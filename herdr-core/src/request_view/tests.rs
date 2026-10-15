@@ -61,6 +61,7 @@ fn pull_request(
         closed_at_unix_ms: None,
         head_oid: Some(head_of(branch)),
         cross_repository: false,
+        work: Default::default(),
     }
 }
 

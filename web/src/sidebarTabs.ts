@@ -1,7 +1,7 @@
 import type { BoardRow } from "./projectBoard";
 import type { AgentRow, Checkout, Tab } from "./snapshot";
 
-/** One tab's segment of a checkout's agent list; `glyph` is set when its tab holds two or more recognized agents. */
+/** One tab's segment of a checkout's agent list; `glyph` is set when its tab holds two or more recognized agents or the operator named it. */
 export type SidebarTabGroup = { tab: Tab | null; rows: BoardRow[]; count: number; glyph: boolean };
 
 /** Keep complete lineage subtrees with their root, ordered by the actual tabs. */
@@ -20,7 +20,7 @@ export function sidebarTabGroups(checkout: Checkout, device: string, rows: reado
     const members = byTab.get(tab);
     if (!members?.length) return [];
     const count = tab ? new Set(tab.panes.filter((pane) => agentPanes.has(pane.id)).map((pane) => pane.id)).size : 0;
-    const glyph = tab !== null && tab.id !== null && tab.sidebar !== undefined && count >= 2;
+    const glyph = tab !== null && tab.id !== null && tab.sidebar !== undefined && (count >= 2 || tab.sidebar.manual_name !== null);
     return [{ tab, rows: members, count, glyph }];
   });
 }

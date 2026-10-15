@@ -101,8 +101,8 @@ pub fn start(
     ledger.next_id = sequence.checked_add(1).ok_or("capacity")?;
     let watch = Watch {
         id: format!("watch-{sequence}"),
-        parent: parent.clone(),
-        target: target.clone(),
+        parent: crate::coordination::named(ledger, parent),
+        target: crate::coordination::named(ledger, target),
         last_activity_at_unix_ms: activity,
         first_warning_at_unix_ms: None,
         warning_count: 0,

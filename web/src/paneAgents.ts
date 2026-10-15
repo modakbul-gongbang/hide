@@ -1,4 +1,4 @@
-import type { AgentRow, RemoteStatus, SnapshotRest } from "./snapshot";
+import type { AgentRow, RemoteStatus } from "./snapshot";
 
 let lastLocal: AgentRow[] | null = null;
 let lastRemote: RemoteStatus[] | undefined;
@@ -30,25 +30,4 @@ export function agentsByPane(agents: AgentRow[]): ReadonlyMap<string, AgentRow> 
     indexes.set(agents, index);
   }
   return index;
-}
-
-let lastDevices: NonNullable<SnapshotRest["navigator"]>["devices"];
-let lastStatus: RemoteStatus[] | undefined;
-let lastFacts: SnapshotRest = {};
-
-/**
- * The devices and their connection rows, shaped as the `rest` the device
- * helpers read. It keeps its identity while neither moved, so a header that
- * only needs to know whether a device is reachable ignores the rest of the
- * snapshot.
- */
-export function deviceFacts(rest: SnapshotRest | null): SnapshotRest {
-  const devices = rest?.navigator?.devices;
-  const remote = rest?.status?.remote;
-  if (devices !== lastDevices || remote !== lastStatus) {
-    lastDevices = devices;
-    lastStatus = remote;
-    lastFacts = { navigator: { devices }, status: { remote } };
-  }
-  return lastFacts;
 }

@@ -176,6 +176,8 @@ PACKAGE_PATHS = (
 POLICY_ONLY = (
     "agents/*", "site/*", "plugins/*", "tools/*", "spikes/*",
     ".gitignore", "web/.gitignore", "desktop/.gitignore",
+    # hide's own license and copyright notice; no build or package reads them.
+    "LICENSE", "NOTICE",
     ".github/pull_request_template.md", ".github/dependabot.yml",
     # Workflows no `pr.yml` job calls; `design-contract.yml` has its own pull
     # request trigger, and the nightly calls `perf.yml`.

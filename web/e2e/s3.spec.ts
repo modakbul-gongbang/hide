@@ -243,11 +243,13 @@ test("the Explorer lists a checkout, expands a folder and opens a preview tab", 
     await expect.poll(() => sent.get("ui_state_update")).toBeGreaterThanOrEqual(2);
     await screenshot(page, "s3-explorer-expanded");
 
-    // A single click opened the checkout's preview tab (B3).
+    // A single click opened the checkout's preview tab (B3), and the
+    // keyboard went with it out of the tree.
     const fileTab = page.locator('[data-tab-kind="file"]');
     await expect(fileTab).toHaveCount(1);
     await expect(fileTab).toHaveAttribute("data-preview", "true");
     expect(lastSent.get("file_open")).toMatchObject({ path: `${repo}/src/main.ts`, preview: true });
+    await expect(page.locator("[data-editor-codemirror] .cm-content")).toBeFocused();
     await screenshot(page, "s3-preview-tab");
 
     // ⌘⇧K promotes the preview display to an ordinary one (B3; S7 B2).
@@ -255,9 +257,9 @@ test("the Explorer lists a checkout, expands a folder and opens a preview tab", 
     await expect.poll(() => sent.get("view_layout.keep_open")).toBe(1);
     await expect(fileTab).toHaveAttribute("data-preview", "false");
 
-    // Closing the view is one view_layout close and the terminal canvas returns.
-    await fileTab.hover();
-    await fileTab.locator("button").click();
+    // ⌘W closes the file the click opened: one view_layout close, and the
+    // terminal canvas returns.
+    await page.keyboard.press(chord("close_tab"));
     await expect.poll(() => sent.get("view_layout.close")).toBe(1);
     await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
     await expect(page.locator("[data-canvas]")).toBeVisible();
@@ -1046,9 +1048,9 @@ test("⌘P opens a file by name and ⌘K switches checkout", { tag: "@platform" 
     await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
 
     // ⌘P: hided indexes the checkout, ranks the typed name and opens it in the
-    // preview tab (B12). The open brings the files tool back; the close
-    // turned the tree off, and turned on it shows the row revealed (PRD
-    // right-lane B11, B16).
+    // preview tab (B12). The open brings the files tool back with the tree
+    // the close left on, and it shows the row revealed (PRD right-lane B11,
+    // B16).
     await page.keyboard.press(chord("open_file"));
     const input = page.locator('[data-palette="Open file"] [data-palette-input]');
     await expect(input).toBeVisible();
@@ -1059,8 +1061,6 @@ test("⌘P opens a file by name and ⌘K switches checkout", { tag: "@platform" 
     await row.click();
     await expect(page.locator("[data-palette-input]")).toHaveCount(0);
     await expect(page.locator('[data-tab-kind="file"]').filter({ hasText: "main.ts" })).toHaveCount(1);
-    await expect(page.locator("[data-lane-tree]")).toHaveCount(0);
-    await page.keyboard.press(chord("toggle_file_tree"));
     await expect(page.locator("[data-lane-tree] [data-explorer]")).toBeVisible();
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveAttribute("data-selected", "true", { timeout: 10_000 });
     expect(sent.get("file_index") ?? 0).toBeGreaterThanOrEqual(1);
@@ -1574,7 +1574,7 @@ test("a save refused at the daemon's boundary keeps the draft unsaved, across a 
 
     await page.reload();
     await expect(content).toContainText("answer = 55", { timeout: 20_000 });
-    await showTool(page, "files"); // an unpinned lane comes back put away (PRD right-lane B22)
+    await showTool(page, "files");
     await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
     expect(fs.readFileSync(file, "utf8")).toBe(original);
 

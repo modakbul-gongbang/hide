@@ -14,11 +14,14 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
     'ath-mark-n': {content: String(count), fill: kind === 'raised' ? '$--warning' : '$--agent-working'},
   });
   const provider = (id, kind = 'claude') => frame(id, 'Provider', {width:14,height:14,fill:{type:'image',enabled:true,url:`../web/src/assets/agent-${kind}.png`,mode:'contain'}}, []);
-  // The PR mark (web/src/components/pr-mark.tsx), a ref of Component / Agent tree parts: the state's icon and colour, then `#number` for one PR (with `+N` for an agent's other own PRs) or the bare count for a root standing for two or more (PRD session-record-redesign).
-  const prChip = (id, {number, count, state, more = 0}) => {
+  // The PR mark (web/src/components/pr-mark.tsx), a ref of Component / Agent tree parts: the state's icon and colour and `#number` for one PR, and for several, an agent's own or a root's family, each state's icon and count in its colour, worst first.
+  const prPart = (id, state, content, tinted) => {
     const [, glyph, fill] = PR_STATES.find(([key]) => key === state);
-    return themedXref(id, AGENT_TREE_MASTERS.prIcon, count === undefined ? `PR #${number}` : `PR ${count}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': {content: count === undefined ? `#${number}` : `${count}`}, 'ath-pr-more': more ? {enabled: true, content: `+${more}`} : {enabled: false}});
+    return themedXref(id, AGENT_TREE_MASTERS.prIcon, tinted ? `PR ${content} ${state}` : `PR ${content}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': {content, ...(tinted ? {fill} : {})}});
   };
+  const prChip = (id, {number, state, counts}) => counts
+    ? frame(id, `PR ${counts.reduce((sum, [, count]) => sum + count, 0)}`, {layout:'horizontal', gap:'$--spacing-xs', alignItems:'center', width:'fit_content'}, counts.map(([key, count]) => prPart(`${id}-${key}`, key, String(count), true)))
+    : prPart(id, state, `#${number}`, false);
   const chevron = (id, open) => frame(id, 'Chevron lane', {width:16,height:20,layout:'horizontal',justifyContent:'center',alignItems:'center'}, open === null ? [] : [icon(`${id}-g`, open ? 'chevron-down' : 'chevron-right', {size:12,fill:'$--muted-foreground'})]);
 
   // A Sessions row (B30, B31): mark, provider, title, the folded raised mark
@@ -96,7 +99,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
         {title:'hide 에이전트 지원 PR 묶음 머지 조율',mark:'!',tone:'$--warning',open:false,age:'12m',ask:['승인','e2e 테스트 돌리던 중']},
       ]),
       group('working','Working',[
-        {title:'공통 후보 전체 검증과 PR 제출',open:false,desc:['raised',1],pr:{count:2,state:'failed'},age:'4h',line:'sealed verify 다시 돌리는 중'},
+        {title:'공통 후보 전체 검증과 PR 제출',open:false,desc:['raised',1],pr:{counts:[['failed',1],['mergeable',1]]},age:'4h',line:'sealed verify 다시 돌리는 중'},
         {title:'Mac mini 연동 5단계 순차 구현',mark:'○',open:true,pr:{number:1188,state:'pending'},age:'2m',line:'4단계 리뷰 지적 수정 중'},
         {title:'Implementor',depth:1,open:true,pr:{number:1188,state:'pending'},age:'2m',branch:'feat/core-host-node-layer5',line:'NodeLink 호출 옮기는 중'},
         {title:'테스트 작성',depth:2,rails:[true],last:true,open:true,age:'1m',line:'e2e 스펙 두 개 추가 중'},
@@ -178,7 +181,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
       labeled('disconnected','Unavailable states: topology access with a connection reason',[pane(`${id}-disconnected`,{title:'다른 기기의 자식 상태',children:5,disconnected:true,summary:'Mac mini 연결되지 않음'})]),
       labeled('grand','Grandchild pane: two ancestors, no PR and no children (B20)',[pane(`${id}-grand`,{path:[root,'P8 읽기 전용 준비'],mark:'!',tone:'$--warning',title:'테스트 작성',terminal:'Allow bash: pnpm --dir web e2e ? (y/n)'})]),
       labeled('fork','Forked pane: a root of its own, the fork mark after the title opens the source it was forked from (fork-operator-root B8)',[pane(`${id}-fork`,{provider:'claude',title:'P8 읽기 전용 준비',forked:true})]),
-      labeled('two','Two own PRs: PR 2 ×1 (B22)',[pane(`${id}-two`,{path:[root],mark:'✓',tone:'$--success',provider:'claude',title:'P6 OpenCode 세션 리더',pr:{number:811,state:'failed',more:1}})]),
+      labeled('two','Two own PRs: one mark per state (B22)',[pane(`${id}-two`,{path:[root],mark:'✓',tone:'$--success',provider:'claude',title:'P6 OpenCode 세션 리더',pr:{counts:[['failed',1],['merged',1]]}})]),
       labeled('bands','Band per cause: child counts compact to preserve the request (B3)',bands.map(([key,band])=>pane(`${id}-band-${key}`,{path:[root],title:'P8 읽기 전용 준비',children:2,band}))),
       caption(`${id}-rule`,'승인은 label 줄이 없으면 "권한 요청에서 멈춤". 답변의 대기는 부모가 못 받은 시간. 초안은 초안이 걸린 부모를 연다. 띠는 PTY 크기를 바꾸지 않는다.'),
     ]);

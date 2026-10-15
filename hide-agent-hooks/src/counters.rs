@@ -14,7 +14,14 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::runtime::{HOOK_VERSION, HookEvent};
+use crate::runtime::{AgentRuntime, HOOK_VERSION, HookEvent};
+
+/// The most subagents one session may have running at once, and the most
+/// finished ones it remembers by id. A record is read and rewritten whole by
+/// every event, so it is bounded; crossing the running cap is a failed hook
+/// event the pane's last report failure shows, not a larger record.
+const RUNNING_LIMIT: usize = 256;
+const FINISHED_LIMIT: usize = 256;
 
 /// What one pane's session has spawned.
 ///
@@ -40,6 +47,15 @@ pub struct PaneCounters {
 /// `session` the agent's own id of the session that did, when the hook's
 /// input named it. A file an older helper wrote has none of them and is not
 /// restored from.
+///
+/// A record belongs to one session: an event of another session starts it
+/// over, and an event of a session Herdr does not report for the pane never
+/// reaches it ([`change_for_pane`]).
+///
+/// `running` and `finished` are the subagents an agent names by id: a start
+/// puts an id in `running`, its stop moves it to `finished` once, and a
+/// repeated stop or the stop of an id that never started changes nothing.
+/// `working` counts the subagents of an agent whose events carry no id.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 struct Record {
     #[serde(default)]
@@ -52,12 +68,18 @@ struct Record {
     agent: Option<String>,
     #[serde(default)]
     session: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    running: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    finished: Vec<String>,
 }
 
 impl Record {
     fn counters(&self) -> PaneCounters {
         PaneCounters {
-            working: self.working,
+            working: self
+                .working
+                .saturating_add(u32::try_from(self.running.len()).unwrap_or(u32::MAX)),
             done: self.done,
         }
     }
@@ -137,38 +159,124 @@ const LOCK_WAIT: Duration = Duration::from_millis(1_000);
 
 /// One change an event makes to a pane's counts.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Change {
-    /// A new session took over the pane: its counts start again.
-    Reset,
-    /// One subagent started.
-    Started,
-    /// One subagent finished.
-    Stopped,
-    /// The turn ended with this many subagents still running: none for an
-    /// agent whose subagents end with its turn, and the background ones Grok
-    /// lists for a turn that leaves them running.
+pub enum Change<'a> {
+    /// A session started. The record already is that session's when the event
+    /// names it (a resume or a compaction of the same session keeps its
+    /// subagents); an event that names none starts the record over.
+    SessionStarted,
+    /// One subagent started: by id when the agent names it, and a subagent that
+    /// stopped and is running again is not counted done any more.
+    Started(Option<&'a str>),
+    /// One subagent stopped: a known id moves from working to done once.
+    Stopped(Option<&'a str>),
+    /// The turn ended with this many subagents still running, for an agent
+    /// that names none by id: none for an agent whose subagents end with its
+    /// turn, and the background ones Grok lists for a turn that leaves them
+    /// running.
     Settled { running: u32 },
+    /// The turn ended and the agent listed the subagents that still run. A
+    /// subagent it no longer lists ended without a stop reaching the hook, and
+    /// is no longer working; it is not counted done, since nothing said it
+    /// finished.
+    Listed { running: &'a [String] },
     /// The event changes no count; the pane's counts are only republished.
     None,
 }
 
-impl Change {
-    /// The change a six-event runtime's hook makes.
+impl<'a> Change<'a> {
+    /// The change one event of a six-event runtime makes, from what its input
+    /// said.
     ///
-    /// - `SessionStart` starts the pane over: a new session in a reused pane
-    ///   must not inherit the last one's numbers.
-    /// - `Stop` sweeps `working` to zero. The turn is over, so nothing this
-    ///   session spawned is still running, and a `SubagentStop` that never
-    ///   arrived cannot leave a count behind (PRD B31).
-    pub fn of(event: HookEvent) -> Self {
+    /// Claude Code names each subagent and lists the ones still running when
+    /// a turn ends, so its `Stop` never sweeps: a background subagent outlives
+    /// its parent's turn (measured: the turn's `Stop` fires before the
+    /// subagent's `SubagentStop`). A `Stop` without that list changes nothing
+    /// rather than guessing. A runtime that lists nothing keeps the older
+    /// rule, that the turn is over and so are the subagents it started.
+    pub fn of(runtime: Option<AgentRuntime>, event: HookEvent, input: &'a SubagentInput) -> Self {
         match event {
-            HookEvent::SessionStart => Self::Reset,
+            HookEvent::SessionStart => Self::SessionStarted,
             HookEvent::UserPromptSubmit | HookEvent::PreToolUse => Self::None,
-            HookEvent::SubagentStart => Self::Started,
-            HookEvent::SubagentStop => Self::Stopped,
+            HookEvent::SubagentStart => Self::Started(input.subagent.as_deref()),
+            HookEvent::SubagentStop => Self::Stopped(input.subagent.as_deref()),
+            // A subagent's own turn end is not the session's.
+            HookEvent::Stop if input.subagent.is_some() => Self::None,
+            HookEvent::Stop if runtime == Some(AgentRuntime::ClaudeCode) => match &input.running {
+                Some(running) => Self::Listed { running },
+                None => Self::None,
+            },
             HookEvent::Stop => Self::Settled { running: 0 },
         }
     }
+}
+
+/// What a six-event runtime's hook input says about the subagent count: the
+/// session it came from, the subagent it is about, and the subagents that
+/// were running when a turn ended.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SubagentInput {
+    pub session: Option<String>,
+    pub subagent: Option<String>,
+    /// The ids Claude Code's `background_tasks` lists as running subagents,
+    /// when the input has that list.
+    pub running: Option<Vec<String>>,
+}
+
+impl SubagentInput {
+    /// Reads the input whole. One that was cut off or cannot be read names
+    /// nothing, which the counts treat as an event of an unknown session.
+    pub fn read(payload: &[u8], truncated: bool) -> Self {
+        #[derive(Deserialize)]
+        struct Task {
+            id: Option<String>,
+            #[serde(rename = "type")]
+            kind: Option<String>,
+            status: Option<String>,
+        }
+        #[derive(Deserialize)]
+        struct Input {
+            session_id: Option<String>,
+            agent_id: Option<String>,
+            background_tasks: Option<Vec<Task>>,
+        }
+        let Some(input) = (!truncated)
+            .then(|| serde_json::from_slice::<Input>(payload).ok())
+            .flatten()
+        else {
+            return Self::default();
+        };
+        Self {
+            session: input
+                .session_id
+                .filter(|id| crate::delivery::valid_session(id)),
+            subagent: input.agent_id.filter(|id| valid_subagent(id)),
+            running: input.background_tasks.map(|tasks| {
+                tasks
+                    .into_iter()
+                    .filter(|task| {
+                        task.kind.as_deref() == Some("subagent")
+                            && task.status.as_deref() == Some("running")
+                    })
+                    .filter_map(|task| task.id)
+                    .filter(|id| valid_subagent(id))
+                    .collect()
+            }),
+        }
+    }
+}
+
+fn valid_subagent(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 128 && !id.chars().any(char::is_control)
+}
+
+/// What a change did to the pane's file.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Applied {
+    /// The pane's counts after the change.
+    pub counters: PaneCounters,
+    /// The event came from a session that is not the pane's agent session as
+    /// Herdr reports it, so the file was left as it was.
+    pub foreign: bool,
 }
 
 /// The pane's record as the last finished change left it, read under the
@@ -203,25 +311,47 @@ fn read_record(home: &Path, pane_id: &str) -> io::Result<Record> {
 }
 
 pub fn read(home: &Path, pane_id: &str) -> PaneCounters {
-    let path = record_path(home, pane_id);
-    fs::read_to_string(&path)
-        .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default()
+    read_lenient(&record_path(home, pane_id)).counters()
 }
 
-/// Applies one [`Change`] under the pane's lock and returns the new counts.
-/// The record is read, changed and written while the lock is held, so two
-/// events of one pane never both start from the same count. The write is
-/// not synced: a count describes running sessions and is rebuilt by their
-/// next events, so it does not have to survive a crash, and a sync inside
-/// the lock would make parallel subagent starts wait out the lock.
+/// Applies one [`Change`] under the pane's lock and returns the new counts,
+/// for a caller that has no pane session to compare with.
 pub fn change(
     home: &Path,
     pane_id: &str,
-    change: Change,
+    change: Change<'_>,
     who: Reporter<'_>,
 ) -> io::Result<PaneCounters> {
+    change_for_pane(home, pane_id, change, who, || None).map(|applied| applied.counters)
+}
+
+/// Applies one [`Change`] to the pane's record, unless the event is another
+/// session's.
+///
+/// `pane_session` asks for the session Herdr reports for the pane's agent. A
+/// session that is not that one is a foreign one (a nested `claude -p` that a
+/// user's own Stop hook starts runs the same hooks with the pane's
+/// environment), and its events change nothing: Herdr, not the hook's
+/// environment, says which session the pane's agent is. Without a session
+/// every event is the pane's, as the events of a runtime that names no session
+/// always were.
+///
+/// It is asked at most once, before the lock is taken (a socket round trip
+/// never waits inside it), and not at all for an event that changes no count
+/// and finds the record already naming its reporter.
+///
+/// The record is read, changed and written while the lock is held, so two
+/// events of one pane never both start from the same count. The write is not
+/// synced: a count describes running sessions and is rebuilt by their next
+/// events, so it does not have to survive a crash, and a sync inside the lock
+/// would make parallel subagent starts wait out the lock.
+pub fn change_for_pane(
+    home: &Path,
+    pane_id: &str,
+    change: Change<'_>,
+    who: Reporter<'_>,
+    pane_session: impl FnOnce() -> Option<String>,
+) -> io::Result<Applied> {
     let path = record_path(home, pane_id);
     if let Some(parent) = path.parent() {
         hide_platform::fs::private::create_dir_all(parent)?;
@@ -233,39 +363,133 @@ pub fn change(
         // gets one below: every pane that has reported has a file that says
         // who reported, which is what a restore reads.
         match read_record(home, pane_id) {
-            Ok(record) if record.names(who) => return Ok(record.counters()),
+            Ok(record) if record.names(who) => {
+                return Ok(Applied {
+                    counters: record.counters(),
+                    foreign: false,
+                });
+            }
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
     }
+    if pane_session().is_some_and(|session| who.session != Some(session.as_str())) {
+        let counters = match read_record(home, pane_id) {
+            Ok(record) => record.counters(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => PaneCounters::default(),
+            Err(error) => return Err(error),
+        };
+        return Ok(Applied {
+            counters,
+            foreign: true,
+        });
+    }
     let held = hold(home, hide_platform::fs::lock::Mode::Exclusive)?;
-    let before = read_lenient(&path);
-    let mut counters = before.counters();
+    let mut record = read_lenient(&path);
+    // A record belongs to one session: the first event of another one, that
+    // the pane's agent now is, starts it over. A record that names no session
+    // or agent (an older helper's, or a runtime's that reads none) is taken
+    // over by the first one that does, with its counts.
+    let new_session = who.session.is_some()
+        && (record
+            .session
+            .as_deref()
+            .is_some_and(|session| Some(session) != who.session)
+            || record
+                .agent
+                .as_deref()
+                .is_some_and(|agent| Some(agent) != who.agent));
+    if new_session {
+        record = Record::default();
+    }
+    let kept_session = record.session.clone();
+    let kept_agent = record.agent.clone();
     match change {
-        Change::Reset => counters = PaneCounters::default(),
-        Change::Started => counters.working = counters.working.saturating_add(1),
-        Change::Stopped => {
-            counters.working = counters.working.saturating_sub(1);
-            counters.done = counters.done.saturating_add(1);
+        // A session that names itself has a fresh record already, or is
+        // the record's own; one that names none cannot say which.
+        Change::SessionStarted => {
+            if who.session.is_none() {
+                record = Record::default();
+            }
         }
-        Change::Settled { running } => counters.working = running,
+        Change::Started(Some(subagent)) => {
+            if let Some(at) = record.finished.iter().position(|id| id == subagent) {
+                record.finished.remove(at);
+                record.done = record.done.saturating_sub(1);
+            }
+            if !record.running.iter().any(|id| id == subagent) {
+                if record.running.len() >= RUNNING_LIMIT {
+                    return Err(too_many());
+                }
+                record.running.push(subagent.to_owned());
+            }
+        }
+        Change::Started(None) => record.working = record.working.saturating_add(1),
+        Change::Stopped(Some(subagent)) => {
+            if let Some(at) = record.running.iter().position(|id| id == subagent) {
+                record.running.remove(at);
+                remember_finished(&mut record, subagent);
+                record.done = record.done.saturating_add(1);
+            }
+        }
+        Change::Stopped(None) => {
+            record.working = record.working.saturating_sub(1);
+            record.done = record.done.saturating_add(1);
+        }
+        Change::Settled { running } => record.working = running,
+        Change::Listed { running } => {
+            let mut listed: Vec<String> = Vec::with_capacity(running.len());
+            for id in running {
+                if !listed.contains(id) {
+                    listed.push(id.clone());
+                }
+            }
+            if listed.len() > RUNNING_LIMIT {
+                return Err(too_many());
+            }
+            for id in &listed {
+                if let Some(at) = record.finished.iter().position(|finished| finished == id) {
+                    record.finished.remove(at);
+                    record.done = record.done.saturating_sub(1);
+                }
+            }
+            record.running = listed;
+        }
         Change::None => {}
     }
     let session = match change {
         // Not evidence of another session, so the one the file names stays
         // unless this event names its own, and only for the same agent.
-        Change::None => who.session.map(str::to_owned).or_else(|| {
-            before
-                .session
-                .clone()
-                .filter(|_| before.agent.as_deref() == who.agent)
-        }),
+        Change::None => who
+            .session
+            .map(str::to_owned)
+            .or_else(|| kept_session.filter(|_| kept_agent.as_deref() == who.agent)),
         _ => who.session.map(str::to_owned),
     };
-    write_record(&path, counters, who, session)?;
+    let counters = record.counters();
+    write_record(&path, record, who, session)?;
     drop(held);
-    Ok(counters)
+    Ok(Applied {
+        counters,
+        foreign: false,
+    })
+}
+
+fn too_many() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("a session has more than {RUNNING_LIMIT} subagents running"),
+    )
+}
+
+/// Remembers that `subagent` finished, so that one that starts again is not
+/// counted done twice. The oldest ids go first.
+fn remember_finished(record: &mut Record, subagent: &str) {
+    if record.finished.len() >= FINISHED_LIMIT {
+        record.finished.remove(0);
+    }
+    record.finished.push(subagent.to_owned());
 }
 
 /// Replaces a pane's counts with ones its agent keeps itself: OpenCode's
@@ -283,7 +507,12 @@ pub fn store(
         hide_platform::fs::private::create_dir_all(parent)?;
     }
     let held = hold(home, hide_platform::fs::lock::Mode::Exclusive)?;
-    write_record(&path, counters, who, who.session.map(str::to_owned))?;
+    let record = Record {
+        working: counters.working,
+        done: counters.done,
+        ..Record::default()
+    };
+    write_record(&path, record, who, who.session.map(str::to_owned))?;
     drop(held);
     Ok(())
 }
@@ -300,18 +529,17 @@ fn read_lenient(path: &Path) -> Record {
 /// Writes a record in place, private to the account, under a held lock.
 fn write_record(
     path: &Path,
-    counters: PaneCounters,
+    record: Record,
     who: Reporter<'_>,
     session: Option<String>,
 ) -> io::Result<()> {
-    let mut record = hide_platform::fs::private::open_or_create_file(path)?;
-    record.set_len(0)?;
-    record.write_all(&serde_json::to_vec(&Record {
-        working: counters.working,
-        done: counters.done,
+    let mut file = hide_platform::fs::private::open_or_create_file(path)?;
+    file.set_len(0)?;
+    file.write_all(&serde_json::to_vec(&Record {
         version: Some(HOOK_VERSION),
         agent: who.agent.map(str::to_owned),
         session,
+        ..record
     })?)
 }
 
@@ -408,11 +636,11 @@ mod tests {
         let root = home("lifecycle");
         let pane = "w7B:pM";
         assert_eq!(
-            change(&root, pane, Change::of(HookEvent::SessionStart), WHO).unwrap(),
+            change(&root, pane, Change::SessionStarted, WHO).unwrap(),
             PaneCounters::default()
         );
-        change(&root, pane, Change::of(HookEvent::SubagentStart), WHO).unwrap();
-        let two = change(&root, pane, Change::of(HookEvent::SubagentStart), WHO).unwrap();
+        change(&root, pane, Change::Started(None), WHO).unwrap();
+        let two = change(&root, pane, Change::Started(None), WHO).unwrap();
         assert_eq!(
             two,
             PaneCounters {
@@ -420,7 +648,7 @@ mod tests {
                 done: 0
             }
         );
-        let one = change(&root, pane, Change::of(HookEvent::SubagentStop), WHO).unwrap();
+        let one = change(&root, pane, Change::Stopped(None), WHO).unwrap();
         assert_eq!(
             one,
             PaneCounters {
@@ -445,9 +673,9 @@ mod tests {
         let root = home("restore");
         let pane = "w7B:pM";
         assert_eq!(restore_of(&root, pane).unwrap(), Restore::NoRecord);
-        change(&root, pane, Change::of(HookEvent::SubagentStart), WHO).unwrap();
-        change(&root, pane, Change::of(HookEvent::SubagentStart), WHO).unwrap();
-        change(&root, pane, Change::of(HookEvent::SubagentStop), WHO).unwrap();
+        change(&root, pane, Change::Started(None), WHO).unwrap();
+        change(&root, pane, Change::Started(None), WHO).unwrap();
+        change(&root, pane, Change::Stopped(None), WHO).unwrap();
         assert_eq!(
             restore_of(&root, pane).unwrap(),
             restorable(1, 1, Some("session-a"))
@@ -456,18 +684,18 @@ mod tests {
     }
 
     #[test]
-    fn an_event_that_names_another_session_replaces_the_one_the_file_names() {
+    fn an_event_that_names_another_session_starts_the_file_over_for_it() {
         let root = home("restore-session");
         let pane = "w7B:pM";
-        change(&root, pane, Change::Started, WHO).unwrap();
+        change(&root, pane, Change::Started(None), WHO).unwrap();
         let other = Reporter {
             session: Some("session-b"),
             ..WHO
         };
-        change(&root, pane, Change::Started, other).unwrap();
+        change(&root, pane, Change::Started(None), other).unwrap();
         assert_eq!(
             restore_of(&root, pane).unwrap(),
-            restorable(2, 0, Some("session-b"))
+            restorable(1, 0, Some("session-b"))
         );
         // A hook that could not read its input names no session, and the
         // count it changed is not the earlier session's to claim.
@@ -475,8 +703,8 @@ mod tests {
             session: None,
             ..WHO
         };
-        change(&root, pane, Change::Started, unknown).unwrap();
-        assert_eq!(restore_of(&root, pane).unwrap(), restorable(3, 0, None));
+        change(&root, pane, Change::Started(None), unknown).unwrap();
+        assert_eq!(restore_of(&root, pane).unwrap(), restorable(2, 0, None));
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -484,12 +712,12 @@ mod tests {
     fn an_event_that_changes_nothing_keeps_the_session_for_the_same_agent_only() {
         let root = home("restore-none");
         let pane = "w7B:pM";
-        change(&root, pane, Change::of(HookEvent::SessionStart), WHO).unwrap();
+        change(&root, pane, Change::SessionStarted, WHO).unwrap();
         let blind = Reporter {
             session: None,
             ..WHO
         };
-        change(&root, pane, Change::of(HookEvent::PreToolUse), blind).unwrap();
+        change(&root, pane, Change::None, blind).unwrap();
         assert_eq!(
             restore_of(&root, pane).unwrap(),
             restorable(0, 0, Some("session-a"))
@@ -499,7 +727,7 @@ mod tests {
             agent: Some("codex"),
             session: None,
         };
-        change(&root, pane, Change::of(HookEvent::PreToolUse), codex).unwrap();
+        change(&root, pane, Change::None, codex).unwrap();
         assert_eq!(
             restore_of(&root, pane).unwrap(),
             Restore::Report(Restorable {
@@ -517,7 +745,7 @@ mod tests {
         let root = home("restore-first");
         let pane = "w7B:pM";
         assert_eq!(
-            change(&root, pane, Change::of(HookEvent::PreToolUse), WHO).unwrap(),
+            change(&root, pane, Change::None, WHO).unwrap(),
             PaneCounters::default()
         );
         assert_eq!(
@@ -548,7 +776,7 @@ mod tests {
                 }
             );
         }
-        change(&root, pane, Change::of(HookEvent::PreToolUse), WHO).unwrap();
+        change(&root, pane, Change::None, WHO).unwrap();
         assert_eq!(
             restore_of(&root, pane).unwrap(),
             restorable(2, 4, Some("session-a"))
@@ -573,10 +801,10 @@ mod tests {
     fn a_turn_that_ends_sweeps_a_count_a_missing_stop_left_behind() {
         let root = home("sweep");
         let pane = "w7B:pM";
-        change(&root, pane, Change::of(HookEvent::SessionStart), WHO).unwrap();
-        change(&root, pane, Change::of(HookEvent::SubagentStart), WHO).unwrap();
-        change(&root, pane, Change::of(HookEvent::SubagentStart), WHO).unwrap();
-        let swept = change(&root, pane, Change::of(HookEvent::Stop), WHO).unwrap();
+        change(&root, pane, Change::SessionStarted, WHO).unwrap();
+        change(&root, pane, Change::Started(None), WHO).unwrap();
+        change(&root, pane, Change::Started(None), WHO).unwrap();
+        let swept = change(&root, pane, Change::Settled { running: 0 }, WHO).unwrap();
         assert_eq!(swept.working, 0, "no subagent outlives its turn");
         assert_eq!(swept.done, 0, "the sweep does not invent completions");
         fs::remove_dir_all(&root).unwrap();
@@ -586,8 +814,8 @@ mod tests {
     fn a_new_session_in_the_same_pane_does_not_inherit_the_last_ones_numbers() {
         let root = home("reset");
         let pane = "w7B:pM";
-        change(&root, pane, Change::of(HookEvent::SubagentStart), WHO).unwrap();
-        change(&root, pane, Change::of(HookEvent::SubagentStop), WHO).unwrap();
+        change(&root, pane, Change::Started(None), WHO).unwrap();
+        change(&root, pane, Change::Stopped(None), WHO).unwrap();
         assert_eq!(
             read(&root, pane),
             PaneCounters {
@@ -595,8 +823,12 @@ mod tests {
                 done: 1
             }
         );
+        let next = Reporter {
+            session: Some("session-b"),
+            ..WHO
+        };
         assert_eq!(
-            change(&root, pane, Change::of(HookEvent::SessionStart), WHO).unwrap(),
+            change(&root, pane, Change::SessionStarted, next).unwrap(),
             PaneCounters::default()
         );
         fs::remove_dir_all(&root).unwrap();
@@ -605,9 +837,9 @@ mod tests {
     #[test]
     fn a_sweep_drops_the_records_of_panes_that_are_gone_and_keeps_the_rest() {
         let root = home("retain");
-        change(&root, "w1:pA", Change::of(HookEvent::SubagentStart), WHO).unwrap();
-        change(&root, "w1:pB", Change::of(HookEvent::SubagentStart), WHO).unwrap();
-        change(&root, "w2:pC", Change::of(HookEvent::SubagentStart), WHO).unwrap();
+        change(&root, "w1:pA", Change::Started(None), WHO).unwrap();
+        change(&root, "w1:pB", Change::Started(None), WHO).unwrap();
+        change(&root, "w2:pC", Change::Started(None), WHO).unwrap();
         // A file the sweep did not write is not its business.
         fs::write(state_directory(&root).join("notes.txt"), b"kept").unwrap();
 
@@ -640,7 +872,7 @@ mod tests {
         let threads: Vec<_> = (0..8)
             .map(|_| {
                 let root = root.clone();
-                std::thread::spawn(move || change(&root, pane, Change::Started, WHO).unwrap())
+                std::thread::spawn(move || change(&root, pane, Change::Started(None), WHO).unwrap())
             })
             .collect();
         for thread in threads {
@@ -655,21 +887,368 @@ mod tests {
         let root = home("settled");
         let pane = "w7B:pM";
         for _ in 0..3 {
-            change(&root, pane, Change::Started, WHO).unwrap();
+            change(&root, pane, Change::Started(None), WHO).unwrap();
         }
         let settled = change(&root, pane, Change::Settled { running: 2 }, WHO).unwrap();
         assert_eq!(settled.working, 2);
-        let one = change(&root, pane, Change::Stopped, WHO).unwrap();
+        let one = change(&root, pane, Change::Stopped(None), WHO).unwrap();
         assert_eq!((one.working, one.done), (1, 1));
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn ids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|id| (*id).to_owned()).collect()
+    }
+
+    fn counts(root: &Path, pane: &str) -> (u32, u32) {
+        let counters = read(root, pane);
+        (counters.working, counters.done)
+    }
+
+    // The order below is what an interactive Claude Code 2.1.300 sent for two
+    // background subagents that each paused on a background command twice
+    // (agents/runs/fix-claude-subagent-counts/dbg2/events.log): a `Stop` that
+    // lists both before either stops, a `SubagentStop` at each pause, and a
+    // `SubagentStart` with the same agent_id when the command ends.
+    #[test]
+    fn a_subagent_that_pauses_and_resumes_is_one_subagent() {
+        let root = home("pause");
+        let pane = "w7B:pM";
+        let apply = |change| {
+            super::change(&root, pane, change, WHO).unwrap();
+        };
+        let both = ids(&["a", "b"]);
+        apply(Change::SessionStarted);
+        apply(Change::Started(Some("a")));
+        apply(Change::Started(Some("b")));
+        apply(Change::Listed { running: &both });
+        assert_eq!(
+            counts(&root, pane),
+            (2, 0),
+            "the parent's turn end is no sweep"
+        );
+        apply(Change::Stopped(Some("a")));
+        apply(Change::Stopped(Some("b")));
+        assert_eq!(counts(&root, pane), (0, 2));
+        apply(Change::Listed { running: &[] });
+        assert_eq!(counts(&root, pane), (0, 2));
+        // Resumed by its command's end: running again, and not done twice.
+        apply(Change::Started(Some("a")));
+        apply(Change::Started(Some("b")));
+        assert_eq!(counts(&root, pane), (2, 0));
+        apply(Change::Stopped(Some("a")));
+        apply(Change::Stopped(Some("b")));
+        assert_eq!(counts(&root, pane), (0, 2));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_repeated_stop_or_the_stop_of_an_unknown_subagent_changes_nothing() {
+        let root = home("repeat-stop");
+        let pane = "w7B:pM";
+        change(&root, pane, Change::Started(Some("a")), WHO).unwrap();
+        change(&root, pane, Change::Stopped(Some("a")), WHO).unwrap();
+        for stopped in ["a", "never-started"] {
+            change(&root, pane, Change::Stopped(Some(stopped)), WHO).unwrap();
+        }
+        assert_eq!(counts(&root, pane), (0, 1));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_start_repeated_for_a_running_subagent_counts_it_once() {
+        let root = home("repeat-start");
+        let pane = "w7B:pM";
+        for _ in 0..3 {
+            change(&root, pane, Change::Started(Some("a")), WHO).unwrap();
+        }
+        assert_eq!(counts(&root, pane), (1, 0));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    // A subagent stopped with the agent's TaskStop tool sends no SubagentStop
+    // (measured), so the next turn end's list is what ends it, uncounted as
+    // done because nothing said it finished.
+    #[test]
+    fn a_subagent_killed_without_a_stop_leaves_when_the_next_turn_end_no_longer_lists_it() {
+        let root = home("killed");
+        let pane = "w7B:pM";
+        change(&root, pane, Change::Started(Some("a")), WHO).unwrap();
+        change(
+            &root,
+            pane,
+            Change::Listed {
+                running: &ids(&["a"]),
+            },
+            WHO,
+        )
+        .unwrap();
+        assert_eq!(counts(&root, pane), (1, 0));
+        change(&root, pane, Change::Listed { running: &[] }, WHO).unwrap();
+        assert_eq!(counts(&root, pane), (0, 0));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_list_names_a_subagent_whose_start_never_arrived() {
+        let root = home("listed-new");
+        let pane = "w7B:pM";
+        change(
+            &root,
+            pane,
+            Change::Listed {
+                running: &ids(&["a", "a", "b"]),
+            },
+            WHO,
+        )
+        .unwrap();
+        assert_eq!(counts(&root, pane), (2, 0));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    // The measured trace of the lead pane: a nested `claude -p` started by the
+    // operator's Stop hook runs SessionStart, UserPromptSubmit and Stop with
+    // the pane's environment, in a session that has no transcript.
+    #[test]
+    fn a_session_herdr_does_not_report_for_the_pane_leaves_its_counts_alone() {
+        let root = home("foreign");
+        let pane = "w7B:pM";
+        let pane_session = Some("session-a");
+        let nested = Reporter {
+            session: Some("nested"),
+            ..WHO
+        };
+        change(&root, pane, Change::Started(Some("a")), WHO).unwrap();
+        change(&root, pane, Change::Stopped(Some("a")), WHO).unwrap();
+        change(&root, pane, Change::Started(Some("b")), WHO).unwrap();
+        let before = fs::read(record_path(&root, pane)).unwrap();
+        for event in [
+            Change::SessionStarted,
+            Change::None,
+            Change::Started(Some("x")),
+            Change::Listed { running: &[] },
+            Change::Settled { running: 0 },
+        ] {
+            let applied = change_for_pane(&root, pane, event, nested, || {
+                pane_session.map(str::to_owned)
+            })
+            .unwrap();
+            assert!(applied.foreign, "{event:?}");
+            assert_eq!(
+                applied.counters,
+                PaneCounters {
+                    working: 1,
+                    done: 1
+                }
+            );
+        }
+        assert_eq!(
+            fs::read(record_path(&root, pane)).unwrap(),
+            before,
+            "the file is byte for byte what the pane's own events left"
+        );
+        // The pane's own session goes on, and a session that names none is not it.
+        let own = change_for_pane(&root, pane, Change::Stopped(Some("b")), WHO, || {
+            pane_session.map(str::to_owned)
+        })
+        .unwrap();
+        assert!(!own.foreign);
+        assert_eq!((own.counters.working, own.counters.done), (0, 2));
+        // A session that names none is not the pane's when it would change
+        // something.
+        let blind = Reporter {
+            session: None,
+            ..WHO
+        };
+        assert!(
+            change_for_pane(&root, pane, Change::Started(Some("y")), blind, || {
+                pane_session.map(str::to_owned)
+            })
+            .unwrap()
+            .foreign
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_event_that_changes_no_count_asks_herdr_only_when_it_would_write() {
+        let root = home("lazy-session");
+        let pane = "w7B:pM";
+        let asked = std::cell::Cell::new(0);
+        let ask = || {
+            asked.set(asked.get() + 1);
+            Some("session-a".to_owned())
+        };
+        // No file yet: the event writes one, so Herdr is asked.
+        change_for_pane(&root, pane, Change::None, WHO, ask).unwrap();
+        assert_eq!(asked.get(), 1);
+        // The file names this reporter: a shared read, no question.
+        change_for_pane(&root, pane, Change::None, WHO, ask).unwrap();
+        assert_eq!(asked.get(), 1);
+        // Another session's event that changes nothing is asked about and
+        // leaves the file as it was.
+        let nested = Reporter {
+            session: Some("nested"),
+            ..WHO
+        };
+        let before = fs::read(record_path(&root, pane)).unwrap();
+        let applied = change_for_pane(&root, pane, Change::None, nested, ask).unwrap();
+        assert!(applied.foreign);
+        assert_eq!(asked.get(), 2);
+        assert_eq!(fs::read(record_path(&root, pane)).unwrap(), before);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_pane_herdr_names_no_session_for_takes_every_event_as_its_own() {
+        let root = home("no-pane-session");
+        let pane = "w7B:pM";
+        let applied =
+            change_for_pane(&root, pane, Change::Started(Some("a")), WHO, || None).unwrap();
+        assert!(!applied.foreign);
+        assert_eq!(applied.counters.working, 1);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_compaction_or_resume_of_the_same_session_keeps_its_subagents() {
+        let root = home("same-session-start");
+        let pane = "w7B:pM";
+        change(&root, pane, Change::Started(Some("a")), WHO).unwrap();
+        change(&root, pane, Change::SessionStarted, WHO).unwrap();
+        assert_eq!(counts(&root, pane), (1, 0));
+        // A runtime that names no session cannot say it is the same one.
+        let blind = Reporter {
+            session: None,
+            ..WHO
+        };
+        change(&root, pane, Change::SessionStarted, blind).unwrap();
+        assert_eq!(counts(&root, pane), (0, 0));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_running_set_has_a_cap_and_crossing_it_is_an_error() {
+        let root = home("cap");
+        let pane = "w7B:pM";
+        for index in 0..RUNNING_LIMIT {
+            change(
+                &root,
+                pane,
+                Change::Started(Some(&format!("a{index}"))),
+                WHO,
+            )
+            .unwrap();
+        }
+        let error = change(&root, pane, Change::Started(Some("one-more")), WHO).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(counts(&root, pane).0, RUNNING_LIMIT as u32);
+        let too_long: Vec<String> = (0..=RUNNING_LIMIT)
+            .map(|index| format!("b{index}"))
+            .collect();
+        assert!(change(&root, pane, Change::Listed { running: &too_long }, WHO).is_err());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_finished_ids_a_record_remembers_are_bounded_and_the_count_is_not() {
+        let root = home("finished-cap");
+        let pane = "w7B:pM";
+        for index in 0..FINISHED_LIMIT + 5 {
+            let id = format!("a{index}");
+            change(&root, pane, Change::Started(Some(&id)), WHO).unwrap();
+            change(&root, pane, Change::Stopped(Some(&id)), WHO).unwrap();
+        }
+        assert_eq!(counts(&root, pane), (0, (FINISHED_LIMIT + 5) as u32));
+        let file: Record =
+            serde_json::from_slice(&fs::read(record_path(&root, pane)).unwrap()).unwrap();
+        assert_eq!(file.finished.len(), FINISHED_LIMIT);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    // Claude Code 2.1.300 payloads, trimmed to the fields the hook reads.
+    const CLAUDE_STOP: &[u8] = br#"{"session_id":"s1","hook_event_name":"Stop","stop_hook_active":false,
+        "background_tasks":[
+          {"id":"a4d1fa","type":"subagent","status":"running","description":"A","agent_type":"general-purpose"},
+          {"id":"bmfo3f","type":"shell","status":"running","command":"sleep 100"},
+          {"id":"aa43d5","type":"subagent","status":"completed"}]}"#;
+    const CLAUDE_SUBAGENT_STOP: &[u8] = br#"{"session_id":"s1","agent_id":"a4d1fa","agent_type":"general-purpose",
+        "hook_event_name":"SubagentStop","background_tasks":[{"id":"a4d1fa","type":"subagent","status":"running"}]}"#;
+
+    #[test]
+    fn the_input_names_the_session_the_subagent_and_the_ones_still_running() {
+        let stop = SubagentInput::read(CLAUDE_STOP, false);
+        assert_eq!(stop.session.as_deref(), Some("s1"));
+        assert_eq!(stop.subagent, None);
+        assert_eq!(
+            stop.running,
+            Some(ids(&["a4d1fa"])),
+            "only running subagents"
+        );
+        let sub = SubagentInput::read(CLAUDE_SUBAGENT_STOP, false);
+        assert_eq!(sub.subagent.as_deref(), Some("a4d1fa"));
+        // No list is not an empty one.
+        let none = SubagentInput::read(br#"{"session_id":"s1"}"#, false);
+        assert_eq!(none.running, None);
+        let empty = SubagentInput::read(br#"{"session_id":"s1","background_tasks":[]}"#, false);
+        assert_eq!(empty.running, Some(Vec::new()));
+        // Cut off or unreadable names nothing.
+        assert_eq!(
+            SubagentInput::read(CLAUDE_STOP, true),
+            SubagentInput::default()
+        );
+        assert_eq!(SubagentInput::read(b"{", false), SubagentInput::default());
+        assert_eq!(
+            SubagentInput::read(br#"{"session_id":"-rf","agent_id":""}"#, false),
+            SubagentInput::default()
+        );
+    }
+
+    #[test]
+    fn each_event_makes_the_change_its_runtime_can_vouch_for() {
+        let stop = SubagentInput::read(CLAUDE_STOP, false);
+        let sub = SubagentInput::read(CLAUDE_SUBAGENT_STOP, false);
+        let blank = SubagentInput::default();
+        let claude = Some(AgentRuntime::ClaudeCode);
+        let of = |runtime, event, input| Change::of(runtime, event, input);
+        assert_eq!(
+            of(claude, HookEvent::Stop, &stop),
+            Change::Listed {
+                running: &ids(&["a4d1fa"])
+            }
+        );
+        // A turn end that lists nothing changes nothing for Claude Code, and
+        // a subagent's own end is not the session's.
+        assert_eq!(of(claude, HookEvent::Stop, &blank), Change::None);
+        assert_eq!(of(claude, HookEvent::Stop, &sub), Change::None);
+        assert_eq!(
+            of(Some(AgentRuntime::Codex), HookEvent::Stop, &blank),
+            Change::Settled { running: 0 }
+        );
+        assert_eq!(
+            of(claude, HookEvent::SubagentStart, &sub),
+            Change::Started(Some("a4d1fa"))
+        );
+        assert_eq!(
+            of(claude, HookEvent::SubagentStop, &sub),
+            Change::Stopped(Some("a4d1fa"))
+        );
+        assert_eq!(
+            of(claude, HookEvent::SessionStart, &blank),
+            Change::SessionStarted
+        );
+        assert_eq!(
+            of(claude, HookEvent::UserPromptSubmit, &blank),
+            Change::None
+        );
     }
 
     #[test]
     fn two_panes_keep_separate_counts() {
         let root = home("panes");
-        change(&root, "w1:pA", Change::of(HookEvent::SubagentStart), WHO).unwrap();
-        change(&root, "w2:pB", Change::of(HookEvent::SubagentStart), WHO).unwrap();
-        change(&root, "w2:pB", Change::of(HookEvent::SubagentStart), WHO).unwrap();
+        change(&root, "w1:pA", Change::Started(None), WHO).unwrap();
+        change(&root, "w2:pB", Change::Started(None), WHO).unwrap();
+        change(&root, "w2:pB", Change::Started(None), WHO).unwrap();
         assert_eq!(read(&root, "w1:pA").working, 1);
         assert_eq!(read(&root, "w2:pB").working, 2);
         fs::remove_dir_all(&root).unwrap();

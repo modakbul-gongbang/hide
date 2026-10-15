@@ -2,11 +2,13 @@
   "agent_onboarding": ["pending", "done"],
   "agent_wait": ["children", "background", "reply"],
   "changed_file_status": ["modified", "added", "deleted", "untracked", "renamed", "conflict"],
+  "color_theme": ["hide", "neutral"],
   "checkout_purpose_origin": ["token", "branch_description", "agent_title", "pull_request_title"],
   "document_kind": ["text", "markdown", "image", "pdf", "binary"],
   "editor_tab_kind": ["file", "diff", "session"],
   "first_run_step": ["agents", "notifications", "project", "done"],
   "screen_intro": ["factory"],
+  "agent_logo_mode": ["shown", "hidden"],
   "factory_attempt_outcome": ["passed", "failed", "environment", "cancelled", "running"],
   "factory_attempt_stage": ["task", "pre_merge"],
   "factory_column": ["before", "moving", "stuck", "done"],
@@ -59,7 +61,7 @@
   "strip_tab_kind": ["herdr", "file", "diff", "session"],
   "memory_card_kind": ["rule", "decision", "lesson", "fact", "preference"],
   "memory_analysis_state": ["idle", "analyzing", "ai_not_ready", "checking", "check_budget_exhausted"],
-  "memory_promotion_state": ["running", "pr_open", "merged", "failed", "unconfirmed"],
+  "memory_promotion_state": ["running", "pr_open", "merged", "failed", "unconfirmed", "building", "unbuilt"],
   "memory_start_failure_code": ["shell_starting", "agent_not_started", "card_not_processed", "other"],
   "memory_action": ["enable", "disable", "delete", "forget", "undo", "promote", "dismiss", "card_right", "doc_right"]
 }

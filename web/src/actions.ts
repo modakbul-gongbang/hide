@@ -1,6 +1,6 @@
 import { projectCheckout } from "./projects";
+import { deviceConnected, readsHere } from "./devices";
 import { sameGithubPullRequest } from "./pullRequestIdentity";
-import { deviceConnected } from "./devices";
 import { areaFrame } from "./areaFrames";
 import { AGENT_WORDS, agentAreaStepUnavailable, agentMenu, type AgentAreaStep, type AgentCommand } from "./agentLayout";
 import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacentInOrder as adjacentAgentArea, locateDisplay as locateAgentTab, neighbourArea as neighbourAgentArea, resizeTarget as resizeAgentTarget, type Edge as AgentEdge } from "./areaLayout";
@@ -8,7 +8,7 @@ import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacen
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
-import type { FocusCheckoutPayload, InterfaceLanguageSetPayload, UiStateUsageHints, UsagePinSetPayload, UsageHiddenSetPayload } from "./generated/hided-ws";
+import type { AgentLogoMode, AgentLogoModeSetPayload, ColorThemeSetPayload, FocusCheckoutPayload, InterfaceLanguageSetPayload, UiStateUsageHints, UsagePinSetPayload, UsageHiddenSetPayload } from "./generated/hided-ws";
 import type { MessageKey } from "./i18n/catalogs";
 import { translate } from "./i18n/client";
 import type { InterfaceLanguage } from "./i18n/locale";
@@ -34,7 +34,7 @@ import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import { frontDeviceId, localDeviceId, railShown } from "./devices";
 import { registeredName } from "./screenMachine";
-import { allAgents, projectEntryLens, pullRequestLens, type OpenTarget } from "./navigation";
+import { allAgents, projectEntryLens, type OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
 import { useStartPanel } from "./startDraft";
 import { contextAgents, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
@@ -60,10 +60,13 @@ import {
   type Tab,
   type Workspace,
   type LinkTarget,
+  type PrMergeMethod,
 } from "./snapshot";
 import { fileUrl, isHtmlFile } from "./browserViews";
 import { requestLine } from "./editor/lineRequest";
 import { terminalPathOwner, type FoundPath } from "./terminalLinkProvider";
+import { homeOpening } from "./hideAiOrigin";
+import { agentsByPane, allAgents as allPaneAgents } from "./paneAgents";
 import { useShellStore } from "./store";
 import { FACTORY_ENTRY, useUiStore, type FactoryPlace, type PendingClose, type SessionTarget, type SidebarMode } from "./ui";
 import type { FactoryCommand } from "./factory/commands";
@@ -101,37 +104,30 @@ function deviceField(device: string, node: string): { device_id?: string } {
 export type Actions = ReturnType<typeof createActions>;
 
 /**
- * What an event does to the front Workspace's unpinned lane (PRD right-lane
- * B4, B15, B16): a tool, a reveal or a linked folder puts it up, and an
- * agent or tab chosen from anywhere puts it away. Read here, where every
- * operator event passes, so no path can forget it; it is page state and
- * never sent. An open, a History selection or a Recent Panels display calls
- * the lane through the core's call number instead (`laneCalls.ts`), the one
- * way a call from the CLI or another page arrives too.
+ * Whether an event puts the front Workspace's unpinned lane up (PRD
+ * right-lane B15, B16): a tool, a reveal or a linked folder. Read here,
+ * where every operator event passes, so no path can forget it; it is page
+ * state and never sent. Choosing an agent or a tab leaves the lane as it
+ * is: only the operator closes it. An open, a History selection or a Recent
+ * Panels display calls the lane through the core's call number instead
+ * (`laneCalls.ts`), the one way a call from the CLI or another page arrives too.
  */
-export function laneCalled(event: Parameters<DispatchFn>[0]): "lane" | "agents" | null {
+export function laneCalled(event: Parameters<DispatchFn>[0]): boolean {
   const payload = event.payload;
   switch (event.kind) {
     case "workspace_view":
-      return (typeof payload.tool === "string" || payload.reveal !== undefined) ? "lane" : null;
+      return typeof payload.tool === "string" || payload.reveal !== undefined;
     case "reveal_path":
       // A folder a terminal link names shows in the files tool's tree.
-      return payload.is_directory ? "lane" : null;
-    case "focus_pane":
-    case "focus_tab":
-      return "agents";
-    case "remote_control":
-      return payload.action === "focus_pane" || payload.action === "focus_tab" ? "agents" : null;
+      return payload.is_directory === true;
     default:
-      return null;
+      return false;
   }
 }
 
 export function createActions(send: DispatchFn) {
   const dispatch: DispatchFn = (event) => {
-    const called = laneCalled(event);
-    if (called === "lane") useUiStore.getState().showLane();
-    else if (called === "agents") useUiStore.getState().putLaneAway();
+    if (laneCalled(event)) useUiStore.getState().showLane();
     return send(event);
   };
   const rest = () => useShellStore.getState().rest;
@@ -387,7 +383,7 @@ export function createActions(send: DispatchFn) {
    * should end at, so the same event sent twice lands where it did once. The
    * core keeps the lane per Workspace, so another Workspace is never touched.
    */
-  const setWorkspaceView = (patch: { tool?: Tool | null; pinned?: boolean; tree?: boolean; lane_width?: number; tree_width?: number; width_request_id?: string; reveal?: string }) => {
+  const setWorkspaceView = (patch: { tool?: Tool | null; pinned?: boolean; tree?: boolean; work_lens?: "sessions" | "prs"; work_only_checkout?: boolean; lane_width?: number; tree_width?: number; width_request_id?: string; reveal?: string }) => {
     if (!workspaceViewOf(rest())) return diagnostic("workspace_view: no Workspace in front");
     return dispatch({ schema_version: 2, kind: "workspace_view", payload: patch });
   };
@@ -414,11 +410,11 @@ export function createActions(send: DispatchFn) {
 
   /** A rail icon (B2, B20): the tool showing closes the lane, otherwise the lane opens on it. */
   const toggleTool = (tool: Tool) => (laneUpWith(tool) ? closeLane() : showTool(tool));
-  /** ⌘E and the path's menu (B20): the lane closes while it shows, and otherwise comes back on the tool it holds, Files when it holds none. */
+  /** ⌘E and the path's menu (B20): the lane closes while it shows, and otherwise comes back on the tool it last showed, Files for a Workspace whose lane never showed one. */
   const toggleLane = () => {
     const { mode } = ui().drawnLane;
     if (mode !== "closed" && mode !== "hidden") return closeLane();
-    showTool(workspaceViewOf(rest())?.tool ?? "files");
+    showTool(workspaceViewOf(rest())?.last_tool ?? "files");
   };
 
   /**
@@ -438,7 +434,7 @@ export function createActions(send: DispatchFn) {
     setWorkspaceView({ tree: !view.tree });
   };
 
-  /** The pin (B5): pinned, the lane docks; unpinned, it stays up over Agent Views until it is put away. */
+  /** The pin (B5): pinned, the lane docks; unpinned, it stays up over Agent Views until the operator closes it or puts it away with Escape. */
   const setLanePinned = (pinned: boolean) => {
     if (!pinned) ui().showLane();
     setWorkspaceView({ pinned });
@@ -488,6 +484,7 @@ export function createActions(send: DispatchFn) {
     const here = explorerHere();
     if (!here) return diagnostic(`${what}: no focused checkout`);
     revealAncestors(path);
+    followOpen(path, "file");
     dispatch({
       schema_version: 2,
       kind: "file_open",
@@ -500,6 +497,16 @@ export function createActions(send: DispatchFn) {
         ...deviceField(here.device, localDeviceId(rest())),
       },
     });
+  };
+
+  /**
+   * The keyboard follows what the operator opened into the view that shows
+   * it once the core places it (B20), so ⌘W, ⌘S and typing act on that file
+   * rather than on the tree, row or palette it was opened from.
+   */
+  const followOpen = (path: string, kind: "file" | "diff", committed: boolean | null = null) => {
+    const front = frontViewWorkspace();
+    if (front) ui().setViewFocusRequest({ workspace: workspaceKey(front), opened: { path, kind, committed } });
   };
 
   /**
@@ -656,6 +663,7 @@ export function createActions(send: DispatchFn) {
     }
     const group = committed ? changes.committed : changes.entries;
     if (!group.some((entry) => entry.path === path)) return diagnostic("changes_select: row is no longer available");
+    followOpen(path, "diff", committed);
     dispatch({ schema_version: 2, kind: "changes_select", payload: { path, committed, preview, ...(beside ? { beside: true } : {}) } });
   };
 
@@ -955,6 +963,17 @@ export function createActions(send: DispatchFn) {
     setTheme(theme: ThemeChoice) {
       dispatch({ schema_version: 2, kind: "theme_set", payload: { theme } });
     },
+    /** One typed event; the core owns the color theme and stores it (hide-color-theme D-08). */
+    setColorTheme(color_theme: ColorThemeSetPayload["color_theme"]) {
+      const payload = { color_theme } satisfies ColorThemeSetPayload;
+      dispatch({ schema_version: 2, kind: "color_theme_set", payload });
+    },
+
+    /** One typed event; the core owns whether list rows and tabs draw the agent's logo (PRD agent-logo-view-mode D-07). */
+    setAgentLogoMode(mode: AgentLogoMode) {
+      const payload = { mode } satisfies AgentLogoModeSetPayload;
+      dispatch({ schema_version: 2, kind: "agent_logo_mode_set", payload });
+    },
 
     /** Sleep idle agents after `hours`; null is Never (PRD agent-sleep B2). */
     setAgentSleepAfter(hours: number | null) {
@@ -1071,6 +1090,10 @@ export function createActions(send: DispatchFn) {
     /** The `에이전트 요약` switch (PRD overview-request-view D-11): off, agent labels are neither asked for nor shown. */
     setAgentSummary(on: boolean) {
       dispatch({ schema_version: 2, kind: "ai_settings", payload: { agent_summary: on } });
+    },
+    /** The `PR 요약` switch (PRD work-tab-pr-lens D-29): off, no pull request summary is asked for or shown. */
+    setPrSummary(on: boolean) {
+      dispatch({ schema_version: 2, kind: "ai_settings", payload: { pr_summary: on } });
     },
     /** The usage limit (PRD hide-ai-usage-limit D-01): a percent, or `"none"`; the core refuses a number outside 1 to 100. */
     setAiUsageLimit(limit: number | "none") {
@@ -1427,14 +1450,67 @@ export function createActions(send: DispatchFn) {
       const projects = catalogWorkspaces(rest());
       const project = projects.find((row) => row.id === pull.workspace_id && row.pull_requests?.some((pr) => pr.number === pull.number && sameGithubPullRequest(pr.url, pull.url)))
         ?? projects.find((row) => row.pull_requests?.some((pr) => pr.number === pull.number && sameGithubPullRequest(pr.url, pull.url)));
-      if (project) this.openPullRequestRow(project.id, pull.number);
+      if (project) this.openPrCard(project.id, pull.number);
       else this.openLink(pull.url, false);
     },
 
-    /** A pull request's row on its Project's PRs tab with its panel open (PRD overview-lenses-prs B21, link-graph B36); ⌘-click stays GitHub's. */
-    openPullRequestRow(projectId: string, number: number | null) {
+    /**
+     * A pull request's decision card (PRD work-tab-pr-lens D-02, D-03, D-28):
+     * one event, and the core chooses the Workspace, brings the PR's live
+     * agent forward and opens the `PR #N` tab in File Views. A project this
+     * core does not read opens the page on GitHub instead. A modal Overview
+     * closes first so the card shows.
+     */
+    openPrCard(projectId: string, number: number, checkoutId?: string) {
       const project = catalogWorkspaces(rest()).find((row) => row.id === projectId);
-      if (project) this.openOverview(project.device_id, projectId, { pullRequest: number });
+      if (!project) return diagnostic(`pr_open: no project ${projectId}`);
+      const pull = project.pull_requests?.find((row) => row.number === number);
+      if (!readsHere(project, rest()?.navigator?.devices)) {
+        if (pull) this.openPullRequest(pull.url, project.device_id, true);
+        return;
+      }
+      const state = ui();
+      if (state.overviewOpen || state.screen?.kind !== "workspace") state.setScreen({ kind: "workspace" });
+      dispatch({ schema_version: 2, kind: "pr_open", payload: { workspace_id: projectId, pr_number: number, ...(checkoutId ? { checkout_id: checkoutId } : {}) } });
+    },
+
+    /** The Work tool's PRs basis, for a list that is not tied to one pull request (`이슈 없는 PR N`). */
+    openWorkPrs() {
+      const state = ui();
+      if (state.overviewOpen || state.screen?.kind !== "workspace") state.setScreen({ kind: "workspace" });
+      if (!workspaceViewOf(rest())) return diagnostic("workspace_view: no Workspace in front");
+      state.showLane();
+      dispatch({ schema_version: 2, kind: "workspace_view", payload: { tool: "work", work_lens: "prs" } });
+    },
+
+    /** The Work tool's basis, remembered for this Workspace (B2). */
+    setWorkLens(lens: "sessions" | "prs") {
+      return setWorkspaceView({ work_lens: lens });
+    },
+
+    /** The Work tool's scope chip: this checkout only, or all checkouts; shared by both bases (B2). */
+    setWorkScope(onlyCheckout: boolean) {
+      return setWorkspaceView({ work_only_checkout: onlyCheckout });
+    },
+
+    /** Reads a card's body, files and review threads again, or the part that failed. */
+    readPrCard(workspaceId: string, number: number) {
+      dispatch({ schema_version: 2, kind: "pr_card_read", payload: { workspace_id: workspaceId, pr_number: number } });
+    },
+
+    /** The operator's Look again after a refused write: dismisses its notice and reads the list and the card. */
+    lookAgainPrCard(workspaceId: string, number: number) {
+      dispatch({ schema_version: 2, kind: "pr_card_read", payload: { workspace_id: workspaceId, pr_number: number, look_again: true } });
+    },
+
+    /** Merge (or add to the merge queue) from a card, conditioned on the head commit the card showed (D-21, D-22). */
+    mergePullRequest(workspaceId: string, number: number, head: string, method: PrMergeMethod | null) {
+      dispatch({ schema_version: 2, kind: "pr_merge", payload: { workspace_id: workspaceId, pr_number: number, head, ...(method ? { method } : {}) } });
+    },
+
+    /** Brings a behind pull request's branch up to its base, conditioned on the head commit the card showed. */
+    updatePullRequestBranch(workspaceId: string, number: number, head: string) {
+      dispatch({ schema_version: 2, kind: "pr_update_branch", payload: { workspace_id: workspaceId, pr_number: number, head } });
     },
 
     /**
@@ -1443,13 +1519,11 @@ export function createActions(send: DispatchFn) {
      * Overview shows, as one action. The screen is this page's own state, so
      * the only event is the device's (PRD cmdk-navigation B20).
      */
-    openOverview(deviceId: string, projectId: string, lens?: { issue: string } | { pullRequest: number | null } | { session: SessionTarget } | { box: string; fold: string | null }) {
+    openOverview(deviceId: string, projectId: string, lens?: { issue: string } | { session: SessionTarget } | { box: string; fold: string | null }) {
       const state = ui();
       const next = state.overviewProjectId === projectId ? state.overviewLens : projectEntryLens(rest(), projectId);
       const selected =
-        lens && "pullRequest" in lens
-          ? pullRequestLens(next, lens.pullRequest)
-          : lens && "session" in lens
+        lens && "session" in lens
             ? { ...next, tab: "sessions" as const, focusTask: null, panel: null, session: lens.session }
             : lens && "box" in lens
               ? // A cross-project chip's other end (issue 718): its box selected and unfolded, with no filter to hide it.
@@ -1552,6 +1626,20 @@ export function createActions(send: DispatchFn) {
     /** An agent chosen on an Overview or in the Agents list: its Workspace and pane (B12). */
     resolveSession(paneId: string) {
       dispatch({ schema_version: 2, kind: "resolve_session", payload: { pane_id: paneId } });
+    },
+
+    /**
+     * An agent chosen in a list that shows only what the operator has to do
+     * (the sidebar, Sessions, a digit): a row its home owns opens the home,
+     * the Memory tab with that attempt's row open, and any other row its pane
+     * (PRD hide-ai-work-home B11). Its pane stays one link away from there.
+     */
+    openListedAgent(paneId: string) {
+      const state = useShellStore.getState();
+      const agent = agentsByPane(allPaneAgents(state.agents, state.rest?.status?.remote)).get(paneId);
+      const home = homeOpening(state.rest, agent);
+      if (home) return this.openMemoryCard(home.deviceId, home.workspaceId, home.number);
+      this.openAgent(paneId);
     },
 
     openAgent(paneId: string) {
@@ -2070,9 +2158,10 @@ export function createActions(send: DispatchFn) {
     },
 
     openUsageHistory() {
+      // Opening Home resets its view to Agents, so the view is chosen after Overview opens.
+      if (ui().screen?.kind !== "main" && !ui().overviewOpen) this.toggleOverview();
       ui().setOverviewProject(null);
       ui().setMainView("usage");
-      if (ui().screen?.kind !== "main" && !ui().overviewOpen) this.toggleOverview();
     },
 
     openAgentsOverview() {
@@ -2141,12 +2230,12 @@ export function createActions(send: DispatchFn) {
       ui().setOverviewProject(null);
       ui().setScreen({ kind: "main" });
       ui().setMainView("agents");
-      showTool("agent_sessions");
+      showTool("work");
     },
 
     openSessionRecord(session: import("./snapshot").WorkSession) {
       ui().setSessionWorkTarget(session);
-      showTool("agent_sessions");
+      showTool("work");
       dispatch({ schema_version: 2, kind: "session_record_open", payload: { session } });
     },
     closeSessionRecord() {

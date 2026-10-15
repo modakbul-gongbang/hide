@@ -44,6 +44,9 @@ pub struct AiSettings {
     /// Whether agent labels are asked of a provider (Settings › Hide AI ›
     /// Features, Agent summaries). On unless the operator turned it off.
     pub agent_summary: bool,
+    /// Whether a pull request's card asks for a one-paragraph summary
+    /// (Settings › Hide AI › Features, PR summary). On unless turned off.
+    pub pr_summary: bool,
     /// Use Hide AI: off, no background feature asks any model anything
     /// (Settings › Hide AI, D-14). The rest of the choice is kept so turning
     /// it back on resumes exactly where it was.
@@ -84,6 +87,7 @@ struct RawSettingsOut {
     provider: Option<&'static str>,
     models: BTreeMap<String, String>,
     agent_summary: bool,
+    pr_summary: bool,
     enabled: bool,
     fallback: Vec<FallbackEntry>,
     #[serde(skip_serializing_if = "UsageLimit::is_default")]
@@ -96,6 +100,7 @@ impl From<AiSettings> for RawSettingsOut {
             provider: settings.chosen.then(|| settings.provider.as_str()),
             models: settings.models,
             agent_summary: settings.agent_summary,
+            pr_summary: settings.pr_summary,
             enabled: settings.enabled,
             fallback: settings.fallback,
             usage_limit: settings.usage_limit,
@@ -112,6 +117,8 @@ struct RawSettings {
     models: BTreeMap<String, String>,
     #[serde(default = "on")]
     agent_summary: bool,
+    #[serde(default = "on")]
+    pr_summary: bool,
     #[serde(default = "on")]
     enabled: bool,
     #[serde(default)]
@@ -135,6 +142,7 @@ impl From<RawSettings> for AiSettings {
             chosen: named.is_some(),
             models: raw.models,
             agent_summary: raw.agent_summary,
+            pr_summary: raw.pr_summary,
             enabled: raw.enabled,
             fallback: Vec::new(),
             usage_limit: raw.usage_limit,
@@ -167,6 +175,7 @@ impl Default for AiSettings {
                 })
                 .collect(),
             agent_summary: on(),
+            pr_summary: on(),
             enabled: on(),
             fallback: Vec::new(),
             usage_limit: UsageLimit::default(),
@@ -819,5 +828,19 @@ mod tests {
             "a saved choice reads as chosen"
         );
         std::fs::remove_dir_all(home).expect("the temporary home is removable");
+    }
+
+    #[test]
+    fn the_pr_summary_switch_is_on_until_turned_off_and_survives_a_rewrite() {
+        let settings = AiSettings::from(
+            serde_json::from_str::<RawSettings>(r#"{"provider":"codex"}"#).unwrap(),
+        );
+        assert!(settings.pr_summary, "an existing file has the switch on");
+        let off = AiSettings::from(
+            serde_json::from_str::<RawSettings>(r#"{"pr_summary":false}"#).unwrap(),
+        );
+        assert!(!off.pr_summary);
+        let written = serde_json::to_string(&RawSettingsOut::from(off)).unwrap();
+        assert!(written.contains(r#""pr_summary":false"#));
     }
 }

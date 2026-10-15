@@ -92,6 +92,8 @@ pub(super) struct OpenedMemoryLoad {
     /// Each card's promotion, drawn on its row once the ledger names its
     /// agent under the lock.
     promotions: Vec<(u64, hide_memory::Promotion)>,
+    /// Each listed card's current revision, which a dismissal holds for.
+    revisions: HashMap<u64, u64>,
     suggestions: Vec<hide_memory::PromotionSuggestion>,
     expanded: Option<MemoryCardSnapshot>,
     search: Option<MemorySearchSnapshot>,
@@ -148,6 +150,22 @@ impl Runtime {
                 .unwrap_or_default(),
             crate::workspace_control::Caller::Checkout { .. } => Vec::new(),
         };
+        let repository = self.catalog_project_of(device, &context.checkout_path);
+        // A device's catalog carries no branch list, and an empty one was
+        // never read: neither can say a branch is missing.
+        let branches = repository
+            .map(|project| project.branches.clone())
+            .filter(|branches| !branches.is_empty());
+        let branch_checkouts = repository
+            .map(|project| {
+                project
+                    .worktrees
+                    .iter()
+                    .filter(|worktree| !worktree.missing)
+                    .filter_map(|worktree| Some((worktree.branch.clone()?, worktree.path.clone())))
+                    .collect()
+            })
+            .unwrap_or_default();
         Ok(crate::memory_command::PreparedMemory {
             command,
             node,
@@ -159,8 +177,40 @@ impl Runtime {
             reader,
             settings: self.ai_active().then(|| self.ai_settings.clone()).flatten(),
             caller_agents,
+            branches,
+            branch_checkouts,
             context: self.worker_context.clone(),
         })
+    }
+
+    /// The repository of the worktree catalog that holds `path` on `device`,
+    /// as its root or one of its worktrees.
+    pub(super) fn catalog_project_of(
+        &self,
+        device: &str,
+        path: &str,
+    ) -> Option<&crate::model::ProjectWorktreesSnapshot> {
+        let holds = |project: &&crate::model::ProjectWorktreesSnapshot| {
+            project.root_path == path
+                || project
+                    .worktrees
+                    .iter()
+                    .any(|worktree| worktree.path == path)
+        };
+        if device == self.node.as_str() {
+            self.worktree_catalog.projects.iter().find(holds)
+        } else {
+            self.device_worktrees
+                .get(device)?
+                .projects
+                .values()
+                .find(holds)
+        }
+    }
+
+    /// The opened Project's folder, with the machine that holds it.
+    pub(super) fn project_memory_path(&self) -> Option<&(crate::node::NodeId, String)> {
+        self.project_memory.path.as_ref()
     }
 
     /// Memory's id for the Project a shell opened, once a read resolved it.
@@ -522,24 +572,55 @@ impl Runtime {
             })
             .collect::<std::collections::HashSet<_>>();
         let mut open = false;
+        // An unbuilt card the operator kept at its current text is not asked
+        // about again, its document disagreement included, until its text
+        // changes.
+        let mut left = std::collections::HashSet::new();
         for (number, promotion) in &load.promotions {
             open |= matches!(
                 promotion.state,
-                hide_memory::PromotionState::Running | hide_memory::PromotionState::PrOpen
+                hide_memory::PromotionState::Running
+                    | hide_memory::PromotionState::PrOpen
+                    | hide_memory::PromotionState::Building
             );
             let snapshot = self.promotion_snapshot(&project_id, *number, promotion);
             let Some(row) = rows.iter_mut().find(|row| row.number == *number) else {
                 continue;
             };
-            if promotion.state == hide_memory::PromotionState::Failed {
-                questions.push(MemoryQuestionSnapshot::Failed {
-                    number: *number,
-                    title: row.title.clone(),
-                    start_failure: promotion
-                        .failure
-                        .as_deref()
-                        .map(crate::model::MemoryStartFailure::of),
-                });
+            match promotion.state {
+                hide_memory::PromotionState::Failed => {
+                    questions.push(MemoryQuestionSnapshot::Failed {
+                        number: *number,
+                        title: row.title.clone(),
+                        start_failure: promotion
+                            .failure
+                            .as_deref()
+                            .map(crate::model::MemoryStartFailure::of),
+                    });
+                }
+                hide_memory::PromotionState::Unbuilt => {
+                    questions.push(MemoryQuestionSnapshot::Unbuilt {
+                        number: *number,
+                        title: row.title.clone(),
+                        reason: promotion
+                            .failure
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|reason| !reason.is_empty())
+                            .map(|reason| {
+                                reason
+                                    .chars()
+                                    .take(crate::model::MemoryStartFailure::DETAIL_CHARS)
+                                    .collect()
+                            }),
+                    });
+                }
+                hide_memory::PromotionState::Kept
+                    if load.revisions.get(number) == Some(&promotion.revision) =>
+                {
+                    left.insert(*number);
+                }
+                _ => {}
             }
             row.promotion = snapshot;
         }
@@ -548,6 +629,7 @@ impl Runtime {
             if matches!(row.kind, MemoryCardKind::Fact | MemoryCardKind::Preference)
                 || document.authority == hide_memory::DocumentAuthority::Outdated
                 || closed.contains(&row.number)
+                || left.contains(&row.number)
                 || row.promotion.as_ref().is_some_and(|promotion| {
                     matches!(
                         promotion.state,
@@ -555,6 +637,8 @@ impl Runtime {
                             | crate::model::MemoryPromotionState::PrOpen
                             | crate::model::MemoryPromotionState::Failed
                             | crate::model::MemoryPromotionState::Unconfirmed
+                            | crate::model::MemoryPromotionState::Building
+                            | crate::model::MemoryPromotionState::Unbuilt
                     )
                 })
             {
@@ -1132,6 +1216,7 @@ fn load_opened_memory(
         state: None,
         rows: Vec::new(),
         promotions: Vec::new(),
+        revisions: HashMap::new(),
         suggestions: Vec::new(),
         expanded: None,
         search: None,
@@ -1153,11 +1238,14 @@ fn load_opened_memory(
         .filter_map(|(number, promotion)| {
             matches!(
                 promotion.state,
-                hide_memory::PromotionState::Running | hide_memory::PromotionState::PrOpen
+                hide_memory::PromotionState::Running
+                    | hide_memory::PromotionState::PrOpen
+                    | hide_memory::PromotionState::Building
             )
             .then_some(*number)
         })
         .collect::<std::collections::HashSet<_>>();
+    let mut revisions = HashMap::new();
     let rows = store
         .list_memories(&identity.id)
         .map_err(|error| error.to_string())?
@@ -1167,6 +1255,7 @@ fn load_opened_memory(
                 .document_comparison(&identity.id, item.number)
                 .map_err(|error| error.to_string())?;
             let preview = previewed.contains(&item.number);
+            revisions.insert(item.number, item.revision);
             let mut row = memory_row(item, preview);
             row.document_comparison = comparison
                 .as_ref()
@@ -1234,6 +1323,7 @@ fn load_opened_memory(
         state: Some(state),
         rows,
         promotions,
+        revisions,
         suggestions,
         expanded,
         search,
@@ -1510,6 +1600,7 @@ mod tests {
             started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
             failure: None,
+            building_branch: None,
         };
         store
             .set_promotion(&identity.id, 2, &promotion(PromotionState::Failed, None))
@@ -1790,5 +1881,177 @@ mod tests {
             "disabled cards are saved but never injectable"
         );
         assert_eq!(project.rows.len(), 4);
+    }
+
+    #[test]
+    fn an_unbuilt_card_is_asked_once_and_a_building_or_kept_card_asks_nothing() {
+        // A decision the code does not have yet is not a document to
+        // correct: a card another branch builds waits for that work, one
+        // nothing builds is asked about once, and one the operator kept is
+        // not asked again, its document disagreement included.
+        use crate::model::MemoryPromotionState;
+        use hide_memory::{Promotion, PromotionState};
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let root = std::fs::canonicalize(root)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let node: Arc<dyn crate::node_access::NodeLink> =
+            Arc::new(hide_node::Local::new(Some(temp.path().join("home"))));
+        let identity = project_identity(node.as_ref(), &crate::node::test_node(), &root).unwrap();
+        let database = temp.path().join("memory.sqlite3");
+        let mut store = MemoryStore::open(&database).unwrap();
+        store
+            .ensure_project(&identity.id, &identity.root, crate::node::TEST_NODE)
+            .unwrap();
+        store.set_enabled(&identity.id, true, true).unwrap();
+        let decision = |text: &str, offset| Candidate {
+            text: text.to_owned(),
+            title: text.to_owned(),
+            aliases: Vec::new(),
+            kind: CandidateKind::Decision,
+            confidence: 0.9,
+            salience: 0.9,
+            source_offsets: vec![offset],
+            human_offsets: vec![offset],
+            source_times: Default::default(),
+            cited_paths: Vec::new(),
+            relation: CandidateRelation::New,
+        };
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: "b".to_owned(),
+                    project_id: identity.id.clone(),
+                    provider: "codex".to_owned(),
+                    analysis_provider: "codex".to_owned(),
+                    session_id: "s-1".to_owned(),
+                    content_hash: "h".to_owned(),
+                    created_at_unix_ms: 1,
+                },
+                &[
+                    decision("Backlog follows one issue source", 1),
+                    decision("Missed work offers one button", 2),
+                    decision("Overview groups tasks by device", 3),
+                ],
+            )
+            .unwrap();
+        let ended = |state, failure: Option<&str>, building_branch: Option<&str>| Promotion {
+            state,
+            revision: 1,
+            attempt: 1,
+            agent_id: Some("agent-1".to_owned()),
+            branch: Some("hide-memory-m1".to_owned()),
+            pr_number: None,
+            repository: None,
+            target_path: building_branch.map(|_| "docs/UI_BEHAVIOR.md".to_owned()),
+            started_at_unix_ms: 1,
+            updated_at_unix_ms: 1,
+            failure: failure.map(str::to_owned),
+            building_branch: building_branch.map(str::to_owned),
+        };
+        store
+            .set_promotion(
+                &identity.id,
+                1,
+                &ended(
+                    PromotionState::Unbuilt,
+                    Some("  백로그 출처 선택이 아직 없음 "),
+                    None,
+                ),
+            )
+            .unwrap();
+        store
+            .set_promotion(
+                &identity.id,
+                2,
+                &ended(PromotionState::Building, None, Some("feat/overview")),
+            )
+            .unwrap();
+        store
+            .set_promotion(&identity.id, 3, &ended(PromotionState::Kept, None, None))
+            .unwrap();
+        for number in 1..=3 {
+            store
+                .set_document_comparison(
+                    &identity.id,
+                    number,
+                    1,
+                    &hide_memory::DocumentComparison {
+                        authority: hide_memory::DocumentAuthority::CardNewer,
+                        document: "docs/AI_PROVIDERS.md".into(),
+                        document_text: "Issue drafts".into(),
+                        document_at_unix_ms: None,
+                        operator_text: "Operator decision".into(),
+                        operator_at_unix_ms: Some(1),
+                        source_session: Some("s-1".into()),
+                    },
+                )
+                .unwrap();
+        }
+        let mut runtime = crate::runtime::tests::runtime();
+        runtime.ingest_session(Ok(crate::runtime::tests::context_payload()));
+        let workspace = runtime.snapshot.navigator.workspaces[0].id.clone();
+        runtime.open_project_memory(Some(workspace));
+        let read = |runtime: &mut Runtime| {
+            let load = load_opened_memory(
+                &crate::node::test_node(),
+                node.as_ref(),
+                &database,
+                &root,
+                None,
+                None,
+            )
+            .unwrap();
+            let generation = runtime.project_memory.reads.begin().unwrap();
+            assert!(runtime.ingest_project_memory(generation, Ok(load)));
+            runtime
+                .snapshot
+                .memory
+                .as_ref()
+                .unwrap()
+                .project
+                .clone()
+                .unwrap()
+        };
+
+        let project = read(&mut runtime);
+        assert_eq!(
+            project.questions,
+            vec![MemoryQuestionSnapshot::Unbuilt {
+                number: 1,
+                title: "Backlog follows one issue source".to_owned(),
+                reason: Some("백로그 출처 선택이 아직 없음".to_owned()),
+            }]
+        );
+        let promotion = |number| {
+            project
+                .rows
+                .iter()
+                .find(|row| row.number == number)
+                .unwrap()
+                .promotion
+                .clone()
+        };
+        let building = promotion(2).unwrap();
+        assert_eq!(
+            (building.state, building.pr_number, building.target_path),
+            (
+                MemoryPromotionState::Building,
+                None,
+                Some("docs/UI_BEHAVIOR.md".to_owned())
+            )
+        );
+        assert_eq!(promotion(3), None, "a kept card is an ordinary card");
+
+        // 그대로 두기 keeps the unbuilt card: nothing is asked any more.
+        super::super::memory_promotion::dismiss_promotion(&mut store, &identity.id, 1).unwrap();
+        assert_eq!(
+            store.promotions(&identity.id).unwrap()[0].1.state,
+            PromotionState::Kept
+        );
+        assert!(read(&mut runtime).questions.is_empty());
     }
 }

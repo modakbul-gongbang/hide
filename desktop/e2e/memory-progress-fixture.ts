@@ -18,6 +18,9 @@ const fs = require("node:fs");
 const args = process.argv.slice(2), key = args.slice(0, 2).join(" ");
 const pulls = JSON.parse(fs.readFileSync(${JSON.stringify(file)}, "utf8"));
 if (key === "auth status") process.exit(0);
+if (key === "api user") { console.log("example-user"); process.exit(0); }
+if (process.argv.slice(2).join(" ").includes("review-requested:@me")) { console.log("[]"); process.exit(0); }
+if (process.argv.slice(2).join(" ").includes("HidePrFacts")) { console.log('{"data":{"repository":{"pullRequests":{"nodes":[]}}}}'); process.exit(0); }
 if (key === "repo view") { console.log('{"nameWithOwner":"acme/memory-fixture"}'); process.exit(0); }
 if (key === "issue list") { console.log("[]"); process.exit(0); }
 if (key === "pr list") { console.log(JSON.stringify(pulls)); process.exit(0); }

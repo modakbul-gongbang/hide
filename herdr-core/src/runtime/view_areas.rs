@@ -34,8 +34,8 @@ use crate::model::{
     ViewLayoutSnapshot, ViewLimitsSnapshot, ViewNodeSnapshot, ViewSplitSnapshot,
 };
 use crate::view_layout::{
-    Display, DisplayKind, Edge, Layout, LayoutError, MAX_SPLIT_DEPTH, MAX_VIEW_AREAS,
-    MAX_VIEW_DISPLAYS, Node, browser_address, browser_title, is_file_address,
+    Display, DisplayKind, Edge, Layout, LayoutError, MAX_SPLIT_DEPTH, MAX_TAB_VIEWS,
+    MAX_VIEW_AREAS, MAX_VIEW_DISPLAYS, Node, browser_address, browser_title, is_file_address,
 };
 
 /// Split request ids remembered per Workspace, so a split sent twice splits
@@ -312,10 +312,14 @@ fn last_focused_showing(
         .map(|display| display.id.clone())
 }
 
-/// The cap with the opens still being read counted, so reads in flight
-/// cannot pass it together.
-fn display_limit(displays: usize, pending: usize) -> Option<LayoutRefusal> {
-    (displays + pending >= MAX_VIEW_DISPLAYS).then(|| LayoutError::DisplayLimit.into())
+/// The caps with the opens still being read counted, so reads in flight
+/// cannot pass them together: the tab's own, then the Workspace's.
+fn display_limit(tab: usize, workspace: usize) -> Option<LayoutRefusal> {
+    if tab >= MAX_TAB_VIEWS {
+        Some(LayoutError::TabDisplayLimit.into())
+    } else {
+        (workspace >= MAX_VIEW_DISPLAYS).then(|| LayoutError::DisplayLimit.into())
+    }
 }
 
 /// A browser open refused for a reason other than the View layout's.
@@ -324,6 +328,14 @@ fn browser_refusal(message: impl Into<String>) -> LayoutRefusal {
         kind: "browser.open_refused",
         message: message.into(),
     }
+}
+
+/// Where `make_view_room` may close a view: in one tab's presentation (the
+/// projected one for `None`), or in any of the Workspace's.
+#[derive(Clone, Copy)]
+enum RoomScope<'a> {
+    Tab(Option<&'a str>),
+    Workspace,
 }
 
 /// The view `make_view_room` closes: the tab whose parked presentation
@@ -513,12 +525,20 @@ impl Runtime {
     /// holds none, since it starts with an empty presentation.
     pub(super) fn caller_view_layout(&self, key: &WorkspaceKey, caller: &str) -> Option<&Layout> {
         let entry = self.workspace_views.as_ref()?.views.get(&key.0, &key.1)?;
-        match self.control_caller_tab(key, caller) {
-            Some(tab) if entry.view_owner.as_ref().is_some_and(|owner| owner != &tab) => {
-                entry.view_presentations.get(&tab).map(|view| &view.layout)
-            }
-            _ => Some(&entry.layout),
+        match self.caller_parked_tab(key, caller) {
+            Some(tab) => entry.view_presentations.get(&tab).map(|view| &view.layout),
+            None => Some(&entry.layout),
         }
+    }
+
+    /// The tab whose parked presentation a caller's open goes to, or `None`
+    /// when it goes to the projected one. A Workspace no tab owns yet
+    /// projects its active tab (`projected_view_owner`), the same answer
+    /// `parked_tab` parks against, so a caller reads the tab it wrote.
+    pub(super) fn caller_parked_tab(&self, key: &WorkspaceKey, caller: &str) -> Option<String> {
+        let owner = self.projected_view_owner(key)?;
+        self.control_caller_tab(key, caller)
+            .filter(|tab| *tab != owner)
     }
 
     /// Whether the Workspace of a checkout holds `display_id`, before a
@@ -576,19 +596,14 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_mut() else {
             return Err(LayoutError::UnknownArea(key.1.clone()));
         };
-        let reserved = store
+        // Displays are the checkout's budget, a reserved operator layout
+        // included; areas are each layout's own, which its tree enforces.
+        let reserved_displays = store
             .view_transaction
             .as_ref()
             .filter(|(owner, _)| owner == key)
-            .and_then(|(_, layout)| layout.as_ref());
-        let reserved_counts = reserved
-            .map(|layout| {
-                (
-                    layout.display_count(),
-                    crate::workspace_views::WorkspaceView::occupied_areas(layout),
-                )
-            })
-            .unwrap_or_default();
+            .and_then(|(_, layout)| layout.as_ref())
+            .map_or(0, Layout::display_count);
         let entry = store.views.entry(&key.0, &key.1);
         let before = entry.layout.clone();
         entry.layout.next_id = entry.next_view_identity();
@@ -603,20 +618,19 @@ impl Runtime {
         if !changed {
             entry.layout = before.clone();
         }
-        let displays =
-            entry.layouts().map(Layout::display_count).sum::<usize>() + reserved_counts.0;
-        let areas = entry
-            .layouts()
-            .map(crate::workspace_views::WorkspaceView::occupied_areas)
-            .sum::<usize>()
-            + reserved_counts.1;
-        if displays > MAX_VIEW_DISPLAYS || areas > MAX_VIEW_AREAS {
+        // An addition never takes a tab past its own cap; a tab saved with
+        // more still moves and closes its views.
+        if entry.layout.display_count() > MAX_TAB_VIEWS
+            && entry.layout.display_count() > before.display_count()
+        {
             entry.layout = before;
-            return Err(if displays > MAX_VIEW_DISPLAYS {
-                LayoutError::DisplayLimit
-            } else {
-                LayoutError::AreaLimit
-            });
+            return Err(LayoutError::TabDisplayLimit);
+        }
+        let displays =
+            entry.layouts().map(Layout::display_count).sum::<usize>() + reserved_displays;
+        if displays > MAX_VIEW_DISPLAYS {
+            entry.layout = before;
+            return Err(LayoutError::DisplayLimit);
         }
         entry.view_next_id = entry.next_view_identity();
         if changed {
@@ -638,19 +652,19 @@ impl Runtime {
         preview: bool,
         beside: bool,
     ) -> bool {
-        let pending = self.pending_view_placements(key);
-        let displays = self.all_view_layouts(key).map(Layout::display_count).sum();
-        let areas = self
+        let displays = self
             .all_view_layouts(key)
-            .map(crate::workspace_views::WorkspaceView::occupied_areas)
-            .sum::<usize>();
+            .map(Layout::display_count)
+            .sum::<usize>()
+            + self.pending_view_placements(key);
+        let tab_pending =
+            self.pending_tab_placements(key, self.projected_view_owner(key).as_deref());
         let Some(layout) = self.view_layout_of(key) else {
             return true;
         };
+        let tab = layout.display_count() + tab_pending;
         let base = layout.active_area();
-        let refusal = if layout.display_count() == 0 && areas >= MAX_VIEW_AREAS {
-            Some(LayoutError::AreaLimit.into())
-        } else if beside {
+        let refusal = if beside {
             match BESIDE_ORDER
                 .iter()
                 .find_map(|edge| layout.neighbour(&base.id, *edge))
@@ -664,12 +678,11 @@ impl Runtime {
                 {
                     None
                 }
-                Some(_) => display_limit(displays, pending),
-                None if base.displays.is_empty() => display_limit(displays, pending),
-                None if areas >= MAX_VIEW_AREAS => Some(LayoutError::AreaLimit.into()),
+                Some(_) => display_limit(tab, displays),
+                None if base.displays.is_empty() => display_limit(tab, displays),
                 None => match layout.can_split(&base.id, Edge::Right) {
                     Err(error) => Some(error.into()),
-                    Ok(()) => display_limit(displays, pending),
+                    Ok(()) => display_limit(tab, displays),
                 },
             }
         } else if self.new_tab_target(key, false).is_some()
@@ -691,10 +704,10 @@ impl Runtime {
             // whose document holds work stays and the open adds a display.
             None
         } else {
-            display_limit(displays, pending)
+            display_limit(tab, displays)
         };
         let refusal = refusal.filter(|refusal| {
-            refusal.kind != LayoutError::DisplayLimit.kind() || !self.make_view_room(key)
+            refusal.kind != LayoutError::DisplayLimit.kind() || !self.make_view_room(key, None)
         });
         match refusal {
             Some(refusal) => {
@@ -713,34 +726,88 @@ impl Runtime {
         }
     }
 
-    /// Room for one more view in the Workspace `key`: while its views and
-    /// the opens still being read fill `MAX_VIEW_DISPLAYS`, the view looked
-    /// at longest ago closes, whichever Agent tab holds it. A view on screen
-    /// (its area's front in the projected presentation) and a document with
-    /// unsaved work never close. Returns whether there is room. None is made
-    /// while a background caller's presentation is parked, because that
-    /// transaction's rollback restores every other presentation; its callers
-    /// make room before they park.
-    pub(super) fn make_view_room(&mut self, key: &WorkspaceKey) -> bool {
-        loop {
-            let held: usize = self.all_view_layouts(key).map(Layout::display_count).sum();
-            if held + self.pending_view_placements(key) < MAX_VIEW_DISPLAYS {
-                return true;
-            }
-            if self
-                .workspace_views
-                .as_ref()
-                .is_none_or(|store| store.view_transaction.is_some())
-            {
-                return false;
-            }
-            let Some(oldest) = self.oldest_closable_view(key) else {
-                return false;
-            };
-            if !self.close_oldest_view(key, oldest) {
-                return false;
-            }
+    /// Room for one more view in the tab `tab` of the Workspace `key`, the
+    /// projected presentation for `None`. While that tab's views and the
+    /// opens still being read for it fill `MAX_TAB_VIEWS`, its views looked
+    /// at longest ago close, as many as a tab saved with more needs; then,
+    /// while the Workspace's fill `MAX_VIEW_DISPLAYS`, the view looked at
+    /// longest ago closes, whichever tab holds it. A view on screen (its
+    /// area's front in the projected presentation) and a document with
+    /// unsaved work never close, and when too few can close nothing does.
+    /// Returns whether there is room. None is made while a background
+    /// caller's presentation is parked, because that transaction's rollback
+    /// restores every other presentation; its callers make room before they
+    /// park.
+    pub(super) fn make_view_room(&mut self, key: &WorkspaceKey, tab: Option<&str>) -> bool {
+        let owner = tab
+            .map(str::to_owned)
+            .or_else(|| self.projected_view_owner(key));
+        let in_tab = self
+            .tab_view_layout(key, tab)
+            .map_or(0, Layout::display_count)
+            + self.pending_tab_placements(key, owner.as_deref());
+        if !self.close_oldest_views(
+            key,
+            RoomScope::Tab(tab),
+            (in_tab + 1).saturating_sub(MAX_TAB_VIEWS),
+        ) {
+            return false;
         }
+        let in_workspace = self
+            .all_view_layouts(key)
+            .map(Layout::display_count)
+            .sum::<usize>()
+            + self.pending_view_placements(key);
+        self.close_oldest_views(
+            key,
+            RoomScope::Workspace,
+            (in_workspace + 1).saturating_sub(MAX_VIEW_DISPLAYS),
+        )
+    }
+
+    /// Closes the `count` views of `scope` looked at longest ago that may
+    /// close, or none when fewer may.
+    fn close_oldest_views(&mut self, key: &WorkspaceKey, scope: RoomScope, count: usize) -> bool {
+        if count == 0 {
+            return true;
+        }
+        if self
+            .workspace_views
+            .as_ref()
+            .is_none_or(|store| store.view_transaction.is_some())
+        {
+            return false;
+        }
+        let oldest = self.closable_views(key, scope);
+        if oldest.len() < count {
+            return false;
+        }
+        oldest
+            .into_iter()
+            .take(count)
+            .all(|view| self.close_oldest_view(key, view))
+    }
+
+    /// The layout of the tab `tab` of the Workspace `key`: its parked
+    /// presentation, or the projected one for `None` or the tab that owns it.
+    fn tab_view_layout(&self, key: &WorkspaceKey, tab: Option<&str>) -> Option<&Layout> {
+        let entry = self.workspace_views.as_ref()?.views.get(&key.0, &key.1)?;
+        match tab {
+            Some(tab) if self.projected_view_owner(key).as_deref() != Some(tab) => {
+                entry.view_presentations.get(tab).map(|view| &view.layout)
+            }
+            _ => Some(&entry.layout),
+        }
+    }
+
+    /// The tab the projected presentation belongs to, which an open from
+    /// the screen places its view for.
+    pub(super) fn projected_view_owner(&self, key: &WorkspaceKey) -> Option<String> {
+        self.workspace_views
+            .as_ref()
+            .and_then(|store| store.views.get(&key.0, &key.1))
+            .and_then(|entry| entry.view_owner.clone())
+            .or_else(|| self.workspace_active_tab(key))
     }
 
     /// Whether a caller's open adds a view to its tab rather than focus one
@@ -775,8 +842,15 @@ impl Runtime {
         }
     }
 
-    fn oldest_closable_view(&self, key: &WorkspaceKey) -> Option<OldestView> {
-        let entry = self.workspace_views.as_ref()?.views.get(&key.0, &key.1)?;
+    /// The views of `scope` that may close, looked at longest ago first.
+    fn closable_views(&self, key: &WorkspaceKey, scope: RoomScope) -> Vec<OldestView> {
+        let Some(entry) = self
+            .workspace_views
+            .as_ref()
+            .and_then(|store| store.views.get(&key.0, &key.1))
+        else {
+            return Vec::new();
+        };
         let fronts: HashSet<&str> = entry
             .layout
             .areas()
@@ -793,20 +867,28 @@ impl Runtime {
                 .displays()
                 .map(move |display| (Some(tab), display))
         });
-        projected
+        let mut closable: Vec<_> = projected
             .chain(hidden)
+            .filter(|(tab, _)| match scope {
+                RoomScope::Tab(only) => tab.map(String::as_str) == only,
+                RoomScope::Workspace => true,
+            })
             // A file still being restored has no document to close yet.
             .filter(|(_, display)| match &display.tab_id {
                 Some(tab_id) => !self.document_kept(tab_id),
                 None => display.kind == DisplayKind::Browser,
             })
-            .min_by_key(|(_, display)| display.last_focused_unix_ms)
+            .collect();
+        closable.sort_by_key(|(_, display)| display.last_focused_unix_ms);
+        closable
+            .into_iter()
             .map(|(tab, display)| OldestView {
                 tab: tab.cloned(),
                 display_id: display.id.clone(),
                 kind: display.kind,
                 document: display.tab_id.clone(),
             })
+            .collect()
     }
 
     /// Takes the view out of the presentation that holds it, and closes its
@@ -977,12 +1059,7 @@ impl Runtime {
                     false
                 };
                 let placement = (!shown).then(|| ViewPlacement {
-                    owner: self
-                        .workspace_views
-                        .as_ref()
-                        .and_then(|store| store.views.get(&key.0, &key.1))
-                        .and_then(|entry| entry.view_owner.clone())
-                        .or_else(|| self.workspace_active_tab(&key)),
+                    owner: self.projected_view_owner(&key),
                     area: self
                         .view_layout_of(&key)
                         .map(|layout| layout.active_area().id.clone())
@@ -1845,7 +1922,8 @@ impl Runtime {
             None
         };
         if self.open_adds_view(&key, &caller, &action, None) {
-            self.make_view_room(&key);
+            let tab = self.caller_parked_tab(&key, &caller);
+            self.make_view_room(&key, tab.as_deref());
         }
         let parked = self
             .parked_caller(&key, &caller, &action)
@@ -2328,7 +2406,7 @@ impl Runtime {
         for display in self
             .all_view_layouts(key)
             .flat_map(|layout| layout.displays())
-            .filter(|display| display.kind != DisplayKind::Browser)
+            .filter(|display| display.kind.is_document())
         {
             let target = (display.path.clone(), display.kind, display.committed);
             if display.tab_id.is_none() && !targets.contains(&target) {
@@ -2341,7 +2419,7 @@ impl Runtime {
             // read from that checkout; a diff is always this one's.
             let (workspace_id, checkout_id) = match kind {
                 DisplayKind::File => self.display_source(key, path),
-                DisplayKind::Diff | DisplayKind::Browser => None,
+                DisplayKind::Diff | DisplayKind::Browser | DisplayKind::PullRequest => None,
             }
             .unwrap_or_else(|| front.clone());
             let open = self.snapshot.editor.tabs.iter().any(|tab| {
@@ -2355,7 +2433,7 @@ impl Runtime {
                 continue;
             }
             match kind {
-                DisplayKind::Browser => {}
+                DisplayKind::Browser | DisplayKind::PullRequest => {}
                 DisplayKind::Diff => {
                     self.insert_diff_tab(
                         &workspace_id,
@@ -2500,7 +2578,7 @@ impl Runtime {
                 store.live.contains(&key),
                 ReconcileAdmission {
                     owned: &owned,
-                    available: MAX_VIEW_DISPLAYS.saturating_sub(hidden_count),
+                    available: MAX_TAB_VIEWS.min(MAX_VIEW_DISPLAYS.saturating_sub(hidden_count)),
                     append_unrequested: view.view_owner.is_none(),
                 },
                 &tabs,
@@ -2553,7 +2631,7 @@ impl Runtime {
                 self.push_diagnostic(
                     "view_layout.display_limit",
                     format!(
-                        "{path} is open but not shown: {workspace} already has {MAX_VIEW_DISPLAYS} views, and it shows once one is closed"
+                        "{path} is open but not shown: its tab has no room for another view ({MAX_TAB_VIEWS}) or {workspace} has none ({MAX_VIEW_DISPLAYS}), and it shows once one is closed"
                     ),
                 );
             }
@@ -2790,7 +2868,10 @@ impl Runtime {
     ) -> (ViewDisplayState, Option<String>) {
         // The host loads a page wherever it is; whether it loaded is the
         // page's own state, which the host draws.
-        if display.kind == DisplayKind::Browser {
+        if matches!(
+            display.kind,
+            DisplayKind::Browser | DisplayKind::PullRequest
+        ) {
             return (ViewDisplayState::Open, None);
         }
         if let Some(tab) = display.tab_id.as_deref().and_then(|id| facts.tabs.get(id)) {
@@ -2824,7 +2905,7 @@ impl Runtime {
             return (ViewDisplayState::Opening, None);
         }
         let reason = match display.kind {
-            DisplayKind::File | DisplayKind::Browser => {
+            DisplayKind::File | DisplayKind::Browser | DisplayKind::PullRequest => {
                 "This view's file is not open; Retry reads it again"
             }
             DisplayKind::Diff => "This view's diff is not open; Retry opens it again",
@@ -2848,7 +2929,7 @@ impl Runtime {
             limits: ViewLimitsSnapshot {
                 areas: MAX_VIEW_AREAS,
                 depth: MAX_SPLIT_DEPTH,
-                displays: MAX_VIEW_DISPLAYS,
+                displays: MAX_TAB_VIEWS,
             },
             display_count: layout.display_count(),
         }
@@ -2874,6 +2955,9 @@ impl Runtime {
                             path: display.path.clone(),
                             label: match (tab, display.kind) {
                                 (_, DisplayKind::Browser) => browser_label(display),
+                                (_, DisplayKind::PullRequest) => {
+                                    format!("PR #{}", display.pr.unwrap_or_default())
+                                }
                                 (Some(tab), _) => tab.label.clone(),
                                 (None, DisplayKind::File) => file_label(&display.path),
                                 (None, DisplayKind::Diff) => super::editor::diff_label(
@@ -2888,6 +2972,7 @@ impl Runtime {
                             reason,
                             url: display.url.clone(),
                             title: display.title.clone(),
+                            pr: display.pr,
                             load: display.load,
                         }
                     })

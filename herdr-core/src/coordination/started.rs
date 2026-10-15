@@ -11,6 +11,8 @@ use crate::delivery::ledger::Ledger;
 /// One live agent Hide started.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StartedAgent {
+    /// The coordination record's id, which a home's attempt names its agent by.
+    pub(crate) agent_id: String,
     /// The pane in the core's own ids, and the session digest it was
     /// registered with, which a later agent in a reused pane does not share.
     pub(crate) pane_id: String,
@@ -69,6 +71,7 @@ pub(crate) fn hide_started(ledger: &Ledger) -> HideStarted {
             continue;
         };
         started.agents.push(StartedAgent {
+            agent_id: child.id.clone(),
             pane_id: child.actor.pane_id.clone(),
             session: child.actor.session.clone(),
             task: spawn.task.clone(),
@@ -102,7 +105,7 @@ pub(crate) mod tests {
     fn record(actor: &Actor) -> AgentRecord {
         AgentRecord {
             id: String::new(),
-            name: actor.name.clone(),
+            name: Some(actor.name.clone()),
             machine: actor.device_id.clone(),
             host_scope: actor.kind.clone(),
             native_machine: actor.kind.clone(),
@@ -216,7 +219,7 @@ pub(crate) mod tests {
 
     pub(crate) fn memory_task(target: &str) -> Option<SpawnTask> {
         Some(SpawnTask {
-            kind: crate::coordination::MEMORY_PROMOTE_TASK.into(),
+            kind: crate::coordination::TaskKind::MemoryPromote,
             target: Some(target.into()),
         })
     }
@@ -259,6 +262,55 @@ pub(crate) mod tests {
                 task: memory_task("m72"),
             }]
         );
+    }
+
+    /// D-10, D-19, B20, B22: a known kind has its home and writes its code
+    /// unchanged; a kind another build wrote loads, keeps its value, and has
+    /// no home, so its agent alone stays an operator's row.
+    #[test]
+    fn a_ledger_with_a_kind_this_build_does_not_know_still_loads() {
+        let ledger = hide_started_ledger(NODE, "hide-memory-m72", memory_task("m72"), here("p72"));
+        let written = serde_json::to_string(&ledger).unwrap();
+        assert!(
+            written.contains("\"kind\":\"memory_promote\""),
+            "the code is unchanged"
+        );
+        for code in ["future_kind", ""] {
+            let other = written.replace(
+                "\"kind\":\"memory_promote\"",
+                &format!("\"kind\":\"{code}\""),
+            );
+            let loaded: Ledger = serde_json::from_str(&other).unwrap();
+            let started = hide_started(&loaded);
+            assert_eq!(started.agents.len(), 1, "{code:?}");
+            let task = started.agents[0].task.as_ref().unwrap();
+            assert_eq!(task.kind.as_str(), code);
+            assert_eq!(task.kind.home(), None, "{code:?}");
+            assert_eq!(
+                serde_json::to_string(&loaded).unwrap(),
+                other,
+                "kept as written"
+            );
+        }
+        let known = hide_started(&ledger);
+        assert_eq!(
+            known.agents[0].task.as_ref().unwrap().kind.home(),
+            Some(crate::coordination::TaskHome::Memory)
+        );
+    }
+
+    /// A new start needs a home to show its progress in.
+    #[test]
+    fn a_new_start_of_a_kind_with_no_home_is_refused() {
+        let mut ledger = Ledger::default();
+        let hide = Actor::hide("memory", NODE);
+        let origin = register(&mut ledger, &hide);
+        let task = Some(SpawnTask {
+            kind: crate::coordination::TaskKind::from_code("future_kind"),
+            target: None,
+        });
+        let refused = spawn(&mut ledger, &hide, &origin, false, task, "b", here("p1"));
+        assert_eq!(refused.unwrap_err(), "task_kind_unknown");
     }
 
     #[test]

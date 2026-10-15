@@ -326,7 +326,7 @@ function SubIssueRow({ item, owner, handlers }: { item: CardSubIssue; owner: Tas
           data-sub-issue-pr={item.pr.number}
           onClick={(event) => {
             if (holdsCommandKey(event)) handlers.openGitHub(item.pr!.url, owner.device_id);
-            else handlers.openPullRequestRow(owner, item.pr!.number);
+            else handlers.openPrCard(owner, item.pr!.number);
           }}
         >
           <PrChipMark chip={item.pr} />
@@ -375,7 +375,7 @@ function WorkDone({ card, handlers, focusedPaneId, actions }: { card: TaskCard; 
       ) : null}
       {checkout && pr && card.pr ? (
         <div className="flex min-w-0 items-center gap-xs text-caption text-muted-foreground" data-issue-work-pr={pr.number}>
-          <PullRequestChip project={owner} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, owner.device_id)} onRow={(number) => handlers.openPullRequestRow(owner, number)} now={Date.now()} />
+          <PullRequestChip project={owner} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, owner.device_id)} onRow={(number) => handlers.openPrCard(owner, number)} now={Date.now()} />
           <span className="min-w-0 flex-1 truncate text-foreground">{pr.title}</span>
         </div>
       ) : null}
@@ -525,7 +525,7 @@ function IssueSessions({ card, actions }: { card: TaskCard; actions: Actions }) 
       project={project}
       branchOf={branchOf}
       onRetry={() => actions.openLinks(project.id, { kind: "issue", key })}
-      onOpenPr={(number) => actions.openPullRequestRow(project.id, number)}
+      onOpenPr={(number) => actions.openPrCard(project.id, number)}
       empty={<p className="text-caption text-muted-foreground" data-link-none="true">{t("links.noIssueSessions")}</p>}
       actions={actions}
     />

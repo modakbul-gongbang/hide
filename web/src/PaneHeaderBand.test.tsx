@@ -7,7 +7,7 @@ import { TooltipProvider } from "./components/ui/tooltip";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import { RELATION_ANSWER_TIMEOUT_MS } from "./lineage";
 import { PaneHeaderBand, PanePrChip } from "./PaneHeaderBand";
-import type { AgentPullRequest, AgentRow, PaneHeader, PaneFocusRequest, SnapshotRest, Workspace } from "./snapshot";
+import type { AgentPullRequest, AgentRow, PaneHeader, PaneFocusRequest, PrState, SnapshotRest, Workspace } from "./snapshot";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -237,8 +237,8 @@ it("blocks Open on a raised descendant whose device is not connected and says wh
   } finally { await unmount(); }
 });
 
-it("opens the displayed repository even when another project has the same PR number", async () => {
-  const {actions, unmount} = await mount();
+it("opens the card of the displayed repository even when another project has the same PR number", async () => {
+  const {actions, events, unmount} = await mount();
   const url = "https://github.com/acme/other/pull/7";
   try {
     await act(async () => useShellStore.setState({rest: {navigator: {focused_device_id: "local", devices: [{id: "local", kind: "local"}], workspaces: [
@@ -246,8 +246,8 @@ it("opens the displayed repository even when another project has the same PR num
       {id: "other", device_id: "local", pull_requests: [{number: 7, url}], checkouts: []},
     ] as unknown as Workspace[]}} as SnapshotRest}));
     await act(async () => actions.openSessionPullRequest({workspace_id: "here", number: 7, url}));
-    expect(useUiStore.getState().overviewProjectId).toBe("other");
-    expect(useUiStore.getState().overviewLens).toMatchObject({tab: "prs", prs: {panel: 7, focus: 7}});
+    // One event opens the card; the core chooses the Workspace (PRD work-tab-pr-lens D-28).
+    expect(events.filter((event) => event.kind === "pr_open")).toEqual([{schema_version: 2, kind: "pr_open", payload: {workspace_id: "other", pr_number: 7}}]);
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     actions.openSessionPullRequest({workspace_id: "here", number: 7, url: "https://github.com/acme/absent/pull/7"});
     expect(open).toHaveBeenCalledWith("https://github.com/acme/absent/pull/7", "_blank", "noopener,noreferrer");
@@ -256,10 +256,10 @@ it("opens the displayed repository even when another project has the same PR num
 
 // The pane header draws the Sessions row's PR mark: a parent counts its
 // descendants' pull requests, a pane without children shows only its own.
-function pullRow(pane: string, numbers: number[], children: string[] = []): AgentRow {
+function pullRow(pane: string, numbers: number[], children: string[] = [], states: PrState[] = numbers.map(() => "pending")): AgentRow {
   const seed = legacyAgentRow({ pane_id: pane, identity_label: `${pane} 세션`, lineage_child_pane_ids: children });
   const pulls: AgentPullRequest[] = numbers.map((number) => ({ number, title: `PR ${number}`, url: `https://github.com/acme/app/pull/${number}`, badge: "open", checks: "pending", head_branch: "feat/work", closing_issues: [], live: true, duty: true, created: true, settled_at_unix_ms: null }));
-  return { ...seed, state: { ...seed.state, pr: numbers.length ? { count: numbers.length, worst: "pending", pulls: numbers.map((_, index) => ({ state: "pending", index })) } : null }, request: { verb: "working", verb_since_unix_ms: 0, request: null, later_by: null, reply: null, pull_requests: pulls } };
+  return { ...seed, state: { ...seed.state, pr: numbers.length ? { count: numbers.length, worst: states[0]!, pulls: numbers.map((_, index) => ({ state: states[index]!, index })) } : null }, request: { verb: "working", verb_since_unix_ms: 0, request: null, later_by: null, reply: null, pull_requests: pulls } };
 }
 
 async function mountChip(paneId: string, agents: AgentRow[]) {
@@ -289,11 +289,13 @@ it("shows a parent's PR mark over its descendants as the Sessions row does, and 
   try {
     expect(own.container.querySelector("[data-agent-pr=child]")?.textContent).toBe("#" + "1073");
   } finally { await own.unmount(); }
-  const several = await mountChip("parent", [parent, pullRow("child", [1073, 1074])]);
+  // Several PRs are counted per state in each state's colour, worst first:
+  // a mergeable PR beside a merged one is green 1 purple 1, not green 2.
+  const several = await mountChip("parent", [parent, pullRow("child", [1073, 1074], [], ["mergeable", "merged"])]);
   try {
     const mark = several.container.querySelector<HTMLButtonElement>("[data-agent-pr=parent]")!;
-    expect(mark.textContent).toBe("2");
-    expect(mark.getAttribute("aria-label")).toBe("PR 2 CI running or review pending");
+    expect(Array.from(mark.querySelectorAll("[data-pr-count]"), (part) => [part.getAttribute("data-pr-count"), part.textContent])).toEqual([["mergeable", "1"], ["merged", "1"]]);
+    expect(mark.getAttribute("aria-label")).toBe("PR 2 · Mergeable 1 · Merged 1");
   } finally { await several.unmount(); }
   const none = await mountChip("parent", [{ ...parent, lineage_child_pane_ids: [] }]);
   try {

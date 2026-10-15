@@ -329,7 +329,7 @@ pub(super) fn scope(
     let mut value = Scope {
         marks,
         sections: sections(physical),
-        sidebar_tree: super::lineage::sidebar_tree(physical, all),
+        sidebar_tree: super::lineage::sidebar_tree(&tree_rows(physical), all),
         ..Scope::default()
     };
     let references = row_references(physical);
@@ -533,6 +533,10 @@ struct Input {
     factory_workers: HashSet<String>,
     places: Vec<PlaceInput>,
     devices: Vec<DeviceInput>,
+    /// The minute the PRs list was last judged in: a working agent turns
+    /// stalled and a pull request turns old with the clock alone (PRD
+    /// work-tab-pr-lens D-10, D-11), and nothing else would republish.
+    clock_minute: u64,
 }
 
 /// One owned comparison input, bounded by the snapshot's agents and catalog.
@@ -541,6 +545,9 @@ struct Input {
 pub(crate) struct Cache {
     previous: Option<Input>,
     output: Output,
+    /// Where each pull request stood on the last projection, by project: a
+    /// pull request GitHub has not judged yet keeps its place (B12).
+    placements: HashMap<(String, String), HashMap<u32, &'static str>>,
 }
 
 #[derive(Default)]
@@ -558,7 +565,36 @@ struct DeviceRows<'a> {
     label: Option<&'a str>,
     connected: bool,
     projects: Vec<&'a WorkspaceSnapshot>,
+    /// Every row the device lists, for lookups by pane.
     agents: Vec<&'a SidebarAgentSnapshot>,
+    /// The rows the operator's own lists enumerate: a row its home owns is
+    /// left out unless it is in Needs You (PRD hide-ai-work-home D-13), so
+    /// no tree, section, count, request or graph names it.
+    listed: Vec<&'a SidebarAgentSnapshot>,
+}
+
+/// The rows a checkout's tree draws: `listed` without the rows a home owns,
+/// which the raised Needs You and Sessions lists draw and no checkout's tree
+/// does (PRD hide-ai-work-home D-17).
+fn tree_rows<'a>(listed: &[&'a SidebarAgentSnapshot]) -> Vec<&'a SidebarAgentSnapshot> {
+    listed
+        .iter()
+        .copied()
+        .filter(|row| {
+            !matches!(
+                crate::agent_state::ownership_of(row),
+                crate::agent_state::Ownership::HideAi { .. }
+            )
+        })
+        .collect()
+}
+
+fn operator_listed<'a>(agents: &[&'a SidebarAgentSnapshot]) -> Vec<&'a SidebarAgentSnapshot> {
+    agents
+        .iter()
+        .copied()
+        .filter(|row| crate::agent_state::listed_for_operator(row))
+        .collect()
 }
 
 fn device_rows(snapshot: &crate::model::Snapshot) -> Vec<DeviceRows<'_>> {
@@ -572,6 +608,7 @@ fn device_rows(snapshot: &crate::model::Snapshot) -> Vec<DeviceRows<'_>> {
         label: local.and_then(|d| d.label.as_deref()),
         connected: true,
         projects: snapshot.navigator.workspaces.iter().collect(),
+        listed: operator_listed(&snapshot.navigator.agents.iter().collect::<Vec<_>>()),
         agents: snapshot.navigator.agents.iter().collect(),
     }];
     for remote in &snapshot.status.remote {
@@ -592,6 +629,12 @@ fn device_rows(snapshot: &crate::model::Snapshot) -> Vec<DeviceRows<'_>> {
                 .session
                 .as_ref()
                 .map_or_else(Vec::new, |s| s.workspaces.iter().collect()),
+            listed: operator_listed(
+                &remote
+                    .session
+                    .as_ref()
+                    .map_or_else(Vec::new, |s| s.agents.iter().collect::<Vec<_>>()),
+            ),
             agents: remote
                 .session
                 .as_ref()
@@ -602,7 +645,7 @@ fn device_rows(snapshot: &crate::model::Snapshot) -> Vec<DeviceRows<'_>> {
 }
 
 impl Cache {
-    pub(crate) fn refresh(&mut self, snapshot: &mut crate::model::Snapshot) -> bool {
+    pub(crate) fn refresh(&mut self, snapshot: &mut crate::model::Snapshot, now: u64) -> bool {
         let devices = device_rows(snapshot);
         let factory_workers = worker_panes(
             snapshot
@@ -611,6 +654,7 @@ impl Cache {
                 .and_then(|f| f.summary.as_deref()),
         );
         let input = Input {
+            clock_minute: now / 60_000,
             factory_workers,
             devices: devices
                 .iter()
@@ -697,6 +741,7 @@ impl Cache {
         let mut projects = HashMap::new();
         let mut checkouts = HashMap::new();
         let mut device_scopes = HashMap::new();
+        let mut placements = HashMap::new();
         let all: Vec<_> = devices
             .iter()
             .flat_map(|d| d.agents.iter().copied())
@@ -705,6 +750,11 @@ impl Cache {
             .iter()
             .filter(|d| d.connected)
             .flat_map(|d| d.agents.iter().copied())
+            .collect();
+        let live_listed: Vec<_> = devices
+            .iter()
+            .filter(|d| d.connected)
+            .flat_map(|d| d.listed.iter().copied())
             .collect();
         let live_projects: Vec<_> = devices
             .iter()
@@ -724,7 +774,7 @@ impl Cache {
                 .map(|agent| (agent.pane_id.as_str(), *agent))
                 .collect();
             for project in device.projects.iter().filter(|p| !p.is_home) {
-                for member in members(&[project], &device.agents) {
+                for member in members(&[project], &device.listed) {
                     graph_members.push(super::graph::GraphMember {
                         project,
                         agent: by_pane[member.pane_id.as_str()],
@@ -738,10 +788,12 @@ impl Cache {
         let mut overall_listed = Vec::new();
         let mut overall_members = Vec::new();
         let mut overall_projects = Vec::new();
+        let live_tree = tree_rows(&live_listed);
         for (device_index, device) in devices.iter().enumerate() {
+            let device_tree = tree_rows(&device.listed);
             for project in &device.projects {
-                let mut trees = super::lineage::checkout_trees(project, &device.agents);
-                let mut global_trees = super::lineage::checkout_trees(project, &live);
+                let mut trees = super::lineage::checkout_trees(project, &device_tree);
+                let mut global_trees = super::lineage::checkout_trees(project, &live_tree);
                 let pane_ids: HashSet<_> = project
                     .checkouts
                     .iter()
@@ -750,7 +802,7 @@ impl Cache {
                     .map(|p| p.id.as_str())
                     .collect();
                 let physical: Vec<_> = device
-                    .agents
+                    .listed
                     .iter()
                     .copied()
                     .filter(|r| pane_ids.contains(r.pane_id.as_str()))
@@ -759,7 +811,7 @@ impl Cache {
                     (project.device_id.clone(), project.id.clone()),
                     scope(
                         &physical,
-                        members(&[project], &device.agents),
+                        members(&[project], &device.listed),
                         &device.agents,
                         project_marks(&[project]),
                         &input.factory_workers,
@@ -768,8 +820,23 @@ impl Cache {
                 let projected = projects
                     .get_mut(&(project.device_id.clone(), project.id.clone()))
                     .expect("project scope inserted");
-                projected.prs =
-                    crate::agent_state::work::board::project(project, &device.agents, &trees);
+                let key = (project.device_id.clone(), project.id.clone());
+                let previous = self.placements.get(&key).cloned().unwrap_or_default();
+                projected.prs = crate::agent_state::work::board::project(
+                    project,
+                    &device.agents,
+                    &previous,
+                    now,
+                );
+                placements.insert(
+                    key,
+                    projected
+                        .prs
+                        .rows
+                        .iter()
+                        .map(|row| (row.number, row.group))
+                        .collect(),
+                );
                 projected.graph = super::graph::project(
                     project,
                     &projected.members,
@@ -784,7 +851,7 @@ impl Cache {
                         .map(|p| p.id.as_str())
                         .collect();
                     let physical: Vec<_> = device
-                        .agents
+                        .listed
                         .iter()
                         .copied()
                         .filter(|r| pane_ids.contains(r.pane_id.as_str()))
@@ -829,11 +896,11 @@ impl Cache {
                 .copied()
                 .filter(|p| !p.is_home)
                 .collect();
-            let scoped_members = members(&overview, &device.agents);
+            let scoped_members = members(&overview, &device.listed);
             overall_members.extend(scoped_members.iter().cloned());
             overall_projects.extend(overview.iter().copied());
             let physical = if device.connected {
-                device.agents.as_slice()
+                device.listed.as_slice()
             } else {
                 &[]
             };
@@ -889,17 +956,23 @@ impl Cache {
             let device_scope = device_scopes
                 .get_mut(device.id)
                 .expect("device scope inserted");
-            device_scope.listed = physical
-                .iter()
-                .enumerate()
-                .map(|(index, a)| Listed {
-                    pane_id: a.pane_id.clone(),
-                    device_id: device.id.into(),
-                    device_label: device.label.map(str::to_owned),
-                    remote: device_index > 0,
-                    index,
-                })
-                .collect();
+            // Every row the device has, a home-owned one included: this is the
+            // pool search, links and tabs find an agent in, not a list (B5).
+            device_scope.listed = if device.connected {
+                device.agents.as_slice()
+            } else {
+                &[]
+            }
+            .iter()
+            .enumerate()
+            .map(|(index, a)| Listed {
+                pane_id: a.pane_id.clone(),
+                device_id: device.id.into(),
+                device_label: device.label.map(str::to_owned),
+                remote: device_index > 0,
+                index,
+            })
+            .collect();
             overall_listed.extend(device_scope.listed.iter().cloned());
             device_scope.places_live = device.connected;
             device_scope.relations = super::relations::project(&device.projects, &device.agents);
@@ -941,16 +1014,16 @@ impl Cache {
             device_scopes
                 .get_mut(device.id)
                 .expect("device scope just inserted")
-                .folded = super::lineage::folded(&device.agents, &live_projects, &places);
+                .folded = super::lineage::folded(&device.listed, &live_projects, &places);
         }
         let mut overall = scope(
-            &live,
+            &live_listed,
             overall_members,
             &all,
             project_marks(&overall_projects),
             &input.factory_workers,
         );
-        overall.folded = super::lineage::folded(&live, &live_projects, &places);
+        overall.folded = super::lineage::folded(&live_listed, &live_projects, &places);
         overall.listed = overall_listed;
         for device in &devices {
             super::close::add(&mut overall.closes, &device.projects, &device.agents, &live);
@@ -961,6 +1034,7 @@ impl Cache {
             devices: device_scopes,
             overall,
         };
+        self.placements = placements;
         self.previous = Some(input);
         self.apply(snapshot)
     }

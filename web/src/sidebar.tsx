@@ -6,8 +6,7 @@ import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, EllipsisIcon, Fold
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { StatusMark } from "./components/status-mark";
 import { markTone } from "./agentRow";
-import { HideMark } from "./AgentMark";
-import { hideAiCheckoutOf, originLine, splitByOrigin } from "./hideAiOrigin";
+import { drawnInTree, hideAiCheckoutOf, originLine } from "./hideAiOrigin";
 import { useFactoryTurnCount } from "./factory/hooks";
 import { FACTORY_OPEN } from "./factory/launch";
 import { REQUEST_ANSWER_TIMEOUT_MS } from "./factory/request";
@@ -67,6 +66,7 @@ import { machineName, screenDeviceId, windowDeviceId, windowFirst } from "./scre
 import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type HideAiCheckout, type SleepingSession, type SnapshotRest, type Workspace } from "./snapshot";
 import { useStartPanel } from "./startDraft";
 import { HelpMenu } from "./components/help-menu";
+import { ViewMenu } from "./components/view-menu";
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
 import { useUiStore } from "./ui";
@@ -167,6 +167,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
             {list}
             <div data-sidebar-footer="true" className="flex shrink-0 flex-wrap items-center justify-end gap-xs border-t border-border px-sm py-xs">
               <Usage actions={actions} />
+              <ViewMenu actions={actions} />
               <HelpMenu actions={actions} />
               <Hint label={`${t("common.settings")} (${commandLabel("settings")})`}>
                 <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>
@@ -472,7 +473,7 @@ function catalogLineOf(rest: SnapshotRest | null, t: TFunction<"translation">) {
 }
 
 /**
- * The scope picker below Overview and the raised sections: the projects of the context on
+ * The raised sections, held above the list, and the scope picker below them: the projects of the context on
  * screen. A selected SSH device lists its Herdr workspaces, one checkout
  * each; the inactive folds and pins are this machine's and are not drawn
  * there (docs/UI_BEHAVIOR.md: the remote context carries no pins). The row of
@@ -504,6 +505,7 @@ function ProjectList({ actions }: { actions: Actions }) {
   const focusRowPane = useFocusRowPane();
   const workspaceVisible = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
   const focusedProjectId = workspaceVisible ? (workspaces.find((workspace) => workspace.checkouts.some((checkout) => checkout.id === focusedCheckoutId))?.id ?? null) : null;
+  const lists = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLUListElement>(null);
   const revealed = useRef<string | null>(null);
   // The focus's row is brought into view when the focus moves, before the frame
@@ -511,11 +513,11 @@ function ProjectList({ actions }: { actions: Actions }) {
   // a snapshot or another screen in front, so a list the operator scrolled
   // stays where they left it.
   useLayoutEffect(() => {
-    if (!workspaceVisible || !list.current) return;
+    if (!workspaceVisible || !lists.current) return;
     const focus = `${focusedCheckoutId ?? ""}\u0000${focusedPaneId ?? ""}`;
     if (focus === revealed.current) return;
     revealed.current = focus;
-    revealSidebarFocus(list.current);
+    revealSidebarFocus(lists.current);
   }, [loaded, workspaceVisible, focusedCheckoutId, focusedPaneId]);
   const catalogState = useShellStore((s) => catalogLineOf(s.rest, t)?.state ?? null);
   const catalogText = useShellStore((s) => catalogLineOf(s.rest, t)?.text ?? null);
@@ -559,33 +561,44 @@ function ProjectList({ actions }: { actions: Actions }) {
   };
   if (!loaded) return <ListLoading />;
   return (
-    <ul ref={list} className="min-h-0 flex-1 overflow-auto px-sm" data-project-list="true" onKeyDown={moveSidebarKey}>
-      {catalogLine ? (
-        <li role="status" className="px-md py-xs text-caption text-muted-foreground" data-device-catalog={catalogLine.state}>
-          {catalogLine.text}
-        </li>
+    // The arrow keys move through both lists as one.
+    <div ref={lists} className="flex min-h-0 flex-1 flex-col" onKeyDown={moveSidebarKey}>
+      {/* Needs You and Done stand still above the projects, so opening one row
+          after another never scrolls them away: an opened row leaves its
+          section and the next one moves up into its place. Up to half the
+          height, past which they scroll on their own. */}
+      {catalogLine || raised.length > 0 ? (
+        <ul className="max-h-1/2 shrink-0 overflow-auto px-sm" data-raised-list="true">
+          {catalogLine ? (
+            <li role="status" className="px-md py-xs text-caption text-muted-foreground" data-device-catalog={catalogLine.state}>
+              {catalogLine.text}
+            </li>
+          ) : null}
+          {raised.map((row) => (
+            <ProjectRowView key={rowKey(row)} row={row} context={context} />
+          ))}
+        </ul>
       ) : null}
-      {raised.map((row) => (
-        <ProjectRowView key={rowKey(row)} row={row} context={context} />
-      ))}
-      {/* Each section is its own box, so its header sticks to the list's top only while its rows pass under it, and the next section's header pushes it away (D-05). */}
-      {sections.map((section, index) => (
-        <li key={`section:${section.header.section}`} data-project-section={section.header.section}>
-          <ul>
-            <SectionHeader row={section.header} actions={actions} />
-            {section.rows.map((row) => (
-              <ProjectRowView key={rowKey(row)} row={row} context={context} />
-            ))}
-            {index === sections.length - 1 ? <CleanupRows workspaces={workspaces} context={context} deviceId={frontId} /> : null}
-          </ul>
-        </li>
-      ))}
-      {!remote && workspaces.length === 0 ? (
-        <li className="flex flex-col items-start gap-sm px-sm py-sm text-caption text-muted-foreground" data-projects-empty="true">
-          {t("sidebar.noProjects")}
-        </li>
-      ) : null}
-    </ul>
+      <ul ref={list} className="min-h-0 flex-1 overflow-auto px-sm" data-project-list="true">
+        {/* Each section is its own box, so its header sticks to the list's top only while its rows pass under it, and the next section's header pushes it away (D-05). */}
+        {sections.map((section, index) => (
+          <li key={`section:${section.header.section}`} data-project-section={section.header.section}>
+            <ul>
+              <SectionHeader row={section.header} actions={actions} />
+              {section.rows.map((row) => (
+                <ProjectRowView key={rowKey(row)} row={row} context={context} />
+              ))}
+              {index === sections.length - 1 ? <CleanupRows workspaces={workspaces} context={context} deviceId={frontId} /> : null}
+            </ul>
+          </li>
+        ))}
+        {!remote && workspaces.length === 0 ? (
+          <li className="flex flex-col items-start gap-sm px-sm py-sm text-caption text-muted-foreground" data-projects-empty="true">
+            {t("sidebar.noProjects")}
+          </li>
+        ) : null}
+      </ul>
+    </div>
   );
 }
 
@@ -686,8 +699,7 @@ function SectionHeader({ row, actions }: { row: SectionRow; actions: Actions }) 
 /**
  * Marks each section header that is stuck to the top of the list, which draws
  * its hairline; read on scroll and on any size change of the list or a row of
- * it (a raised group growing above the sections moves them too), written
- * straight to the element so scrolling renders nothing.
+ * it, written straight to the element so scrolling renders nothing.
  */
 function useStuckHeaders(list: { current: HTMLUListElement | null }, loaded: boolean) {
   // Set up once per list, not per snapshot: what moves a header is a scroll,
@@ -806,7 +818,7 @@ function RaisedAgentRow({ listed: { agent, device }, context }: { listed: Listed
       depth={0}
       ask={agent.state.needs_you}
       selected={agent.pane_id === context.focusRowPane}
-      onOpen={context.actions.openAgent}
+      onOpen={(id) => context.actions.openListedAgent(id)}
       onOpenPullRequest={(url, external) => context.actions.openLink(url, external)}
       inset={PROJECT_COLUMN}
       number={context.numberOf?.(agent.pane_id, null) ?? null}
@@ -1043,8 +1055,10 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
   const target = projectCheckout(workspace, useShellStore.getState().rest?.ui_state?.recent_checkouts);
   const marks = projectMarks(workspace);
   const hiding = focusFold(workspace, context.workspaceScreen ? context.focusedCheckoutId : null, expanded);
-  // The operator's checkouts keep their place; the ones Hide AI made gather behind them under one head (D-03, D-06).
-  const { operator, hideAi: madeByHideAi } = splitByOrigin(hideAiListed, workspace, active);
+  // A checkout Hide AI made is drawn only while it is in front or an operator's agent works in it (PRD hide-ai-work-home D-17, B3).
+  const drawn = (checkout: Checkout) => drawnInTree(hideAiListed, workspace, checkout, checkout.id === context.focusedCheckoutId, (rowsByCheckout.get(checkout.id) ?? NO_BOARD_ROWS).length > 0);
+  const emptyFold = workspace.session_folds ? workspace.checkouts.filter((checkout) => workspace.session_folds!.empty.includes(checkout.id) && drawn(checkout)) : [];
+  const inactiveDrawn = inactive.filter(drawn);
   const checkoutRow = (checkout: Checkout) => (
     <CheckoutRowView
       key={checkout.id}
@@ -1101,19 +1115,18 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
       </EntryContextMenu>
       {expanded ? (
         <ul>
-          {operator.map(checkoutRow)}
-          {madeByHideAi.length > 0 ? <HideAiGroup count={madeByHideAi.length}>{madeByHideAi.map(checkoutRow)}</HideAiGroup> : null}
-          {(workspace.session_folds?.empty.length ?? 0) > 0 ? <li>
+          {active.filter(drawn).map(checkoutRow)}
+          {emptyFold.length > 0 ? <li>
             <FoldRow label={[t("agentSessions.emptyWorktrees"), workspace.session_folds!.open_prs > 0 ? t("agentSessions.openPrs", { count: workspace.session_folds!.open_prs }) : null].filter(Boolean).join(" · ")}
-              count={workspace.session_folds!.empty.length} expanded={workspace.session_folds!.empty_open} level="checkout" current={hiding === "empty"}
+              count={emptyFold.length} expanded={workspace.session_folds!.empty_open} level="checkout" current={hiding === "empty"}
               onToggle={() => actions.toggleSessionFold(workspace.id)} data-empty-worktrees={workspace.id} />
-            {workspace.session_folds!.empty_open ? <ul>{workspace.checkouts.filter((checkout) => workspace.session_folds!.empty.includes(checkout.id)).map(checkoutRow)}</ul> : null}
+            {workspace.session_folds!.empty_open ? <ul>{emptyFold.map(checkoutRow)}</ul> : null}
           </li> : null}
-          {inactive.length > 0 ? (
+          {inactiveDrawn.length > 0 ? (
             <li>
               <FoldRow
                 label={t("sidebar.inactive")}
-                count={inactive.length}
+                count={inactiveDrawn.length}
                 expanded={workspace.inactive_checkouts.expanded}
                 level="checkout"
                 current={hiding === "inactive"}
@@ -1122,7 +1135,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
               />
             </li>
           ) : null}
-          {workspace.inactive_checkouts.expanded ? inactive.map(checkoutRow) : null}
+          {workspace.inactive_checkouts.expanded ? inactiveDrawn.map(checkoutRow) : null}
         </ul>
       ) : null}
     </li>
@@ -1130,26 +1143,6 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
 }
 
 const NO_BOARD_ROWS: BoardRow[] = [];
-
-/**
- * The checkouts Hide AI made for a project, behind the operator's own under
- * one head: its mark, its name and how many (PRD hide-ai-origin-mark D-03).
- * The rows inside carry no badge, since the head says who made them; the
- * caller draws the group only while it has a checkout (D-08).
- */
-function HideAiGroup({ count, children }: { count: number; children: ReactNode }) {
-  const { t } = useInterfaceTranslation();
-  return (
-    <li data-hide-ai-group="true">
-      <div className="flex min-h-(--size-sidebar-line) items-center gap-xs pt-xs pr-xs text-micro font-medium text-muted-foreground" style={{ paddingLeft: CHECKOUT_COLUMN }} data-hide-ai-head="true" aria-hidden="true">
-        <HideMark className="size-(--size-icon-sm)" />
-        <span>{t("hideAi.name")}</span>
-        <span data-hide-ai-count={count}>{count}</span>
-      </div>
-      <ul aria-label={t("hideAi.group", { count })}>{children}</ul>
-    </li>
-  );
-}
 
 /**
  * The row of this project that carries the focused checkout's selection while
@@ -1171,7 +1164,12 @@ function focusFold(workspace: Workspace, checkoutId: string | null, expanded: bo
 function CleanupRows({ workspaces, context, deviceId }: { workspaces: Workspace[]; context: ListContext; deviceId: string }) {
   const { t } = useInterfaceTranslation();
   const hideAiListed = useShellStore((s) => s.rest?.navigator?.hide_ai_checkouts);
-  const rows = workspaces.flatMap((workspace) => workspace.checkouts.filter((checkout) => workspace.session_folds?.cleanup.includes(checkout.id)).map((checkout) => ({ workspace, checkout })));
+  // A cleanup candidate is what the operator reviews, so a checkout Hide AI made and kept after its pull request settled is listed here too (PRD hide-ai-work-home B18).
+  const rows = workspaces.flatMap((workspace) =>
+    workspace.checkouts
+      .filter((checkout) => workspace.session_folds?.cleanup.includes(checkout.id))
+      .map((checkout) => ({ workspace, checkout })),
+  );
   if (rows.length === 0) return null;
   const expanded = rows[0]!.workspace.session_folds!.cleanup_open;
   const current = !expanded && context.workspaceScreen && rows.some(({ checkout }) => checkout.id === context.focusedCheckoutId);
@@ -1483,7 +1481,7 @@ function CheckoutOpenButton({
       card={card}
       description={view.detail}
       onOpenPullRequest={(url, external) => actions.openPullRequest(url, workspace.device_id, external)}
-      onShowPullRequestRow={workspace.is_git && readsHere(workspace, devices) ? (number) => actions.openPullRequestRow(workspace.id, number) : undefined}
+      onShowPullRequestRow={workspace.is_git && readsHere(workspace, devices) ? (number) => actions.openPrCard(workspace.id, number) : undefined}
     >
       <button
         type="button"
@@ -1600,11 +1598,11 @@ function OpenAgentRows({ checkout, groupTabs, deviceId, agentRows, sleeping, ins
 const TAB_LINE = "calc(var(--size-sidebar-line) + var(--spacing-xxs))";
 
 /**
- * A tab is a segment of its checkout's agent list, not a level (docs/UI_BEHAVIOR.md, Sidebar hierarchy): a tab holding two or more agents
- * draws a hairline guide centered under the checkout's kind glyph spanning the segment's rows, and opens with one quiet line inside the
+ * A tab is a segment of its checkout's agent list, not a level (docs/UI_BEHAVIOR.md, Sidebar hierarchy): a tab holding two or more agents,
+ * or one the operator named, draws a hairline guide centered under the checkout's kind glyph spanning the segment's rows, and opens with one quiet line inside the
  * guide, the tab glyph on the status-mark column and its name (the manual one, else `Tab N`) on the title column, so it reads as part of
- * the checkout rather than beside it. The line opens the real tab, and the hint says its name and agent count. A single-agent tab draws
- * nothing: its row alone is the segment, and the gap between segments is the tab boundary.
+ * the checkout rather than beside it. The line opens the real tab, and the hint says its name and agent count. An unnamed single-agent
+ * tab draws nothing: its row alone is the segment, and the gap between segments is the tab boundary.
  */
 function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context }: { group: SidebarTabGroup; checkout: Checkout; deviceId: string; inset: string; glyphColumn: string; context: TreeContext }) {
   const { t } = useInterfaceTranslation();
@@ -1678,7 +1676,7 @@ function AgentTreeRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
             tree={tree}
             remote={remote}
             selected={agent.pane_id === context.focusRowPane}
-            onOpen={depth === 0 || !parent ? context.actions.openAgent : (id) => context.actions.followRelation(parent.pane_id, id, agent.identity_label)}
+            onOpen={depth === 0 || !parent ? (id) => context.actions.openListedAgent(id) : (id) => context.actions.followRelation(parent.pane_id, id, agent.identity_label)}
             onOpenPullRequest={(url, external) => context.actions.openLink(url, external)}
             inset={inset}
             // A tree row is one line with no branch (B14); the popover names a differing branch.

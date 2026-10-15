@@ -223,15 +223,17 @@ export function PrNewIssueDialog({ actions, workspace, pr, onClose }: { actions:
  * editable; a failed read leaves it empty with why and `Read again`, and never
  * blocks the start. Started, the screen goes to the agent's pane.
  */
-export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions: Actions; workspace: Workspace; pr: PullRequest; onClose: () => void }) {
+export function PrDelegateDialog({ actions, workspace, pr, intent, onClose }: { actions: Actions; workspace: Workspace; pr: PullRequest; intent?: "review"; onClose: () => void }) {
   const { t } = useInterfaceTranslation();
   const branch = pr.head_branch ?? "";
   // The checkout the core holds this pull request for, which is what the start reuses.
   const checkout = workspace.checkouts.find((row) => row.exists && row.pull_request?.url === pr.url) ?? null;
   // A pull request is handed to an agent, never a bare terminal: the remembered kind, else Claude.
   const [agent, setAgent] = useState<AgentSelection>(() => rememberedSelection(useShellStore.getState().rest?.ui_state?.agent_start));
-  const [prompt, setPrompt] = useState("");
-  const promptEdited = useRef(false);
+  // A review asks the agent to read the pull request and report to the operator, never to post to GitHub (B35).
+  const reviewing = intent === "review";
+  const [prompt, setPrompt] = useState(() => (reviewing ? t("work.card.reviewPrompt", { number: pr.number, branch, title: pr.title }) : ""));
+  const promptEdited = useRef(reviewing);
   const [readId, setReadId] = useState(() => requestId("pr-feedback", pr.number));
   const read = useFeedbackRead(actions, readId, workspace.id, pr.number);
   useEffect(() => {
@@ -281,7 +283,7 @@ export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions:
               </Note>
             ) : null}
             <AgentField agent={agent} actions={actions} disabled={working} onChange={setAgent} />
-            <Field label={t("issue.firstPrompt")} aside={<span className="text-muted-foreground">{t(read?.phase === "reading" || !read ? "prWork.readingFeedback" : "prWork.feedbackPrefilled")}</span>}>
+            <Field label={t("issue.firstPrompt")} aside={reviewing ? undefined : <span className="text-muted-foreground">{t(read?.phase === "reading" || !read ? "prWork.readingFeedback" : "prWork.feedbackPrefilled")}</span>}>
               <TextArea
                 value={prompt}
                 rows={7}
@@ -293,7 +295,7 @@ export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions:
                 data-pr-delegate-prompt="true"
               />
             </Field>
-            {read?.phase === "failed" ? (
+            {!reviewing && read?.phase === "failed" ? (
               <Note tone="warn" data-pr-delegate-read-failed="true">
                 <span className="flex items-center gap-sm">
                   <span className="min-w-0 flex-1 break-words">{t("prWork.feedbackReadFailed", { message: read.message === "project_settings_repository_changed" ? t("projectSettings.repositoryChanged") : read.message ?? "" })}</span>

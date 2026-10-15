@@ -6,7 +6,7 @@ import type { ProjectSettings, ProjectSettingsWrite } from "./projectSettings";
 // layout. Every selector is a lookup: the snapshot carries every tab's layout,
 // so a tab switch never draws a waiting state (PRD S2 B3).
 
-import type { UsagePreferences } from "./generated/hided-ws";
+import type { AgentLogoMode, UsagePreferences } from "./generated/hided-ws";
 
 /** The status codes the core sends in `status_code`; the catalogs name one word for each (agents.status.*). */
 export type AgentStatusCode = "error" | "question" | "approval" | "working" | "done" | "idle" | "unknown" | "waiting" | "stopped" | "attached" | "sleeping" | "waking" | "sleep_failed";
@@ -66,8 +66,18 @@ export type RaisedAsk = {
 /** What Hide AI started an agent for, as codes the screen words (`memory_promote`, the card `m72`). */
 export type HideAiTask = { kind: string; target?: string };
 
-/** Hide AI started this agent (PRD hide-ai-origin-mark D-01); `task` is absent for a start that named none. */
-export type HideAi = { task?: HideAiTask };
+/** The screen that owns what a Hide AI task does (PRD hide-ai-work-home D-10); a kind the core has no home for carries none. */
+export type HideAiHome = "memory";
+
+/** What the home waits for the operator to do, beyond what the agent itself asks (D-14); the core decides it. */
+export type HomeTurn = { kind: "pr_review" | "ci_failed"; pr_number: number };
+
+/**
+ * Hide AI started this agent (PRD hide-ai-origin-mark D-01); `task` is absent for a start that named none.
+ * With a `home` the row belongs to that screen: it is listed only while the operator has something to do,
+ * `workspace_id` names the catalog Project whose home shows it and `turn` what that home waits for.
+ */
+export type HideAi = { task?: HideAiTask; home?: HideAiHome; workspace_id?: string; turn?: HomeTurn };
 
 /** A checkout Hide AI made for an agent it started, joined to a checkout by device and path. */
 export type HideAiCheckout = { device_id: string; path: string; task?: HideAiTask };
@@ -303,6 +313,56 @@ export type PullRequest = {
   closing_issues?: IssueReference[];
   /** The one state its mark draws, decided by the core (`PrState::of`). */
   state: PrState;
+  /** The branch it merges into. */
+  base_branch?: string;
+  /** The GitHub values the Work tab's PRs list and the card read (`PullRequestWork`). */
+  work?: PullRequestWork;
+};
+
+export type MergeState = "unknown" | "clean" | "has_hooks" | "unstable" | "dirty" | "behind" | "blocked" | "draft";
+
+/** The values `gh` gave beyond badge, checks and review (`PullRequestWork`). */
+export type PullRequestWork = {
+  author: string | null;
+  author_is_bot: boolean;
+  /** The signed-in account wrote it. */
+  mine: boolean;
+  merge_state: MergeState;
+  review_requests: { kind: "user" | "team"; name: string }[];
+  asked_of_me: "none" | "direct" | "team";
+  failed_checks: { name: string; url: string | null }[];
+  pending_checks: number;
+  queue_position: number | null;
+  review_requested_at_unix_ms: number | null;
+};
+
+/** What a pull request's card reads beyond the list, per head commit (`PrCardSnapshot`). */
+export type PrCard = {
+  workspace_id: string;
+  number: number;
+  reading: boolean;
+  head: string | null;
+  body: string | null;
+  files: { path: string; additions: number; deletions: number; generated: boolean }[] | null;
+  files_total: number;
+  threads: { reviewer: string | null; path: string; line: number | null; text: string }[] | null;
+  merge: { methods: PrMergeMethod[]; queue: boolean; can_merge: boolean } | null;
+  /** Parts the last read could not get. */
+  failed: ("body" | "files" | "threads")[];
+  /** hide-ai's summary at `head`; absent while off, paused, failed or not made. */
+  summary?: string;
+  write: PrWrite | null;
+};
+
+export type PrMergeMethod = "merge" | "squash" | "rebase";
+
+/** The Merge or branch update asked for from a card, and how it went (`PrWriteSnapshot`). */
+export type PrWrite = {
+  action: "merge" | "update_branch";
+  head: string;
+  method: PrMergeMethod | null;
+  phase: "working" | "done" | "failed";
+  reason: "head_moved" | "denied" | "conflict" | "not_mergeable" | "unreachable" | "failed" | null;
 };
 
 /** Why a `gh` lookup failed, as the core names it; the catalogs word each (issueSettings.gh*). */
@@ -499,7 +559,7 @@ export type PrFeedback = {
 };
 
 /** The Overview's pull-request work in flight (`PrWorkSnapshot`), one slot each. */
-export type PrWork = { link: PrLink | null; feedback: PrFeedback | null };
+export type PrWork = { link: PrLink | null; feedback: PrFeedback | null; cards?: PrCard[] };
 
 export type Purpose = { text: string; origin: string };
 
@@ -685,7 +745,7 @@ export type Workspace = {
   /** The project's tasks, the Overview's Tasks and Agents views read these. */
   tasks?: ProjectTasks;
   /**
-   * The project's pull requests for the Overview's PRs tab, one per branch:
+   * The project's pull requests for the Work tool's PRs lens, one per branch:
    * every open one, and a merged one while its worktree is recorded here or
    * for 14 days after it merged (PRD overview-lenses-prs D-52). A local Git
    * project's only; absent while it has none.
@@ -999,7 +1059,9 @@ export type ViewDisplaySnapshot = {
   path: string;
   /** The document's name, or a browser page's title (its host until it has one). */
   label: string;
-  kind: "file" | "diff" | "browser";
+  kind: "file" | "diff" | "browser" | "pull_request";
+  /** The pull request a `pull_request` display is the card of. */
+  pr?: number | null;
   /** Which History group a diff shows; null for a file. */
   committed: boolean | null;
   preview: boolean;
@@ -1372,6 +1434,8 @@ export type BackgroundAi = {
   chosen: boolean;
   /** The `에이전트 요약` switch; absent from an older daemon, which always summarizes. */
   agent_summary?: boolean;
+  /** The `PR 요약` switch; absent from an older daemon, which has none. */
+  pr_summary?: boolean;
   /** The share of an agent's week Hide AI may use (Settings › Hide AI › Usage limit); null is No limit. Absent from an older daemon, which has none. */
   usage_limit?: number | null;
   providers: AiProvider[];
@@ -1483,7 +1547,11 @@ export type ArchiveDetail = {
 export type MemoryCardKind = "rule" | "decision" | "lesson" | "fact" | "preference";
 
 /** Where a card's promotion into the repository stands (`memory_promotion_state`). */
-export type MemoryPromotionState = "running" | "pr_open" | "merged" | "failed" | "unconfirmed";
+/**
+ * `building`: the card's decision is not built yet and another branch builds it; that branch's pull request carries the card in.
+ * `unbuilt`: nothing builds it, and `물어볼 것` asks once.
+ */
+export type MemoryPromotionState = "running" | "pr_open" | "merged" | "failed" | "unconfirmed" | "building" | "unbuilt";
 
 /** What the Memory tab's operator asks for (`memory_action`). */
 export type MemoryAction = "enable" | "disable" | "delete" | "forget" | "undo" | "promote" | "dismiss" | "card_right" | "doc_right";
@@ -1509,7 +1577,7 @@ export type MemoryRow = {
     state: MemoryPromotionState;
     /** The durable promotion attempt's start; absent on older daemons. */
     started_at_unix_ms?: number;
-    /** The agent putting it in the repository, while it runs; `pane_id` is null once the agent ended. */
+    /** The agent putting it in the repository, while it runs, or the one at work on the branch that builds a `building` card; `pane_id` is null once the agent ended. */
     agent: { name: string; pane_id: string | null } | null;
     pr_number: number | null;
     /** Original repository-qualified target; unknown on legacy attempts. */
@@ -1524,7 +1592,9 @@ export type MemoryRow = {
 export type MemoryQuestion =
   | { kind: "promote"; number: number; title: string; human_session_count: number; pulled_session_count: number }
   | { kind: "docs_disagree"; number: number; title: string; document: MemoryDocument }
-  | { kind: "failed"; number: number; title: string; start_failure: MemoryStartFailure | null };
+  | { kind: "failed"; number: number; title: string; start_failure: MemoryStartFailure | null }
+  /** The card's decision is not built and nothing builds it; `reason` is what the agent placing it saw. */
+  | { kind: "unbuilt"; number: number; title: string; reason: string | null };
 
 /**
  * Why a failed promotion's agent never started (`memory_start_failure_code`):
@@ -1763,6 +1833,10 @@ export type SnapshotRest = {
     accent_hex?: string;
     /** `system`, `light` or `dark`; the page reads anything else as Dark. */
     theme?: string;
+    /** Whether list rows and tabs draw the agent's logo (`contracts/snapshot-wire-enums.json`: `agent_logo_mode`); absent reads as hidden. */
+    agent_logo_mode?: AgentLogoMode;
+    /** `hide` or `neutral` (`contracts/snapshot-wire-enums.json`: `color_theme`); the page reads anything else as Hide. */
+    color_theme?: string;
     /** Core-confirmed explicit choice; null follows this client's system language. */
     interface_language?: "en" | "ko" | "zh-CN" | "ja" | null;
     /** The first-run agent choice (`contracts/snapshot-wire-enums.json`: `agent_onboarding`): absent until this Mac's kit answered, `pending` while its kit record waits for the operator's answer. */

@@ -165,6 +165,16 @@ impl Runtime {
             .count()
     }
 
+    /// Those of them that will add a display to the presentation of the tab
+    /// `owner`, so the tab's own cap counts them too.
+    pub(super) fn pending_tab_placements(&self, key: &WorkspaceKey, owner: Option<&str>) -> usize {
+        self.document_opens
+            .values()
+            .flat_map(|open| &open.placements)
+            .filter(|placement| &placement.key == key && placement.owner.as_deref() == owner)
+            .count()
+    }
+
     /// Authoritative tab removal retires only that owner's GUI destinations.
     /// A shared read still serves every surviving explicit request.
     pub(super) fn prune_gui_reads(&mut self, key: &WorkspaceKey, tabs: &[&str]) -> bool {
@@ -321,11 +331,16 @@ impl Runtime {
                     .iter()
                     .any(|held| held.same_destination(placement))
             });
-            if !repeated
-                && self.pending_view_placements(&placement.key)
-                    >= crate::view_layout::MAX_VIEW_DISPLAYS
+            let full = if self.pending_tab_placements(&placement.key, placement.owner.as_deref())
+                >= crate::view_layout::MAX_TAB_VIEWS
             {
-                let error = crate::view_layout::LayoutError::DisplayLimit;
+                Some(crate::view_layout::LayoutError::TabDisplayLimit)
+            } else {
+                (self.pending_view_placements(&placement.key)
+                    >= crate::view_layout::MAX_VIEW_DISPLAYS)
+                    .then_some(crate::view_layout::LayoutError::DisplayLimit)
+            };
+            if !repeated && let Some(error) = full {
                 self.set_error(error.kind(), error.message(), false);
                 return;
             }

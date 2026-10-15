@@ -7,9 +7,18 @@
 
 import type { Checkout, SnapshotRest, StripTab, ViewLayoutSnapshot } from "./snapshot";
 
-/** The lane's tools, in the rail's order (D-01). */
-export const TOOLS = ["files", "changes", "agent_sessions", "memory"] as const;
-export type Tool = (typeof TOOLS)[number];
+export { TOOLS, type Tool } from "./laneTools";
+import type { Tool } from "./laneTools";
+
+/** What a tool is about: the Project (Work, Memory) or the front checkout (Files, Changes). The rail and the lane header draw it (PRD work-tab-pr-lens D-37). */
+export type ToolScope = "project" | "checkout";
+export const TOOL_SCOPES: Record<Tool, ToolScope> = { work: "project", memory: "project", files: "checkout", changes: "checkout" };
+
+/** Which basis the Work tool draws (PRD work-tab-pr-lens D-01). */
+export type WorkLens = "sessions" | "prs";
+
+/** The Work tool's basis and scope chip, kept per Workspace (B2). `only_checkout` is the front checkout only. */
+export type WorkView = { lens: WorkLens; only_checkout: boolean };
 
 /** The front Workspace's presentation as the core published it. */
 export type WorkspaceView = {
@@ -17,6 +26,10 @@ export type WorkspaceView = {
   path: string;
   /** The tool the lane shows, or null while the lane is closed. */
   tool: Tool | null;
+  /** The tool the lane last showed, kept while it is closed; null when it never showed one. */
+  last_tool: Tool | null;
+  /** The Work tool's basis and scope. */
+  work: WorkView;
   /** Whether the lane is pinned beside Agent Views rather than drawn over it (D-03). */
   pinned: boolean;
   /** Whether the files tool shows its tree column (D-05); with no view open the tree shows anyway. */
@@ -57,8 +70,8 @@ export type LaneSizes = {
  * (D-02..D-04, D-07, D-11):
  *
  * - `closed`: no tool; Agent Views has the body.
- * - `hidden`: a tool, but an unpinned lane the operator put away (a terminal
- *   click, Escape, an agent chosen); kept mounted out of sight.
+ * - `hidden`: a tool, but an unpinned lane the operator put away with
+ *   Escape; kept mounted out of sight.
  * - `overlay`: drawn over Agent Views, which keeps its width.
  * - `docked`: pinned, beside Agent Views, which gives up the lane's width.
  * - `expanded`: over the whole body; Agent Views keeps the width it had.
@@ -90,7 +103,7 @@ export type LaneInput = {
   treeWidth: number | null;
   /** The files tool has a view, or a file of this checkout opening into one. */
   hasViews: boolean;
-  /** An unpinned lane is up: called, or opened from the rail, and not yet put away. */
+  /** An unpinned lane is up: not put away with Escape since it was last called or opened. */
   shown: boolean;
   expanded: boolean;
   /** The body's width left of the tool rail. */
@@ -182,27 +195,21 @@ export function agentEntries(checkout: Checkout): StripTab[] {
 export type CallsSeen = {
   /** The core's call count at the last read, or null before the first. */
   last: number | null;
-  /** The Workspace in front at the last read, by device and path. */
-  front: string | null;
 };
 
-export const NO_CALLS_SEEN: CallsSeen = { last: null, front: null };
+export const NO_CALLS_SEEN: CallsSeen = { last: null };
 
-type FrontView = Pick<WorkspaceView, "device_id" | "path" | "lane_called" | "lane_calls">;
+type FrontView = Pick<WorkspaceView, "lane_called" | "lane_calls">;
 
 /**
- * The page's reading of the front Workspace's calls: `reset` when another
- * Workspace came in front (an unpinned lane starts put away there), and
- * `call` when that Workspace was called since the last read, the call that
- * brought it in front included. A call older than the last read is history,
- * so an old call never moves a Workspace chosen later; a core that started
- * again counts from zero, so its lower count is only read.
+ * The page's reading of the front Workspace's calls: `call` when that
+ * Workspace was called since the last read, the call that brought it in
+ * front included. A call older than the last read is history, so an old
+ * call never moves a Workspace chosen later; a core that started again
+ * counts from zero, so its lower count is only read.
  */
-export function readCalls(seen: CallsSeen, view: FrontView | null | undefined): { seen: CallsSeen; reset: boolean; call: boolean } {
-  if (!view) return { seen: seen.front === null ? seen : { ...seen, front: null }, reset: false, call: false };
-  const front = `${view.device_id}\u0000${view.path}`;
-  const reset = front !== seen.front;
+export function readCalls(seen: CallsSeen, view: FrontView | null | undefined): { seen: CallsSeen; call: boolean } {
+  if (!view) return { seen, call: false };
   const call = seen.last !== null && view.lane_calls >= seen.last && view.lane_called > seen.last;
-  const next = seen.last === view.lane_calls && !reset ? seen : { last: view.lane_calls, front };
-  return { seen: next, reset, call };
+  return { seen: seen.last === view.lane_calls ? seen : { last: view.lane_calls }, call };
 }

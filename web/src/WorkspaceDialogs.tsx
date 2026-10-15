@@ -123,7 +123,7 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
   if (dialog.kind === "pr_link" || dialog.kind === "pr_new_issue" || dialog.kind === "pr_delegate") {
     const pr = target.workspace.pull_requests?.find((row) => row.number === dialog.prNumber);
     const task = dialog.kind === "pr_link" ? target.workspace.tasks?.tasks.find((row) => row.key === dialog.issueKey) : undefined;
-    if (pr && dialog.kind === "pr_delegate") return <PrDelegateDialog key={pr.number} actions={actions} workspace={target.workspace} pr={pr} onClose={close} />;
+    if (pr && dialog.kind === "pr_delegate") return <PrDelegateDialog key={`${pr.number}:${dialog.intent ?? "fix"}`} actions={actions} workspace={target.workspace} pr={pr} intent={dialog.intent} onClose={close} />;
     if (pr && dialog.kind === "pr_new_issue") return <PrNewIssueDialog key={pr.number} actions={actions} workspace={target.workspace} pr={pr} onClose={close} />;
     if (pr && task) return <PrLinkDialog key={`${pr.number}:${task.key}`} actions={actions} workspace={target.workspace} pr={pr} task={task} onClose={close} />;
     return (

@@ -9,15 +9,39 @@ What it needs from the operator, whether it is running, whether it has reported 
 - Activity: working, stopped, unknown.
 - Completion: reported, not reported.
 - Read: read, unread.
-- Ownership: operator, delegated.
+- Ownership: operator, delegated, or Hide AI's, for work a Hide-started agent does for a screen that owns it.
 
 `herdr-core/src/agent_state/axes.rs` is the single owner of all five.
 `agent_state/turn.rs` derives the group, request verb, close and rest gates from them; `sidebar.rs` assembles the snapshot rows.
 It also derives everything a view draws from them - the group, the mark, whether the row is emphasized, the status word, the descendant mark, and whether closing the pane needs a confirmation or a fresh status check - so no surface decides any of it a second time.
 
 Ownership is not stored anywhere.
-It is read back off the row: a row whose lineage depth is greater than zero is delegated, and every other row, including an orphan whose parent is gone, is the operator's.
+It is read back off the row: a row whose lineage depth is greater than zero is delegated, a root whose Hide AI snapshot names a home is Hide AI's, and every other row, including an orphan whose parent is gone, is the operator's.
 `ownership_of` is the only function that makes that judgement, and `apply_lineage` reapplies every derived value once the lineage is known.
+
+### Work Hide AI does for a home
+
+A Hide-started agent whose task kind has a home (today a Memory card's promotion, `memory_promote`, whose home is the Memory tab's To ask rows) is not the operator's work, so it is a third ownership value, `HideAi`, not a flag on an operator row (PRD hide-ai-work-home D-13).
+The coordination ledger's record of the spawn is the only source of the fact (`coordination::started`), and the task kind is a closed enum (`coordination::TaskKind`) whose exhaustive `home()` match makes a new kind fail to compile until it names its home.
+A kind this build does not know, or a record with no task, loads with the rest of the ledger and reads as no home: that one agent stays an operator row with its mark and a `hide_ai.task_kind_unknown` diagnostic (D-19).
+The row stays in the agent data, so ⌘K, tabs, the pane header's owl and `hide agent list` find it as before; what changes is which lists enumerate it.
+`agent_state::listed_for_operator` is the one decision: a `HideAi` row is a member of the sidebar's tree roots, Sessions, Overview's requests and graph, the phone's list, the checkout counts and the pet only while it is in Needs You, and no tree draws it even then (the raised Needs You and Sessions do).
+Its group is Needs You or Seen and never Working or Done, so it moves no Working or Done badge, rail count or notification.
+It is in Needs You when the agent itself asks (a question, approval or block, read like any row's) or when the home has a turn for the operator.
+The home's turn is computed by the core from what the Memory promotion module already follows, the attempt's pull request in the machine's PR catalog, and published on the row as `hide_ai.turn`:
+
+| The attempt's pull request | Turn |
+| --- | --- |
+| Open, not a draft, checks all passing or none, no change requested | `pr_review`, which stays after the row is read |
+| Open, not a draft, checks failed, and the agent is not working | `ci_failed` |
+| A draft, checks pending or unknown, a requested change, or failed checks while the agent works | none |
+| Merged, closed, or no pull request | none; the attempt leaves the table |
+
+A row has one line; its second line is the agent's ask or its block's cause, then `ci_failed`, then `pr_review`.
+Entering Needs You notifies once, as for an operator row, and a turn changing inside it does not notify again, because the notification state machine follows the group and not the word.
+Only a live agent has a row: an attempt with no agent (a failure with no pull request, an open pull request after the operator closed the pane) shows in the Memory tab alone (D-15).
+The shell words the turn and opens the home from the row (the Memory tab with the attempt's To ask row open); the phone opens the agent's detail.
+Regression owners: `a_hide_started_row_follows_its_attempts_pull_request_into_and_out_of_needs_you` and `a_home_owned_row_is_listed_only_while_the_operator_has_something_to_do` in `herdr-core/src/runtime/tests/`, `the_home_turn_follows_the_pull_request_and_the_agent` in `memory_promotion.rs`, and `a_home_owned_row_notifies_once_on_entering_needs_you_and_not_on_a_turn_change` in `hided/src/mobile/push.rs`.
 
 ## agent_status provenance and background waits
 
@@ -177,11 +201,15 @@ Demand has these sources:
 
 - A question is the core's label verdict on the agent's last message (`label.question`, see Task identity below).
   It exists only while the label is proven for the pane's current session, and it ends when the agent starts working again or a turn ran between two looks at a stopped agent, so a question never outlives the turn that asked it.
-- A native unanswered Claude `AskUserQuestion`, Codex `request_user_input`, Grok `ask_user_question`, omp `ask` or OpenCode `question` is a question even with summaries off.
+- A native unanswered Claude `AskUserQuestion`, Codex `request_user_input` or `request_user_input_async`, Grok `ask_user_question`, omp `ask` or OpenCode `question` is a question even with summaries off.
   A Grok session whose `plan_mode.json` is `Active` and awaiting plan approval is a plan approval, with `plan.md` as its bounded content, until that file says otherwise.
   The current-session/current-state read carries the optional `user_turn` row fact, with `kind: question|plan_approval` and optional `content: {text, choices, truncated}`.
   Text is capped at 8 KiB, choices at eight and each choice at 256 UTF-8 bytes; cuts preserve character boundaries and set `truncated`.
   A correlated native result, a later human turn or an abort clears the pending question.
+  Codex 0.162.1 asks with `request_user_input_async`, whose tool returns `{"accepted":true}` at once while Codex keeps working, so that result answers nothing: the question stays open, as an unread Question in Needs You even while Herdr says the agent works (the demand axis does not read the activity), until a reply names it.
+  The reply is a user message `<send_user_message_question_reply>` carrying `questionItemId`, a JSON array `[tool, call, question number]`; each question of the call waits for its own reply, and the match is on that id, never on the question or answer text.
+  That message is scaffolding like the other injected prefixes, so it is not a human turn and feeds no label as a request; a person's own message still ends the wait, and a turn that starts without one does not (the question outlives the turn that asked it).
+  A reply whose id cannot be placed, or an async call whose arguments cannot be read, leaves the wait unknown rather than nothing.
   Missing content remains absent, and a failed, incomplete or older-state read publishes no structured fact; the independent letter hold stays unknown rather than assuming an answer.
   Native calls are bounded to eight per turn with 256-byte identities; exceeding the bound fails the read instead of dropping a pending question.
 - Approval is Herdr's `blocked` lifecycle, whether or not the operator has read it.
@@ -213,6 +241,9 @@ Whether the operator has read a demand is Hide's own record, never Herdr's tab-s
 
 A blocked pane, or one whose native question or plan waits for the operator, stays in Needs You whether or not it has been read.
 The prompt is still waiting, so it leaves the group when answered rather than when looked at.
+
+A delegated row sits only in Working or Seen, and a Hide AI row for a home only in Needs You or Seen.
+Each of the four groups above is then a group of the rows the operator's lists enumerate; a home's row is counted in none of them until it is in Needs You (see Work Hide AI does for a home).
 
 Done is deliberately separate from Needs You: finished-unseen is "look when you have a moment", an unread demand is "act now".
 
@@ -341,7 +372,7 @@ Every surface draws the mark in one box of one size: `●` and `○` as a filled
 | No demand, stopped, no completion | `○` | Gray | Idle; a newly opened agent is ready for its first instruction |
 | No demand, working | `●` | Blue | Working |
 | No demand, stopped, and waiting on children, a proven background task or a reply (`wait`) | `○` | Blue ring | Waiting; Working group until nothing it waits for is left |
-| No demand, stopped, read | `○` | Gray | Idle; a read completion is not another unread Done |
+| No demand, stopped, read | `○` | Gray (`--status-seen`, the same in both color themes) | Idle; a read completion is not another unread Done |
 | No demand, unknown activity | `~` | Gray | Unknown; never silently labeled Idle |
 | Owning server unavailable | `⊘` | Gray | Disconnected; current agent activity is unavailable |
 | Hide ended the agent and holds its conversation | `☾` (moon) | Gray | `sleeping`, `waking` or `sleep_failed` (`Sleeping · resumes when opened`, `Waking…`, `Sleeping · couldn’t resume`); stays in Seen |
@@ -407,7 +438,7 @@ Connection recovery resumes the current canonical projection; it does not mark a
 The disclosure chevron sits at the right edge of a Workspace row.
 The left edge holds the checkout-kind icon, title, and checkout badges.
 The representative status moves into the trailing agent summary chip immediately before the chevron.
-A root agent status mark aligns with the Workspace branch icon; compact agent rows use a 4pt gap between status and title and draw no provider logo (the pane header alone does; PRD agent-mark-quiet).
+A root agent status mark aligns with the Workspace branch icon; compact agent rows use a 4pt gap between status and title and draw no provider logo unless the operator's agent logo view mode shows it or an ⌥ hold peeks at it (the pane header always does; PRD agent-mark-quiet, PRD agent-logo-view-mode).
 A Workspace with nested agent rows uses the entire row, including its name and empty space, as the disclosure hit area.
 Its right-edge chevron is a non-interactive indicator within that same button, not a second small control.
 A Workspace without nested agent rows shows no chevron and clicking its row opens the Workspace.
@@ -416,7 +447,7 @@ Collapsing does not change the selected pane, tab, agent read state, running pro
 `collapsed_checkout_ids` persists across launches.
 The web shell starts every checkout open and keeps explicit collapses in `session_collapsed_checkout_ids`, changed by `checkout_agents_toggle` and the admitted `focus_checkout` event.
 The older `expanded_checkout_ids` and `collapsed_checkout_ids` records do not determine web checkout disclosure.
-Inside an open checkout, actual tabs group complete root subtrees as segments of one list: every root stands on one status axis, a guide per tab marks the boundary, and the tab line at a segment's head appears only when the tab holds at least two recognized agent panes and has a sidebar root.
+Inside an open checkout, actual tabs group complete root subtrees as segments of one list: every root stands on one status axis, a guide per tab marks the boundary, and the tab line at a segment's head appears only when the tab has a sidebar root and either holds at least two recognized agent panes or carries a manual name.
 The glyph's count describes physical agents in that tab, independently of root ownership or child disclosure; raised groups and sleeping sessions retain their existing positions.
 Tab names use the core's explicit manual-name and stable-number metadata rather than an automatic task label, and no tab fold is saved.
 Raised Needs You and Done rows remain available, while number shortcuts skip hidden tree rows.
@@ -550,7 +581,7 @@ The sighting keeps the rule above: a project whose last read worked and has noth
 The read is quiet: unlike a refresh from the menu or the popover, it does not set `loading`, so the row keeps what it shows until the answer moves it.
 Each address sets off this once while its sighting is under fifteen minutes old, so an address the read still does not return (another repository, or past the newest 200) is not asked for again; a sighting older than that sets off nothing, and an address an answer holds stops being remembered.
 At most 64 addresses that a project owns are remembered at once, and one past that is not read and is written as `read.sighted_over_limit`; the label worker keeps at most 32 sightings between two hand-offs, the newest, and a read that finds more writes `read.sighted_capped` with how many it dropped; each owned address it remembers writes `read.sighted` with the projects read now and those waiting for an answer, both empty when every one of them is in failure backoff.
-A repository with no GitHub remote is an answer, not a failure: when the remotes its node read with the catalog's path facts name no repository `gh` could read, the reader answers "no GitHub remote" (`failure_category` `no_github_remote`, neither stale nor an `unavailable_reason`) with no `gh` call and the screen draws no GitHub state for it; a `gh` that says the same for a repository whose remotes the node could not read (an older node, a config that includes another file, a remote URL in a form the node does not read such as `http://`) or that are not GitHub's gives the same answer.
+A repository with no GitHub remote is an answer, not a failure: when the remotes its node read with the catalog's path facts name no repository `gh` could read, the reader answers "no GitHub remote" (`failure_category` `no_github_remote`, neither stale nor an `unavailable_reason`) with no `gh` call and the screen draws no GitHub state for it; a `gh` that says the same for a repository whose remotes the node could not read (an older node, a config that includes another file, a remote URL in a form the node does not read such as `http://`) or that are not GitHub's gives the same answer. A device project whose `origin` its node reads as naming no GitHub repository gets the same answer (`available`, no `unavailable_reason`), so its checkout cards draw nothing for it either.
 When the node read its remotes, its clock (`GithubClock::NoRemote`) never asks again on its own: the next read comes when the catalog's remotes for that repository change, written as `read.remotes_changed`, or on an explicit refresh; before, each read ran `gh pr list` twice to learn that and was retried every five minutes forever.
 When the node could not, `gh`'s answer is asked again five minutes later, since a remote can be added where the node does not look.
 A failed read (one that did not get the project's pull requests or its issues, whatever the reason: `GithubProjectSnapshot::read_outcome`) is asked again after 30 seconds, then 60, 120 and 240, and from the fifth failure in a row every five minutes; the first read that works starts the count over, and another project's clock is untouched: the reader hands back its cached entry for every project in a request, so an answer counts for a project only when that project's generation moved since its last answer.
@@ -563,13 +594,15 @@ The last successful answer of every project is kept in `github-snapshot.json` in
 A restored answer is stale until a read replaces it: `stale` is set and `last_success_at_unix_ms` stays the time of the read that produced it, so the icon is muted and the popover says how old it is.
 A file that cannot be read, decoded or is of another schema version is not used and is named in the diagnostic log as `snapshot.discarded`; the next answer replaces it.
 `loading` is true only for a project with no answer to show whose first read has not yet answered; a project the reader answers nothing for is not loading either, and a project with a restored or earlier answer is loading only while an explicit refresh of it is in flight.
-A project's pull requests are two [`gh pr list`](https://cli.github.com/manual/gh_pr_list) calls asked for at the same time, each under the 15-second limit: the 200 newest pull requests of any state without `statusCheckRollup` (with `headRefOid` and `isCrossRepository`), and the open ones with `number,statusCheckRollup` only.
+A project's pull requests are two [`gh pr list`](https://cli.github.com/manual/gh_pr_list) calls asked for at the same time, each under the 15-second limit: the 200 newest pull requests of any state without `statusCheckRollup` (with `headRefOid`, `isCrossRepository`, `createdAt`, `closedAt`, `author`, `mergeStateStatus` and `reviewRequests`), and the open ones with `number,statusCheckRollup` only.
+The Work tool's PRs lens (below) adds three reads to the same generation: the signed-in login (`gh api user --jq .login`, once per read of all projects, right after `auth status`), the open pull requests the account was asked to review (`gh pr list --search review-requested:@me`, numbers only), and one GraphQL query for each open pull request's place in the merge queue and the time of its last review request (`HidePrFacts`).
+They are part of the answer: a read without them would put a pull request on the wrong side of `mine` or of the queue, so any of them failing fails the project's read like a failed list does, and the last answer stays.
 Asking for the checks of every merged and closed pull request made one read take 11 - 14 seconds, so a settled pull request's checks are not asked for again: the checks read for the same number and head commit while it was open stay in the reader's cache, and without them its checks are `Unknown`, drawn as no mark.
 Either call failing fails the project's read, which keeps the last answer and states the failure, so half an answer is never a repository with no pull requests; `pull_requests.ok`, `pull_requests.empty` and `pull_requests.failed` carry the read's `duration_ms`.
 Which pull request belongs to a checkout is one rule (`github::belongs_to_checkout`, chosen by `pull_request_for_checkout`), because a branch name is used again for new work: a pull request from a fork never belongs to a local branch of the same name, an open one belongs to the checkout on its head branch, and a merged or closed one only while the checkout's commit (the worktree reader's `head_sha`, or, before that reader has answered, the commit `Repository::head_oid` read from the repository's own files with no process) is exactly the pull request's head commit on that branch; a checkout that was amended, rebased or left behind after the last push therefore loses its merged pull request.
 Several candidates resolve open, then merged, then closed, the most recently updated first among equals, and a checkout whose commit is not read yet takes no settled pull request.
 The sidebar row, the worktree catalog, the agent rows' PR mark and the link and hand-off actions all ask that rule, and a catalog read that moves a HEAD decides the connection again.
-The PRs view and a worktree's base still list one pull request per head branch (`preferred_per_branch`).
+The Work tool's PRs lens and a worktree's base still list one pull request per head branch (`preferred_per_branch`).
 The same generation also reads open issues, their Project Status, and PR closing references for Project Home.
 The issue list uses `sort:updated-desc` and reads one sentinel beyond the 200-issue display cap so overflow is based on evidence.
 Issue references accept a GitHub issue URL, `owner/repo#N`, or `#N` when the repository is known; unsupported hosts and malformed references are rejected.
@@ -604,6 +637,45 @@ The pane header's Review and Merge bands read the same state (`agent_state/heade
 The web turns a state into its icon, colour and word in one module (`web/src/prMark.ts`) and draws it with one component (`web/src/components/pr-mark.tsx`); no screen keeps a colour table or a classifier of its own, and the checks and review words and the stale reading live in the same module.
 The state word and the accessibility label keep the meaning without relying on colour.
 A mark dims while GitHub cannot be read again, and its tooltip says when it was last read.
+
+### Pull request groups
+
+The Work tool's PRs lens (`docs/UI_BEHAVIOR.md`, Work: the PRs lens and the PR card) lists pull requests in groups the core decides, in `herdr-core/src/agent_state/work/board.rs`, from GitHub values the five-minute read carries and from facts only Hide holds: the link record's sessions and the agents' own state.
+A pull request body's headings and a repository's own scripts decide nothing, so the same rules hold in every repository, and Hide AI never changes a group or a reason.
+The result is the `prs` board of each project's `agent_scope`: rows (group, fold, reason, agents, the pane a reason is about, the checkouts it is the work of, its issue), the groups with their numbers in draw order, and the count of `needs_you` rows that are not folded.
+
+Which pull requests are listed: the operator's own, those a session of theirs made or worked on, those a review was asked of them or of their team for, and bots'; a merged one needs the first two, a closed one that was not merged is never listed, and a teammate's pull request none of these reaches is not.
+"Mine" is the pull request's `author.login` equal to the signed-in login.
+A pull request's agents are the live agents whose session the link record names as having made or worked on its branch; sharing a folder alone ties nothing.
+An agent that finished and is not yet looked at moves no group, because the unread check is Sessions' (Done).
+
+Each pull request stops at the first slot that fits:
+
+| # | Fits when | Group | Reason |
+| --- | --- | --- | --- |
+| 1 | the author is a bot (GitHub's `is_bot`) | Bots | the reason its other rules give |
+| 2 | its agent is asking (a question, an approval or an error) | Needs You | `reply` with the agent and the question's first line |
+| 3 | its agent is working but has not moved for the watch's first inactivity window (`INACTIVITY_MS`, 20 minutes) | Needs You | `check` with the agent and the time since it moved |
+| 4 | its agent is working | Agent is working | `working` |
+| 5 | it is in the merge queue | Merging · merged, first | `queued` with the place |
+| 6 | it is a draft | Drafts | `draft` with its age |
+| 7 | it is owned (mine, a session of mine touched it, a bot's) and checks failed that GitHub's `mergeStateStatus` does not call `UNSTABLE`, or a change request stands, or the state is `DIRTY` | Blocked · no agent | `failed` with the first check's name and how many more, `changes`, or `conflict` with the base |
+| 8 | it is mine and the state is `CLEAN` or `HAS_HOOKS`; `UNSTABLE` too, with the failed required-or-not check named | Needs You | `merge` |
+| 9 | it is mine and the state is `BEHIND` | Needs You | `update` with the base |
+| 10 | it is mine and the state is `BLOCKED` | Waiting with `ci` while checks run, Waiting with `waiting_review` while a review is requested, else Needs You | `assign_reviewer` |
+| 11 | a review was asked of the operator by name | Needs You | `review` with the author and the time since the ask |
+| 12 | a review was asked of a team of the operator's (the search finds it, the request names no user) | Needs You, folded as `팀 리뷰 요청 N` | `team_review` |
+| 13 | anything else open | Waiting | `ci` while checks run, else `waiting_review` |
+
+A merged pull request is Merging · merged below the queued ones, newest merge first.
+When GitHub has not computed `mergeStateStatus` (`UNKNOWN`) the pull request keeps the group it stood in on the previous board with the reason `checking`, and waits when it is new, so a pull request never jumps while GitHub thinks.
+A pull request nothing has changed on for 7 days (`OLD_MS`) in any group but Merging · merged is folded as `오래된 PR N` inside its group.
+Folded lines (a team's review asks, old pull requests) are in no count: the Work icon's number is the Sessions Needs You rows plus these unfolded Needs You rows, one for an agent that stands in both, and the sidebar's Needs You is unchanged.
+Within a group the order is the reason's urgency, then the newest update (the newest merge for Merging · merged), then the larger number.
+Times in a reason are the instants they began, never durations, so time passing publishes nothing; the web counts them on its one clock.
+
+`<checkout> only` keeps a row whose `checkout_ids` hold the checkout: the one on the pull request's branch, the ones its recorded sessions ran in and the ones its live agents sit in.
+A project with no GitHub remote has no board, and `gh` missing or signed out is a state of the project's GitHub status, not an empty board.
 
 ### Project Overview summary
 
@@ -665,6 +737,9 @@ OpenCode's `question` tool part supplies the question's text and choices while i
 The agent's own title rides the same proof as the label: it is laid on the row only while the pane's reference proves the session it was read from.
 The Herdr workspace label is never a name: it is whatever the workspace was called when it was opened, and one workspace can hold agents for several checkouts.
 The Herdr agent name remains the unique control identifier that Sasu and other orchestrators assign at start, so it never enters the display ladder.
+A registration's name (`AgentRecord::name`) is optional and is never a pane id.
+Where a program compares names, an unnamed registration is called by its registration id (`coordination::wire_name`), never by its title: the label worker accepts a parent's request as its child's work only when the envelope header's sender equals the `parent_name` of the lineage facts, and both come from that one function, so a title that changes every turn cannot separate them ([delivery.md](delivery.md#names-on-the-wire-and-on-screen)).
+Where a person reads a name (the bell line, a row) an unnamed agent is called by its title, and by its runtime's name when it has none.
 Nothing publishes a session `name`, reads Codex's first human turn as a title, or renames an agent or tab.
 
 The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex, Grok, Pi, omp, Cursor or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v10`), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
@@ -712,6 +787,7 @@ A settled pull request counts as live only when it settled after the operator's 
 The verb's time is kept per pane in `core-state.json` (`request_verbs`), so a restart does not restart the wait.
 Opening a finished row in the request view (`overview_open_result`) reads the pane the way a focus does and moves no focus; a demand outlives the read as everywhere else.
 Who sent a request is the label worker's verdict (ARCHITECTURE.md, Agent labels in the core); a delegated child's first request is its parent's, by the parent row's title.
+The session's first request is the first request any read holds, whichever read that is: an agent can write its session before its first prompt (Grok and OpenCode do, every time), so the offset stays unset through empty reads and is kept for good once set; only a rewritten conversation starts it over.
 Text another program wrote, a title, a label line, a sender's name, a request or a reply, reaches the row without control characters or bidirectional controls, and a title, line or name also without the other Unicode default-ignorable code points (zero-width characters, Hangul fillers; `herdr-core/src/display_text.rs`) and on one line and a sender's name at most 64 characters; a sender whose name reads as the row's word for the operator or an unnamed agent (`나`, `에이전트`, `operator`, compared by its letters and digits after NFKC and case folding) is shown as an unnamed agent.
 Regression owners: `herdr-core/src/request_view/tests.rs` for the verb, the pull request links, duty and senders, and `runtime::tests::labels` for the title ladder, the stopped and waiting verbs with the switch on and off, the open-result read and the running-checks re-read.
 
@@ -730,6 +806,7 @@ Reading an AI question skips its demand rung and leaves a dimmed question; menu 
 Without a label line the row keeps its outline but carries no invented line.
 `agent_scope.sessions` publishes the ordered member indices and the nonempty groups for checkout, project, device and overall scopes, with no counts.
 Delegated children are never Sessions members of their own: they are drawn under their root through every row the operator expands, at any depth (`sessions_expanded_agent_pane_ids` in core UI state holds each expanded pane), and Factory workers retain their dedicated surface.
+A Hide AI row for a home is a member only while it is in Needs You, where it draws the home's turn under the agent's own ask or block cause and opens the home when chosen.
 
 Resolve records `resolved_sessions` in core UI state and publishes the hidden row only after the existing coalesced writer acknowledges that exact save.
 Failure keeps it visible with the existing actionable save error; input, activity, session replacement or pane closure invalidates a pending acknowledgement.
@@ -890,6 +967,7 @@ A read root question clears the server’s effective push state, while the phone
 The phone reads the core’s `holds_notification` value, and `emphasized` controls its compact title.
 The projection and push regression tests remain in `hided/src/mobile/{projection,push}.rs`, exercising the same public core functions the transport calls.
 The desktop app's agent notifications run the same transitions on their own ledger (`hided/src/desktop_notices.rs`, PRD first-run-onboarding D-09), so a desktop notification and a phone push agree on what is new without either one's seed or mode moving the other.
+A Hide AI row for a home is on the phone's list, and in these transitions, only while it is in Needs You, so the notification follows the group: one notice when it enters, none when the home's turn changes inside it, and none for its progress (PRD hide-ai-work-home B2, B10); the phone opens the agent's detail from it.
 
 ### With and without Hide AI
 

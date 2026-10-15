@@ -4,7 +4,7 @@
 // files. Nothing here touches the DOM, so the order, the expansion and the Git
 // slot are all testable without a browser.
 
-import { fileIcon, type FileIcon } from "./fileIcons";
+import { fileIcon, folderIcon, type FileIcon } from "./fileIcons";
 import type { ChangedFileStatus, ChangesSnapshot, DeviceHost } from "./snapshot";
 import type { DirectoryList } from "./store";
 import type { MenuEntry } from "./components/entry-menu";
@@ -199,7 +199,7 @@ export function explorerRows({
         expanded: open,
         listing: entry.is_directory ? (listings[entry.path] ?? null) : null,
         decoration: decorationFor(decorations, entry.path, rootPath, entry.is_directory),
-        icon: fileIcon(entry.name),
+        icon: entry.is_directory ? folderIcon(entry.name, open) : fileIcon(entry.name),
       });
       if (open) walk(entry.path, depth + 1);
     }
@@ -254,7 +254,7 @@ export function filteredRows({
         expanded: isDirectory,
         listing: null,
         decoration: decorationFor(decorations, child.path, rootPath, isDirectory),
-        icon: fileIcon(child.name),
+        icon: isDirectory ? folderIcon(child.name, true) : fileIcon(child.name),
       });
       if (isDirectory) walk(child, depth + 1);
     }
@@ -272,12 +272,6 @@ export function rowTitle(row: ExplorerRow, rootPath: string, t: TFunction<"trans
 /** The cell's accessibility label. */
 export function rowAccessibilityLabel(row: ExplorerRow, t: TFunction<"translation">): string {
   return row.decoration ? t("explorer.rowLabel", { name: row.name, status: t(row.decoration.title) }) : row.name;
-}
-
-/** The disclosure mark a folder row draws; the sidebar already uses these. */
-export function disclosureMark(row: ExplorerRow): string {
-  if (!row.isDirectory) return "";
-  return row.expanded ? "▾" : "▸";
 }
 
 /** The folder a path sits in, as written; a top-level path returns itself. */

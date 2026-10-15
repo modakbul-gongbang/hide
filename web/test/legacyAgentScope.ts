@@ -8,9 +8,8 @@ import type { CloseScope, CloseSubtree } from "../src/agentScope";
 import type { PaneRow } from "../src/snapshot";
 import { projectRows as drawProjectRows, checkoutPresentation as drawCheckoutPresentation, checkoutCard as drawCheckoutCard } from "../src/projects";
 import { projectListNumbers as drawProjectNumbers } from "./legacyProjectNumbers";
-import { buildPullRequests as beforeBuildPrs } from "./legacyPrBoard";
 import { checkoutAgentRows as beforeCheckoutAgentRows } from "./legacyAgentTree";
-import { buildTasks as drawBuildTasks, buildPullRequests as drawBuildPullRequests, shownAgents as drawShownAgents, type BoardRow } from "../src/projectBoard";
+import { buildTasks as drawBuildTasks, shownAgents as drawShownAgents, type BoardRow } from "../src/projectBoard";
 import { legacyAgentRow } from "./legacyAgentRow";
 // Frozen scope fixture adapter from main 9f144877. Test data only.
 // Assertions keep the old screen values; production reads the core wire.
@@ -26,7 +25,7 @@ const todo = verbs.slice(0, 6);
 /** The frozen scope with the retired `work` map the legacy request list still reads. */
 export type LegacyScope = AgentScope & { work: Record<string, RowWork> };
 export function emptyScope(): AgentScope {
-  return { sessions: { groups: [] }, overview_needs_you: 0, has_working: false, relations: {}, listed: [], places: {}, places_live: false, graph: { cross: {}, attention: 4, recency: "", checkouts: {}, variants: Array(16).fill(0), tucked: [{}] }, closes: {}, raised: [], owners: {}, badge_total: 0, prs: { counts: { turn: 0, fixing: 0, blocked: 0, review: 0, draft: 0, look: 0 }, rows: [], groups: [], open: 0 }, rows: [], group_rows: [], descendants: {}, children: {}, folded: {}, tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, sidebar_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, global_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, stopped: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
+  return { sessions: { groups: [] }, overview_needs_you: 0, has_working: false, relations: {}, listed: [], places: {}, places_live: false, graph: { cross: {}, attention: 4, recency: "", checkouts: {}, variants: Array(16).fill(0), tucked: [{}] }, closes: {}, raised: [], owners: {}, badge_total: 0, prs: { rows: [], groups: [], needs_you: 0 }, rows: [], group_rows: [], descendants: {}, children: {}, folded: {}, tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, sidebar_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, global_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, stopped: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
 }
 
 export function legacyScope(lens: readonly LensAgent[], all: readonly AgentRow[] = lens.map((l) => l.agent), workers: ReadonlySet<string> = new Set()): LegacyScope {
@@ -90,10 +89,8 @@ export function legacyProject<T extends Workspace>(project: T, agents: readonly 
     value.global_tree = value.tree;
     return { ...checkout, agent_scope: value };
   });
-  const prs = beforeBuildPrs({ workspace: treeProject, agents: [...agents], device: null }, 0);
   scope.graph = legacyGraphScope(project, scope.members, agents);
   scope.graph.cross = legacyGraphCross(project, members);
-  scope.prs = { counts: legacyPrCounts(prs), rows: prs.groups.flatMap((g) => g.rows).map((r) => ({ number: r.number, checkout_id: r.checkout?.id ?? null, agents: legacyRefs(r.agents, agents), lineage: r.lineage.map((a) => ({ ...legacyRefs([a.agent], agents)[0]!, depth: a.depth })), needs_look: r.needsLook, group: r.group, issue: r.issue ? { key: r.issue.key, label: r.issue.label, url: r.issue.url, task_key: r.issue.task?.key ?? null } : null })), groups: prs.groups.map((g) => ({ group: g.group, numbers: g.rows.map((r) => r.number) })), open: (project.pull_requests ?? []).filter((p) => p.badge !== "merged").length };
   return { ...project, inactive_checkouts: project.inactive_checkouts ?? { expanded: false, checkout_ids: [] }, checkouts, agent_scope: scope };
 }
 
@@ -256,7 +253,6 @@ export function shownAgents(rows: BoardRow[]) { return drawShownAgents(legacyTre
 export function buildTasks(projects: readonly BoardProject[], ...args: Parameters<typeof drawBuildTasks> extends [unknown, ...infer R] ? R : never) {
   return drawBuildTasks(projects.map((p) => ({ ...p, workspace: legacyProject(p.workspace, p.agents) })), ...args);
 }
-export function buildPullRequests(project: BoardProject, now: number) { return drawBuildPullRequests({ ...project, workspace: legacyProject(project.workspace, project.agents) }, now); }
 
 function legacyRaised(projects: readonly Workspace[], listed: readonly ListedAgent[]) {
   const drawn = new Set<string>(), owners: Record<string, string> = {};
@@ -316,13 +312,6 @@ export function subtreeOf(inside: readonly string[], agents: readonly AgentRow[]
 }
 export function closeSheet(panes: readonly PaneRow[], host: readonly AgentRow[], all: readonly AgentRow[]) { return drawClose.closeSheet(panes, host, all, legacyCloseScope(panes, host, all)); }
 
-export function legacyPrCounts(board: { groups: { group: string; rows: { needsLook: boolean; state: string }[] }[] }) {
-  const rows = (group: string) => board.groups.find((g) => g.group === group)?.rows ?? [];
-  const turn = rows("turn");
-  const look = turn.filter((r) => r.needsLook).length;
-  const draft = turn.filter((r) => !r.needsLook && r.state === "draft").length;
-  return { turn: turn.length, fixing: rows("fixing").length, blocked: rows("blocked").length, review: turn.length - look - draft, draft, look };
-}
 
 function legacyRefs(selected: readonly AgentRow[], source: readonly AgentRow[]): import("../src/agentScope").AgentRef[] {
   return selected.map(row => ({ pane_id: row.pane_id, occurrence: source.filter(a => a.pane_id === row.pane_id).indexOf(row) }));

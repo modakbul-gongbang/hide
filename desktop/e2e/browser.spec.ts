@@ -473,7 +473,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
     const plain = await browser.newPage();
     await plain.goto(status.url);
     await enterWorkspace(plain, "fixture");
-    await showTool(plain, "files"); // another client's lane starts put away (PRD right-lane B22)
+    await showTool(plain, "files");
     await tab(plain, "Page A").click();
     // Page C, opened beside Page A, shows the same notice in its own area.
     await expect(plain.locator(`[data-browser-display="${a}"] [data-area-empty="browser-host"]`)).toContainText("Pages open in the hide desktop app.");
@@ -567,8 +567,8 @@ test("browser: a shell layer never has a page drawn over it, and a page tab's hi
   await fitWindow(app, { width: 720, height: WINDOW.height });
   await showTool(page, "files");
   await expectOnSlot(page, url, a);
-  await page.locator('[data-lane-tool="agent_sessions"]').click();
-  await expect(page.locator('[data-lane="agent_sessions"]')).toBeVisible();
+  await page.locator('[data-lane-tool="work"]').click();
+  await expect(page.locator('[data-lane="work"]')).toBeVisible();
   await expect.poll(shown, { message: "another tool in the lane hides the page" }).toBe(false);
   await windowShot("browser-narrow-tools");
   await page.locator('[data-lane-tool="files"]').click();

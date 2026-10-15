@@ -191,7 +191,7 @@ test("a new session's first prompt carries the guidance and the letters in one h
   // `lost` counts calls an earlier budget gave up on; a loaded machine may add it. Letters know the session by its
   // file, as Herdr does; Memory by the host's own id, which its session reader keys a receipt by.
   const { lost: _lost, ...input } = call.input;
-  assert.deepEqual(input, { session_id: file, native_session: id, prompt: "Fix the failing parser test", cwd: "/checkouts/fixture", first: true, memory_first: true, version: 2 });
+  assert.deepEqual(input, { session_id: file, native_session: id, prompt: "Fix the failing parser test", cwd: "/checkouts/fixture", first: true, memory_first: true, version: 3 });
   assert.equal(call.env.HERDR_PANE_ID, "w1:p1");
 
   // Once the host wrote it, the session's guidance is given.
@@ -328,6 +328,33 @@ test("a headless run and an unsaved session take no letters", async () => {
   assert.equal(made("prompt").length, 0);
 });
 
+test("a session file counts when it is absolute on either system, and not when it is relative", async () => {
+  // Windows names its session files `C:\...` or `\\server\share\...`; the check is on the string, so it holds on every system.
+  const absolute = [
+    "/sessions/fixture/a.jsonl",
+    "C:\\sessions\\fixture\\a.jsonl",
+    "c:/sessions/fixture/a.jsonl",
+    "\\\\server\\share\\a.jsonl",
+  ];
+  for (const sessionFile of absolute) {
+    const host = await extension();
+    await started(host, "");
+    answer({ prompt: { context: "LETTER", letters: ["letter-1"] } });
+    const result = await prompt(host, "x", context("before_agent_start", { sessionFile }));
+    assert.match(result?.message?.content ?? "", /LETTER/, sessionFile);
+    const [call] = await until("prompt");
+    assert.equal(call.input.session_id, sessionFile);
+  }
+  for (const sessionFile of ["sessions/a.jsonl", "a.jsonl", "C:a.jsonl", ".\\a.jsonl", ""]) {
+    const host = await extension();
+    await started(host, "");
+    answer({ prompt: { context: "LETTER", letters: ["letter-1"] } });
+    assert.equal(await prompt(host, "x", context("before_agent_start", { sessionFile })), undefined, sessionFile);
+    await settled(host);
+    assert.equal(made("prompt").length, 0, sessionFile);
+  }
+});
+
 test("a slow, failing or garbled helper leaves the prompt unchanged within its budget and never throws", async () => {
   // The helper holds out far past the 1.85 s budget; the bound only proves the prompt did not wait for it.
   for (const reply of [{ delay_ms: 15000, context: "LATE", letters: ["letter-1"] }, { exit: 3 }, { raw: "not json" }, { raw: "" }]) {
@@ -361,7 +388,7 @@ test("a shell call that starts an agent through Herdr is refused with the helper
   assert.deepEqual(await host.emit("tool_call", launch, context("tool_call.bash")), { block: true, reason: "Use hide agent spawn --parent here" });
   const [call] = await until("tool");
   const { lost: _lost, ...input } = call.input;
-  assert.deepEqual(input, { tool: "bash", command: "herdr agent start helper --kind claude", cwd: "/checkouts/fixture", version: 2 });
+  assert.deepEqual(input, { tool: "bash", command: "herdr agent start helper --kind claude", cwd: "/checkouts/fixture", version: 3 });
 
   assert.equal(await host.emit("tool_call", sample("tool_call.bash").event, context("tool_call.bash")), undefined);
   await settled(host);
@@ -389,7 +416,7 @@ if (AGENT === "omp") {
     assert.deepEqual(await host.emit("tool_call", ask.event, context("tool_call.ask")), { block: true, reason: "Ask with hide factory ask" });
     const [call] = await until("tool");
     const { lost: _lost, ...input } = call.input;
-    assert.deepEqual(input, { session_id: ask.ctx.sessionFile, tool: "ask", version: 2 });
+    assert.deepEqual(input, { session_id: ask.ctx.sessionFile, tool: "ask", version: 3 });
     answer({ tool: {} });
     assert.equal(await host.emit("tool_call", ask.event, context("tool_call.ask")), undefined, "outside a worker the question shows");
 
