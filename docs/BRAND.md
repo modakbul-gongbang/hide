@@ -36,6 +36,7 @@ The mark itself contains no lettering.
 
 These values describe the artwork; they do not replace the web shell's functional tokens or status colors.
 The app's default Hide color theme carries the brand into the shell instead: its Dark is the landing page's Owl Field night, a blue-green near `#0D191B`, and its Light is white tinted with a little of the quiet field `#B7C9CC`, with a terminal palette tuned to each; the values live in `design/tokens.json` (`hide`), and the Neutral color theme keeps the grey chrome.
+In Settings the Hide choice is marked by that quiet field `#B7C9CC` and Neutral by a grey (`--swatch-hide`, `--swatch-neutral`), the same in Light and Dark.
 Keep the image's proportions, lower-right crop, eye spacing, and full square background.
 Do not add glow, gradients, expressions, accessories, or a different color to signal agent state.
 At small sizes, use the full mark rather than extracting either eye.

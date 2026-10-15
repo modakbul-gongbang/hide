@@ -53,7 +53,7 @@ function LanguageRow({ actions }: { actions: Actions }) {
   );
 }
 
-/** The swatch beside each color theme: that theme's background in the current mode. */
+/** The swatch beside each color theme: its brand color, the same in Light and Dark (hide-color-theme D-15). */
 const COLOR_THEME_SWATCH = { hide: "bg-swatch-hide", neutral: "bg-swatch-neutral" } as const;
 
 /**

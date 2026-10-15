@@ -154,12 +154,18 @@ test("the color theme switches the whole page at once from the keyboard, keeps t
     return {
       background: await token(page, "--background"),
       primary: await token(page, "--primary"),
+      seen: await token(page, "--status-seen"),
+      swatches: [await token(page, "--swatch-hide"), await token(page, "--swatch-neutral")],
       terminal: terminal && Object.fromEntries(Object.entries(terminal).map(([name, hex]) => [name, sixDigits(hex)])),
     };
   };
   const expected = (palette: "hide" | "neutral", mode: "dark" | "light") => ({
     background: rgb(hexOf(tokens["--background"]!, palette, mode)),
     primary: rgb(hexOf(tokens["--accent-choice-lime"]!, palette, mode)),
+    // B11: the Seen mark is Neutral's in both color themes. B2: each swatch is
+    // its brand color in both modes, Hide's the owl mark's #B7C9CC.
+    seen: rgb(hexOf(tokens["--status-seen"]!, "neutral", mode)),
+    swatches: [rgb("#B7C9CC"), rgb(tokens["--swatch-neutral"]!.value)],
     terminal: expect.objectContaining({
       background: hexOf(tokens["--background"]!, palette, mode).toLowerCase(),
       blue: hexOf(tokens["--terminal-blue"]!, palette, mode).toLowerCase(),

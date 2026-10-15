@@ -65785,6 +65785,48 @@
     "--size-tree-min": {
       "type": "number",
       "value": 180
+    },
+    "--status-seen": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#52525B"
+        },
+        {
+          "value": "#A4A5A8",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
+    },
+    "--swatch-hide": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#B7C9CC"
+        },
+        {
+          "value": "#B7C9CC",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
+    },
+    "--swatch-neutral": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#7A7C80"
+        },
+        {
+          "value": "#7A7C80",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

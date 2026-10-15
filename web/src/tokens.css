@@ -29,8 +29,6 @@
 
 @theme inline {
   --color-background: var(--background);
-  --color-swatch-neutral: var(--swatch-neutral);
-  --color-swatch-hide: var(--swatch-hide);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
@@ -67,6 +65,9 @@
   --color-success: var(--success);
   --color-agent-working: var(--agent-working);
   --color-status-foreground: var(--status-foreground);
+  --color-status-seen: var(--status-seen);
+  --color-swatch-hide: var(--swatch-hide);
+  --color-swatch-neutral: var(--swatch-neutral);
   --color-file-neutral: var(--file-neutral);
   --color-file-document: var(--file-document);
   --color-file-blue: var(--file-blue);
@@ -318,8 +319,6 @@
 :root,
 .light {
   --background: #ffffff;
-  --swatch-neutral: #ffffff;
-  --swatch-hide: #f6f8f8;
   --foreground: #18181b;
   --card: #f4f4f5;
   --card-foreground: var(--foreground);
@@ -356,6 +355,9 @@
   --success: #15803d;
   --agent-working: #2563eb;
   --status-foreground: #ffffff;
+  --status-seen: #52525b;
+  --swatch-hide: #b7c9cc;
+  --swatch-neutral: #7a7c80;
   --file-neutral: #6e6e73;
   --file-document: #52525b;
   --file-blue: #2d7598;
@@ -396,8 +398,6 @@
 
 .dark {
   --background: #101112;
-  --swatch-neutral: #101112;
-  --swatch-hide: #0d191b;
   --foreground: #f4f4f6;
   --card: #1d1f21;
   --card-foreground: var(--foreground);
@@ -434,6 +434,9 @@
   --success: #5ee69e;
   --agent-working: #61a6ff;
   --status-foreground: #101112;
+  --status-seen: #a4a5a8;
+  --swatch-hide: #b7c9cc;
+  --swatch-neutral: #7a7c80;
   --file-neutral: #9c9c9d;
   --file-document: #d3d3d4;
   --file-blue: #519aba;
