@@ -167,11 +167,13 @@ pub struct SpawnTask {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "AgentRecordOnDisk", into = "AgentRecordOnDisk")]
 pub struct AgentRecord {
     pub id: String,
     /// The name the agent registered under; none when it never had one of its
-    /// own. A pane id is never a name (`AgentRecord::forget_pane_name`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// own. A pane id is never a name (`AgentRecord::forget_pane_name`). On
+    /// disk the field is always a string, so a build before this one reads the
+    /// ledger: an unnamed record is written under its registration id.
     pub name: Option<String>,
     pub machine: String,
     pub host_scope: String,
@@ -194,6 +196,74 @@ pub struct AgentRecord {
     /// the operator's roots has a parent and carries no mark.
     #[serde(default)]
     pub forked: bool,
+}
+
+/// `AgentRecord` as the ledger file spells it, with the wire name in `name`.
+#[derive(Serialize, Deserialize)]
+struct AgentRecordOnDisk {
+    id: String,
+    name: String,
+    machine: String,
+    host_scope: String,
+    native_machine: String,
+    session: String,
+    instance: String,
+    pane: String,
+    parent: Option<String>,
+    #[serde(default)]
+    origin: Option<String>,
+    project: Option<String>,
+    actor: Actor,
+    ended: bool,
+    #[serde(default)]
+    forked: bool,
+}
+
+impl From<AgentRecord> for AgentRecordOnDisk {
+    fn from(record: AgentRecord) -> Self {
+        Self {
+            name: record.wire_name().to_owned(),
+            id: record.id,
+            machine: record.machine,
+            host_scope: record.host_scope,
+            native_machine: record.native_machine,
+            session: record.session,
+            instance: record.instance,
+            pane: record.pane,
+            parent: record.parent,
+            origin: record.origin,
+            project: record.project,
+            actor: record.actor,
+            ended: record.ended,
+            forked: record.forked,
+        }
+    }
+}
+
+/// A name equal to the record's own id or to its pane is no name: the first is
+/// how an unnamed record is written, the second how an earlier build wrote a
+/// parent Herdr never named.
+impl From<AgentRecordOnDisk> for AgentRecord {
+    fn from(disk: AgentRecordOnDisk) -> Self {
+        let mut record = Self {
+            name: Some(disk.name),
+            id: disk.id,
+            machine: disk.machine,
+            host_scope: disk.host_scope,
+            native_machine: disk.native_machine,
+            session: disk.session,
+            instance: disk.instance,
+            pane: disk.pane,
+            parent: disk.parent,
+            origin: disk.origin,
+            project: disk.project,
+            actor: disk.actor,
+            ended: disk.ended,
+            forked: disk.forked,
+        };
+        record.forget_pane_name();
+        record
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -312,14 +382,18 @@ impl AgentRecord {
         self.name.as_deref().unwrap_or(&self.id)
     }
 
-    /// A record written while a pane id was taken for a name reads as having
-    /// none. Reading does it, so no migration is needed: the ledger load
-    /// calls this once and the next save writes the correction.
-    pub(crate) fn forget_pane_name(&mut self) {
-        if self
-            .name
-            .as_deref()
-            .is_some_and(|name| name == self.pane || name == self.actor.pane_id)
+    /// A record written while a pane id was taken for a name, or under its own
+    /// registration id, reads as having none. Reading does it, so no migration
+    /// is needed: the next save writes the record in its current shape.
+    fn forget_pane_name(&mut self) {
+        // A Factory's or Hide's own identity is named by its code-owned name,
+        // which is also its pane.
+        if !self.actor.code_owned()
+            && self.name.as_deref().is_some_and(|name| {
+                name == self.pane
+                    || name == self.actor.pane_id
+                    || (!self.id.is_empty() && name == self.id)
+            })
         {
             self.name = None;
         }
@@ -1203,7 +1277,8 @@ mod tests {
     fn record(pane: &str, session: &str, parent: Option<String>) -> AgentRecord {
         AgentRecord {
             id: String::new(),
-            name: Some(pane.into()),
+            // A pane id is no name, so a fixture's agent has its own.
+            name: Some(format!("{pane}-agent")),
             machine: "local".into(),
             host_scope: "fixture-scope".into(),
             native_machine: "fixture-machine".into(),
@@ -1248,11 +1323,18 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("delivery-ledger.json");
         let mut ledger = Ledger::default();
-        let (legacy, named) = (record("w9J:p9R", "legacy-native", None), {
-            let mut named = record("w9J:p9S", "named-native", None);
-            named.name = Some("lead".into());
-            named
-        });
+        let (legacy, named) = (
+            {
+                let mut legacy = record("w9J:p9R", "legacy-native", None);
+                legacy.name = Some("w9J:p9R".into());
+                legacy
+            },
+            {
+                let mut named = record("w9J:p9S", "named-native", None);
+                named.name = Some("lead".into());
+                named
+            },
+        );
         let caller = legacy.actor.clone();
         let legacy_id = register_as(&mut ledger, legacy, &caller).unwrap()["id"]
             .as_str()
@@ -1280,6 +1362,45 @@ mod tests {
             resolve_actor(&loaded, "w9J:p9R").is_some(),
             "its pane still addresses it"
         );
+    }
+
+    /// A build before this one reads the ledger this one writes: `name` is a
+    /// string on every record, the registration id for one with no name.
+    #[test]
+    fn an_unnamed_record_is_written_in_the_shape_an_older_build_reads() {
+        #[derive(Deserialize)]
+        #[allow(dead_code)]
+        struct PreviousRecord {
+            id: String,
+            name: String,
+            machine: String,
+            host_scope: String,
+            native_machine: String,
+            session: String,
+            instance: String,
+            pane: String,
+            parent: Option<String>,
+            #[serde(default)]
+            origin: Option<String>,
+            project: Option<String>,
+            actor: Actor,
+            ended: bool,
+            #[serde(default)]
+            forked: bool,
+        }
+        let mut unnamed = record("lead", "lead-native", None);
+        unnamed.id = "agent-7".into();
+        unnamed.name = None;
+        let mut named = record("worker", "worker-native", None);
+        named.id = "agent-8".into();
+        named.name = Some("worker-agent".into());
+        for (record, written) in [(unnamed, "agent-7"), (named, "worker-agent")] {
+            let json = serde_json::to_value(&record).unwrap();
+            assert_eq!(json["name"], written);
+            let previous: PreviousRecord = serde_json::from_value(json.clone()).unwrap();
+            assert_eq!(previous.name, written);
+            assert_eq!(serde_json::from_value::<AgentRecord>(json).unwrap(), record);
+        }
     }
 
     fn command(intent: &str) -> Command {
@@ -1487,7 +1608,7 @@ mod tests {
         assert_eq!(here(&ledger, &caller).unwrap().id, id);
         assert_eq!(
             here(&ledger, &child_actor).unwrap().name.as_deref(),
-            Some("child")
+            Some("child-agent")
         );
         // A remote participant on a pane of the same name is not this caller.
         let mut remote = caller.clone();
@@ -1780,7 +1901,7 @@ mod tests {
                 seed_tab: None,
                 id: id.clone(),
                 path: Some("/fixture/topic".into()),
-                pane: Some("worker".into()),
+                pane: Some("worker-pane".into()),
                 terminal: None,
                 shell: None,
                 child: None,
@@ -1788,7 +1909,12 @@ mod tests {
             2,
         )
         .unwrap();
-        let mut child = record("worker", "native-child", mode.responsibility(&parent_id));
+        let mut child = record(
+            "worker-pane",
+            "native-child",
+            mode.responsibility(&parent_id),
+        );
+        child.name = Some("worker".into());
         child.origin = mode.origin(&parent_id);
         child.machine = device.into();
         child.actor.device_id = device.into();
@@ -2572,10 +2698,14 @@ mod tests {
         );
         let to = &moved.actor;
         let ledger_watch = ledger.watches.iter().find(|w| w.id == watch.id).unwrap();
-        assert_eq!((&ledger_watch.target, &ledger_watch.parent), (to, &parent));
+        // They follow the registration by identity; the names they carry are
+        // the wire names they were written with.
+        assert!(
+            ledger_watch.target.same_identity(to) && ledger_watch.parent.same_identity(&parent)
+        );
         let letter = |id: &str| ledger.letters.iter().find(|l| l.id == id).unwrap();
-        assert_eq!(&letter(&ask.id).recipient, to);
-        assert_eq!(&letter(&report.id).sender, to);
+        assert!(letter(&ask.id).recipient.same_identity(to));
+        assert!(letter(&report.id).sender.same_identity(to));
         assert_eq!(
             ledger
                 .spawns

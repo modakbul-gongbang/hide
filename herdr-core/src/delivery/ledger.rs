@@ -572,10 +572,6 @@ pub fn load(path: &Path) -> Result<Ledger, String> {
         return Err("ledger_unavailable".into());
     }
     let mut ledger: Ledger = serde_json::from_slice(&bytes).map_err(|_| "ledger_unavailable")?;
-    // A registration that took a pane id for its name reads as unnamed.
-    for record in &mut ledger.agents {
-        record.forget_pane_name();
-    }
     ledger.validate().map_err(|_| "ledger_unavailable")?;
     ledger.end_stretches_at_start();
     Ok(ledger)

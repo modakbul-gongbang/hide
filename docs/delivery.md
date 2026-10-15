@@ -317,7 +317,8 @@ An agent has two kinds of name, and each is made in one place.
 
 A registration stores a name only when it has one of its own.
 A parent that `hide agent spawn --parent here` registers for the caller takes the name Herdr has for the pane, and none when Herdr has none, so a pane id is never stored as a name (`AgentRecord::name` is optional, and an executor-made record drops a name that only restates its pane).
-A ledger written by an earlier build can hold a pane id as a name: the load reads such a record as unnamed (`AgentRecord::forget_pane_name`) and the next save writes that, so no migration file exists.
+On disk the field stays a string on every record, so a build before this one reads the ledger this one writes: an unnamed record is written under its registration id, and reading a name equal to the record's own id or to its pane as no name turns that back (`AgentRecordOnDisk`).
+A ledger written by an earlier build can hold a pane id as a name; reading it that way gives such a record no name, with no migration file, and a code-owned identity keeps its name, which is also its pane.
 A letter keeps the endpoint names it was written with, so a letter written before this rule keeps a pane id in its history until its one-day retention ends.
 `hide inbox` and a letter's envelope show the registration id of an unnamed sender, not its title, and show the pane id of a sender that never registered and that Herdr never named.
 
