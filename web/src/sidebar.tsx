@@ -804,7 +804,7 @@ function RaisedAgentRow({ listed: { agent, device }, context }: { listed: Listed
       depth={0}
       ask={agent.state.needs_you}
       selected={agent.pane_id === context.focusRowPane}
-      onOpen={context.actions.openListedAgent}
+      onOpen={(id) => context.actions.openListedAgent(id)}
       onOpenPullRequest={(url, external) => context.actions.openLink(url, external)}
       inset={PROJECT_COLUMN}
       number={context.numberOf?.(agent.pane_id, null) ?? null}
@@ -1656,7 +1656,7 @@ function AgentTreeRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
             tree={tree}
             remote={remote}
             selected={agent.pane_id === context.focusRowPane}
-            onOpen={depth === 0 || !parent ? context.actions.openListedAgent : (id) => context.actions.followRelation(parent.pane_id, id, agent.identity_label)}
+            onOpen={depth === 0 || !parent ? (id) => context.actions.openListedAgent(id) : (id) => context.actions.followRelation(parent.pane_id, id, agent.identity_label)}
             onOpenPullRequest={(url, external) => context.actions.openLink(url, external)}
             inset={inset}
             // A tree row is one line with no branch (B14); the popover names a differing branch.
