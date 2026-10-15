@@ -2497,7 +2497,17 @@ fn listing(dir: &std::path::Path) -> Result<Vec<String>> {
     let mut names: Vec<String> = std::fs::read_dir(dir)?
         .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
         .collect::<Result<_>>()?;
-    names.retain(|name| name != "Logs" && !(name.starts_with('.') && name.contains(".hide-")));
+    // What the machine keeps of its own work, written by its node's ordinary
+    // reads and never moved with a core: its log and its worktree facts.
+    let worktree_facts = hide_kit::layout::worktree_facts(dir);
+    let worktree_facts = worktree_facts
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned());
+    names.retain(|name| {
+        name != "Logs"
+            && Some(name) != worktree_facts.as_ref()
+            && !(name.starts_with('.') && name.contains(".hide-"))
+    });
     names.sort();
     Ok(names)
 }
