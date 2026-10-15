@@ -66,17 +66,19 @@ export function RightLaneScene({ theme, scale, content, state }: SceneParams & {
     const document: EditorDocumentSnapshot = { path: tabs[0]!.path, language: "markdown", document_kind: "markdown", contents_utf8: REVIEW, revision: "sha256:0", dirty: false, readonly_reason: null, conflict: null, save: null };
     const documents: Documents = lane.documents ? { t1: document } : {};
     const listing = (folder: string, entries: [string, boolean][]): DirectoryList => ({ kind: "file_list", root_path: folder, truncated: false, entries: entries.map(([name, is_directory]) => ({ name, path: `${folder}/${name}`, is_directory })) });
+    // A project's usual kinds of folder and file, three levels deep, so the
+    // tree's marks and indent guides are drawn as a real checkout shows them.
     const listings = {
-      [root]: listing(root, [["docs", true], ["web", true]]),
+      [root]: listing(root, [[".github", true], ["docs", true], ["web", true], [".gitignore", false], ["Cargo.toml", false], ["package.json", false], ["README.md", false]]),
       [`${root}/docs`]: listing(`${root}/docs`, [["설정검토.md", false], ["작업계획.md", false]]),
-      [`${root}/web`]: listing(`${root}/web`, [["src", true]]),
-      [`${root}/web/src`]: listing(`${root}/web/src`, [["SettingsPanel.tsx", false], ["lane.css", false]]),
+      [`${root}/web`]: listing(`${root}/web`, [["src", true], ["tsconfig.json", false], ["vite.config.ts", false]]),
+      [`${root}/web/src`]: listing(`${root}/web/src`, [["components", true], ["SettingsPanel.tsx", false], ["SettingsPanel.test.tsx", false], ["lane.css", false]]),
     };
     scene.rest.navigator!.focused_workspace_id = workspace.id;
     scene.rest.navigator!.focused_checkout_id = checkout.id;
     scene.rest.ui_state = { ...scene.rest.ui_state!, expanded_paths: Object.keys(listings), selected_path: lane.documents ? tabs[0]!.path : null };
     scene.rest.workspace_view = {
-      device_id: "local", path: root, tool: lane.tool, work: { lens: "sessions", only_checkout: false }, pinned: lane.pinned, tree: lane.tree, lane_width: null, tree_width: null, lane_called: 0, lane_calls: 0,
+      device_id: "local", path: root, tool: lane.tool, last_tool: lane.tool, work: { lens: "sessions", only_checkout: false }, pinned: lane.pinned, tree: lane.tree, lane_width: null, tree_width: null, lane_called: 0, lane_calls: 0,
       layout: { root: { area: { id: "a1", active: displays[0]?.id ?? null, displays } }, active_area: "a1", limits: { areas: 4, depth: 3, displays: 32 }, display_count: displays.length },
     };
     return { scene, editor: { tabs: lane.documents ? tabs : [], active_tab_id: lane.documents ? "t1" : null }, documents, listings };

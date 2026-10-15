@@ -7,6 +7,7 @@ import { AreaEmpty } from "./AreaEmpty";
 import { BrowserDisplay } from "./BrowserDisplay";
 import { focusBrowserDisplay, hostKey, useBrowserStore } from "./browserViews";
 import { Badge } from "./components/ui/badge";
+import { FileMark } from "./components/file-mark";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { revealHost } from "./host";
@@ -259,12 +260,7 @@ export function displayMark(display: Pick<ViewDisplaySnapshot, "kind" | "label">
       </span>
     );
   }
-  const icon = fileIcon(display.label);
-  return (
-    <span aria-hidden="true" data-view-mark="file" className={`shrink-0 ${icon.color}`} style={{ fontFamily: "seti" }}>
-      {icon.glyph}
-    </span>
-  );
+  return <FileMark icon={fileIcon(display.label)} data-view-mark="file" />;
 }
 
 /** The minimum-density identity choice lives here so review can replace it without changing the fit curve. */

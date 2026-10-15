@@ -596,6 +596,41 @@ fn each_lane_field_ends_at_its_sent_value_and_a_repeat_converges() {
     }
 }
 
+/// A closed lane remembers the tool it last showed, however it was closed or
+/// reopened, and a Workspace that never showed one opens on Files; the tool
+/// survives a restart.
+#[test]
+fn a_closed_lane_keeps_the_tool_it_last_showed_across_a_restart() {
+    let (runtime, _checkout_id, directory) = strip_checkout("lane-last-tool");
+    let (_views, state) = views_path("lane-last-tool");
+    let mut runtime = with_views(runtime, &state);
+    with_tabs(&mut runtime, &directory);
+    let last = |runtime: &Runtime| {
+        runtime
+            .snapshot
+            .workspace_view
+            .as_ref()
+            .expect("a front Workspace")
+            .last_tool
+    };
+    assert_eq!(last(&runtime), None, "a lane that never showed a tool");
+
+    layout(&mut runtime, serde_json::json!({"tool": "memory"}));
+    assert_eq!(last(&runtime), Some(Tool::Memory));
+    layout(&mut runtime, serde_json::json!({"tool": null}));
+    assert_eq!(lane(&runtime).0, None);
+    assert_eq!(last(&runtime), Some(Tool::Memory), "a close keeps it");
+
+    layout(&mut runtime, serde_json::json!({"tool": "changes"}));
+    layout(&mut runtime, serde_json::json!({"tool": null}));
+    assert_eq!(last(&runtime), Some(Tool::Changes), "the latest wins");
+
+    let (saved, _) = crate::workspace_views::load(&state, 0);
+    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+    let saved = saved.get(&view.device_id, &view.path).unwrap();
+    assert_eq!((saved.tool, saved.last_tool), (None, Some(Tool::Changes)));
+}
+
 /// PRD right-lane B12: the files lane opened with no view opens nothing in
 /// it (the shell draws the tree alone); a file picked there opens beside the
 /// tree, which stays on; and closing the last view keeps the lane on the

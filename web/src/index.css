@@ -35,16 +35,14 @@
 }
 
 /*
- * The Seti glyph subset the file rows draw (MIT, notice at
- * desktop/resources/THIRD_PARTY_NOTICES/seti-ui-MIT.txt) and the codepoints
- * fileIcons.ts resolves. block rather than swap: the glyphs
- * are private-use codepoints, so a fallback face would draw tofu for every row
- * until the font landed.
+ * A file or folder mark (components/file-mark.tsx): the picture fileIcons.ts
+ * resolved, and the light theme's own where the icon theme draws one.
  */
-@font-face {
-  font-family: "seti";
-  src: url("./assets/seti-subset.woff") format("woff");
-  font-display: block;
+[data-file-mark] {
+  background: var(--file-mark) center / contain no-repeat;
+}
+.light [data-file-mark] {
+  background-image: var(--file-mark-light);
 }
 
 @layer base {

@@ -12,6 +12,7 @@ import { useWorkCounts } from "./workCount";
 import { WorkPanel } from "./WorkPanel";
 import { DividerGuide, LaneDivider } from "./LaneDivider";
 import { commandLabel } from "./shortcutLabels";
+import type { CommandId } from "./shortcuts";
 import { catalogWorkspaces, frontCheckout, type Checkout } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -31,6 +32,8 @@ import type { MessageKey } from "./i18n/catalogs";
 
 const TOOL_NAMES = { files: "panes.lane.files", changes: "panes.lane.changes", work: "work.title", memory: "panes.lane.memory" } as const satisfies Record<Tool, MessageKey>;
 const TOOL_ICONS: Record<Tool, LucideIcon> = { files: FilesIcon, changes: FileDiffIcon, work: SquareKanbanIcon, memory: BrainIcon };
+/** The command that opens and closes the lane on a tool, whose chord the rail icon's hint shows (D-12). */
+const LANE_TOOL_COMMAND = { work: "toggle_lane_work", files: "toggle_lane_files", changes: "toggle_lane_changes", memory: "toggle_lane_memory" } as const satisfies Record<Tool, CommandId>;
 
 /** Whether a lane drawn this way is on screen. */
 export function laneUp(mode: LaneFrame["mode"]): boolean {
@@ -70,6 +73,7 @@ export function ToolRail({ actions }: { actions: Actions }) {
     return Boolean(project?.enabled && project.questions.length > 0 && project.workspace_id === frontCheckout(state.rest)?.workspace_id);
   });
   const scope = useScope(checkout);
+  const uiState = useShellStore((s) => s.rest?.ui_state);
   // The Work icon's number: the Needs You of Sessions and PRs added, once each (PRD work-tab-pr-lens B4).
   const work = useWorkCounts(null).total;
   const up = laneUp(drawn.mode);
@@ -89,7 +93,7 @@ export function ToolRail({ actions }: { actions: Actions }) {
         return (
           <Fragment key={tool}>
           {boundary ? <span aria-hidden="true" className="my-xs h-(--size-hairline) w-(--size-icon-lg) shrink-0 bg-border" data-tool-rail-divider="true" /> : null}
-          <Hint label={`${name} · ${scope(tool)}`} side="left">
+          <Hint label={`${name} · ${scope(tool)}`} shortcut={commandLabel(LANE_TOOL_COMMAND[tool], uiState) || undefined} side="left">
             <button
               type="button"
               aria-pressed={pressed}
