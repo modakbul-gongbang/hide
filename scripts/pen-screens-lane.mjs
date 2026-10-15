@@ -153,17 +153,32 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
       frame(`${id}-code`, 'Code block', {width: 'fill_container', layout: 'vertical', gap: 3, padding: [10, 12], fill: '$--secondary', cornerRadius: '$--radius-md'}, DOC.code.map((line, index) => cap(`${id}-code${index}`, line, '$--subtle-foreground', {mono: true}))),
     ]);
   }
+  // The Explorer's rows as the shell draws them: a chevron column per folder,
+  // an indent per level with a hairline under each ancestor's chevron, then the
+  // mark. The shell's marks are Material Icon Theme SVGs, which Pen fills only
+  // from a raster, so lucide glyphs in the theme's hues stand in for them here.
   const TREE = [
-    {depth: 0, folder: true, name: 'settings-ui'}, {depth: 1, folder: true, name: 'docs'}, {depth: 2, kind: 'MD', name: '설정검토.md'}, {depth: 2, kind: 'MD', name: '작업계획.md'},
-    {depth: 1, folder: true, name: 'web / src'}, {depth: 2, kind: 'TS', name: 'SettingsPanel.tsx'}, {depth: 2, kind: 'CSS', name: 'lane.css'},
+    {depth: 0, folder: 'open', name: 'settings-ui'}, {depth: 1, folder: 'open', name: 'docs', mark: 'folder-open', fill: '$--file-blue'}, {depth: 2, mark: 'file-text', fill: '$--file-blue', name: '설정검토.md'}, {depth: 2, mark: 'file-text', fill: '$--file-blue', name: '작업계획.md'},
+    {depth: 1, folder: 'open', name: 'web', mark: 'folder-open', fill: '$--file-blue'}, {depth: 2, folder: 'open', name: 'src', mark: 'folder-open', fill: '$--success'},
+    {depth: 3, folder: 'closed', name: 'components', mark: 'folder', fill: '$--file-yellow'}, {depth: 3, mark: 'atom', fill: '$--file-blue', name: 'SettingsPanel.tsx'}, {depth: 3, mark: 'file-code', fill: '$--file-purple', name: 'lane.css'},
   ];
-  const KIND_FILL = {MD: '$--file-document', TS: '$--file-blue', CSS: '$--file-purple'};
+  const INDENT = n('--size-tree-indent');
+  const MARK = n('--size-tree-mark');
+  const INSET = n('--spacing-sm');
   function tree(id, width, {only}) {
     const selected = only ? null : '설정검토.md';
-    const row = (entry, index) => frame(`${id}-r${index}`, entry.name, {width: 'fill_container', height: 26, layout: 'horizontal', gap: 6, alignItems: 'center', padding: [0, 8, 0, 10 + entry.depth * 14], ...(entry.name === selected ? {fill: '$--color-selected', stroke: '$--primary', strokeWidth: {left: 2}, strokeAlignment: 'inner'} : {})}, [
-      entry.folder ? icon(`${id}-r${index}-g`, 'chevron-down', {size: 10, fill: '$--muted-foreground'}) : mic(`${id}-r${index}-k`, entry.kind, KIND_FILL[entry.kind], {mono: true, weight: '600'}),
-      body(`${id}-r${index}-t`, entry.name, '$--foreground', {weight: entry.folder ? '500' : '400'}),
+    const guide = (rowId, level) => frame(`${rowId}-i${level}`, 'Indent', {width: INDENT, height: n('--size-pane-child-row'), layout: 'none'}, [
+      frame(`${rowId}-i${level}-l`, 'Guide', {x: MARK / 2, y: 0, width: 1, height: n('--size-pane-child-row'), fill: '$--border'}, []),
     ]);
+    const row = (entry, index) => {
+      const rowId = `${id}-r${index}`;
+      return frame(rowId, entry.name, {width: 'fill_container', height: n('--size-pane-child-row'), layout: 'horizontal', gap: n('--spacing-xs'), alignItems: 'center', padding: [0, 8, 0, INSET], ...(entry.name === selected ? {fill: '$--secondary'} : {})}, [
+        frame(`${rowId}-in`, 'Indent guides', {height: n('--size-pane-child-row'), layout: 'horizontal'}, Array.from({length: entry.depth}, (_, level) => guide(rowId, level))),
+        frame(`${rowId}-c`, 'Chevron', {width: MARK, height: MARK, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, entry.folder ? [icon(`${rowId}-g`, entry.folder === 'open' ? 'chevron-down' : 'chevron-right', {size: MARK, fill: '$--muted-foreground'})] : []),
+        icon(`${rowId}-k`, entry.mark ?? 'folder-open', {size: MARK, fill: entry.fill ?? '$--file-neutral'}),
+        sub(`${rowId}-t`, entry.name, '$--foreground'),
+      ]);
+    };
     return frame(id, only ? 'Tree (only)' : 'Tree column', {width, height: 'fill_container', layout: 'vertical', fill: '$--sidebar', ...(only ? {} : {stroke: '$--border', strokeWidth: {right: 1}, strokeAlignment: 'inner'})}, [
       frame(`${id}-find`, 'Find row', {width: 'fill_container', layout: 'vertical', padding: [8, 8, 4, 8]}, [
         frame(`${id}-find-f`, 'Find field', {width: 'fill_container', height: 28, layout: 'horizontal', gap: 8, alignItems: 'center', padding: [0, 8], fill: '$--background', stroke: '$--border', strokeWidth: 1, strokeAlignment: 'inner', cornerRadius: '$--radius-sm'}, [
@@ -171,7 +186,7 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
         ]),
       ]),
       frame(`${id}-hintrow`, 'Hint', {width: 'fill_container', padding: [0, 10, 6, 10]}, [mic(`${id}-hint`, only ? '열린 문서 없음 · 트리만' : '한 번 클릭 미리보기 · 두 번 클릭 고정')]),
-      frame(`${id}-rows`, 'Rows', {width: 'fill_container', height: 'fill_container', layout: 'vertical', padding: [0, 4]}, TREE.map(row)),
+      frame(`${id}-rows`, 'Rows', {width: 'fill_container', height: 'fill_container', layout: 'vertical'}, TREE.map(row)),
       frame(`${id}-foot`, 'Foot', {width: 'fill_container', height: 28, layout: 'horizontal', alignItems: 'center', padding: [0, 10], stroke: '$--border', strokeWidth: {top: 1}, strokeAlignment: 'inner'}, [mic(`${id}-foot-t`, only ? '파일을 고르면 옆에 열림' : '끌 때까지 남음 · ⌘⇧E')]),
     ]);
   }

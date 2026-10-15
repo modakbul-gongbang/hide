@@ -204,6 +204,8 @@ The reference includes the lane's and the tree's dividers at rest, under the poi
 Light and Dark frames carry Korean text and long paths, including the one-line shortened document path and its full-path tooltip.
 The server-picker comparison retains its distinct reachable endpoints, and the area-focus comparison retains two View areas with one keyboard owner and independently readable selections.
 The remote Workspace keeps the device-colored band at the start of the top row's path and the agent pane frame; This Mac has neither.
+The Explorer tree's rows use the shell's indent (`--size-tree-indent`), chevron and mark column (`--size-tree-mark`) and hairline guides.
+The shell's marks are Material Icon Theme SVGs, which Pen draws empty, so the sheet draws lucide glyphs in the theme's hues in their place; the production gallery's `right-lane` scene (`state=tree-only`) is the reference for the marks themselves.
 Its web files are `web/src/WorkspaceScreen.tsx`, `web/src/TabBar.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, and `web/src/ExplorerTree.tsx`.
 
 Session record is `Screen / Session record`, built by `sessionWorkScreens` in `scripts/pen-screens-session-work.mjs` (PRD session-record-redesign).
