@@ -26,7 +26,8 @@ mod dormant;
 #[cfg(test)]
 pub(crate) use dormant::fixture_record;
 pub use dormant::{
-    DormantPhase, DormantRecord, DormantRegistration, SleepId, SleepingSessionSnapshot,
+    DORMANT_BUDGET_SPENT, DormantPhase, DormantRecord, DormantRegistration, FactoryWorker, SleepId,
+    SleepingSessionSnapshot,
 };
 
 /// The Settings choices besides Never, in hours (PRD D-10).
@@ -570,7 +571,7 @@ impl AgentSleepStore {
 }
 
 /// Whether Hide can put an agent of this Herdr kind to sleep and wake it:
-/// only the two whose session files it reads.
+/// the kinds whose adapter declares a sleep.
 pub(crate) fn sleeps_kind(kind: &str) -> bool {
     hide_agent_adapter::adapter(kind).is_some_and(|row| row.sleep.is_some())
 }

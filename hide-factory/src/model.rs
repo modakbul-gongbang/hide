@@ -615,15 +615,15 @@ impl Runtime {
             .map(|kind| Self(kind))
     }
 
-    /// Factory workers keep their pane identity through sleep (D-28).
-    /// A declared sleep that closes its pane is supported only by manual
-    /// agent sleep until Factory can own the fresh execution's identity.
-    /// Remove this restriction when #857 binds the new worker, coordination,
-    /// letter and watch identities.
+    /// Whether a Factory can put this worker to sleep (D-28): its adapter
+    /// declares a sleep, and one that closes its pane to sleep is bound back
+    /// to its worker only for Pi and omp (#857). Grok, OpenCode and Cursor
+    /// close their pane too but keep working through a pause until a task of
+    /// their own settles that.
     pub fn sleeps(self) -> bool {
-        self.adapter()
-            .sleep
-            .is_some_and(|dialect| !dialect.closes_pane_when_sleeping())
+        self.adapter().sleep.is_some_and(|dialect| {
+            !dialect.closes_pane_when_sleeping() || matches!(self.0, "pi" | "omp")
+        })
     }
 
     /// How the agent's start takes a model and an effort.
@@ -2230,12 +2230,12 @@ mod summary_tests {
     }
 
     #[test]
-    fn factory_sleep_preserves_the_workers_pane() {
+    fn factory_sleep_follows_the_sleep_the_adapter_declares() {
         for (kind, supported) in [
             ("claude", true),
             ("codex", true),
-            ("pi", false),
-            ("omp", false),
+            ("pi", true),
+            ("omp", true),
             ("grok", false),
             ("opencode", false),
             ("cursor", false),
