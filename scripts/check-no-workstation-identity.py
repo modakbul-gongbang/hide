@@ -356,7 +356,20 @@ def checkout_bytes(root, path):
         raise ScanError("checkout_read_failed", path) from None
 
 
-def content_findings(data):
+# A package's deprecation notice, as the npm registry wrote it into the
+# lockfile pnpm generates: the package author's words, often with their own
+# contact, and nothing about this workstation. Every other line of the
+# lockfile, and that key in any other file, is still checked.
+LOCKFILE = "pnpm-lock.yaml"
+REGISTRY_NOTICE = re.compile(r"^[ \t]*deprecated: ", re.MULTILINE)
+
+
+def registry_notice(text, start):
+    line_start = text.rfind("\n", 0, start) + 1
+    return REGISTRY_NOTICE.match(text, line_start) is not None
+
+
+def content_findings(data, path=""):
     # Windows text files may carry UTF-16; a BOM makes that interpretation exact.
     encoding = "utf-16" if data.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8"
     text = data.decode(encoding, errors="replace")
@@ -371,7 +384,10 @@ def content_findings(data):
 
     # Contact addresses are checked in text, avoiding random binary byte matches.
     if "\x00" not in text:
+        lockfile = path == LOCKFILE
         for match in email_findings(text):
+            if lockfile and registry_notice(text, match.start()):
+                continue
             yield text.count("\n", 0, match.start()) + 1, "contact_email"
 
 
@@ -423,7 +439,7 @@ def scan(root, scope):
                 failures += 1
             else:
                 data = index_bytes(batch, path, oid) if batch else checkout_bytes(root, path)
-                for line, classification in content_findings(data):
+                for line, classification in content_findings(data, path):
                     diagnostic(path, line, classification, scope)
                     failures += 1
                     if failures >= MAX_DIAGNOSTICS:
