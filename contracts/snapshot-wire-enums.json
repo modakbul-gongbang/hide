@@ -33,6 +33,7 @@
   "factory_diagnosis_source": ["user_turn", "last_answer", "screen"],
   "factory_task_state": ["drafting", "waiting", "running", "paused", "blocked", "verifying", "merge_waiting", "landed", "done", "stopped", "relanding", "outside", "cancelled"],
   "factory_waiting_for": ["predecessors", "slot", "environment", "answer"],
+  "herdr_behind_cause": ["cannot_hand_off", "handoff_failed"],
   "kit_agent_availability": ["available", "not_installed", "unsupported_system"],
   "codex_daemon_off_failure": ["codex_missing", "codex_refused", "timed_out", "unreachable", "stop_failed"],
   "kit_check_failure": ["read_failed"],

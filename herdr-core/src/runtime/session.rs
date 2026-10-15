@@ -1873,8 +1873,20 @@ impl Runtime {
     pub fn ingest_remote_session(
         &mut self,
         target_id: &str,
-        mut fetched: Result<RemoteSessionSnapshot, SessionFetchError>,
+        fetched: Result<RemoteSessionSnapshot, SessionFetchError>,
     ) -> bool {
+        // The server's own answer names its version; the status read the
+        // connection made once does not follow a live handoff (PRD
+        // device-herdr-update B3).
+        let live_herdr_version = match &fetched {
+            Ok(session) => session.herdr_version.clone(),
+            Err(error) => error
+                .protocol_details()
+                .and_then(|(_, _, version)| version.map(str::to_owned)),
+        };
+        // A device's server on an older protocol is the device's to update
+        // or hand over, never this machine's to stop (D-15).
+        let mut fetched = fetched.map_err(SessionFetchError::for_device);
         // A remote projection is built off the runtime, so it cannot see the
         // read ledger; without this every stopped remote pane published `Done`
         // and demanded a close confirmation. Hide never focuses a remote pane,
@@ -1969,10 +1981,22 @@ impl Runtime {
                 ),
             );
         }
-        let herdr_version = self
-            .remote_connections
-            .get(target_id)
-            .and_then(|connection| connection.transport.device().cached_herdr_version());
+        // The row's line holds only while the server it is about still
+        // answers with the release it was left on: a server restarted on
+        // another release ends it without waiting for the next kit pass (B8).
+        if let Some(live) = live_herdr_version.as_deref()
+            && self
+                .device_herdr_behind
+                .get(target_id)
+                .is_some_and(|behind| behind.server_version != live)
+        {
+            self.device_herdr_behind.remove(target_id);
+        }
+        let herdr_version = live_herdr_version.or_else(|| {
+            self.remote_connections
+                .get(target_id)
+                .and_then(|connection| connection.transport.device().cached_herdr_version())
+        });
         let status = &mut self.snapshot.status.remote[status_index];
 
         let mut changed = read_changed;

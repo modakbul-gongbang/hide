@@ -1267,7 +1267,17 @@ export type Device = {
   machine_name?: string | null;
   /** A node that dials the core rather than a device the core dials (`DeviceSnapshot::dials_in`). */
   dials_in?: boolean;
+  /**
+   * The device's Herdr server stays on an older release than Hide's pinned
+   * Herdr (`DeviceSnapshot::herdr_behind`); null while it runs the pin or newer.
+   */
+  herdr_behind?: HerdrBehind | null;
 };
+
+/** Why a device's Herdr stays older than Hide's (`contracts/snapshot-wire-enums.json`: `herdr_behind_cause`). */
+export type HerdrBehindCause = "cannot_hand_off" | "handoff_failed";
+
+export type HerdrBehind = { server_version: string; version: string; cause: HerdrBehindCause };
 
 /** One part of the install kit (`contracts/snapshot-wire-enums.json`: `kit_component_id`). */
 export type KitComponentId = "cli" | "claude_code_hook" | "codex_hook" | "coordination_retirement";

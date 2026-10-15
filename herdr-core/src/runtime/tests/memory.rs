@@ -479,6 +479,7 @@ fn turning_memory_on_updates_the_hooks_first_and_then_turns_it_on() {
             codex_daemon_running: None,
             codex_daemon_unreadable: None,
             codex_daemon_off: None,
+            herdr: None,
         },
     );
     let pending = |runtime: &Runtime| opened(runtime).and_then(|project| project.pending_action);
@@ -662,6 +663,7 @@ fn a_registered_device_project_keeps_its_memory_scope_while_the_link_is_down() {
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
             issue_links: Default::default(),
+            herdr_version: None,
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),

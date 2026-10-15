@@ -744,6 +744,7 @@ fn a_later_local_memory_or_device_visit_supersedes_delayed_remote_memory() {
                     pane_hook_tokens: Default::default(),
                     issue_tokens: Default::default(),
                     issue_links: Default::default(),
+                    herdr_version: None,
                 }),
                 files: RemoteFileListSnapshot::idle(),
                 catalog: Default::default(),
@@ -815,6 +816,7 @@ fn acknowledged_remote_repository_edits_invalidate_native_intake_before_returnin
         pane_hook_tokens: Default::default(),
         issue_tokens: Default::default(),
         issue_links: Default::default(),
+        herdr_version: None,
     });
     runtime.snapshot.status.remote = vec![remote];
     runtime.device_hosts.insert(

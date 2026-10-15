@@ -208,6 +208,7 @@ fn attested_device_resolves_colliding_pane_ids_without_crossing_workspaces() {
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
             issue_links: Default::default(),
+            herdr_version: None,
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),

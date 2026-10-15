@@ -23,7 +23,8 @@
 //!   from a later process that reused it.
 //! - [`image_of`] names the file a process was started from, and that file
 //!   stays its answer when the file is renamed, deleted or replaced at its
-//!   path.
+//!   path; [`running`] names every process this account can see that runs
+//!   a given file.
 //! - [`measure_tree`] counts a process's descendants and sums their resident
 //!   memory, reading the kernel's tables and forking nothing.
 //! - [`run_to_end`] answers a child's exit code and capped output, or ends the
@@ -968,6 +969,19 @@ pub struct Image {
 /// and keeps no identity of the file that follows a rename.
 pub fn image_of(pid: u32) -> io::Result<Image> {
     sys::image_of(pid)
+}
+
+/// Every process this account can see whose program file is `file`, read
+/// from one look at the system's process table: a process that runs the
+/// file under another path (renamed, linked or deleted since) is one of
+/// them, and one started from a newer file at the same path is not. A
+/// process the system will not describe (another account's) or that ends
+/// during the look is left out. `Unsupported` where [`image_of`] is.
+pub fn running(file: &crate::fs::identity::FileId) -> io::Result<Vec<u32>> {
+    Ok(sys::all_pids()?
+        .into_iter()
+        .filter(|pid| image_of(*pid).is_ok_and(|image| image.file == *file))
+        .collect())
 }
 
 /// How the terminal a process controls takes typed input, which decides
@@ -2018,6 +2032,35 @@ mod sys {
         }
     }
 
+    /// Every pid the kernel lists now.
+    #[cfg(target_os = "macos")]
+    pub(super) fn all_pids() -> io::Result<Vec<u32>> {
+        // SAFETY: the first call asks for the count with a null buffer; the
+        // second writes at most `capacity` ints into a buffer we own, and
+        // returns how many it wrote (`proc_listallpids` counts pids, not
+        // bytes, as `proc_listchildpids` does).
+        unsafe {
+            let needed = libc::proc_listallpids(std::ptr::null_mut(), 0);
+            if needed <= 0 {
+                return Err(io::Error::last_os_error());
+            }
+            // Slack for processes that start between the two calls.
+            let capacity = needed as usize + 64;
+            let mut buffer = vec![0i32; capacity];
+            let byte_len = (capacity * std::mem::size_of::<i32>()) as libc::c_int;
+            let written = libc::proc_listallpids(buffer.as_mut_ptr().cast(), byte_len);
+            if written <= 0 {
+                return Err(io::Error::last_os_error());
+            }
+            buffer.truncate((written as usize).min(capacity));
+            Ok(buffer
+                .into_iter()
+                .filter_map(|pid| u32::try_from(pid).ok())
+                .filter(|pid| *pid != 0)
+                .collect())
+        }
+    }
+
     /// The kernel answers "who are the children of this pid" directly, so a
     /// walk asks for each level and reads no table.
     #[cfg(target_os = "macos")]
@@ -2153,6 +2196,15 @@ mod sys {
         // SAFETY: `sysconf` takes a plain integer and has no memory effects.
         let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         Ok(pages.saturating_mul(u64::try_from(page).unwrap_or(4096)))
+    }
+
+    /// Every pid `/proc` lists now.
+    #[cfg(target_os = "linux")]
+    pub(super) fn all_pids() -> io::Result<Vec<u32>> {
+        Ok(std::fs::read_dir("/proc")?
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+            .collect())
     }
 
     /// `/proc` lists every process once; one pass builds the parent table a
@@ -2751,6 +2803,14 @@ mod sys {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "Windows reports no working directory for another process",
+        ))
+    }
+
+    /// No pid is worth listing where no image can be compared.
+    pub(super) fn all_pids() -> io::Result<Vec<u32>> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Windows keeps no identity of a process's image file",
         ))
     }
 
