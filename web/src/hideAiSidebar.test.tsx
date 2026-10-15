@@ -183,10 +183,10 @@ it("draws what the home waits for on a Needs You row after the agent's own ask, 
     const waiting = (turn: { kind: "pr_review" | "ci_failed"; pr_number: number }) => agent("m72", "m72 결정을 문서로 옮기기", { hide_ai: { task, home: "memory", workspace_id: "workspace:w1", turn }, group: "needs_you", status_code: "stopped", unread: false });
     const rowOf = (row: AgentRow) => <TooltipProvider><ul><SidebarAgentRow agent={row} device={null} place="herdr-ide › Promote Memory · m72" depth={0} selected={false} onOpen={() => {}} onOpenPullRequest={() => {}} inset="0" tree={null} menu={MENU} ask /></ul></TooltipProvider>;
     await act(async () => root.render(rowOf(waiting({ kind: "pr_review", pr_number: 924 }))));
-    expect(container.querySelector("[data-agent-home-turn]")?.textContent).toBe("PR #924 review");
+    expect(container.querySelector("[data-agent-home-turn]")?.textContent).toBe(`PR ${"#"}924 review`);
     expect(container.querySelector("[data-hide-mark]")).not.toBeNull();
     expect(container.querySelector("[data-agent-place]")?.textContent).toBe("herdr-ide › Promote Memory · m72");
-    expect(container.querySelector("[data-agent-open]")?.getAttribute("aria-label")).toContain("Hide AI · Promote Memory · m72 · PR #924 review");
+    expect(container.querySelector("[data-agent-open]")?.getAttribute("aria-label")).toContain(`Hide AI · Promote Memory · m72 · PR ${"#"}924 review`);
     await act(async () => root.render(rowOf(waiting({ kind: "ci_failed", pr_number: 924 }))));
     expect(container.querySelector("[data-agent-home-turn]")?.textContent).toBe("CI failed");
     // The agent's own ask comes first.
