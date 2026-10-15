@@ -11,6 +11,7 @@ import { remoteContext } from "./remote";
 import type { Checkout, Device, SnapshotRest, Workspace } from "./snapshot";
 import { frontCheckout, localDeviceId } from "./snapshot";
 import type { Screen } from "./ui";
+import { projectSettings, settingsTarget } from "./projectSettings";
 
 type TargetBase = {
   /** Unique across devices; the menu's value. */
@@ -23,7 +24,8 @@ type TargetBase = {
 
 export type StartTarget =
   | (TargetBase & { kind: "home" })
-  | (TargetBase & { kind: "checkout"; checkoutPath: string; workspaceId: string; checkoutId: string });
+  | (TargetBase & { kind: "checkout"; checkoutPath: string; workspaceId: string; checkoutId: string })
+  | (TargetBase & { kind: "worktree"; repositoryRoot: string; workspaceId: string });
 
 export type TargetGroup = { deviceId: string; deviceLabel: string; connected: boolean; items: StartTarget[] };
 
@@ -36,6 +38,7 @@ export type StartTargets = {
 
 export const homeKey = (deviceId: string) => `home:${deviceId}`;
 export const checkoutKey = (deviceId: string, path: string) => `checkout:${deviceId}:${path}`;
+export const worktreeKey = (deviceId: string, root: string) => `worktree:${deviceId}:${root}`;
 
 /** The core's own node before the snapshot names it: the empty id, which an event carries as no `device_id`. */
 const localDevice: Pick<Device, "id" | "kind"> = { id: "", kind: "local" };
@@ -113,11 +116,27 @@ export function startTargets(rest: SnapshotRest | null, screen: Screen | null, t
   // Each device as this window names it; before the snapshot lists any, the one machine is this window's.
   const name = (id: string) => (listed ? machineName(listed, id, t) : t(thisMachineKey(null)));
   const groups = ordered.map((device) => groupOf(rest, device, name(device.id), device.id === frontId, t));
+  // Only a project-scoped start offers this initial default. Explicit checkout,
+  // Home, issue, PR and resume targets keep their existing meaning.
+  let projectDefault: string | null = null;
+  if (projectId && !settings) {
+    for (const group of groups) {
+      const device = ordered.find((row) => row.id === group.deviceId);
+      const project = device && deviceWorkspaces(rest, device).workspaces.find((row) => row.id === projectId && !row.is_home);
+      if (!project?.is_git) continue;
+      const key = worktreeKey(group.deviceId, project.path);
+      group.items.push({ kind: "worktree", key, deviceId: group.deviceId, label: `${project.label} · ${t("projectSettings.worktree")}`, disabled: group.connected ? null : "not_connected", repositoryRoot: project.path, workspaceId: project.id });
+      const location = projectSettings(rest, settingsTarget(project)).record?.new_work;
+      const checkout = mainCheckout(project);
+      projectDefault = location === "worktree" ? key : checkout ? checkoutKey(group.deviceId, checkout.path) : null;
+      break;
+    }
+  }
   const items = groups.flatMap((group) => group.items);
   const usable = (key: string) => items.some((item) => item.key === key && item.disabled === null);
   const front = groups[0];
   const workspaces = front ? deviceWorkspaces(rest, ordered[0]!).workspaces : [];
-  const wanted = front ? frontKey(rest, screen, settings, front.deviceId, workspaces, projectId) : null;
+  const wanted = projectDefault ?? (front ? frontKey(rest, screen, settings, front.deviceId, workspaces, projectId) : null);
   const defaultKey =
     (wanted && usable(wanted) ? wanted : null) ?? (front && usable(homeKey(front.deviceId)) ? homeKey(front.deviceId) : null) ?? items.find((item) => item.disabled === null)?.key ?? null;
   return { groups, defaultKey };

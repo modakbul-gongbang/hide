@@ -921,6 +921,9 @@ New issue makes the issue in the page's project's source, and its `어디에` li
 
 `이슈로` on a missed-work item opens this same editable New issue form with a title and body drafted from that item's original request, answer and repository templates.
 The note says it will create an issue without starting an agent, and the repository stays fixed to the originating session's device and project.
+The session's recorded original repository is retained through later Connections changes.
+A record whose original repository is unknown explains that it cannot create an issue; a connection to another repository asks the operator to restore the original connection and retry.
+Old records are not assigned today's repository merely because their checkout path still exists.
 Only `이슈 만들기` creates it; Cancel leaves the item unchanged, and a failed create keeps the entered form with Retry.
 An unavailable provider, login or usage allowance leaves the missed text as title and an empty body with the reason.
 When GitHub cannot be read, Retry checks the preview's connection while the same form stays open with the operator's edits; a successful check enables the separate Create action.
@@ -1011,7 +1014,9 @@ Project rows and ⌘K project results open their most recent usable checkout, no
 Issue and PR results open the shared Overview in that project's scope with their panel or PR selected.
 The shared Overview row opens its device's All projects page and carries the selection.
 The title row carries the path back (`Home / Project`, where Home is the project's device's), New agent and 새 이슈; directly under it is one line of facts, then, under the header's rule, the tab row, which shows even while the project has no agent.
-The project's name has the title row first: New agent and `새 이슈` carry their word (and `C` on `새 이슈`) only while the whole name fits beside them, and otherwise keep their icon alone, at any window, sidebar, device-badge and label width and in any language, with the name truncated to an ellipsis only after that (issue 618; `web/src/OverviewTitleRow.tsx`, `web/e2e/overview-header.spec.ts`).
+The project's name has the title row first: All projects, New agent and `새 이슈` carry their word (and `C` on `새 이슈`) only while the whole name fits beside them, and otherwise keep their icon alone, at any window, sidebar, device-badge and label width and in any language, with the name truncated to an ellipsis only after that (issue 618; `web/src/OverviewTitleRow.tsx`, `web/e2e/overview-header.spec.ts`).
+All projects keeps its accessible name and returns to the same device's All projects scope in either form; the Project settings menu stays available beside the name.
+The fit decision measures invisible labelled copies of the return and primary actions, so their visible icon state cannot change the width used to decide that state.
 An icon-only action opens a hint with its name, and `새 이슈`'s hint carries the `C` keycap; the hint also opens over a disabled New agent, and no hint opens while the word shows.
 The facts line holds only facts about storage: for a Local Git project the worktree count, the disk every worktree and the shared Git directory occupy, main's distance behind origin only above zero, a warning cell only while the volume is short of room, and `N merged → 정리` only above zero; the open issues and pull requests are counted on the tabs, not here.
 The disk number's tooltip lists build cache, dependencies, worktree source, the folders Hide does not know and the shared Git data, and pressing the number opens the disk cleanup sheet; a node's project is cleaned up on that node, and a dialed device's offers no sheet.
@@ -1854,6 +1859,7 @@ A query with a GitHub project the core reads (its own or a node's that dials it)
 A pull request's row, held or found on GitHub, leads with its PR mark without the number and says its state in the muted word; a found one's state is the core's (`pr_state`), as a held one's is.
 The query's words match like a search box, and a query is capped at 200 characters.
 The same query already searching is not started again, and an answer for an older query is dropped.
+Search targets use confirmed project repository choices and valid catalog repository names; an unknown or malformed local name is resolved by the worker, while a node project without a valid name is left out.
 Choosing a GitHub result opens it in the browser.
 
 ### Keys and results
@@ -1903,6 +1909,46 @@ Keys typed right after New tab or a split go to the new pane once Herdr names it
 Keyboard focus follows the core's answer, not the drawing, so a second ⌘D pressed before Herdr confirms the first splits the original pane again, as Herdr does.
 Keys typed after a click go to the pane clicked last, whatever order snapshots arrive in: the header may briefly follow an older snapshot, but keyboard focus does not leave the last-clicked pane until the core has answered that click, and a focus move the core makes afterwards (Herdr's own move, or a refused click) is followed.
 Unread weight is never reused to mean parent, child, delegated, or selected.
+
+## Project settings
+
+A Git project or plain folder's gear, project menu and Overview title menu open the same Project settings dialog without selecting or folding that project.
+Home has no project settings entry.
+The gear shares the reserved action space with New work and More, appears on hover, keyboard focus or an open menu, and stays visible on devices without hover.
+Closing the dialog with Escape or its close button restores the opener's focus and leaves the screen, selected device and checkout unchanged.
+
+The dialog is 880 by 640 when the window permits it, with a fixed 200-wide navigation list for Connections, Working style and Memory; only the page scrolls.
+Choices are scoped to the owning device and canonical main-worktree root, shared by all of that project's checkouts.
+Each change saves immediately through the core's existing state writer, shows pending, saved or failed beside its row, and keeps the last confirmed value until durable acknowledgment.
+Closing does not cancel a save, and reopening preserves the failed intent's Retry.
+A later window's save does not turn an already completed change back into Pending.
+An unavailable device or missing project retains its last observed values read-only, with a retry at that surface; a newer settings version is also read-only with an update reason.
+
+Connections shows the actual GitHub repository or why none was detected, with automatic detection or an explicit owner/repository override, and the existing Auto, GitHub and Local issue choices.
+An invalid repository has an inline reason and is not saved.
+Changing the connection does not change Git remotes, account login or permissions; provider failures stay with the provider rather than silently switching to Local.
+Linear is a disabled Coming soon row.
+Previously linked issues and recorded issue, pull-request and session addresses keep their original repository identity, including an unchanged legacy bare issue token.
+
+Working style chooses the initial location for project-scoped New work: an existing checkout or a new worktree.
+A new-worktree start asks for its branch and actual base before starting and preserves the task, agent and model on failure.
+An explicit checkout, issue or pull-request start, CLI target, resume, wake, fork and running agent keep their existing behavior.
+The base branch is also the project's existing Git comparison and merge base; an absent saved branch falls back to an existing branch with a reason.
+Plain folders cannot select worktree creation or a Git base.
+Original-checkout branch protection and main file-write blocking are separate unsupported rows.
+
+Memory uses the existing consent and kit; its row shows hook preparation, pending writes and project-scoped failure with Retry, while retaining the confirmed value.
+That Retry applies only to enabling or disabling Memory; card actions stay in the Memory tool with their existing confirmations.
+Memory promotion PR rows retain their original repository-qualified link after Connections changes; checks, status and agent identity join only that exact URL.
+A legacy promotion whose original repository cannot be proven shows PR verification unavailable and keeps its PR button disabled.
+Turning it off keeps existing cards.
+While the dialog is open its project owns the daemon's single Memory read slot, and the tool rail's project is restored when it closes.
+Open project Memory is one scoped navigation intent that closes the dialog and opens that project's usable checkout with the right lane on its Memory tool; a delayed remote focus changes the lane only on arrival, and refusal leaves the earlier checkout's lane unchanged.
+The shell waits for both the target checkout and its Memory tool; the core's lane call then brings the lane forward, over the agents in a narrow window.
+A newer explicit navigation cancels the delayed Memory choice so its later arrival cannot take the screen back.
+Without a usable checkout it gives a local recovery reason.
+All pages use the four interface languages, existing settings rows, system controls, dialog keyboard containment and theme tokens.
+`web/src/ProjectSettingsSheet.tsx` owns the dialog and `web/src/projectSettings.ts` reads its confirmed scoped choices.
 
 ## Settings: each machine's install kit
 

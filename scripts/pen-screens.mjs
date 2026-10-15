@@ -40,6 +40,7 @@ import {factoryRows} from './pen-screens-factory.mjs';
 import {laneBoards} from './pen-screens-lane.mjs';
 import {onboardingBoards} from './pen-screens-onboarding.mjs';
 import {settingsBoards, settingsParts} from './pen-screens-settings.mjs';
+import {projectSettingsScreens} from './pen-screens-project-settings.mjs';
 import {sessionScreens} from './pen-screens-sessions.mjs';
 import {sessionWorkScreens} from './pen-screens-session-work.mjs';
 import {AGENT_TREE_MASTERS, PR_STATES} from './pen-agent-tree.mjs';
@@ -4034,6 +4035,7 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Workspace', build: () => buildWorkspace(tokens)},
     {name: 'Screen / Project Sessions', build: () => buildSessions(tokens)},
     {name: 'Screen / Settings', build: () => buildSettings(tokens, root)},
+    {name: 'Screen / Project Settings', build: () => projectSettingsScreens(tokens, settingsParts(tokens, root, {themedXref, screenIconButton, screenSwatch}), {screenSheet, screenIconButton, screenInput})},
     {name: 'Screen / Usage', build: () => {
       const build = suffix => [themedXref(`screen-usage-popover-${suffix}`, 'usage-popover-light', 'Usage popover'),
         themedXref(`screen-usage-week-${suffix}`, 'usage-history-popover-week-light', 'Seven-day chart'),

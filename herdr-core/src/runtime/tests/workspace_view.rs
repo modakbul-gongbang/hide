@@ -1390,3 +1390,39 @@ fn workspace_width_requests_are_bounded_ephemeral_and_confirm_exact_intents() {
     std::fs::remove_dir_all(state.parent().unwrap()).unwrap();
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn an_explicit_file_visit_supersedes_a_delayed_memory_visit() {
+    let (runtime, checkout_id, directory) = strip_checkout("file-supersedes-memory");
+    let mut runtime = with_new_views(runtime, "file-supersedes-memory");
+    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+    let tab = runtime.snapshot.editor.tabs[0].id.clone();
+    let key = (
+        crate::node::TEST_NODE.to_owned(),
+        directory.to_string_lossy().into_owned(),
+    );
+    runtime.choose_when_in_front(crate::node::TEST_NODE, "old-memory", key);
+    runtime.attach_memory_navigation(
+        crate::node::TEST_NODE,
+        "old-memory",
+        "workspace:order".into(),
+    );
+    runtime.dispatch_json(&explorer_event(
+        "file_focus",
+        serde_json::json!({"tab_id": tab}),
+    ));
+    runtime.acknowledge_memory_navigation(crate::node::TEST_NODE, "old-memory");
+    runtime.sync_workspace_view();
+    assert_eq!(active_label(&runtime).as_deref(), Some("notes.md"));
+    assert_ne!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        Some(Tool::Memory)
+    );
+    assert!(
+        runtime
+            .snapshot
+            .memory
+            .as_ref()
+            .is_none_or(|memory| memory.project.is_none())
+    );
+}

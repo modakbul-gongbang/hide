@@ -43,6 +43,8 @@ test("the Project Overview title row keeps a long project name readable at every
     const name = header.getByRole("heading", { level: 1, name: LABEL });
     const issue = header.getByRole("button", { name: "New issue" });
     const agent = header.getByRole("button", { name: "New agent" });
+    const back = header.getByRole("button", { name: "All projects", exact: true });
+    const settings = header.getByRole("button", { name: "Project settings", exact: true });
     for (const theme of ["dark", "light"] as const) {
       await chooseTheme(page, theme);
       for (const viewport of [1600, 900, 720]) {
@@ -52,6 +54,9 @@ test("the Project Overview title row keeps a long project name readable at every
         await expect.poll(() => actionsAreIcons(page, issue), { message: `New issue as an icon at ${viewport}px` }).toBe(viewport !== 1600);
         await expect(issue.locator("kbd")).toBeVisible({ visible: viewport === 1600 });
         await expect(agent).toBeVisible();
+        await expect(back).toBeVisible();
+        await expect(back.locator("svg")).toBeVisible({ visible: viewport !== 1600 });
+        await expect(settings).toBeVisible();
         expect(await width(name), `the name's width at ${viewport}px`).toBeGreaterThanOrEqual(NAME_MIN);
         expect(await name.evaluate((node) => node.scrollWidth > node.clientWidth), `the name is cut with an ellipsis only at ${viewport}px`).toBe(viewport === 720);
         expect(await page.locator("[data-overview-screen]").evaluate((node) => node.scrollWidth <= node.clientWidth), `nothing runs past the page at ${viewport}px`).toBe(true);
@@ -64,6 +69,22 @@ test("the Project Overview title row keeps a long project name readable at every
     await expect(page.getByRole("tooltip").locator("kbd")).toHaveText("C");
     await page.mouse.move(600, 600);
     await expect(page.getByRole("tooltip")).toHaveCount(0);
+    // The compact return stays named, hinted and keyboard operable after a wide -> narrow transition.
+    await page.setViewportSize({ width: 900, height: 800 });
+    await back.hover();
+    await expect(page.getByRole("tooltip")).toContainText("All projects");
+    await back.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("[data-main-screen]")).toBeVisible();
+    await page.getByRole("tab", { name: LABEL, exact: true }).click();
+    await expect(name).toBeVisible();
+    await settings.focus();
+    await page.keyboard.press("Enter");
+    await page.locator('[data-menu-item="project_settings"]').focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("[data-project-settings]")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(settings).toBeFocused();
     // A disabled control takes no pointer, so the hint hangs on the span around it.
     // The DOM is forced here: no project this fixture can make has New agent disabled.
     await agent.evaluate((node: HTMLButtonElement) => {
