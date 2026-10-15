@@ -3595,7 +3595,7 @@ mod tests {
         for (index, actor) in [parent.clone(), child.clone()].into_iter().enumerate() {
             ledger.agents.push(crate::coordination::AgentRecord {
                 id: format!("agent-{}", index + 1),
-                name: actor.name.clone(),
+                name: Some(actor.name.clone()),
                 machine: actor.device_id.clone(),
                 host_scope: "fixture".into(),
                 native_machine: "fixture".into(),

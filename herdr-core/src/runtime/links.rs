@@ -545,7 +545,7 @@ impl Runtime {
                     &record.actor.device_id,
                     &record.actor.kind,
                     &record.session,
-                    &record.name,
+                    record.wire_name(),
                 )
                     .hash(&mut hasher);
             }
@@ -605,6 +605,24 @@ impl Runtime {
             .link_lineage_agents()
             .map(|agent| (agent.pane_id.as_str(), agent))
             .collect::<HashMap<_, _>>();
+        let wire_name = |agent: &SidebarAgentSnapshot, device: &str| {
+            let pane = if device == self.node.as_str() {
+                agent.pane_id.clone()
+            } else {
+                format!("remote:{device}:pane:{}", agent.pane_id)
+            };
+            match (
+                self.delivery_observations.get(&pane),
+                self.delivery_ledger.as_ref(),
+            ) {
+                (Some(observed), Ok(ledger)) => {
+                    crate::coordination::wire_name(ledger, &observed.actor)
+                }
+                (Some(observed), Err(_)) => observed.actor.name.clone(),
+                // Delivery never saw this pane, so no letter names it.
+                (None, _) => agent.pane_id.clone(),
+            }
+        };
         let mut parents = self
             .link_lineage_agents()
             .filter_map(|agent| {
@@ -616,10 +634,7 @@ impl Runtime {
                     parent_device_id: (*devices.get(parent.pane_id.as_str())?).to_owned(),
                     parent_agent: session_agent(&parent.agent_kind)?.to_owned(),
                     parent_session_id: parent.session_id.clone()?,
-                    parent_name: parent
-                        .herdr_name
-                        .clone()
-                        .unwrap_or_else(|| parent.pane_id.clone()),
+                    parent_name: wire_name(parent, devices.get(parent.pane_id.as_str())?),
                 })
             })
             .map(|parent| {
@@ -656,7 +671,7 @@ impl Runtime {
                     parent_device_id: parent.actor.device_id.clone(),
                     parent_agent: session_agent(&parent.actor.kind)?.to_owned(),
                     parent_session_id: parent.session.clone(),
-                    parent_name: parent.name.clone(),
+                    parent_name: parent.wire_name().to_owned(),
                 })
             })
             .collect::<Vec<_>>();

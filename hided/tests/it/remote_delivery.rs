@@ -577,7 +577,7 @@ fn a_spawn_with_machine_starts_the_agent_on_the_device_under_its_caller() -> Res
                 .iter()
                 .any(|watch| watch.target.device_id == "remote"
                     && watch.target.name == "remote-worker"
-                    && watch.parent.name == parent.name),
+                    && Some(&watch.parent.name) == parent.name.as_ref()),
             "the caller has no watch on the device's agent"
         );
 

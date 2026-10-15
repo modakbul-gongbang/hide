@@ -180,8 +180,8 @@ pub(crate) fn send(
     let letter = Letter {
         id: format!("letter-{sequence}"),
         intent: intent.to_owned(),
-        sender: sender.clone(),
-        recipient: recipient.clone(),
+        sender: crate::coordination::named(ledger, sender),
+        recipient: crate::coordination::named(ledger, recipient),
         kind: kind.to_owned(),
         body: body.to_owned(),
         state: State::Pending,
