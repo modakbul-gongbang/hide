@@ -31,15 +31,14 @@ test("shared Overview preserves work, returns the keyboard and has direct sideba
     // On a 1920 × 1080 window the modal stops at its cap, 1440 × 960.
     expect(await modal.boundingBox().then((box) => [box?.width, box?.height])).toEqual([1440, 960]);
     await expect(sidebar).toHaveAttribute("aria-current", "page");
-    await expect(page.locator("[data-project-overview]")).toHaveCount(0);
     expect(await pane.boundingBox()).toEqual(geometry);
     expect(await modal.evaluate((node) => node.contains(document.activeElement))).toBe(true);
     await page.keyboard.press("Tab");
     expect(await modal.evaluate((node) => node.contains(document.activeElement))).toBe(true);
     await screenshot(page, "overview-modal-all-dark");
-    await page.getByRole("tab", { name: "fixture", exact: true }).click();
-    await expect(modal.locator("[data-overview-screen]")).toBeVisible();
-    await screenshot(page, "overview-modal-project-dark");
+    await modal.locator('[data-main-tab="projects"]').click();
+    await expect(modal.locator("[data-overview-projects]")).toBeVisible();
+    await screenshot(page, "overview-modal-projects-dark");
     await page.keyboard.press("Escape");
     await expect(modal).toHaveCount(0);
     await expect(input).toBeFocused();
@@ -54,7 +53,7 @@ test("shared Overview preserves work, returns the keyboard and has direct sideba
     await page.keyboard.press(chord("overview"));
     await expect(page.locator("[data-palette]")).toHaveCount(0);
     await expect(modal).toBeVisible();
-    await expect(modal.locator("[data-overview-screen]")).toBeVisible();
+    await expect(modal.locator("[data-overview-page]")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(input).toBeFocused();
 
@@ -98,11 +97,10 @@ test("shared Overview preserves work, returns the keyboard and has direct sideba
     await expect(input).toBeFocused();
     expect((sent.get("focus_pane") ?? 0) - before).toBe(1);
 
-    // Shift+A opens the Agents graph; Shift+P closes it and focuses the one sidebar.
+    // Focus sidebar closes the Overview and focuses the one sidebar.
     await page.keyboard.press(chord("overview"));
-    await page.keyboard.press(chord("sidebar_agents"));
     await expect(modal).toBeVisible();
-    await expect(modal.locator('[data-overview-view="agents"]')).toBeVisible();
+    await expect(modal.locator('[data-main-view="tasks"]')).toBeVisible();
     await page.keyboard.press(chord("sidebar_projects"));
     await expect(modal).toHaveCount(0);
     await expect.poll(() => page.locator('nav[data-sidebar]').evaluate((node) => node.contains(document.activeElement))).toBe(true);

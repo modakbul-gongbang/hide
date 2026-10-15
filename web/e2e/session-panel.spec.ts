@@ -152,14 +152,10 @@ test("Sessions groups, read rules, child navigation and durable resolution share
       await chooseTheme(page, theme);
       await screenshot(page, `sessions-panel-${theme}`);
     }
-    // All projects includes Usage; project Overview has conversation history, no Requests.
-    await page.keyboard.press(chord("sidebar_agents"));
+    // The Overview is the device's Tasks, backlog, Projects and Usage, with no Conversation history (PRD overview-device-tasks D-01, D-20).
+    await page.keyboard.press(chord("overview"));
     const modal = page.getByRole("dialog", { name: "Overview", exact: true });
-    await modal.getByRole("tab", { name: "repo", exact: true }).click();
-    expect(await modal.locator("[data-lens-tile]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-lens-tile")))).toEqual(["agents", "issues", "sessions"]);
-    await expect(modal.locator('[data-lens-tile="sessions"]')).toContainText("Conversation history");
-    await modal.getByRole("tab", { name: "All projects", exact: true }).click();
-    expect(await modal.locator("[data-main-tab]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-main-tab")))).toEqual(["agents", "tasks", "projects", "usage"]);
+    expect(await modal.locator("[data-main-tab]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-main-tab")))).toEqual(["tasks", "backlog", "projects", "usage"]);
     await page.keyboard.press("Escape");
     await page.locator(`nav[data-sidebar] [data-agent-open="${stopped}"]`).first().click();
     await showSessions();

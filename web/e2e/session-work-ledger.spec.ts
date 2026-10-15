@@ -80,12 +80,12 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
   } finally { daemon?.stop(); herdr.stop(); }
 });
 
-test("@platform cancel leaves missed work open and retry reconciles an issue whose create response was lost", async ({ page }) => {
+test("@platform 백로그로 makes one title-only issue, a lost create response converges on retry, and 되돌리기 closes it", async ({ page }) => {
   const herdr = await startHerdr();
   let daemon: Daemon | undefined;
   try {
     const github = workFixture(herdr, true);
-    daemon = await startHided(herdr, "session-issue-retry", undefined, github.env);
+    daemon = await startHided(herdr, "session-backlog-retry", undefined, github.env);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     await showTool(page, "work");
@@ -97,60 +97,67 @@ test("@platform cancel leaves missed work open and retry reconciles an issue who
     await root.hover();
     await page.locator(`[data-session-record-button="${herdr.panes[0]}"]`).click();
     const missed = page.locator("[data-session-record] [data-missed-work]", { hasText: MISSED });
-    await missed.locator('[data-missed-issue]').click({ timeout: 45_000 });
-    const form = page.locator('[data-new-issue]');
-    await expect(form.locator('[data-new-issue-title]')).toHaveValue("한국어 요청 줄바꿈 확인", { timeout: 30_000 });
-    await expect(form.locator('[data-new-issue-body]')).toContainText("## 확인할 동작");
-    await form.getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(missed).toHaveAttribute("data-missed-status", "open");
-    expect(fs.existsSync(github.issue)).toBe(false);
-    await missed.locator('[data-missed-issue]').click();
-    await form.locator('[data-new-issue-create]').click();
-    await expect(form.locator('[data-new-issue-error]')).toBeVisible({ timeout: 30_000 });
-    const created = JSON.parse(fs.readFileSync(github.issue, "utf8")) as { title: string };
-    expect(created.title).toBe("한국어 요청 줄바꿈 확인");
-    await form.locator('[data-new-issue-create]').click();
-    await expect(form).toHaveCount(0, { timeout: 30_000 });
-    await expect(missed).toHaveAttribute("data-missed-status", "issue");
-    await expect(missed.getByRole("button", { name: "#77", exact: true })).toBeVisible();
-    const calls = fs.readFileSync(github.calls, "utf8").trim().split("\n").map((line) => JSON.parse(line) as string[]);
-    expect(calls.filter((args) => args[0] === "issue" && args[1] === "create")).toHaveLength(1);
-    expect(calls.some((args) => args.join(" ").includes("HideSessionIssueAttempts"))).toBe(true);
+    // PRD overview-device-tasks B43-B45: one press, no form; GitHub made the
+    // issue but its answer was lost, so the line fails, and the retry joins
+    // the issue GitHub already has instead of making a second one.
+    await missed.locator("[data-missed-backlog-add]").click({ timeout: 45_000 });
+    await expect(missed.locator("[data-missed-failed]")).toBeVisible({ timeout: 30_000 });
+    await missed.locator("[data-missed-failed]").getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(missed.locator('[data-missed-backlog="#77"]')).toBeVisible({ timeout: 30_000 });
+    await expect(missed).toHaveAttribute("data-missed-status", "backlog");
+    const calls = () => fs.readFileSync(github.calls, "utf8").trim().split("\n").map((line) => JSON.parse(line) as string[]);
+    const creates = calls().filter((args) => args[0] === "issue" && args[1] === "create");
+    expect(creates).toHaveLength(1);
+    // Title only: nothing of the conversation goes to GitHub (D-10).
+    expect(creates[0]![creates[0]!.indexOf("--title") + 1]).toBe(MISSED);
+    expect(creates[0]![creates[0]!.indexOf("--body") + 1]).toBe("");
+
+    // `· 백로그 #77` opens the item in the Overview's backlog, whose 되돌리기
+    // closes the issue and opens the missed line again (B32).
+    await missed.locator('[data-missed-backlog="#77"]').click();
+    const item = page.locator("[data-overview-panel] [data-backlog-item]");
+    await expect(item).toBeVisible();
+    await item.locator("[data-item-undo]").click();
+    await expect.poll(() => calls().some((args) => args[0] === "issue" && args[1] === "close" && args[2] === "77"), { timeout: 30_000 }).toBe(true);
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await expect(missed).toHaveAttribute("data-missed-status", "open", { timeout: 30_000 });
   } finally { daemon?.stop(); herdr.stop(); }
 });
 
-test("@platform GitHub connection retry preserves the edited preview and creates only after confirmation", async ({ page }) => {
+test("@platform ⌘⇧M adds a backlog issue from the terminal and hands the keyboard back", async ({ page }) => {
   const herdr = await startHerdr();
   let daemon: Daemon | undefined;
   try {
     const github = workFixture(herdr);
-    fs.writeFileSync(github.repositoryUnavailable, "unavailable");
-    daemon = await startHided(herdr, "session-issue-connection", undefined, github.env);
+    daemon = await startHided(herdr, "quick-add", undefined, github.env);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
-    await showTool(page, "work");
-    seedFirstWork(herdr, Date.now());
-    const root = page.locator(`[data-session-row="${herdr.panes[0]}"]`);
-    await expect(root).toContainText(FIRST_GOAL, { timeout: 45_000 });
-    await root.hover();
-    await page.locator(`[data-session-record-button="${herdr.panes[0]}"]`).click();
-    const missed = page.locator('[data-session-record] [data-missed-work]', { hasText: MISSED });
-    await missed.locator('[data-missed-issue]').click({ timeout: 45_000 });
-    const form = page.locator('[data-new-issue]');
-    await expect(form.getByText("Couldn't read GitHub. Retry to check the connection; your edits stay here.")).toBeVisible({ timeout: 30_000 });
-    await form.locator('[data-new-issue-title]').fill("edited title");
-    await form.locator('[data-new-issue-body]').fill("edited body");
-    fs.unlinkSync(github.repositoryUnavailable);
-    await form.getByRole("button", { name: /Retry/ }).click();
-    await expect(form.getByRole("button", { name: /Create issue/ })).toBeEnabled({ timeout: 30_000 });
-    await expect(form.locator('[data-new-issue-title]')).toHaveValue("edited title");
-    await expect(form.locator('[data-new-issue-body]')).toHaveValue("edited body");
-    expect(fs.existsSync(github.issue)).toBe(false);
-    await form.locator('[data-new-issue-create]').click();
-    await expect(form).toHaveCount(0, { timeout: 30_000 });
-    const calls = fs.readFileSync(github.calls, "utf8").trim().split("\n").map((line) => JSON.parse(line) as string[]);
-    const creates = calls.filter((args) => args[0] === "issue" && args[1] === "create");
+    const terminal = page.locator(`[data-pane-view="${herdr.panes[0]}"] .xterm-helper-textarea`);
+    await terminal.focus();
+    // B37-B39: the input opens over the Workspace on the front checkout's
+    // project, says why, and says where the item goes.
+    await page.keyboard.press(chord("add_backlog"));
+    const quick = page.locator("[data-quick-add]");
+    await expect(quick).toBeVisible();
+    await expect(quick.locator("[data-quick-add-input]")).toBeFocused();
+    await expect(quick.locator("[data-quick-add-reason]")).toHaveAttribute("data-quick-add-reason", "front");
+    await expect(quick.locator("[data-quick-add-destination]")).toBeVisible({ timeout: 30_000 });
+    // B42: Esc makes nothing and the terminal holds the keyboard again.
+    await page.keyboard.press("Escape");
+    await expect(quick).toHaveCount(0);
+    await expect(terminal).toBeFocused();
+    // B42: a pasted multi-line text is one line.
+    await page.keyboard.press(chord("add_backlog"));
+    await quick.locator("[data-quick-add-input]").fill("빠른 추가\n두 번째 줄");
+    await expect(quick.locator("[data-quick-add-input]")).toHaveValue("빠른 추가 두 번째 줄");
+    // B40: Enter makes it, the made line names it, and the input closes on its own.
+    await page.keyboard.press("Enter");
+    await expect(quick.locator('[data-quick-add-made="github:acme/repo#77"]')).toBeVisible({ timeout: 30_000 });
+    await expect(quick).toHaveCount(0, { timeout: 10_000 });
+    await expect(terminal).toBeFocused();
+    const creates = fs.readFileSync(github.calls, "utf8").trim().split("\n").map((line) => JSON.parse(line) as string[]).filter((args) => args[0] === "issue" && args[1] === "create");
     expect(creates).toHaveLength(1);
-    expect(creates[0]).toEqual(expect.arrayContaining(["edited title", "edited body"]));
+    expect(creates[0]![creates[0]!.indexOf("--title") + 1]).toBe("빠른 추가 두 번째 줄");
   } finally { daemon?.stop(); herdr.stop(); }
 });

@@ -159,7 +159,6 @@ test("a pull request's panel shows the sessions that made it and worked on it af
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
     await chooseTheme(page, "light");
-    const overview = page.locator("[data-overview-screen]");
 
     // The card: the maker first among the ended lines is the newest-first
     // order the record keeps, each with its request; the maker's line names
@@ -181,22 +180,14 @@ test("a pull request's panel shows the sessions that made it and worked on it af
     await screenshot(page, "link-graph-panel-light");
 
     // A line's buttons stand under it on the pointer; View conversation opens
-    // the Sessions tab at that session (B10, B11).
+    // that session's record in the lane beside the card (B10, B11; PRD
+    // overview-device-tasks B58).
     await maker.hover();
     await expect(maker.locator('[data-link-button="view"]')).toBeVisible();
     await expect(maker.locator('[data-link-button="resume"]')).toBeVisible();
     await maker.locator('[data-link-button="view"]').click();
-    await expect(overview).toHaveAttribute("data-overview-view", "sessions");
-    await expect(page.locator('[data-session-header="s-maker"]')).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator("[data-session-turns]")).toContainText("검증 끝났으면 PR 올려 줘");
-
-    // The session's row and head carry its PR chip, which opens the panel again (B36).
-    const chip = page.locator('[data-session="s-maker"] [data-session-pr="31"]');
-    await expect(chip).toHaveAttribute("data-session-pr-created", "true", { timeout: 30_000 });
-    await expect(page.locator('[data-session-header="s-maker"] [data-session-pr="31"]')).toBeVisible();
-    await expect(page.locator('[data-session="s-review"] [data-session-pr="31"]')).not.toHaveAttribute("data-session-pr-created", "true");
-    await chip.click();
-    await expect(overview).toHaveCount(0);
+    await expect(page.locator('[data-session-record="lane"]')).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator("[data-overview-page]")).toHaveCount(0);
     await expect(panel).toBeVisible();
 
     // A session whose file is gone stays as a dim line, and Resume says why (B15);
@@ -254,7 +245,6 @@ test(`a ${kind} archive resume keeps its selected source and uses the current co
     const gh = fakeGh(herdr.root);
     daemon = await startHided(herdr, `${kind}-archive`, herdr.env.HOME, { PATH: `${gh}${path.delimiter}${herdr.fixturePath}` });
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    const overview = page.locator("[data-overview-screen]");
     const panel = await openCard(page, 31);
     const archived = panel.locator(`[data-link-session="${id}"]`);
     await expect(archived).toBeVisible({ timeout: 60_000 });
@@ -267,13 +257,8 @@ test(`a ${kind} archive resume keeps its selected source and uses the current co
     await expect(resume).toBeEnabled();
     await archived.hover();
     await archived.locator('[data-link-button="view"]').click();
-    await expect(overview).toHaveAttribute("data-overview-view", "sessions");
-    const detail = page.locator(`[data-session-header="${id}"]`);
-    await expect(detail).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator("[data-session-turns]")).toContainText("요청 보기를 만들어줘");
-    await screenshot(page, `${kind}-archive-conversation`);
-    await detail.locator('[data-session-pr="31"]').click();
-    await expect(overview).toHaveCount(0);
+    await expect(page.locator('[data-session-record="lane"]')).toBeVisible({ timeout: 30_000 });
+    await screenshot(page, `${kind}-archive-record`);
     await expect(panel.locator(`[data-pr-panel-worktree="${tree}"]`)).not.toHaveAttribute("data-removed", "true");
     await expect(panel.locator("[data-link-loading]")).toHaveCount(0, { timeout: 60_000 });
     // The card's own parts settle first: a failed part draws a line that moves the row under the pointer.

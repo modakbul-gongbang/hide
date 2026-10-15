@@ -46,11 +46,11 @@ test("one confirmed choice follows every window, persists, and resets to each sy
     await expect(left.locator("[data-interface-language]")).toHaveAttribute("data-interface-language", "system");
     // The answers are product copy, independent of the translation catalog.
     const keycaps = await left.locator(".sidebar-command-keycap").allTextContents();
-    for (const [language, heading, general, overview, all, scope, close, change, clear, projectCommand, agentCommand] of [
-      ["en", "Settings", "General", "Overview", "All projects", "Overview scope", "Close Overview", "Change the shortcut for Overview, now {chord}", "Clear the shortcut for Overview", "Focus sidebar", "Agents overview"],
-      ["ko", "설정", "일반", "개요", "모든 프로젝트", "개요 범위", "개요 닫기", "개요 단축키 변경, 현재 {chord}", "개요 단축키 해제", "사이드바로 이동", "에이전트 Overview"],
-      ["zh-CN", "设置", "常规", "概览", "所有项目", "概览范围", "关闭概览", "更改概览的快捷键，当前为 {chord}", "清除概览的快捷键", "聚焦侧边栏", "智能体总览"],
-      ["ja", "設定", "一般", "概要", "すべてのプロジェクト", "概要の範囲", "概要を閉じる", "概要のショートカットを変更、現在 {chord}", "概要のショートカットを解除", "サイドバーへ移動", "エージェント概要"],
+    for (const [language, heading, general, overview, tasks, devices, close, change, clear, projectCommand, backlogCommand] of [
+      ["en", "Settings", "General", "Overview", "Tasks", "Device", "Close Overview", "Change the shortcut for Overview, now {chord}", "Clear the shortcut for Overview", "Focus sidebar", "Add to backlog"],
+      ["ko", "설정", "일반", "개요", "태스크", "기기", "개요 닫기", "개요 단축키 변경, 현재 {chord}", "개요 단축키 해제", "사이드바로 이동", "백로그에 추가"],
+      ["zh-CN", "设置", "常规", "概览", "任务", "设备", "关闭概览", "更改概览的快捷键，当前为 {chord}", "清除概览的快捷键", "聚焦侧边栏", "添加到待办"],
+      ["ja", "設定", "一般", "概要", "タスク", "デバイス", "概要を閉じる", "概要のショートカットを変更、現在 {chord}", "概要のショートカットを解除", "サイドバーへ移動", "バックログに追加"],
     ]) {
       await choose(left, language!);
       for (const page of [left, right]) {
@@ -74,15 +74,15 @@ test("one confirmed choice follows every window, persists, and resets to each sy
       await left.locator("[data-open-overview]").click();
       const modal = left.getByRole("dialog", { name: overview!, exact: true });
       await expect(modal).toBeVisible();
-      await expect(modal.getByRole("tablist", { name: scope!, exact: true })).toBeVisible();
-      await expect(modal.getByRole("tab", { name: all!, exact: true })).toHaveAttribute("aria-selected", "true");
-      await expect(modal.getByRole("tab", { name: "fixture", exact: true })).toBeVisible();
+      await expect(modal.getByRole("radiogroup", { name: devices!, exact: true })).toBeVisible();
+      await expect(modal.locator('[data-main-tab="tasks"]')).toHaveAttribute("aria-selected", "true");
+      await expect(modal.locator('[data-main-tab="tasks"]')).toContainText(tasks!);
       await expect(modal.getByRole("button", { name: close!, exact: true })).toHaveText("Esc");
       await screenshot(left, `interface-${language}`);
       await left.keyboard.press("Escape");
       // Command labels translate while command ids and effective chords stay stable.
       await left.keyboard.press(chord("shortcuts"));
-      for (const [id, title] of [["overview", overview], ["sidebar_projects", projectCommand], ["sidebar_agents", agentCommand]]) {
+      for (const [id, title] of [["overview", overview], ["sidebar_projects", projectCommand], ["add_backlog", backlogCommand]]) {
         await expect(left.locator(`[data-shortcut="${id}"]`).locator("span").first()).toHaveText(title!);
       }
       await left.keyboard.press("Escape");

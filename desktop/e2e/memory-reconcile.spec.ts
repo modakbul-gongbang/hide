@@ -69,7 +69,7 @@ test("Memory compares sources, limits a batch and groups a confirmed PR", async 
     // fixture's PR 72 is no pull request of any repository, so the core refuses it and
     // the lane stays on Memory.
     await expect.poll(() => sent.get("pr_open")).toMatchObject({ pr_number: 72 });
-    await expect(page.locator("[data-overview-screen]")).toHaveCount(0);
+    await expect(page.locator("[data-overview-page]")).toHaveCount(0);
     await expect(tab.locator('[data-memory="on"]')).toBeVisible();
     // Return to this Memory, then the light/narrow state.
     await (await showProjectRow(page, page.locator("[data-project]", { hasText: "sample" }).locator("[data-checkout]").first())).click();
