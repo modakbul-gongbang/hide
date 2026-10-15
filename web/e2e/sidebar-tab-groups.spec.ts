@@ -40,11 +40,11 @@ test("a tab with two agents wears a glyph that opens it, names itself once renam
     expect(sent.get("focus_pane") ?? 0).toBe(before);
     await expect(segment(page, herdr.tab).locator("[data-agent-open]")).toHaveCount(2);
 
-    // One agent left: a short segment with no glyph and no name line, even though the tab is still named.
+    // One agent left: the row alone, with no guide, no glyph and no name line, even though the tab is still named.
     herdr.run(["pane", "close", herdr.panes[1]]);
     await expect(glyph(page, herdr.tab)).toHaveCount(0);
     await expect(page.locator("[data-sidebar-tab-name]")).toHaveCount(0);
-    await expect(guide(page, herdr.tab)).toHaveCount(1);
+    await expect(guide(page, herdr.tab)).toHaveCount(0);
     await expect(segment(page, herdr.tab).locator("[data-agent-open]")).toHaveCount(1);
 
     // A second agent brings the glyph back with the retained name.
@@ -85,9 +85,10 @@ test("2-1-2 tab segments share one root column right of the kind glyph, with gui
     const titles = await Promise.all((await page.locator("[data-project-list] li[data-pane][data-depth='0'] [data-agent-title]").all()).map(position));
     expect(titles.map((title) => title.x - marks[0]!.x)).toEqual(titles.map(() => 16));
 
-    // Each segment's guide is 1px, centered under the kind glyph, and the gap between segments is 8px.
+    // A two-agent segment's guide is 1px, centered under the kind glyph; the single-agent segment draws none, and the gap between segments is 8px.
     const center = kind.x + kind.width / 2;
-    for (const tab of [herdr.tab, single.tab.tab_id, paired.tab.tab_id]) {
+    await expect(guide(page, single.tab.tab_id)).toHaveCount(0);
+    for (const tab of [herdr.tab, paired.tab.tab_id]) {
       const line = await position(guide(page, tab));
       expect(line.width).toBe(1);
       expect(Math.abs(line.x + line.width / 2 - center)).toBeLessThanOrEqual(0.5);

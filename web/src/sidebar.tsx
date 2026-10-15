@@ -1591,10 +1591,10 @@ function OpenAgentRows({ checkout, groupTabs, deviceId, agentRows, sleeping, ins
 const TAB_LINE = "calc(var(--size-sidebar-line) + var(--spacing-xxs))";
 
 /**
- * A tab is a segment of its checkout's agent list, not a level (docs/UI_BEHAVIOR.md, Sidebar hierarchy): a hairline guide centered under the
- * checkout's kind glyph spans the segment's rows, and the gap between two guides is the tab boundary. A tab holding two or more agents wears
- * the tab glyph at the head of its guide, on the first row's line; a manual name adds one quiet line carrying that glyph and the name. Both
- * open the real tab, and the hint says its name and agent count.
+ * A tab is a segment of its checkout's agent list, not a level (docs/UI_BEHAVIOR.md, Sidebar hierarchy): a tab holding two or more agents
+ * draws a hairline guide centered under the checkout's kind glyph spanning the segment's rows, with the tab glyph at its head on the first
+ * row's line; a manual name adds one quiet line carrying that glyph and the name. Both open the real tab, and the hint says its name and
+ * agent count. A single-agent tab draws nothing: its row alone is the segment, and the gap between segments is the tab boundary.
  */
 function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context }: { group: SidebarTabGroup; checkout: Checkout; deviceId: string; inset: string; glyphColumn: string; context: TreeContext }) {
   const { t } = useInterfaceTranslation();
@@ -1607,14 +1607,14 @@ function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context
   const center = `calc(${glyphColumn} + var(--size-checkout-icon) / 2)`;
   const glyph = <PanelsTopLeftIcon aria-hidden="true" className="size-(--size-icon-sm)" />;
   const open = () => context.actions.openSurface(tabSurface(checkout, tab!.id!, deviceId));
-  // The guide starts under the glyph a head carries, and a row's own padding from the segment's edge without one.
+  if (!group.glyph) return null;
+  // The guide starts under the glyph the head carries.
   // It stands above a selected or hovered row's fill, so only a tab boundary breaks it; the list isolates its stacking so neither it nor the glyph rises over the sticky section header.
-  const guideTop = !group.glyph ? "var(--spacing-xs)"
-    : named ? `calc(${TAB_LINE} / 2 + var(--size-icon-sm) / 2 + var(--spacing-xxs))`
+  const guideTop = named ? `calc(${TAB_LINE} / 2 + var(--size-icon-sm) / 2 + var(--spacing-xxs))`
     : `calc(var(--spacing-xs) + var(--size-sidebar-line) / 2 + var(--size-icon-sm) / 2 + var(--spacing-xxs))`;
   return (
     <>
-      <span aria-hidden="true" data-sidebar-tab-guide={tab?.id ?? ""} className="pointer-events-none absolute z-10 w-(--size-hairline) bg-lineage-rail" style={{ left: `calc(${center} - var(--size-hairline) / 2)`, top: guideTop, bottom: "var(--spacing-xs)" }} />
+      <span aria-hidden="true" data-sidebar-tab-guide={tab!.id!} className="pointer-events-none absolute z-10 w-(--size-hairline) bg-lineage-rail" style={{ left: `calc(${center} - var(--size-hairline) / 2)`, top: guideTop, bottom: "var(--spacing-xs)" }} />
       {named ? (
         <div data-sidebar-tab-line={tab!.id!} className="group/row relative rounded-sm hover:bg-accent" style={{ height: TAB_LINE }}>
           <Hint label={label} reveals>
@@ -1623,11 +1623,11 @@ function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context
           <span aria-hidden="true" className="pointer-events-none absolute top-1/2 -translate-x-1/2 -translate-y-1/2 text-subtle-foreground" style={{ left: center }}>{glyph}</span>
           <span aria-hidden="true" data-sidebar-tab-name="true" className="pointer-events-none absolute inset-y-0 right-xs flex min-w-0 items-center text-caption text-subtle-foreground" style={{ left: inset }}><span className="truncate">{manual}</span></span>
         </div>
-      ) : group.glyph ? (
+      ) : (
         <Hint label={label} reveals>
           <button type="button" data-sidebar-tab={tab!.id!} disabled={removing} aria-label={label} className="absolute z-10 flex size-(--size-sidebar-line) -translate-x-1/2 items-center justify-center rounded-xs text-subtle-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" style={{ left: center, top: "var(--spacing-xs)" }} onClick={open}>{glyph}</button>
         </Hint>
-      ) : null}
+      )}
     </>
   );
 }

@@ -2968,12 +2968,12 @@ function buildProjectsSidebar(tokens) {
     return node;
   }
 
-  // A tab is a segment of its checkout's agent list, not a level: a 1px guide
-  // centered under the checkout's kind glyph spans the segment's rows, and the
-  // gap between two guides is the tab boundary. A tab of two or more agents wears
-  // the tab glyph at the head of its guide, on the first row's line; a manual name
-  // adds one quiet 22px line carrying that glyph and the name, starting on the
-  // status-mark column (sidebar.tsx's TabSegmentHead).
+  // A tab is a segment of its checkout's agent list, not a level. A tab of two
+  // or more agents draws a 1px guide centered under the checkout's kind glyph
+  // spanning the segment's rows, with the tab glyph at its head on the first
+  // row's line; a manual name adds one quiet 22px line carrying that glyph and
+  // the name, starting on the status-mark column (sidebar.tsx's TabSegmentHead).
+  // A single-agent tab draws no guide; the gap between segments is the tab boundary.
   function segment(id, {name = null, glyph = false, rows}) {
     const line = num(tokens, '--size-sidebar-line');
     const tabLine = line + num(tokens, '--spacing-xxs');
@@ -2983,7 +2983,7 @@ function buildProjectsSidebar(tokens) {
     const named = glyph && name !== null;
     const glyphX = glyphColumn + (kind - glyphSize) / 2;
     const guideX = glyphColumn + (kind - 1) / 2;
-    const guideTop = !glyph ? xs : named ? tabLine / 2 + glyphSize / 2 + air : xs + line / 2 + glyphSize / 2 + air;
+    const guideTop = named ? tabLine / 2 + glyphSize / 2 + air : xs + line / 2 + glyphSize / 2 + air;
     const head = named
       ? [frame(`${id}-line`, 'Tab line', {width: row, height: tabLine, layout: 'horizontal', alignItems: 'center', gap: nameColumn - glyphX - glyphSize, padding: [0, xs, 0, glyphX]}, [
         icon(`${id}-glyph`, 'panels-top-left', {size: glyphSize, fill: '$--subtle-foreground'}),
@@ -2991,8 +2991,8 @@ function buildProjectsSidebar(tokens) {
       ])]
       : glyph ? [{...icon(`${id}-glyph`, 'panels-top-left', {size: glyphSize, fill: '$--subtle-foreground'}), layoutPosition: 'absolute', x: glyphX, y: xs + (line - glyphSize) / 2}] : [];
     const total = (named ? tabLine : 0) + rows.reduce((sum, node) => sum + treeHeights.get(node), 0);
-    const guide = frame(`${id}-guide`, 'Tab guide', {layoutPosition: 'absolute', x: guideX, y: guideTop, width: 1, height: total - guideTop - xs, fill: '$--lineage-rail'}, []);
-    return frame(id, 'Tab segment', {width: row, layout: 'vertical'}, [...head, ...rows, guide]);
+    const guide = glyph ? [frame(`${id}-guide`, 'Tab guide', {layoutPosition: 'absolute', x: guideX, y: guideTop, width: 1, height: total - guideTop - xs, fill: '$--lineage-rail'}, [])] : [];
+    return frame(id, 'Tab segment', {width: row, layout: 'vertical'}, [...head, ...rows, ...guide]);
   }
 
   // An opened checkout and its unboxed tab segments, 8px apart.
