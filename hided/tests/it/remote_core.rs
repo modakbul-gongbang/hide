@@ -2233,12 +2233,12 @@ fn a_node_project_is_measured_on_the_node_as_a_local_one_is() -> Result<()> {
                         .filter(|row| row["is_git"] == true))
                 })
             })?;
-            // The node's screen opens the project's Overview, which asks for
-            // its size.
+            // The node's screen shows the Projects tab, which asks for its
+            // projects' sizes.
             send(
                 &mut socket,
-                "card_measure_disk",
-                json!({"workspace_id": row["id"]}),
+                "disk_watch",
+                json!({"workspace_ids": [row["id"]]}),
             )
             .await?;
             let mut last = Value::Null;

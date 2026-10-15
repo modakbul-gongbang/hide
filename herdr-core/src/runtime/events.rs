@@ -1482,7 +1482,6 @@ pub(super) enum Event {
     CleanupConfirm(CleanupConfirmPayload),
     CleanupDismiss,
     CardRefresh,
-    CardMeasureDisk,
     DiskWatch(super::disk_sweep::DiskWatchPayload),
     ReconnectPane(FocusPanePayload),
     PetSetVisible(PetVisibilityPayload),
@@ -1725,8 +1724,6 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "overview_open_section" => decode!(OverviewOpenSectionPayload, OverviewOpenSection),
         "agent_start_in_checkout" => decode!(AgentStartInCheckoutPayload, AgentStartInCheckout),
         "card_refresh" => Ok(Event::CardRefresh),
-        // An older client sends `{}`; a payload that is absent reads the same.
-        "card_measure_disk" => Ok(Event::CardMeasureDisk),
         "disk_watch" => decode!(super::disk_sweep::DiskWatchPayload, DiskWatch),
         "reconnect_pane" => decode!(FocusPanePayload, ReconnectPane),
         "pet_set_visible" => decode!(PetVisibilityPayload, PetSetVisible),
@@ -3626,13 +3623,6 @@ impl Runtime {
                 // answer and the local counts, because the operator pressing
                 // it means "this is out of date", not "gh is out of date".
                 self.reread_focused_project();
-                true
-            }
-            Event::CardMeasureDisk => {
-                // The delete confirmation states the size it is about to
-                // delete, so it is measured when the dialog opens rather
-                // than shown from whenever the card last looked.
-                self.remeasure_disk();
                 true
             }
             Event::DiskWatch(payload) => self.watch_disk(payload),

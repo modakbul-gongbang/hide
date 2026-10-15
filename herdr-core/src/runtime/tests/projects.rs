@@ -800,17 +800,6 @@ fn the_projects_tab_measures_a_git_project_whole() {
         disk.unavailable_reason.as_deref(),
         Some("Measurement exceeded its limit")
     );
-
-    let generation = runtime.disk_request().generation;
-    assert!(
-        runtime.dispatch_json(
-            &serde_json::to_vec(&serde_json::json!({
-                "schema_version": SCHEMA_VERSION, "kind": "card_measure_disk", "payload": null
-            }))
-            .unwrap()
-        )
-    );
-    assert_eq!(runtime.disk_request().generation, generation + 1);
 }
 
 #[test]
