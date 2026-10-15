@@ -11,18 +11,21 @@ import type { MobileState } from "../mobileSettings";
 import { EMPTY_GALLERY_SCOPE } from "./agentScopes";
 import { REFERENCE_FOLDS, sidebarScene } from "./sceneData";
 
+/** A pull request or issue reference as the page writes it. */
+const ref = (number: number) => `#${number}`;
+
 /** What one agent row is called and which CLI runs it, by the fixture's pane id. */
 type Words = { title: string; kind: string; detail?: string; pull?: [number, string] };
 
 const AGENT_WORDS: Record<string, Words> = {
-  a3: { title: "Approve #431 and #432?", kind: "claude", detail: "Both checked by Claude Code. Tests pass." },
-  q1: { title: "#433: CSV or XLSX for the export?", kind: "claude", detail: "A product call the lead won't make for you." },
+  a3: { title: `Approve ${ref(431)} and ${ref(432)}?`, kind: "claude", detail: "Both checked by Claude Code. Tests pass." },
+  q1: { title: `${ref(433)}: CSV or XLSX for the export?`, kind: "claude", detail: "A product call the lead won't make for you." },
   q2: { title: "Fix the test that broke the export", kind: "opencode" },
   e1: { title: "Task detail API", kind: "codex" },
   tn1: { title: "Tidy the meeting notes", kind: "claude" },
   a1: { title: "Split the invoice export in three", kind: "claude", pull: [431, "Export invoices as CSV"] },
   a1c1: { title: "Export invoices as CSV", kind: "codex" },
-  a1c2: { title: "Check #431 and #432", kind: "claude" },
+  a1c2: { title: `Check ${ref(431)} and ${ref(432)}`, kind: "claude" },
   a1c3: { title: "Sort the export by date", kind: "codex", pull: [432, "Sort the export by date"] },
   a1g1: { title: "Find why the test broke", kind: "opencode" },
   a1g2: { title: "Add a test for sorted output", kind: "opencode" },
@@ -62,8 +65,8 @@ const BRANCHES: Record<string, string> = {
 
 const PURPOSES: Record<string, string> = {
   "hide:main": "Split the invoice export in three",
-  "hide:155": "#433 CSV or XLSX for the export",
-  "hide:154": "#434 Fix the test that broke the export",
+  "hide:155": `${ref(433)} CSV or XLSX for the export`,
+  "hide:154": `${ref(434)} Fix the test that broke the export`,
   "hide:electron": "Task detail API",
   "hide:ux": "Export guide",
   "team-notes:folder": "Tidy the meeting notes",
