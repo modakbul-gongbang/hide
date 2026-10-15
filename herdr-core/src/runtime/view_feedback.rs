@@ -752,16 +752,30 @@ impl Runtime {
                 "There are no comments to send".into(),
             ));
         }
-        // Only a Send that names comments to send is one Retry can ask again.
-        self.view_feedback.asked.insert(
-            key.clone(),
-            AskedSend {
-                request_id: request_id.clone(),
-                group: group.clone(),
-                display_id: display_id.clone(),
-                to: to.clone(),
-            },
-        );
+        // Only a Send that went ahead is one Retry can ask again; a refused
+        // one leaves the last such Send to retry.
+        let asked = AskedSend {
+            request_id: request_id.clone(),
+            group: group.clone(),
+            display_id: display_id.clone(),
+            to: to.clone(),
+        };
+        let started = self.route_view_feedback_send(key, request_id, comments, to);
+        if started.is_ok() {
+            self.view_feedback.asked.insert(key.clone(), asked);
+        }
+        started
+    }
+
+    /// Sends `comments` where `to` says: the group's opener, a chosen pane,
+    /// or the opener reopened.
+    fn route_view_feedback_send(
+        &mut self,
+        key: &WorkspaceKey,
+        request_id: String,
+        comments: Vec<Comment>,
+        to: SendTo,
+    ) -> Result<(), (&'static str, String)> {
         let group_opener = comments
             .iter()
             .find_map(|comment| comment.recipient.clone());
@@ -2491,6 +2505,15 @@ mod tests {
                 serde_json::from_value(json!({
                     "workspace": workspace, "request_id": "6f8fad5b-d9cb-469f-a165-70867728950e",
                     "group": "", "display_id": empty, "to": {"kind": "default"},
+                }))
+                .unwrap(),
+            );
+            // Nor does one to an agent that is not here.
+            runtime.lock().unwrap().apply_view_feedback_send(
+                serde_json::from_value(json!({
+                    "workspace": workspace, "request_id": "7f8fad5b-d9cb-469f-a165-70867728950e",
+                    "group": format!("{}/term-recipient", crate::node::TEST_NODE),
+                    "to": {"kind": "pane", "pane_id": "nobody"},
                 }))
                 .unwrap(),
             );
