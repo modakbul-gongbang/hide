@@ -86,7 +86,7 @@ describe("shortcut registry", () => {
       keep_open: "⇧⌘K",
       split_right: "⌘D",
       split_down: "⇧⌘D",
-      toggle_zoom: "⌥⌘↩",
+      toggle_zoom: "⇧⌘↩",
       close_pane: "⇧⌘W",
       text_larger: "⌘=",
       text_smaller: "⌘-",
@@ -181,14 +181,14 @@ describe("shortcut registry", () => {
   });
 
   it("runs each host's own stored set and never the other's", () => {
-    const uiState = { browser_shortcut_bindings: { split_right: "alt+KeyR" }, shortcut_bindings: { toggle_zoom: "command+shift+return" } };
+    const uiState = { browser_shortcut_bindings: { split_right: "alt+KeyR" }, shortcut_bindings: { toggle_zoom: "command+option+return" } };
     const browser = hostRegistry(uiState, "browser", "mac").registry;
     const desktop = hostRegistry(uiState, "electron", "mac").registry;
     expect(matchHost({ code: "KeyR", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, browser, "browser")?.id).toBe("split_right");
     expect(matchHost({ code: "KeyR", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, desktop, "electron")).toBeNull();
     expect(matchHost({ code: "KeyD", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false }, desktop, "electron")?.id).toBe("split_right");
-    expect(matchHost({ code: "Enter", metaKey: true, altKey: false, shiftKey: true, ctrlKey: false }, desktop, "electron")?.id).toBe("toggle_zoom");
-    expect(matchHost({ code: "Enter", metaKey: true, altKey: false, shiftKey: true, ctrlKey: false }, browser, "browser")).toBeNull();
+    expect(matchHost({ code: "Enter", metaKey: true, altKey: true, shiftKey: false, ctrlKey: false }, desktop, "electron")?.id).toBe("toggle_zoom");
+    expect(matchHost({ code: "Enter", metaKey: true, altKey: true, shiftKey: false, ctrlKey: false }, browser, "browser")).toBeNull();
     expect(hostRegistry({}, "electron", "mac").registry).toBe(REGISTRY);
   });
 
@@ -335,7 +335,7 @@ describe("the desktop app's macOS pane chords (user decision 2026-09-26)", () =>
     expect(matchHost(press("Enter", { meta: true, alt: true }), registry, "electron")).toBeNull();
     expect(displayCommand("text_larger", "electron", registry, "mac")).toBe("⌘=");
     // The browser column is untouched by the macOS set.
-    expect(registry.find((command) => command.id === "toggle_zoom")?.browser).toEqual({ code: "Enter", meta: true, alt: true });
+    expect(registry.find((command) => command.id === "toggle_zoom")?.browser).toEqual({ code: "Enter", meta: true, shift: true });
   });
 
   it("keeps the surfaceless Toggle Conversation in the set without running it", () => {

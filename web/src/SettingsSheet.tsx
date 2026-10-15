@@ -28,10 +28,11 @@ import { NotificationsTab } from "./settings/NotificationsTab";
 import { ShortcutsTab } from "./settings/ShortcutsTab";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
+import { ProjectSettingsSheet } from "./ProjectSettingsSheet";
 
 export function SettingsGate({ actions }: { actions: Actions }) {
-  const open = useUiStore((s) => s.overlay === "settings");
-  return open ? <SettingsSheet actions={actions} /> : null;
+  const overlay = useUiStore((s) => s.overlay);
+  return overlay === "settings" ? <SettingsSheet actions={actions} /> : overlay === "project_settings" ? <ProjectSettingsSheet actions={actions} /> : null;
 }
 
 /**

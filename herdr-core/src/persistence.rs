@@ -52,6 +52,8 @@ struct StoredUiState {
     expanded_inactive_project_device_ids: Vec<String>,
     #[serde(default)]
     project_base_branches: BTreeMap<String, String>,
+    #[serde(default)]
+    project_settings: BTreeMap<String, crate::project_settings::ProjectSettings>,
     /// The folded-by-default agent tree's open rows. The former
     /// `collapsed_agent_pane_ids` key is ignored on load and dropped on the
     /// next write: the ids it held name panes of some earlier Herdr server,
@@ -370,6 +372,8 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
                 .expanded_inactive_checkout_project_paths,
             expanded_inactive_project_device_ids: stored.expanded_inactive_project_device_ids,
             project_base_branches: stored.project_base_branches,
+            project_settings: stored.project_settings,
+            project_settings_writes: BTreeMap::new(),
             expanded_agent_pane_ids: stored.expanded_agent_pane_ids,
             sessions_expanded_agent_pane_ids: stored.sessions_expanded_agent_pane_ids,
             selected_path: stored.selected_path,
@@ -484,6 +488,7 @@ pub fn save(
             .clone(),
         expanded_inactive_project_device_ids: state.expanded_inactive_project_device_ids.clone(),
         project_base_branches: state.project_base_branches.clone(),
+        project_settings: state.project_settings.clone(),
         expanded_agent_pane_ids: state.expanded_agent_pane_ids.clone(),
         sessions_expanded_agent_pane_ids: state.sessions_expanded_agent_pane_ids.clone(),
         selected_path: state.selected_path.clone(),

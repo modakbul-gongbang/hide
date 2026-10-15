@@ -281,6 +281,11 @@ A rule, decision or lesson card the operator's words or the agents' own pulls ma
 At most three new promotion suggestions are open; document corrections for rule, lesson and decision cards are also selectable, and a dismissal holds only for its revision.
 `memory_action` `promote` takes one card or up to five selected card numbers through one path.
 The store reserves every card atomically before starting one agent in one worktree, with Hide's `hide:memory` identity as its origin and no parent or watch.
+The reserved attempt durably captures its repository from the confirmed connection and node-owned Git facts.
+Repository owner/name comparisons follow GitHub's case-insensitive identity; the URL host, `pull` path kind and PR number stay exact.
+Its PR number, branch and repository-qualified URL must match before a catalog result can settle it; a changed connection cannot fail or settle the old attempt from another repository.
+Schema 14 adds nullable `card_promotions.repository`; legacy unknown provenance stays unknown, keeps its card state and is shown as unconfirmed with its PR link disabled.
+A failed batch retry preserves that original target and refuses a different or unknown connection; restoring the original connection asks for a fresh catalog before deciding absence.
 The fixed prompt reads each card through `hide memory show`, treats it as untrusted reference data, processes cards sequentially with one commit each, reports successful placement through `hide memory placed`, and opens or updates one PR with each card's operator date and source session.
 A failed batch retry reuses its branch, retained worktree and confirmed PR rather than creating another; a duplicate request while its cards are running returns the existing intent.
 An unprocessed card reported through `hide memory skipped` returns to To ask with its bounded reason, while successfully placed peers remain in the shared PR.
@@ -640,7 +645,8 @@ The total is `max(ATTACHED_TAB_LIMIT, shown_count)`, at most six tabs, so an uns
 Herdr renders a pane for every attached client, so the core releases tabs outside that bounded set through the ordinary session drop.
 A released pane keeps its projection entry carrying `released`; the shell disposes its terminal and redraws from Herdr's frame on the next visit.
 Terminal metadata belongs to each session pane, independently of which pane is selected.
-An acknowledged new tab awaiting its layout, or a selected pane that retired, cannot erase other retained tabs' metadata; each authoritative layout still prunes panes that actually closed.
+A selection that moves, including a switch to another checkout, an acknowledged new tab awaiting its layout, or a selected pane that retired clears only the selected pane's presentation and cannot erase other retained tabs' metadata; each authoritative layout still prunes panes that actually closed.
+The shell disposes a parked terminal whose entry is missing, so a single list without a retained pane throws its renderer away even when the next list brings the pane back.
 The attach window continues to release its oldest tab normally, and returning to an evicted tab restores its PTY content with a new renderer.
 The idle tick attaches every shown tab's panes, while focus, read and sleep-visit state follow only the active area's tab.
 All shown tabs count as on screen for sleep prevention.
@@ -833,6 +839,7 @@ Retention follows each Project's Copied history: Off keeps a line only while its
 A repository is keyed by GitHub's repository id when `gh repo view` gives it, so a rename keeps its rows.
 
 A connected device's sessions come through its helper: `link_files` lists the device's changed session files and `link_read` reads up to 8 of them, each answer only link facts (helper protocol 32 includes bounded request and issue facts); the worker asks each ready device at most once a minute, a device whose call failed is left alone for a minute before it is asked again, and a device that is gone keeps every row it gave.
+The owning node converts the native cwd in each `LinkRead` answer to the platform layer's wire spelling before sending it, so Windows agent paths relate to catalog paths with the same separators without the core interpreting another device's native path.
 The panel's read is one request at a time, the latest only, answered as `link_panel` on its own delta revision beside `rest`; `links_open` names the pull request or issue, a generation fence drops an answer for one no longer shown, and a failure keeps the lines read before.
 A store that cannot open is tried again every 15 s, and while it is closed, or while the worker's writes keep failing, the panel's answer is that failure rather than a record that stopped growing.
 The worker re-reads an open panel after it writes, and publishes the small per-Project summary (`link_summaries`: session counts by pull request and issue, each session's pull request chips, and whether the first fill of this machine or of a device is running; a later listing turns no spinner) at most every 2 s and only when it changed.
@@ -844,8 +851,19 @@ It answers through hided's own core without a renderer, scoped by default to the
 ### Session work records
 
 The link store's version 2 adds the session work ledger, keyed by device, agent kind and native session id.
+Version 3 retains one immutable nullable original project and repository for each retained session, including descendants.
+An observed connection can identify only a session that started after that connection was known; first discoveries of older history and records migrated from versions 1 or 2 keep unknown repository identity.
+The writer resets its connection observation window on restart, and an accepted repository edit advances that project's window even when changes return to the same repository before the worker observes them.
+The save acknowledgement posts the new connection epoch to the writer for both local and device Projects, with an unknown repository until its new provider read answers.
+A retained cursor's same session identity cannot certify a new birth when the native file is replaced or truncated.
+Both local and device intake certify only a birth strictly before the node read began, with no newer project facts pending when its answer returns; otherwise ordinary reader data is kept with an immutable unknown origin.
+A device clock ahead of the writer may therefore leave its original repository unknown rather than assign a current connection without a valid observation window.
+These rows share the store's size cap, device conversion and Copied history pruning; no later catalog lookup fills an unknown original repository or rewrites a known one.
 `links/ledger.rs` owns its values and bounds, `links/ledger_store.rs` its transactions, `runtime/session_work.rs` its events, and `web/src/SessionRecord.tsx` its read surface.
 Only `hide-links` writes it; record reads and session search are latest-only mailbox requests, with separate delta revisions and generation fences.
+Missed-work previews capture the common Project repository resolver with their owning device and checkout.
+An unknown original repository or a confirmed connection to another repository refuses creation; connection edits cancel the captured preview or create and reject its late answer while retaining the worker's ownership until it ends.
+Every external create remains pinned to the original reserved repository, and a retry reconciles that durable attempt before another effect.
 The helper's version 32 supplies canonical request senders and letter kinds from every supported native reader; an older helper keeps its existing raw requests and PR facts until updated.
 
 The record retains requests of at most 500 characters, goal chapters, assigned tasks, END judgments, created outputs and missed work.
@@ -2021,6 +2039,25 @@ Closing follows one flow in `web/src/close.ts`: an unknown activity status asks 
 
 ### Settings and workspace management in the web shell
 
+Project choices live in the additive, versioned `ui_state.project_settings` map, keyed by `hide_project::project_id` of the owning device and its canonical main-worktree root.
+The catalog supplies that root; neither the visible workspace id nor the stored primary checkout identifies the settings, and a remote root is never resolved on this machine.
+An unset issue or base field retains the legacy path-based choice, an explicit automatic choice shadows it, and a partial patch leaves omitted fields unchanged.
+`project_settings_set` admits the exact catalog device/root pair and validates the repository and existing branch before the existing coalesced state writer saves it outside the runtime mutex.
+The confirmed record and its consumers move only when that exact save acknowledges the pending record; a failure retains the prior record with a request-scoped failed receipt, and closing a client does not cancel the write.
+Records are bounded to 256 projects, and transient receipts to 512 entries so a busy refusal can settle its caller without replacing an active write; receipts are not persisted, and unrelated `ui_state_update` echoes preserve both maps.
+Completed receipts displaced by a later caller remain request-scoped within that bound, so a coalesced snapshot still exposes each saved outcome; clients retain an observed terminal outcome when another writer replaces the project's latest receipt.
+An explicit repository is a private provider target, not a git remote or credential change.
+The existing GitHub reader separates its cached checks by repository as well as root and generation; changing the confirmed connection removes the previous screen data, moves the generation and rejects late remote answers for the old repository.
+Before a connection changes, the record retains up to 200 existing checkout issue references by checkout path, branch and bare number, with their original repository.
+Bare issue numbers on those unchanged branches keep that identity after restart, while an explicit owner/repository reference names its own target; prior issue creation and PR replies cannot attach to a different repository's same-number resource.
+This adds bounded map lookups to link projection and uses the existing readers and save queue, with no polling, subprocess or machine I/O under the runtime mutex.
+Remote worktree requests carry the confirmed device/root base choice, and a base change discards the one old in-flight answer before the coalesced reread.
+The search slot likewise refuses joins to an invalidated worker and resolves every fresh target from the confirmed connection before a provider read answers.
+`project_memory_navigate` scopes focus and the right lane's Memory tool to one checkout and calls that lane forward; a remote lane changes only when the existing pending choice reaches its exact front, and a refused focus drops the choice.
+An accepted newer checkout, pane, tab, device, file or local Memory navigation supersedes that pending Memory choice before its late acknowledgment or checkout arrival can move the screen.
+Memory projects expose their own hook-preparation and failed-action state, preserving confirmed values and cards for Retry.
+Settings retries only its enable or disable action; card deletion, forgetting and promotion retain the existing Memory tool's confirmation and card identity.
+Tests in `herdr-core/src/runtime/tests/project_settings.rs` cover the save acknowledgment, failed save, fallback, identity and late-answer boundary.
 The agent logo view mode is owned the same way: `agent_logo_mode_set` alone changes `ui_state.agent_logo_mode`, an unknown stored value reads as `hidden` with a `ui_state.agent_logo_mode_unknown` diagnostic, and unrelated UI saves preserve it.
 Interface language is a core-owned UI preference: `interface_language_set` alone changes `ui_state.interface_language`, and unrelated UI saves preserve it.
 The existing coalesced persistence queue stores the raw choice; snapshot serialization publishes English for an invalid stored value while keeping that value and logging a diagnostic.
@@ -2759,7 +2796,7 @@ The table below is written in macOS chords; Windows and Linux press each one thr
 | Toggle Tools | - | ⌘E | ⌘E |
 | Toggle File Tree | - | ⌘⇧E | ⌘⇧E |
 | Split right / down | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D |
-| Zoom pane | ⌘⌥↩ | ⌘⌥↩ | ⌘⌥↩ |
+| Zoom pane (Expand while the keyboard is in the right lane) | ⌘⌥↩ | ⇧⌘↩ | ⇧⌘↩ |
 | Close pane | ⌘⇧W | ⌥⇧W (moved: Chrome reserves ⌘⇧W) | ⌘⇧W |
 | Larger / smaller / reset text | ⌘= / ⌘- / ⌘0 | same chords; while an image or PDF display holds the keyboard they zoom it in Chrome's steps and ⌘0 returns it to its fit | same chords, and the same for an image or PDF; while a browser display's page holds the keyboard they zoom that page in Chrome's steps and it keeps the keyboard, and ⌘+ (⌘⇧=) zooms it in too (`docs/BROWSER_DISPLAYS.md`) |
 | Move to Trash | ⌘⌫ (Explorer tree only) | not intercepted; a terminal gets ^U | same as the browser |

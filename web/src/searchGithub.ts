@@ -88,7 +88,7 @@ export function githubRow(query: string, answer: GithubSearch | null, t: TFuncti
   const label = t("search.githubQuery", { query });
   if (!answer) return { state: "idle", label };
   if (answer.phase === "working") return { state: "working", label };
-  if (answer.phase === "failed") return { state: "failed", label: t("search.githubFailed") };
+  if (answer.phase === "failed") return { state: "failed", label: t(answer.message === "project_settings_repository_changed" ? "projectSettings.repositoryChanged" : "search.githubFailed") };
   // A search the core cut short does not claim GitHub has nothing.
   if (answer.results.length > 0) return { state: "idle", label };
   return { state: "none", label: answer.message ? t("search.githubPartialNone") : t("search.githubNone") };

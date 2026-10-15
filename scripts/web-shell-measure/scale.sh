@@ -74,11 +74,14 @@ build() {
     printf '%s %s\n' "$pane" "$state" >> "$agents_file"
     if ((n < printing)); then printf '%s\n' "$pane" >> "$run_dir/scale-printing.txt"; fi
   done
+  # The counts the private server answers beside the ones this scale asks
+  # for, so a reader can tell the measured fixture from the intended one.
   "$herdr" api snapshot | python3 -c '
 import json, sys
 d = json.load(sys.stdin); r = d.get("result") or d; s = r.get("snapshot") or r
-print(json.dumps({"scale": sys.argv[1], "workspaces": len(s.get("workspaces") or []), "tabs": len(s.get("tabs") or []), "panes": len(s.get("panes") or []), "agents_reported": int(sys.argv[2]), "printing": 0, "printing_targets": int(sys.argv[3])}))
-' "$scale" "$agents" "$printing" > "$run_dir/scale.json"
+print(json.dumps({"scale": sys.argv[1], "workspaces": len(s.get("workspaces") or []), "tabs": len(s.get("tabs") or []), "panes": len(s.get("panes") or []), "agents_reported": int(sys.argv[2]), "printing": 0, "printing_targets": int(sys.argv[3]),
+                  "target": {"workspaces": int(sys.argv[4]), "tabs": int(sys.argv[5]), "panes": int(sys.argv[6])}}))
+' "$scale" "$agents" "$printing" "$workspaces" "$tabs" "$panes" > "$run_dir/scale.json"
   cat "$run_dir/scale.json"
 }
 

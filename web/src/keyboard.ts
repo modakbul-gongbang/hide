@@ -281,8 +281,15 @@ export function installKeyboard(actions: Actions): () => void {
         return actions.split("right");
       case "split_down":
         return actions.split("down");
-      case "toggle_zoom":
+      case "toggle_zoom": {
+        // One chord for "this, full size", chosen by where the operator
+        // works: in the right lane it expands the lane and back, anywhere
+        // else it zooms the focused terminal pane.
+        const owner = event ? keyboardOwner() : keyboardCommandOwner();
+        const lane = ui().drawnLane.mode;
+        if ((owner.kind === "view" || owner.kind === "tool") && lane !== "closed" && lane !== "hidden") return ui().setLaneExpanded(!ui().laneExpanded);
         return actions.toggleZoom();
+      }
       case "close_pane":
         return actions.closePane();
       case "text_larger":
