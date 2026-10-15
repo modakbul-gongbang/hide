@@ -195,12 +195,6 @@ function usePaneChildren(paneId: string, agents: AgentRow[]): { children: PaneCh
 }
 
 /**
- * The pane's PR mark after its title, as the Sessions row of the same agent
- * draws it: a pane without children shows its own PRs (B21, B22), and a
- * parent shows `PR N` over itself and every descendant, so the operator sees a
- * child's pull request from the pane that delegated it.
- */
-/**
  * The status mark, logo and title of an agent pane's head as one button once
  * the pane's session is known (PRD overview-device-tasks B22-B24): it shows
  * that session's record in the lane, and a press on the record already shown
@@ -232,6 +226,12 @@ export function PaneRecordButton({ paneId, title, product, actions, children, pl
   );
 }
 
+/**
+ * The pane's PR mark after its title, as the Sessions row of the same agent
+ * draws it: a pane without children shows its own PRs (B21, B22), and a
+ * parent shows `PR N` over itself and every descendant, so the operator sees a
+ * child's pull request from the pane that delegated it.
+ */
 export function PanePrChip({ paneId, actions }: { paneId: string; actions: Actions }) {
   const agents = usePaneAgents();
   const byPane = agentsByPane(agents);
