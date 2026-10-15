@@ -99,12 +99,12 @@ export function OverviewProjects({ projects, deviceId, actions }: { projects: re
   );
 }
 
-/** `Needs You N · 일하는 중 N · 기다림 N · 끝남 N` with its colour bar, `쉬는 중 N` when nothing moves, `일감 없음` with no task (B48). */
 /** A size inside a summary sentence: mono for the number, the words in the body font. */
 const NUMBER = <span className="font-mono" />;
 
 const NOW_TONE: Record<NowPart["key"], string> = { needs: "bg-warning", working: "bg-agent-working", waiting: "bg-muted-foreground", done: "bg-success" };
 
+/** The non-zero of `Needs You N · 일하는 중 N · 기다림 N · 끝남 N` with its colour bar, `쉬는 중 N` when nothing moves, `일감 없음` with no task (B48). */
 function NowCell({ now }: { now: NowCounts }) {
   const { t } = useInterfaceTranslation();
   if (now.total === 0) return <span className="text-muted-foreground">{t("overviewProjects.noTasks")}</span>;
