@@ -1,4 +1,5 @@
-import { GlobeIcon, Link2Icon, LoaderCircleIcon, XIcon } from "lucide-react";
+import { GitPullRequestIcon, GlobeIcon, Link2Icon, LoaderCircleIcon, XIcon } from "lucide-react";
+import { PrCardView } from "./PrCard";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { createAreaTree, tabFit, type AreaAdapter, type AreaTabInteraction } from "./AreaTree";
@@ -6,6 +7,7 @@ import { AreaEmpty } from "./AreaEmpty";
 import { BrowserDisplay } from "./BrowserDisplay";
 import { focusBrowserDisplay, hostKey, useBrowserStore } from "./browserViews";
 import { Badge } from "./components/ui/badge";
+import { FileMark } from "./components/file-mark";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { revealHost } from "./host";
@@ -156,6 +158,7 @@ function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnaps
 function DisplayBody({ display, workspace, actions }: { display: ViewDisplaySnapshot; workspace: ViewWorkspace; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   if (display.kind === "browser") return <BrowserDisplay display={display} workspace={workspace} actions={actions} />;
+  if (display.kind === "pull_request") return <PrCardView workspace={{ device_id: workspace.device_id, path: workspace.path }} number={display.pr ?? 0} actions={actions} />;
   if (display.state === "open") {
     return <DisplayEditor display={display} workspace={workspace} placeKey={placeKey(workspaceKey(workspace), display)} actions={actions} />;
   }
@@ -265,6 +268,7 @@ export function DisplayTab({ display, workspace, interaction, actions }: { displ
 /** A file's type mark or the diff's comparison mark; never colour alone (D-15). */
 export function displayMark(display: Pick<ViewDisplaySnapshot, "kind" | "label">) {
   if (display.kind === "browser") return <GlobeIcon aria-hidden="true" data-view-mark="browser" className="size-(--size-icon) shrink-0 text-muted-foreground" />;
+  if (display.kind === "pull_request") return <GitPullRequestIcon aria-hidden="true" data-view-mark="pull_request" className="size-(--size-icon) shrink-0 text-muted-foreground" />;
   if (display.kind === "diff") {
     return (
       <span aria-hidden="true" data-view-mark="diff" className="shrink-0 font-mono text-warning">
@@ -272,12 +276,7 @@ export function displayMark(display: Pick<ViewDisplaySnapshot, "kind" | "label">
       </span>
     );
   }
-  const icon = fileIcon(display.label);
-  return (
-    <span aria-hidden="true" data-view-mark="file" className={`shrink-0 ${icon.color}`} style={{ fontFamily: "seti" }}>
-      {icon.glyph}
-    </span>
-  );
+  return <FileMark icon={fileIcon(display.label)} data-view-mark="file" />;
 }
 
 /** The minimum-density identity choice lives here so review can replace it without changing the fit curve. */

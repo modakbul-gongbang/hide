@@ -1,5 +1,5 @@
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, FlagIcon, GitBranchIcon } from "lucide-react";
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
 import { AgentRowMark } from "./AgentRowMark";
 import { useAgentLogosShown } from "./agentLogoMode";
@@ -29,6 +29,7 @@ import { useUiStore } from "./ui";
 import { MissedRow, SessionRecord } from "./SessionRecord";
 import { openMissedWork, sessionOfAgent, workKey } from "./sessionWork";
 import { summariesEnabled } from "./hideAi";
+import { useRequestViewDemand } from "./requestViewDemand";
 import { agentsByPane } from "./paneAgents";
 
 const GROUP_LABEL: Record<SessionGroup, MessageKey> = {
@@ -44,35 +45,25 @@ const NO_PANES: ReadonlySet<string> = new Set();
  * apart from the sidebar's folds, and the row standing for the focused pane
  * is selected as in the sidebar.
  */
-export function AgentSessions({ actions }: { actions: Actions }) {
+export function AgentSessions({ actions, onlyCheckout = null }: { actions: Actions; onlyCheckout?: string | null }) {
   const rest = useShellStore((state) => state.rest);
   const agents = useShellStore((state) => state.agents);
   const live = useShellStore((state) => state.connection === "live");
   const folds = useShellStore((state) => state.rest?.ui_state?.sessions_expanded_agent_pane_ids ?? NO_FOLDS);
-  const [onlyCheckout, setOnlyCheckout] = useState<string | null>(null);
   // The sidebar's rule: a Workspace in front selects the row of its focused pane.
   const inWorkspace = useUiStore((state) => state.screen?.kind === "workspace" && !state.overviewOpen);
   const focusedPane = useShellStore((state) => state.focusedPaneId);
   const model = useMemo(() => sessionsModel(rest, agents, onlyCheckout), [rest, agents, onlyCheckout]);
   const target = useUiStore((state) => state.sessionWorkTarget);
   // Share the existing visible-board demand. No new polling clock or reader.
-  useEffect(() => {
-    if (!live) return;
-    const report = () => actions.observeRequestView(document.visibilityState === "visible");
-    report();
-    document.addEventListener("visibilitychange", report);
-    return () => {
-      document.removeEventListener("visibilitychange", report);
-      actions.observeRequestView(false);
-    };
-  }, [actions, live]);
+  useRequestViewDemand(actions, live);
   // Keep the list mounted while a record is open: Back retains its folds,
   // selection and exact scroll position (B2).
-  return <><div className={target ? "hidden" : "flex min-h-0 min-w-0 flex-1 flex-col"}><SessionsContent model={model} actions={actions} folds={folds} focusedPane={inWorkspace ? focusedPane : null} onlyCheckout={onlyCheckout} onOnlyCheckout={setOnlyCheckout} /></div>{target ? <SessionRecord actions={actions} target={target} /> : null}</>;
+  return <><div className={target ? "hidden" : "flex min-h-0 min-w-0 flex-1 flex-col"}><SessionsContent model={model} actions={actions} folds={folds} focusedPane={inWorkspace ? focusedPane : null} onlyCheckout={onlyCheckout} /></div>{target ? <SessionRecord actions={actions} target={target} /> : null}</>;
 }
 
-const SessionsContent = memo(function SessionsContent({ model, actions, folds, focusedPane, onlyCheckout, onOnlyCheckout }: {
-  model: SessionsModel; actions: Actions; folds: string[]; focusedPane: string | null; onlyCheckout: string | null; onOnlyCheckout: (id: string | null) => void;
+const SessionsContent = memo(function SessionsContent({ model, actions, folds, focusedPane, onlyCheckout }: {
+  model: SessionsModel; actions: Actions; folds: string[]; focusedPane: string | null; onlyCheckout: string | null;
 }) {
   const { t } = useInterfaceTranslation();
   const [resolvedOpen, setResolvedOpen] = useState(false);
@@ -114,13 +105,6 @@ const SessionsContent = memo(function SessionsContent({ model, actions, folds, f
   const showAll = (parent: string) => setShownAll((before) => new Set(before).add(parent));
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-session-panel="true">
-      <header className="flex shrink-0 flex-col gap-sm border-b border-border px-md py-sm">
-        <span className="truncate text-caption font-medium" title={model.project?.label}>{model.project?.label ?? t("overview.allProjects")}</span>
-        {model.project && model.front ? <div className="flex min-w-0 gap-xs">
-          <button type="button" aria-pressed={!filtered} className="rounded-xs bg-secondary px-xs py-xxs text-micro outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => onOnlyCheckout(null)}>{t("agentSessions.allCheckouts")}</button>
-          <button type="button" aria-pressed={filtered} className="min-w-0 truncate rounded-xs px-xs py-xxs text-micro outline-none aria-pressed:bg-secondary focus-visible:ring-1 focus-visible:ring-ring" title={model.front.label} onClick={() => onOnlyCheckout(filtered ? null : model.front!.id)}>{t("agentSessions.onlyCheckout", { checkout: model.front.label })}</button>
-        </div> : null}
-      </header>
       {!model.available ? <p className="px-md py-sm text-caption text-muted-foreground" role="status">{model.reason ?? t("devices.rail.notConnected")}</p> : null}
       <div ref={list} className="min-h-0 flex-1 overflow-y-auto px-sm pb-md" data-session-list="true" onKeyDown={moveFocus}>
         {missed.length > 0 ? <details data-open-missed="true" className="border-b border-border py-xs"><summary className="flex cursor-pointer items-center gap-xs rounded-xs px-xs py-xs text-caption text-warning outline-none focus-visible:ring-1 focus-visible:ring-ring" data-session-focus="missed"><FlagIcon className="size-(--size-icon-sm)" />{t("sessionWork.count", { count: missed.length })}</summary><ul className="px-xs">{missed.map(({ owner, item }) => <MissedRow key={`${workKey(owner.session)}:${item.id}`} missed={item} record={owner} actions={actions} />)}</ul></details> : null}
@@ -143,7 +127,7 @@ const SessionsContent = memo(function SessionsContent({ model, actions, folds, f
     </div>
   );
 }, (before, after) => before.actions === after.actions && before.folds === after.folds && before.focusedPane === after.focusedPane
-  && before.onlyCheckout === after.onlyCheckout && before.onOnlyCheckout === after.onOnlyCheckout
+  && before.onlyCheckout === after.onlyCheckout
   && sameModel(before.model, after.model));
 
 function sameModel(a: SessionsModel, b: SessionsModel): boolean {

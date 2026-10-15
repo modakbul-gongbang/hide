@@ -40,6 +40,15 @@ pub(crate) struct Observation {
 }
 
 impl Observation {
+    /// Input hide routed after the last submission and the last start of
+    /// work: an unsent draft, a prompt Esc brought back, a recalled input.
+    pub(crate) fn unsent_draft(&self) -> bool {
+        self.last_input_at_unix_ms
+            > self
+                .last_submit_at_unix_ms
+                .max(self.entered_working_at_unix_ms)
+    }
+
     /// A Factory's recipient as a letter target: no pane, no status.
     pub(crate) fn code_owned(actor: Actor) -> Self {
         Self {
@@ -153,6 +162,12 @@ impl Runtime {
                         expected_id: None,
                     }
                 });
+            // A pane seen for the first time after a restart, an update or a
+            // device's return keeps the draft the last run held in it, unless
+            // it is working now, which a submission started.
+            let draft_kept = previous.is_none()
+                && status != "working"
+                && self.composer_marks.iter().any(|mark| mark.matches(&actor));
             let observation = Observation {
                 actor,
                 raw_pane_id: pane.to_owned(),
@@ -161,15 +176,20 @@ impl Runtime {
                 status_changed_at_unix_ms: changed_at,
                 // A pane hide has not seen before has no key it knows of, so
                 // every clock starts at this observation: a 30 second grace,
-                // and no draft assumed.
+                // and no draft assumed, unless the last run kept one.
                 last_input_at_unix_ms: previous.map(|old| old.last_input_at_unix_ms).unwrap_or(now),
-                last_submit_at_unix_ms: previous
-                    .map(|old| old.last_submit_at_unix_ms)
-                    .unwrap_or(now),
+                last_submit_at_unix_ms: previous.map(|old| old.last_submit_at_unix_ms).unwrap_or(
+                    if draft_kept {
+                        now.saturating_sub(1)
+                    } else {
+                        now
+                    },
+                ),
                 entered_working_at_unix_ms: match previous {
                     Some(old) if status != "working" || old.status == "working" => {
                         old.entered_working_at_unix_ms
                     }
+                    _ if draft_kept => now.saturating_sub(1),
                     _ => now,
                 },
                 session,
@@ -178,11 +198,16 @@ impl Runtime {
                     .map(str::to_owned),
                 turn,
             };
-            self.delivery_observations.insert(pane_id, observation);
+            self.delivery_observations
+                .insert(pane_id.clone(), observation);
+            self.sync_composer_mark(&pane_id, now);
         }
         self.delivery_observations.retain(|pane, observation| {
             observation.actor.device_id != device || present.contains(pane)
         });
+        let observed = &self.delivery_observations;
+        self.delivery_input_traced
+            .retain(|pane, _| observed.contains_key(pane));
         if excess {
             self.delivery_overflow.insert(device.to_owned());
         } else {
@@ -370,8 +395,38 @@ impl Runtime {
     /// Enter and reads `done` to Herdr, so only a prompt hook of the pane's
     /// own session, a phone reply, or the pane entering work proves the
     /// composer was sent.
-    pub(crate) fn note_delivery_key(&mut self, pane_id: &str) {
+    ///
+    /// `path` names how the input reached the pane (`find`, `attachment`,
+    /// `phone`), for the record `trace_delivery_input` leaves.
+    pub(crate) fn note_delivery_key(&mut self, pane_id: &str, path: &'static str) {
         self.note_delivery_key_at(pane_id, unix_milliseconds());
+        self.trace_delivery_input(pane_id, path);
+    }
+
+    /// Leaves one record per pane per second of an input the core noted
+    /// itself, so a draft hold can be traced to the input that made it. The
+    /// node leaves the same record for the keys it saw (`terminal.input`).
+    /// Only observed panes are traced, which bounds the map.
+    fn trace_delivery_input(&mut self, pane_id: &str, path: &'static str) {
+        const WINDOW_MS: u64 = 1_000;
+        if !self.delivery_observations.contains_key(pane_id) {
+            return;
+        }
+        let now = unix_milliseconds();
+        let last = self
+            .delivery_input_traced
+            .entry(pane_id.to_owned())
+            .or_insert(0);
+        if now.saturating_sub(*last) < WINDOW_MS {
+            return;
+        }
+        *last = now;
+        crate::diagnostic!(serde_json::json!({
+            "component": "delivery",
+            "kind": "delivery.input",
+            "pane_id": pane_id,
+            "path": path,
+        }));
     }
 
     /// [`Runtime::note_delivery_key`] for a key its node saw typed at
@@ -382,6 +437,7 @@ impl Runtime {
         self.reopen_resolved_session(pane_id);
         if let Some(observation) = self.delivery_observations.get_mut(pane_id) {
             observation.last_input_at_unix_ms = observation.last_input_at_unix_ms.max(at_unix_ms);
+            self.sync_composer_mark(pane_id, unix_milliseconds());
         }
     }
 
@@ -393,6 +449,8 @@ impl Runtime {
             let now = unix_milliseconds();
             observation.last_input_at_unix_ms = now;
             observation.last_submit_at_unix_ms = now;
+            self.sync_composer_mark(pane_id, now);
+            self.trace_delivery_input(pane_id, "phone_reply");
         }
     }
 
@@ -410,6 +468,7 @@ impl Runtime {
             .filter(|observation| observation.status != "working")
         {
             observation.last_submit_at_unix_ms = unix_milliseconds();
+            self.sync_composer_mark(pane_id, unix_milliseconds());
         }
     }
 
@@ -604,6 +663,71 @@ impl Runtime {
         Ok(PreparedHuman::new(
             self.delivery_client.clone().ok_or("delivery_unavailable")?,
         ))
+    }
+
+    /// Restores the panes the last run held as a draft and keeps the store
+    /// to save every later change into.
+    pub(crate) fn install_composer_store(
+        &mut self,
+        store: crate::composer_store::ComposerStore,
+        restored: Vec<crate::composer_store::Mark>,
+    ) {
+        self.composer_marks = restored;
+        self.composer_store = Some(store);
+    }
+
+    /// Makes the pane's mark say what its clocks say now: marked while an
+    /// unsent draft stands in a pane the doorbell would ring, unmarked
+    /// otherwise. A pane that is not observed keeps its mark until it comes
+    /// back or the mark is old (`UNSEEN_TTL_MS`). Memory only here; the
+    /// store's thread writes the file.
+    fn sync_composer_mark(&mut self, pane_id: &str, now: u64) {
+        use crate::composer_store::{MARK_LIMIT, Mark, UNSEEN_TTL_MS};
+        let draft = self
+            .delivery_observations
+            .get(pane_id)
+            .and_then(|observation| {
+                (observation.unsent_draft()
+                    && crate::delivery::doorbell::bell_target(&observation.actor.kind))
+                .then(|| observation.actor.clone())
+            });
+        let held = self
+            .composer_marks
+            .iter()
+            .position(|mark| mark.pane_id == pane_id);
+        let mut changed = false;
+        match (draft, held) {
+            (Some(actor), Some(index)) if self.composer_marks[index].matches(&actor) => {}
+            (Some(actor), Some(index)) => {
+                self.composer_marks[index] = Mark::of(&actor, now);
+                changed = true;
+            }
+            (Some(actor), None) => {
+                self.composer_marks.push(Mark::of(&actor, now));
+                changed = true;
+            }
+            (None, Some(index)) => {
+                self.composer_marks.remove(index);
+                changed = true;
+            }
+            (None, None) => {}
+        }
+        if !changed {
+            return;
+        }
+        let observed = &self.delivery_observations;
+        self.composer_marks.retain(|mark| {
+            observed.contains_key(&mark.pane_id)
+                || now.saturating_sub(mark.since_unix_ms) < UNSEEN_TTL_MS
+        });
+        if self.composer_marks.len() > MARK_LIMIT {
+            self.composer_marks
+                .sort_by_key(|mark| std::cmp::Reverse(mark.since_unix_ms));
+            self.composer_marks.truncate(MARK_LIMIT);
+        }
+        if let Some(store) = &self.composer_store {
+            store.save(self.composer_marks.clone());
+        }
     }
 
     pub(crate) fn delivery_state(&self) -> Result<Arc<Ledger>, String> {
@@ -1950,7 +2074,7 @@ pub(crate) mod tests {
             let mut ledger = (*guard.delivery_state().unwrap()).clone();
             ledger.agents.push(crate::coordination::AgentRecord {
                 id: "agent-7".into(),
-                name: "recipient".into(),
+                name: Some("recipient".into()),
                 machine: crate::node::TEST_NODE.into(),
                 host_scope: "fixture-scope".into(),
                 native_machine: "fixture-machine".into(),
@@ -2449,7 +2573,8 @@ pub(crate) mod tests {
         for (id, pane) in [("agent-1", "lead"), ("agent-2", "child")] {
             ledger.agents.push(crate::coordination::AgentRecord {
                 id: id.into(),
-                name: pane.into(),
+                // A name that is not the pane id: a pane id is no name.
+                name: Some(format!("{pane}-agent")),
                 machine: crate::node::TEST_NODE.into(),
                 host_scope: "scope".into(),
                 native_machine: "fixture-machine".into(),
@@ -2611,7 +2736,7 @@ pub(crate) mod tests {
         let variant = |id: u64, pane: &str| {
             let mut record = child.clone();
             record.id = format!("agent-{id}");
-            record.name = pane.into();
+            record.name = Some(format!("{pane}-agent"));
             record.pane = pane.into();
             record.actor.pane_id = pane.into();
             record.parent = None;
@@ -2647,5 +2772,123 @@ pub(crate) mod tests {
                 .collect::<Vec<_>>(),
             [("agent-2".to_owned(), "pane_absent")]
         );
+    }
+
+    /// The recipient idle for good, the way an update finds it: a native
+    /// session, nothing waiting, no change of status for long.
+    fn idle_recipient() -> SessionSnapshotPayload {
+        serde_json::from_value(json!({"agents":[
+            {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"idle","state_change_seq":2,
+             "lineage_session":"recipient-session"},
+        ]}))
+        .unwrap()
+    }
+
+    /// A runtime whose first look at the recipient is `payload`, with the
+    /// composer store at `path` installed before it, as a daemon starts.
+    fn started_with_store(
+        root: &std::path::Path,
+        path: &std::path::Path,
+        payload: &SessionSnapshotPayload,
+    ) -> Arc<Mutex<Runtime>> {
+        let (runtime, _, _, _) = fixture(root);
+        {
+            let mut guard = runtime.lock().unwrap();
+            guard.delivery_observations.clear();
+            let store = crate::composer_store::ComposerStore::new(path.to_owned());
+            let marks = store.restore(unix_milliseconds());
+            guard.install_composer_store(store, marks);
+            guard.observe_delivery(crate::node::TEST_NODE, payload, None, None);
+        }
+        runtime
+    }
+
+    /// The doorbell's verdict for the recipient, `ago` milliseconds after the
+    /// pane last changed, with the session read saying nothing waits.
+    fn verdict_for_recipient(
+        runtime: &Arc<Mutex<Runtime>>,
+    ) -> Result<(), crate::delivery::doorbell::Hold> {
+        let mut guard = runtime.lock().unwrap();
+        let observation = guard.delivery_observations.get_mut("recipient").unwrap();
+        read_nothing_waits(observation);
+        observation.status_changed_at_unix_ms = 0;
+        let observation = observation.clone();
+        crate::delivery::doorbell::judge(&observation, unix_milliseconds() + 600_000)
+    }
+
+    #[test]
+    fn a_draft_the_last_run_held_is_held_by_the_next_and_a_submission_releases_it() {
+        use crate::delivery::doorbell::Hold;
+        let root = tempfile::tempdir().unwrap();
+        let marks = root.path().join("composer-marks.json");
+        // The first run: the operator types into an idle pane.
+        {
+            let runtime = started_with_store(&root.path().join("one"), &marks, &idle_recipient());
+            {
+                let mut guard = runtime.lock().unwrap();
+                let observation = guard.delivery_observations.get_mut("recipient").unwrap();
+                observation.last_input_at_unix_ms = 0;
+                observation.last_submit_at_unix_ms = 0;
+                observation.entered_working_at_unix_ms = 0;
+                guard.note_delivery_key_at("recipient", unix_milliseconds());
+            }
+            assert_eq!(verdict_for_recipient(&runtime), Err(Hold::Draft));
+        }
+        // The app is replaced: a new runtime sees the pane for the first time.
+        let runtime = started_with_store(&root.path().join("two"), &marks, &idle_recipient());
+        assert_eq!(
+            verdict_for_recipient(&runtime),
+            Err(Hold::Draft),
+            "the restarted daemon still knows the composer holds a draft"
+        );
+        // The prompt hook of the pane's own session ends it, and the file
+        // stops naming the pane.
+        runtime.lock().unwrap().note_prompt_submitted("recipient");
+        assert_eq!(verdict_for_recipient(&runtime), Ok(()));
+        drop(runtime);
+        let restarted = started_with_store(&root.path().join("three"), &marks, &idle_recipient());
+        assert_eq!(
+            verdict_for_recipient(&restarted),
+            Ok(()),
+            "a pane that was submitted is not held again"
+        );
+    }
+
+    #[test]
+    fn a_pane_the_last_run_knew_no_draft_in_is_not_held_after_a_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let marks = root.path().join("composer-marks.json");
+        let runtime = started_with_store(&root.path().join("one"), &marks, &idle_recipient());
+        assert_eq!(verdict_for_recipient(&runtime), Ok(()));
+        assert!(!marks.exists(), "nothing to remember, nothing written");
+    }
+
+    #[test]
+    fn a_pane_that_is_working_when_the_daemon_returns_drops_the_kept_draft() {
+        let root = tempfile::tempdir().unwrap();
+        let marks = root.path().join("composer-marks.json");
+        {
+            let runtime = started_with_store(&root.path().join("one"), &marks, &idle_recipient());
+            let mut guard = runtime.lock().unwrap();
+            let observation = guard.delivery_observations.get_mut("recipient").unwrap();
+            observation.last_input_at_unix_ms = 0;
+            observation.last_submit_at_unix_ms = 0;
+            observation.entered_working_at_unix_ms = 0;
+            guard.note_delivery_key_at("recipient", unix_milliseconds());
+        }
+        let working: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
+            {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"working","state_change_seq":3,
+             "lineage_session":"recipient-session"},
+        ]}))
+        .unwrap();
+        let runtime = started_with_store(&root.path().join("two"), &marks, &working);
+        // The turn that started while the daemon was away took the draft.
+        runtime.lock().unwrap().observe_delivery(
+            crate::node::TEST_NODE,
+            &idle_recipient(),
+            None,
+            None,
+        );
+        assert_eq!(verdict_for_recipient(&runtime), Ok(()));
     }
 }

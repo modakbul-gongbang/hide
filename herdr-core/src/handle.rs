@@ -311,6 +311,11 @@ impl Core {
                 crate::github_store::GithubStore::new(hide_kit::layout::github_snapshot(directory));
             let restored = store.restore();
             lock_recover(&runtime).install_github_store(store, restored);
+            let composers = crate::composer_store::ComposerStore::new(
+                hide_kit::layout::composer_marks(directory),
+            );
+            let marks = composers.restore(crate::links::now_ms());
+            lock_recover(&runtime).install_composer_store(composers, marks);
         }
         // Before any coordinator starts, because each builds its label worker
         // on these, and before the kit runs, because the plugin state the

@@ -411,7 +411,7 @@ esac"#,
     }
 
     #[test]
-    fn a_pull_request_takes_only_its_body_write_and_its_two_reads() {
+    fn a_pull_request_takes_only_its_body_write_its_two_reads_and_the_two_conditioned_writes() {
         let fixture = GhFixture::new(r#"printf 'ok'"#);
         let run = |arguments: &[&str]| {
             run_gh(
@@ -425,6 +425,22 @@ esac"#,
             &["pr", "view", "12", "--json", "body"][..],
             &["pr", "view", "12", "--json", PR_FEEDBACK_FIELDS],
             &["pr", "edit", "12", "--body", "Closes #7"],
+            &[
+                "pr",
+                "merge",
+                "12",
+                "--squash",
+                "--match-head-commit",
+                "0123456789abcdef0123456789abcdef01234567",
+            ],
+            &[
+                "api",
+                "--method",
+                "PUT",
+                "repos/acme/app/pulls/12/update-branch",
+                "-f",
+                "expected_head_sha=0123456789abcdef0123456789abcdef01234567",
+            ],
         ] {
             if let Err(failure) = run(allowed) {
                 panic!("{allowed:?} must run: {}", failure.reason);
@@ -437,6 +453,15 @@ esac"#,
             &["pr", "edit", "12", "--body", "y", "--title", "z"],
             &["pr", "view", "12", "--json", "body,title"],
             &["pr", "merge", "12"],
+            &[
+                "pr",
+                "merge",
+                "12",
+                "--admin",
+                "--match-head-commit",
+                "0123456789abcdef0123456789abcdef01234567",
+            ],
+            &["pr", "merge", "12", "--squash"],
             &["pr", "comment", "12", "--body", "y"],
             &["pr", "review", "12", "--approve"],
             &["pr", "close", "12"],

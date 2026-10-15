@@ -8,7 +8,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use hide_session::Agent;
-use hide_session::label_transcript::{LabelTranscript, LabelTranscriptRequest, read};
+use hide_session::label_transcript::{
+    LabelEventKind, LabelTranscript, LabelTranscriptRequest, read,
+};
 use hide_session::turns::{TurnTracker, UserTurnContent, UserTurnFact, UserTurnKind, Waiting};
 use serde_json::{Value, json};
 
@@ -132,6 +134,129 @@ fn fact(answer: &LabelTranscript) -> Option<UserTurnFact> {
 fn question(text: &str, choices: &[&str]) -> Value {
     json!([{"id":"choice","header":"선택","question":text,
         "options":choices.iter().map(|label| json!({"label":label,"description":"native option"})).collect::<Vec<_>>() }])
+}
+
+/// Codex 0.162.1 asks with `request_user_input_async`: the tool returns
+/// `{"accepted":true}` at once, the turn goes on, and the operator's answer
+/// comes later as a user message naming the call and the question.
+const ASYNC_CALL: &str = "call_async_question_1";
+
+impl Session {
+    fn async_question() -> Self {
+        Self::new(
+            Agent::Codex,
+            ".codex/sessions/2026/10/14/rollout-2026-10-14T02-15-54-0199a000-0000-7000-8000-0000000000c1.jsonl",
+            &fixture("user-turns/codex-0.162.1-async-question.jsonl"),
+        )
+    }
+
+    /// The record Codex writes for one answered question of an async call;
+    /// `question_item_id` is a JSON array inside a string, as Codex writes it.
+    fn async_reply(&self, call: &str, index: u32, answer: &str) -> Value {
+        let id = json!(["request_user_input_async", call, index]).to_string();
+        let body = json!([{"answer":answer,"question":"질문 본문은 매칭에 쓰이지 않는다","questionItemId":id}]);
+        json!({"type":"response_item","timestamp":"2026-10-14T02:19:30Z",
+            "payload":{"type":"message","role":"user","content":[{"type":"input_text",
+            "text":format!("<send_user_message_question_reply>\n{body}\n</send_user_message_question_reply>")}]}})
+    }
+}
+
+#[test]
+fn an_async_codex_question_waits_though_its_tool_result_came_back_at_once() {
+    let session = Session::async_question();
+    let answer: LabelTranscript =
+        serde_json::from_slice(&serde_json::to_vec(&session.read()).unwrap()).unwrap();
+    assert_eq!(
+        answer.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Question)
+    );
+    assert_eq!(
+        serde_json::to_value(fact(&answer)).unwrap(),
+        json!({
+            "kind":"question", "content":{"text":"배포 대상을 골라주세요\n검토 방식을 고르세요",
+            "choices":["미리보기","운영","직접","자동"], "truncated":false}
+        })
+    );
+}
+
+#[test]
+fn an_async_codex_question_is_answered_by_replies_matched_on_its_item_id_and_never_on_text() {
+    let mut session = Session::async_question();
+    let asked = session.read();
+    session.resume(&asked);
+    // Another call's reply, and a result for this call, answer nothing.
+    session.append(&session.async_reply("call_other", 0, "미리보기"));
+    session.append(&session.result(ASYNC_CALL));
+    let unrelated = session.read();
+    assert_eq!(fact(&unrelated), fact(&asked));
+    session.resume(&unrelated);
+    // The call asked two questions: one reply leaves the other open.
+    session.append(&session.async_reply(ASYNC_CALL, 0, "미리보기"));
+    let half = session.read();
+    assert_eq!(
+        half.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Question)
+    );
+    session.resume(&half);
+    session.append(&session.async_reply(ASYNC_CALL, 1, "직접"));
+    let answered = session.read();
+    assert_eq!(fact(&answered), None);
+    assert_eq!(
+        answered.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Nothing)
+    );
+}
+
+#[test]
+fn a_question_reply_is_not_a_human_turn_but_a_typed_answer_still_ends_the_wait() {
+    let mut session = Session::async_question();
+    let asked = session.read();
+    session.resume(&asked);
+    session.append(&session.async_reply("call_other", 0, "미리보기"));
+    let reply = session.read();
+    // A human turn would have cleared the open question.
+    assert_eq!(fact(&reply), fact(&asked));
+    assert!(
+        reply
+            .events
+            .iter()
+            .all(|event| event.kind != LabelEventKind::Human),
+        "{:?}",
+        reply.events
+    );
+    session.resume(&reply);
+    session.append(&session.human("미리보기로 해줘"));
+    assert_eq!(fact(&session.read()), None);
+}
+
+#[test]
+fn an_async_reply_that_cannot_be_placed_leaves_the_wait_unknown_not_nothing() {
+    let mut session = Session::async_question();
+    let asked = session.read();
+    session.resume(&asked);
+    let id = json!(["request_user_input_async", ASYNC_CALL]).to_string();
+    let body = json!([{"answer":"미리보기","question":"q","questionItemId":id}]);
+    session.append(&json!({"type":"response_item","timestamp":"2026-10-14T02:19:30Z",
+        "payload":{"type":"message","role":"user","content":[{"type":"input_text",
+        "text":format!("<send_user_message_question_reply>\n{body}\n</send_user_message_question_reply>")}]}}));
+    let read = session.read();
+    assert_eq!(read.turns.as_ref().unwrap().waiting(), None);
+    assert_eq!(fact(&read), None);
+}
+
+#[test]
+fn an_async_question_outlives_the_turn_that_asked_it() {
+    let mut session = Session::async_question();
+    let asked = session.read();
+    session.resume(&asked);
+    session.append(&json!({"type":"event_msg","timestamp":"2026-10-14T02:19:00Z","payload":{"type":"task_complete","turn_id":"turn-1"}}));
+    session.append(&json!({"type":"event_msg","timestamp":"2026-10-14T02:19:10Z","payload":{"type":"task_started","turn_id":"turn-2","collaboration_mode_kind":"default"}}));
+    let next_turn = session.read();
+    assert_eq!(fact(&next_turn), fact(&asked));
+    session.resume(&next_turn);
+    session.append(&session.async_reply(ASYNC_CALL, 0, "미리보기"));
+    session.append(&session.async_reply(ASYNC_CALL, 1, "직접"));
+    assert_eq!(fact(&session.read()), None);
 }
 
 #[test]

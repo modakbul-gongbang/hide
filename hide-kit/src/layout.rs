@@ -94,6 +94,13 @@ pub fn delivery_ledger(state_dir: &Path) -> PathBuf {
     state_dir.join("delivery-ledger.json")
 }
 
+/// The panes the doorbell holds as an unsent draft, restored when the daemon
+/// starts so a restart does not forget what the operator typed; its owner is
+/// the core's composer store.
+pub fn composer_marks(state_dir: &Path) -> PathBuf {
+    state_dir.join("composer-marks.json")
+}
+
 /// The last GitHub answer per project, restored when the daemon starts; its
 /// owner is the core's GitHub store.
 pub fn github_snapshot(state_dir: &Path) -> PathBuf {

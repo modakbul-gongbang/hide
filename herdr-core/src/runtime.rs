@@ -427,6 +427,9 @@ struct WaitingExplorerChange {
     request: ExplorerRequest,
 }
 
+/// Pull request summaries kept for their head commit (D-29).
+const PR_SUMMARY_CACHE_LIMIT: usize = 64;
+
 /// How many Explorer changes wait behind the running one. A drag and the
 /// keys that follow it queue one or two; past this the newest is refused.
 const EXPLORER_QUEUE_LIMIT: usize = 4;
@@ -1071,6 +1074,13 @@ pub struct Runtime {
     /// View openers waiting for their document, Sends under way, and the
     /// feedback worker (PRD view-opener-feedback).
     view_feedback: view_feedback::FeedbackRuntime,
+    /// The panes held as an unsent draft, kept across a restart so a daemon
+    /// that starts over does not type a bell over what the operator typed
+    /// (`composer_store.rs`); absent in a runtime with no state folder.
+    composer_marks: Vec<crate::composer_store::Mark>,
+    /// When each observed pane's input was last traced (`delivery.input`).
+    delivery_input_traced: HashMap<String, u64>,
+    composer_store: Option<crate::composer_store::ComposerStore>,
     /// Open Factories' code-owned recipients (`factory:<id>`), set by the
     /// Factory host; a letter to any other `factory:` name has no recipient.
     /// Each open Factory's id with its stall window (D-30, B24).
@@ -1428,6 +1438,9 @@ pub struct Runtime {
     /// What the link worker was last handed, and its panel reads.
     links_work: links::LinksWork,
     session_issue_work: session_work::SessionIssueWork,
+    /// The minute the Work tab's PRs list was last judged against the clock
+    /// (`runtime/request_view.rs`, `tick_work_clock`).
+    work_clock_minute: u64,
     /// Project Memory's background pass, receipts and analysis state
     /// (`runtime/memory_analysis.rs`).
     memory_work: memory_analysis::MemoryWork,
@@ -1573,6 +1586,11 @@ pub struct Runtime {
     /// Ids for the `issue_work` slots, so a late answer for a replaced
     /// request is recognised and dropped.
     next_issue_work_id: u64,
+    /// The summary hide-ai made of a pull request at a head commit, kept for
+    /// that head (D-29). In memory, capped at [`PR_SUMMARY_CACHE_LIMIT`].
+    pr_summaries: BTreeMap<(String, u32), (String, String)>,
+    /// Summaries being asked for now, so one head is asked once.
+    pr_summaries_asked: BTreeSet<(String, u32, String)>,
     /// The one running GitHub search and the one waiting behind it
     /// (`issues::GithubSearchWork`).
     github_search: issues::GithubSearchWork,
@@ -1695,6 +1713,12 @@ pub struct Runtime {
     /// Local projects whose first read has been answered, with or without a
     /// result; until then a project without an answer is loading.
     github_settled: HashSet<String>,
+    /// Pull requests whose Merge Hide just saw GitHub accept, as (project
+    /// root, number) with the time it was seen: the list reads them as merged at once, since GitHub's
+    /// own list can still answer open (merge state unknown) for a moment
+    /// after its own merge. An entry leaves when a read shows the pull
+    /// request merged or closed, or no longer lists it.
+    merged_here: HashMap<(String, u32), u64>,
     /// The number of local Git projects past `GITHUB_PROJECT_LIMIT` last
     /// stated, so a count is logged once rather than on every wake.
     github_over_limit: usize,
@@ -1976,6 +2000,9 @@ impl Runtime {
             delivery_client: None,
             delivery_observations: HashMap::new(),
             view_feedback: view_feedback::FeedbackRuntime::default(),
+            composer_marks: Vec::new(),
+            delivery_input_traced: HashMap::new(),
+            composer_store: None,
             factory_recipients: std::collections::BTreeMap::new(),
             factory_screen: None,
             delivery_overflow: HashSet::new(),
@@ -2113,6 +2140,7 @@ impl Runtime {
             search_generation: 0,
             links_work: links::LinksWork::default(),
             session_issue_work: session_work::SessionIssueWork::default(),
+            work_clock_minute: 0,
             memory_work: Default::default(),
             project_memory: Default::default(),
             editor_tab_history: Vec::new(),
@@ -2174,6 +2202,8 @@ impl Runtime {
             local_issues_save_active: false,
             local_issue_links: BTreeMap::new(),
             next_issue_work_id: 0,
+            pr_summaries: BTreeMap::new(),
+            pr_summaries_asked: BTreeSet::new(),
             github_search: issues::GithubSearchWork::default(),
             pr_link_checkout: None,
             task_agent_launch: None,
@@ -2210,6 +2240,7 @@ impl Runtime {
             github_remotes: HashMap::new(),
             github_read_generation: HashMap::new(),
             github_settled: HashSet::new(),
+            merged_here: HashMap::new(),
             github_over_limit: 0,
             github_store: None,
             disk_generation: 0,

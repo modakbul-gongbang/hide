@@ -10,12 +10,11 @@
 //! file. One thread and one pending slot per store, so a burst of answers
 //! writes the newest and skips the rest.
 
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
-use std::thread::JoinHandle;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::latest_file::{LatestFile, read_capped};
 use crate::model::{GithubProjectSnapshot, GithubSnapshot};
 
 const SCHEMA_VERSION: u32 = 1;
@@ -125,22 +124,20 @@ fn decode(bytes: &[u8]) -> Result<GithubSnapshot, String> {
 
 pub(crate) struct GithubStore {
     path: PathBuf,
-    slot: Arc<Mutex<Slot>>,
-    worker: Mutex<Option<JoinHandle<()>>>,
-}
-
-#[derive(Default)]
-struct Slot {
-    latest: Option<GithubSnapshot>,
-    active: bool,
+    file: LatestFile<GithubSnapshot>,
 }
 
 impl GithubStore {
     pub(crate) fn new(path: PathBuf) -> Self {
         Self {
+            file: LatestFile::new(
+                path.clone(),
+                "hide-github-save",
+                "github",
+                "snapshot",
+                encode,
+            ),
             path,
-            slot: Arc::default(),
-            worker: Mutex::new(None),
         }
     }
 
@@ -157,7 +154,7 @@ impl GithubStore {
             }));
             None
         };
-        let bytes = match read_capped(&self.path) {
+        let bytes = match read_capped(&self.path, READ_CAP) {
             Ok(Some(bytes)) => bytes,
             Ok(None) => return None,
             Err(reason) => return discard(reason),
@@ -178,107 +175,8 @@ impl GithubStore {
     /// Queues `github` to replace the file. A snapshot still waiting when a
     /// newer one arrives is dropped: only the latest answer is worth writing.
     pub(crate) fn save(&self, github: GithubSnapshot) {
-        let mut slot = self.slot.lock().unwrap_or_else(PoisonError::into_inner);
-        slot.latest = Some(github);
-        if slot.active {
-            return;
-        }
-        let mut worker = self.worker.lock().unwrap_or_else(PoisonError::into_inner);
-        // The previous worker has cleared `active` and is returning.
-        if let Some(finished) = worker.take() {
-            let _ = finished.join();
-        }
-        let shared = Arc::clone(&self.slot);
-        let path = self.path.clone();
-        match std::thread::Builder::new()
-            .name("hide-github-save".to_owned())
-            .spawn(move || write_latest(&shared, &path))
-        {
-            Ok(handle) => {
-                slot.active = true;
-                *worker = Some(handle);
-            }
-            Err(error) => crate::diagnostic!(serde_json::json!({
-                "component": "github",
-                "kind": "snapshot.save_failed",
-                "message": format!("worker could not start: {error}"),
-            })),
-        }
+        self.file.save(github);
     }
-}
-
-impl Drop for GithubStore {
-    /// A save queued just before quitting reaches the disk first.
-    fn drop(&mut self) {
-        let worker = self
-            .worker
-            .get_mut()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        if let Some(worker) = worker
-            && worker.join().is_err()
-        {
-            crate::diagnostic!(
-                serde_json::json!({"component":"github","kind":"snapshot.save_join_failed"})
-            );
-        }
-    }
-}
-
-fn write_latest(slot: &Mutex<Slot>, path: &Path) {
-    loop {
-        let github = {
-            let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
-            match slot.latest.take() {
-                Some(github) => github,
-                None => {
-                    slot.active = false;
-                    return;
-                }
-            }
-        };
-        if let Err(reason) = write(path, &github) {
-            crate::diagnostic!(serde_json::json!({
-                "component": "github",
-                "kind": "snapshot.save_failed",
-                "path": path.to_string_lossy(),
-                "message": reason,
-            }));
-        }
-    }
-}
-
-fn write(path: &Path, github: &GithubSnapshot) -> Result<(), String> {
-    let bytes = encode(github)?;
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        hide_platform::fs::private::create_dir_all(parent)
-            .map_err(|error| format!("folder could not be prepared: {error}"))?;
-    }
-    hide_platform::fs::atomic::write_file(path, &bytes, hide_platform::fs::Access::Private)
-        .map(|_| ())
-        .map_err(|error| format!("could not be replaced: {error}"))
-}
-
-fn read_capped(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("could not be opened: {error}")),
-    };
-    let length = file
-        .metadata()
-        .map_err(|error| format!("could not be measured: {error}"))?
-        .len();
-    if length > READ_CAP {
-        return Err(format!("is {length} bytes, past the {READ_CAP} byte cap"));
-    }
-    let mut bytes = Vec::with_capacity(length as usize);
-    std::io::Read::read_to_end(&mut std::io::Read::take(file, READ_CAP), &mut bytes)
-        .map_err(|error| format!("could not be read: {error}"))?;
-    Ok(Some(bytes))
 }
 
 #[cfg(test)]
@@ -313,6 +211,7 @@ mod tests {
                 closed_at_unix_ms: Some(8),
                 head_oid: Some("0123456789abcdef".to_owned()),
                 cross_repository: true,
+                work: Default::default(),
             }],
             pull_requests_read: true,
             issues_read: true,

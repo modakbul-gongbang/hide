@@ -66,6 +66,9 @@ const pulls = [pull(31,"기록 화면 구현",true,false,clock.first),pull(32,"�
 const tracked = {number:41,title:"기록 화면 후속 검증",state:"OPEN",url:"https://github.com/acme/repo/issues/41",createdAt:new Date(clock.first+500).toISOString(),updatedAt:new Date(clock.first+1000).toISOString(),labels:[]};
 const [a,b] = args;
 if(a==="auth"&&b==="status") process.exit(0);
+if(a==="api"&&b==="user") {process.stdout.write("example-user\\n");process.exit(0);}
+if (process.argv.slice(2).join(" ").includes("review-requested:@me")) { process.stdout.write("[]\\n"); process.exit(0); }
+if (process.argv.slice(2).join(" ").includes("HidePrFacts")) { process.stdout.write('{"data":{"repository":{"pullRequests":{"nodes":[]}}}}\\n'); process.exit(0); }
 if(a==="repo"&&b==="view") {
  const deadline=Date.now()+15000;
  while(fs.existsSync(${JSON.stringify(repositoryGate)})) {

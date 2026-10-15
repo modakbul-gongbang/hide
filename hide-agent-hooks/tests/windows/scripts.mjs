@@ -8,6 +8,7 @@
 // texts the script added to its session's prompts, for the test to read.
 
 import { readFileSync } from "node:fs";
+import { win32 } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const AGENT = process.env.HIDE_SCRIPT_AGENT;
@@ -45,13 +46,16 @@ async function opencode() {
 async function extension() {
   const samples = fixture(`pi-extension/${AGENT === "pi" ? "pi-1.0.4.json" : "omp-18.7.0.json"}`).samples;
   const sample = (name) => structuredClone(samples[name]);
+  // Both hosts name a session file by a Windows path here, `C:\...`, not the fixture's POSIX one.
+  const sessionFile = win32.join(process.cwd(), ".pi", "agent", "sessions", "fixture", "session.jsonl");
+  if (!win32.isAbsolute(sessionFile) || sessionFile.startsWith("/")) throw new Error(`not a Windows session file: ${sessionFile}`);
   const context = (name) => {
     const facts = sample(name).ctx;
     return {
       hasUI: true,
       mode: "tui",
       cwd: process.cwd(),
-      sessionManager: { getSessionFile: () => facts.sessionFile, getSessionId: () => facts.sessionId },
+      sessionManager: { getSessionFile: () => sessionFile, getSessionId: () => facts.sessionId },
     };
   };
   const handlers = new Map();

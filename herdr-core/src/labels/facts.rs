@@ -167,9 +167,6 @@ pub(crate) struct ReadFacts<'a> {
     pub(crate) custom_title: Option<&'a str>,
     pub(crate) sightings: &'a [PrSighting],
     pub(crate) subagents: &'a BTreeMap<String, ConversationCheckpoint>,
-    /// The read began at the conversation's start, so its first person's
-    /// message is the session's first request.
-    pub(crate) from_beginning: bool,
 }
 
 impl SessionFacts {
@@ -191,7 +188,11 @@ impl SessionFacts {
             self.subagents.insert(name.clone(), checkpoint.clone());
         }
         let mut input = input;
-        if read.from_beginning {
+        // Not seen yet, or seen at one offset for good: whichever read first
+        // holds a request records it, because an agent can write its session
+        // before its first prompt and the prompt then arrives in a later read.
+        // Only a rewritten conversation (`forget_offsets`) starts over.
+        if self.first_request_offset.is_none() {
             self.first_request_offset = read
                 .events
                 .iter()
@@ -466,7 +467,6 @@ mod tests {
                 custom_title: None,
                 sightings: &[],
                 subagents: &BTreeMap::new(),
-                from_beginning: true,
             },
             InputView {
                 submits,
@@ -517,7 +517,6 @@ mod tests {
                     custom_title: title,
                     sightings: &[],
                     subagents: &BTreeMap::new(),
-                    from_beginning: false,
                 },
                 InputView {
                     submits: &[],
@@ -695,5 +694,78 @@ mod tests {
         for event in [&parent, &report, &peer] {
             assert!(!facts.feeds_work(event, None));
         }
+    }
+
+    #[test]
+    fn a_delegated_childs_first_request_feeds_work_when_it_arrives_in_a_later_read() {
+        // The reader found the session store before the parent's prompt was
+        // written: the first read holds no events. The prompt arrives in the
+        // next read, and a later request in a third must not replace it.
+        let mut facts = SessionFacts::default();
+        let mut claimed = None;
+        let no_subagents = BTreeMap::new();
+        let first_request = human("parent's first prompt", 5_000, 1759);
+        let later_request = human("a follow-up", 9_000, 1760);
+        for events in [
+            &[][..],
+            std::slice::from_ref(&first_request),
+            std::slice::from_ref(&later_request),
+        ] {
+            facts.fold(
+                ReadFacts {
+                    events,
+                    title: None,
+                    custom_title: None,
+                    sightings: &[],
+                    subagents: &no_subagents,
+                },
+                InputView {
+                    submits: &[],
+                    observed_since_unix_ms: 1_000,
+                    claimed: &mut claimed,
+                },
+                &LOG,
+            );
+        }
+        assert!(
+            facts.feeds_work(&first_request, Some("lead")),
+            "the parent's first request must feed the child's work analysis"
+        );
+        assert!(
+            !facts.feeds_work(&later_request, Some("lead")),
+            "a later request does not replace the first"
+        );
+        let shown = facts
+            .operator_request
+            .as_ref()
+            .or(facts.other_request.as_ref())
+            .expect("the request was read");
+        assert!(
+            !shown.first,
+            "the latest request is not the session's first"
+        );
+    }
+
+    #[test]
+    fn a_first_request_seen_before_a_restart_stays_the_first_after_it() {
+        let mut facts = SessionFacts::default();
+        let mut claimed = None;
+        let first_request = human("parent's first prompt", 5_000, 1759);
+        fold(&mut facts, &[], &[], &mut claimed);
+        fold(
+            &mut facts,
+            std::slice::from_ref(&first_request),
+            &[],
+            &mut claimed,
+        );
+        let mut restored: SessionFacts =
+            serde_json::from_value(serde_json::to_value(&facts).unwrap()).unwrap();
+        fold(
+            &mut restored,
+            &[human("a follow-up", 9_000, 1760)],
+            &[],
+            &mut claimed,
+        );
+        assert!(restored.feeds_work(&first_request, Some("lead")));
     }
 }

@@ -216,6 +216,8 @@
   --size-checkout-metadata-inset: 22px;
   --size-lineage-indent: 18px;
   --size-lineage-chevron: 16px;
+  --size-tree-indent: 12px;
+  --size-tree-mark: 16px;
   --size-lineage-rail-x: 8px;
   --size-lineage-departure-y: 18px;
   --size-worktree-dialog: 440px;

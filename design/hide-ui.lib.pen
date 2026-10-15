@@ -37646,7 +37646,7 @@
           "fill": "$--muted-foreground",
           "textGrowth": "fixed-width",
           "width": 1180,
-          "content": "PRD right-lane: Agent Views, one right lane and a 48px tool rail. The rail holds Files, Changes, Sessions and Memory, the pressed tool with a 2px primary bar, the Files badge while the lane shows another tool, and Memory's dot. The lane opens over the agents or, pinned, docks beside them (Agent Views keep 480); its header names the tool and scope with Pin, Expand and Close. Documents ≥360, ideal 520; the tree ≥180, ideal 240, turned on by the document header's tree button. Dividers move a guide and land once.",
+          "content": "PRD right-lane: Agent Views, one right lane and a 48px tool rail. The rail holds Files, Changes, Work and Memory, the pressed tool with a 2px primary bar, the Files badge while the lane shows another tool, Work's count of what needs the operator (a warning badge), and Memory's dot. The lane opens over the agents or, pinned, docks beside them (Agent Views keep 480); its header names the tool and scope with Pin, Expand and Close. Documents ≥360, ideal 520; the tree ≥180, ideal 240, turned on by the document header's tree button. Dividers move a guide and land once.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
           "fontWeight": "normal"
@@ -38251,6 +38251,40 @@
           "name": "Component / Tool rail",
           "children": [
             {
+              "id": "lane-rail-work",
+              "type": "ref",
+              "ref": "lane-tool",
+              "name": "Work",
+              "descendants": {
+                "lane-tool-glyph": {
+                  "icon": "square-kanban"
+                }
+              }
+            },
+            {
+              "id": "lane-rail-memory",
+              "type": "ref",
+              "ref": "lane-tool",
+              "name": "Memory",
+              "descendants": {
+                "lane-tool-glyph": {
+                  "icon": "brain"
+                }
+              }
+            },
+            {
+              "type": "rectangle",
+              "id": "lane-rail-divider",
+              "name": "Project | checkout divider",
+              "width": 20,
+              "height": 1,
+              "fill": "$--border",
+              "margin": [
+                "$--spacing-xs",
+                0
+              ]
+            },
+            {
               "id": "lane-rail-files",
               "type": "ref",
               "ref": "lane-tool",
@@ -38269,28 +38303,6 @@
               "descendants": {
                 "lane-tool-glyph": {
                   "icon": "file-diff"
-                }
-              }
-            },
-            {
-              "id": "lane-rail-sessions",
-              "type": "ref",
-              "ref": "lane-tool",
-              "name": "Sessions",
-              "descendants": {
-                "lane-tool-glyph": {
-                  "icon": "messages-square"
-                }
-              }
-            },
-            {
-              "id": "lane-rail-memory",
-              "type": "ref",
-              "ref": "lane-tool",
-              "name": "Memory",
-              "descendants": {
-                "lane-tool-glyph": {
-                  "icon": "brain"
                 }
               }
             },
@@ -38429,16 +38441,38 @@
               "fontWeight": "600"
             },
             {
+              "type": "icon",
+              "id": "lane-header-scope-glyph",
+              "name": "Scope icon",
+              "width": 12,
+              "height": 12,
+              "icon": "git-branch",
+              "library": "lucide",
+              "fill": "$--subtle-foreground",
+              "margin": [
+                0,
+                0,
+                0,
+                2
+              ]
+            },
+            {
               "type": "text",
               "id": "lane-header-scope",
-              "name": " · settings-ui",
-              "content": " · settings-ui",
+              "name": "settings-ui",
+              "content": "settings-ui",
               "fill": "$--subtle-foreground",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "400",
               "textGrowth": "fixed-width",
-              "width": "fill_container"
+              "width": "fill_container",
+              "margin": [
+                0,
+                0,
+                0,
+                2
+              ]
             },
             {
               "id": "lane-header-pin",
@@ -38598,6 +38632,84 @@
               "children": [
                 {
                   "type": "frame",
+                  "id": "lane-l-rail-work-cell",
+                  "name": "Work pressed",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-rail-work-cap",
+                      "name": "Work pressed",
+                      "content": "Work pressed",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-l-rail-work",
+                      "type": "ref",
+                      "ref": "lane-rail",
+                      "name": "Work pressed",
+                      "height": 260,
+                      "descendants": {
+                        "lane-rail-work": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-rail-work/lane-tool-bar": {
+                          "enabled": true
+                        },
+                        "lane-rail-work/lane-tool-glyph": {
+                          "fill": "$--foreground"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-l-rail-memory-cell",
+                  "name": "Memory pressed",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-rail-memory-cap",
+                      "name": "Memory pressed",
+                      "content": "Memory pressed",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-l-rail-memory",
+                      "type": "ref",
+                      "ref": "lane-rail",
+                      "name": "Memory pressed",
+                      "height": 260,
+                      "descendants": {
+                        "lane-rail-memory": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-rail-memory/lane-tool-bar": {
+                          "enabled": true
+                        },
+                        "lane-rail-memory/lane-tool-glyph": {
+                          "fill": "$--foreground"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
                   "id": "lane-l-rail-files-cell",
                   "name": "Files pressed",
                   "children": [
@@ -38664,84 +38776,6 @@
                           "enabled": true
                         },
                         "lane-rail-changes/lane-tool-glyph": {
-                          "fill": "$--foreground"
-                        }
-                      }
-                    }
-                  ],
-                  "layout": "vertical",
-                  "gap": "$--spacing-xs",
-                  "alignItems": "start",
-                  "width": "fit_content"
-                },
-                {
-                  "type": "frame",
-                  "id": "lane-l-rail-sessions-cell",
-                  "name": "Sessions pressed",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "lane-l-rail-sessions-cap",
-                      "name": "Sessions pressed",
-                      "content": "Sessions pressed",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-micro",
-                      "fontWeight": "600"
-                    },
-                    {
-                      "id": "lane-l-rail-sessions",
-                      "type": "ref",
-                      "ref": "lane-rail",
-                      "name": "Sessions pressed",
-                      "height": 260,
-                      "descendants": {
-                        "lane-rail-sessions": {
-                          "fill": "$--secondary"
-                        },
-                        "lane-rail-sessions/lane-tool-bar": {
-                          "enabled": true
-                        },
-                        "lane-rail-sessions/lane-tool-glyph": {
-                          "fill": "$--foreground"
-                        }
-                      }
-                    }
-                  ],
-                  "layout": "vertical",
-                  "gap": "$--spacing-xs",
-                  "alignItems": "start",
-                  "width": "fit_content"
-                },
-                {
-                  "type": "frame",
-                  "id": "lane-l-rail-memory-cell",
-                  "name": "Memory pressed",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "lane-l-rail-memory-cap",
-                      "name": "Memory pressed",
-                      "content": "Memory pressed",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-micro",
-                      "fontWeight": "600"
-                    },
-                    {
-                      "id": "lane-l-rail-memory",
-                      "type": "ref",
-                      "ref": "lane-rail",
-                      "name": "Memory pressed",
-                      "height": 260,
-                      "descendants": {
-                        "lane-rail-memory": {
-                          "fill": "$--secondary"
-                        },
-                        "lane-rail-memory/lane-tool-bar": {
-                          "enabled": true
-                        },
-                        "lane-rail-memory/lane-tool-glyph": {
                           "fill": "$--foreground"
                         }
                       }
@@ -38910,7 +38944,7 @@
                           "content": "Files"
                         },
                         "lane-header-scope": {
-                          "content": " · settings-ui"
+                          "content": "settings-ui"
                         }
                       }
                     }
@@ -38927,25 +38961,28 @@
                   "children": [
                     {
                       "type": "text",
-                      "id": "lane-l-header-sessions-cap",
-                      "name": "Sessions · pinned",
-                      "content": "Sessions · pinned",
+                      "id": "lane-l-header-work-cap",
+                      "name": "Work · pinned",
+                      "content": "Work · pinned",
                       "fill": "$--muted-foreground",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-micro",
                       "fontWeight": "600"
                     },
                     {
-                      "id": "lane-l-header-sessions",
+                      "id": "lane-l-header-work",
                       "type": "ref",
                       "ref": "lane-header",
-                      "name": "Sessions · pinned",
+                      "name": "Work · pinned",
                       "descendants": {
                         "lane-header-tool": {
-                          "content": "Sessions"
+                          "content": "Work"
                         },
                         "lane-header-scope": {
-                          "content": " · all of hide"
+                          "content": "all of hide"
+                        },
+                        "lane-header-scope-glyph": {
+                          "icon": "folder"
                         },
                         "lane-header-pin": {
                           "fill": "$--secondary"
@@ -38987,7 +39024,7 @@
                           "content": "Changes"
                         },
                         "lane-header-scope": {
-                          "content": " · settings-ui"
+                          "content": "settings-ui"
                         },
                         "lane-header-expand": {
                           "fill": "$--secondary"
@@ -39496,6 +39533,84 @@
               "children": [
                 {
                   "type": "frame",
+                  "id": "lane-d-rail-work-cell",
+                  "name": "Work pressed",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-rail-work-cap",
+                      "name": "Work pressed",
+                      "content": "Work pressed",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-d-rail-work",
+                      "type": "ref",
+                      "ref": "lane-rail",
+                      "name": "Work pressed",
+                      "height": 260,
+                      "descendants": {
+                        "lane-rail-work": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-rail-work/lane-tool-bar": {
+                          "enabled": true
+                        },
+                        "lane-rail-work/lane-tool-glyph": {
+                          "fill": "$--foreground"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-d-rail-memory-cell",
+                  "name": "Memory pressed",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-rail-memory-cap",
+                      "name": "Memory pressed",
+                      "content": "Memory pressed",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-d-rail-memory",
+                      "type": "ref",
+                      "ref": "lane-rail",
+                      "name": "Memory pressed",
+                      "height": 260,
+                      "descendants": {
+                        "lane-rail-memory": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-rail-memory/lane-tool-bar": {
+                          "enabled": true
+                        },
+                        "lane-rail-memory/lane-tool-glyph": {
+                          "fill": "$--foreground"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
                   "id": "lane-d-rail-files-cell",
                   "name": "Files pressed",
                   "children": [
@@ -39562,84 +39677,6 @@
                           "enabled": true
                         },
                         "lane-rail-changes/lane-tool-glyph": {
-                          "fill": "$--foreground"
-                        }
-                      }
-                    }
-                  ],
-                  "layout": "vertical",
-                  "gap": "$--spacing-xs",
-                  "alignItems": "start",
-                  "width": "fit_content"
-                },
-                {
-                  "type": "frame",
-                  "id": "lane-d-rail-sessions-cell",
-                  "name": "Sessions pressed",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "lane-d-rail-sessions-cap",
-                      "name": "Sessions pressed",
-                      "content": "Sessions pressed",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-micro",
-                      "fontWeight": "600"
-                    },
-                    {
-                      "id": "lane-d-rail-sessions",
-                      "type": "ref",
-                      "ref": "lane-rail",
-                      "name": "Sessions pressed",
-                      "height": 260,
-                      "descendants": {
-                        "lane-rail-sessions": {
-                          "fill": "$--secondary"
-                        },
-                        "lane-rail-sessions/lane-tool-bar": {
-                          "enabled": true
-                        },
-                        "lane-rail-sessions/lane-tool-glyph": {
-                          "fill": "$--foreground"
-                        }
-                      }
-                    }
-                  ],
-                  "layout": "vertical",
-                  "gap": "$--spacing-xs",
-                  "alignItems": "start",
-                  "width": "fit_content"
-                },
-                {
-                  "type": "frame",
-                  "id": "lane-d-rail-memory-cell",
-                  "name": "Memory pressed",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "lane-d-rail-memory-cap",
-                      "name": "Memory pressed",
-                      "content": "Memory pressed",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-micro",
-                      "fontWeight": "600"
-                    },
-                    {
-                      "id": "lane-d-rail-memory",
-                      "type": "ref",
-                      "ref": "lane-rail",
-                      "name": "Memory pressed",
-                      "height": 260,
-                      "descendants": {
-                        "lane-rail-memory": {
-                          "fill": "$--secondary"
-                        },
-                        "lane-rail-memory/lane-tool-bar": {
-                          "enabled": true
-                        },
-                        "lane-rail-memory/lane-tool-glyph": {
                           "fill": "$--foreground"
                         }
                       }
@@ -39808,7 +39845,7 @@
                           "content": "Files"
                         },
                         "lane-header-scope": {
-                          "content": " · settings-ui"
+                          "content": "settings-ui"
                         }
                       }
                     }
@@ -39825,25 +39862,28 @@
                   "children": [
                     {
                       "type": "text",
-                      "id": "lane-d-header-sessions-cap",
-                      "name": "Sessions · pinned",
-                      "content": "Sessions · pinned",
+                      "id": "lane-d-header-work-cap",
+                      "name": "Work · pinned",
+                      "content": "Work · pinned",
                       "fill": "$--muted-foreground",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-micro",
                       "fontWeight": "600"
                     },
                     {
-                      "id": "lane-d-header-sessions",
+                      "id": "lane-d-header-work",
                       "type": "ref",
                       "ref": "lane-header",
-                      "name": "Sessions · pinned",
+                      "name": "Work · pinned",
                       "descendants": {
                         "lane-header-tool": {
-                          "content": "Sessions"
+                          "content": "Work"
                         },
                         "lane-header-scope": {
-                          "content": " · all of hide"
+                          "content": "all of hide"
+                        },
+                        "lane-header-scope-glyph": {
+                          "icon": "folder"
                         },
                         "lane-header-pin": {
                           "fill": "$--secondary"
@@ -39885,7 +39925,7 @@
                           "content": "Changes"
                         },
                         "lane-header-scope": {
-                          "content": " · settings-ui"
+                          "content": "settings-ui"
                         },
                         "lane-header-expand": {
                           "fill": "$--secondary"
@@ -66154,6 +66194,14 @@
     "--size-hide-badge-mark": {
       "type": "number",
       "value": 9
+    },
+    "--size-tree-indent": {
+      "type": "number",
+      "value": 12
+    },
+    "--size-tree-mark": {
+      "type": "number",
+      "value": 16
     },
     "--size-view-note": {
       "type": "number",

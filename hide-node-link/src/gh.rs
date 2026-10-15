@@ -103,7 +103,18 @@ pub const PR_FEEDBACK_FIELDS: &str = "body,statusCheckRollup,reviews";
 /// and closed ones included, is what made one read take 11 - 14 seconds
 /// against the 15-second limit, and nothing draws a settled pull request's
 /// checks as news.
-pub const PULL_REQUEST_FIELDS: &str = "number,title,headRefName,headRefOid,isCrossRepository,baseRefName,state,reviewDecision,isDraft,url,mergedAt,updatedAt,createdAt,closedAt,closingIssuesReferences";
+///
+/// `author`, `mergeStateStatus` and `reviewRequests` are what the Work tab's
+/// PRs list groups by (PRD work-tab-pr-lens D-08, D-20): who wrote it, how it
+/// stands against its base, and whom a review was asked of.
+pub const PULL_REQUEST_FIELDS: &str = "number,title,headRefName,headRefOid,isCrossRepository,baseRefName,state,reviewDecision,isDraft,url,mergedAt,updatedAt,createdAt,closedAt,closingIssuesReferences,author,mergeStateStatus,reviewRequests";
+
+/// The open pull requests a review was asked of the operator or of one of
+/// their teams, `gh`'s own `@me` meaning the signed-in account. The list
+/// carries numbers only: whether the ask was direct or through a team is
+/// read from each pull request's `reviewRequests` against the viewer's login.
+pub const REVIEW_ASKED_SEARCH: &str = "review-requested:@me";
+pub const REVIEW_ASKED_FIELDS: &str = "number";
 
 /// The second list: only the open pull requests, only their checks.
 pub const OPEN_CHECK_FIELDS: &str = "number,statusCheckRollup";
@@ -156,6 +167,182 @@ fn is_issue_attempt_query(value: &str) -> bool {
 pub const MERGED_PROOF_LIMIT: &str = "100";
 pub const MERGED_PROOF_FIELDS: &str = "headRefOid,baseRefName";
 
+/// The signed-in account's login, read once per pass beside `auth status`:
+/// it tells the Work tab which pull requests are the operator's own and which
+/// review asks were made of them directly.
+pub const VIEWER_LOGIN: [&str; 4] = ["api", "user", "--jq", ".login"];
+
+/// A commit as `--match-head-commit` and `expected_head_sha` take it: the
+/// full lowercase hex object name, so a branch or a flag never rides there.
+pub fn is_commit(value: &str) -> bool {
+    matches!(value.len(), 40 | 64)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// What one repository's open pull requests add to the 5-minute list: each
+/// pull request's place in the merge queue and when a review was last asked
+/// of someone on it. The newest hundred only, a cap the screen never states
+/// because a queued or just-asked pull request is a recently active one.
+pub fn pr_facts_query(repository: &str) -> Option<String> {
+    if !is_repository(repository) {
+        return None;
+    }
+    let (owner, name) = repository.split_once('/')?;
+    Some(format!(
+        "query=query HidePrFacts {{ repository(owner:\"{owner}\",name:\"{name}\") {{ pullRequests(states:OPEN,first:100,orderBy:{{field:UPDATED_AT,direction:DESC}}) {{ nodes {{ number mergeQueueEntry {{ position }} timelineItems(last:1,itemTypes:[REVIEW_REQUESTED_EVENT]) {{ nodes {{ ... on ReviewRequestedEvent {{ createdAt }} }} }} }} }} }} }}"
+    ))
+}
+
+/// What the card reads about one pull request when it opens and when its head
+/// moves: the head commit, the body, the files with their counts, the
+/// unresolved review threads, and what the repository lets a merge be.
+pub const CARD_FILE_LIMIT: usize = 100;
+pub const CARD_THREAD_LIMIT: usize = 50;
+
+pub fn pr_card_query(repository: &str, number: u32) -> Option<String> {
+    if !is_repository(repository) {
+        return None;
+    }
+    let (owner, name) = repository.split_once('/')?;
+    Some(format!(
+        "query=query HidePrCard {{ repository(owner:\"{owner}\",name:\"{name}\") {{ mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission defaultBranchRef {{ name }} mergeQueue {{ id }} attributes: object(expression:\"HEAD:.gitattributes\") {{ ... on Blob {{ text }} }} pullRequest(number:{number}) {{ headRefOid baseRefName body files(first:{CARD_FILE_LIMIT}) {{ totalCount nodes {{ path additions deletions }} }} reviewThreads(first:{CARD_THREAD_LIMIT}) {{ nodes {{ isResolved path line comments(first:1) {{ nodes {{ author {{ login }} body }} }} }} }} }} }} }}"
+    ))
+}
+
+fn is_pr_facts_query(value: &str) -> bool {
+    let Some(rest) = value.strip_prefix("query=query HidePrFacts { repository(owner:\"") else {
+        return false;
+    };
+    let Some((owner, rest)) = rest.split_once("\",name:\"") else {
+        return false;
+    };
+    let Some((name, _)) = rest.split_once('"') else {
+        return false;
+    };
+    pr_facts_query(&format!("{owner}/{name}")).is_some_and(|query| query == value)
+}
+
+fn is_pr_card_query(value: &str) -> bool {
+    let Some(rest) = value.strip_prefix("query=query HidePrCard { repository(owner:\"") else {
+        return false;
+    };
+    let Some((owner, rest)) = rest.split_once("\",name:\"") else {
+        return false;
+    };
+    let Some((name, rest)) = rest.split_once('"') else {
+        return false;
+    };
+    let Some((_, rest)) = rest.split_once("pullRequest(number:") else {
+        return false;
+    };
+    let Some((number, _)) = rest.split_once(')') else {
+        return false;
+    };
+    number
+        .parse::<u32>()
+        .ok()
+        .and_then(|number| pr_card_query(&format!("{owner}/{name}"), number))
+        .is_some_and(|query| query == value)
+}
+
+/// How a pull request is merged. A repository with a merge queue takes none:
+/// `gh` adds the pull request to the queue.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrMergeMethod {
+    Merge,
+    Squash,
+    Rebase,
+}
+
+impl PrMergeMethod {
+    pub const fn flag(self) -> &'static str {
+        match self {
+            Self::Merge => "--merge",
+            Self::Squash => "--squash",
+            Self::Rebase => "--rebase",
+        }
+    }
+}
+
+/// `gh pr merge N [--method] --match-head-commit SHA`: the one merge write.
+/// The head condition is not optional, so a pull request that moved after
+/// the card was drawn is refused by GitHub rather than merged unseen.
+pub fn pr_merge_arguments(
+    number: u32,
+    method: Option<PrMergeMethod>,
+    head: &str,
+) -> Option<Vec<String>> {
+    if !is_commit(head) {
+        return None;
+    }
+    let mut arguments = vec!["pr".to_owned(), "merge".to_owned(), number.to_string()];
+    if let Some(method) = method {
+        arguments.push(method.flag().to_owned());
+    }
+    arguments.extend(["--match-head-commit".to_owned(), head.to_owned()]);
+    Some(arguments)
+}
+
+/// `gh api --method PUT repos/OWNER/NAME/pulls/N/update-branch -f
+/// expected_head_sha=SHA`: the one branch-update write, which `gh pr
+/// update-branch` cannot condition on a head commit.
+pub fn pr_update_branch_arguments(
+    repository: &str,
+    number: u32,
+    head: &str,
+) -> Option<Vec<String>> {
+    if !is_repository(repository) || !is_commit(head) {
+        return None;
+    }
+    Some(vec![
+        "api".to_owned(),
+        "--method".to_owned(),
+        "PUT".to_owned(),
+        format!("repos/{repository}/pulls/{number}/update-branch"),
+        "-f".to_owned(),
+        format!("expected_head_sha={head}"),
+    ])
+}
+
+fn is_pr_write(arguments: &[&str]) -> bool {
+    match arguments {
+        ["pr", "merge", number, "--match-head-commit", head] => {
+            is_number(number) && is_commit(head)
+        }
+        ["pr", "merge", number, flag, "--match-head-commit", head] => {
+            is_number(number)
+                && is_commit(head)
+                && [
+                    PrMergeMethod::Merge,
+                    PrMergeMethod::Squash,
+                    PrMergeMethod::Rebase,
+                ]
+                .iter()
+                .any(|method| method.flag() == *flag)
+        }
+        ["api", "--method", "PUT", path, "-f", field] => {
+            let Some(path) = path.strip_prefix("repos/") else {
+                return false;
+            };
+            let Some((repository, number)) = path
+                .strip_suffix("/update-branch")
+                .and_then(|path| path.rsplit_once("/pulls/"))
+            else {
+                return false;
+            };
+            is_repository(repository)
+                && is_number(number)
+                && field
+                    .strip_prefix("expected_head_sha=")
+                    .is_some_and(is_commit)
+        }
+        _ => false,
+    }
+}
+
 /// A value `gh` reads as the value of the flag before it, never a flag.
 fn is_value(argument: &str) -> bool {
     !argument.is_empty() && !argument.starts_with('-')
@@ -167,8 +354,9 @@ pub fn is_number(argument: &str) -> bool {
 }
 
 /// Whether `arguments` is one of the `gh` command lines Hide runs: reads,
-/// and the two writes (docs/ARCHITECTURE.md), a new issue with a title and a
-/// body, and a pull request's body, nothing else of either.
+/// and the writes (docs/ARCHITECTURE.md), a new issue with a title and a
+/// body, a pull request's body, and the Work tab's two, a merge and a branch
+/// update, each conditioned on the head commit the operator was shown.
 pub fn allowed(arguments: &[&str]) -> bool {
     arguments == ["auth", "status"]
         || matches!(
@@ -186,6 +374,12 @@ pub fn allowed(arguments: &[&str]) -> bool {
             ["issue", "list", "--state", "open", "--limit", ISSUE_LIST_LIMIT, "--search", ISSUE_LIST_SEARCH, "--json", fields]
                 if *fields == ISSUE_LIST_FIELDS || *fields == ISSUE_LIST_PROJECT_FIELDS
         )
+        || matches!(
+            arguments,
+            ["pr", "list", "--state", "open", "--search", REVIEW_ASKED_SEARCH, "--limit", PULL_REQUEST_LIMIT, "--json", REVIEW_ASKED_FIELDS]
+        )
+        || is_pr_write(arguments)
+        || arguments == VIEWER_LOGIN
         || arguments == ["repo", "view", "--json", "nameWithOwner"]
         || arguments == ["repo", "view", "--json", "nameWithOwner,id"]
         || (arguments.len() == 6
@@ -211,7 +405,9 @@ pub fn allowed(arguments: &[&str]) -> bool {
             && arguments[..3] == ["api", "graphql", "-f"]
             && (arguments[3].starts_with("query=query HideLinkedIssues {")
                 || arguments[3].starts_with("query=query HideIssueDependencies {")
-                || is_issue_attempt_query(arguments[3])))
+                || is_issue_attempt_query(arguments[3])
+                || is_pr_facts_query(arguments[3])
+                || is_pr_card_query(arguments[3])))
 }
 
 /// Whether `value` names a repository as `gh` takes it, `[HOST/]OWNER/NAME`:
@@ -585,5 +781,148 @@ mod tests {
         ] {
             assert!(!allowed(&arguments), "{arguments:?} must be refused");
         }
+    }
+
+    const HEAD: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    /// The two new writes are their exact command lines, conditioned on a
+    /// full head commit: no merge without the condition, no extra flag that
+    /// would bypass checks, delete a branch, or queue an auto-merge.
+    #[test]
+    fn a_merge_and_a_branch_update_are_their_exact_command_lines_with_a_head_commit() {
+        for arguments in [
+            vec!["pr", "merge", "7", "--match-head-commit", HEAD],
+            vec!["pr", "merge", "7", "--squash", "--match-head-commit", HEAD],
+            vec!["pr", "merge", "7", "--merge", "--match-head-commit", HEAD],
+            vec!["pr", "merge", "7", "--rebase", "--match-head-commit", HEAD],
+        ] {
+            assert!(allowed(&arguments), "{arguments:?} must be allowed");
+        }
+        let update = pr_update_branch_arguments("acme/app", 7, HEAD).unwrap();
+        let update: Vec<&str> = update.iter().map(String::as_str).collect();
+        assert!(allowed(&update), "{update:?} must be allowed");
+        for arguments in [
+            vec!["pr", "merge", "7"],
+            vec!["pr", "merge", "7", "--squash"],
+            vec![
+                "pr",
+                "merge",
+                "7",
+                "--squash",
+                "--match-head-commit",
+                "abc123",
+            ],
+            vec!["pr", "merge", "7", "--match-head-commit", "main"],
+            vec!["pr", "merge", "7", "--admin", "--match-head-commit", HEAD],
+            vec!["pr", "merge", "7", "--auto", "--match-head-commit", HEAD],
+            vec![
+                "pr",
+                "merge",
+                "7",
+                "--delete-branch",
+                "--match-head-commit",
+                HEAD,
+            ],
+            vec!["pr", "merge", "-7", "--match-head-commit", HEAD],
+            vec![
+                "pr",
+                "merge",
+                "7",
+                "--squash",
+                "--rebase",
+                "--match-head-commit",
+                HEAD,
+            ],
+            vec!["pr", "close", "7"],
+            vec![
+                "api",
+                "--method",
+                "PUT",
+                "repos/acme/app/pulls/7/update-branch",
+            ],
+            vec![
+                "api",
+                "--method",
+                "DELETE",
+                "repos/acme/app/pulls/7/update-branch",
+                "-f",
+                "expected_head_sha=0123456789abcdef0123456789abcdef01234567",
+            ],
+            vec![
+                "api",
+                "--method",
+                "PUT",
+                "repos/acme/app/pulls/7/merge",
+                "-f",
+                "expected_head_sha=0123456789abcdef0123456789abcdef01234567",
+            ],
+            vec![
+                "api",
+                "--method",
+                "PUT",
+                "repos/acme/../app/pulls/7/update-branch",
+                "-f",
+                "expected_head_sha=0123456789abcdef0123456789abcdef01234567",
+            ],
+            vec![
+                "api",
+                "--method",
+                "PUT",
+                "repos/acme/app/pulls/7/update-branch",
+                "-f",
+                "expected_head_sha=main",
+            ],
+        ] {
+            assert!(!allowed(&arguments), "{arguments:?} must be refused");
+        }
+        assert_eq!(pr_merge_arguments(7, None, "main"), None);
+        assert_eq!(pr_update_branch_arguments("-acme/app", 7, HEAD), None);
+        assert_eq!(pr_update_branch_arguments("acme/app", 7, "HEAD"), None);
+    }
+
+    /// The viewer and queue read and the card read are their exact queries
+    /// for a repository (and a number), never text a caller edited.
+    #[test]
+    fn the_queue_and_card_queries_are_only_the_ones_this_crate_builds() {
+        let queue = pr_facts_query("acme/app").unwrap();
+        let card = pr_card_query("acme/app", 12).unwrap();
+        for query in [&queue, &card] {
+            assert!(allowed(&["api", "graphql", "-f", query]), "{query}");
+        }
+        let edited_queue = queue.replace("number", "number body");
+        let edited_card = card.replace("body ", "body mergeCommit ");
+        let other_number = card.replace("number:12", "number:12) { id } other(number:1");
+        for query in [&edited_queue, &edited_card, &other_number] {
+            assert!(!allowed(&["api", "graphql", "-f", query]), "{query}");
+        }
+        assert_eq!(pr_card_query("-acme/app", 1), None);
+    }
+
+    #[test]
+    fn the_review_asked_search_is_its_exact_command_line() {
+        let ask = |search: &'static str| {
+            vec![
+                "pr",
+                "list",
+                "--state",
+                "open",
+                "--search",
+                search,
+                "--limit",
+                PULL_REQUEST_LIMIT,
+                "--json",
+                REVIEW_ASKED_FIELDS,
+            ]
+        };
+        assert!(allowed(&ask(REVIEW_ASKED_SEARCH)));
+        assert!(!allowed(&ask("author:someone")));
+        assert!(!allowed(&[
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--search",
+            REVIEW_ASKED_SEARCH
+        ]));
     }
 }

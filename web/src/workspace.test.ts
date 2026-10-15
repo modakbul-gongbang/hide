@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Checkout, StripTab } from "./snapshot";
-import { agentEntries, laneFrame, laneLanding, NO_CALLS_SEEN, readCalls, treeLanding, type LaneInput, type LaneSizes } from "./workspace";
+import { agentEntries, laneFrame, laneLanding, NO_CALLS_SEEN, readCalls, TOOLS, TOOL_SCOPES, treeLanding, type LaneInput, type LaneSizes } from "./workspace";
 
 const strip: StripTab[] = [
   { id: "herdr:1", kind: "herdr", source_id: "t1", label: "1", preview: false },
@@ -33,7 +33,7 @@ describe("the right lane (PRD right-lane)", () => {
 
   it("draws an unpinned lane over Agent Views at its width, Agent Views keeping its own (B3)", () => {
     expect(frame({ tool: "files", shown: true, body: 1200 })).toMatchObject({ mode: "overlay", agents: 1200, width: 520, document: 520, tree: null });
-    expect(frame({ tool: "agent_sessions", shown: true, laneWidth: 700, body: 1200 })).toMatchObject({ mode: "overlay", agents: 1200, width: 700 });
+    expect(frame({ tool: "work", shown: true, laneWidth: 700, body: 1200 })).toMatchObject({ mode: "overlay", agents: 1200, width: 700 });
   });
 
   it("docks a pinned lane, Agent Views giving up its width and the divider's (B5, B7)", () => {
@@ -158,5 +158,11 @@ describe("readCalls", () => {
     const fresh = readCalls(readCalls(NO_CALLS_SEEN, view("/a", 0, 0)).seen, view("/a", 3, 3)).seen;
     const again = readCalls(fresh, view("/a", 0, 0)).seen;
     expect(readCalls(again, view("/a", 1, 1)).call).toBe(true);
+  });
+});
+
+describe("the rail's tool scopes (PRD work-tab-pr-lens D-37)", () => {
+  it("lists the Project's tools before the checkout's, so the rail draws one boundary", () => {
+    expect(TOOLS.map((tool) => TOOL_SCOPES[tool])).toEqual(["project", "project", "checkout", "checkout"]);
   });
 });

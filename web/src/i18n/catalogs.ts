@@ -29,6 +29,7 @@ import { firstRunCatalogs, firstRunEnglish } from "./resources/firstRun";
 import { memoryCatalogs, memoryEnglish } from "./resources/memory";
 import { prWorkCatalogs, prWorkEnglish } from "./resources/prWork";
 import { prListCatalogs, prListEnglish } from "./resources/prList";
+import { workCatalogs, workEnglish } from "./resources/work";
 import { linksCatalogs, linksEnglish } from "./resources/links";
 import { feedbackCatalogs, feedbackEnglish } from "./resources/feedback";
 import { requestsCatalogs, requestsEnglish } from "./resources/requests";
@@ -68,6 +69,7 @@ export const english = {
   ...prWorkEnglish,
   ...boardEnglish,
   ...prListEnglish,
+  ...workEnglish,
   ...linksEnglish,
   ...feedbackEnglish,
   ...overviewEnglish,
@@ -112,6 +114,7 @@ export const catalogs = {
     ...prWorkCatalogs.ko,
     ...boardCatalogs.ko,
     ...prListCatalogs.ko,
+    ...workCatalogs.ko,
     ...linksCatalogs.ko,
     ...feedbackCatalogs.ko,
     ...overviewCatalogs.ko,
@@ -151,6 +154,7 @@ export const catalogs = {
     ...prWorkCatalogs["zh-CN"],
     ...boardCatalogs["zh-CN"],
     ...prListCatalogs["zh-CN"],
+    ...workCatalogs["zh-CN"],
     ...linksCatalogs["zh-CN"],
     ...feedbackCatalogs["zh-CN"],
     ...overviewCatalogs["zh-CN"],
@@ -190,6 +194,7 @@ export const catalogs = {
     ...prWorkCatalogs.ja,
     ...boardCatalogs.ja,
     ...prListCatalogs.ja,
+    ...workCatalogs.ja,
     ...linksCatalogs.ja,
     ...feedbackCatalogs.ja,
     ...overviewCatalogs.ja,
