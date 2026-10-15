@@ -1,4 +1,4 @@
-// hide-extension@2 sha256=b87a237726774feb84fafa4205c95a9f5716a564cd38192202be97a52017740a
+// hide-extension@3 sha256=69e16aad5cef668fb965174cae3e86434ec16aee6a8671d711ad0789b378e075
 // Hide's extension for Pi and omp, written by Hide's install kit (hide-agent-hooks).
 // An edit is kept and shown as edited in Settings; Reinstall puts Hide's back.
 // Outside a Herdr pane, in an agent started from another Pi's or omp's shell, or when its helper is gone, it does
@@ -8,10 +8,11 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
+import path from "node:path";
 
 const HELPER = "/kit path/it's/hide-agent-hooks";
 const AGENT = "pi";
-const VERSION = 2;
+const VERSION = 3;
 
 // The prompt budget is Claude Code's prompt hook's; the tool budget is the spawn guard's. Both hosts wait for
 // a handler far longer (omp gives up at 30 s and then blocks the tool), so these are the limits.
@@ -165,11 +166,15 @@ function root(ctx) {
   return !subagent(ctx) && ctx?.mode === "tui";
 }
 
-/** The session file Herdr's integration reports for the pane, or null for an unsaved session. */
+/**
+ * The session file Herdr's integration reports for the pane, or null for an unsaved session. Absolute in either
+ * system's spelling, as Herdr's own Pi integration judges it: Windows reports `C:\...`, which the host's `path` would
+ * only call absolute on Windows.
+ */
 function sessionFile(ctx) {
   try {
     const file = ctx?.sessionManager?.getSessionFile?.();
-    return typeof file === "string" && file.startsWith("/") ? file : null;
+    return typeof file === "string" && (path.posix.isAbsolute(file) || path.win32.isAbsolute(file)) ? file : null;
   } catch {
     return null;
   }
