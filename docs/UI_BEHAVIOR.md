@@ -2329,6 +2329,10 @@ Ctrl+C copies only while text is selected and clears the selection as it copies,
 Every other plain Ctrl key reaches the program, apart from text size (Ctrl+=, Ctrl+- and Ctrl+0).
 Settings, Shortcuts refuses a binding on the terminal's copy or paste chord.
 
+While an input method composes (Hangul, kana, pinyin), the keys in this table are the input method's and none is sent; a ⇧↩ that ends a syllable reaches the program after that syllable, never before it (`web/src/terminals.ts`).
+The syllable being composed is drawn in the terminal's own colours, underlined.
+Anywhere in the window, an Escape pressed while a field composes is the input method's too: it never closes the dialog, sheet or palette the field is in (`web/src/keyboard.ts`).
+
 ### Every command
 
 The hold hint follows the same table: holding Ctrl+Shift alone in the desktop app on Windows and Linux floats the tab numbers, and holding Alt alone the Agents-list numbers.

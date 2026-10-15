@@ -62,6 +62,12 @@ type Instance = {
   wheel: { rows: number; remainder: number; column: number; row: number; modifiers: number; frame: number | null };
   /** The cell of a primary press that may still become a click, or null once it dragged or was not one. */
   press: { column: number; row: number } | null;
+  /**
+   * An input method just finished a composition and xterm has not sent it
+   * yet: it sends the composed text one task after `compositionend`, once the
+   * textarea holds the final syllable (its `CompositionHelper`).
+   */
+  commitPending: boolean;
   disposeHandlers: () => void;
 };
 
@@ -535,6 +541,7 @@ function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLin
     grid: null,
     wheel: { rows: 0, remainder: 0, column: 0, row: 0, modifiers: 0, frame: null },
     press: null,
+    commitPending: false,
     disposeHandlers: () => {},
   };
   // Right after a new tab or split was asked for, keys go to that request's
@@ -551,13 +558,23 @@ function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLin
     const action = terminalKey(event, system, term.hasSelection());
     if (!action) return true;
     event.preventDefault();
-    if (action.kind === "bytes") send(action.bytes);
-    // The page's own Ctrl+Shift+V is paste-as-plain-text, which drops an
-    // image, so the chord reads the clipboard itself.
-    else if (action.kind === "paste") void pasteClipboard(paneId, "terminal");
-    // Clearing the selection once it is copied lets the next Ctrl+C
-    // interrupt; a refused copy keeps it. Nothing selected copies nothing.
-    else if (term.hasSelection()) void copySelection(paneId, "terminal").then((copied) => copied && term.clearSelection());
+    const run = () => {
+      if (action.kind === "bytes") send(action.bytes);
+      // The page's own Ctrl+Shift+V is paste-as-plain-text, which drops an
+      // image, so the chord reads the clipboard itself.
+      else if (action.kind === "paste") void pasteClipboard(paneId, "terminal");
+      // Clearing the selection once it is copied lets the next Ctrl+C
+      // interrupt; a refused copy keeps it. Nothing selected copies nothing.
+      else if (term.hasSelection()) void copySelection(paneId, "terminal").then((copied) => copied && term.clearSelection());
+    };
+    // xterm sends a pending composition early for a key that reaches its own
+    // handler, and a key taken here never does. macOS Chromium delivers the
+    // Return that ends a Hangul syllable as a second keydown after
+    // `compositionend`, so ⇧↩ right after "안녕" would reach the program as
+    // "안", the newline, then "녕". The key waits one task instead, queued
+    // behind xterm's send, so the syllable goes first.
+    if (instance.commitPending) setTimeout(() => instances.get(paneId) === instance && run(), 0);
+    else run();
     return false;
   });
   term.onData((data) => send(new TextEncoder().encode(data)));
@@ -612,6 +629,14 @@ export function attachTerminal(
   shown.links = links;
   if (fresh) {
     shown.term.open(shown.element);
+    // Added after xterm's own listener, so this clearing task runs right
+    // after xterm's send of the composed text (`commitPending`).
+    shown.term.textarea?.addEventListener("compositionend", () => {
+      shown.commitPending = true;
+      setTimeout(() => {
+        shown.commitPending = false;
+      }, 0);
+    });
     shown.renderer = loadTerminalRenderer(shown.term, (reason) => {
       if (probeEnabled()) useShellStore.getState().noteDiagnostic(`terminal.renderer pane=${paneId} mode=dom reason=${reason}`);
     });
