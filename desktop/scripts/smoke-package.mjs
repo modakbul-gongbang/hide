@@ -172,7 +172,7 @@ try {
    * `.hide/runtime` on Windows, the installed resources folder elsewhere.
    */
   function prepareRuntime(cli) {
-    const answer = JSON.parse(output(cli, ["runtime", "prepare"], isolated));
+    const answer = runtimePrepare(cli);
     if (answer.ok !== true) throw new Error(JSON.stringify(answer));
     const runtimeRoot = path.join(home, ".hide", "runtime");
     if (process.platform === "win32" ? path.dirname(answer.dir) !== runtimeRoot : answer.dir !== path.dirname(cli)) {
@@ -181,6 +181,25 @@ try {
     if (process.platform === "win32" && answer.dir.toLowerCase().startsWith(app.toLowerCase())) throw new Error("the runtime copy is under the install folder");
     return answer;
   }
+  /**
+   * `hide runtime prepare`'s answer. What it kept (in use) or could not
+   * remove reaches only its stderr, as records the host logs; they are
+   * printed so a run shows what each prepare did with the other copies.
+   */
+  function runtimePrepare(cli) {
+    const run = spawnSync(cli, ["runtime", "prepare"], { env: isolated, encoding: "utf8", timeout: 30_000 });
+    if (run.error || run.status !== 0) throw new Error(`hide runtime prepare: ${run.error?.message ?? `exit ${run.status}`}: ${run.stderr}`);
+    for (const line of run.stderr.split(/\r?\n/).filter(Boolean)) console.log(`  runtime prepare: ${line}`);
+    return JSON.parse(run.stdout);
+  }
+
+  /** The processes whose program lies under `dir`, as Windows names them. */
+  function runningFrom(dir) {
+    if (process.platform !== "win32") return "";
+    const script = `Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith('${dir.replace(/'/g, "''")}', 'OrdinalIgnoreCase') } | ForEach-Object { "$($_.Id) $($_.Path)" }`;
+    return execFileSync("pwsh", ["-NoProfile", "-Command", script], { encoding: "utf8" }).trim() || "none";
+  }
+
   let firstCopy = null;
   check("hide runtime prepare", () => {
     const answer = prepareRuntime(controlCli);
@@ -435,8 +454,11 @@ try {
   // Nothing runs from the first build's copy now, so the next start removes it.
   if (firstCopy) {
     check("a later start removes the copy nothing runs from", () => {
-      const answer = JSON.parse(output(path.join(upgraded, "resources", `hide${exe}`), ["runtime", "prepare"], isolated));
-      if (fs.existsSync(firstCopy) || !answer.removed.includes(path.basename(firstCopy))) throw new Error(`${firstCopy} is still there: ${JSON.stringify(answer)}`);
+      const answer = runtimePrepare(path.join(upgraded, "resources", `hide${exe}`));
+      if (fs.existsSync(firstCopy) || !answer.removed.includes(path.basename(firstCopy))) {
+        const held = fs.existsSync(firstCopy) ? fs.readdirSync(firstCopy).join(", ") : "gone";
+        throw new Error(`${firstCopy} is still there: ${JSON.stringify(answer)}; it holds: ${held}; running from it: ${runningFrom(firstCopy)}; the runtime folder holds: ${fs.readdirSync(path.dirname(firstCopy)).join(", ")}`);
+      }
     });
   }
 } catch (error) {
