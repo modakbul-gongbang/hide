@@ -318,6 +318,9 @@ impl Runtime {
             }));
         }
         let mut changed = self.decide_agent_onboarding(device_id, report);
+        if let Some(update) = &report.herdr {
+            changed |= self.ingest_device_herdr_update(device_id, update);
+        }
         let mut snapshot = KitSnapshot::from_report(report);
         snapshot.busy = self.kit_install_queued(device_id);
         // A daemon answer the kit could not read reads as no answer; the log
@@ -1298,6 +1301,47 @@ impl Runtime {
     /// A machine's kit as its row shows it. A device the helper may not be
     /// installed on, or whose platform this build does not carry, installs
     /// nothing and says why (B17, B21); otherwise its last report stands.
+    /// What a device's node did about its Herdr server after a kit pass:
+    /// one log record for every outcome (PRD device-herdr-update B12), and
+    /// the device row's line while the server stays older than the pin (B8).
+    /// An outcome that could not tell the server's Herdr keeps the last
+    /// known one.
+    fn ingest_device_herdr_update(
+        &mut self,
+        device_id: &str,
+        update: &hide_kit::device_herdr::HerdrUpdate,
+    ) -> bool {
+        use hide_kit::device_herdr::HerdrUpdate;
+        crate::diagnostic!(update.record(device_id));
+        let behind = match update {
+            HerdrUpdate::Failed { .. } => return false,
+            HerdrUpdate::Behind {
+                server_version,
+                version,
+                cause,
+                ..
+            } => Some(crate::model::HerdrBehindSnapshot {
+                server_version: server_version.clone(),
+                version: version.clone(),
+                cause: *cause,
+            }),
+            HerdrUpdate::NoServer { .. }
+            | HerdrUpdate::Current { .. }
+            | HerdrUpdate::Kept { .. }
+            | HerdrUpdate::HandedOff { .. } => None,
+        };
+        if self.device_herdr_behind.get(device_id) == behind.as_ref() {
+            return false;
+        }
+        match behind {
+            Some(behind) => self
+                .device_herdr_behind
+                .insert(device_id.to_owned(), behind),
+            None => self.device_herdr_behind.remove(device_id),
+        };
+        self.refresh_device_snapshots()
+    }
+
     pub(super) fn kit_view(&self, device_id: &str) -> KitSnapshot {
         let mut view = self.kit_view_without_sessions(device_id);
         self.fill_agent_sessions(device_id, &mut view);

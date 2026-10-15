@@ -24,6 +24,9 @@ pub struct Connector {
     /// Where each device's terminals' output and reports go; none for a
     /// connector whose devices' terminals do not reach this process.
     terminals: Option<Arc<dyn crate::terminal::device::DeviceSink>>,
+    /// The helper root the core installs under on each device, whose pinned
+    /// Herdr the status read asks first.
+    helper_root: Option<String>,
 }
 
 impl Connector {
@@ -35,7 +38,14 @@ impl Connector {
             resolve: ssh_g(PathBuf::from("ssh")),
             panes: None,
             terminals: None,
+            helper_root: None,
         }
+    }
+
+    /// The helper root the core installs under on each device.
+    pub fn with_helper_root(mut self, root: String) -> Self {
+        self.helper_root = Some(root);
+        self
     }
 
     /// Each device's panes' terminals flow inside its node link, and their
@@ -85,7 +95,8 @@ impl DeviceConnector for Connector {
             })?;
         let client = RusshRemoteClient::new(resolved)
             .map_err(|error| error.to_string())?
-            .with_herdr_socket(herdr_socket);
+            .with_herdr_socket(herdr_socket)
+            .with_helper_root(self.helper_root.clone());
         Ok(Arc::new(SshDevice {
             client: Arc::new(client),
             packages: self.packages.clone(),

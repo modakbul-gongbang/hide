@@ -435,10 +435,14 @@ impl Default for NodeTerminals {
 
 impl NodeTerminals {
     /// The service of a device's node: `herdr terminal session` children of
-    /// the `herdr` on the account's own search path.
+    /// the pinned Herdr the build brought (PRD device-herdr-update D-10), or
+    /// of the `herdr` on the account's own search path when it brought none.
     pub fn new() -> Self {
         Self::with_attacher(Box::new(|socket: &str| {
-            let herdr = hide_platform::programs::find_cli("herdr");
+            let herdr = std::env::current_exe()
+                .ok()
+                .and_then(|helper| hide_kit::device_herdr::pinned_for_helper(&helper))
+                .or_else(|| hide_platform::programs::find_cli("herdr"));
             Box::new(LocalAttacher::new(herdr, socket.into())) as Box<dyn super::Attacher>
         }))
     }

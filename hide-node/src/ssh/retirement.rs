@@ -507,6 +507,7 @@ mod tests {
                 // before this deliberately empty payload can create a folder.
                 let payload = super::super::Payload {
                     files: Vec::new(),
+                    herdr: None,
                     missing: Vec::new(),
                 };
                 super::super::install(

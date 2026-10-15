@@ -778,6 +778,12 @@ fn owner_loop(
             .ok()
             .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf)),
     )
+    .with_helper_root(
+        options
+            .host_helper_root
+            .clone()
+            .unwrap_or_else(|| hide_node::ssh::host::DEFAULT_HELPER_ROOT.to_owned()),
+    )
     .with_pane_events(panes)
     .with_terminals(Arc::clone(&terminals) as Arc<dyn DeviceSink>);
     let Some(core) = Core::create(

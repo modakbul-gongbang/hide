@@ -332,6 +332,7 @@ fn browser_authority_records_remote_session_and_catalog_revocations_before_reads
         pane_hook_tokens: Default::default(),
         issue_tokens: Default::default(),
         issue_links: Default::default(),
+        herdr_version: None,
     };
     let store = runtime.workspace_views.as_mut().unwrap();
     store.views.entry("mini", path);

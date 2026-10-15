@@ -149,8 +149,9 @@ export const codexAutostart = (home: string) => (fs.existsSync(path.join(home, "
 
 /**
  * A daemon folder laid out as the app's Contents/Resources: this build's
- * binaries and every kit part a device gets. The daemon reads the device
- * payload from beside its own executable.
+ * binaries, every kit part a device gets and the pinned Herdr the package
+ * carries. The daemon reads the device payload from beside its own
+ * executable.
  */
 export function stageBuild(root: string): string {
   const debug = path.dirname(HIDE_CLI);
@@ -164,5 +165,9 @@ export function stageBuild(root: string): string {
     if (!fs.existsSync(binary)) throw new Error(`${binary} is missing: run \`cargo build -p hided -p hide-agent-hooks\``);
     place(binary, path.join(build, name));
   }
+  // A copy, so the device's Herdr server, which runs the linked pinned
+  // binary, never runs the file the upload reads.
+  fs.copyFileSync(herdrBinary(), path.join(build, "herdr"));
+  fs.chmodSync(path.join(build, "herdr"), 0o755);
   return build;
 }

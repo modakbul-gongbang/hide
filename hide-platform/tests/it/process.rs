@@ -20,7 +20,7 @@ use hide_platform::process::{
     CaptureFailureKind, MAX_CAPTURE_BYTES, OWNER_LAUNCH_KEYS, OwnedChild, OwnerWatch,
     RUN_OUTPUT_CAP, RunFailure, cwd_of, descendants, descends_from, detach, image_of, is_alive,
     kill_tree, measure_tree, name_of, parent_of, restrict_to_login_environment, run_to_end,
-    start_time, terminate, terminate_group,
+    running, start_time, terminate, terminate_group,
 };
 
 const ROLE: &str = "HIDE_PLATFORM_PROC_ROLE";
@@ -820,6 +820,48 @@ fn the_image_of_a_process_is_the_file_it_started_from_wherever_that_file_goes() 
     child.kill().unwrap();
     child.wait().unwrap();
     assert_eq!(image_of(pid).unwrap_err().kind(), ErrorKind::NotFound);
+}
+
+/// What keeps a device's old Herdr copy while a server runs it: the
+/// processes that run a file are found by the file, wherever it went, and a
+/// file no process runs has none.
+#[test]
+fn the_processes_running_a_file_are_found_by_the_file_not_its_path() {
+    let _serial = serial();
+    let root = tempfile::tempdir().unwrap();
+    let program = root
+        .path()
+        .join(format!("program{}", std::env::consts::EXE_SUFFIX));
+    copy_program(&std::env::current_exe().unwrap(), &program);
+    let unused = root
+        .path()
+        .join(format!("unused{}", std::env::consts::EXE_SUFFIX));
+    copy_program(&std::env::current_exe().unwrap(), &unused);
+    let file = file_id(&program).unwrap();
+    let mut child = role_command_from(&program, "sleep").spawn().unwrap();
+    ready_number(child.stdout.take().unwrap());
+    let pid = child.id();
+
+    let found = running(&file);
+    if cfg!(windows) {
+        assert_eq!(found.unwrap_err().kind(), ErrorKind::Unsupported);
+        child.kill().unwrap();
+        child.wait().unwrap();
+        return;
+    }
+    assert_eq!(found.unwrap(), vec![pid]);
+    assert_eq!(
+        running(&file_id(&unused).unwrap()).unwrap(),
+        Vec::<u32>::new()
+    );
+
+    let moved = root.path().join("moved");
+    std::fs::rename(&program, &moved).unwrap();
+    assert_eq!(running(&file).unwrap(), vec![pid]);
+
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert_eq!(running(&file).unwrap(), Vec::<u32>::new());
 }
 
 /// A copy of `from` at `to` that runs as a program of its own, its bytes

@@ -338,6 +338,7 @@ impl Runtime {
         self.remote_tab_creations_in_flight
             .retain(|(target_id, _, _, _)| target_id != device_id);
         self.remote_device_tests.remove(device_id);
+        self.device_herdr_behind.remove(device_id);
         self.snapshot
             .status
             .remote
@@ -622,15 +623,18 @@ impl Runtime {
                 .and_then(crate::remote::connection_problem)
                 .map(str::to_owned);
             let test = tests.get(&device.id).cloned();
+            let herdr_behind = self.device_herdr_behind.get(&device.id).cloned();
             if device.state != state
                 || device.message != message
                 || device.problem != problem
                 || device.test != test
+                || device.herdr_behind != herdr_behind
             {
                 device.state = state.to_owned();
                 device.message = message;
                 device.problem = problem;
                 device.test = test;
+                device.herdr_behind = herdr_behind;
                 changed = true;
             }
         }

@@ -1150,6 +1150,9 @@ pub struct Runtime {
     /// The last connection test of each device, kept apart from the device
     /// rows because those are rebuilt with every catalog.
     remote_device_tests: HashMap<String, crate::model::DeviceTestSnapshot>,
+    /// Each device whose Herdr server its node last found older than the
+    /// pin after a kit pass (PRD device-herdr-update B8).
+    device_herdr_behind: HashMap<String, crate::model::HerdrBehindSnapshot>,
     /// Each device's helper connection and the consent it runs under.
     device_hosts: HashMap<String, hosts::DeviceHost>,
     /// When each device's lost or failed link is tried again.
@@ -2032,6 +2035,7 @@ impl Runtime {
             inbound_arrivals: HashMap::new(),
             retired_remote_syncs: Vec::new(),
             remote_device_tests: HashMap::new(),
+            device_herdr_behind: HashMap::new(),
             device_hosts: HashMap::new(),
             device_host_retries: HashMap::new(),
             last_host_generation: 0,
