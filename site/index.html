@@ -25,7 +25,10 @@
     <header class="site-header">
       <div class="wrap">
         <a class="wordmark" href="#main" aria-label="hide home">
-          <img src="./assets/hide-mark.png" width="30" height="30" alt="">
+          <picture>
+            <source srcset="./assets/hide-icon.svg" media="(prefers-reduced-motion: reduce)">
+            <img src="./assets/hide-icon-blinking.svg" width="34" height="34" alt="">
+          </picture>
           <span>hide</span>
         </a>
         <nav aria-label="Main navigation">
@@ -54,7 +57,7 @@
         </div>
 
         <figure class="stage wrap reveal">
-          <img class="peek" src="./assets/owls/owl-peek.webp" width="900" height="544" alt="">
+          <img class="peek" src="./assets/owls/owl-peek-still.svg" data-peek="./assets/owls/owl-peek.svg" width="1200" height="942" alt="">
           <div class="window">
             <img src="./assets/hide-workspace.webp" width="2912" height="1800" alt="The hide window: two agents that need an answer raised above the project tree, Claude Code and Codex side by side, and every session listed by group on the right.">
           </div>

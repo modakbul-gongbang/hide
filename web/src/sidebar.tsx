@@ -67,6 +67,7 @@ import { machineName, screenDeviceId, windowDeviceId, windowFirst } from "./scre
 import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type HideAiCheckout, type SleepingSession, type SnapshotRest, type Workspace } from "./snapshot";
 import { useStartPanel } from "./startDraft";
 import { HelpMenu } from "./components/help-menu";
+import { ViewMenu } from "./components/view-menu";
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
 import { useUiStore } from "./ui";
@@ -167,6 +168,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
             {list}
             <div data-sidebar-footer="true" className="flex shrink-0 flex-wrap items-center justify-end gap-xs border-t border-border px-sm py-xs">
               <Usage actions={actions} />
+              <ViewMenu actions={actions} />
               <HelpMenu actions={actions} />
               <Hint label={`${t("common.settings")} (${commandLabel("settings")})`}>
                 <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>
@@ -472,7 +474,7 @@ function catalogLineOf(rest: SnapshotRest | null, t: TFunction<"translation">) {
 }
 
 /**
- * The scope picker below Overview and the raised sections: the projects of the context on
+ * The raised sections, held above the list, and the scope picker below them: the projects of the context on
  * screen. A selected SSH device lists its Herdr workspaces, one checkout
  * each; the inactive folds and pins are this machine's and are not drawn
  * there (docs/UI_BEHAVIOR.md: the remote context carries no pins). The row of
@@ -504,6 +506,7 @@ function ProjectList({ actions }: { actions: Actions }) {
   const focusRowPane = useFocusRowPane();
   const workspaceVisible = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
   const focusedProjectId = workspaceVisible ? (workspaces.find((workspace) => workspace.checkouts.some((checkout) => checkout.id === focusedCheckoutId))?.id ?? null) : null;
+  const lists = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLUListElement>(null);
   const revealed = useRef<string | null>(null);
   // The focus's row is brought into view when the focus moves, before the frame
@@ -511,11 +514,11 @@ function ProjectList({ actions }: { actions: Actions }) {
   // a snapshot or another screen in front, so a list the operator scrolled
   // stays where they left it.
   useLayoutEffect(() => {
-    if (!workspaceVisible || !list.current) return;
+    if (!workspaceVisible || !lists.current) return;
     const focus = `${focusedCheckoutId ?? ""}\u0000${focusedPaneId ?? ""}`;
     if (focus === revealed.current) return;
     revealed.current = focus;
-    revealSidebarFocus(list.current);
+    revealSidebarFocus(lists.current);
   }, [loaded, workspaceVisible, focusedCheckoutId, focusedPaneId]);
   const catalogState = useShellStore((s) => catalogLineOf(s.rest, t)?.state ?? null);
   const catalogText = useShellStore((s) => catalogLineOf(s.rest, t)?.text ?? null);
@@ -559,33 +562,44 @@ function ProjectList({ actions }: { actions: Actions }) {
   };
   if (!loaded) return <ListLoading />;
   return (
-    <ul ref={list} className="min-h-0 flex-1 overflow-auto px-sm" data-project-list="true" onKeyDown={moveSidebarKey}>
-      {catalogLine ? (
-        <li role="status" className="px-md py-xs text-caption text-muted-foreground" data-device-catalog={catalogLine.state}>
-          {catalogLine.text}
-        </li>
+    // The arrow keys move through both lists as one.
+    <div ref={lists} className="flex min-h-0 flex-1 flex-col" onKeyDown={moveSidebarKey}>
+      {/* Needs You and Done stand still above the projects, so opening one row
+          after another never scrolls them away: an opened row leaves its
+          section and the next one moves up into its place. Up to half the
+          height, past which they scroll on their own. */}
+      {catalogLine || raised.length > 0 ? (
+        <ul className="max-h-1/2 shrink-0 overflow-auto px-sm" data-raised-list="true">
+          {catalogLine ? (
+            <li role="status" className="px-md py-xs text-caption text-muted-foreground" data-device-catalog={catalogLine.state}>
+              {catalogLine.text}
+            </li>
+          ) : null}
+          {raised.map((row) => (
+            <ProjectRowView key={rowKey(row)} row={row} context={context} />
+          ))}
+        </ul>
       ) : null}
-      {raised.map((row) => (
-        <ProjectRowView key={rowKey(row)} row={row} context={context} />
-      ))}
-      {/* Each section is its own box, so its header sticks to the list's top only while its rows pass under it, and the next section's header pushes it away (D-05). */}
-      {sections.map((section, index) => (
-        <li key={`section:${section.header.section}`} data-project-section={section.header.section}>
-          <ul>
-            <SectionHeader row={section.header} actions={actions} />
-            {section.rows.map((row) => (
-              <ProjectRowView key={rowKey(row)} row={row} context={context} />
-            ))}
-            {index === sections.length - 1 ? <CleanupRows workspaces={workspaces} context={context} deviceId={frontId} /> : null}
-          </ul>
-        </li>
-      ))}
-      {!remote && workspaces.length === 0 ? (
-        <li className="flex flex-col items-start gap-sm px-sm py-sm text-caption text-muted-foreground" data-projects-empty="true">
-          {t("sidebar.noProjects")}
-        </li>
-      ) : null}
-    </ul>
+      <ul ref={list} className="min-h-0 flex-1 overflow-auto px-sm" data-project-list="true">
+        {/* Each section is its own box, so its header sticks to the list's top only while its rows pass under it, and the next section's header pushes it away (D-05). */}
+        {sections.map((section, index) => (
+          <li key={`section:${section.header.section}`} data-project-section={section.header.section}>
+            <ul>
+              <SectionHeader row={section.header} actions={actions} />
+              {section.rows.map((row) => (
+                <ProjectRowView key={rowKey(row)} row={row} context={context} />
+              ))}
+              {index === sections.length - 1 ? <CleanupRows workspaces={workspaces} context={context} deviceId={frontId} /> : null}
+            </ul>
+          </li>
+        ))}
+        {!remote && workspaces.length === 0 ? (
+          <li className="flex flex-col items-start gap-sm px-sm py-sm text-caption text-muted-foreground" data-projects-empty="true">
+            {t("sidebar.noProjects")}
+          </li>
+        ) : null}
+      </ul>
+    </div>
   );
 }
 
@@ -686,8 +700,7 @@ function SectionHeader({ row, actions }: { row: SectionRow; actions: Actions }) 
 /**
  * Marks each section header that is stuck to the top of the list, which draws
  * its hairline; read on scroll and on any size change of the list or a row of
- * it (a raised group growing above the sections moves them too), written
- * straight to the element so scrolling renders nothing.
+ * it, written straight to the element so scrolling renders nothing.
  */
 function useStuckHeaders(list: { current: HTMLUListElement | null }, loaded: boolean) {
   // Set up once per list, not per snapshot: what moves a header is a scroll,
@@ -1600,11 +1613,11 @@ function OpenAgentRows({ checkout, groupTabs, deviceId, agentRows, sleeping, ins
 const TAB_LINE = "calc(var(--size-sidebar-line) + var(--spacing-xxs))";
 
 /**
- * A tab is a segment of its checkout's agent list, not a level (docs/UI_BEHAVIOR.md, Sidebar hierarchy): a tab holding two or more agents
- * draws a hairline guide centered under the checkout's kind glyph spanning the segment's rows, and opens with one quiet line inside the
+ * A tab is a segment of its checkout's agent list, not a level (docs/UI_BEHAVIOR.md, Sidebar hierarchy): a tab holding two or more agents,
+ * or one the operator named, draws a hairline guide centered under the checkout's kind glyph spanning the segment's rows, and opens with one quiet line inside the
  * guide, the tab glyph on the status-mark column and its name (the manual one, else `Tab N`) on the title column, so it reads as part of
- * the checkout rather than beside it. The line opens the real tab, and the hint says its name and agent count. A single-agent tab draws
- * nothing: its row alone is the segment, and the gap between segments is the tab boundary.
+ * the checkout rather than beside it. The line opens the real tab, and the hint says its name and agent count. An unnamed single-agent
+ * tab draws nothing: its row alone is the segment, and the gap between segments is the tab boundary.
  */
 function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context }: { group: SidebarTabGroup; checkout: Checkout; deviceId: string; inset: string; glyphColumn: string; context: TreeContext }) {
   const { t } = useInterfaceTranslation();

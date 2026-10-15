@@ -52,13 +52,16 @@ Browser QA should simulate GitHub responses at that external boundary for ready,
 
 The brand line, approved owl mark, palette and voice come from [BRAND.md](../docs/BRAND.md).
 `assets/hide-mark.png` is an unchanged copy of `design/brand/hide-mark.png`; keep its full square and proportions.
+`assets/hide-icon-blinking.svg` is an unchanged copy of `design/brand/hide-icon-blinking.svg`, the animated app icon, and `assets/hide-icon.svg` is the same file with its `<animateTransform>` elements removed, which leaves the resting pose.
 The page leads with the person's attention: "Run more agents. Hold less." Its sections, in order, are the hero, one night with hide (`#night`), three pillars, the terminal band, the Software Factory (Soon), pricing, the FAQ, and a closing that carries the download chooser.
 Each section's claims follow the owning guide: the supported agents and their tiers [agent-hooks.md](../docs/agent-hooks.md), the four groups and status marks [status-model.md](../docs/status-model.md), agents handing work to each other [delivery.md](../docs/delivery.md), the core, devices and the phone [ARCHITECTURE.md](../docs/ARCHITECTURE.md) and [INSTALL.md](../docs/INSTALL.md), Hide AI [AI_PROVIDERS.md](../docs/AI_PROVIDERS.md), the Factory [factory.md](../docs/factory.md), and adopting an existing Herdr server [INSTALL.md](../docs/INSTALL.md), which the FAQ answers.
 The three pillar panels and the night timeline are small HTML drawings of the app's own surfaces (the sidebar's four groups, the lineage tree, the core and its screens) with invented example work; they are illustrations, not captures, and use the app's status marks and colors.
 The night timeline sits in `#night-stage` as a static, complete fallback that reads without script; the visible words avoid developer jargon on purpose ("a test broke", "ready for review").
 Every section owl is an `<img class="owl" data-owl="...">`, so a pose is replaced by changing its `src`.
 Supported agents are named in text; third-party agent marks stay inside the app, where `web/src/assets/agents/manifest.json` records their terms.
-`site.js` runs the one-time scroll reveals, and nothing else on the page repeats; under `prefers-reduced-motion` the reveals show at once.
+`site.js` runs the one-time scroll reveals and the hero owl's peeking.
+The two repeating images, the header icon's blink and the hero owl, sit in different places, run or play only while visible, and under `prefers-reduced-motion` each shows one still frame.
+The header icon's blink is SMIL inside an `<img>`, which a hidden tab does not paint; under `prefers-reduced-motion` a `<picture>` source shows `hide-icon.svg` instead.
 The Factory is marked Soon and has no sign-up form, because the site has no backend to receive one: its action is to watch the repository's releases on GitHub.
 Pro and Team carry no price, because none is decided; free covers everything a person runs themselves.
 The workflow and feature descriptions follow [UI_BEHAVIOR.md](../docs/UI_BEHAVIOR.md), with current main's agent launcher, project overview and Workspace components as implementation references.
@@ -69,7 +72,11 @@ The site has its own small CSS scale and brand palette; it does not consume or r
 `assets/hide-workspace.webp` is a render of the design library, not a capture of a running app.
 The workspace render is assembled from `design/hide-screens.pen` parts (the Projects sidebar, the Workspace toolbar and Agent column, the Sessions panel) with two terminal panes and example session titles written for the page.
 It was built in a scratch copy through the Pen CLI and exported at 2x; the committed `.pen` files are unchanged.
-`assets/owls/` holds the owl character's poses, generated with the approved mark as the style reference and keyed to transparency; [BRAND.md](../docs/BRAND.md#the-owl-character) owns what the character may and may not do, and the mark stays the unchanged `hide-mark.png` in the header and favicon.
+`assets/owls/` holds the owl character's poses, generated with the approved mark as the style reference and keyed to transparency; [BRAND.md](../docs/BRAND.md#the-owl-character) owns what the character may and may not do, the header shows the blinking app icon and the favicon stays the unchanged `hide-mark.png`.
+`owl-peek.svg` is the `owl-agents` owl traced into vector parts (ears, body, wings, face) and animated by CSS keyframes inside the file, so it plays as a plain `<img>` with no player script.
+Its field spans the window's width with the screenshot's top edge 200 units down, and the owl hides behind straight edges measured on `hide-workspace.webp`: it pops up over the window's top edge, leans out from behind the Sessions panel and rises from behind the sidebar's project box, looks at one place each time, and ducks back.
+A new screenshot moves those edges, so the edge positions in the file are measured again with it.
+`owl-peek-still.svg` is its first stop held still, which the page shows while the hero is off screen, in a hidden tab and under `prefers-reduced-motion`, because an SVG inside `<img>` does not see the page's media queries in every browser.
 The page is dark by default, on the Owl Field palette: the mark's blue-gray field taken down to night, lime as the one primary accent and the field color as the secondary on kickers, numbers and markers.
 It follows `prefers-color-scheme` for a light variant that keeps the same primary and secondary.
 

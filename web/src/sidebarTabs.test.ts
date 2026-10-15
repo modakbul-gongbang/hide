@@ -24,12 +24,15 @@ describe("Projects sidebar tab groups", () => {
     expect(groups[0]!.rows).toHaveLength(1);
   });
 
-  it("wears the glyph through 2 -> 1 -> 2 and keeps a manual name", () => {
-    const named = { ...tab("t1", ["a", "b"]), sidebar: { manual_name: "긴 한국어 탭 이름", number: 1 } };
-    const at = (panes: string[]) => sidebarTabGroups(checkout([{ ...named, panes: panes.map((id) => ({ id })) as Tab["panes"] }]), "local", panes.map((id) => row(id)), panes.map((id) => agent(id)))[0]!;
-    expect(at(["a", "b"])).toMatchObject({ glyph: true });
-    expect(at(["a"])).toMatchObject({ glyph: false });
-    expect(at(["a", "b"])).toMatchObject({ glyph: true, tab: { sidebar: { manual_name: "긴 한국어 탭 이름" } } });
+  it("drops an unnamed tab's glyph at one agent and keeps a named tab's through 2 -> 1 -> 2", () => {
+    const at = (base: Tab, panes: string[]) => sidebarTabGroups(checkout([{ ...base, panes: panes.map((id) => ({ id })) as Tab["panes"] }]), "local", panes.map((id) => row(id)), panes.map((id) => agent(id)))[0]!;
+    const unnamed = tab("t1", ["a", "b"]);
+    expect(at(unnamed, ["a", "b"])).toMatchObject({ glyph: true });
+    expect(at(unnamed, ["a"])).toMatchObject({ count: 1, glyph: false });
+    const named = { ...unnamed, sidebar: { manual_name: "긴 한국어 탭 이름", number: 1 } };
+    expect(at(named, ["a", "b"])).toMatchObject({ glyph: true });
+    expect(at(named, ["a"])).toMatchObject({ count: 1, glyph: true, tab: { sidebar: { manual_name: "긴 한국어 탭 이름" } } });
+    expect(at(named, ["a", "b"])).toMatchObject({ count: 2, glyph: true });
   });
 
   it("leaves partial legacy snapshots readable without fabricating a tab name", () => {
