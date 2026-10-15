@@ -9,15 +9,39 @@ What it needs from the operator, whether it is running, whether it has reported 
 - Activity: working, stopped, unknown.
 - Completion: reported, not reported.
 - Read: read, unread.
-- Ownership: operator, delegated.
+- Ownership: operator, delegated, or Hide AI's, for work a Hide-started agent does for a screen that owns it.
 
 `herdr-core/src/agent_state/axes.rs` is the single owner of all five.
 `agent_state/turn.rs` derives the group, request verb, close and rest gates from them; `sidebar.rs` assembles the snapshot rows.
 It also derives everything a view draws from them - the group, the mark, whether the row is emphasized, the status word, the descendant mark, and whether closing the pane needs a confirmation or a fresh status check - so no surface decides any of it a second time.
 
 Ownership is not stored anywhere.
-It is read back off the row: a row whose lineage depth is greater than zero is delegated, and every other row, including an orphan whose parent is gone, is the operator's.
+It is read back off the row: a row whose lineage depth is greater than zero is delegated, a root whose Hide AI snapshot names a home is Hide AI's, and every other row, including an orphan whose parent is gone, is the operator's.
 `ownership_of` is the only function that makes that judgement, and `apply_lineage` reapplies every derived value once the lineage is known.
+
+### Work Hide AI does for a home
+
+A Hide-started agent whose task kind has a home (today a Memory card's promotion, `memory_promote`, whose home is the Memory tab's To ask rows) is not the operator's work, so it is a third ownership value, `HideAi`, not a flag on an operator row (PRD hide-ai-work-home D-13).
+The coordination ledger's record of the spawn is the only source of the fact (`coordination::started`), and the task kind is a closed enum (`coordination::TaskKind`) whose exhaustive `home()` match makes a new kind fail to compile until it names its home.
+A kind this build does not know, or a record with no task, loads with the rest of the ledger and reads as no home: that one agent stays an operator row with its mark and a `hide_ai.task_kind_unknown` diagnostic (D-19).
+The row stays in the agent data, so ⌘K, tabs, the pane header's owl and `hide agent list` find it as before; what changes is which lists enumerate it.
+`agent_state::listed_for_operator` is the one decision: a `HideAi` row is a member of the sidebar's tree roots, Sessions, Overview's requests and graph, the phone's list, the checkout counts and the pet only while it is in Needs You, and no tree draws it even then (the raised Needs You and Sessions do).
+Its group is Needs You or Seen and never Working or Done, so it moves no Working or Done badge, rail count or notification.
+It is in Needs You when the agent itself asks (a question, approval or block, read like any row's) or when the home has a turn for the operator.
+The home's turn is computed by the core from what the Memory promotion module already follows, the attempt's pull request in the machine's PR catalog, and published on the row as `hide_ai.turn`:
+
+| The attempt's pull request | Turn |
+| --- | --- |
+| Open, not a draft, checks all passing or none, no change requested | `pr_review`, which stays after the row is read |
+| Open, not a draft, checks failed, and the agent is not working | `ci_failed` |
+| A draft, checks pending or unknown, a requested change, or failed checks while the agent works | none |
+| Merged, closed, or no pull request | none; the attempt leaves the table |
+
+A row has one line; its second line is the agent's ask or its block's cause, then `ci_failed`, then `pr_review`.
+Entering Needs You notifies once, as for an operator row, and a turn changing inside it does not notify again, because the notification state machine follows the group and not the word.
+Only a live agent has a row: an attempt with no agent (a failure with no pull request, an open pull request after the operator closed the pane) shows in the Memory tab alone (D-15).
+The shell words the turn and opens the home from the row (the Memory tab with the attempt's To ask row open); the phone opens the agent's detail.
+Regression owners: `a_hide_started_row_follows_its_attempts_pull_request_into_and_out_of_needs_you` and `a_home_owned_row_is_listed_only_while_the_operator_has_something_to_do` in `herdr-core/src/runtime/tests/`, `the_home_turn_follows_the_pull_request_and_the_agent` in `memory_promotion.rs`, and `a_home_owned_row_notifies_once_on_entering_needs_you_and_not_on_a_turn_change` in `hided/src/mobile/push.rs`.
 
 ## agent_status provenance and background waits
 
@@ -213,6 +237,9 @@ Whether the operator has read a demand is Hide's own record, never Herdr's tab-s
 
 A blocked pane, or one whose native question or plan waits for the operator, stays in Needs You whether or not it has been read.
 The prompt is still waiting, so it leaves the group when answered rather than when looked at.
+
+A delegated row sits only in Working or Seen, and a Hide AI row for a home only in Needs You or Seen.
+Each of the four groups above is then a group of the rows the operator's lists enumerate; a home's row is counted in none of them until it is in Needs You (see Work Hide AI does for a home).
 
 Done is deliberately separate from Needs You: finished-unseen is "look when you have a moment", an unread demand is "act now".
 
@@ -730,6 +757,7 @@ Reading an AI question skips its demand rung and leaves a dimmed question; menu 
 Without a label line the row keeps its outline but carries no invented line.
 `agent_scope.sessions` publishes the ordered member indices and the nonempty groups for checkout, project, device and overall scopes, with no counts.
 Delegated children are never Sessions members of their own: they are drawn under their root through every row the operator expands, at any depth (`sessions_expanded_agent_pane_ids` in core UI state holds each expanded pane), and Factory workers retain their dedicated surface.
+A Hide AI row for a home is a member only while it is in Needs You, where it draws the home's turn under the agent's own ask or block cause and opens the home when chosen.
 
 Resolve records `resolved_sessions` in core UI state and publishes the hidden row only after the existing coalesced writer acknowledges that exact save.
 Failure keeps it visible with the existing actionable save error; input, activity, session replacement or pane closure invalidates a pending acknowledgement.
@@ -890,6 +918,7 @@ A read root question clears the server’s effective push state, while the phone
 The phone reads the core’s `holds_notification` value, and `emphasized` controls its compact title.
 The projection and push regression tests remain in `hided/src/mobile/{projection,push}.rs`, exercising the same public core functions the transport calls.
 The desktop app's agent notifications run the same transitions on their own ledger (`hided/src/desktop_notices.rs`, PRD first-run-onboarding D-09), so a desktop notification and a phone push agree on what is new without either one's seed or mode moving the other.
+A Hide AI row for a home is on the phone's list, and in these transitions, only while it is in Needs You, so the notification follows the group: one notice when it enters, none when the home's turn changes inside it, and none for its progress (PRD hide-ai-work-home B2, B10); the phone opens the agent's detail from it.
 
 ### With and without Hide AI
 

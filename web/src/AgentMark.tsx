@@ -14,10 +14,10 @@ export type BadgeGround = "sidebar" | "card";
 const GROUND: Record<BadgeGround, string> = { sidebar: "bg-sidebar", card: "bg-card" };
 
 /**
- * Hide's own mark, the owl face at a small size: the head of the Hide AI group
- * in a project's tree, the mark a Hide AI-started row draws alone in the
- * place of the provider logo while logos are hidden (PRD agent-mark-quiet
- * D-04), and (as `HideAiBadge`) the badge a shown logo wears. The full
+ * Hide's own mark, the owl face at a small size: the mark a Hide AI-started
+ * row draws beside its status mark in the place of the provider logo while
+ * logos are hidden (PRD agent-mark-quiet D-04), and (as `HideAiBadge`) the
+ * badge a shown logo wears. The full
  * square mark is used at every size (docs/BRAND.md); decorative, because the
  * words `Hide AI` stand beside it or in the row's name.
  */

@@ -40,7 +40,7 @@ function agent(id: string, label: string, over: Partial<AgentRow> = {}): AgentRo
   }) as AgentRow;
 }
 
-function setup(listed: HideAiCheckout[]) {
+function setup(listed: HideAiCheckout[], focused: string | null) {
   const workspace = { agent_scope: emptyScope(), id: "workspace:w1", label: "herdr-ide", path: "/repo", device_id: "local", is_git: true, registered: true,
     temporary: false, pinned: false, remote_target_id: null, inactive_checkouts: { expanded: false, checkout_ids: [] },
     checkouts: [
@@ -51,12 +51,13 @@ function setup(listed: HideAiCheckout[]) {
       checkout("checkout:own", "hide-memory-m9-by-hand", "/repo.worktrees/hide-memory-m9-by-hand"),
     ],
   } as unknown as Workspace;
-  const rows = [agent("main", "사이드바 가독성 개선"), agent("checkout:m43", "m43 규칙을 문서로 옮기는 중", { hide_ai: { task: MEMORY_M43 } })];
-  const rest = { navigator: { devices: [LOCAL], workspaces: [workspace], agents: rows, hide_ai_checkouts: listed, focused_device_id: "local" } } as unknown as SnapshotRest;
+  // An operator's agent works in the first Hide AI checkout; the core leaves a Hide AI agent's own row out of every tree.
+  const rows = [agent("main", "사이드바 가독성 개선"), agent("checkout:m43", "m43 문서 직접 수정")];
+  const rest = { navigator: { devices: [LOCAL], workspaces: [workspace], agents: rows, hide_ai_checkouts: listed, focused_device_id: "local", focused_checkout_id: focused } } as unknown as SnapshotRest;
   return { rest, rows };
 }
 
-async function render(listed: HideAiCheckout[]) {
+async function render(listed: HideAiCheckout[], focused: string | null = null) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const tokens = (JSON.parse(tokensText) as { tokens: Record<string, { value: number }> }).tokens;
@@ -64,7 +65,7 @@ async function render(listed: HideAiCheckout[]) {
   for (const name of widthTokens) document.documentElement.style.setProperty(name, `${tokens[name]?.value}px`);
   const shell = useShellStore.getState();
   const ui = useUiStore.getState();
-  const { rest, rows } = setup(listed);
+  const { rest, rows } = setup(listed, focused);
   useShellStore.setState({ rest: legacyRest(rest, rows), agents: rows, connection: "live" });
   useUiStore.setState({ sidebarMode: "projects" });
   const container = document.createElement("div");
@@ -89,29 +90,30 @@ const LISTED: HideAiCheckout[] = [
   { device_id: "local", path: "/repo.worktrees/hide-memory-m72-mv4msuko", task: { kind: "memory_promote", target: "m72" } },
 ];
 
-it("gathers the checkouts Hide AI made under one head behind the operator's, with their task and no badge inside (B1, B2, B6, B13)", async () => {
+it("draws a checkout Hide AI made only while an operator's agent works in it or it is in front, under no head (B1, B3, B13)", async () => {
   const { container, cleanup } = await render(LISTED);
   try {
-    const group = container.querySelector("[data-hide-ai-group]")!;
-    expect(group.querySelector("[data-hide-ai-count]")?.textContent).toBe("2");
-    const inGroup = [...group.querySelectorAll("[data-checkout-row]")].map((row) => row.getAttribute("data-checkout-row"));
-    expect(inGroup).toEqual(["checkout:m43", "checkout:m72"]);
-    // The operator's checkouts, the lookalike included, stay above the head.
+    expect(container.querySelector("[data-hide-ai-group]")).toBeNull();
+    // The empty, unfocused one is not drawn; the lookalike with a hand-made branch is the operator's and stays.
     const rows = [...container.querySelectorAll("[data-checkout-row]")].map((row) => row.getAttribute("data-checkout-row"));
-    expect(rows).toEqual(["checkout:main", "checkout:own", "checkout:m43", "checkout:m72"]);
-    // An open checkout names the task under its agent row; a folded one in the purpose line's place, ahead of the purpose.
-    expect(group.querySelector('[data-pane="pane:checkout:m43"] [data-agent-task]')?.textContent).toBe("Promote Memory · m43");
-    expect(group.querySelector('[data-checkout-row="checkout:m72"] [data-purpose]')?.textContent).toBe("Promote Memory · m72 · PR 없이 끝남");
-    // The group head says who started the rows, so no tree row draws the owl or a provider logo.
-    expect(group.querySelector("[data-pane] [data-hide-mark], [data-pane] [data-agent-mark]")).toBeNull();
-    // The operator's agent carries no task line.
-    expect(container.querySelector('[data-pane="pane:main"] [data-agent-task]')).toBeNull();
+    expect(rows).toEqual(["checkout:main", "checkout:m43", "checkout:own"]);
+    // Where an operator's agent works, the checkout names its task ahead of the purpose, and the agent row carries none.
+    expect(container.querySelector('[data-pane="pane:checkout:m43"] [data-agent-task]')).toBeNull();
+    expect(container.querySelector('[data-pane="pane:checkout:m43"] [data-hide-mark]')).toBeNull();
   } finally {
     await cleanup();
   }
+  const front = await render(LISTED, "checkout:m72");
+  try {
+    const rows = [...front.container.querySelectorAll("[data-checkout-row]")].map((row) => row.getAttribute("data-checkout-row"));
+    expect(rows).toEqual(["checkout:main", "checkout:m43", "checkout:m72", "checkout:own"]);
+    expect(front.container.querySelector('[data-checkout-row="checkout:m72"] [data-purpose]')?.textContent).toBe("Promote Memory · m72 · PR 없이 끝남");
+  } finally {
+    await front.cleanup();
+  }
 });
 
-it("draws no head while no checkout is Hide AI's, even when a branch is named like one (B5, B13)", async () => {
+it("draws every checkout while none is Hide AI's, even when a branch is named like one (B5, B13)", async () => {
   const { container, cleanup } = await render([]);
   try {
     expect(container.querySelector("[data-hide-ai-group]")).toBeNull();
@@ -164,6 +166,34 @@ it("draws the Hide owl alone, with no provider logo, on a Hide AI row where it s
     await act(async () => root.render(<Row row={named} place={null} tree />));
     expect(container.querySelector("[data-hide-mark]")).toBeNull();
     expect(container.querySelector("[data-agent-task]")?.textContent).toBe("Hide AI");
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("draws what the home waits for on a Needs You row after the agent's own ask, and the owl beside the task (D-14, D-16, B8, B9, B12)", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    const task = { kind: "memory_promote", target: "m72" };
+    const waiting = (turn: { kind: "pr_review" | "ci_failed"; pr_number: number }) => agent("m72", "m72 결정을 문서로 옮기기", { hide_ai: { task, home: "memory", workspace_id: "workspace:w1", turn }, group: "needs_you", status_code: "stopped", unread: false });
+    const rowOf = (row: AgentRow) => <TooltipProvider><ul><SidebarAgentRow agent={row} device={null} place="herdr-ide › Promote Memory · m72" depth={0} selected={false} onOpen={() => {}} onOpenPullRequest={() => {}} inset="0" tree={null} menu={MENU} ask /></ul></TooltipProvider>;
+    await act(async () => root.render(rowOf(waiting({ kind: "pr_review", pr_number: 924 }))));
+    expect(container.querySelector("[data-agent-home-turn]")?.textContent).toBe(`PR ${"#"}924 review`);
+    expect(container.querySelector("[data-hide-mark]")).not.toBeNull();
+    expect(container.querySelector("[data-agent-place]")?.textContent).toBe("herdr-ide › Promote Memory · m72");
+    expect(container.querySelector("[data-agent-open]")?.getAttribute("aria-label")).toContain(`Hide AI · Promote Memory · m72 · PR ${"#"}924 review`);
+    await act(async () => root.render(rowOf(waiting({ kind: "ci_failed", pr_number: 924 }))));
+    expect(container.querySelector("[data-agent-home-turn]")?.textContent).toBe("CI failed");
+    // The agent's own ask comes first.
+    const asking = waiting({ kind: "pr_review", pr_number: 924 });
+    asking.state = { ...asking.state, ask: { verb: "answer", what: "Which file?", more: 0 } } as never;
+    await act(async () => root.render(rowOf(asking)));
+    expect(container.querySelector("[data-agent-home-turn]")).toBeNull();
   } finally {
     await act(async () => root.unmount());
     container.remove();

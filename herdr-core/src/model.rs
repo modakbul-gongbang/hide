@@ -562,10 +562,40 @@ pub struct NavigatorSnapshot {
 
 /// Hide AI started this agent, read from the coordination ledger's record of
 /// the spawn and never from a branch name. `task` is what it was started for.
+///
+/// A kind with a home makes the row the home's: it leaves the operator's
+/// lists and reaches Needs You only on the operator's turn (PRD
+/// hide-ai-work-home D-06, D-13). A kind this build has no home for keeps
+/// its mark and stays an operator row (D-19).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct HideAiSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<crate::coordination::SpawnTask>,
+    /// The screen that owns this agent's work; absent for a kind this build
+    /// has no home for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub home: Option<crate::coordination::TaskHome>,
+    /// The catalog Project whose home shows the work, once the home has
+    /// recorded the attempt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    /// What the home waits for the operator to do, beyond what the agent
+    /// itself asks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn: Option<HomeTurn>,
+}
+
+/// The home's turn: the operator is to act on the work the agent did
+/// (D-14). The agent's own question, approval or block is the row's demand,
+/// not this.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum HomeTurn {
+    /// The pull request is open, ready, passing or unchecked, and nobody
+    /// asked for changes: it waits for the operator's review.
+    PrReview { pr_number: u64 },
+    /// Checks failed and the agent is not at work on them.
+    CiFailed { pr_number: u64 },
 }
 
 /// A checkout Hide AI made for an agent it started.

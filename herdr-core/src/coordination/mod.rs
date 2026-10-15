@@ -83,8 +83,77 @@ pub enum Command {
     },
 }
 
-/// The task kind of a Memory card's promotion into the repository.
+/// The serialized value of a Memory card's promotion into the repository.
 pub const MEMORY_PROMOTE_TASK: &str = "memory_promote";
+
+/// What Hide started an agent for. Every kind Hide knows names the screen that
+/// owns its progress, its home, in one exhaustive match, so a kind added
+/// without a home does not compile (PRD hide-ai-work-home D-10, B22).
+///
+/// The ledger outlives a build: a kind another build wrote reads as
+/// `Unknown` and never fails the ledger's load (D-19). The serialized value
+/// of a known kind is its code, unchanged.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TaskKind {
+    /// A Memory card's promotion into the repository.
+    MemoryPromote,
+    /// A kind this build has no home for, with the value as written.
+    Unknown(String),
+}
+
+/// The screen that owns what a Hide-started agent does: it shows the
+/// progress, opens the agent's pane and cleans up after the work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskHome {
+    /// The Memory tab's To ask rows.
+    Memory,
+}
+
+impl TaskKind {
+    pub fn from_code(code: &str) -> Self {
+        match code {
+            MEMORY_PROMOTE_TASK => Self::MemoryPromote,
+            // A code this build does not know is shown and logged, never
+            // acted on, so only a short printable form of it is kept.
+            other => Self::Unknown(
+                other
+                    .chars()
+                    .filter(|character| !character.is_control())
+                    .take(64)
+                    .collect(),
+            ),
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::MemoryPromote => MEMORY_PROMOTE_TASK,
+            Self::Unknown(code) => code,
+        }
+    }
+
+    /// The kind's home; none for a kind this build does not know, whose
+    /// agent is then an operator's row (D-19).
+    pub fn home(&self) -> Option<TaskHome> {
+        match self {
+            Self::MemoryPromote => Some(TaskHome::Memory),
+            Self::Unknown(_) => None,
+        }
+    }
+}
+
+impl Serialize for TaskKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for TaskKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(|code| Self::from_code(&code))
+    }
+}
 
 /// The work Hide started an agent for, as codes the screen words in the
 /// operator's language (`memory_promote` and the card `m72`), never as a
@@ -92,7 +161,7 @@ pub const MEMORY_PROMOTE_TASK: &str = "memory_promote";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpawnTask {
-    pub kind: String,
+    pub kind: TaskKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
 }
@@ -412,7 +481,6 @@ pub(crate) fn validate_records(ledger: &Ledger) -> Result<(), String> {
             || record.args.iter().map(String::len).sum::<usize>() > 8192
             || record.task.as_ref().is_some_and(|task| {
                 record.mode != SpawnMode::Handoff
-                    || !key(&task.kind)
                     || task.target.as_deref().is_some_and(|target| !key(target))
             })
         {
@@ -530,10 +598,14 @@ pub(crate) fn apply(
             if task.as_ref().is_some_and(|task| {
                 mode != SpawnMode::Handoff
                     || !caller.hide_owned()
-                    || !key(&task.kind)
                     || task.target.as_deref().is_some_and(|target| !key(target))
             }) {
                 return Err("task_reserved".into());
+            }
+            // A new start needs a home to show its progress in; only an
+            // old record may carry a kind this build does not know (D-19).
+            if task.as_ref().is_some_and(|task| task.kind.home().is_none()) {
+                return Err("task_kind_unknown".into());
             }
             if let Some(record) = ledger
                 .spawns
@@ -1674,6 +1746,22 @@ mod tests {
                 assert_eq!(ledger.spawns.len(), 1);
             }
         }
+    }
+
+    /// A kind this build does not know keeps only a short printable form.
+    #[test]
+    fn an_unknown_task_kind_is_kept_short_and_printable() {
+        let long = format!("future\u{7}_kind\n{}", "x".repeat(200));
+        let TaskKind::Unknown(kept) = TaskKind::from_code(&long) else {
+            panic!("a kind with no home is unknown");
+        };
+        assert_eq!(kept.chars().count(), 64);
+        assert!(kept.starts_with("future_kind"));
+        assert!(!kept.chars().any(char::is_control));
+        assert_eq!(
+            TaskKind::from_code("memory_promote"),
+            TaskKind::MemoryPromote
+        );
     }
 
     #[test]

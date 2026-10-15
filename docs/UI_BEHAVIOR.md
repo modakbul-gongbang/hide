@@ -479,19 +479,38 @@ While a close names a pane, its row retains closing feedback.
 ⌥1 to ⌥9 select the first nine visible root occurrences top to bottom, counting duplicate raised/tree rows only once; tree children carry no number.
 Web owners: `web/src/PaneView.tsx`, `web/src/PaneHeaderBand.tsx`, `web/src/PaneRelations.tsx`, `web/src/components/sidebar-agent-row.tsx`, `web/src/components/agent-tree.tsx` (the verb, ask line, descendant mark, rails and chevron the three surfaces share), `web/src/components/pr-mark.tsx` and `web/src/prMark.ts` (the PR mark every surface draws), `web/src/components/agent-tree-popover.tsx`, and `web/src/sidebarTree.ts`.
 
-### Rows Hide AI started
+### Work Hide AI does for a home
 
-Hide AI starts agents for the operator by itself (today a Memory card's `올리기`), and the screen tells them from the agents the operator started with one fact, that Hide AI started it; the work is named in words, `Memory 올리기 · m72`, and never by an icon of its own, because Hide AI will start other work.
-The fact comes only from the coordination record of the spawn (`docs/delivery.md`), never from a branch or worktree name: a checkout the operator made by hand on a branch called `hide-memory-m9` is an ordinary checkout.
-In a project's tree the checkouts Hide AI made gather behind the operator's under a `Hide AI` head, its 12 mark, its name and the number of checkouts; the head exists only while the project has one and goes with the last, and the rows inside carry no badge.
-An opened checkout in the group shows a second line under its agent row with the task (`Memory 올리기 · m43`), and a folded one puts the task in the purpose line's place ahead of the purpose (`Memory 올리기 · m72 · PR 없이 끝남`); a start the core named no task for says `Hide AI` alone, and nothing else is invented.
-A checkout in one of the folds (`에이전트 없는 워크트리`, `정리할 것`, inactive) stays in that fold and names its task there.
-The group is by who made the checkout and the task line and badge are by who started the agent, so an agent the operator started in a Hide AI worktree has neither, and a Hide AI agent has both wherever it is listed.
-Where a row stands alone, in the sidebar's Needs You and Done and in Sessions, the Hide owl mark stands beside the status mark in the place of a provider logo while logos are hidden, and wears the provider's logo's lower-right corner as an 11-pixel badge while they are shown, and a place line names the task where the branch would stand (`herdr-ide › Memory 올리기 · m72`); a row the operator started and a delegated child have neither.
-The row's accessible name carries `Hide AI` and the task (`Hide AI · Memory 올리기 · m72`), and the head's list is named `Hide AI, N`.
-A connected device's projects get the same group and badges, and they hold across a restart of hided because the ledger is persisted.
-The digits that number agent rows follow the drawn order, so the checkouts Hide AI made are numbered after the operator's.
-Web owners: `web/src/hideAiOrigin.ts` (the words, the place line and the split of a project's checkouts), `web/src/AgentMark.tsx` (the owl, the badge and the pane header's mark), `web/src/AgentRowMark.tsx` (the row's mark by view mode), `web/src/sidebar.tsx` (the head and the group) and `web/src/components/sidebar-agent-row.tsx` (the task line); core owner: `herdr-core/src/coordination/started.rs`.
+Hide AI starts agents for the operator by itself (today a Memory card's `올리기`), and the work belongs to a screen, its home, not to the operator's agent lists (PRD hide-ai-work-home).
+The Memory tab's To ask row is the home of a promotion: it shows the progress, the pull request, the failure and the agent link, and it is where the work is read and acted on.
+The fact that Hide AI started an agent comes only from the coordination record of the spawn (`docs/delivery.md`), never from a branch or worktree name: a checkout the operator made by hand on a branch called `hide-memory-m9` is an ordinary checkout.
+The work is named in words, `Memory 올리기 · m72`, and never by an icon of its own, because Hide AI will start other work, each kind with its own home.
+`docs/status-model.md`, Work Hide AI does for a home, owns the ownership value, the group rule and the turn table; this section owns what the screen draws.
+
+While the agent works, finishes or rests, the work is in no list: not the sidebar's tree or Working, not Sessions' Working, Done or Idle, not the phone's list, not Overview's requests and graph, and it moves no badge, rail count, checkout count, desktop notification or push.
+The agent is still found by ⌘K, the recent panel, the tab strip and `hide agent list`, and its pane header keeps the owl; only the lists that enumerate the operator's work leave it out.
+The sidebar tree has no `Hide AI` head, and a checkout Hide AI made is drawn as an ordinary checkout only while it is the front checkout or an agent the operator started works in it; the Hide AI agent's own row is never in a tree.
+The same rule applies inside the empty-worktree and Inactive folds, so a fold's count is of the checkouts it draws; the cleanup fold lists every cleanup candidate, because reviewing them is its job, and that is where a worktree kept after its pull request settled is found.
+
+The operator is called out in two cases, and both are one row in the sidebar's Needs You and Sessions' Needs You with the owl beside the status mark, the task name and a place line naming the task where the branch would stand (`herdr-ide › Memory 올리기 · m72`).
+The agent asks: a question, an approval or a block, with the same read rules as an operator's row, so an AI-inferred question leaves once read and a block or native question stays until answered.
+The home has a turn: the attempt's pull request is open, ready, passing or unchecked and nobody asked for changes, so the second line is `PR #924 리뷰` and the row stays after it is read until the pull request is merged, closed, made a draft, or gets a requested change or a failed check; or checks failed and the agent is no longer working, so the second line is `CI 실패` until the agent works again.
+A draft, running checks and a requested change are the author's turn and draw nothing.
+A row has one line, and its second line is the agent's ask or its block's cause, then `CI 실패`, then `PR #n 리뷰`; the core decides the turn and the screen only words it.
+The row's accessible name carries `Hide AI`, the task and the turn (`Hide AI · Memory 올리기 · m72 · PR #924 리뷰`).
+An attempt with no live agent (a failure with no pull request, an open pull request after the operator closed the pane) never has a row; the Memory tab alone shows it, as it did.
+
+Choosing the row, by click, by its digit or from its desktop notification, does not go to the pane: it opens the Tools lane on the Memory tab of the row's Project with that attempt's To ask row open, and the `Agent ↗` link there opens the pane.
+A row whose Project the core has not yet named opens the pane as any row does.
+The phone's Needs You row opens the agent's detail.
+The digits that number agent rows follow the drawn order, so a Hide AI row is numbered with the Needs You rows above the tree and no checkout of its own takes a digit.
+
+When GitHub reports the attempt's pull request merged or closed, the row leaves Needs You, the agent ends and its pane closes, and the worktree is removed when its tree is clean and no other agent or running program is in it; the branch is always kept, and a pull request reopened later does not revive the attempt.
+A worktree that is dirty or in use stays and is named in the diagnostic log, and it appears in the disk cleanup review; nothing is removed while GitHub's answer is missing, and an attempt already merged or closed before an upgrade is retired the same way on the next start.
+A kind of Hide AI task this build does not know, or a record with no task, shows its agent as an operator's row naming its task (`Hide AI` alone for none) and leaves the rest of the ledger alone.
+A feature that makes Hide AI start a new kind of agent names the kind's home in code, and chooses what its turn and cleanup are, before it has a row.
+A connected device's agents follow the same rules, and they hold across a restart of hided because the ledger is persisted.
+Web owners: `web/src/hideAiOrigin.ts` (the words, the place line, the turn line, whether a tree draws a checkout, where a row opens), `web/src/AgentMark.tsx` (the owl, the badge and the pane header's mark), `web/src/AgentRowMark.tsx` (the row's mark by view mode), `web/src/sidebar.tsx` and `web/src/components/sidebar-agent-row.tsx` (the rows), `web/src/AgentSessions.tsx` (Sessions' row) and `openListedAgent` in `web/src/actions.ts`; core owners: `herdr-core/src/coordination/started.rs`, `herdr-core/src/agent_state/axes.rs` and `herdr-core/src/runtime/memory_promotion.rs`.
 
 ### Agent logo view mode
 
@@ -505,7 +524,7 @@ The choice is a core preference, `ui_state.agent_logo_mode` (`shown` or `hidden`
 A mode the core refuses leaves the check and the screens as they were and records a diagnostic, with no alert; a change the core accepts but cannot save is drawn as chosen until the next start and records `ui_state.save_failed`, as the theme does.
 Hidden is the default and draws the screens as before.
 Shown draws the agent's 16-pixel logo after the status mark and before the title in the sidebar's agent rows (a sleeping row after its moon), in Sessions rows and child rows, and in the Agent tabs; a row's second and branch lines indent past it in Sessions, and a kind with no logo draws the neutral `>_`.
-A row Hide AI started that stands alone wears the owl as a badge on the logo; inside a project's Hide AI group it draws the logo alone.
+A row Hide AI started wears the owl as a badge on the logo.
 Search, overlays, Overview, a Project's conversation list, the graph, Task boards and the phone never follow the mode, and the pane header, the usage chips and the Usage pages draw their logos in both modes.
 While hidden, holding the Agents key (⌥, or Alt) draws the same logos for as long as the number keycaps show: the peek is the existing hold state, with its 0.15 second delay, its end on any other key, on a window that loses focus and while a layer is open, and it adds no key listener.
 Shown, the same hold shows only the keycaps.
@@ -657,6 +676,8 @@ Checkboxes, links and action buttons perform only their own actions.
 An ordinary question opens its current body, cited files and sources below its action buttons, while a document disagreement opens Compare content.
 A progress row opens each card's title and a two-line body preview, followed by Open PR and Open agent where their real targets are available.
 Merged promotions leave To ask and become document pointers; closed-unmerged promotions leave To ask as ordinary cards and are not suggested again at that revision.
+A promotion row whose agent is alive is also in Needs You while the operator has something to do (`PR #n 리뷰` or `CI 실패`), and choosing that row opens this tab with it open (Work Hide AI does for a home); the row here still shows the progress, the pull request and the agent link whether or not it is in Needs You.
+When the pull request merges or closes, its agent ends and its worktree goes with the branch kept, so a closed attempt's `Agent ↗` link leaves with the pane.
 A card that was not processed returns with its concrete reason and Retry, continuing the shared branch and PR.
 A new rule or lesson suggestion keeps its source-session counts and dismissal until its revision changes; at most three new suggestions are open.
 `카드 N` lists the other cards, two lines each: the number and title, then the kind, how many sessions it was given to, how many times it was pulled, how many of its sources are the operator's words, and when it changed.
