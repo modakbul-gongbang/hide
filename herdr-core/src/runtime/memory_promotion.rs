@@ -1489,6 +1489,16 @@ fn retire_attempt(
 }
 
 /// The panes Herdr runs in the folder `path` or below it.
+/// Whether `cwd` is `path` or below it, however either spells its end: a
+/// pane missed here would be taken for no one's, and its folder removed.
+fn within(cwd: &str, path: &str) -> bool {
+    let (cwd, path) = (cwd.trim_end_matches('/'), path.trim_end_matches('/'));
+    cwd == path
+        || cwd
+            .strip_prefix(path)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
 fn panes_in(
     connector: &dyn hide_herdr_client::ApiConnector,
     path: &str,
@@ -1501,11 +1511,10 @@ fn panes_in(
     )
     .map_err(|error| error.to_string())?;
     let snapshot = crate::wire::snapshot_response(snapshot).map_err(|_| "snapshot_unavailable")?;
-    let inside = |cwd: &str| cwd == path || cwd.starts_with(&format!("{path}/"));
     Ok(snapshot
         .panes
         .into_iter()
-        .filter(|pane| pane.cwd.as_deref().is_some_and(inside))
+        .filter(|pane| pane.cwd.as_deref().is_some_and(|cwd| within(cwd, path)))
         .map(|pane| pane.pane_id)
         .collect())
 }
@@ -2913,6 +2922,17 @@ mod tests {
                 .iter()
                 .any(|(pane, _)| pane == "w2:p1")
         );
+    }
+
+    /// A folder's panes are those in it or below it, and a sibling that only
+    /// shares the name's start is not, whatever the spelling of the end.
+    #[test]
+    fn a_pane_is_within_a_folder_only_at_a_path_boundary() {
+        assert!(within("/r/wt", "/r/wt"));
+        assert!(within("/r/wt/", "/r/wt"));
+        assert!(within("/r/wt/docs", "/r/wt/"));
+        assert!(!within("/r/wt-other", "/r/wt"));
+        assert!(!within("/r", "/r/wt"));
     }
 
     /// A machine that is away holds no slot, and an attempt not tried yet goes

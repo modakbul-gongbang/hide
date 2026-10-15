@@ -114,7 +114,15 @@ impl TaskKind {
     pub fn from_code(code: &str) -> Self {
         match code {
             MEMORY_PROMOTE_TASK => Self::MemoryPromote,
-            other => Self::Unknown(other.to_owned()),
+            // A code this build does not know is shown and logged, never
+            // acted on, so only a short printable form of it is kept.
+            other => Self::Unknown(
+                other
+                    .chars()
+                    .filter(|character| !character.is_control())
+                    .take(64)
+                    .collect(),
+            ),
         }
     }
 
@@ -1738,6 +1746,22 @@ mod tests {
                 assert_eq!(ledger.spawns.len(), 1);
             }
         }
+    }
+
+    /// A kind this build does not know keeps only a short printable form.
+    #[test]
+    fn an_unknown_task_kind_is_kept_short_and_printable() {
+        let long = format!("future\u{7}_kind\n{}", "x".repeat(200));
+        let TaskKind::Unknown(kept) = TaskKind::from_code(&long) else {
+            panic!("a kind with no home is unknown");
+        };
+        assert_eq!(kept.chars().count(), 64);
+        assert!(kept.starts_with("future_kind"));
+        assert!(!kept.chars().any(char::is_control));
+        assert_eq!(
+            TaskKind::from_code("memory_promote"),
+            TaskKind::MemoryPromote
+        );
     }
 
     #[test]
