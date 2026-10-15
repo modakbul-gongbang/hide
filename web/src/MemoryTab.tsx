@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronRightIcon, FileIcon, LoaderCircleIcon, MoreHorizontalIcon, SettingsIcon, SparklesIcon, Trash2Icon, Undo2Icon, UserIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, ClockIcon, FileIcon, LoaderCircleIcon, MoreHorizontalIcon, SettingsIcon, SparklesIcon, Trash2Icon, Undo2Icon, UserIcon } from "lucide-react";
 import { useUiStore } from "./ui";
 import { sameGithubPullRequest } from "./pullRequestIdentity";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -310,28 +310,34 @@ function Question({ question, project, actions, busy, last, selected, selecting,
   const compare = question.kind === "docs_disagree";
   const ask = compare && question.document.authority === "ask";
   const expanded = project.expanded?.number === question.number ? project.expanded : null;
-  const reason = question.kind === "promote" ? [question.human_session_count ? t("memory.promote.human", { count: question.human_session_count }) : null, question.pulled_session_count ? t("memory.promote.sessions", { count: question.pulled_session_count }) : null].filter(Boolean).join(" · ") || t("memory.promote.ask") : question.kind === "docs_disagree" ? t(ask ? "memory.docs.ask" : "memory.docs.newer") : question.start_failure?.code === "shell_starting" && question.start_failure.detail ? t("memory.startFailure.shellQuestion", { line: question.start_failure.detail }) : question.start_failure?.detail ?? t(failureKey(question.start_failure));
+  const failed = question.kind === "failed";
+  const unbuilt = question.kind === "unbuilt";
+  // What the agent saw stays behind the row; its line names the state.
+  const told = question.kind === "unbuilt" ? question.reason : question.kind === "failed" && question.start_failure?.code === "card_not_processed" ? question.start_failure.detail : null;
+  const reason = question.kind === "promote" ? [question.human_session_count ? t("memory.promote.human", { count: question.human_session_count }) : null, question.pulled_session_count ? t("memory.promote.sessions", { count: question.pulled_session_count }) : null].filter(Boolean).join(" · ") || t("memory.promote.ask") : question.kind === "docs_disagree" ? t(ask ? "memory.docs.ask" : "memory.docs.newer") : question.kind === "unbuilt" ? t("memory.unbuilt") : question.start_failure?.code === "shell_starting" && question.start_failure.detail ? t("memory.startFailure.shellQuestion", { line: question.start_failure.detail }) : question.start_failure?.code === "card_not_processed" ? `${t("memory.startFailure.cardNotProcessed")} · ${t("memory.failed")}` : question.start_failure?.detail ?? t(failureKey(question.start_failure));
   return (
     <div className={cn("min-w-0", !last && "border-b border-border")} data-memory-question={question.kind} data-memory-card={question.number}>
       <AskRow number={question.number} expanded={!!expanded} onToggle={() => actions.memoryExpand(id, expanded ? null : question.number)}>
-      <Checkbox className="pointer-events-auto mt-xxs" checked={selected} disabled={busy || selectionDisabled} onCheckedChange={onSelect} aria-label={t("memory.batch.select", { card: cardName(question.number) })} data-memory-select={question.number} />
+      {unbuilt ? <ClockIcon aria-hidden="true" className="mt-xxs size-(--size-icon-sm) text-muted-foreground" data-memory-unbuilt={question.number} /> : <Checkbox className="pointer-events-auto mt-xxs" checked={selected} disabled={busy || selectionDisabled} onCheckedChange={onSelect} aria-label={t("memory.batch.select", { card: cardName(question.number) })} data-memory-select={question.number} />}
         <div className="flex min-w-0 items-center gap-sm">
           <span className="shrink-0 font-mono text-caption text-muted-foreground">{cardName(question.number)}</span>
           <span className="min-w-0 flex-1 truncate text-body text-foreground" title={question.title}>{question.title}</span>
         </div>
         <div className="col-start-2 flex min-w-0 items-center gap-sm">
-          <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground" title={reason} data-memory-failure={question.kind === "failed" ? "true" : undefined}>{reason}</span>
+          <span className={cn("min-w-0 flex-1 truncate text-caption", failed ? "text-warning" : "text-muted-foreground")} title={reason} data-memory-failure={failed ? "true" : undefined}>{reason}</span>
           {compare ? <button type="button" className="pointer-events-auto shrink-0 text-caption text-subtle-foreground hover:text-foreground" aria-expanded={!!expanded} onClick={() => actions.memoryExpand(id, expanded ? null : question.number)} data-memory-compare={question.number}>{t("memory.docs.compare")}</button> : null}
           <AskChevron expanded={!!expanded} />
         </div>
         {!selecting || ask ? <div className="col-start-2 flex flex-wrap items-center gap-xs">
-          <Button className="pointer-events-auto" size="sm" variant="outline" disabled={busy} onClick={() => actions.memoryAction(id, ask ? "card_right" : "promote", question.number)} data-memory-promote={question.kind === "failed" ? undefined : question.number} data-memory-retry={question.kind === "failed" ? question.number : undefined}>
-            {t(ask ? "memory.docs.cardRight" : compare ? "memory.docs.fix" : question.kind === "failed" ? "memory.retry" : "memory.promote.yes")}
-          </Button>
-          {question.kind !== "failed" ? <Button className="pointer-events-auto" size="sm" variant="ghost" disabled={busy} onClick={() => actions.memoryAction(id, compare ? "doc_right" : "dismiss", question.number)} data-memory-dismiss={question.number}>{t(ask ? "memory.docs.docRight" : compare ? "memory.docs.cardWrong" : "memory.promote.no")}</Button> : null}
+          {unbuilt ? <Button className="pointer-events-auto" size="sm" variant="outline" disabled={busy} onClick={() => actions.memoryAction(id, "dismiss", question.number)} data-memory-keep={question.number}>{t("memory.unbuilt.keep")}</Button> : <>
+            <Button className="pointer-events-auto" size="sm" variant="outline" disabled={busy} onClick={() => actions.memoryAction(id, ask ? "card_right" : "promote", question.number)} data-memory-promote={failed ? undefined : question.number} data-memory-retry={failed ? question.number : undefined}>
+              {t(ask ? "memory.docs.cardRight" : compare ? "memory.docs.fix" : failed ? "memory.retry" : "memory.promote.yes")}
+            </Button>
+            <Button className="pointer-events-auto" size="sm" variant="ghost" disabled={busy} onClick={() => actions.memoryAction(id, compare ? "doc_right" : "dismiss", question.number)} data-memory-dismiss={question.number}>{t(ask ? "memory.docs.docRight" : compare ? "memory.docs.cardWrong" : "memory.promote.no")}</Button>
+          </>}
         </div> : null}
       </AskRow>
-      {expanded ? <div className="pb-sm pl-lg">{compare && expanded.document_comparison ? <DocumentCompare comparison={expanded.document_comparison} /> : <CardDetail card={expanded} project={project} actions={actions} busy={busy} />}</div> : null}
+      {expanded ? <div className="flex min-w-0 flex-col gap-sm pb-sm pl-lg">{told ? <p className="break-words text-caption text-subtle-foreground" data-memory-told={question.number}>{t("memory.agentReason", { reason: told })}</p> : null}{compare && expanded.document_comparison ? <DocumentCompare comparison={expanded.document_comparison} /> : <CardDetail card={expanded} project={project} actions={actions} busy={busy} />}</div> : null}
     </div>
   );
 }

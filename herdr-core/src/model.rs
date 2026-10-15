@@ -2780,6 +2780,12 @@ pub enum MemoryPromotionState {
     /// came (gh missing or logged out, or failing reads): the attempt is
     /// still followed, and restoring GitHub settles it.
     Unconfirmed,
+    /// The card's decision is not built yet and another branch builds it:
+    /// that branch's pull request carries the card into its file.
+    Building,
+    /// The card's decision is not built and no branch builds it; the card is
+    /// asked about once.
+    Unbuilt,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -2832,6 +2838,13 @@ pub enum MemoryQuestionSnapshot {
         number: u64,
         title: String,
         start_failure: Option<MemoryStartFailure>,
+    },
+    /// The card's decision is not built and no branch builds it: "아직 안
+    /// 만든 결정", with what the agent saw, until the operator leaves it.
+    Unbuilt {
+        number: u64,
+        title: String,
+        reason: Option<String>,
     },
 }
 
@@ -6257,6 +6270,8 @@ mod wire_enum_tests {
             MemoryPromotionState::Merged,
             MemoryPromotionState::Failed,
             MemoryPromotionState::Unconfirmed,
+            MemoryPromotionState::Building,
+            MemoryPromotionState::Unbuilt,
         ];
         for variant in promotion_states {
             match variant {
@@ -6264,7 +6279,9 @@ mod wire_enum_tests {
                 | MemoryPromotionState::PrOpen
                 | MemoryPromotionState::Merged
                 | MemoryPromotionState::Failed
-                | MemoryPromotionState::Unconfirmed => {}
+                | MemoryPromotionState::Unconfirmed
+                | MemoryPromotionState::Building
+                | MemoryPromotionState::Unbuilt => {}
             }
         }
         assert_wire(&contract, "memory_promotion_state", &promotion_states);
