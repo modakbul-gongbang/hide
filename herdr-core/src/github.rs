@@ -1078,7 +1078,12 @@ pub(crate) fn reconcile_issue_attempt(
             .and_then(parse_rfc3339_ms)
             .ok_or("issue_reconcile_invalid")?;
         oldest = oldest.min(created);
+        let authored = node
+            .get("viewerDidAuthor")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or("issue_reconcile_invalid")?;
         if created < since
+            || !authored
             || node.get("title").and_then(serde_json::Value::as_str) != Some(title)
             || node
                 .get("number")

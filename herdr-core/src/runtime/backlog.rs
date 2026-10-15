@@ -111,6 +111,13 @@ pub(super) struct BacklogItemPayload {
     pub(super) task_key: String,
 }
 
+/// `backlog_origin_close`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct BacklogKeyPayload {
+    pub(super) task_key: String,
+}
+
 fn summaries_on(settings: Option<&hide_ai::AiSettings>) -> bool {
     settings.is_some_and(|settings| settings.enabled && settings.chosen && settings.agent_summary)
 }
@@ -515,6 +522,11 @@ impl Runtime {
         if row.phase != BacklogPhase::Failed || !row.retry {
             return false;
         }
+        // A missed line's sentence goes to GitHub only while summaries are
+        // on, on the retry as on the first press.
+        if row.missed.is_some() && !summaries_on(self.ai_settings.as_ref()) {
+            return self.refuse_backlog("backlog.summaries_off", "Hide AI summaries are off");
+        }
         let Some(job) = self.backlog_work.jobs.remove(&payload.intent) else {
             return false;
         };
@@ -543,6 +555,14 @@ impl Runtime {
         };
         let row = self.snapshot.issue_work.backlog.remove(index);
         let job = self.backlog_work.jobs.remove(&row.intent);
+        // `무시` on a failed missed line puts the line away with its row.
+        if let Some(source) = row.missed.clone() {
+            self.set_missed_status(super::links::MissedStatusPayload {
+                session: source.session,
+                id: source.id,
+                status: crate::links::ledger::MissedStatus::Dismissed,
+            });
+        }
         if job.is_some_and(|job| !job.memo && job.missed.is_none())
             && let Some(client) = self.links_work.client.clone()
         {
@@ -760,7 +780,10 @@ impl Runtime {
 
     fn ingest_pending_backlog(&mut self, rows: Vec<PendingBacklog>) -> bool {
         let mut changed = false;
-        for pending in rows.into_iter().take(FAILED_LIMIT) {
+        for pending in rows
+            .into_iter()
+            .take(crate::links::ledger::PENDING_BACKLOG_LIMIT)
+        {
             let intent = pending.intent.intent.clone();
             if self.backlog_row(&intent).is_some() {
                 continue;
@@ -961,6 +984,24 @@ impl Runtime {
                 serde_json::json!({"component":"backlog","kind":"backlog.release_failed","code":code})
             );
         }
+    }
+
+    /// `backlog_origin_close`: the panel and the Start dialog that read an
+    /// item's origin are gone, so the turn's words leave the snapshot.
+    pub(super) fn close_backlog_origin(&mut self, payload: BacklogKeyPayload) -> bool {
+        if self
+            .snapshot
+            .issue_work
+            .origin
+            .as_ref()
+            .is_none_or(|origin| origin.task_key != payload.task_key)
+        {
+            return false;
+        }
+        // A read still on its way is answered into nothing.
+        self.backlog_work.origin_generation += 1;
+        self.snapshot.issue_work.origin = None;
+        true
     }
 
     /// `backlog_origin`: where an item came from, for its panel's `어디서
@@ -1185,13 +1226,11 @@ fn create_once(
                 at_unix_ms: unix_milliseconds(),
             })?;
         }
-        let approved = crate::github::Where::Repository(attempt.repository.clone());
-        let place = match place {
-            crate::github::Where::Checkout(_) => place,
-            _ => &approved,
-        };
+        // The create names the reserved repository outright, so a remote
+        // changed since the reserve cannot send the issue elsewhere.
+        let reserved = crate::github::Where::Repository(attempt.repository.clone());
         changed()?;
-        crate::github::create_issue_failing(node, place, title, "").map_err(failure_of)
+        crate::github::create_issue_failing(node, &reserved, title, "").map_err(failure_of)
     })();
     let issue = match made {
         Ok(issue) => issue,

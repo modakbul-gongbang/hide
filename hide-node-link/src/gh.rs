@@ -135,13 +135,15 @@ pub const ISSUE_LIST_PROJECT_FIELDS: &str =
 
 /// A fresh creation-ordered read, including closed issues. A search index's
 /// absence is not proof that an interrupted create did not reach GitHub.
+/// `viewerDidAuthor` keeps an issue someone else filed with the same title
+/// from being adopted as the one Hide made.
 pub fn issue_attempt_query(repository: &str) -> Option<String> {
     if !is_repository(repository) {
         return None;
     }
     let (owner, name) = repository.split_once('/')?;
     Some(format!(
-        "query=query HideSessionIssueAttempts {{ repository(owner:\"{owner}\",name:\"{name}\") {{ issues(first:100,states:[OPEN,CLOSED],orderBy:{{field:CREATED_AT,direction:DESC}}) {{ nodes {{ number title url state createdAt }} pageInfo {{ hasNextPage }} }} }} }}"
+        "query=query HideSessionIssueAttempts {{ repository(owner:\"{owner}\",name:\"{name}\") {{ issues(first:100,states:[OPEN,CLOSED],orderBy:{{field:CREATED_AT,direction:DESC}}) {{ nodes {{ number title url state createdAt viewerDidAuthor }} pageInfo {{ hasNextPage }} }} }} }}"
     ))
 }
 

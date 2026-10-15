@@ -84,7 +84,7 @@ if(a==="issue"&&b==="create") {
 }
 if(a==="api"&&b==="graphql") {
  const query=args.join(" ");
- if(query.includes("states:[OPEN,CLOSED]")) out({data:{repository:{issues:{nodes:created?[created]:[],pageInfo:{hasNextPage:false}}}}});
+ if(query.includes("states:[OPEN,CLOSED]")) out({data:{repository:{issues:{nodes:created?[{...created,viewerDidAuthor:true}]:[],pageInfo:{hasNextPage:false}}}}});
  else if(query.includes("issues(first:100")) out({data:{repository:{issues:{nodes:open,pageInfo:{hasNextPage:false}}}}});
  else if(query.includes("issue(number:")) out({data:{r0:{issue:query.includes("77")?created:tracked}}});
  else out({data:{}});

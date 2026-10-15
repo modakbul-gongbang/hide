@@ -1660,3 +1660,77 @@ fn only_an_issue_hide_made_is_named_as_made_after_a_restart_until_it_is_undone()
         "an undone issue is closed"
     );
 }
+
+/// Undone typed items leave the ledger like confirmed ones, so a device
+/// that undid many items can still add one (engineering principle 15).
+#[test]
+fn undone_typed_items_are_pruned_and_never_fill_the_backlog_ledger() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    let intent = |index: usize| BacklogIntent {
+        intent: format!("i-{index}"),
+        device: "mac".into(),
+        project: "/repo".into(),
+        workspace_id: "w".into(),
+    };
+    for index in 0..=BACKLOG_INTENT_LIMIT {
+        store
+            .ledger_call(LedgerCall::ReserveIssue {
+                key: AttemptKey::Intent(intent(index)),
+                repository: "owner/repo".into(),
+                title: format!("item {index}"),
+                body: String::new(),
+                at_unix_ms: index as u64,
+            })
+            .unwrap_or_else(|code| panic!("item {index} refused: {code}"));
+        let number = index as u64 + 1;
+        store
+            .ledger_call(LedgerCall::FinishIssue {
+                key: AttemptKey::Intent(intent(index)),
+                number,
+                url: format!("https://github.com/owner/repo/issues/{number}"),
+            })
+            .unwrap();
+        store
+            .ledger_call(LedgerCall::ReleaseBacklog {
+                backlog_key: format!("github:owner/repo#{number}"),
+            })
+            .unwrap();
+    }
+}
+
+/// Unconfirmed typed items past what a restart offers are forgotten, oldest
+/// first, so none is kept that no row could show (engineering principle 15).
+#[test]
+fn only_the_newest_unconfirmed_typed_items_are_kept() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    let intent = |index: usize| BacklogIntent {
+        intent: format!("i-{index:02}"),
+        device: "mac".into(),
+        project: "/repo".into(),
+        workspace_id: "w".into(),
+    };
+    for index in 0..PENDING_BACKLOG_LIMIT + 8 {
+        store
+            .ledger_call(LedgerCall::ReserveIssue {
+                key: AttemptKey::Intent(intent(index)),
+                repository: "owner/repo".into(),
+                title: format!("item {index}"),
+                body: String::new(),
+                at_unix_ms: index as u64,
+            })
+            .unwrap();
+        store
+            .ledger_call(LedgerCall::UnknownIssue(AttemptKey::Intent(intent(index))))
+            .unwrap();
+    }
+    let LedgerAnswer::Pending(rows) = store.ledger_call(LedgerCall::PendingBacklog).unwrap() else {
+        panic!("expected pending rows")
+    };
+    assert_eq!(rows.len(), PENDING_BACKLOG_LIMIT);
+    assert_eq!(
+        rows[0].intent.intent, "i-08",
+        "the eight oldest are forgotten"
+    );
+}

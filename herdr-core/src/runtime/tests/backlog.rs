@@ -22,8 +22,11 @@ struct FakeGh {
     created: Mutex<u32>,
     /// What the next create prints instead of its URL.
     create_prints: Mutex<Option<String>>,
-    /// The issues the reconcile query answers.
-    reconcile: Mutex<Vec<(u32, String)>>,
+    /// The issues the reconcile query answers, and whether the signed-in
+    /// account wrote each.
+    reconcile: Mutex<Vec<(u32, String, bool)>>,
+    /// The repository each create was pinned to (`GH_REPO`).
+    create_repositories: Mutex<Vec<Option<String>>>,
 }
 
 impl FakeGh {
@@ -35,6 +38,7 @@ impl FakeGh {
             created: Mutex::new(40),
             create_prints: Mutex::new(None),
             reconcile: Mutex::new(Vec::new()),
+            create_repositories: Mutex::new(Vec::new()),
         })
     }
 
@@ -86,11 +90,12 @@ impl FakeGh {
                 .lock()
                 .unwrap()
                 .iter()
-                .map(|(number, title)| {
+                .map(|(number, title, authored)| {
                     serde_json::json!({
                         "number": number, "title": title, "state": "OPEN",
                         "url": format!("https://github.com/acme/project/issues/{number}"),
                         "createdAt": "2099-01-01T00:00:00Z",
+                        "viewerDidAuthor": authored,
                     })
                 })
                 .collect();
@@ -117,6 +122,12 @@ impl NodeLink for FakeGh {
             return Err(LinkError::NotConnected("only gh is scripted".into()));
         };
         self.calls.lock().unwrap().push(args.join(" "));
+        if args.starts_with(&["issue".to_owned(), "create".to_owned()]) {
+            self.create_repositories
+                .lock()
+                .unwrap()
+                .push(repository.clone());
+        }
         Ok(LinkAnswer::Parsed(
             serde_json::to_value(self.answer(&args, repository.as_deref())).unwrap(),
         ))
@@ -323,7 +334,7 @@ fn a_retry_after_a_restart_finds_the_issue_the_unconfirmed_create_made() {
     gh.reconcile
         .lock()
         .unwrap()
-        .push((41, "Release notes".into()));
+        .push((41, "Release notes".into(), true));
 
     // A restart forgets the row; the ledger brings it back.
     {
@@ -349,6 +360,53 @@ fn a_retry_after_a_restart_finds_the_issue_the_unconfirmed_create_made() {
         Some("github:acme/project#41")
     );
     assert_eq!(gh.calls("issue create").len(), 1, "no second issue");
+}
+
+#[test]
+fn a_checkout_project_creates_in_the_repository_it_reserved() {
+    let gh = FakeGh::new();
+    let (shared, _worker) = backlog_runtime(gh.clone());
+    add(&shared, "i-1", "w", "Pinned");
+    wait(&shared, "the issue", |runtime| {
+        row_key(runtime, "i-1").is_some()
+    });
+    assert_eq!(
+        *gh.create_repositories.lock().unwrap(),
+        [Some("acme/project".to_owned())],
+        "the create names the reserved repository, not the checkout's remote"
+    );
+}
+
+#[test]
+fn a_retry_never_adopts_a_same_titled_issue_someone_else_wrote() {
+    let gh = FakeGh::new();
+    *gh.create_prints.lock().unwrap() = Some("Something went wrong".into());
+    let (shared, _worker) = backlog_runtime(gh.clone());
+    add(&shared, "i-1", "w", "Release notes");
+    wait(&shared, "the unconfirmed create", |runtime| {
+        phases(runtime).first().map(|row| (row.1, row.2))
+            == Some((BacklogPhase::Failed, Some(BacklogFailure::Unconfirmed)))
+    });
+    // A teammate filed #41 with the same title; Hide's own create was lost.
+    gh.reconcile
+        .lock()
+        .unwrap()
+        .push((41, "Release notes".into(), false));
+    send(
+        &shared,
+        "backlog_retry",
+        serde_json::json!({"intent": "i-1"}),
+    );
+    wait(&shared, "the retried item", |runtime| {
+        row_key(runtime, "i-1").is_some()
+    });
+    let runtime = shared.lock().unwrap();
+    assert_eq!(
+        row_key(&runtime, "i-1").as_deref(),
+        Some("github:acme/project#42"),
+        "the retry makes Hide's own issue instead of adopting #41"
+    );
+    assert_eq!(gh.calls("issue create").len(), 2);
 }
 
 #[test]
@@ -585,6 +643,7 @@ fn a_missed_line_whose_session_origin_repository_is_unknown_makes_no_issue() {
         });
         // The session is first read now, as old history: no repository is
         // proved for it.
+        let now = super::super::unix_milliseconds() - 2_000;
         let store = hide_kit::layout::links_store(runtime.state_path.parent().unwrap());
         let (mut store, _) = crate::links::store::LinkStore::open(&store).unwrap();
         store
@@ -600,8 +659,9 @@ fn a_missed_line_whose_session_origin_repository_is_unknown_makes_no_issue() {
                     facts: hide_session::links::LinkFacts {
                         session_id: Some(session.session_id.clone()),
                         cwd: Some("/repo".into()),
-                        first_at_unix_ms: Some(1),
-                        last_at_unix_ms: Some(1),
+                        // Recent, so record retention never prunes it first.
+                        first_at_unix_ms: Some(now),
+                        last_at_unix_ms: Some(now),
                         ..Default::default()
                     },
                 },
@@ -1041,4 +1101,87 @@ fn a_missed_line_whose_failure_no_retry_can_change_is_added_again_under_a_new_in
     let runtime = shared.lock().unwrap();
     let intents: Vec<_> = phases(&runtime).into_iter().map(|row| row.0).collect();
     assert_eq!(intents, ["m-2"]);
+}
+
+#[test]
+fn closing_an_items_origin_takes_its_turn_out_of_the_snapshot() {
+    let gh = FakeGh::new();
+    let (shared, _worker) = backlog_runtime(gh);
+    shared.lock().unwrap().snapshot.issue_work.origin = Some(crate::model::BacklogOriginSnapshot {
+        task_key: "github:acme/project#41".into(),
+        phase: "ready".into(),
+        session: None,
+        session_title: None,
+        missed_text: Some("Update the docs".into()),
+        task_name: None,
+        request: Some("the operator's request".into()),
+        answer: Some("the agent's answer".into()),
+    });
+    send(
+        &shared,
+        "backlog_origin_close",
+        serde_json::json!({"task_key": "github:acme/project#7"}),
+    );
+    assert!(
+        shared.lock().unwrap().snapshot.issue_work.origin.is_some(),
+        "another item's close leaves this one"
+    );
+    send(
+        &shared,
+        "backlog_origin_close",
+        serde_json::json!({"task_key": "github:acme/project#41"}),
+    );
+    assert!(shared.lock().unwrap().snapshot.issue_work.origin.is_none());
+}
+
+#[test]
+fn a_missed_lines_retry_waits_for_summaries_and_its_dismiss_puts_the_line_away() {
+    let gh = FakeGh::new();
+    *gh.create_prints.lock().unwrap() = Some("Something went wrong".into());
+    let mut id = String::new();
+    let (shared, _worker) = backlog_runtime_with(gh.clone(), |runtime| {
+        summaries_on(runtime);
+        id = seed_open_missed(runtime, &missed_session());
+    });
+    add_missed(&shared, "m-1", "w", &id);
+    wait(&shared, "the unconfirmed create", |runtime| {
+        failure(runtime, "m-1") == Some((BacklogPhase::Failed, Some(BacklogFailure::Unconfirmed)))
+    });
+    shared.lock().unwrap().ai_settings = None;
+    send(
+        &shared,
+        "backlog_retry",
+        serde_json::json!({"intent": "m-1"}),
+    );
+    {
+        let runtime = shared.lock().unwrap();
+        assert_eq!(
+            runtime.snapshot.status.last_error.as_ref().unwrap().kind,
+            "backlog.summaries_off"
+        );
+        assert!(retry(&runtime, "m-1"), "the row keeps its retry");
+    }
+    assert_eq!(
+        gh.calls("issue create").len(),
+        1,
+        "nothing more went to GitHub"
+    );
+
+    // One press of 무시 puts away the row and its missed line.
+    summaries_on(&mut shared.lock().unwrap());
+    send(
+        &shared,
+        "backlog_dismiss",
+        serde_json::json!({"intent": "m-1"}),
+    );
+    assert!(failure(&shared.lock().unwrap(), "m-1").is_none());
+    let path = {
+        let runtime = shared.lock().unwrap();
+        hide_kit::layout::links_store(runtime.state_path.parent().unwrap())
+    };
+    wait_for("the missed line to be put away", || {
+        let (store, _) = crate::links::store::LinkStore::open(&path).unwrap();
+        store.ledger_record(&missed_session()).unwrap().missed[0].status
+            == crate::links::ledger::MissedStatus::Dismissed
+    });
 }
