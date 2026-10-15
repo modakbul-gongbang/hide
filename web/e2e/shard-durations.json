@@ -138,8 +138,6 @@
   "s7.spec.ts › dragging a tab reorders, moves or splits once on a valid drop and leaves everything as it was otherwise": 11.6,
   "s7.spec.ts › splits, moves, resizes, focus and closes run from the tab menu, area commands and chords by keyboard, each landing once": 15.2,
   "s7.spec.ts › the rail, tools, kind marks and an open while the lane is closed keep working beside several View areas": 11.8,
-  "s8.spec.ts › a Project's Sessions: history, filters, a read-only session, failures and two windows": 12.8,
-  "s8.spec.ts › a session recorded in a checkout's own folder is named by that checkout": 8.9,
   "shell.spec.ts › a bad token shows the refused connection state": 0.6,
   "shell.spec.ts › a sidebar row click switches the pane and typed text echoes there": 9.3,
   "shell.spec.ts › sidebar shows a missing Herdr socket and the badge goes live": 0.7,
