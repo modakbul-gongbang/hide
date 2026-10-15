@@ -37,7 +37,9 @@ export function OverviewBacklog({ projects, rows, actions }: { projects: readonl
   // The sections stand in Tasks' order (B25).
   const order = useMemo(() => taskSections(projects, rows, "all", "", only).map((section) => section.project), [projects, rows, only]);
   return (
-    <div className="flex flex-col gap-lg px-lg py-md" data-overview-backlog="true">
+    // One grid for every project: each input row takes the shared hint
+    // column, so the inputs end at the same x whatever their hint says.
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-sm gap-y-lg px-lg py-md" data-overview-backlog="true">
       {order.map((project) => (readsHere(project, devices) ? <BacklogSection key={project.id} project={project} actions={actions} /> : <DialedSection key={project.id} project={project} />))}
     </div>
   );
@@ -46,7 +48,7 @@ export function OverviewBacklog({ projects, rows, actions }: { projects: readonl
 function DialedSection({ project }: { project: Workspace }) {
   const { t } = useInterfaceTranslation();
   return (
-    <section aria-label={project.label} data-backlog-section={project.id} data-backlog-dialed="true">
+    <section aria-label={project.label} className="col-span-full" data-backlog-section={project.id} data-backlog-dialed="true">
       <h2 className="pb-xs text-subhead font-semibold text-foreground">{project.label}</h2>
       <p className="text-caption text-muted-foreground">{t("backlog.dialed", { project: project.label })}</p>
     </section>
@@ -93,8 +95,8 @@ function BacklogSection({ project, actions }: { project: Workspace; actions: Act
   const hidden = rows.length - shown.length;
   const neverRead = source?.failure && source.last_read_at_unix_ms === null;
   return (
-    <section aria-label={project.label} data-backlog-section={project.id}>
-      <h2 className="flex min-w-0 flex-wrap items-center gap-sm pb-xs">
+    <section aria-label={project.label} className="col-span-full grid grid-cols-subgrid" data-backlog-section={project.id}>
+      <h2 className="col-span-full flex min-w-0 flex-wrap items-center gap-sm pb-xs">
         <span className="min-w-0 truncate text-subhead font-semibold text-foreground">{project.label}</span>
         <SourceChip project={project} actions={actions} />
         <span className="text-caption text-muted-foreground" data-backlog-open={backlog.rows.length}>{t("backlog.openCount", { count: backlog.rows.length })}</span>
@@ -115,19 +117,19 @@ function BacklogSection({ project, actions }: { project: Workspace; actions: Act
         ) : null}
       </h2>
       <BacklogInput project={project} actions={actions} />
-      <ul className="flex flex-col" role="list">
+      <ul className="col-span-full flex flex-col" role="list">
         {pending.map((item) => <PendingRow key={item.intent} item={item} project={project} actions={actions} />)}
         {neverRead ? null : shown.map((row) => <ItemRow key={row.key} row={row} project={project} />)}
       </ul>
-      {!neverRead && backlog.rows.length === 0 && pending.length === 0 ? <p className="px-sm py-xs text-caption text-muted-foreground">{t("backlog.empty")}</p> : null}
-      {!neverRead && filtering && rows.length === 0 && backlog.rows.length > 0 ? <p className="px-sm py-xs text-caption text-muted-foreground">{t("backlog.noMatch")}</p> : null}
+      {!neverRead && backlog.rows.length === 0 && pending.length === 0 ? <p className="col-span-full px-sm py-xs text-caption text-muted-foreground">{t("backlog.empty")}</p> : null}
+      {!neverRead && filtering && rows.length === 0 && backlog.rows.length > 0 ? <p className="col-span-full px-sm py-xs text-caption text-muted-foreground">{t("backlog.noMatch")}</p> : null}
       {hidden > 0 ? (
-        <button type="button" className={cn(LINK, "mt-xxs text-muted-foreground")} data-backlog-more={project.id} onClick={() => useUiStore.getState().setOverview({ open: toggledFold(useUiStore.getState().overview.open, `more:${project.id}`) })}>
+        <button type="button" className={cn(LINK, "col-span-full mt-xxs justify-self-start text-muted-foreground")} data-backlog-more={project.id} onClick={() => useUiStore.getState().setOverview({ open: toggledFold(useUiStore.getState().overview.open, `more:${project.id}`) })}>
           {t(local ? "backlog.moreMemos" : "backlog.moreIssues", { count: hidden })}
           <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />
         </button>
       ) : more && rows.length > BACKLOG_SHOWN && !filtering ? (
-        <button type="button" className={cn(LINK, "mt-xxs text-muted-foreground")} onClick={() => useUiStore.getState().setOverview({ open: toggledFold(useUiStore.getState().overview.open, `more:${project.id}`) })}>
+        <button type="button" className={cn(LINK, "col-span-full mt-xxs justify-self-start text-muted-foreground")} onClick={() => useUiStore.getState().setOverview({ open: toggledFold(useUiStore.getState().overview.open, `more:${project.id}`) })}>
           {t("overviewTasks.fold")}
         </button>
       ) : null}
@@ -153,18 +155,20 @@ function BacklogInput({ project, actions }: { project: Workspace; actions: Actio
     setTitle("");
   };
   return (
-    <div className="flex items-center gap-sm pb-xs">
-      <Input
-        value={title}
-        placeholder={t(destination === "local" ? "backlog.placeholderLocal" : "backlog.placeholderGithub", { project: project.label })}
-        aria-label={t(destination === "local" ? "backlog.placeholderLocal" : "backlog.placeholderGithub", { project: project.label })}
-        className="min-w-0 flex-1"
-        onChange={(event) => setTitle(backlogTitle(event.target.value))}
-        onKeyDown={submit}
-        data-backlog-input={project.id}
-      />
-      {title ? <span className="shrink-0 font-mono text-micro text-muted-foreground" data-backlog-left={left}>{t("backlog.remaining", { count: left })}</span> : null}
-      <span className="shrink-0 text-micro text-muted-foreground" data-backlog-destination={destination}>
+    <div className="col-span-full grid grid-cols-subgrid items-center pb-xs">
+      <span className="flex min-w-0 items-center gap-sm">
+        <Input
+          value={title}
+          placeholder={t(destination === "local" ? "backlog.placeholderLocal" : "backlog.placeholderGithub", { project: project.label })}
+          aria-label={t(destination === "local" ? "backlog.placeholderLocal" : "backlog.placeholderGithub", { project: project.label })}
+          className="min-w-0 flex-1"
+          onChange={(event) => setTitle(backlogTitle(event.target.value))}
+          onKeyDown={submit}
+          data-backlog-input={project.id}
+        />
+        {title ? <span className="shrink-0 font-mono text-micro text-muted-foreground" data-backlog-left={left}>{t("backlog.remaining", { count: left })}</span> : null}
+      </span>
+      <span className="text-micro text-muted-foreground" data-backlog-destination={destination}>
         {t(destination === "local" ? "backlog.enterLocal" : destination === "public" ? "backlog.enterGithubPublic" : destination === "unknown" ? "backlog.enterGithubUnknown" : "backlog.enterGithub")}
       </span>
     </div>
