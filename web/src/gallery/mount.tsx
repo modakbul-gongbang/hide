@@ -15,8 +15,12 @@ import { NodeProjectScene, nodeProjectSceneParams } from "./NodeProjectScene";
 import { MemoryScene, memorySceneParams } from "./MemoryScene";
 import { UsageScene } from "./UsageScene";
 import { SessionWorkScene } from "./SessionWorkScene";
+import { PALETTE_HIDE_CLASS } from "../theme";
 
 export function mountGallery(root: Root) {
+  // The gallery draws Neutral, the palette every Pen frame it is compared with
+  // draws (hide-color-theme D-10), though it shares the page whose first paint is Hide.
+  document.documentElement.classList.remove(PALETTE_HIDE_CLASS);
   const params = new URLSearchParams(window.location.search);
   const scene = params.get("scene");
   if (scene !== null) {
