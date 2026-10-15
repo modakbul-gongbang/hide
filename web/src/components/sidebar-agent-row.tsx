@@ -222,8 +222,8 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
             {/* Every row ends in the fold slot, so every time ends on one column (sidebar-readability D-3). */}
             <FoldLane />
           </span>
-          {ask && agent.state.ask ? <span aria-hidden="true" className="pointer-events-none flex min-w-0 leading-(--size-sidebar-line-detail)"><AskLine ask={agent.state.ask} className="flex-1" /></span> : ask && agent.hide_ai?.turn ? (
-            // What the row's home waits for, after the agent's own ask (PRD hide-ai-work-home D-14, D-16).
+          {ask && agent.state.ask ? <span aria-hidden="true" className="pointer-events-none flex min-w-0 leading-(--size-sidebar-line-detail)"><AskLine ask={agent.state.ask} className="flex-1" /></span> : ask && agent.hide_ai?.turn && !(line && agent.status_code === "error") ? (
+            // What the row's home waits for, after the agent's own ask or block cause (PRD hide-ai-work-home D-14, D-16).
             <span aria-hidden="true" data-agent-home-turn={agent.hide_ai.turn.kind} className="pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail) text-warning">
               {homeTurnLine(t, agent.hide_ai.turn)}
             </span>

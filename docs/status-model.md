@@ -37,7 +37,7 @@ The home's turn is computed by the core from what the Memory promotion module al
 | A draft, checks pending or unknown, a requested change, or failed checks while the agent works | none |
 | Merged, closed, or no pull request | none; the attempt leaves the table |
 
-A row has one line; its second line is the agent's ask, then `ci_failed`, then `pr_review`.
+A row has one line; its second line is the agent's ask or its block's cause, then `ci_failed`, then `pr_review`.
 Entering Needs You notifies once, as for an operator row, and a turn changing inside it does not notify again, because the notification state machine follows the group and not the word.
 Only a live agent has a row: an attempt with no agent (a failure with no pull request, an open pull request after the operator closed the pane) shows in the Memory tab alone (D-15).
 The shell words the turn and opens the home from the row (the Memory tab with the attempt's To ask row open); the phone opens the agent's detail.
@@ -757,7 +757,7 @@ Reading an AI question skips its demand rung and leaves a dimmed question; menu 
 Without a label line the row keeps its outline but carries no invented line.
 `agent_scope.sessions` publishes the ordered member indices and the nonempty groups for checkout, project, device and overall scopes, with no counts.
 Delegated children are never Sessions members of their own: they are drawn under their root through every row the operator expands, at any depth (`sessions_expanded_agent_pane_ids` in core UI state holds each expanded pane), and Factory workers retain their dedicated surface.
-A Hide AI row for a home is a member only while it is in Needs You, where it draws the home's turn under the agent's own ask and opens the home when chosen.
+A Hide AI row for a home is a member only while it is in Needs You, where it draws the home's turn under the agent's own ask or block cause and opens the home when chosen.
 
 Resolve records `resolved_sessions` in core UI state and publishes the hidden row only after the existing coalesced writer acknowledges that exact save.
 Failure keeps it visible with the existing actionable save error; input, activity, session replacement or pane closure invalidates a pending acknowledgement.

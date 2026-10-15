@@ -1144,12 +1144,12 @@ function focusFold(workspace: Workspace, checkoutId: string | null, expanded: bo
 function CleanupRows({ workspaces, context, deviceId }: { workspaces: Workspace[]; context: ListContext; deviceId: string }) {
   const { t } = useInterfaceTranslation();
   const hideAiListed = useShellStore((s) => s.rest?.navigator?.hide_ai_checkouts);
-  const rows = workspaces.flatMap((workspace) => {
-    const agentRows = checkoutAgentRows(workspace, context.agents, "sidebar");
-    return workspace.checkouts
-      .filter((checkout) => workspace.session_folds?.cleanup.includes(checkout.id) && drawnInTree(hideAiListed, workspace, checkout, checkout.id === context.focusedCheckoutId, (agentRows.get(checkout.id) ?? NO_BOARD_ROWS).length > 0))
-      .map((checkout) => ({ workspace, checkout }));
-  });
+  // A cleanup candidate is what the operator reviews, so a checkout Hide AI made and kept after its pull request settled is listed here too (PRD hide-ai-work-home B18).
+  const rows = workspaces.flatMap((workspace) =>
+    workspace.checkouts
+      .filter((checkout) => workspace.session_folds?.cleanup.includes(checkout.id))
+      .map((checkout) => ({ workspace, checkout })),
+  );
   if (rows.length === 0) return null;
   const expanded = rows[0]!.workspace.session_folds!.cleanup_open;
   const current = !expanded && context.workspaceScreen && rows.some(({ checkout }) => checkout.id === context.focusedCheckoutId);

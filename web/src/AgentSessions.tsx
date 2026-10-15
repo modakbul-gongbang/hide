@@ -290,8 +290,8 @@ function SecondLine({ agent, owl }: { agent: AgentRow; owl: boolean }) {
   const session = agent.state.session;
   const ask = session.group === "needs_you" ? agent.state.ask : null;
   if (ask) return <div className={cn(indent, "flex min-w-0 text-micro")} data-session-line="ask"><AskLine ask={ask} className="flex-1" /></div>;
-  // What its home waits for, after the agent's own ask (PRD hide-ai-work-home D-14, D-16).
-  const turn = session.group === "needs_you" ? agent.hide_ai?.turn : undefined;
+  // What its home waits for, after the agent's own ask or block cause (PRD hide-ai-work-home D-14, D-16).
+  const turn = session.group === "needs_you" && !(session.line && agent.status_code === "error") ? agent.hide_ai?.turn : undefined;
   if (turn) return <div className={cn(indent, "flex min-w-0 text-micro text-warning")} data-session-line="home-turn"><span className="min-w-0 truncate">{homeTurnLine(t, turn)}</span></div>;
   if (!session.line) return null;
   const blocked = agent.status_code === "error";
