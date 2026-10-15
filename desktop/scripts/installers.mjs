@@ -79,7 +79,7 @@ function sha512Base64(file) {
  * running version there (Electron's `app.getVersion()`), so a second build of
  * the same app for the update test must carry the newer one inside it.
  */
-export function setAppVersion(app, version) {
+export async function setAppVersion(app, version) {
   const asar = process.platform === "darwin" ? path.join(app, "Contents", "Resources", "app.asar") : path.join(app, "resources", "app.asar");
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "hide-asar-"));
   try {
@@ -88,7 +88,8 @@ export function setAppVersion(app, version) {
     const metadata = JSON.parse(fs.readFileSync(manifest, "utf8"));
     metadata.version = version;
     fs.writeFileSync(manifest, `${JSON.stringify(metadata, null, 2)}\n`);
-    return createPackage(scratch, asar);
+    // Awaited inside the try: the archive reads the scratch files after this returns otherwise.
+    await createPackage(scratch, asar);
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }

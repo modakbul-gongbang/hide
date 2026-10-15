@@ -31,6 +31,9 @@ use crate::layout;
 /// a copy that was interrupted, and is never run.
 pub const MARKER: &str = ".hide-runtime";
 
+/// The programs a copy runs; one missing makes the copy unfinished.
+const PROGRAMS: [&str; 4] = ["hided", "hide", "hide-agent-hooks", "herdr"];
+
 /// What the package's resources hold for the Electron window alone, which a
 /// copy leaves out.
 const SHELL_ONLY: [&str; 2] = ["app.asar", "app.asar.unpacked"];
@@ -68,7 +71,8 @@ pub fn build_name(version: &str, hided_build: &str) -> Result<String, String> {
 
 /// Whether `dir` is a finished runtime copy: `~/.hide/runtime/<build>`
 /// holding the marker that names that build, which is written only once the
-/// whole copy is in place. Read from the folder rather than trusted from a
+/// whole copy is in place, and still holding every program it runs (a scanner
+/// may have taken one since). Read from the folder rather than trusted from a
 /// path alone, like a package's own layout.
 pub fn is_runtime_copy(dir: &Path) -> bool {
     let (Some(build), Some(root)) = (dir.file_name(), dir.parent()) else {
@@ -81,6 +85,10 @@ pub fn is_runtime_copy(dir: &Path) -> bool {
         && home.file_name() == Some(layout::HIDE_HOME.as_ref())
         && fs::read_to_string(dir.join(MARKER))
             .is_ok_and(|named| named.trim() == build.to_string_lossy())
+        && PROGRAMS.iter().all(|program| {
+            dir.join(format!("{program}{}", std::env::consts::EXE_SUFFIX))
+                .is_file()
+        })
 }
 
 /// What a prepare did with the copies of other builds.
@@ -333,6 +341,22 @@ mod tests {
             fs::read_to_string(prepared.dir.join(&hided)).unwrap(),
             hided
         );
+    }
+
+    #[test]
+    fn a_copy_missing_a_program_is_made_again() {
+        let scratch = tempfile::tempdir().unwrap();
+        let home = scratch.path().join("home");
+        let resources = package(scratch.path());
+        let first = prepare(&resources, &home, "0.4.0-aaaaaaaaaaaa").unwrap();
+        let herdr = first
+            .dir
+            .join(format!("herdr{}", std::env::consts::EXE_SUFFIX));
+        fs::remove_file(&herdr).unwrap();
+        assert!(!is_runtime_copy(&first.dir));
+        let again = prepare(&resources, &home, "0.4.0-aaaaaaaaaaaa").unwrap();
+        assert!(again.copied);
+        assert!(herdr.is_file());
     }
 
     #[test]

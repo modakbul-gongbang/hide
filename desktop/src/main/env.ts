@@ -108,7 +108,7 @@ export const ENV_REGISTRY: readonly EnvKey[] = [
   {
     key: "HIDE_UPDATE_FEED_URL",
     requirement: "optional",
-    shape: "an http or https URL of a folder holding an update file (latest-mac.yml, latest.yml or latest-linux.yml) and the files it names",
+    shape: "an http or https URL on this machine (127.0.0.1, localhost or [::1]) of a folder holding an update file (latest-mac.yml, latest.yml or latest-linux.yml) and the files it names",
     fallback: "the release `updater.ts` chooses from with-hide/hide's GitHub releases",
     note: "Points a packaged release build's updater at another feed, for the CI update test (PRD auto-update D-29); the build must still be one that updates itself. The update file's sha512 comes from that same feed, so setting it trusts whoever serves the feed with what the app installs; the host logs `update.feed_override` at launch whenever it is set",
   },
@@ -178,6 +178,11 @@ export function loadEnv(source: Record<string, string | undefined>): DesktopEnv 
     }
     if (url?.protocol !== "http:" && url?.protocol !== "https:") {
       problems.push({ key, kind: "not an http or https URL" });
+      return null;
+    }
+    // Only a feed on this machine: what it serves is installed unsigned on Windows and Linux.
+    if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) {
+      problems.push({ key, kind: "not a loopback address" });
       return null;
     }
     return value;

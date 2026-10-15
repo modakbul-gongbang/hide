@@ -34,6 +34,7 @@ describe("the environment registry", () => {
   it("takes an update feed only as an http or https URL", () => {
     expect(loadEnv({ HIDE_UPDATE_FEED_URL: "http://127.0.0.1:8080/feed" }).updateFeedUrl).toBe("http://127.0.0.1:8080/feed");
     for (const value of ["file:///tmp/feed", "not a url"]) expect(() => loadEnv({ HIDE_UPDATE_FEED_URL: value })).toThrow("HIDE_UPDATE_FEED_URL: not an http or https URL");
+    for (const value of ["https://example.test/feed", "http://10.0.0.2:8080/"]) expect(() => loadEnv({ HIDE_UPDATE_FEED_URL: value })).toThrow("HIDE_UPDATE_FEED_URL: not a loopback address");
   });
 
   it.runIf(process.platform !== "win32")("reads the macOS and Linux keys", () => {

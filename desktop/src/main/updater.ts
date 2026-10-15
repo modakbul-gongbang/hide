@@ -174,6 +174,7 @@ export class AppUpdates {
   private running: Promise<void> | null = null;
   private cancelTimer: (() => void) | null = null;
   private installing = false;
+  private stopped = false;
   private readonly feedOverride: string | null;
   private readonly listeners = new Set<(status: UpdateStatus) => void>();
 
@@ -225,7 +226,9 @@ export class AppUpdates {
     this.schedule(FIRST_CHECK_DELAY_MS);
   }
 
+  /** Ends the schedule; a check already running stops before its next step. */
   stop(): void {
+    this.stopped = true;
     this.cancelTimer?.();
     this.cancelTimer = null;
   }
@@ -241,7 +244,7 @@ export class AppUpdates {
 
   /** Installs the ready update and reopens the app; nothing happens unless one is ready. */
   restart(): void {
-    if (!this.updater || this.phase.kind !== "ready" || this.installing) return;
+    if (!this.updater || this.phase.kind !== "ready" || this.installing || this.stopped) return;
     this.installing = true;
     this.log.event("update.install", { version: this.phase.version, trigger: "restart" });
     // Silent, and opening the new version once installed.
@@ -261,6 +264,7 @@ export class AppUpdates {
   }
 
   private schedule(ms: number): void {
+    if (this.stopped) return;
     this.cancelTimer?.();
     this.cancelTimer = this.io.later(() => {
       void this.check(ms === FIRST_CHECK_DELAY_MS ? "launch" : "interval").finally(() => this.schedule(CHECK_INTERVAL_MS));
@@ -279,6 +283,8 @@ export class AppUpdates {
         if (!ready) this.set({ kind: "idle", checkedAt: this.io.now() });
         return;
       }
+      // Restart or quit may have begun while the list was read; a download now would empty the installer in use.
+      if (this.installing || this.stopped) return;
       updater.setFeedURL({ provider: "generic", url: this.feedOverride ?? `${RELEASE_DOWNLOADS}/${chosen!.tag}` });
       const result = await updater.checkForUpdates();
       if (!result?.isUpdateAvailable || result.updateInfo.version === ready?.version) {
@@ -292,18 +298,22 @@ export class AppUpdates {
       if (!ready) this.set({ kind: "failed", stage: "check" });
       return;
     }
+    if (this.installing || this.stopped) return;
     this.log.event("update.found", { version });
-    // A ready update stays the one shown while a newer one downloads; the
-    // line names the newer one once it is ready (B19).
-    if (!ready) this.set({ kind: "downloading", version, percent: 0 });
+    // electron-updater keeps one pending update and empties it when another
+    // download starts, so a newer release replaces the ready one from here:
+    // the row shows that download, and the line names the newer version once
+    // it is ready (B19). Showing the older one as ready meanwhile would offer
+    // a Restart with nothing to install.
+    if (ready) this.log.event("update.replacing", { ready: ready.version, version });
+    this.set({ kind: "downloading", version, percent: 0 });
     try {
       await updater.downloadUpdate();
     } catch (error) {
       // A file whose sha512 (or macOS signature) does not match is discarded
-      // by electron-updater and lands here; nothing was installed. With an
-      // update already ready, a failure behind it is the log's alone (B26).
+      // by electron-updater and lands here; nothing was installed.
       this.log.event("update.download_failed", { version, detail: errorDetail(error) });
-      if (!ready) this.set({ kind: "failed", stage: "download" });
+      this.set({ kind: "failed", stage: "download" });
       return;
     }
     this.log.event("update.ready", { version });
@@ -340,9 +350,14 @@ export async function fetchReleases(fetchImpl: (url: string, init: RequestInit) 
     await response.body?.cancel();
     throw new Error(`GitHub answered the release list with HTTP ${response.status}`);
   }
-  const text = await response.text();
-  if (text.length > RELEASES_BYTES_CAP) throw new Error("GitHub's release list exceeds 8 MiB");
-  return JSON.parse(text);
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (declared > RELEASES_BYTES_CAP) {
+    await response.body?.cancel();
+    throw new Error("GitHub's release list exceeds 8 MiB");
+  }
+  const body = await response.arrayBuffer();
+  if (body.byteLength > RELEASES_BYTES_CAP) throw new Error("GitHub's release list exceeds 8 MiB");
+  return JSON.parse(new TextDecoder().decode(body));
 }
 
 /** The Linux package type electron-builder writes beside the app (`resources/package-type`), or null. */

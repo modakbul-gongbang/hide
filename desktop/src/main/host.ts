@@ -212,7 +212,12 @@ export class DesktopHost {
     this.listenNotify();
     this.listenWindowChrome();
     this.listenEditor();
-    this.startUpdates();
+    // An optional feature: a failure to set it up is the log's, and the window opens regardless.
+    try {
+      this.startUpdates();
+    } catch (error) {
+      this.log.event("update.start_failed", { detail: error instanceof Error ? error.message : String(error) });
+    }
     this.openWindow();
     if (process.platform === "win32") this.listenToastActivation();
     void this.discover("launch");

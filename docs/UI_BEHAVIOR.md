@@ -2125,7 +2125,7 @@ In the desktop app, an Updates row and a preview switch sit under the `hide` ver
 | Failed | `Couldn't check for updates` or `Couldn't update`, with the reason in the app's log | `Check again` |
 | Off | `Updates are off in development builds`, or on macOS `Move hide to Applications to get updates` for an app on the disk image or in a folder it cannot write | none |
 
-A ready update stays ready while a later check looks, and a newer release that check finds replaces it once downloaded.
+A ready update stays ready while a later check looks; a newer release that check finds is downloaded in its place, so the row shows that download and the dot and Help's line return with the newer version once it is ready, since the updater keeps one pending update.
 `Get preview versions (rc)`, with a note that turning it off never goes back to a lower version, is off at first, kept in the desktop profile, and cannot be turned while updates are off.
 `Check for updates…` in the app menu (macOS) or the Help menu (Windows, Linux) opens About and looks at once.
 A browser tab and the phone show neither row.

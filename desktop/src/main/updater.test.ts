@@ -201,8 +201,8 @@ describe("the updater's states (D-17 to D-21)", () => {
     expect(download.events.at(-1)).toEqual(["update.download_failed", { version: "0.5.0", detail: "ERR_CHECKSUM_MISMATCH: sha512 checksum mismatch" }]);
   });
 
-  it("keeps a ready update ready while a later check looks, and takes a newer one in its place (B19)", async () => {
-    const { updates, updater, setReleases, failReleases } = harness({ releases: [release("v0.5.0")] });
+  it("keeps a ready update ready while a later check looks, and downloads a newer one in its place (B19)", async () => {
+    const { updates, updater, setReleases, failReleases, events } = harness({ releases: [release("v0.5.0")] });
     updater.available = "0.5.0";
     const first = updates.check("operator");
     await settle(() => updater.download !== null);
@@ -222,22 +222,43 @@ describe("the updater's states (D-17 to D-21)", () => {
     updater.download = null;
     const second = updates.check("interval");
     await settle(() => updater.download !== null);
-    // The newer one downloads behind the ready one, which the line keeps naming.
-    updater.emit("download-progress", { percent: 50 });
-    expect(updates.status().phase).toEqual({ kind: "ready", version: "0.5.0" });
+    // electron-updater keeps one pending update, so the newer download replaces the ready one.
+    expect(updates.status().phase).toEqual({ kind: "downloading", version: "0.5.1", percent: 0 });
     updater.download!.resolve([]);
     await second;
     expect(updates.status().phase).toEqual({ kind: "ready", version: "0.5.1" });
+    expect(events.map(([event]) => event)).toContain("update.replacing");
+  });
 
-    // A newer download that fails leaves the ready one shown (B26).
-    setReleases([release("v0.5.2"), release("v0.5.1")]);
-    updater.available = "0.5.2";
-    updater.download = null;
-    const third = updates.check("interval");
-    await settle(() => updater.download !== null);
-    updater.download!.reject(new Error("ERR_CHECKSUM_MISMATCH"));
-    await third;
-    expect(updates.status().phase).toEqual({ kind: "ready", version: "0.5.1" });
+  it("stops a running check before it downloads once Restart or quit has begun", async () => {
+    for (const end of ["restart", "stop"] as const) {
+      const { updates, updater, setReleases } = harness({ releases: [release("v0.5.0")] });
+      updater.available = "0.5.0";
+      const first = updates.check("operator");
+      await settle(() => updater.download !== null);
+      updater.download!.resolve([]);
+      await first;
+      setReleases([release("v0.5.1")]);
+      updater.available = "0.5.1";
+      updater.download = null;
+      const second = updates.check("interval");
+      if (end === "restart") updates.restart();
+      else updates.stop();
+      await second;
+      expect(updater.download).toBeNull();
+      expect(updater.feeds).toHaveLength(1);
+      expect(updates.status().phase).toEqual({ kind: "ready", version: "0.5.0" });
+    }
+  });
+
+  it("schedules nothing more once stopped, even when a check ends after", async () => {
+    const { updates, timers } = harness();
+    updates.start();
+    timers[0]!.run();
+    updates.stop();
+    await settle(() => true);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(timers).toHaveLength(1);
   });
 
   it("runs one check at a time", async () => {
@@ -270,10 +291,11 @@ describe("the updater's states (D-17 to D-21)", () => {
   });
 
   it("reads a test feed in place of GitHub (D-29), and says so in the log at start", async () => {
-    const { updates, updater, events } = harness({ feedOverride: "http://127.0.0.1:8123/" });
-    updates.start();
-    expect(events[0]).toEqual(["update.feed_override", { url: "http://127.0.0.1:8123/" }]);
-    updates.stop();
+    const started = harness({ feedOverride: "http://127.0.0.1:8123/" });
+    started.updates.start();
+    expect(started.events[0]).toEqual(["update.feed_override", { url: "http://127.0.0.1:8123/" }]);
+    started.updates.stop();
+    const { updates, updater } = harness({ feedOverride: "http://127.0.0.1:8123/" });
     updater.available = "0.5.0";
     const check = updates.check("operator");
     await settle(() => updater.download !== null);
