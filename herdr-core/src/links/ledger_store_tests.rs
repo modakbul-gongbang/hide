@@ -1699,10 +1699,10 @@ fn undone_typed_items_are_pruned_and_never_fill_the_backlog_ledger() {
     }
 }
 
-/// Unconfirmed typed items past what a restart offers are forgotten, oldest
-/// first, so none is kept that no row could show (engineering principle 15).
+/// Unconfirmed typed items are never evicted: past what a restart offers
+/// back a new create is refused, and putting one away lets the next in.
 #[test]
-fn only_the_newest_unconfirmed_typed_items_are_kept() {
+fn unconfirmed_typed_items_are_kept_and_a_create_past_them_is_refused() {
     let directory = tempfile::tempdir().unwrap();
     let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
     let intent = |index: usize| BacklogIntent {
@@ -1711,26 +1711,41 @@ fn only_the_newest_unconfirmed_typed_items_are_kept() {
         project: "/repo".into(),
         workspace_id: "w".into(),
     };
-    for index in 0..PENDING_BACKLOG_LIMIT + 8 {
-        store
-            .ledger_call(LedgerCall::ReserveIssue {
-                key: AttemptKey::Intent(intent(index)),
-                repository: "owner/repo".into(),
-                title: format!("item {index}"),
-                body: String::new(),
-                at_unix_ms: index as u64,
-            })
-            .unwrap();
+    let reserve = |store: &mut LinkStore, index: usize| {
+        store.ledger_call(LedgerCall::ReserveIssue {
+            key: AttemptKey::Intent(intent(index)),
+            repository: "owner/repo".into(),
+            title: format!("item {index}"),
+            body: String::new(),
+            at_unix_ms: index as u64,
+        })
+    };
+    for index in 0..PENDING_BACKLOG_LIMIT {
+        reserve(&mut store, index).unwrap();
         store
             .ledger_call(LedgerCall::UnknownIssue(AttemptKey::Intent(intent(index))))
             .unwrap();
     }
+    assert_eq!(
+        reserve(&mut store, PENDING_BACKLOG_LIMIT).unwrap_err(),
+        "ledger_backlog_pending_capacity"
+    );
     let LedgerAnswer::Pending(rows) = store.ledger_call(LedgerCall::PendingBacklog).unwrap() else {
         panic!("expected pending rows")
     };
-    assert_eq!(rows.len(), PENDING_BACKLOG_LIMIT);
     assert_eq!(
-        rows[0].intent.intent, "i-08",
-        "the eight oldest are forgotten"
+        rows.len(),
+        PENDING_BACKLOG_LIMIT,
+        "every one is still offered"
     );
+    assert!(
+        matches!(reserve(&mut store, 0).unwrap(), LedgerAnswer::Attempt(attempt) if attempt.reconcile),
+        "the oldest one's retry still looks for what it made"
+    );
+    store
+        .ledger_call(LedgerCall::DismissBacklog {
+            intent: "i-00".into(),
+        })
+        .unwrap();
+    assert!(reserve(&mut store, PENDING_BACKLOG_LIMIT).is_ok());
 }

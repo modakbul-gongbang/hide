@@ -15,8 +15,9 @@ pub const SEARCH_LIMIT: usize = 50;
 pub const LEDGER_RPC_LIMIT: usize = 16;
 /// Typed backlog attempts kept: the newest complete ones are dropped past it.
 pub const BACKLOG_INTENT_LIMIT: usize = 512;
-/// Unconfirmed typed items the ledger keeps and offers after a restart; an
-/// older one is forgotten, since no row could ever show or put it away.
+/// Unconfirmed typed items the ledger holds at once, all of which a restart
+/// offers back; a new create past them is refused rather than one evicted,
+/// since its row may still retry it.
 pub const PENDING_BACKLOG_LIMIT: usize = 32;
 /// Descendant edges below a root; traversal also includes the root itself.
 pub const LEDGER_DEPTH_LIMIT: usize = 32;

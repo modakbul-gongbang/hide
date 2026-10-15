@@ -506,8 +506,15 @@ impl LinkStore {
                         AttemptKey::Intent(intent) => {
                             tx.execute("DELETE FROM ledger_backlog WHERE rowid IN (SELECT rowid FROM ledger_backlog WHERE state IN ('complete','dismissed','undone') ORDER BY started_at DESC LIMIT -1 OFFSET ?1)",
                                 params![(BACKLOG_INTENT_LIMIT / 2) as i64]).map_err(failed)?;
-                            tx.execute("DELETE FROM ledger_backlog WHERE rowid IN (SELECT rowid FROM ledger_backlog WHERE state IN ('creating','unknown') ORDER BY started_at DESC LIMIT -1 OFFSET ?1)",
-                                params![(PENDING_BACKLOG_LIMIT - 1) as i64]).map_err(failed)?;
+                            // An unconfirmed attempt is never evicted: its row may
+                            // still retry it. Past what a restart shows, a new
+                            // create waits until one is confirmed or put away.
+                            let pending: i64 = tx
+                                .query_row("SELECT COUNT(*) FROM ledger_backlog WHERE state IN ('creating','unknown')", [], |r| r.get(0))
+                                .map_err(failed)?;
+                            if pending >= PENDING_BACKLOG_LIMIT as i64 {
+                                return Err("ledger_backlog_pending_capacity".into());
+                            }
                             let kept: i64 = tx
                                 .query_row("SELECT COUNT(*) FROM ledger_backlog", [], |r| r.get(0))
                                 .map_err(failed)?;

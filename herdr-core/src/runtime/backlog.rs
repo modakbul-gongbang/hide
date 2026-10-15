@@ -1160,6 +1160,8 @@ fn create_once(
             crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.ledger_refused","code":code}));
             if code == "ledger_issue_repository_changed" {
                 BacklogFailure::RepositoryChanged
+            } else if code == "ledger_backlog_pending_capacity" {
+                BacklogFailure::QueueFull
             } else {
                 BacklogFailure::Refused
             }
