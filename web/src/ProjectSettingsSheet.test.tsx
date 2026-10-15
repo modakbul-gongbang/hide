@@ -123,8 +123,21 @@ it("adds and removes protected paths and says why a path is refused in place (B1
     await add(".env");
     expect(guard("files").textContent).toContain("That path is already on the list.");
     expect(saved()?.guardrails?.paths.filter((path) => path === ".env")).toHaveLength(1);
+    const input = () => guard("files").querySelector<HTMLInputElement>("input");
+    // Escape leaves the field and keeps the dialog.
+    await act(async () => input()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(input()).toBeNull();
+    expect(sheet()).not.toBeNull();
+    expect(document.activeElement?.textContent).toBe("Add path");
     await act(async () => sheet().querySelector<HTMLButtonElement>('[aria-label="Remove *.pem"]')!.click());
     expect(saved()?.guardrails?.paths).not.toContain("*.pem");
+    expect(document.activeElement?.textContent).toBe("Add path");
+    // A pattern only the core can judge: its refusal shows under the field, which keeps what was typed, with
+    // nothing to retry.
+    await add("[z-a]");
+    expect(input()?.value).toBe("[z-a]");
+    expect(guard("files").textContent).toContain("That isn't a valid pattern.");
+    expect([...guard("files").querySelectorAll("button")].some((button) => button.textContent === "Try again")).toBe(false);
   });
 });
 

@@ -29,11 +29,27 @@ export function projectGuardrails(record: ProjectSettings | null): Guardrails {
 
 /** Why `path` cannot join `paths`, as the core would answer, or null; the pattern itself is the core's to judge. */
 export function guardPathRefusal(paths: readonly string[], path: string): "project_settings_paths_limit" | "project_settings_path_too_long" | "project_settings_path_duplicate" | "project_settings_path_invalid" | null {
-  if (!path.trim()) return "project_settings_path_invalid";
+  if (!guardPathShaped(path)) return "project_settings_path_invalid";
   if (paths.length >= GUARD_PATH_LIMIT) return "project_settings_paths_limit";
-  if (path.length > GUARD_PATH_LENGTH) return "project_settings_path_too_long";
+  // Characters, as the core counts them (`chars`), not UTF-16 units.
+  if ([...path].length > GUARD_PATH_LENGTH) return "project_settings_path_too_long";
   if (paths.includes(path)) return "project_settings_path_duplicate";
   return null;
+}
+
+/** The core's shape rule for one entry (`Rules::validate`): trimmed, no control character, a `~/` path under home
+ * or a pattern, never only a comment or a negation. A pattern the gitignore reader refuses is the core's to say. */
+function guardPathShaped(path: string): boolean {
+  if (!path.trim() || path !== path.trim() || /\p{Cc}/u.test(path)) return false;
+  if (path.startsWith("~") && (!path.startsWith("~/") || path === "~/")) return false;
+  return !path.startsWith("#") && !path.startsWith("!");
+}
+
+/** A save the core refused for what it asked, which sending it again cannot change. */
+export function refusedForGood(code: string | null | undefined): boolean {
+  return code === "project_settings_paths_limit" || code === "project_settings_path_too_long" || code === "project_settings_path_duplicate"
+    || code === "project_settings_path_invalid" || code === "project_settings_not_git" || code === "project_settings_base_unknown"
+    || code === "project_settings_invalid_repository" || code === "project_settings_newer_version";
 }
 
 /** The branch the base protection guards: the chosen one, or the remote's default for Auto; null when the project names none (B17). */

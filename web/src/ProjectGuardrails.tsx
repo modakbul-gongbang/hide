@@ -4,7 +4,7 @@
 // set of protections; the core saves it once the project's machine has it.
 
 import { PlusIcon, XIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Group, Note, Row } from "./components/settings-rows";
 import { Button } from "./components/ui/button";
 import { Checkbox } from "./components/ui/checkbox";
@@ -19,9 +19,13 @@ export type GuardPart = "worktree_folder" | "base_branch" | "agent_merge" | "git
 
 const SWITCHES = ["worktree_folder", "base_branch", "agent_merge", "git_commands", "files"] as const;
 
-/** Which control a saved or failed change moved, for a receipt read back without its intent. */
-export function guardPartOf(sent: Guardrails, confirmed: Guardrails): GuardPart {
-  return SWITCHES.find((key) => sent[key] !== confirmed[key]) ?? "paths";
+/** Which control a failed change moved, for a receipt read back without its intent; none for one that saved, whose
+ * sent value is the confirmed one. */
+export function guardPartOf(sent: Guardrails, confirmed: Guardrails): GuardPart | undefined {
+  const moved = SWITCHES.find((key) => sent[key] !== confirmed[key]);
+  if (moved) return moved;
+  const same = sent.paths.length === confirmed.paths.length && sent.paths.every((path, index) => path === confirmed.paths[index]);
+  return same ? undefined : "paths";
 }
 
 export function ProjectGuardrails({ rules, isGit, base, disabled, unguarded, save, stateFor, onOpenAgents }: {
@@ -39,7 +43,32 @@ export function ProjectGuardrails({ rules, isGit, base, disabled, unguarded, sav
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
   const [refusal, setRefusal] = useState<string | null>(null);
+  // The path sent and not yet confirmed: its field stays open with it, so a refusal shows where it was typed (B16).
+  const [sent, setSent] = useState<string | null>(null);
+  const addButton = useRef<HTMLButtonElement>(null);
   const change = (part: GuardPart, next: Partial<Guardrails>) => save(part, { ...rules, ...next });
+  useEffect(() => {
+    if (sent === null || !rules.paths.includes(sent)) return;
+    setSent(null);
+    setDraft("");
+    setAdding(false);
+  }, [rules.paths, sent]);
+  // Focus returns to Add path once the field closes or a chip is removed and the save that disabled it settles,
+  // rather than to the page.
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (!adding && !disabled && refocus.current) {
+      refocus.current = false;
+      addButton.current?.focus();
+    }
+  });
+  const cancel = () => {
+    refocus.current = true;
+    setAdding(false);
+    setDraft("");
+    setSent(null);
+    setRefusal(null);
+  };
   // A plain folder's three Git protections are off and unavailable, said once (B17).
   const gitReason = isGit ? null : <Note>{t("workspace.unavailable.notGit")}</Note>;
   const add = () => {
@@ -47,8 +76,8 @@ export function ProjectGuardrails({ rules, isGit, base, disabled, unguarded, sav
     const refused = guardPathRefusal(rules.paths, path);
     if (refused) { setRefusal(refused); return; }
     setRefusal(null);
-    setDraft("");
-    setAdding(false);
+    setSent(path);
+    refocus.current = true;
     change("paths", { paths: [...rules.paths, path] });
   };
   const row = (part: (typeof SWITCHES)[number], label: string, note: ReactNode, extra?: ReactNode, unavailable = false) =>
@@ -76,16 +105,21 @@ export function ProjectGuardrails({ rules, isGit, base, disabled, unguarded, sav
       <ul className="flex min-w-0 flex-wrap items-center gap-xs" aria-label={t("projectSettings.guardFiles")}>
         {rules.paths.map((path) => <li key={path} className="inline-flex min-w-0 max-w-full items-center gap-xxs rounded-xs border border-border bg-secondary px-xs font-mono text-caption text-foreground" data-project-guard-path={path}>
           <span className="min-w-0 break-all">{path}</span>
-          <button type="button" aria-label={t("projectSettings.guardPathRemove", { path })} disabled={disabled} onClick={() => change("paths", { paths: rules.paths.filter((held) => held !== path) })}
+          <button type="button" aria-label={t("projectSettings.guardPathRemove", { path })} disabled={disabled} onClick={() => { refocus.current = true; change("paths", { paths: rules.paths.filter((held) => held !== path) }); }}
             className="inline-flex size-(--size-icon) shrink-0 items-center justify-center rounded-xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-(--opacity-disabled)"><XIcon aria-hidden="true" className="size-(--size-icon-sm)" /></button>
         </li>)}
-        {!adding ? <li><Button variant="ghost" size="sm" disabled={disabled} onClick={() => setAdding(true)}><PlusIcon aria-hidden="true" />{t("projectSettings.guardPathAdd")}</Button></li> : null}
+        {!adding ? <li><Button ref={addButton} variant="ghost" size="sm" disabled={disabled} onClick={() => setAdding(true)}><PlusIcon aria-hidden="true" />{t("projectSettings.guardPathAdd")}</Button></li> : null}
       </ul>
       {adding ? <div className="flex min-w-0 max-w-full flex-wrap gap-xs">
         <Input autoFocus aria-label={t("projectSettings.guardPathAdd")} placeholder={t("projectSettings.guardPathHint")} value={draft} disabled={disabled}
           className="w-(--size-settings-control-w) max-w-full font-mono"
-          onChange={(event) => { setDraft(event.target.value); setRefusal(null); }}
-          onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) add(); }} />
+          onChange={(event) => { setDraft(event.target.value); setRefusal(null); setSent(null); }}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === "Enter") add();
+            // Escape leaves the field and keeps the dialog open.
+            if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancel(); }
+          }} />
         <Button size="sm" disabled={disabled} onClick={add}>{t("projectSettings.apply")}</Button>
       </div> : null}
       {refusal ? <Note tone="error">{t(pathRefusalKey(refusal))}</Note> : null}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { KitAgent, KitPiece, SnapshotRest, Workspace } from "./snapshot";
+import { guardPartOf } from "./ProjectGuardrails";
 import { DEFAULT_GUARD_PATHS, guardedBase, guardPathRefusal, projectBaseBranch, projectGuardrails, projectIssueSource, projectSettings, readableSettings, settingsTarget, unguardedAgents } from "./projectSettings";
 
 const project = { id: "display-id", device_id: "local", path: "/project", label: "project", branches: ["main", "develop"], default_branch: "main" } as Workspace;
@@ -70,6 +71,11 @@ describe("project guardrails", () => {
     expect(guardPathRefusal(Array.from({ length: 31 }, (_, n) => `p${n}`), "last")).toBeNull();
     expect(guardPathRefusal(Array.from({ length: 32 }, (_, n) => `p${n}`), "one-more")).toBe("project_settings_paths_limit");
     expect(guardPathRefusal([], "  ")).toBe("project_settings_path_invalid");
+    // Characters as the core counts them, and the core's shape rule.
+    expect(guardPathRefusal([], "경".repeat(200))).toBeNull();
+    expect(guardPathRefusal([], "경".repeat(201))).toBe("project_settings_path_too_long");
+    for (const path of [" .env", "~", "~/", "~user/x", "# note", "!.env", "a\tb"]) expect(guardPathRefusal([], path), path).toBe("project_settings_path_invalid");
+    expect(guardPathRefusal([], "~/.aws/")).toBeNull();
   });
 
   it("guards the chosen base branch, or the remote's default for Auto, and none when the project names none (B17)", () => {
@@ -79,6 +85,13 @@ describe("project guardrails", () => {
     expect(guardedBase(rest, project, record({ mode: "auto" }))).toBe("main");
     expect(guardedBase(rest, project, record())).toBe("develop");
     expect(guardedBase({} as SnapshotRest, { ...project, default_branch: null } as Workspace, record({ mode: "auto" }))).toBeNull();
+  });
+
+  it("places a reopened receipt beside the control it moved, and a saved one nowhere", () => {
+    const confirmed = projectGuardrails(null);
+    expect(guardPartOf(confirmed, confirmed)).toBeUndefined();
+    expect(guardPartOf({ ...confirmed, git_commands: true }, confirmed)).toBe("git_commands");
+    expect(guardPartOf({ ...confirmed, paths: [...confirmed.paths, ".aws/"] }, confirmed)).toBe("paths");
   });
 
   it("names the installed agents whose Hide hook is not in place, Codex's untrusted one included (B25)", () => {

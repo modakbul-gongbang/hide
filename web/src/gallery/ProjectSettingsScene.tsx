@@ -33,6 +33,11 @@ export function ProjectSettingsScene({ params }: { params: URLSearchParams }) {
   const actions = useMemo(() => createActions((event) => {
     if (event.kind === "project_settings_set") {
       const request = event.payload as { request_id: string; patch: ProjectSettingsPatch };
+      // A pattern only the core's gitignore reader refuses (a backwards range) answers as the core does.
+      if (request.patch.guardrails?.paths.some((path) => path.includes("[z-a]"))) {
+        useShellStore.setState((shell) => ({ rest: { ...shell.rest, ui_state: { ...shell.rest?.ui_state, project_settings_writes: { example: { device_id: workspace.device_id, root: workspace.path, request_id: request.request_id, state: "failed", error: "project_settings_path_invalid", patch: request.patch } } } } }));
+        return true;
+      }
       useShellStore.setState((shell) => {
         const saved = shell.rest?.ui_state?.project_settings?.example;
         // A record that carries guardrails is version 2, as the core writes it.

@@ -12,7 +12,7 @@ import { deviceConnected } from "./devices";
 import { useInterfaceTranslation } from "./i18n/client";
 import { MemorySettings, useMemoryProject } from "./MemoryTab";
 import { guardPartOf, ProjectGuardrails, pathRefusalKey, type GuardPart } from "./ProjectGuardrails";
-import { guardedBase, projectBaseBranch, projectGuardrails, projectIssueSource, projectSettings, readableSettings, unguardedAgents, type Guardrails, type ProjectSettingsPatch, type ProjectSettingsTarget } from "./projectSettings";
+import { guardedBase, projectBaseBranch, projectGuardrails, projectIssueSource, projectSettings, readableSettings, refusedForGood, unguardedAgents, type Guardrails, type ProjectSettingsPatch, type ProjectSettingsTarget } from "./projectSettings";
 import { issueSourceChoices } from "./settings";
 import { catalogWorkspaces } from "./snapshot";
 import { useShellStore } from "./store";
@@ -69,7 +69,7 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
     return <div className="flex flex-wrap items-center gap-sm" aria-live="polite">
       <Status tone={state === "failed" ? "error" : state === "pending" ? "pending" : "ok"}>{t(`projectSettings.${state === "failed" ? "failed" : state === "pending" ? "pending" : "saved"}`)}</Status>
       {state === "failed" ? <Note tone="error">{t(settingsErrorKey(write?.error))}</Note> : null}
-      {state === "failed" ? <Button size="sm" variant="ghost" disabled={!available} onClick={() => setIntent({ id: retry.id, field, part, patch: retry.patch, state: actions.setProjectSettings(target, retry.patch, retry.id) ? "pending" : "failed" })}>{t("projectSettings.retry")}</Button> : null}
+      {state === "failed" && !refusedForGood(write?.error) ? <Button size="sm" variant="ghost" disabled={!available} onClick={() => setIntent({ id: retry.id, field, part, patch: retry.patch, state: actions.setProjectSettings(target, retry.patch, retry.id) ? "pending" : "failed" })}>{t("projectSettings.retry")}</Button> : null}
     </div>;
   };
   useMemoryProject(actions, available ? current.id : null);
