@@ -4,7 +4,7 @@
 
 <h1 align="center">hide</h1>
 
-<p align="center"><strong>Many agents. One clear view.</strong></p>
+<p align="center"><strong>Run more agents. Hold less.</strong></p>
 
 <p align="center">
   A calm IDE for coding with multiple agents, with each task in context and attention on what matters.

@@ -65,6 +65,20 @@ class WorkstationIdentityTests(unittest.TestCase):
             self.assertEqual(self.classes(result), ["contact_email"])
             self.assertNotIn(address, result.stdout + result.stderr)
 
+    def test_only_the_published_contact_address_is_allowed(self):
+        published = "hello" + "@" + "withhide.dev"
+        self.tracked("site.html", '<a href="mailto:' + published + '">' + published + "</a>")
+        for scope in ("checkout", "index"):
+            self.assertEqual(self.check(scope).returncode, 0)
+        # The domain is not allowed, nor is a lookalike of the published address.
+        for other in ("someone" + "@" + "withhide.dev", "xhello" + "@" + "withhide.dev",
+                      "hello" + "@" + "mail.withhide.dev", "hello" + "@" + "withhide.dev.example.org"):
+            self.tracked("site.html", "contact: " + other)
+            result = self.check()
+            self.assertEqual(result.returncode, 1, other)
+            self.assertEqual(self.classes(result), ["contact_email"])
+            self.assertNotIn(other, result.stdout + result.stderr)
+
     def test_email_in_a_url_path_or_before_colon_is_still_private(self):
         address = "private-fixture-person" + "@" + "mail.vendor.com"
         for value in ("https://host.vendor.com/contact/" + address, address + ": contact"):
