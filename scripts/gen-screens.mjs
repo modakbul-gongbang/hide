@@ -16,6 +16,7 @@ import {readTokens} from './gen-tokens.mjs';
 import {screenSheets, readLocalVariables, ALIAS, LIBRARY_PATH} from './pen-screens.mjs';
 import {THEMES} from './pen-tokens.mjs';
 import {serialize} from './pen-bands.mjs';
+import {transplant} from './pen-transplant.mjs';
 
 export const FILE = 'design/hide-screens.pen';
 const GRID_STRIDE_X = 1400;
@@ -28,7 +29,7 @@ function loadExisting(root) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
-export function generate(root) {
+export function generate(root, ownedSheets = []) {
   const tokens = readTokens(root);
   const variables = readLocalVariables(root);
   const existing = loadExisting(root);
@@ -43,7 +44,11 @@ export function generate(root) {
     children = found ? children.map(node => node === found ? sheet : node) : [...children, sheet];
   }
 
-  const document = {version: existing?.version ?? '2.18', themes: THEMES, imports: {[ALIAS]: LIBRARY_PATH}, variables, children};
+  let document = {version: existing?.version ?? '2.18', themes: THEMES, imports: {[ALIAS]: LIBRARY_PATH}, variables, children};
+  if (ownedSheets.length) {
+    if (!existing) throw new Error('Scoped regeneration needs an existing screen document');
+    document = transplant(document, {...existing, variables}, ownedSheets).document;
+  }
   const before = existing ? serialize(existing) : null;
   const after = serialize(document);
   return {file: path.join(root, FILE), before, after, sheetCount: generated.length};
@@ -51,7 +56,13 @@ export function generate(root) {
 
 const invoked = process.argv[1] && path.basename(process.argv[1]) === 'gen-screens.mjs';
 if (invoked) {
-  const {file, before, after, sheetCount} = generate(process.cwd());
+  const args = process.argv.slice(2);
+  const ownedSheets = [];
+  for (let i = 0; i < args.length; i += 2) {
+    if (args[i] !== '--sheet' || !args[i + 1]) throw new Error('Expected --sheet <owned-sheet-id>');
+    ownedSheets.push(args[i + 1]);
+  }
+  const {file, before, after, sheetCount} = generate(process.cwd(), ownedSheets);
   if (before === after) {
     console.log(`${FILE} is already what the generator writes: ${sheetCount} screen sheets.`);
   } else {

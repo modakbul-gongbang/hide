@@ -630,6 +630,8 @@ pub(crate) struct DeviceWorktrees {
     pub in_flight: Option<u64>,
     /// Asked again while a read ran; one more read follows it.
     pub again: bool,
+    /// A confirmed base changed while this bounded worker was reading.
+    pub discard_answer: bool,
     pub unavailable: Option<String>,
     /// The next read covers every repository, because a new connection has
     /// not confirmed what the last one listed.

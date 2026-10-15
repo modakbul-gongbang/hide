@@ -1044,12 +1044,12 @@ fn a_full_search_index_makes_room_for_the_named_projects_newest_session() {
             .session_search
             .clone()
             .unwrap();
-        let interrupted = answered
-            .failure
-            .as_deref()
-            .is_some_and(|failure| failure.ends_with(": interrupted"));
+        // The screen receives an actionable failure, not sqlite's diagnostic
+        // word. Ask again on that state; a persistent failure still fails the
+        // strict final assertions after the same four operator attempts.
+        let failed = answered.failure.is_some();
         search = Some(answered);
-        if !interrupted {
+        if !failed {
             break;
         }
     }

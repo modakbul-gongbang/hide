@@ -14,6 +14,7 @@ import { CoreMoveScene, coreMoveSceneParams } from "./CoreMoveScene";
 import { NodeProjectScene, nodeProjectSceneParams } from "./NodeProjectScene";
 import { MemoryScene, memorySceneParams } from "./MemoryScene";
 import { UsageScene } from "./UsageScene";
+import { ProjectSettingsScene } from "./ProjectSettingsScene";
 import { SessionWorkScene } from "./SessionWorkScene";
 import { PALETTE_HIDE_CLASS } from "../theme";
 
@@ -24,6 +25,10 @@ export function mountGallery(root: Root) {
   const params = new URLSearchParams(window.location.search);
   const scene = params.get("scene");
   if (scene !== null) {
+    if (scene === "project-settings") {
+      root.render(<StrictMode><ProjectSettingsScene params={params} /></StrictMode>);
+      return;
+    }
     if (scene === "session-record") {
       root.render(<StrictMode><SessionWorkScene params={params} /></StrictMode>);
       return;

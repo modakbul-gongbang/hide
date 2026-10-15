@@ -68,16 +68,51 @@ type Flow = {
   firstRow: ReturnType<Page["locator"]>;
   sent: Map<string, number>;
   lastSent: Map<string, Record<string, unknown>>;
+  /** Every `terminal.panes` list the daemon sent, oldest first, each pane id with its transport state. */
+  terminalLists: Map<string, string>[];
   stop: () => void;
 };
+
+/**
+ * Records each `terminal.panes` list the page receives. The core sends the
+ * whole list whenever it changes, and the shell disposes a parked terminal
+ * whose pane is missing from it, so one list without a retained pane is a
+ * renderer thrown away even when the next list brings the pane back.
+ */
+function recordTerminalLists(page: Page): Map<string, string>[] {
+  const lists: Map<string, string>[] = [];
+  page.on("websocket", (ws) => {
+    ws.on("framereceived", (frame) => {
+      const text = String(frame.payload);
+      if (!text.includes('"terminal":{')) return;
+      const panes = (JSON.parse(text) as { payload?: { rest?: { terminal?: { panes?: { pane_id: string; transport_state: string }[] } } } }).payload?.rest?.terminal?.panes;
+      if (panes) lists.push(new Map(panes.map((pane) => [pane.pane_id, pane.transport_state])));
+    });
+  });
+  return lists;
+}
+
+/** The lists received since `from` that lack one of `panes` or carry it released. */
+function listsDropping(lists: Map<string, string>[], from: number, panes: string[]): string[] {
+  return lists.slice(from).flatMap((list, index) => {
+    const dropped = panes.filter((pane) => !list.has(pane) || list.get(pane) === "released");
+    return dropped.length ? [`list ${from + index}: ${dropped.join(",")}`] : [];
+  });
+}
+
+const attachedPanes = (page: Page) => page.evaluate(() => window.__hideProbe!.attachedPanes().sort());
+const liveTerminals = (page: Page) => page.evaluate(() => window.__hideProbe!.liveTerminals().sort());
+const paneText = (page: Page, paneId: string) => page.evaluate((id) => window.__hideProbe!.paneText(id), paneId);
 
 /**
  * A second checkout and two more tabs in the first, all without focus, then
  * the page opened on the first checkout: three tabs, its first tab split
  * into two Claude agent panes. A Workspace opens with the Explorer beside its
  * agents; the room keeps the split panes wide enough that typed lines do not wrap.
+ * `tabLabels` names the tabs added to the first; without `ownerMark` its
+ * workspace is not its owner, so the first tab Hide creates there opens one.
  */
-async function startFlow(page: Page): Promise<Flow> {
+async function startFlow(page: Page, { tabLabels = ["second", "third"], ownerMark = true } = {}): Promise<Flow> {
   await page.setViewportSize({ width: 1680, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -91,7 +126,7 @@ async function startFlow(page: Page): Promise<Flow> {
       "workspace", "create", "--cwd", path.join(herdr.root, "beta"), "--label", "beta", "--env", `PATH=${herdr.fixturePath}`, "--no-focus",
     ]) as Flow["beta"];
     const tabs = [herdr.tab];
-    for (const label of ["second", "third"]) {
+    for (const label of tabLabels) {
       const made = herdr.run([
         "tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", label, "--env", `PATH=${herdr.fixturePath}`, "--no-focus",
       ]) as { result: { tab: { tab_id: string } } };
@@ -103,10 +138,11 @@ async function startFlow(page: Page): Promise<Flow> {
     // Owner identity uses the core's wire path, including on Windows.
     const folder = toPage(fs.realpathSync(path.join(herdr.root, "fixture")));
     const owner = crypto.createHash("sha256").update(`local\0${folder}`).digest("hex").slice(0, 32);
-    execFileSync(herdr.bin, ["workspace", "report-metadata", herdr.workspace, "--source", "e2e-owner", "--token", `hide_owner=${owner}`], { env: herdr.env, timeout: 30_000 });
+    if (ownerMark) execFileSync(herdr.bin, ["workspace", "report-metadata", herdr.workspace, "--source", "e2e-owner", "--token", `hide_owner=${owner}`], { env: herdr.env, timeout: 30_000 });
     daemon = await startHided(herdr);
     const lastSent = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, lastSent);
+    const terminalLists = recordTerminalLists(page);
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
 
     // Two checkouts in the Projects sidebar. Which one the core focuses at
@@ -118,9 +154,9 @@ async function startFlow(page: Page): Promise<Flow> {
     const firstRow = page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first();
     await firstRow.click();
     await expect(firstRow).toHaveAttribute("aria-current", "true");
-    await expect(page.locator("[data-tab]")).toHaveCount(3);
+    await expect(page.locator("[data-tab]")).toHaveCount(tabs.length);
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
-    return { herdr, beta, tabs, firstRow, sent, lastSent, stop };
+    return { herdr, beta, tabs, firstRow, sent, lastSent, terminalLists, stop };
   } catch (error) {
     stop();
     throw error;
@@ -608,53 +644,129 @@ test("the shortcut sheet marks the moved chords and ⌘F reaches the agent's own
   }
 });
 
-test("creating a sixth tab preserves the four retained tabs and restores the evicted tab", async ({ page }) => {
+/** The panes of the last five distinct tabs in `shown`, the tabs in the order they were shown (ARCHITECTURE.md, the attach window). */
+function lastFiveShown(shown: string[], tabPanes: Map<string, string[]>): string[] {
+  const recent = [...new Set([...shown].reverse())].slice(0, 5);
+  return recent.flatMap((tab) => tabPanes.get(tab)!).sort();
+}
+
+test("creating a sixth tab keeps the four retained tabs, and two revisit cycles restore every evicted tab", async ({ page }) => {
+  // Five tabs in a folder whose workspace is not its owner, so the sixth,
+  // created here, opens the owner workspace: Herdr answers with the new
+  // pane before the core knows its workspace (I3 of the interaction audit).
+  const flow = await startFlow(page, { tabLabels: ["second", "third", "fourth", "fifth"], ownerMark: false });
+  try {
+    // The fixture's first tab holds two panes, every other one pane.
+    // Each pane carries its own text, typed while its tab was in front.
+    const tabPanes = new Map<string, string[]>([[flow.herdr.tab, [...flow.herdr.panes].sort()]]);
+    const typed = new Map<string, string>();
+    const mark = async (paneId: string, text: string) => {
+      typed.set(paneId, `${typed.get(paneId) ?? ""}${text}`);
+      await page.locator(`[data-pane-view="${paneId}"] textarea`).focus();
+      await page.keyboard.type(text);
+      await expect.poll(() => paneText(page, paneId)).toContain(text);
+    };
+    await mark((await page.evaluate(() => window.__hideProbe!.paneId()))!, "keep-t1");
+    const visit = async (tab: string) => {
+      await page.locator(`[data-tab="${tab}"]`).click();
+      await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", tab);
+      for (const paneId of tabPanes.get(tab) ?? []) await expect(page.locator(`[data-pane-view="${paneId}"]`)).toHaveAttribute("data-transport", "controlling");
+    };
+    for (const tab of flow.tabs.slice(1)) {
+      await visit(tab);
+      const paneId = (await page.locator("[data-pane-view]").getAttribute("data-pane-view"))!;
+      tabPanes.set(tab, [paneId]);
+      await mark(paneId, `keep-${tab}`);
+    }
+    // The fifth tab is in front: its terminal must be the same one after the sixth tab.
+    const warmPane = tabPanes.get(flow.tabs[4])![0];
+    const warmTextarea = await page.locator(`[data-pane-view="${warmPane}"] textarea`).elementHandle();
+    const shown = [...flow.tabs];
+    await expect.poll(() => attachedPanes(page)).toEqual(lastFiveShown(shown, tabPanes));
+    await expect.poll(() => liveTerminals(page)).toEqual(lastFiveShown(shown, tabPanes));
+
+    // The sixth tab releases the first tab's two panes and nothing else: no
+    // list on the way drops one of the four retained tabs, and the released
+    // panes keep their entries, marked released.
+    const retained = shown.slice(1).flatMap((tab) => tabPanes.get(tab)!);
+    const before = flow.terminalLists.length;
+    await page.locator("[data-new-agent-tab]").first().click();
+    await expect(page.locator("[data-tab]")).toHaveCount(6);
+    await expect(page.locator("[data-pane-view]")).not.toHaveAttribute("data-pane-view", warmPane);
+    await expect(page.locator("[data-pane-view]")).toHaveAttribute("data-transport", "controlling");
+    await expect.poll(() => screen(page)).toContain("fixture %");
+    const sixth = (await page.locator("[data-canvas]").getAttribute("data-canvas"))!;
+    tabPanes.set(sixth, [(await page.locator("[data-pane-view]").getAttribute("data-pane-view"))!]);
+    await mark(tabPanes.get(sixth)![0], "keep-sixth");
+    const order = [...flow.tabs, sixth];
+    shown.push(sixth);
+    await expect.poll(() => attachedPanes(page)).toEqual(lastFiveShown(shown, tabPanes));
+    await expect.poll(() => liveTerminals(page)).toEqual(lastFiveShown(shown, tabPanes));
+    expect(listsDropping(flow.terminalLists, before, retained)).toEqual([]);
+    expect(flow.herdr.panes.map((paneId) => flow.terminalLists.at(-1)!.get(paneId))).toEqual(["released", "released"]);
+    await visit(flow.tabs[4]);
+    expect(await warmTextarea!.evaluate((element, id) => element === document.querySelector(`[data-pane-view="${id}"] textarea`), warmPane)).toBe(true);
+    shown.push(flow.tabs[4]);
+
+    // Two full cycles through the six tabs in strip order: each visit keeps
+    // the last five shown, an evicted tab comes back with its text from
+    // Herdr's frame, and every revisited pane takes new ordered input.
+    for (const cycle of [1, 2]) {
+      for (const tab of order) {
+        await visit(tab);
+        shown.push(tab);
+        await expect.poll(() => attachedPanes(page)).toEqual(lastFiveShown(shown, tabPanes));
+        await expect.poll(() => liveTerminals(page)).toEqual(lastFiveShown(shown, tabPanes));
+        for (const paneId of tabPanes.get(tab)!) {
+          if (typed.has(paneId)) await expect.poll(() => paneText(page, paneId)).toContain(typed.get(paneId)!);
+        }
+        await mark(tabPanes.get(tab)![0], `-c${cycle}`);
+      }
+    }
+    const firstInput = flow.herdr.inputLogs[flow.herdr.panes.indexOf(tabPanes.get(flow.herdr.tab)![0])];
+    if (firstInput) await expect.poll(() => fs.readFileSync(firstInput, "utf8")).toContain("-c1-c2");
+  } finally {
+    flow.stop();
+  }
+});
+
+test("switching to another checkout and back keeps the first checkout's retained terminals", async ({ page }) => {
   const flow = await startFlow(page);
   try {
-    const firstPane = (await page.evaluate(() => window.__hideProbe!.paneId()))!;
-    await page.locator(`[data-pane-view="${firstPane}"] textarea`).focus();
-    await page.keyboard.type("retention-before");
-    await expect.poll(() => screen(page)).toContain("retention-before");
-    const retained: string[] = [];
+    const retained: string[] = [...flow.herdr.panes];
     for (const tab of flow.tabs.slice(1)) {
       await page.locator(`[data-tab="${tab}"]`).click();
       await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", tab);
       await expect(page.locator("[data-pane-view]")).toHaveAttribute("data-transport", "controlling");
       retained.push((await page.locator("[data-pane-view]").getAttribute("data-pane-view"))!);
     }
-    const warmPane = retained[1];
+    const warmPane = retained.at(-1)!;
+    await page.locator(`[data-pane-view="${warmPane}"] textarea`).focus();
+    await page.keyboard.type("checkout-warm");
+    await expect.poll(() => paneText(page, warmPane)).toContain("checkout-warm");
+    await expect.poll(() => attachedPanes(page)).toEqual([...retained].sort());
     const warmTextarea = await page.locator(`[data-pane-view="${warmPane}"] textarea`).elementHandle();
-    const createTab = async (count: number) => {
-      const previousPane = await page.locator("[data-pane-view]").getAttribute("data-pane-view");
-      await page.locator("[data-new-agent-tab]").first().click();
-      await expect(page.locator("[data-tab]")).toHaveCount(count);
-      await expect(page.locator("[data-pane-view]")).not.toHaveAttribute("data-pane-view", previousPane!);
-      await expect(page.locator("[data-pane-view]")).toHaveAttribute("data-transport", "controlling");
-      await expect.poll(() => screen(page)).toContain("fixture %");
-      return (await page.locator("[data-pane-view]").getAttribute("data-pane-view"))!;
-    };
-    retained.push(await createTab(4), await createTab(5));
-    const before = [...flow.herdr.panes, ...retained].sort();
-    await expect.poll(() => page.evaluate(() => window.__hideProbe!.attachedPanes().sort())).toEqual(before);
-    await expect.poll(() => page.evaluate(() => window.__hideProbe!.liveTerminals().sort())).toEqual(before);
 
-    const sixthPane = await createTab(6);
-    const after = [...retained, sixthPane].sort();
-    await expect.poll(() => page.evaluate(() => window.__hideProbe!.attachedPanes().sort())).toEqual(after);
-    await expect.poll(() => page.evaluate(() => window.__hideProbe!.liveTerminals().sort())).toEqual(after);
-    await page.locator(`[data-tab="${flow.tabs[2]}"]`).click();
+    // Four tabs are shown at most, so every pane stays attached, and the
+    // first checkout's terminals stay parked while the other is in front.
+    const before = flow.terminalLists.length;
+    const betaRow = await showProjectRow(page, page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first());
+    await betaRow.click();
+    await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", flow.beta.result.tab.tab_id);
+    await expect(page.locator("[data-pane-view]")).toHaveAttribute("data-transport", "controlling");
+    const betaPane = (await page.locator("[data-pane-view]").getAttribute("data-pane-view"))!;
+    const all = [...retained, betaPane].sort();
+    await expect.poll(() => attachedPanes(page)).toEqual(all);
+    await expect.poll(() => liveTerminals(page)).toEqual(all);
+    expect(listsDropping(flow.terminalLists, before, retained)).toEqual([]);
+
+    // Coming back finds the same terminal with its text, not a new one.
+    await flow.firstRow.click();
+    await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", flow.tabs[2]);
     await expect(page.locator(`[data-pane-view="${warmPane}"]`)).toHaveAttribute("data-transport", "controlling");
     expect(await warmTextarea!.evaluate((element, id) => element === document.querySelector(`[data-pane-view="${id}"] textarea`), warmPane)).toBe(true);
-
-    // Eviction ends a renderer, not its PTY: revisiting restores old text and accepts new input.
-    await page.locator(`[data-tab="${flow.herdr.tab}"]`).click();
-    await expect(page.locator(`[data-pane-view="${firstPane}"]`)).toHaveAttribute("data-transport", "controlling");
-    await expect.poll(() => page.evaluate((id) => window.__hideProbe!.paneText(id), firstPane)).toContain("retention-before");
-    await page.locator(`[data-pane-view="${firstPane}"] textarea`).focus();
-    await page.keyboard.type("retention-after");
-    const inputLog = flow.herdr.inputLogs[flow.herdr.panes.indexOf(firstPane)];
-    await expect.poll(() => fs.readFileSync(inputLog, "utf8")).toContain("retention-beforeretention-after");
-    await expect.poll(() => page.evaluate((id) => window.__hideProbe!.paneText(id), firstPane)).toContain("retention-after");
+    expect(await paneText(page, warmPane)).toContain("checkout-warm");
+    expect(listsDropping(flow.terminalLists, before, retained)).toEqual([]);
   } finally {
     flow.stop();
   }

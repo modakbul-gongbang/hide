@@ -2,7 +2,7 @@ import { emptyScope } from "../test/legacyAgentScope";
 import { describe, expect, it } from "vitest";
 import type { Checkout, Device, SnapshotRest, Workspace } from "./snapshot";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { checkoutKey, homeKey, resolveTarget, startTargets as targetsWith } from "./startTargets";
+import { checkoutKey, homeKey, resolveTarget, startTargets as targetsWith, worktreeKey } from "./startTargets";
 import type { Screen } from "./ui";
 
 const { t } = initializeInterfaceI18n("en");
@@ -150,6 +150,21 @@ describe("start target menu (B26)", () => {
 });
 
 describe("resolving the target a start goes to", () => {
+  it("uses the confirmed scoped worktree default without changing explicit or global targets", () => {
+    const snapshot = rest();
+    snapshot.navigator!.workspaces![0]!.is_git = true;
+    snapshot.ui_state = { project_settings: {
+      unrelated: { version: 1, device_id: "mini", root: "/hide", new_work: "checkout" },
+      selected: { version: 1, device_id: "local", root: "/hide", new_work: "worktree" },
+    } } as SnapshotRest["ui_state"];
+    const scoped = overviewTargets(snapshot, "w-hide");
+    expect(scoped.defaultKey).toBe(worktreeKey("local", "/hide"));
+    expect(resolveTarget(scoped, checkoutKey("local", "/hide.worktrees/rail"))?.key).toBe(checkoutKey("local", "/hide.worktrees/rail"));
+    expect(startTargets(snapshot, { kind: "workspace" }).defaultKey).toBe(checkoutKey("local", "/hide"));
+    expect(startTargets(snapshot, { kind: "workspace" }, true, "w-hide").defaultKey).toBe(homeKey("local"));
+    snapshot.ui_state!.project_settings!.selected!.new_work = "checkout";
+    expect(overviewTargets(snapshot, "w-hide").defaultKey).toBe(checkoutKey("local", "/hide"));
+  });
   it("keeps the operator's pick while it is listed and usable, else the default", () => {
     const targets = startTargets(rest(), { kind: "main" });
     expect(resolveTarget(targets, checkoutKey("local", "/sasu"))?.key).toBe(checkoutKey("local", "/sasu"));

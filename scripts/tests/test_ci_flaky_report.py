@@ -196,10 +196,10 @@ class Workflows(unittest.TestCase):
         steps = 0
         for workflow in sorted((SCRIPT.parents[1] / ".github" / "workflows").glob("*.yml")):
             for step in re.split(r"\n      - ", workflow.read_text()):
-                if "ci-flaky-report.py --suite" in step:
+                if re.search(r"ci-flaky-report\.py --(suite|measurement)", step):
                     steps += 1
                     self.assertEqual(step.count("ci-flaky-report.py"), 1, f"{workflow.name}: {step.splitlines()[0]}")
-        self.assertEqual(steps, 8)
+        self.assertEqual(steps, 9)
 
 
 class Annotating(unittest.TestCase):
@@ -227,6 +227,28 @@ class Annotating(unittest.TestCase):
         failed = r.nextest_failed(root)
         self.assertEqual([(t["file"], t["name"]) for t in failed], [("hided", "hided::real_herdr echoes")])
         self.assertIn("panicked at", failed[0]["error"])
+
+    def test_a_failed_measurement_is_annotated_with_its_check_and_no_file(self):
+        # The nightly report reads the title and the first line; a measurement
+        # has no test file to name.
+        with tempfile.TemporaryDirectory() as tmp:
+            record = Path(tmp) / "nightly-summary.json"
+            record.write_text(json.dumps({"failures": [
+                {"name": "key echo under agent churn: invalid measurement", "error": "trial did not complete successfully"}]}))
+            lines = []
+            saved = r.annotate
+            self.addCleanup(setattr, r, "annotate", saved)
+            r.annotate = lambda failed, title=r.FAILED_TITLE: saved(failed, lines.append, title)
+            self.assertEqual(r.main(["--measurement", str(record)]), 0)
+            self.assertEqual(lines, ["::error title=Failed measurement::key echo under agent churn: invalid measurement"
+                                     "%0Atrial did not complete successfully"])
+            lines.clear()
+            record.write_text(json.dumps({"failures": []}))
+            self.assertEqual(r.main(["--measurement", str(record)]), 0)
+            self.assertEqual(lines, [])
+            # A run that wrote no record is reported by its failed step instead.
+            self.assertEqual(r.main(["--measurement", str(Path(tmp) / "missing.json")]), 0)
+            self.assertEqual(lines, [])
 
     def test_more_failed_tests_than_a_step_has_room_for_end_with_their_count(self):
         # GitHub keeps 10 error annotations per step; one is left for the runner's own.
@@ -365,6 +387,34 @@ class NightlyFailures(unittest.TestCase):
         self.assertNotIn("#670", body, "it touched another file")
         self.assertNotIn("#600", body, "it merged outside the range")
         self.assertNotIn("alice", body)
+
+    def test_a_failed_measurement_names_every_pull_request_merged_since_the_lane_passed(self):
+        lane = "performance (macOS) / topology operator"
+        check = "key echo under agent churn: invalid measurement"
+        github = FakeGitHub(
+            [job(1, lane, "failure", [("Judge the run", "failure")])],
+            annotations={1: [{"title": "Failed measurement", "path": ".github", "start_line": 1,
+                              "message": f"{check}\ntrial did not complete successfully"}]},
+            commits=["m1", "m2"],
+            pulls=[{"number": 668, "merge_commit_sha": "m1", "updated_at": "2026-10-06T10:00:00Z"},
+                   {"number": 670, "merge_commit_sha": "m2", "updated_at": "2026-10-06T11:00:00Z"},
+                   {"number": 600, "merge_commit_sha": "old", "updated_at": "2026-10-06T12:00:00Z"}],
+            files={668: ["hided/src/server.rs"], 670: ["docs/BUILD.md"]},
+        )
+        github.add_earlier(90, GREEN, "2026-10-05T18:00:00Z", [job(11, lane, "success")])
+        (issue,) = nightly(github).opened()
+        self.assertEqual(issue["title"], f"Nightly failure ({lane}): {check}")
+        body = issue["body"]
+        for text in (f"<!-- nightly-failure:{lane}:measurement {check} -->", f"- Measurement: \"{check}\"",
+                     "touching any path, since a measurement moves with any change): #668, #670",
+                     "trial did not complete successfully"):
+            self.assertIn(text, body)
+        self.assertNotIn("#600", body, "it merged outside the range")
+        # The same check failing again is a comment on that issue.
+        again = nightly(FakeGitHub(
+            [job(1, lane, "failure")], annotations=github.annotations,
+            issues=[{"number": 5, "body": f"<!-- nightly-failure:{lane}:measurement {check} -->"}]))
+        self.assertEqual((again.opened(), again.commented()), ([], [5]))
 
     def test_the_same_test_failing_in_two_lanes_is_two_issues_their_titles_tell_apart(self):
         name = "a test whose name runs long " * 10

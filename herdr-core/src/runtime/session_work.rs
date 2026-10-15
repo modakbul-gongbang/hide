@@ -17,6 +17,8 @@ struct Place {
     project: String,
     checkout: String,
     repository: Option<String>,
+    target: Result<crate::github::Where, String>,
+    connection_epoch: u64,
 }
 
 #[derive(Default)]
@@ -26,6 +28,7 @@ pub(super) struct SessionIssueWork {
     /// Draft cannot create an unbounded set of threads or provider processes.
     active: Option<CancelToken>,
     ready: Option<Place>,
+    create_active: Option<(String, String, CancelToken)>,
 }
 
 struct Draft {
@@ -36,6 +39,61 @@ struct Draft {
 }
 
 impl Runtime {
+    pub(super) fn invalidate_session_issue_repository(&mut self, device: &str, root: &str) {
+        let owns = self
+            .snapshot
+            .issue_work
+            .draft
+            .as_ref()
+            .is_some_and(|draft| {
+                draft.source.session.device_id == device
+                    && draft.workspace_id.as_ref().is_some_and(|id| {
+                        self.issue_project(id).is_some_and(|(_, workspace)| {
+                            workspace.device_id == device && workspace.path == root
+                        })
+                    })
+            });
+        if owns {
+            if let Some(cancel) = &self.session_issue_work.active {
+                cancel.cancel();
+            }
+            self.session_issue_work.ready = None;
+            if let Some(slot) = &mut self.snapshot.issue_work.draft {
+                slot.phase = "failed".into();
+                slot.message = Some("issue_draft_repository_changed".into());
+            }
+        }
+        if let Some((owner, project, cancel)) = &self.session_issue_work.create_active
+            && owner == device
+            && project == root
+        {
+            cancel.cancel();
+        }
+    }
+
+    fn session_issue_place_current(&self, device: &str, place: &Place) -> bool {
+        self.issue_project(&place.workspace_id)
+            .is_some_and(|(_, workspace)| {
+                workspace.device_id == device
+                    && workspace.path == place.project
+                    && workspace
+                        .checkouts
+                        .iter()
+                        .any(|checkout| checkout.path == place.checkout)
+                    && self.github_place(
+                        (device != self.node.as_str()).then_some(device),
+                        &place.project,
+                    ) == place.target
+                    && self
+                        .links_work
+                        .connection_epochs
+                        .get(&hide_project::project_id(device, Path::new(&place.project)))
+                        .copied()
+                        .unwrap_or(0)
+                        == place.connection_epoch
+            })
+    }
+
     pub(crate) fn cancel_session_issue_draft(&mut self) -> bool {
         if let Some(cancel) = &self.session_issue_work.active {
             cancel.cancel();
@@ -95,6 +153,20 @@ impl Runtime {
                     project: workspace.path.clone(),
                     checkout: checkout.path.clone(),
                     repository: workspace.home_issues.repository.clone(),
+                    target: self.github_place(
+                        (workspace.device_id != self.node.as_str())
+                            .then_some(workspace.device_id.as_str()),
+                        &workspace.path,
+                    ),
+                    connection_epoch: self
+                        .links_work
+                        .connection_epochs
+                        .get(&hide_project::project_id(
+                            &workspace.device_id,
+                            Path::new(&workspace.path),
+                        ))
+                        .copied()
+                        .unwrap_or(0),
                 });
             }
         };
@@ -147,6 +219,7 @@ impl Runtime {
             message: None,
         });
         let requested = source.clone();
+        let admission = cancel.clone();
         let spawned = self.spawn_issue_worker("session-issue-preview", move || {
             let ai = DraftAi { provider, usage, settings: ai_usable.then_some(settings) };
             read_draft(&client, &requested, &places, &node, &ai, &cancel)
@@ -154,7 +227,10 @@ impl Runtime {
             if runtime.session_issue_work.generation != generation { return false; }
             runtime.session_issue_work.active = None;
             if !runtime.ai_settings.as_ref().is_some_and(|settings| settings.enabled && settings.chosen && settings.agent_summary) { return runtime.cancel_session_issue_draft(); }
-            let Some(slot) = runtime.snapshot.issue_work.draft.as_mut().filter(|slot|slot.source == source) else { return false; };
+            if runtime.snapshot.issue_work.draft.as_ref().is_none_or(|slot| slot.source != source) { return false; }
+            let invalid = admission.is_cancelled() || result.as_ref().is_ok_and(|draft| !runtime.session_issue_place_current(&source.session.device_id, &draft.place));
+            let slot = runtime.snapshot.issue_work.draft.as_mut().expect("draft owner checked");
+            if invalid { slot.phase = "failed".into(); slot.message = Some("issue_draft_repository_changed".into()); return true; }
             match result {
                 Ok(draft) => {
                     slot.phase = "ready".into(); slot.workspace_id = Some(draft.place.workspace_id.clone());
@@ -164,7 +240,7 @@ impl Runtime {
                 }
                 Err(code) => {
                     crate::diagnostic!(serde_json::json!({"component":"session_work","kind":"issue_draft.failed","generation":generation,"code":code}));
-                    slot.phase = "failed".into(); slot.message = Some("issue_draft_unavailable".into());
+                    slot.phase = "failed".into(); slot.message = Some(if matches!(code.as_str(), "issue_draft_repository_unknown" | "issue_draft_repository_changed") {code} else {"issue_draft_unavailable".into()});
                 }
             }
             true
@@ -203,6 +279,15 @@ impl Runtime {
             );
             return true;
         };
+        if !self.session_issue_place_current(&source.session.device_id, &place) {
+            self.session_issue_work.ready = None;
+            self.set_error(
+                "issue_create.repository_changed",
+                "The issue preview's repository has changed. Open the preview again.",
+                true,
+            );
+            return true;
+        }
         if !self
             .snapshot
             .issue_work
@@ -251,9 +336,18 @@ impl Runtime {
         };
         let device = source.session.device_id.clone();
         let project = place.project.clone();
+        let observed_place = place.clone();
+        let cancel = CancelToken::new();
+        self.session_issue_work.create_active =
+            Some((device.clone(), project.clone(), cancel.clone()));
+        let admission = cancel.clone();
         let spawned = self.spawn_issue_worker("session-issue-create", move || {
-            create_once(&client, &source, &node, &place, &payload.title, &payload.body)
+            create_once(&client, &source, &node, &place, &payload.title, &payload.body, &cancel)
         }, move |runtime, result| {
+            runtime.session_issue_work.create_active = None;
+            if admission.is_cancelled() || !runtime.session_issue_place_current(&device, &observed_place) {
+                return runtime.settle_issue_create(id, Err("The issue preview's repository changed. Reopen it to check the original attempt.".into()));
+            }
             match result {
                 Ok(issue) => {
                     let key = crate::tasks::github_key(&issue.reference);
@@ -268,6 +362,7 @@ impl Runtime {
             }
         });
         if let Err(code) = spawned {
+            self.session_issue_work.create_active = None;
             return self.settle_issue_create(id, Err(code));
         }
         true
@@ -323,14 +418,17 @@ fn read_draft(
                 .cloned()
         })
         .ok_or("issue_draft_checkout_missing")?;
-    let gh_place = crate::github::Where::DeviceCheckout(place.checkout.clone());
-    let repository = crate::github::issue_repository(node.as_ref(), &gh_place);
+    let original = record
+        .repository
+        .as_deref()
+        .ok_or("issue_draft_repository_unknown")?;
+    // Provider failure may retain an editable draft, but never grants the
+    // current checkout authority over this session's immutable original.
+    place.repository = Some(original.into());
+    let gh_place = place.target.as_ref().map_err(Clone::clone)?;
+    let repository = crate::github::issue_repository(node.as_ref(), gh_place);
     if let Ok(repository) = &repository {
-        if record
-            .repository
-            .as_deref()
-            .is_some_and(|known| !known.eq_ignore_ascii_case(repository))
-        {
+        if !original.eq_ignore_ascii_case(repository) {
             return Err("issue_draft_repository_changed".into());
         }
         place.repository = Some(repository.clone());
@@ -420,11 +518,15 @@ fn create_once(
     place: &Place,
     title: &str,
     body: &str,
+    cancel: &CancelToken,
 ) -> Result<crate::issues::IssueSnapshot, String> {
     let title = crate::local_issues::validated_title(title)?;
     let body = crate::local_issues::validated_body(body)?;
-    let gh_place = crate::github::Where::DeviceCheckout(place.checkout.clone());
-    let repository = crate::github::issue_repository(node.as_ref(), &gh_place)?;
+    if cancel.is_cancelled() {
+        return Err("issue_repository_changed".into());
+    }
+    let gh_place = place.target.as_ref().map_err(Clone::clone)?;
+    let repository = crate::github::issue_repository(node.as_ref(), gh_place)?;
     if place
         .repository
         .as_ref()
@@ -443,6 +545,9 @@ fn create_once(
         return Err("issue_attempt_invalid".into());
     };
     let result = (|| {
+        if cancel.is_cancelled() {
+            return Err("issue_repository_changed".into());
+        }
         if let (Some(number), Some(url)) = (attempt.number, &attempt.url) {
             let reference = crate::issues::IssueReference::parse(url, None)?;
             if u64::from(reference.number) != number {
@@ -465,7 +570,7 @@ fn create_once(
         if attempt.reconcile {
             if let Some(issue) = crate::github::reconcile_issue_attempt(
                 node.as_ref(),
-                &gh_place,
+                gh_place,
                 &attempt.repository,
                 &attempt.title,
                 attempt.started_at_unix_ms,
@@ -483,6 +588,9 @@ fn create_once(
             checkout: place.checkout.clone(),
             repository: attempt.repository.clone(),
         };
+        if cancel.is_cancelled() {
+            return Err("issue_repository_changed".into());
+        }
         crate::github::create_issue(node.as_ref(), &approved, &title, &body)
             .map_err(|_| "issue_create_unconfirmed".to_owned())
     })();

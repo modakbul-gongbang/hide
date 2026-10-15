@@ -1154,6 +1154,9 @@ impl Runtime {
             state.checking = false;
             self.set_kit_state(device_id, state);
         }
+        if device_id == self.node.as_str() {
+            self.settle_memory_hook_preparation();
+        }
     }
 
     /// The device's consent was withdrawn or the device is going away:

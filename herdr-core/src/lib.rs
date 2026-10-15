@@ -49,6 +49,7 @@ mod persistence;
 pub mod pet;
 mod ports;
 mod project_context;
+mod project_settings;
 mod reader;
 mod recent_closed;
 pub mod remote;

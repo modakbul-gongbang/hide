@@ -1067,6 +1067,167 @@ fn connection_loss_cancels_acknowledged_creation_before_reconnect() {
     }
 }
 
+/// Checkout A holds five one-pane tabs and checkout B one, in one session.
+/// Each root is a repository of its own, so the catalog keeps them apart.
+fn two_checkout_session(root_a: &str, root_b: &str, focused_tab: &str) -> SessionSnapshotPayload {
+    let tabs = (1..=5)
+        .map(|number| ("wa", format!("wa:t{number}"), root_a))
+        .chain([("wb", "wb:t1".to_owned(), root_b)])
+        .collect::<Vec<_>>();
+    let focused_workspace = &focused_tab[..2];
+    crate::sidebar::owned_label_fixture(serde_json::json!({
+        "agents": [],
+        "focused_workspace_id": focused_workspace,
+        "focused_pane_id": format!("{focused_tab}:p"),
+        "workspaces": [
+            {"workspace_id": "wa", "label": "a", "active_tab_id": if focused_workspace == "wa" { focused_tab } else { "wa:t5" }},
+            {"workspace_id": "wb", "label": "b", "active_tab_id": "wb:t1"}
+        ],
+        "tabs": tabs.iter().map(|(workspace, tab, _)| serde_json::json!({
+            "workspace_id": workspace, "tab_id": tab, "label": ""
+        })).collect::<Vec<_>>(),
+        "panes": tabs.iter().map(|(_, tab, root)| serde_json::json!({
+            "pane_id": format!("{tab}:p"), "cwd": root
+        })).collect::<Vec<_>>(),
+        "layouts": tabs.iter().map(|(workspace, tab, _)| serde_json::json!({
+            "workspace_id": workspace,
+            "tab_id": tab,
+            "zoomed": false,
+            "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+            "focused_pane_id": format!("{tab}:p"),
+            "panes": [{"pane_id": format!("{tab}:p"), "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+            "splits": []
+        })).collect::<Vec<_>>()
+    }))
+    .expect("two-checkout session payload")
+}
+
+/// ARCHITECTURE.md, Panes, tabs and the attach window: terminal metadata
+/// belongs to each session pane, whichever pane is selected. A checkout
+/// switch selects another pane; the panes of the checkout left behind keep
+/// their entries while their tabs are among the last five shown, the one
+/// that fell out keeps its `released` entry, and nothing moves on return.
+#[test]
+fn a_checkout_switch_keeps_the_other_checkouts_retained_and_released_entries() {
+    let mut runtime = live_runtime();
+    let terminals = record_terminals(&mut runtime);
+    let roots = scratch_dir("hide-checkout-retention-");
+    let [root_a, root_b] = ["a", "b"].map(|name| {
+        let root = roots.path().join(name);
+        std::fs::create_dir_all(&root).expect("checkout folder");
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "-q", "-b", "main"])
+                .current_dir(&root)
+                .status()
+                .expect("git init runs")
+                .success()
+        );
+        root.to_string_lossy().into_owned()
+    });
+    runtime.snapshot.ui_state.workspace_registrations = [("a", &root_a), ("b", &root_b)]
+        .map(|(name, path)| WorkspaceRegistration {
+            primary_checkout_id: None,
+            id: format!("workspace:{name}"),
+            label: name.to_owned(),
+            path: path.clone(),
+            device_id: crate::node::TEST_NODE.to_owned(),
+            pinned: false,
+            home: false,
+        })
+        .to_vec();
+    runtime.rebuild_catalog();
+    let checkout_of = |runtime: &Runtime, workspace_id: &str| {
+        runtime
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .and_then(|workspace| workspace.checkouts.first())
+            .map(|checkout| checkout.id.clone())
+            .expect("registered checkout")
+    };
+    let checkout_a = checkout_of(&runtime, "workspace:a");
+    let checkout_b = checkout_of(&runtime, "workspace:b");
+    let focus_checkout = |workspace_id: &str, checkout_id: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_checkout",
+            "payload": {"workspace_id": workspace_id, "checkout_id": checkout_id}
+        }))
+        .expect("focus checkout event")
+    };
+    runtime.dispatch_json(&focus_checkout("workspace:a", &checkout_a));
+    runtime.ingest_session(Ok(two_checkout_session(&root_a, &root_b, "wa:t1")));
+    answer_retention_attaches(&mut runtime, &terminals);
+    for number in 2..=5 {
+        let tab = format!("wa:t{number}");
+        runtime.dispatch_json(
+            &serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION,
+                "kind": "focus_tab",
+                "payload": {"workspace_id": "workspace:a", "checkout_id": checkout_a, "tab_id": tab}
+            }))
+            .expect("focus tab event"),
+        );
+        runtime.complete_lane_tab(
+            RemoteControlAction::FocusTab { tab_id: tab },
+            Ok(RemoteControlOutcome::Acknowledged {
+                created_tab_id: None,
+                created_pane_id: None,
+            }),
+            0,
+        );
+        answer_retention_attaches(&mut runtime, &terminals);
+    }
+    let panes =
+        |tabs: &[&str]| -> BTreeSet<String> { tabs.iter().map(|tab| format!("{tab}:p")).collect() };
+    let released_entry = |runtime: &Runtime| {
+        runtime
+            .snapshot()
+            .terminal
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == "wa:t1:p")
+            .map(|pane| pane.transport_state.clone())
+    };
+    assert_eq!(
+        retained_pane_ids(&runtime),
+        panes(&["wa:t1", "wa:t2", "wa:t3", "wa:t4", "wa:t5"])
+    );
+
+    // B's tab is the sixth shown: A's first tab leaves the window, and A's
+    // other four stay attached with their entries while B is in front.
+    let last_five = panes(&["wa:t2", "wa:t3", "wa:t4", "wa:t5", "wb:t1"]);
+    assert!(runtime.dispatch_json(&focus_checkout("workspace:b", &checkout_b)));
+    answer_retention_attaches(&mut runtime, &terminals);
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("wb:t1:p")
+    );
+    assert_eq!(retained_pane_ids(&runtime), last_five);
+    assert_eq!(released_entry(&runtime).as_deref(), Some("released"));
+    runtime.ingest_session(Ok(two_checkout_session(&root_a, &root_b, "wb:t1")));
+    answer_retention_attaches(&mut runtime, &terminals);
+    assert_eq!(retained_pane_ids(&runtime), last_five);
+    assert_eq!(released_entry(&runtime).as_deref(), Some("released"));
+
+    // A comes forward on its remembered tab, already in the window.
+    assert!(runtime.dispatch_json(&focus_checkout("workspace:a", &checkout_a)));
+    answer_retention_attaches(&mut runtime, &terminals);
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("wa:t5:p")
+    );
+    assert_eq!(retained_pane_ids(&runtime), last_five);
+    assert_eq!(released_entry(&runtime).as_deref(), Some("released"));
+    assert!(
+        terminals.attaches().is_empty(),
+        "nothing in the window attaches again"
+    );
+}
+
 /// AC15, R11, SC7. Herdr closes the PTY before it reports the pane gone,
 /// so the attach child ends while the pane is still drawn. Reading that as
 /// a transport failure is what flashed "terminal attach ended" over a pane
