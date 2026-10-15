@@ -184,11 +184,17 @@ test("Comment on a page: the operator picks an element in the page and its agent
   await expect(card).toHaveCount(0);
   expect(await inPage<number>(url, "window.keys")).toBe(0);
 
-  // A place picked on a document the page then leaves goes with it, and so does its note.
+  // A place picked at an address the page then leaves goes with it, and so does its note:
+  // a route within the same document first, then another document.
   await pressGo(url);
   await expect(note).toHaveCount(1);
+  const routed = `${url}?step=1`;
+  await inPage(url, `history.pushState({}, "", ${JSON.stringify(routed)}); true`);
+  await expect(note).toHaveCount(0);
+  await pressGo(routed);
+  await expect(note).toHaveCount(1);
   const next = `${url}?step=2`;
-  await inPage(url, `location.assign(${JSON.stringify(next)}); true`);
+  await inPage(routed, `location.assign(${JSON.stringify(next)}); true`);
   await expect(note).toHaveCount(0);
   await expect.poll(() => inPage<boolean>(next, "document.querySelector('hide-comment-overlay') !== null")).toBe(true);
 

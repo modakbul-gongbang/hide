@@ -42,6 +42,7 @@ const BINDING: &str = "__hideCommentSend";
 const EVENTS: &[&str] = &[
     "Runtime.bindingCalled",
     "Page.frameNavigated",
+    "Page.navigatedWithinDocument",
     "Inspector.detached",
 ];
 /// Comment sessions at once: one per View the operator comments on.
@@ -361,7 +362,7 @@ async fn run(
         json!({"name": BINDING, "executionContextName": WORLD}),
     )
     .await?;
-    let mut world = inject(&mut page, &request.strings).await?;
+    let (mut world, mut frame_id) = inject(&mut page, &request.strings).await?;
     let mut shown = (request.pins.clone(), request.strings.clone());
     draw(&mut page, world, &shown).await;
     let key = request.key();
@@ -399,12 +400,23 @@ async fn run(
                         let line = (key.0.as_str(), key.1.as_str(), key.2.as_str());
                         let _ = frames.send(framed(line, json!({"on": true, "reason": null, "dropped": true}))).await;
                         match inject(&mut page, &shown.1).await {
-                            Ok(id) => {
-                                world = id;
+                            Ok((id, frame)) => {
+                                (world, frame_id) = (id, frame);
                                 draw(&mut page, world, &shown).await;
                             }
                             Err(failure) => break Err(failure),
                         }
+                    }
+                    // A route, a fragment or a step back within the same
+                    // document leaves the place picked at the old address:
+                    // the overlay stays, the pick and its note go.
+                    "Page.navigatedWithinDocument"
+                        if event.session.as_deref() == Some(top.as_str())
+                            && event.params["frameId"].as_str() == Some(frame_id.as_str()) =>
+                    {
+                        own.keep(None);
+                        let line = (key.0.as_str(), key.1.as_str(), key.2.as_str());
+                        let _ = frames.send(framed(line, json!({"on": true, "reason": null, "dropped": true}))).await;
                     }
                     "Runtime.bindingCalled"
                         if event.params["name"] == BINDING
@@ -455,13 +467,18 @@ async fn call(page: &mut Page, method: &str, params: Value) -> Result<Value, Fai
         .map_err(|error| page.failure(error))
 }
 
-/// A fresh isolated world on the page's document, with the overlay in it.
-async fn inject(page: &mut Page, strings: &Value) -> Result<i64, Failure> {
+/// A fresh isolated world on the page's document, with the overlay in it:
+/// the world's context id and the page's main frame id.
+async fn inject(page: &mut Page, strings: &Value) -> Result<(i64, String), Failure> {
     let tree = call(page, "Page.getFrameTree", json!({})).await?;
+    let frame_id = tree["frameTree"]["frame"]["id"]
+        .as_str()
+        .ok_or_else(|| Failure::new("display_missing", None))?
+        .to_owned();
     let world = call(
         page,
         "Page.createIsolatedWorld",
-        json!({"frameId": tree["frameTree"]["frame"]["id"], "worldName": WORLD}),
+        json!({"frameId": frame_id, "worldName": WORLD}),
     )
     .await?;
     let id = world["executionContextId"]
@@ -476,7 +493,7 @@ async fn inject(page: &mut Page, strings: &Value) -> Result<i64, Failure> {
     if answer.get("exceptionDetails").is_some() {
         return Err(Failure::new("page_script_failed", None));
     }
-    Ok(id)
+    Ok((id, frame_id))
 }
 
 async fn eval(page: &mut Page, world: i64, expression: &str) {

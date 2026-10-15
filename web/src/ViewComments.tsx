@@ -5,7 +5,7 @@
 // draw from are in `viewFeedback.ts`; the core owns every comment.
 
 import { AlertCircleIcon, CheckIcon, ChevronDownIcon, CircleHelpIcon, FilesIcon, MessageSquarePlusIcon, PencilIcon, RotateCcwIcon, SendIcon, SquareIcon, Trash2Icon, UndoIcon, ArrowUpLeftIcon } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Trans } from "react-i18next";
 import type { Actions } from "./actions";
 import { agentProductName } from "./agentAdapters";
@@ -809,8 +809,19 @@ export function PageNoteLayer({ commentKey, displayId, workspace, actions, add, 
   const edit = useFeedbackStore((s) => s.forms[displayId] ?? null);
   const feedback = useViewFeedback();
   const layer = useRef<HTMLDivElement>(null);
-  const card = useRef<HTMLDivElement>(null);
   const [cardHeight, setCardHeight] = useState(0);
+  // The card's height, read whenever a card is drawn: the first one only
+  // after the slot has been measured.
+  const cardObserver = useRef<ResizeObserver | null>(null);
+  const card = useCallback((element: HTMLDivElement | null) => {
+    cardObserver.current?.disconnect();
+    cardObserver.current = null;
+    if (!element) return;
+    setCardHeight(element.offsetHeight);
+    if (typeof ResizeObserver === "undefined") return;
+    cardObserver.current = new ResizeObserver(() => setCardHeight(element.offsetHeight));
+    cardObserver.current.observe(element);
+  }, []);
   const doneRef = useRef(done);
   doneRef.current = done;
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
@@ -845,15 +856,6 @@ export function PageNoteLayer({ commentKey, displayId, workspace, actions, add, 
   useEffect(() => {
     if (!note && useFeedbackStore.getState().forms[displayId]) closeNote(displayId);
   }, [note, displayId]);
-  useLayoutEffect(() => {
-    const element = card.current;
-    if (!element) return undefined;
-    const measure = () => setCardHeight(element.offsetHeight);
-    measure();
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
-    observer?.observe(element);
-    return () => observer?.disconnect();
-  }, [shown, note]);
   if (!shown || !note) return null;
   const close = () => {
     closeBrowserNote(commentKey);
