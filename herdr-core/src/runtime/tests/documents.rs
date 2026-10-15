@@ -2037,9 +2037,10 @@ fn a_coalesced_gui_read_cannot_replace_closed_new_tabs() {
 }
 
 /// B15/D12: New tab churn cannot turn one held file read into an unbounded
-/// queue of GUI destinations, even though each replaces an existing slot.
+/// queue of GUI destinations, even though each replaces an existing slot:
+/// the tab's cap counts the destinations still waiting for the read.
 #[test]
-fn a_coalesced_gui_read_refuses_a_sixty_fifth_destination() {
+fn a_coalesced_gui_read_refuses_a_destination_past_the_tabs_cap() {
     let f = Fixture::new();
     let views_dir = f.runtime_dir("hide-gui-bounded-read-");
     {
@@ -2051,7 +2052,7 @@ fn a_coalesced_gui_read_refuses_a_sixty_fifth_destination() {
         runtime.sync_workspace_view();
     }
     f.device.hold_read("a.txt");
-    for n in 1..=65 {
+    for n in 1..=crate::view_layout::MAX_TAB_VIEWS + 1 {
         f.dispatch(
             "browser_open",
             serde_json::json!({"url": "", "workspace_id": WORKSPACE, "checkout_id": f.checkout}),
@@ -2074,7 +2075,7 @@ fn a_coalesced_gui_read_refuses_a_sixty_fifth_destination() {
         f.open("a.txt");
         {
             let runtime = f.shared.lock().unwrap();
-            if n <= 64 {
+            if n <= crate::view_layout::MAX_TAB_VIEWS {
                 assert!(
                     runtime.snapshot.status.last_error.is_none(),
                     "destination {n} is admitted"

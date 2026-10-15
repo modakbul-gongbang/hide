@@ -434,21 +434,11 @@ impl WorkspaceView {
         )
     }
 
-    /// An empty presentation remembers visibility but owns no View area.
-    pub(crate) fn occupied_areas(layout: &Layout) -> usize {
-        if layout.display_count() == 0 {
-            0
-        } else {
-            layout.area_count()
-        }
-    }
-
-    /// Every parked layout shares the checkout's original resource budget.
+    /// Every parked layout shares the checkout's display budget; View areas
+    /// are each layout's own and its tree keeps them within the cap.
     pub(crate) fn within_view_budget(&self) -> bool {
         self.layouts().map(Layout::display_count).sum::<usize>()
             <= crate::view_layout::MAX_VIEW_DISPLAYS
-            && self.layouts().map(Self::occupied_areas).sum::<usize>()
-                <= crate::view_layout::MAX_VIEW_AREAS
     }
 
     pub(crate) fn next_view_identity(&self) -> u64 {

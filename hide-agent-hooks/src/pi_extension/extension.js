@@ -7,6 +7,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
+import path from "node:path";
 
 const HELPER = __HIDE_HELPER__;
 const AGENT = __HIDE_AGENT__;
@@ -164,11 +165,15 @@ function root(ctx) {
   return !subagent(ctx) && ctx?.mode === "tui";
 }
 
-/** The session file Herdr's integration reports for the pane, or null for an unsaved session. */
+/**
+ * The session file Herdr's integration reports for the pane, or null for an unsaved session. Absolute in either
+ * system's spelling, as Herdr's own Pi integration judges it: Windows reports `C:\...`, which the host's `path` would
+ * only call absolute on Windows.
+ */
 function sessionFile(ctx) {
   try {
     const file = ctx?.sessionManager?.getSessionFile?.();
-    return typeof file === "string" && file.startsWith("/") ? file : null;
+    return typeof file === "string" && (path.posix.isAbsolute(file) || path.win32.isAbsolute(file)) ? file : null;
   } catch {
     return null;
   }

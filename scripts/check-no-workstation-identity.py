@@ -59,8 +59,16 @@ EMAIL = re.compile(r"(?<![\w.+-])[A-Za-z0-9][A-Za-z0-9._%+-]*@"
                    r"(?P<domain>(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})(?![\w.-])")
 
 
+# The project's published contact address, shown on the public site on purpose. It is an
+# exact address, never its domain: withhide.dev is a Workspace domain whose other accounts
+# belong to people, and their addresses stay refused.
+PUBLIC_CONTACTS = frozenset({"hello@withhide.dev"})
+
+
 def email_findings(text):
     for match in EMAIL.finditer(text):
+        if match.group().lower() in PUBLIC_CONTACTS:
+            continue
         domain = match.group("domain").lower()
         if domain in {"example.com", "example.net", "example.org"} or domain.endswith(
                 (".example", ".invalid", ".test")):

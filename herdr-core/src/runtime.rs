@@ -1069,6 +1069,13 @@ pub struct Runtime {
     hide_started: crate::coordination::started::HideStarted,
     delivery_client: Option<crate::delivery::worker::Client>,
     delivery_observations: HashMap<String, delivery::Observation>,
+    /// The panes held as an unsent draft, kept across a restart so a daemon
+    /// that starts over does not type a bell over what the operator typed
+    /// (`composer_store.rs`); absent in a runtime with no state folder.
+    composer_marks: Vec<crate::composer_store::Mark>,
+    /// When each observed pane's input was last traced (`delivery.input`).
+    delivery_input_traced: HashMap<String, u64>,
+    composer_store: Option<crate::composer_store::ComposerStore>,
     /// Open Factories' code-owned recipients (`factory:<id>`), set by the
     /// Factory host; a letter to any other `factory:` name has no recipient.
     /// Each open Factory's id with its stall window (D-30, B24).
@@ -1976,6 +1983,9 @@ impl Runtime {
             delivery_ledger,
             delivery_client: None,
             delivery_observations: HashMap::new(),
+            composer_marks: Vec::new(),
+            delivery_input_traced: HashMap::new(),
+            composer_store: None,
             factory_recipients: std::collections::BTreeMap::new(),
             factory_screen: None,
             delivery_overflow: HashSet::new(),

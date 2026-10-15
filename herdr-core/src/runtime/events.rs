@@ -1921,7 +1921,7 @@ impl Runtime {
                 crate::agent_state::sessions::ResolveSource::Operator,
             ),
             Event::PaneInputSent(payload) => {
-                self.note_delivery_key(&payload.pane_id);
+                self.note_delivery_key(&payload.pane_id, "phone");
                 false
             }
             Event::PaneVisit(payload) => self.record_pane_visit(payload.pane_id),
