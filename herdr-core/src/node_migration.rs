@@ -405,12 +405,6 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
     ),
     (
         WORKSPACE_VIEWS,
-        "/workspaces/*/view_visibility/{key}",
-        Mechanism::Owned,
-        Moves::Tab,
-    ),
-    (
-        WORKSPACE_VIEWS,
         "/workspaces/*/view_owner",
         Mechanism::Owned,
         Moves::Tab,
@@ -895,7 +889,7 @@ const JSON_STORES: &[(&str, &str, &[u64], JsonConverter)] = &[
     (
         WORKSPACE_VIEWS,
         "schema_version",
-        &[1, 2],
+        &[1, 2, 3],
         convert_workspace_views,
     ),
     (LABELS, "version", &[1], convert_labels),
@@ -1317,7 +1311,7 @@ mod tests {
         write(
             WORKSPACE_VIEWS,
             json!({"schema_version": 2, "workspaces": [
-                {"device_id": "local", "path": root, "agent_layout": {"tabs": ["w1:t1"]}, "view_bookmarks": {"w1:t1": {"area-1": "display-1"}}, "view_visibility": {"w1:t1": false}, "view_owner": "w1:t1", "view_presentations": {"w1:t1": {"views": false, "layout": {"root": {}}}}, "layout": {"root": {}}},
+                {"device_id": "local", "path": root, "agent_layout": {"tabs": ["w1:t1"]}, "view_bookmarks": {"w1:t1": {"area-1": "display-1"}}, "view_owner": "w1:t1", "view_presentations": {"w1:t1": {"views": false, "layout": {"root": {}}}}, "layout": {"root": {}}},
                 {"device_id": "mini", "path": "/srv/p"},
             ]}),
         );
@@ -1821,7 +1815,7 @@ mod tests {
     #[test]
     fn a_store_of_a_version_this_build_does_not_read_is_left_to_its_loader() {
         let dir = tempfile::tempdir().unwrap();
-        let unknown = br#"{"schema_version": 3, "workspaces": [{"device_id": "local"}]}"#;
+        let unknown = br#"{"schema_version": 99, "workspaces": [{"device_id": "local"}]}"#;
         std::fs::write(dir.path().join(WORKSPACE_VIEWS), unknown).unwrap();
         let outcome = convert(dir.path(), &node()).unwrap();
         assert!(outcome.files.is_empty(), "{outcome:?}");

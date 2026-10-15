@@ -461,7 +461,7 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
         .unwrap()
         .context;
     let before = runtime.snapshot.navigator.focused_workspace_id.clone();
-    let called = |runtime: &Runtime| runtime.workspace_views.as_ref().unwrap().views_calls;
+    let called = |runtime: &Runtime| runtime.workspace_views.as_ref().unwrap().lane_calls;
     runtime
         .workspace_control_action(
             crate::node::TEST_NODE,
@@ -478,10 +478,10 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
         .unwrap();
     assert_eq!(runtime.snapshot.navigator.focused_workspace_id, before);
     assert!(
-        views_of(&runtime, key),
-        "B6: the caller's result is visible when its checkout is shown"
+        !views_of(&runtime, key),
+        "right-lane B17: a background select leaves the caller's lane as it was"
     );
-    assert_eq!(called(&runtime), 0, "a background select calls no column");
+    assert_eq!(called(&runtime), 0, "a background select calls no lane");
     runtime
         .workspace_control_action(
             crate::node::TEST_NODE,
@@ -502,15 +502,15 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
         "{:?}",
         runtime.snapshot.status.last_error
     );
-    assert!(views_of(&runtime, key), "a reveal turns File Views on");
-    // The shell shows a called File Views in a narrow body; a call from the
-    // CLI reaches it only as this count rising (PRD three-column-panel D-07).
-    assert_eq!(called(&runtime), 1, "a reveal calls File Views");
+    assert!(views_of(&runtime, key), "a reveal opens the files lane");
+    // The shell shows a called lane over the terminals; a call from the CLI
+    // reaches it only as this count rising (PRD right-lane B1, B16).
+    assert_eq!(called(&runtime), 1, "a reveal calls the lane");
     let numbered = runtime
         .workspace_views
         .as_ref()
         .unwrap()
-        .views_called
+        .lane_called
         .get(&(key.0.to_owned(), key.1.to_owned()))
         .copied();
     assert_eq!(
@@ -529,7 +529,7 @@ fn views_of(runtime: &Runtime, key: (&str, &str)) -> bool {
         .workspaces
         .iter()
         .find(|view| view.is(key.0, key.1))
-        .map(|view| view.views)
+        .map(|view| view.tool == Some(crate::workspace_views::Tool::Files))
         .unwrap()
 }
 

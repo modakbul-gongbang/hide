@@ -32911,120 +32911,10 @@
           "fill": "$--muted-foreground",
           "textGrowth": "fixed-width",
           "width": 1180,
-          "content": "Agents ≥480 · File Views ≥360 · Tools ≥260 · dividers 8 · full 1116 · mid 848. Independent File Views and Tools controls. Pointer drag moves only a guide; release commits, cancellation restores.",
+          "content": "PRD right-lane: Agent Views, one right lane and a 48px tool rail. The rail holds Files, Changes, Sessions and Memory, the pressed tool with a 2px primary bar, the Files badge while the lane shows another tool, and Memory's dot. The lane opens over the agents or, pinned, docks beside them (Agent Views keep 480); its header names the tool and scope with Pin, Expand and Close. Documents ≥360, ideal 520; the tree ≥180, ideal 240, turned on by the document header's tree button. Dividers move a guide and land once.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
           "fontWeight": "normal"
-        },
-        {
-          "type": "frame",
-          "id": "side-panel-toggle",
-          "name": "Component / File Views toggle",
-          "reusable": true,
-          "width": 24,
-          "height": 24,
-          "layout": "none",
-          "children": [
-            {
-              "id": "side-panel-toggle-button",
-              "type": "ref",
-              "ref": "Nyvom",
-              "name": "Show File Views",
-              "x": 0,
-              "y": 0,
-              "descendants": {
-                "ZIZFR": {
-                  "icon": "files",
-                  "fill": "$--subtle-foreground"
-                }
-              }
-            },
-            {
-              "type": "frame",
-              "id": "side-panel-toggle-badge",
-              "x": 12,
-              "y": -2,
-              "name": "Component / Open File Views count",
-              "reusable": true,
-              "enabled": false,
-              "width": 14,
-              "height": 14,
-              "fill": "$--primary",
-              "cornerRadius": "$--radius-lg",
-              "justifyContent": "center",
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "text",
-                  "id": "side-panel-toggle-count",
-                  "name": "Open File Views count label",
-                  "fill": "$--primary-foreground",
-                  "content": "2",
-                  "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-micro",
-                  "fontWeight": "600"
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "side-panel-tool-tabs",
-          "name": "Component / Tools tabs",
-          "reusable": true,
-          "width": 64,
-          "height": 32,
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "frame",
-              "id": "side-panel-tool-explorer",
-              "name": "Explorer",
-              "width": 32,
-              "height": 32,
-              "stroke": "$--primary",
-              "strokeWidth": {
-                "bottom": "$--size-tab-indicator"
-              },
-              "strokeAlignment": "inner",
-              "justifyContent": "center",
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "icon",
-                  "id": "side-panel-tool-explorer-glyph",
-                  "name": "Glyph",
-                  "width": 14,
-                  "height": 14,
-                  "icon": "folder",
-                  "library": "lucide",
-                  "fill": "$--foreground"
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "side-panel-tool-history",
-              "name": "History",
-              "width": 32,
-              "height": 32,
-              "justifyContent": "center",
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "icon",
-                  "id": "side-panel-tool-history-glyph",
-                  "name": "Glyph",
-                  "width": 14,
-                  "height": 14,
-                  "icon": "git-branch",
-                  "library": "lucide",
-                  "fill": "$--subtle-foreground"
-                }
-              ]
-            }
-          ]
         },
         {
           "type": "frame",
@@ -33060,29 +32950,13 @@
                   "fill": "$--subtle-foreground"
                 }
               }
-            },
-            {
-              "id": "xMinO",
-              "type": "ref",
-              "ref": "side-panel-toggle",
-              "name": "File Views",
-              "width": 24,
-              "height": 24
-            },
-            {
-              "id": "XHe9v",
-              "type": "ref",
-              "ref": "jBxBb",
-              "name": "Tools",
-              "width": 24,
-              "height": 24
             }
           ]
         },
         {
           "type": "frame",
           "id": "side-panel-grip",
-          "name": "Component / Column divider",
+          "name": "Component / Lane divider",
           "reusable": true,
           "width": 8,
           "height": 480,
@@ -33135,111 +33009,6 @@
         },
         {
           "type": "frame",
-          "id": "side-panel",
-          "name": "Component / Workspace columns",
-          "reusable": true,
-          "clip": true,
-          "width": 1116,
-          "height": 840,
-          "fill": "$--background",
-          "layout": "none",
-          "children": [
-            {
-              "id": "YpxMC",
-              "type": "ref",
-              "ref": "rnWpl",
-              "name": "Agents",
-              "x": 0,
-              "y": 0,
-              "width": 480,
-              "height": 840
-            },
-            {
-              "id": "giyPa",
-              "type": "ref",
-              "ref": "PSRwz",
-              "name": "File Views",
-              "x": 488,
-              "y": 0,
-              "width": 360,
-              "height": 840
-            },
-            {
-              "id": "eNvgI",
-              "type": "ref",
-              "ref": "LyGwr",
-              "name": "Tools",
-              "x": 856,
-              "y": 0,
-              "width": 260,
-              "height": 840
-            },
-            {
-              "id": "gPjhF",
-              "type": "ref",
-              "ref": "side-panel-grip",
-              "name": "Agents / File Views divider",
-              "x": 480,
-              "y": 0,
-              "width": 8,
-              "height": 840,
-              "descendants": {
-                "side-panel-grip-line-top": {
-                  "height": 840
-                },
-                "side-panel-grip-pill": {
-                  "y": 408
-                }
-              }
-            },
-            {
-              "id": "w7GZ7c",
-              "type": "ref",
-              "ref": "side-panel-grip",
-              "name": "File Views / Tools divider",
-              "x": 848,
-              "y": 0,
-              "width": 8,
-              "height": 840,
-              "descendants": {
-                "side-panel-grip-line-top": {
-                  "height": 840
-                },
-                "side-panel-grip-pill": {
-                  "y": 408
-                }
-              }
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "jBxBb",
-          "name": "Component / Tools toggle",
-          "reusable": true,
-          "width": 24,
-          "height": 24,
-          "layout": "none",
-          "children": [
-            {
-              "id": "OaJhM",
-              "type": "ref",
-              "ref": "Nyvom",
-              "name": "Show Tools",
-              "x": 0,
-              "y": 0,
-              "layoutPosition": "absolute",
-              "descendants": {
-                "ZIZFR": {
-                  "icon": "panel-right",
-                  "fill": "$--subtle-foreground"
-                }
-              }
-            }
-          ]
-        },
-        {
-          "type": "frame",
           "id": "VMZTz",
           "name": "Component / Workspace toolbar",
           "reusable": true,
@@ -33275,1558 +33044,6 @@
               "type": "ref",
               "ref": "side-panel-actions",
               "name": "Workspace actions"
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "wDo22",
-          "name": "State / Workspace controls / Light",
-          "theme": {
-            "Mode": "Light"
-          },
-          "width": 1216,
-          "fill": "$--background",
-          "layout": "vertical",
-          "gap": 16,
-          "padding": 16,
-          "children": [
-            {
-              "type": "text",
-              "id": "fiuj1",
-              "name": "Theme",
-              "fill": "$--foreground",
-              "content": "Light",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-subhead",
-              "fontWeight": "600"
-            },
-            {
-              "type": "frame",
-              "id": "JWMFd",
-              "name": "Control states",
-              "width": "fill_container",
-              "gap": 24,
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "xv8Io",
-                  "name": "File Views - zero views",
-                  "width": 210,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "TsuQc",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "File Views - zero views",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "d2we3",
-                      "type": "ref",
-                      "ref": "side-panel-toggle",
-                      "name": "File Views - zero views"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "TkXUm",
-                  "name": "File Views - two hidden views",
-                  "width": 210,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "ruHZD",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "File Views - two hidden views",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "e4Mbg5",
-                      "type": "ref",
-                      "ref": "side-panel-toggle",
-                      "name": "File Views - two hidden views",
-                      "descendants": {
-                        "side-panel-toggle-badge": {
-                          "enabled": true
-                        }
-                      }
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "H4M5P",
-                  "name": "File Views - visible",
-                  "width": 210,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "OqlfF",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "File Views - visible",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "nDoHz",
-                      "type": "ref",
-                      "ref": "side-panel-toggle",
-                      "name": "File Views - visible",
-                      "descendants": {
-                        "side-panel-toggle-button": {
-                          "fill": "$--secondary"
-                        },
-                        "side-panel-toggle-badge": {
-                          "enabled": false
-                        }
-                      }
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "FTnAH",
-                  "name": "Tools - hidden",
-                  "width": 210,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "UXhec",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Tools - hidden",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "Znr7R",
-                      "type": "ref",
-                      "ref": "jBxBb",
-                      "name": "Tools - hidden"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "mCybo",
-                  "name": "Tools - visible",
-                  "width": 210,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "capI7",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Tools - visible",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "NGmv6",
-                      "type": "ref",
-                      "ref": "jBxBb",
-                      "name": "Tools - visible",
-                      "descendants": {
-                        "OaJhM": {
-                          "fill": "$--secondary"
-                        }
-                      }
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "dtzDh",
-              "name": "Hover and keyboard focus",
-              "gap": 24,
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "kHOw3",
-                  "name": "Hover",
-                  "width": 160,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "wVHEG",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Hover",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "dfcBy",
-                      "type": "ref",
-                      "ref": "side-panel-toggle",
-                      "name": "Hover",
-                      "descendants": {
-                        "side-panel-toggle-button": {
-                          "fill": "$--secondary"
-                        }
-                      }
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "GS5JY",
-                  "name": "Keyboard focus",
-                  "width": 160,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "hmQM8",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Keyboard focus",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "L52CRl",
-                      "type": "ref",
-                      "ref": "side-panel-toggle",
-                      "name": "Keyboard focus",
-                      "descendants": {
-                        "side-panel-toggle-button": {
-                          "fill": "$--secondary",
-                          "stroke": "$--ring",
-                          "strokeWidth": 1,
-                          "strokeAlignment": "outer"
-                        }
-                      }
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "LbWWb",
-                  "name": "Hover",
-                  "width": 160,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "ipc72",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Hover",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "vqPrt",
-                      "type": "ref",
-                      "ref": "jBxBb",
-                      "name": "Hover",
-                      "descendants": {
-                        "OaJhM": {
-                          "fill": "$--secondary"
-                        }
-                      }
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "M6x7j",
-                  "name": "Keyboard focus",
-                  "width": 160,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "L9MkO",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Keyboard focus",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "nlHtK",
-                      "type": "ref",
-                      "ref": "jBxBb",
-                      "name": "Keyboard focus",
-                      "descendants": {
-                        "OaJhM": {
-                          "fill": "$--secondary",
-                          "stroke": "$--ring",
-                          "strokeWidth": 1,
-                          "strokeAlignment": "outer"
-                        }
-                      }
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "Trmu6",
-              "name": "Tools tab states",
-              "gap": 40,
-              "children": [
-                {
-                  "id": "r1NHGo",
-                  "type": "ref",
-                  "ref": "side-panel-tool-tabs",
-                  "name": "Explorer selected"
-                },
-                {
-                  "id": "HupD4",
-                  "type": "ref",
-                  "ref": "side-panel-tool-tabs",
-                  "name": "History selected",
-                  "descendants": {
-                    "side-panel-tool-explorer": {
-                      "stroke": []
-                    },
-                    "side-panel-tool-explorer-glyph": {
-                      "fill": "$--subtle-foreground"
-                    },
-                    "side-panel-tool-history": {
-                      "stroke": "$--primary",
-                      "strokeWidth": {
-                        "bottom": "$--size-tab-indicator"
-                      },
-                      "strokeAlignment": "inner"
-                    },
-                    "side-panel-tool-history-glyph": {
-                      "fill": "$--foreground"
-                    }
-                  }
-                }
-              ]
-            },
-            {
-              "id": "WEiON",
-              "type": "ref",
-              "ref": "VMZTz",
-              "name": "Shared toolbar - File Views visible, Tools visible, badge hidden",
-              "width": 1184,
-              "descendants": {
-                "Kjfje/xMinO/side-panel-toggle-button": {
-                  "fill": "$--secondary"
-                },
-                "Kjfje/xMinO/side-panel-toggle-badge": {
-                  "enabled": false
-                },
-                "Kjfje/XHe9v/OaJhM": {
-                  "fill": "$--secondary"
-                }
-              }
-            },
-            {
-              "type": "frame",
-              "id": "y4mGn6",
-              "name": "Divider states",
-              "gap": 48,
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "cjj0T",
-                  "name": "Rest",
-                  "width": 140,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "iYZcZ",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Rest",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "B07Oh",
-                      "name": "Frozen neighboring content",
-                      "width": 140,
-                      "height": 160,
-                      "fill": "$--card",
-                      "layout": "none",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "IGnDU",
-                          "x": 8,
-                          "y": 8,
-                          "name": "Agent content",
-                          "fill": "$--foreground",
-                          "content": "fixture %",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "id": "csrXx",
-                          "type": "ref",
-                          "ref": "side-panel-grip",
-                          "name": "Rest",
-                          "x": 70,
-                          "y": 0,
-                          "height": 160,
-                          "descendants": {
-                            "side-panel-grip-line-top": {
-                              "height": 160,
-                              "enabled": false
-                            },
-                            "side-panel-grip-pill": {
-                              "y": 68,
-                              "enabled": false
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "gXy49",
-                  "name": "Hover",
-                  "width": 140,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "qiPLy",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Hover",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "Zq8fb",
-                      "name": "Frozen neighboring content",
-                      "width": 140,
-                      "height": 160,
-                      "fill": "$--card",
-                      "layout": "none",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "tgjy3",
-                          "x": 8,
-                          "y": 8,
-                          "name": "Agent content",
-                          "fill": "$--foreground",
-                          "content": "fixture %",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "id": "LJrfK",
-                          "type": "ref",
-                          "ref": "side-panel-grip",
-                          "name": "Hover",
-                          "x": 70,
-                          "y": 0,
-                          "height": 160,
-                          "descendants": {
-                            "side-panel-grip-line-top": {
-                              "height": 160,
-                              "enabled": true
-                            },
-                            "side-panel-grip-pill": {
-                              "y": 68,
-                              "enabled": true
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "T9bsO",
-                  "name": "Keyboard focus",
-                  "width": 140,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "ztA6i",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Keyboard focus",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "t4nv8",
-                      "name": "Frozen neighboring content",
-                      "width": 140,
-                      "height": 160,
-                      "fill": "$--card",
-                      "layout": "none",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "wuogb",
-                          "x": 8,
-                          "y": 8,
-                          "name": "Agent content",
-                          "fill": "$--foreground",
-                          "content": "fixture %",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "id": "L3u2g",
-                          "type": "ref",
-                          "ref": "side-panel-grip",
-                          "name": "Keyboard focus",
-                          "x": 70,
-                          "y": 0,
-                          "height": 160,
-                          "descendants": {
-                            "side-panel-grip-line-top": {
-                              "height": 160,
-                              "enabled": true
-                            },
-                            "side-panel-grip-pill": {
-                              "y": 68,
-                              "enabled": true,
-                              "stroke": "$--border"
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "VwqRB",
-                  "name": "Drag guide only",
-                  "width": 140,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "oLvkM",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Drag guide only",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "U4cEMG",
-                      "name": "Frozen neighboring content",
-                      "width": 140,
-                      "height": 160,
-                      "fill": "$--card",
-                      "layout": "none",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "kT4Yd",
-                          "x": 8,
-                          "y": 8,
-                          "name": "Agent content",
-                          "fill": "$--foreground",
-                          "content": "fixture %",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "id": "svs73",
-                          "type": "ref",
-                          "ref": "side-panel-grip",
-                          "name": "Drag guide only",
-                          "x": 70,
-                          "y": 0,
-                          "height": 160,
-                          "descendants": {
-                            "side-panel-grip-line-top": {
-                              "height": 160,
-                              "enabled": true
-                            },
-                            "side-panel-grip-pill": {
-                              "y": 68,
-                              "enabled": true
-                            }
-                          }
-                        },
-                        {
-                          "id": "p5jz7s",
-                          "type": "ref",
-                          "ref": "side-panel-grip",
-                          "name": "Temporary guide at proposed position",
-                          "x": 102,
-                          "y": 0,
-                          "height": 160,
-                          "descendants": {
-                            "side-panel-grip-line-top": {
-                              "height": 160,
-                              "enabled": true
-                            },
-                            "side-panel-grip-pill": {
-                              "y": 68,
-                              "enabled": true
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "MOFZD",
-                  "name": "Released",
-                  "width": 140,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "je3SE",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Released",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "fmfIP",
-                      "name": "Frozen neighboring content",
-                      "width": 140,
-                      "height": 160,
-                      "fill": "$--card",
-                      "layout": "none",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "RnpcZ",
-                          "x": 8,
-                          "y": 8,
-                          "name": "Agent content",
-                          "fill": "$--foreground",
-                          "content": "fixture %",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "id": "TZCxd",
-                          "type": "ref",
-                          "ref": "side-panel-grip",
-                          "name": "Released",
-                          "x": 70,
-                          "y": 0,
-                          "height": 160,
-                          "descendants": {
-                            "side-panel-grip-line-top": {
-                              "height": 160,
-                              "enabled": false
-                            },
-                            "side-panel-grip-pill": {
-                              "y": 68,
-                              "enabled": false
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "O3cNX",
-                  "name": "Cancelled",
-                  "width": 140,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "w5kPV",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Cancelled",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "jyMzm",
-                      "name": "Frozen neighboring content",
-                      "width": 140,
-                      "height": 160,
-                      "fill": "$--card",
-                      "layout": "none",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "fg2VP",
-                          "x": 8,
-                          "y": 8,
-                          "name": "Agent content",
-                          "fill": "$--foreground",
-                          "content": "fixture %",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "id": "SSUaG",
-                          "type": "ref",
-                          "ref": "side-panel-grip",
-                          "name": "Cancelled",
-                          "x": 70,
-                          "y": 0,
-                          "height": 160,
-                          "descendants": {
-                            "side-panel-grip-line-top": {
-                              "height": 160,
-                              "enabled": false
-                            },
-                            "side-panel-grip-pill": {
-                              "y": 68,
-                              "enabled": false
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "VdiNa",
-          "name": "State / Workspace controls / Dark",
-          "theme": {
-            "Mode": "Dark"
-          },
-          "width": 1216,
-          "fill": "$--background",
-          "layout": "vertical",
-          "gap": 16,
-          "padding": 16,
-          "children": [
-            {
-              "type": "text",
-              "id": "ps2QC",
-              "name": "Theme",
-              "fill": "$--foreground",
-              "content": "Dark",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-subhead",
-              "fontWeight": "600"
-            },
-            {
-              "type": "frame",
-              "id": "S8n6z6",
-              "name": "Control states",
-              "width": "fill_container",
-              "gap": 24,
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "ZsbD5",
-                  "name": "File Views - zero views",
-                  "width": 210,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "aYRPt",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "File Views - zero views",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "o7F4IZ",
-                      "type": "ref",
-                      "ref": "side-panel-toggle",
-                      "name": "File Views - zero views"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "fdFwE",
-                  "name": "File Views - two hidden views",
-                  "width": 210,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "fn4i6",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "File Views - two hidden views",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "GGafP",
-                      "type": "ref",
-                      "ref": "side-panel-toggle",
-                      "name": "File Views - two hidden views",
-                      "descendants": {
-                        "side-panel-toggle-badge": {
-                          "enabled": true
-                        }
-                      }
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "vsOXZ",
-                  "name": "File Views - visible",
-                  "width": 210,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "XDtN7",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "File Views - visible",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "CntmM",
-                      "type": "ref",
-                      "ref": "side-panel-toggle",
-                      "name": "File Views - visible",
-                      "descendants": {
-                        "side-panel-toggle-button": {
-                          "fill": "$--secondary"
-                        },
-                        "side-panel-toggle-badge": {
-                          "enabled": false
-                        }
-                      }
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "TZvAz",
-                  "name": "Tools - hidden",
-                  "width": 210,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "c3XQU3",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Tools - hidden",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "Tv3Rk",
-                      "type": "ref",
-                      "ref": "jBxBb",
-                      "name": "Tools - hidden"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "KZMiz",
-                  "name": "Tools - visible",
-                  "width": 210,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "zVPPl",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Tools - visible",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "j8ZHj",
-                      "type": "ref",
-                      "ref": "jBxBb",
-                      "name": "Tools - visible",
-                      "descendants": {
-                        "OaJhM": {
-                          "fill": "$--secondary"
-                        }
-                      }
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "zAv9T",
-              "name": "Hover and keyboard focus",
-              "gap": 24,
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "oTKXJ",
-                  "name": "Hover",
-                  "width": 160,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "JDflo",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Hover",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "iG9Gw",
-                      "type": "ref",
-                      "ref": "side-panel-toggle",
-                      "name": "Hover",
-                      "descendants": {
-                        "side-panel-toggle-button": {
-                          "fill": "$--secondary"
-                        }
-                      }
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "Y4Ba3",
-                  "name": "Keyboard focus",
-                  "width": 160,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "wQjzV",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Keyboard focus",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "AM03k",
-                      "type": "ref",
-                      "ref": "side-panel-toggle",
-                      "name": "Keyboard focus",
-                      "descendants": {
-                        "side-panel-toggle-button": {
-                          "fill": "$--secondary",
-                          "stroke": "$--ring",
-                          "strokeWidth": 1,
-                          "strokeAlignment": "outer"
-                        }
-                      }
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "HOef3",
-                  "name": "Hover",
-                  "width": 160,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "OY6uV",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Hover",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "zf7mL",
-                      "type": "ref",
-                      "ref": "jBxBb",
-                      "name": "Hover",
-                      "descendants": {
-                        "OaJhM": {
-                          "fill": "$--secondary"
-                        }
-                      }
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "gN29X",
-                  "name": "Keyboard focus",
-                  "width": 160,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "w7vhnH",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Keyboard focus",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "xs0Ux",
-                      "type": "ref",
-                      "ref": "jBxBb",
-                      "name": "Keyboard focus",
-                      "descendants": {
-                        "OaJhM": {
-                          "fill": "$--secondary",
-                          "stroke": "$--ring",
-                          "strokeWidth": 1,
-                          "strokeAlignment": "outer"
-                        }
-                      }
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "Q8VJj",
-              "name": "Tools tab states",
-              "gap": 40,
-              "children": [
-                {
-                  "id": "ASgEn",
-                  "type": "ref",
-                  "ref": "side-panel-tool-tabs",
-                  "name": "Explorer selected"
-                },
-                {
-                  "id": "UECqF",
-                  "type": "ref",
-                  "ref": "side-panel-tool-tabs",
-                  "name": "History selected",
-                  "descendants": {
-                    "side-panel-tool-explorer": {
-                      "stroke": []
-                    },
-                    "side-panel-tool-explorer-glyph": {
-                      "fill": "$--subtle-foreground"
-                    },
-                    "side-panel-tool-history": {
-                      "stroke": "$--primary",
-                      "strokeWidth": {
-                        "bottom": "$--size-tab-indicator"
-                      },
-                      "strokeAlignment": "inner"
-                    },
-                    "side-panel-tool-history-glyph": {
-                      "fill": "$--foreground"
-                    }
-                  }
-                }
-              ]
-            },
-            {
-              "id": "RjEwX",
-              "type": "ref",
-              "ref": "VMZTz",
-              "name": "Shared toolbar - File Views visible, Tools visible, badge hidden",
-              "width": 1184,
-              "descendants": {
-                "Kjfje/xMinO/side-panel-toggle-button": {
-                  "fill": "$--secondary"
-                },
-                "Kjfje/xMinO/side-panel-toggle-badge": {
-                  "enabled": false
-                },
-                "Kjfje/XHe9v/OaJhM": {
-                  "fill": "$--secondary"
-                }
-              }
-            },
-            {
-              "type": "frame",
-              "id": "w9DbnA",
-              "name": "Divider states",
-              "gap": 48,
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "bmZLe",
-                  "name": "Rest",
-                  "width": 140,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "Y7ezl",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Rest",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "MjJQH",
-                      "name": "Frozen neighboring content",
-                      "width": 140,
-                      "height": 160,
-                      "fill": "$--card",
-                      "layout": "none",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "T7yAWM",
-                          "x": 8,
-                          "y": 8,
-                          "name": "Agent content",
-                          "fill": "$--foreground",
-                          "content": "fixture %",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "id": "L6ii5",
-                          "type": "ref",
-                          "ref": "side-panel-grip",
-                          "name": "Rest",
-                          "x": 70,
-                          "y": 0,
-                          "height": 160,
-                          "descendants": {
-                            "side-panel-grip-line-top": {
-                              "height": 160,
-                              "enabled": false
-                            },
-                            "side-panel-grip-pill": {
-                              "y": 68,
-                              "enabled": false
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "v61lO",
-                  "name": "Hover",
-                  "width": 140,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "KeSbB",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Hover",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "k01SsN",
-                      "name": "Frozen neighboring content",
-                      "width": 140,
-                      "height": 160,
-                      "fill": "$--card",
-                      "layout": "none",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "mgcD9",
-                          "x": 8,
-                          "y": 8,
-                          "name": "Agent content",
-                          "fill": "$--foreground",
-                          "content": "fixture %",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "id": "y1CI3",
-                          "type": "ref",
-                          "ref": "side-panel-grip",
-                          "name": "Hover",
-                          "x": 70,
-                          "y": 0,
-                          "height": 160,
-                          "descendants": {
-                            "side-panel-grip-line-top": {
-                              "height": 160,
-                              "enabled": true
-                            },
-                            "side-panel-grip-pill": {
-                              "y": 68,
-                              "enabled": true
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "Q7Jp2",
-                  "name": "Keyboard focus",
-                  "width": 140,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "FyLTT",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Keyboard focus",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "a6NYVF",
-                      "name": "Frozen neighboring content",
-                      "width": 140,
-                      "height": 160,
-                      "fill": "$--card",
-                      "layout": "none",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "YbiD0",
-                          "x": 8,
-                          "y": 8,
-                          "name": "Agent content",
-                          "fill": "$--foreground",
-                          "content": "fixture %",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "id": "eMWdL",
-                          "type": "ref",
-                          "ref": "side-panel-grip",
-                          "name": "Keyboard focus",
-                          "x": 70,
-                          "y": 0,
-                          "height": 160,
-                          "descendants": {
-                            "side-panel-grip-line-top": {
-                              "height": 160,
-                              "enabled": true
-                            },
-                            "side-panel-grip-pill": {
-                              "y": 68,
-                              "enabled": true,
-                              "stroke": "$--border"
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "Ha6b6",
-                  "name": "Drag guide only",
-                  "width": 140,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "y1GHm",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Drag guide only",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "IDCB1",
-                      "name": "Frozen neighboring content",
-                      "width": 140,
-                      "height": 160,
-                      "fill": "$--card",
-                      "layout": "none",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "K0Nlv",
-                          "x": 8,
-                          "y": 8,
-                          "name": "Agent content",
-                          "fill": "$--foreground",
-                          "content": "fixture %",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "id": "zib8u",
-                          "type": "ref",
-                          "ref": "side-panel-grip",
-                          "name": "Drag guide only",
-                          "x": 70,
-                          "y": 0,
-                          "height": 160,
-                          "descendants": {
-                            "side-panel-grip-line-top": {
-                              "height": 160,
-                              "enabled": true
-                            },
-                            "side-panel-grip-pill": {
-                              "y": 68,
-                              "enabled": true
-                            }
-                          }
-                        },
-                        {
-                          "id": "nNNK5",
-                          "type": "ref",
-                          "ref": "side-panel-grip",
-                          "name": "Temporary guide at proposed position",
-                          "x": 102,
-                          "y": 0,
-                          "height": 160,
-                          "descendants": {
-                            "side-panel-grip-line-top": {
-                              "height": 160,
-                              "enabled": true
-                            },
-                            "side-panel-grip-pill": {
-                              "y": 68,
-                              "enabled": true
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "A56fwP",
-                  "name": "Released",
-                  "width": 140,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "Mtkaw",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Released",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "NFEqJ",
-                      "name": "Frozen neighboring content",
-                      "width": 140,
-                      "height": 160,
-                      "fill": "$--card",
-                      "layout": "none",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "Xu042",
-                          "x": 8,
-                          "y": 8,
-                          "name": "Agent content",
-                          "fill": "$--foreground",
-                          "content": "fixture %",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "id": "F7Maa",
-                          "type": "ref",
-                          "ref": "side-panel-grip",
-                          "name": "Released",
-                          "x": 70,
-                          "y": 0,
-                          "height": 160,
-                          "descendants": {
-                            "side-panel-grip-line-top": {
-                              "height": 160,
-                              "enabled": false
-                            },
-                            "side-panel-grip-pill": {
-                              "y": 68,
-                              "enabled": false
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "TuApr",
-                  "name": "Cancelled",
-                  "width": 140,
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "TROdX",
-                      "name": "State label",
-                      "fill": "$--muted-foreground",
-                      "content": "Cancelled",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "YAukV",
-                      "name": "Frozen neighboring content",
-                      "width": 140,
-                      "height": 160,
-                      "fill": "$--card",
-                      "layout": "none",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "y1LiC2",
-                          "x": 8,
-                          "y": 8,
-                          "name": "Agent content",
-                          "fill": "$--foreground",
-                          "content": "fixture %",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "id": "PaL35",
-                          "type": "ref",
-                          "ref": "side-panel-grip",
-                          "name": "Cancelled",
-                          "x": 70,
-                          "y": 0,
-                          "height": 160,
-                          "descendants": {
-                            "side-panel-grip-line-top": {
-                              "height": 160,
-                              "enabled": false
-                            },
-                            "side-panel-grip-pill": {
-                              "y": 68,
-                              "enabled": false
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
             }
           ]
         },
@@ -35158,9 +33375,9 @@
         {
           "type": "frame",
           "id": "GGXfK",
-          "name": "Component / File column toolbar",
+          "name": "Component / Document header",
           "reusable": true,
-          "width": 360,
+          "width": 520,
           "height": 32,
           "fill": "$--card",
           "stroke": "$--border",
@@ -35171,18 +33388,26 @@
           "gap": 8,
           "padding": [
             0,
-            12
+            "$--spacing-md",
+            0,
+            "$--spacing-xs"
           ],
           "alignItems": "center",
           "children": [
             {
+              "id": "GGXfK-tree",
+              "type": "ref",
+              "ref": "lane-tree-button",
+              "name": "Tree button"
+            },
+            {
               "type": "text",
               "id": "BUboy",
-              "name": "Truncated path - docs/한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md",
+              "name": "Path in steps",
               "fill": "$--subtle-foreground",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "… 제목과 경로 확인.md",
+              "content": "docs › 한글과 English 작업 기록.md",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -35287,702 +33512,2184 @@
         },
         {
           "type": "frame",
-          "id": "PSRwz",
-          "name": "Component / File Views column",
-          "reusable": true,
-          "clip": true,
-          "width": 360,
-          "height": 840,
-          "fill": "$--card",
-          "layout": "vertical",
+          "id": "lane-rail",
+          "name": "Component / Tool rail",
           "children": [
             {
-              "type": "frame",
-              "id": "tPjjv",
-              "name": "File Views tab strip",
-              "width": "fill_container",
-              "height": 32,
-              "fill": "$--card",
-              "stroke": "$--border",
-              "strokeWidth": {
-                "bottom": "$--size-hairline"
-              },
-              "strokeAlignment": "inner",
-              "alignItems": "center",
-              "children": [
-                {
-                  "id": "b7bsc7",
-                  "type": "ref",
-                  "ref": "view-tab",
-                  "name": "Korean and English long file title",
-                  "width": 304,
-                  "descendants": {
-                    "view-tab-mark": {
-                      "icon": "file-text",
-                      "fill": "$--file-blue"
-                    },
-                    "view-tab-title-lane": {
-                      "clip": true
-                    },
-                    "view-tab-title": {
-                      "content": "한글과 English 작업 기록 - 긴 파일…",
-                      "fill": "$--foreground",
-                      "fontStyle": "italic",
-                      "height": 16
-                    },
-                    "view-tab-close": {
-                      "enabled": true
-                    }
-                  }
+              "id": "lane-rail-files",
+              "type": "ref",
+              "ref": "lane-tool",
+              "name": "Files",
+              "descendants": {
+                "lane-tool-glyph": {
+                  "icon": "file"
                 },
-                {
-                  "id": "N6jVdg",
-                  "type": "ref",
-                  "ref": "Nyvom",
-                  "name": "New File View",
-                  "descendants": {
-                    "ZIZFR": {
-                      "icon": "plus",
-                      "fill": "$--subtle-foreground"
-                    }
-                  }
-                },
-                {
-                  "id": "eeRGB",
-                  "type": "ref",
-                  "ref": "Nyvom",
-                  "name": "File Views menu",
-                  "width": 28,
-                  "height": 24,
-                  "descendants": {
-                    "ZIZFR": {
-                      "icon": "ellipsis",
-                      "fill": "$--subtle-foreground"
-                    }
-                  }
+                "lane-tool-label": {
+                  "content": "Files"
                 }
-              ]
+              }
             },
             {
-              "id": "fenJg",
+              "id": "lane-rail-changes",
               "type": "ref",
-              "ref": "GGXfK",
-              "name": "Document controls",
+              "ref": "lane-tool",
+              "name": "Changes",
+              "descendants": {
+                "lane-tool-glyph": {
+                  "icon": "git-branch"
+                },
+                "lane-tool-label": {
+                  "content": "Changes"
+                }
+              }
+            },
+            {
+              "id": "lane-rail-sessions",
+              "type": "ref",
+              "ref": "lane-tool",
+              "name": "Sessions",
+              "descendants": {
+                "lane-tool-glyph": {
+                  "icon": "message-square"
+                },
+                "lane-tool-label": {
+                  "content": "Sessions"
+                }
+              }
+            },
+            {
+              "id": "lane-rail-memory",
+              "type": "ref",
+              "ref": "lane-tool",
+              "name": "Memory",
+              "descendants": {
+                "lane-tool-glyph": {
+                  "icon": "book-open"
+                },
+                "lane-tool-label": {
+                  "content": "Memory"
+                }
+              }
+            },
+            {
+              "type": "frame",
+              "id": "lane-rail-fill",
+              "name": "Filler",
+              "children": [],
+              "width": 1,
+              "height": "fill_container"
+            },
+            {
+              "id": "lane-rail-more",
+              "type": "ref",
+              "ref": "Nyvom",
+              "name": "More",
+              "fill": [],
+              "descendants": {
+                "ZIZFR": {
+                  "icon": "ellipsis",
+                  "fill": "$--subtle-foreground"
+                }
+              }
+            }
+          ],
+          "reusable": true,
+          "width": 48,
+          "height": 480,
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "padding": [
+            "$--spacing-xs",
+            0
+          ],
+          "alignItems": "center",
+          "fill": "$--sidebar",
+          "stroke": "$--border",
+          "strokeWidth": {
+            "left": "$--size-hairline"
+          },
+          "strokeAlignment": "inner"
+        },
+        {
+          "type": "frame",
+          "id": "lane-tool",
+          "name": "Component / Tool rail button",
+          "children": [
+            {
+              "type": "rectangle",
+              "id": "lane-tool-bar",
+              "name": "Pressed bar",
+              "layoutPosition": "absolute",
+              "x": -4,
+              "y": 8,
+              "width": 2,
+              "height": 24,
+              "cornerRadius": 999,
+              "fill": "$--primary",
+              "enabled": false
+            },
+            {
+              "type": "icon",
+              "id": "lane-tool-glyph",
+              "name": "Glyph",
+              "enabled": true,
+              "width": 20,
+              "height": 20,
+              "icon": "file",
+              "library": "lucide",
+              "fill": "$--muted-foreground"
+            },
+            {
+              "type": "text",
+              "id": "lane-tool-label",
+              "name": "Files",
+              "content": "Files",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "400"
+            },
+            {
+              "type": "frame",
+              "id": "lane-tool-badge",
+              "name": "Open views count",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "lane-tool-badge-t",
+                  "name": "2",
+                  "content": "2",
+                  "fill": "$--primary-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "400"
+                }
+              ],
+              "layoutPosition": "absolute",
+              "x": 26,
+              "y": 0,
+              "height": 14,
+              "width": 14,
+              "cornerRadius": 999,
+              "fill": "$--primary",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "enabled": false
+            },
+            {
+              "type": "frame",
+              "id": "lane-tool-dot",
+              "name": "Questions waiting",
+              "children": [],
+              "layoutPosition": "absolute",
+              "x": 29,
+              "y": 4,
+              "width": 7,
+              "height": 7,
+              "cornerRadius": 999,
+              "fill": "$--warning",
+              "enabled": false
+            }
+          ],
+          "reusable": true,
+          "width": 40,
+          "height": 40,
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "justifyContent": "center",
+          "alignItems": "center",
+          "cornerRadius": "$--radius-md"
+        },
+        {
+          "type": "frame",
+          "id": "lane-header",
+          "name": "Component / Lane header",
+          "children": [
+            {
+              "type": "text",
+              "id": "lane-header-tool",
+              "name": "Files",
+              "content": "Files",
+              "fill": "$--foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "lane-header-scope",
+              "name": " · settings-ui",
+              "content": " · settings-ui",
+              "fill": "$--subtle-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "400",
+              "textGrowth": "fixed-width",
               "width": "fill_container"
             },
             {
-              "type": "frame",
-              "id": "nFrdf",
-              "name": "Markdown editor",
-              "clip": true,
-              "width": "fill_container",
-              "height": "fill_container",
-              "fill": "$--card",
-              "layout": "vertical",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "aX9gF",
-                  "name": "Editor line 1",
-                  "width": "fill_container",
-                  "height": 38,
-                  "fill": "$--secondary",
-                  "gap": 8,
-                  "padding": [
-                    0,
-                    8
-                  ],
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "jOt0p",
-                      "name": "Line number",
-                      "fill": "$--muted-foreground",
-                      "content": "1",
-                      "fontFamily": "$--font-mono",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "text",
-                      "id": "iExJ4",
-                      "name": "Markdown content",
-                      "fill": "$--file-blue",
-                      "content": "# 긴 제목의 작업 기록",
-                      "fontFamily": "$--font-mono",
-                      "fontSize": "$--text-editor-heading-1",
-                      "fontWeight": "600"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "K5ZjT",
-                  "name": "Editor line 2",
-                  "width": "fill_container",
-                  "height": 24,
-                  "gap": 8,
-                  "padding": [
-                    0,
-                    8
-                  ],
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "T1KFmN",
-                      "name": "Line number",
-                      "fill": "$--muted-foreground",
-                      "content": "2",
-                      "fontFamily": "$--font-mono",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "text",
-                      "id": "sfXAM",
-                      "name": "Markdown content",
-                      "fill": "$--foreground",
-                      "fontFamily": "$--font-mono",
-                      "fontSize": "$--text-editor-document",
-                      "fontWeight": "normal"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "ZcJ4b",
-                  "name": "Editor line 3",
-                  "width": "fill_container",
-                  "height": 24,
-                  "gap": 8,
-                  "padding": [
-                    0,
-                    8
-                  ],
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "h10qC",
-                      "name": "Line number",
-                      "fill": "$--muted-foreground",
-                      "content": "3",
-                      "fontFamily": "$--font-mono",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "text",
-                      "id": "fzHJn",
-                      "name": "Markdown content",
-                      "fill": "$--foreground",
-                      "content": "한글과 English를 나란히 읽습니다.",
-                      "fontFamily": "$--font-mono",
-                      "fontSize": "$--text-editor-document",
-                      "fontWeight": "normal"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "nxhzG",
-                  "name": "Editor line 4",
-                  "width": "fill_container",
-                  "height": 24,
-                  "gap": 8,
-                  "padding": [
-                    0,
-                    8
-                  ],
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "GQ6yZ",
-                      "name": "Line number",
-                      "fill": "$--muted-foreground",
-                      "content": "4",
-                      "fontFamily": "$--font-mono",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "text",
-                      "id": "oVfkk",
-                      "name": "Markdown content",
-                      "fill": "$--foreground",
-                      "fontFamily": "$--font-mono",
-                      "fontSize": "$--text-editor-document",
-                      "fontWeight": "normal"
-                    }
-                  ]
+              "id": "lane-header-pin",
+              "type": "ref",
+              "ref": "lane-pin",
+              "name": "Pin"
+            },
+            {
+              "id": "lane-header-expand",
+              "type": "ref",
+              "ref": "Nyvom",
+              "name": "Expand",
+              "fill": [],
+              "descendants": {
+                "ZIZFR": {
+                  "icon": "maximize-2",
+                  "fill": "$--subtle-foreground"
                 }
-              ]
+              }
+            },
+            {
+              "id": "lane-header-close",
+              "type": "ref",
+              "ref": "Nyvom",
+              "name": "Close",
+              "fill": [],
+              "descendants": {
+                "ZIZFR": {
+                  "icon": "x",
+                  "fill": "$--subtle-foreground"
+                }
+              }
             }
-          ]
+          ],
+          "reusable": true,
+          "width": 520,
+          "height": 32,
+          "layout": "horizontal",
+          "gap": "$--spacing-xxs",
+          "alignItems": "center",
+          "padding": [
+            0,
+            "$--spacing-xs",
+            0,
+            "$--spacing-md"
+          ],
+          "fill": "$--card",
+          "stroke": "$--border",
+          "strokeWidth": {
+            "bottom": "$--size-hairline"
+          },
+          "strokeAlignment": "inner"
         },
         {
           "type": "frame",
-          "id": "LyGwr",
-          "name": "Component / Tools column",
-          "reusable": true,
-          "clip": true,
-          "width": 260,
-          "height": 840,
-          "fill": "$--card",
-          "layout": "vertical",
+          "id": "lane-pin",
+          "name": "Component / Lane pin",
           "children": [
             {
-              "type": "frame",
-              "id": "H2M1v0",
-              "name": "Tools tab strip",
-              "width": "fill_container",
-              "height": 32,
-              "stroke": "$--border",
-              "strokeWidth": {
-                "bottom": "$--size-hairline"
-              },
-              "strokeAlignment": "inner",
-              "alignItems": "center",
-              "children": [
-                {
-                  "id": "HWGiW",
-                  "type": "ref",
-                  "ref": "side-panel-tool-tabs",
-                  "name": "Explorer and History"
-                }
-              ]
+              "type": "path",
+              "id": "lane-pin-glyph",
+              "name": "Pin glyph",
+              "width": 14,
+              "height": 14,
+              "geometry": "M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z",
+              "viewBox": [
+                0,
+                0,
+                24,
+                24
+              ],
+              "stroke": "$--muted-foreground",
+              "strokeWidth": 2,
+              "strokeLinecap": "round",
+              "strokeLinejoin": "round",
+              "strokeAlignment": "center"
+            }
+          ],
+          "reusable": true,
+          "width": 24,
+          "height": 24,
+          "cornerRadius": "$--radius-sm",
+          "justifyContent": "center",
+          "alignItems": "center"
+        },
+        {
+          "type": "frame",
+          "id": "lane-tree-button",
+          "name": "Component / Tree button",
+          "children": [
+            {
+              "type": "icon",
+              "id": "lane-tree-button-glyph",
+              "name": "Glyph",
+              "enabled": true,
+              "width": 12,
+              "height": 12,
+              "icon": "folder",
+              "library": "lucide",
+              "fill": "$--subtle-foreground"
+            },
+            {
+              "type": "text",
+              "id": "lane-tree-button-label",
+              "name": "settings-ui",
+              "content": "settings-ui",
+              "fill": "$--subtle-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "400"
+            },
+            {
+              "type": "icon",
+              "id": "lane-tree-button-chevron",
+              "name": "Glyph",
+              "enabled": true,
+              "width": 12,
+              "height": 12,
+              "icon": "chevron-down",
+              "library": "lucide",
+              "fill": "$--muted-foreground"
+            }
+          ],
+          "reusable": true,
+          "height": 24,
+          "layout": "horizontal",
+          "gap": "$--spacing-xxs",
+          "alignItems": "center",
+          "padding": [
+            0,
+            "$--spacing-xs"
+          ],
+          "cornerRadius": "$--radius-sm",
+          "stroke": "$--border",
+          "strokeWidth": "$--size-hairline",
+          "strokeAlignment": "inner"
+        },
+        {
+          "type": "frame",
+          "id": "lane-states-l",
+          "name": "State / Right lane / Light",
+          "children": [
+            {
+              "type": "text",
+              "id": "lane-l-theme",
+              "name": "Light",
+              "content": "Light",
+              "fill": "$--foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-headline",
+              "fontWeight": "600"
             },
             {
               "type": "frame",
-              "id": "b22eS",
-              "name": "Explorer root",
-              "width": "fill_container",
-              "height": 32,
-              "stroke": "$--border",
-              "strokeWidth": {
-                "bottom": "$--size-hairline"
-              },
-              "strokeAlignment": "inner",
-              "gap": 8,
-              "padding": [
-                0,
-                12
+              "id": "lane-l-rail",
+              "name": "Tool rail",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "lane-l-rail-files-cell",
+                  "name": "Files pressed",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-rail-files-cap",
+                      "name": "Files pressed",
+                      "content": "Files pressed",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-l-rail-files",
+                      "type": "ref",
+                      "ref": "lane-rail",
+                      "name": "Files pressed",
+                      "height": 260,
+                      "descendants": {
+                        "lane-rail-files": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-rail-files/lane-tool-bar": {
+                          "enabled": true
+                        },
+                        "lane-rail-files/lane-tool-glyph": {
+                          "fill": "$--foreground"
+                        },
+                        "lane-rail-files/lane-tool-label": {
+                          "fill": "$--foreground",
+                          "fontWeight": "500"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-l-rail-changes-cell",
+                  "name": "Changes pressed",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-rail-changes-cap",
+                      "name": "Changes pressed",
+                      "content": "Changes pressed",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-l-rail-changes",
+                      "type": "ref",
+                      "ref": "lane-rail",
+                      "name": "Changes pressed",
+                      "height": 260,
+                      "descendants": {
+                        "lane-rail-changes": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-rail-changes/lane-tool-bar": {
+                          "enabled": true
+                        },
+                        "lane-rail-changes/lane-tool-glyph": {
+                          "fill": "$--foreground"
+                        },
+                        "lane-rail-changes/lane-tool-label": {
+                          "fill": "$--foreground",
+                          "fontWeight": "500"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-l-rail-sessions-cell",
+                  "name": "Sessions pressed",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-rail-sessions-cap",
+                      "name": "Sessions pressed",
+                      "content": "Sessions pressed",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-l-rail-sessions",
+                      "type": "ref",
+                      "ref": "lane-rail",
+                      "name": "Sessions pressed",
+                      "height": 260,
+                      "descendants": {
+                        "lane-rail-sessions": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-rail-sessions/lane-tool-bar": {
+                          "enabled": true
+                        },
+                        "lane-rail-sessions/lane-tool-glyph": {
+                          "fill": "$--foreground"
+                        },
+                        "lane-rail-sessions/lane-tool-label": {
+                          "fill": "$--foreground",
+                          "fontWeight": "500"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-l-rail-memory-cell",
+                  "name": "Memory pressed",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-rail-memory-cap",
+                      "name": "Memory pressed",
+                      "content": "Memory pressed",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-l-rail-memory",
+                      "type": "ref",
+                      "ref": "lane-rail",
+                      "name": "Memory pressed",
+                      "height": 260,
+                      "descendants": {
+                        "lane-rail-memory": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-rail-memory/lane-tool-bar": {
+                          "enabled": true
+                        },
+                        "lane-rail-memory/lane-tool-glyph": {
+                          "fill": "$--foreground"
+                        },
+                        "lane-rail-memory/lane-tool-label": {
+                          "fill": "$--foreground",
+                          "fontWeight": "500"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-l-rail-closed-cell",
+                  "name": "Closed · 2 views open · Memory asks",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-rail-closed-cap",
+                      "name": "Closed · 2 views open · Memo",
+                      "content": "Closed · 2 views open · Memory asks",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-l-rail-closed",
+                      "type": "ref",
+                      "ref": "lane-rail",
+                      "name": "Closed · 2 views open · Memory asks",
+                      "height": 260,
+                      "descendants": {
+                        "lane-rail-files/lane-tool-badge": {
+                          "enabled": true
+                        },
+                        "lane-rail-memory/lane-tool-dot": {
+                          "enabled": true
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-l-rail-tips-cell",
+                  "name": "Tooltips",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-rail-tips-cap",
+                      "name": "Tooltips",
+                      "content": "Tooltips",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "lane-l-rail-tips-list",
+                      "name": "Tooltips",
+                      "children": [
+                        {
+                          "id": "lane-l-tip-files",
+                          "type": "ref",
+                          "ref": "tip-open-l",
+                          "name": "Files · settings-ui ⇧⌘B",
+                          "descendants": {
+                            "tip-open-l-t": {
+                              "content": "Files · settings-ui ⇧⌘B"
+                            }
+                          }
+                        },
+                        {
+                          "id": "lane-l-tip-sessions",
+                          "type": "ref",
+                          "ref": "tip-open-l",
+                          "name": "Sessions · all of hide ⌘E",
+                          "descendants": {
+                            "tip-open-l-t": {
+                              "content": "Sessions · all of hide ⌘E"
+                            }
+                          }
+                        },
+                        {
+                          "id": "lane-l-tip-pin",
+                          "type": "ref",
+                          "ref": "tip-open-l",
+                          "name": "Pin · keep it beside the agents",
+                          "descendants": {
+                            "tip-open-l-t": {
+                              "content": "Pin · keep it beside the agents"
+                            }
+                          }
+                        },
+                        {
+                          "id": "lane-l-tip-unpin",
+                          "type": "ref",
+                          "ref": "tip-open-l",
+                          "name": "Unpin · back over the agents",
+                          "descendants": {
+                            "tip-open-l-t": {
+                              "content": "Unpin · back over the agents"
+                            }
+                          }
+                        },
+                        {
+                          "id": "lane-l-tip-narrow",
+                          "type": "ref",
+                          "ref": "tip-open-l",
+                          "name": "Pin · too narrow, drawn over",
+                          "descendants": {
+                            "tip-open-l-t": {
+                              "content": "Pin · too narrow, drawn over"
+                            }
+                          }
+                        }
+                      ],
+                      "layout": "vertical",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "start"
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                }
               ],
-              "alignItems": "center",
+              "layout": "horizontal",
+              "gap": "$--spacing-lg",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "lane-l-header",
+              "name": "Lane header",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "lane-l-header-files-cell",
+                  "name": "Files · over the agents",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-header-files-cap",
+                      "name": "Files · over the agents",
+                      "content": "Files · over the agents",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-l-header-files",
+                      "type": "ref",
+                      "ref": "lane-header",
+                      "name": "Files · over the agents",
+                      "descendants": {
+                        "lane-header-tool": {
+                          "content": "Files"
+                        },
+                        "lane-header-scope": {
+                          "content": " · settings-ui"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-l-header-sessions-cell",
+                  "name": "Sessions · pinned",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-header-sessions-cap",
+                      "name": "Sessions · pinned",
+                      "content": "Sessions · pinned",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-l-header-sessions",
+                      "type": "ref",
+                      "ref": "lane-header",
+                      "name": "Sessions · pinned",
+                      "descendants": {
+                        "lane-header-tool": {
+                          "content": "Sessions"
+                        },
+                        "lane-header-scope": {
+                          "content": " · all of hide"
+                        },
+                        "lane-header-pin": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-header-pin/lane-pin-glyph": {
+                          "fill": "$--primary",
+                          "stroke": "$--primary"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-l-header-expanded-cell",
+                  "name": "Changes · expanded",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-header-expanded-cap",
+                      "name": "Changes · expanded",
+                      "content": "Changes · expanded",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-l-header-expanded",
+                      "type": "ref",
+                      "ref": "lane-header",
+                      "name": "Changes · expanded",
+                      "descendants": {
+                        "lane-header-tool": {
+                          "content": "Changes"
+                        },
+                        "lane-header-scope": {
+                          "content": " · settings-ui"
+                        },
+                        "lane-header-expand": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-header-expand/ZIZFR": {
+                          "icon": "minimize-2",
+                          "fill": "$--foreground"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                }
+              ],
+              "layout": "horizontal",
+              "gap": "$--spacing-lg",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "lane-l-pin",
+              "name": "Pin",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "lane-l-pin-off-cell",
+                  "name": "Unpinned",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-pin-off-cap",
+                      "name": "Unpinned",
+                      "content": "Unpinned",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-l-pin-off",
+                      "type": "ref",
+                      "ref": "lane-pin",
+                      "name": "Unpinned"
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-l-pin-on-cell",
+                  "name": "Pinned",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-pin-on-cap",
+                      "name": "Pinned",
+                      "content": "Pinned",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-l-pin-on",
+                      "type": "ref",
+                      "ref": "lane-pin",
+                      "name": "Pinned",
+                      "fill": "$--secondary",
+                      "descendants": {
+                        "lane-pin-glyph": {
+                          "fill": "$--primary",
+                          "stroke": "$--primary"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-l-tree-off-cell",
+                  "name": "Tree off",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-tree-off-cap",
+                      "name": "Tree off",
+                      "content": "Tree off",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-l-tree-off",
+                      "type": "ref",
+                      "ref": "lane-tree-button",
+                      "name": "Tree off"
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-l-tree-on-cell",
+                  "name": "Tree on",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-tree-on-cap",
+                      "name": "Tree on",
+                      "content": "Tree on",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-l-tree-on",
+                      "type": "ref",
+                      "ref": "lane-tree-button",
+                      "name": "Tree on",
+                      "fill": "$--secondary",
+                      "descendants": {
+                        "lane-tree-button-glyph": {
+                          "fill": "$--foreground"
+                        },
+                        "lane-tree-button-label": {
+                          "fill": "$--foreground"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                }
+              ],
+              "layout": "horizontal",
+              "gap": "$--spacing-lg",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "lane-l-document",
+              "name": "Document header",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "lane-l-doc-off-cell",
+                  "name": "Tree off",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-doc-off-cap",
+                      "name": "Tree off",
+                      "content": "Tree off",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-l-doc-off",
+                      "type": "ref",
+                      "ref": "GGXfK",
+                      "name": "Tree off"
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-l-doc-on-cell",
+                  "name": "Tree on",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-doc-on-cap",
+                      "name": "Tree on",
+                      "content": "Tree on",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-l-doc-on",
+                      "type": "ref",
+                      "ref": "GGXfK",
+                      "name": "Tree on",
+                      "descendants": {
+                        "GGXfK-tree": {
+                          "fill": "$--secondary"
+                        },
+                        "GGXfK-tree/lane-tree-button-glyph": {
+                          "fill": "$--foreground"
+                        },
+                        "GGXfK-tree/lane-tree-button-label": {
+                          "fill": "$--foreground"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                }
+              ],
+              "layout": "horizontal",
+              "gap": "$--spacing-lg",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "lane-l-divider",
+              "name": "Lane and tree dividers",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "lane-l-div-rest-cell",
+                  "name": "Rest",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-div-rest-cap",
+                      "name": "Rest",
+                      "content": "Rest",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "lane-l-div-rest-surface",
+                      "name": "Rest",
+                      "children": [
+                        {
+                          "id": "lane-l-div-rest",
+                          "type": "ref",
+                          "ref": "side-panel-grip",
+                          "name": "Rest",
+                          "x": 56,
+                          "y": 0,
+                          "height": 160,
+                          "descendants": {
+                            "side-panel-grip-line-top": {
+                              "height": 160
+                            }
+                          }
+                        }
+                      ],
+                      "width": 120,
+                      "height": 160,
+                      "layout": "none",
+                      "fill": "$--background"
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-l-div-hover-cell",
+                  "name": "Hover",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-div-hover-cap",
+                      "name": "Hover",
+                      "content": "Hover",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "lane-l-div-hover-surface",
+                      "name": "Hover",
+                      "children": [
+                        {
+                          "id": "lane-l-div-hover",
+                          "type": "ref",
+                          "ref": "side-panel-grip",
+                          "name": "Hover",
+                          "x": 56,
+                          "y": 0,
+                          "height": 160,
+                          "descendants": {
+                            "side-panel-grip-line-top": {
+                              "enabled": true,
+                              "height": 160
+                            },
+                            "side-panel-grip-pill": {
+                              "enabled": true,
+                              "y": 68
+                            }
+                          }
+                        }
+                      ],
+                      "width": 120,
+                      "height": 160,
+                      "layout": "none",
+                      "fill": "$--background"
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-l-div-focus-cell",
+                  "name": "Keyboard focus",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-div-focus-cap",
+                      "name": "Keyboard focus",
+                      "content": "Keyboard focus",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "lane-l-div-focus-surface",
+                      "name": "Keyboard focus",
+                      "children": [
+                        {
+                          "id": "lane-l-div-focus",
+                          "type": "ref",
+                          "ref": "side-panel-grip",
+                          "name": "Keyboard focus",
+                          "x": 56,
+                          "y": 0,
+                          "height": 160,
+                          "descendants": {
+                            "side-panel-grip-line-top": {
+                              "enabled": true,
+                              "height": 160
+                            },
+                            "side-panel-grip-pill": {
+                              "enabled": true,
+                              "y": 68,
+                              "stroke": "$--ring"
+                            }
+                          }
+                        }
+                      ],
+                      "width": 120,
+                      "height": 160,
+                      "layout": "none",
+                      "fill": "$--background"
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-l-div-guide-cell",
+                  "name": "Drag guide",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-div-guide-cap",
+                      "name": "Drag guide",
+                      "content": "Drag guide",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "lane-l-div-guide-surface",
+                      "name": "Drag guide",
+                      "children": [
+                        {
+                          "id": "lane-l-div-guide",
+                          "type": "ref",
+                          "ref": "side-panel-grip",
+                          "name": "Drag guide",
+                          "x": 56,
+                          "y": 0,
+                          "height": 160,
+                          "descendants": {
+                            "side-panel-grip-line-top": {
+                              "enabled": true,
+                              "height": 160,
+                              "fill": "$--primary",
+                              "opacity": 1
+                            }
+                          }
+                        }
+                      ],
+                      "width": 120,
+                      "height": 160,
+                      "layout": "none",
+                      "fill": "$--background"
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                }
+              ],
+              "layout": "horizontal",
+              "gap": "$--spacing-lg",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "lane-l-toolbar-cell",
+              "name": "Top row: Overview and Open server",
               "children": [
                 {
                   "type": "text",
-                  "id": "d927zh",
-                  "name": "Checkout root",
-                  "fill": "$--subtle-foreground",
-                  "textGrowth": "fixed-width",
-                  "width": "fill_container",
-                  "content": "fixture",
+                  "id": "lane-l-toolbar-cap",
+                  "name": "Top row: Overview and Open s",
+                  "content": "Top row: Overview and Open server",
+                  "fill": "$--muted-foreground",
                   "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-caption",
-                  "fontWeight": "normal"
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
                 },
                 {
-                  "id": "DVJS6",
+                  "id": "lane-l-toolbar",
                   "type": "ref",
-                  "ref": "Nyvom",
-                  "name": "Refresh files",
-                  "width": 20,
-                  "height": 20,
+                  "ref": "VMZTz",
+                  "name": "Top row",
+                  "width": 640,
                   "descendants": {
-                    "ZIZFR": {
-                      "icon": "refresh-cw",
-                      "fill": "$--subtle-foreground"
+                    "bkh81": {
+                      "content": "hide  /  settings-ui"
                     }
                   }
                 }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "NZoEx",
-              "name": "Explorer loading state",
-              "width": "fill_container",
-              "height": 24,
-              "stroke": "$--border",
-              "strokeWidth": {
-                "bottom": "$--size-hairline"
-              },
-              "strokeAlignment": "inner",
-              "padding": [
-                0,
-                12
               ],
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "text",
-                  "id": "iDnaZ",
-                  "name": "Git status state",
-                  "fill": "$--muted-foreground",
-                  "content": "Loading Git status",
-                  "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-caption",
-                  "fontWeight": "normal"
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "MmldP",
-              "name": "Explorer file row - notes.md",
-              "clip": true,
-              "width": "fill_container",
-              "height": 24,
-              "stroke": "$--border",
-              "strokeWidth": {
-                "bottom": "$--size-hairline"
-              },
-              "strokeAlignment": "inner",
-              "gap": 8,
-              "padding": [
-                0,
-                12
-              ],
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "icon",
-                  "id": "Cwgap",
-                  "name": "Markdown identity",
-                  "width": 10,
-                  "height": 10,
-                  "icon": "arrow-down",
-                  "library": "lucide",
-                  "fill": "$--file-blue"
-                },
-                {
-                  "type": "text",
-                  "id": "x1im3",
-                  "name": "File title - notes.md",
-                  "fill": "$--foreground",
-                  "textGrowth": "fixed-width",
-                  "width": "fill_container",
-                  "content": "notes.md",
-                  "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-body",
-                  "fontWeight": "normal"
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "fZi7M",
-              "name": "Explorer file row - 한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md",
-              "clip": true,
-              "width": "fill_container",
-              "height": 24,
-              "stroke": "$--border",
-              "strokeWidth": {
-                "bottom": "$--size-hairline"
-              },
-              "strokeAlignment": "inner",
-              "gap": 8,
-              "padding": [
-                0,
-                12
-              ],
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "icon",
-                  "id": "t0QOE",
-                  "name": "Markdown identity",
-                  "width": 10,
-                  "height": 10,
-                  "icon": "arrow-down",
-                  "library": "lucide",
-                  "fill": "$--file-blue"
-                },
-                {
-                  "type": "text",
-                  "id": "aHlvp",
-                  "name": "File title - 한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md",
-                  "fill": "$--foreground",
-                  "textGrowth": "fixed-width",
-                  "width": "fill_container",
-                  "content": "한글과 English 작업 기록 - 긴 파일…",
-                  "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-body",
-                  "fontWeight": "normal"
-                }
-              ]
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
             }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "EDetr",
-          "name": "State / Docked columns / Light",
+          ],
           "theme": {
             "Mode": "Light"
           },
-          "width": 1216,
-          "fill": "$--background",
           "layout": "vertical",
-          "gap": 16,
-          "padding": 16,
-          "children": [
-            {
-              "type": "text",
-              "id": "IOpIO",
-              "name": "Theme and numeric contract",
-              "fill": "$--foreground",
-              "content": "Light · 480 + 8 + 360 + 8 + 260 = 1116",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-subhead",
-              "fontWeight": "600"
-            },
-            {
-              "id": "h7lqAF",
-              "type": "ref",
-              "ref": "side-panel",
-              "name": "Full body 1116",
-              "width": 1116,
-              "height": 440,
-              "descendants": {
-                "YpxMC": {
-                  "height": 440
-                },
-                "giyPa": {
-                  "height": 440
-                },
-                "eNvgI": {
-                  "height": 440
-                },
-                "gPjhF": {
-                  "height": 440
-                },
-                "w7GZ7c": {
-                  "height": 440
-                }
-              }
-            },
-            {
-              "type": "frame",
-              "id": "T5abzv",
-              "name": "Badge and toolbar tooltip states",
-              "width": "fill_container",
-              "gap": 32,
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "a1DAs",
-                  "name": "Count badge slot",
-                  "width": 14,
-                  "height": 14,
-                  "layout": "none",
-                  "children": [
-                    {
-                      "id": "E5xh54",
-                      "type": "ref",
-                      "ref": "side-panel-toggle-badge",
-                      "name": "Open File Views count badge",
-                      "enabled": true,
-                      "x": 0,
-                      "y": 0
-                    }
-                  ]
-                },
-                {
-                  "id": "a98V5",
-                  "type": "ref",
-                  "ref": "tip-open-l",
-                  "name": "Open server tooltip",
-                  "fill": "$--popover",
-                  "stroke": "$--border",
-                  "descendants": {
-                    "tip-open-l-t": {
-                      "fill": "$--foreground",
-                      "name": "Open server",
-                      "content": "Open server"
-                    }
-                  }
-                },
-                {
-                  "id": "pMMl8",
-                  "type": "ref",
-                  "ref": "tip-shortcut-l",
-                  "name": "File Views tooltip",
-                  "fill": "$--popover",
-                  "stroke": "$--border",
-                  "descendants": {
-                    "tip-shortcut-l-t": {
-                      "fill": "$--foreground",
-                      "name": "File Views",
-                      "content": "File Views"
-                    },
-                    "tip-shortcut-l-k": {
-                      "fill": "$--muted-foreground",
-                      "name": "⇧⌘B",
-                      "content": "⇧⌘B"
-                    }
-                  }
-                },
-                {
-                  "id": "Fwu7H",
-                  "type": "ref",
-                  "ref": "tip-shortcut-l",
-                  "name": "Tools tooltip",
-                  "fill": "$--popover",
-                  "stroke": "$--border",
-                  "descendants": {
-                    "tip-shortcut-l-t": {
-                      "fill": "$--foreground",
-                      "name": "Tools",
-                      "content": "Tools"
-                    },
-                    "tip-shortcut-l-k": {
-                      "fill": "$--muted-foreground",
-                      "name": "⌘E",
-                      "content": "⌘E"
-                    }
-                  }
-                }
-              ]
-            }
-          ]
+          "gap": "$--spacing-lg",
+          "padding": "$--spacing-lg",
+          "fill": "$--background",
+          "width": "fit_content",
+          "cornerRadius": "$--radius-md"
         },
         {
           "type": "frame",
-          "id": "ZQVvo",
-          "name": "State / Docked columns / Dark",
-          "theme": {
-            "Mode": "Dark"
-          },
-          "width": 1216,
-          "fill": "$--background",
-          "layout": "vertical",
-          "gap": 16,
-          "padding": 16,
+          "id": "lane-states-d",
+          "name": "State / Right lane / Dark",
           "children": [
             {
               "type": "text",
-              "id": "ncUFy",
-              "name": "Theme and numeric contract",
+              "id": "lane-d-theme",
+              "name": "Dark",
+              "content": "Dark",
               "fill": "$--foreground",
-              "content": "Dark · 480 + 8 + 360 + 8 + 260 = 1116",
               "fontFamily": "$--font-ui",
-              "fontSize": "$--text-subhead",
+              "fontSize": "$--text-headline",
               "fontWeight": "600"
             },
             {
-              "id": "H7R6hV",
-              "type": "ref",
-              "ref": "side-panel",
-              "name": "Full body 1116",
-              "width": 1116,
-              "height": 440,
-              "descendants": {
-                "YpxMC": {
-                  "height": 440
-                },
-                "giyPa": {
-                  "height": 440
-                },
-                "eNvgI": {
-                  "height": 440
-                },
-                "gPjhF": {
-                  "height": 440
-                },
-                "w7GZ7c": {
-                  "height": 440
-                }
-              }
-            },
-            {
               "type": "frame",
-              "id": "HWW0c",
-              "name": "Badge and toolbar tooltip states",
-              "width": "fill_container",
-              "gap": 32,
+              "id": "lane-d-rail",
+              "name": "Tool rail",
               "children": [
                 {
                   "type": "frame",
-                  "id": "GKSb2",
-                  "name": "Count badge slot",
-                  "width": 14,
-                  "height": 14,
-                  "layout": "none",
+                  "id": "lane-d-rail-files-cell",
+                  "name": "Files pressed",
                   "children": [
                     {
-                      "id": "PyJ9E",
+                      "type": "text",
+                      "id": "lane-d-rail-files-cap",
+                      "name": "Files pressed",
+                      "content": "Files pressed",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-d-rail-files",
                       "type": "ref",
-                      "ref": "side-panel-toggle-badge",
-                      "name": "Open File Views count badge",
-                      "enabled": true,
-                      "x": 0,
-                      "y": 0
+                      "ref": "lane-rail",
+                      "name": "Files pressed",
+                      "height": 260,
+                      "descendants": {
+                        "lane-rail-files": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-rail-files/lane-tool-bar": {
+                          "enabled": true
+                        },
+                        "lane-rail-files/lane-tool-glyph": {
+                          "fill": "$--foreground"
+                        },
+                        "lane-rail-files/lane-tool-label": {
+                          "fill": "$--foreground",
+                          "fontWeight": "500"
+                        }
+                      }
                     }
-                  ]
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
                 },
                 {
-                  "id": "nvy7O",
-                  "type": "ref",
-                  "ref": "tip-open-l",
-                  "name": "Open server tooltip",
-                  "fill": "$--popover",
-                  "stroke": "$--border",
-                  "descendants": {
-                    "tip-open-l-t": {
-                      "fill": "$--foreground",
-                      "name": "Open server",
-                      "content": "Open server"
-                    }
-                  }
-                },
-                {
-                  "id": "hMZoq",
-                  "type": "ref",
-                  "ref": "tip-shortcut-l",
-                  "name": "File Views tooltip",
-                  "fill": "$--popover",
-                  "stroke": "$--border",
-                  "descendants": {
-                    "tip-shortcut-l-t": {
-                      "fill": "$--foreground",
-                      "name": "File Views",
-                      "content": "File Views"
-                    },
-                    "tip-shortcut-l-k": {
+                  "type": "frame",
+                  "id": "lane-d-rail-changes-cell",
+                  "name": "Changes pressed",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-rail-changes-cap",
+                      "name": "Changes pressed",
+                      "content": "Changes pressed",
                       "fill": "$--muted-foreground",
-                      "name": "⇧⌘B",
-                      "content": "⇧⌘B"
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-d-rail-changes",
+                      "type": "ref",
+                      "ref": "lane-rail",
+                      "name": "Changes pressed",
+                      "height": 260,
+                      "descendants": {
+                        "lane-rail-changes": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-rail-changes/lane-tool-bar": {
+                          "enabled": true
+                        },
+                        "lane-rail-changes/lane-tool-glyph": {
+                          "fill": "$--foreground"
+                        },
+                        "lane-rail-changes/lane-tool-label": {
+                          "fill": "$--foreground",
+                          "fontWeight": "500"
+                        }
+                      }
                     }
-                  }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
                 },
                 {
-                  "id": "V9xQXM",
-                  "type": "ref",
-                  "ref": "tip-shortcut-l",
-                  "name": "Tools tooltip",
-                  "fill": "$--popover",
-                  "stroke": "$--border",
-                  "descendants": {
-                    "tip-shortcut-l-t": {
-                      "fill": "$--foreground",
-                      "name": "Tools",
-                      "content": "Tools"
-                    },
-                    "tip-shortcut-l-k": {
+                  "type": "frame",
+                  "id": "lane-d-rail-sessions-cell",
+                  "name": "Sessions pressed",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-rail-sessions-cap",
+                      "name": "Sessions pressed",
+                      "content": "Sessions pressed",
                       "fill": "$--muted-foreground",
-                      "name": "⌘E",
-                      "content": "⌘E"
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-d-rail-sessions",
+                      "type": "ref",
+                      "ref": "lane-rail",
+                      "name": "Sessions pressed",
+                      "height": 260,
+                      "descendants": {
+                        "lane-rail-sessions": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-rail-sessions/lane-tool-bar": {
+                          "enabled": true
+                        },
+                        "lane-rail-sessions/lane-tool-glyph": {
+                          "fill": "$--foreground"
+                        },
+                        "lane-rail-sessions/lane-tool-label": {
+                          "fill": "$--foreground",
+                          "fontWeight": "500"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-d-rail-memory-cell",
+                  "name": "Memory pressed",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-rail-memory-cap",
+                      "name": "Memory pressed",
+                      "content": "Memory pressed",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-d-rail-memory",
+                      "type": "ref",
+                      "ref": "lane-rail",
+                      "name": "Memory pressed",
+                      "height": 260,
+                      "descendants": {
+                        "lane-rail-memory": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-rail-memory/lane-tool-bar": {
+                          "enabled": true
+                        },
+                        "lane-rail-memory/lane-tool-glyph": {
+                          "fill": "$--foreground"
+                        },
+                        "lane-rail-memory/lane-tool-label": {
+                          "fill": "$--foreground",
+                          "fontWeight": "500"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-d-rail-closed-cell",
+                  "name": "Closed · 2 views open · Memory asks",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-rail-closed-cap",
+                      "name": "Closed · 2 views open · Memo",
+                      "content": "Closed · 2 views open · Memory asks",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-d-rail-closed",
+                      "type": "ref",
+                      "ref": "lane-rail",
+                      "name": "Closed · 2 views open · Memory asks",
+                      "height": 260,
+                      "descendants": {
+                        "lane-rail-files/lane-tool-badge": {
+                          "enabled": true
+                        },
+                        "lane-rail-memory/lane-tool-dot": {
+                          "enabled": true
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-d-rail-tips-cell",
+                  "name": "Tooltips",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-rail-tips-cap",
+                      "name": "Tooltips",
+                      "content": "Tooltips",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "lane-d-rail-tips-list",
+                      "name": "Tooltips",
+                      "children": [
+                        {
+                          "id": "lane-d-tip-files",
+                          "type": "ref",
+                          "ref": "tip-open-l",
+                          "name": "Files · settings-ui ⇧⌘B",
+                          "descendants": {
+                            "tip-open-l-t": {
+                              "content": "Files · settings-ui ⇧⌘B"
+                            }
+                          }
+                        },
+                        {
+                          "id": "lane-d-tip-sessions",
+                          "type": "ref",
+                          "ref": "tip-open-l",
+                          "name": "Sessions · all of hide ⌘E",
+                          "descendants": {
+                            "tip-open-l-t": {
+                              "content": "Sessions · all of hide ⌘E"
+                            }
+                          }
+                        },
+                        {
+                          "id": "lane-d-tip-pin",
+                          "type": "ref",
+                          "ref": "tip-open-l",
+                          "name": "Pin · keep it beside the agents",
+                          "descendants": {
+                            "tip-open-l-t": {
+                              "content": "Pin · keep it beside the agents"
+                            }
+                          }
+                        },
+                        {
+                          "id": "lane-d-tip-unpin",
+                          "type": "ref",
+                          "ref": "tip-open-l",
+                          "name": "Unpin · back over the agents",
+                          "descendants": {
+                            "tip-open-l-t": {
+                              "content": "Unpin · back over the agents"
+                            }
+                          }
+                        },
+                        {
+                          "id": "lane-d-tip-narrow",
+                          "type": "ref",
+                          "ref": "tip-open-l",
+                          "name": "Pin · too narrow, drawn over",
+                          "descendants": {
+                            "tip-open-l-t": {
+                              "content": "Pin · too narrow, drawn over"
+                            }
+                          }
+                        }
+                      ],
+                      "layout": "vertical",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "start"
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                }
+              ],
+              "layout": "horizontal",
+              "gap": "$--spacing-lg",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "lane-d-header",
+              "name": "Lane header",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "lane-d-header-files-cell",
+                  "name": "Files · over the agents",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-header-files-cap",
+                      "name": "Files · over the agents",
+                      "content": "Files · over the agents",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-d-header-files",
+                      "type": "ref",
+                      "ref": "lane-header",
+                      "name": "Files · over the agents",
+                      "descendants": {
+                        "lane-header-tool": {
+                          "content": "Files"
+                        },
+                        "lane-header-scope": {
+                          "content": " · settings-ui"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-d-header-sessions-cell",
+                  "name": "Sessions · pinned",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-header-sessions-cap",
+                      "name": "Sessions · pinned",
+                      "content": "Sessions · pinned",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-d-header-sessions",
+                      "type": "ref",
+                      "ref": "lane-header",
+                      "name": "Sessions · pinned",
+                      "descendants": {
+                        "lane-header-tool": {
+                          "content": "Sessions"
+                        },
+                        "lane-header-scope": {
+                          "content": " · all of hide"
+                        },
+                        "lane-header-pin": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-header-pin/lane-pin-glyph": {
+                          "fill": "$--primary",
+                          "stroke": "$--primary"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-d-header-expanded-cell",
+                  "name": "Changes · expanded",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-header-expanded-cap",
+                      "name": "Changes · expanded",
+                      "content": "Changes · expanded",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-d-header-expanded",
+                      "type": "ref",
+                      "ref": "lane-header",
+                      "name": "Changes · expanded",
+                      "descendants": {
+                        "lane-header-tool": {
+                          "content": "Changes"
+                        },
+                        "lane-header-scope": {
+                          "content": " · settings-ui"
+                        },
+                        "lane-header-expand": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-header-expand/ZIZFR": {
+                          "icon": "minimize-2",
+                          "fill": "$--foreground"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                }
+              ],
+              "layout": "horizontal",
+              "gap": "$--spacing-lg",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "lane-d-pin",
+              "name": "Pin",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "lane-d-pin-off-cell",
+                  "name": "Unpinned",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-pin-off-cap",
+                      "name": "Unpinned",
+                      "content": "Unpinned",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-d-pin-off",
+                      "type": "ref",
+                      "ref": "lane-pin",
+                      "name": "Unpinned"
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-d-pin-on-cell",
+                  "name": "Pinned",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-pin-on-cap",
+                      "name": "Pinned",
+                      "content": "Pinned",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-d-pin-on",
+                      "type": "ref",
+                      "ref": "lane-pin",
+                      "name": "Pinned",
+                      "fill": "$--secondary",
+                      "descendants": {
+                        "lane-pin-glyph": {
+                          "fill": "$--primary",
+                          "stroke": "$--primary"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-d-tree-off-cell",
+                  "name": "Tree off",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-tree-off-cap",
+                      "name": "Tree off",
+                      "content": "Tree off",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-d-tree-off",
+                      "type": "ref",
+                      "ref": "lane-tree-button",
+                      "name": "Tree off"
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-d-tree-on-cell",
+                  "name": "Tree on",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-tree-on-cap",
+                      "name": "Tree on",
+                      "content": "Tree on",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-d-tree-on",
+                      "type": "ref",
+                      "ref": "lane-tree-button",
+                      "name": "Tree on",
+                      "fill": "$--secondary",
+                      "descendants": {
+                        "lane-tree-button-glyph": {
+                          "fill": "$--foreground"
+                        },
+                        "lane-tree-button-label": {
+                          "fill": "$--foreground"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                }
+              ],
+              "layout": "horizontal",
+              "gap": "$--spacing-lg",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "lane-d-document",
+              "name": "Document header",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "lane-d-doc-off-cell",
+                  "name": "Tree off",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-doc-off-cap",
+                      "name": "Tree off",
+                      "content": "Tree off",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-d-doc-off",
+                      "type": "ref",
+                      "ref": "GGXfK",
+                      "name": "Tree off"
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-d-doc-on-cell",
+                  "name": "Tree on",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-doc-on-cap",
+                      "name": "Tree on",
+                      "content": "Tree on",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-d-doc-on",
+                      "type": "ref",
+                      "ref": "GGXfK",
+                      "name": "Tree on",
+                      "descendants": {
+                        "GGXfK-tree": {
+                          "fill": "$--secondary"
+                        },
+                        "GGXfK-tree/lane-tree-button-glyph": {
+                          "fill": "$--foreground"
+                        },
+                        "GGXfK-tree/lane-tree-button-label": {
+                          "fill": "$--foreground"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                }
+              ],
+              "layout": "horizontal",
+              "gap": "$--spacing-lg",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "lane-d-divider",
+              "name": "Lane and tree dividers",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "lane-d-div-rest-cell",
+                  "name": "Rest",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-div-rest-cap",
+                      "name": "Rest",
+                      "content": "Rest",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "lane-d-div-rest-surface",
+                      "name": "Rest",
+                      "children": [
+                        {
+                          "id": "lane-d-div-rest",
+                          "type": "ref",
+                          "ref": "side-panel-grip",
+                          "name": "Rest",
+                          "x": 56,
+                          "y": 0,
+                          "height": 160,
+                          "descendants": {
+                            "side-panel-grip-line-top": {
+                              "height": 160
+                            }
+                          }
+                        }
+                      ],
+                      "width": 120,
+                      "height": 160,
+                      "layout": "none",
+                      "fill": "$--background"
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-d-div-hover-cell",
+                  "name": "Hover",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-div-hover-cap",
+                      "name": "Hover",
+                      "content": "Hover",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "lane-d-div-hover-surface",
+                      "name": "Hover",
+                      "children": [
+                        {
+                          "id": "lane-d-div-hover",
+                          "type": "ref",
+                          "ref": "side-panel-grip",
+                          "name": "Hover",
+                          "x": 56,
+                          "y": 0,
+                          "height": 160,
+                          "descendants": {
+                            "side-panel-grip-line-top": {
+                              "enabled": true,
+                              "height": 160
+                            },
+                            "side-panel-grip-pill": {
+                              "enabled": true,
+                              "y": 68
+                            }
+                          }
+                        }
+                      ],
+                      "width": 120,
+                      "height": 160,
+                      "layout": "none",
+                      "fill": "$--background"
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-d-div-focus-cell",
+                  "name": "Keyboard focus",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-div-focus-cap",
+                      "name": "Keyboard focus",
+                      "content": "Keyboard focus",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "lane-d-div-focus-surface",
+                      "name": "Keyboard focus",
+                      "children": [
+                        {
+                          "id": "lane-d-div-focus",
+                          "type": "ref",
+                          "ref": "side-panel-grip",
+                          "name": "Keyboard focus",
+                          "x": 56,
+                          "y": 0,
+                          "height": 160,
+                          "descendants": {
+                            "side-panel-grip-line-top": {
+                              "enabled": true,
+                              "height": 160
+                            },
+                            "side-panel-grip-pill": {
+                              "enabled": true,
+                              "y": 68,
+                              "stroke": "$--ring"
+                            }
+                          }
+                        }
+                      ],
+                      "width": 120,
+                      "height": 160,
+                      "layout": "none",
+                      "fill": "$--background"
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
+                  "id": "lane-d-div-guide-cell",
+                  "name": "Drag guide",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-div-guide-cap",
+                      "name": "Drag guide",
+                      "content": "Drag guide",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "lane-d-div-guide-surface",
+                      "name": "Drag guide",
+                      "children": [
+                        {
+                          "id": "lane-d-div-guide",
+                          "type": "ref",
+                          "ref": "side-panel-grip",
+                          "name": "Drag guide",
+                          "x": 56,
+                          "y": 0,
+                          "height": 160,
+                          "descendants": {
+                            "side-panel-grip-line-top": {
+                              "enabled": true,
+                              "height": 160,
+                              "fill": "$--primary",
+                              "opacity": 1
+                            }
+                          }
+                        }
+                      ],
+                      "width": 120,
+                      "height": 160,
+                      "layout": "none",
+                      "fill": "$--background"
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                }
+              ],
+              "layout": "horizontal",
+              "gap": "$--spacing-lg",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "lane-d-toolbar-cell",
+              "name": "Top row: Overview and Open server",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "lane-d-toolbar-cap",
+                  "name": "Top row: Overview and Open s",
+                  "content": "Top row: Overview and Open server",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "lane-d-toolbar",
+                  "type": "ref",
+                  "ref": "VMZTz",
+                  "name": "Top row",
+                  "width": 640,
+                  "descendants": {
+                    "bkh81": {
+                      "content": "hide  /  settings-ui"
                     }
                   }
                 }
-              ]
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
             }
-          ]
+          ],
+          "theme": {
+            "Mode": "Dark"
+          },
+          "layout": "vertical",
+          "gap": "$--spacing-lg",
+          "padding": "$--spacing-lg",
+          "fill": "$--background",
+          "width": "fit_content",
+          "cornerRadius": "$--radius-md"
         }
       ]
     },
@@ -59676,10 +59383,6 @@
       "type": "number",
       "value": 355
     },
-    "--size-panel-max": {
-      "type": "number",
-      "value": 560
-    },
     "--size-keycap-height": {
       "type": "number",
       "value": 18
@@ -60838,14 +60541,6 @@
       "type": "number",
       "value": 480
     },
-    "--size-file-views-ideal": {
-      "type": "number",
-      "value": 640
-    },
-    "--size-file-views-min": {
-      "type": "number",
-      "value": 360
-    },
     "--logo-plate": {
       "type": "color",
       "value": [
@@ -61025,6 +60720,30 @@
     "--size-usage-bar-plot": {
       "type": "number",
       "value": 66
+    },
+    "--size-lane-ideal": {
+      "type": "number",
+      "value": 520
+    },
+    "--size-lane-min": {
+      "type": "number",
+      "value": 360
+    },
+    "--size-tool-rail": {
+      "type": "number",
+      "value": 48
+    },
+    "--size-tool-rail-button": {
+      "type": "number",
+      "value": 40
+    },
+    "--size-tree-ideal": {
+      "type": "number",
+      "value": 240
+    },
+    "--size-tree-min": {
+      "type": "number",
+      "value": 180
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

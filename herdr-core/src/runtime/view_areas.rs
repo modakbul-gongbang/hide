@@ -551,7 +551,7 @@ impl Runtime {
         let Some(key) = self.workspace_key(workspace_id, checkout_id) else {
             return false;
         };
-        self.apply_area_intent_to(&key, AreaIntent::Views);
+        self.apply_area_intent_to(&key, AreaIntent::Files);
         match self.change_view_layout(&key, |layout, stamp| {
             layout
                 .focus(display_id, stamp)
@@ -618,9 +618,8 @@ impl Runtime {
                 LayoutError::AreaLimit
             });
         }
-        let views_changed = entry.close_empty_views();
         entry.view_next_id = entry.next_view_identity();
-        if changed || views_changed {
+        if changed {
             store.generation += 1;
             self.persist_workspace_views();
         }
@@ -830,13 +829,6 @@ impl Runtime {
         if layout.remove(&oldest.display_id).is_none() {
             return false;
         }
-        if let Some(tab) = &oldest.tab
-            && let Some(view) = entry.view_presentations.get_mut(tab)
-            && view.layout.displays().next().is_none()
-        {
-            view.views = false;
-        }
-        entry.close_empty_views();
         store.generation += 1;
         crate::diagnostic!(serde_json::json!({
             "component": "view_areas",
@@ -1156,7 +1148,7 @@ impl Runtime {
         let in_front =
             parked.is_none() && self.front_workspace_key().as_ref() == Some(&placement.key);
         if in_front {
-            self.apply_area_intent_to(&placement.key, AreaIntent::Views);
+            self.apply_area_intent_to(&placement.key, AreaIntent::Files);
             if self.front_checkout() == Some((workspace_id, checkout_id)) {
                 self.snapshot.ui_state.selected_path = Some(path.to_owned());
             }
@@ -1931,7 +1923,7 @@ impl Runtime {
                 return Err(error);
             }
         };
-        self.apply_area_intent_to(&key, AreaIntent::Views);
+        self.apply_area_intent_to(&key, AreaIntent::Files);
         self.note_control_view(&key, &caller, &action, &display_id, parked)
             .map_err(|error| browser_refusal(error.next_action))?;
         if let Some(context) = reveal_context {
@@ -2532,12 +2524,8 @@ impl Runtime {
                     now,
                 );
                 stored |= changed;
-                if presentation.views && presentation.layout.displays().next().is_none() {
-                    presentation.views = false;
-                    stored = true;
-                }
             }
-            stored |= changed | view.close_empty_views();
+            stored |= changed;
             unshown.extend(
                 capped
                     .into_iter()
@@ -2641,7 +2629,7 @@ impl Runtime {
         else {
             return Vec::new();
         };
-        if !view.shows_views() {
+        if !view.shows_files() {
             return Vec::new();
         }
         view.layout

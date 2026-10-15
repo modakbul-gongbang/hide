@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { continueFixtureTranscript, setFixtureLifecycle, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { FIRST_GOAL, MISSED, NEXT_GOAL, nextWork, seedFirstWork, workFixture, workRepositoryReady } from "./session-work-fixture";
-import { countSent, enterWorkspace, sendEvent, showProjectRow } from "./wire";
+import { countSent, enterWorkspace, sendEvent, showProjectRow, showTool } from "./wire";
 import { chord } from "./chords";
 
 test.describe.configure({ timeout: 180_000 });
@@ -37,8 +37,7 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await workRepositoryReady(daemon.stateDir);
     await enterWorkspace(page, "fixture");
-    await page.getByRole("button", { name: "Tools", exact: true }).click();
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    await showTool(page, "agent_sessions");
     const first = Date.now();
     github.clock(first, first);
     const { session, child } = seedFirstWork(herdr, first);
@@ -60,6 +59,8 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     await setFixtureLifecycle(herdr, herdr.panes[0], "working");
     await expect(root).toContainText(NEXT_GOAL, { timeout: 45_000 });
     await setFixtureLifecycle(herdr, herdr.panes[0], "idle");
+    // Typing in the terminal chose its agent, which put the unpinned lane away (PRD right-lane B15).
+    await showTool(page, "agent_sessions");
     await record.getByRole("button", { name: "Back to Sessions" }).click();
     await root.hover();
     await page.locator(`[data-session-record-button="${herdr.panes[0]}"]`).click();
@@ -105,8 +106,7 @@ test("@platform repository edits keep old session identity and a fresh preview c
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await workRepositoryReady(daemon.stateDir);
     await enterWorkspace(page,"fixture");
-    await page.getByRole("button",{name:"Tools",exact:true}).click();
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    await showTool(page,"agent_sessions");
     const original = seedFirstWork(herdr,Date.now()).session;
     const root = page.locator(`[data-session-row="${herdr.panes[0]}"]`);
     await expect(root).toContainText(FIRST_GOAL,{timeout:45_000});
@@ -156,8 +156,7 @@ test("@platform a recovered provider cannot authorize a typed create in another 
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await workRepositoryReady(daemon.stateDir);
     await enterWorkspace(page,"fixture");
-    await page.getByRole("button",{name:"Tools",exact:true}).click();
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    await showTool(page,"agent_sessions");
     const original = seedFirstWork(herdr,Date.now()).session;
     const root = page.locator(`[data-session-row="${herdr.panes[0]}"]`);
     await expect(root).toContainText(FIRST_GOAL,{timeout:45_000});
@@ -201,8 +200,7 @@ test("@platform a delayed preview cannot accept an A-to-B-to-A repository edit a
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await workRepositoryReady(daemon.stateDir);
     await enterWorkspace(page,"fixture");
-    await page.getByRole("button",{name:"Tools",exact:true}).click();
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    await showTool(page,"agent_sessions");
     const {session} = seedFirstWork(herdr,Date.now());
     const root = page.locator(`[data-session-row="${herdr.panes[0]}"]`);
     await expect(root).toContainText(FIRST_GOAL,{timeout:45_000});
@@ -239,8 +237,7 @@ test("@platform migrated session work explains unknown origin and cannot create 
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await workRepositoryReady(daemon.stateDir);
     await enterWorkspace(page,"fixture");
-    await page.getByRole("button",{name:"Tools",exact:true}).click();
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    await showTool(page,"agent_sessions");
     const identity = seedFirstWork(herdr,Date.now()).session;
     const root = page.locator(`[data-session-row="${herdr.panes[0]}"]`);
     await expect(root).toContainText(FIRST_GOAL,{timeout:45_000});
@@ -269,7 +266,7 @@ test("@platform migrated session work explains unknown origin and cannot create 
     await page.goto("about:blank");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page,"fixture");
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    await showTool(page,"agent_sessions");
     const back = page.getByRole("button",{name:"Back to Sessions",exact:true});
     if (await back.isVisible()) await back.click();
     await expect(root).toBeVisible();
@@ -294,8 +291,7 @@ test("@platform cancel leaves missed work open and retry reconciles an issue who
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await workRepositoryReady(daemon.stateDir);
     await enterWorkspace(page, "fixture");
-    await page.getByRole("button", { name: "Tools", exact: true }).click();
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    await showTool(page, "agent_sessions");
     const first = Date.now();
     github.clock(first, first);
     const {session} = seedFirstWork(herdr, first);
@@ -337,8 +333,7 @@ test("@platform GitHub connection retry preserves the edited preview and creates
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await workRepositoryReady(daemon.stateDir);
     await enterWorkspace(page, "fixture");
-    await page.getByRole("button", { name: "Tools", exact: true }).click();
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    await showTool(page, "agent_sessions");
     const {session} = seedFirstWork(herdr, Date.now());
     const root = page.locator(`[data-session-row="${herdr.panes[0]}"]`);
     await expect(root).toContainText(FIRST_GOAL, { timeout: 45_000 });

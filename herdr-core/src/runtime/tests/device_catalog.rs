@@ -1531,8 +1531,8 @@ fn a_device_agent_chosen_brings_the_device_forward_and_moves_no_column() {
     ));
     let views = tempfile::tempdir().unwrap();
     let mut store = WorkspaceViewStore::open(views.path().join("views.json"), Default::default()).0;
-    store.views.entry(TARGET, &t.main).views = true;
-    store.views.entry(TARGET, &t.linked).views = true;
+    store.views.entry(TARGET, &t.main).tool = Some(crate::workspace_views::Tool::Files);
+    store.views.entry(TARGET, &t.linked).tool = Some(crate::workspace_views::Tool::Files);
     runtime.workspace_views = Some(store);
 
     runtime.request_remote_control(RemoteControlPayload {
@@ -1558,10 +1558,16 @@ fn a_device_agent_chosen_brings_the_device_forward_and_moves_no_column() {
             .views
             .get(TARGET, path)
             .unwrap()
-            .views
+            .tool
     };
-    assert!(panel(&runtime, &t.linked));
-    assert!(panel(&runtime, &t.main));
+    assert_eq!(
+        panel(&runtime, &t.linked),
+        Some(crate::workspace_views::Tool::Files)
+    );
+    assert_eq!(
+        panel(&runtime, &t.main),
+        Some(crate::workspace_views::Tool::Files)
+    );
 
     // D-11: the choice is remembered only once the device's Herdr has moved
     // there, so a refusal on the device would remember nothing.

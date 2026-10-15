@@ -391,7 +391,7 @@ export function openingLanded(rest: SnapshotRest | null, target: OpenTarget): bo
   if ("paneId" in target) return front.tabs.some((tab) => tab.panes.some((pane) => pane.id === target.paneId));
   if (target.tool !== undefined) {
     const view = rest?.workspace_view;
-    if (!view?.tools || view.tool !== target.tool || view.device_id !== target.deviceId || view.path !== front.path) return false;
+    if (!view || view.tool !== target.tool || view.device_id !== target.deviceId || view.path !== front.path) return false;
   }
   if (target.expanded !== undefined && !(rest?.ui_state?.session_collapsed_checkout_ids ?? []).includes(target.checkoutId) !== target.expanded) return false;
   if (front.id === target.checkoutId) return true;

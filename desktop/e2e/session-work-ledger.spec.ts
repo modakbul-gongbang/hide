@@ -5,11 +5,11 @@ import { execFileSync } from "node:child_process";
 import { continueFixtureTranscript, setFixtureLifecycle, startHerdr } from "../../web/e2e/herdr-fixture";
 import { FIRST_GOAL, MISSED, NEXT_GOAL, nextWork, seedFirstWork, workFixture, workRepositoryReady } from "../../web/e2e/session-work-fixture";
 import { chord } from "../../web/e2e/chords";
-import { enterWorkspace } from "../../web/e2e/wire";
+import { enterWorkspace, showTool } from "../../web/e2e/wire";
 import { fitWindow, isolate, launchShell, REPO, test } from "./fixture";
 import { captureElectronWindow } from "./electron-window";
 
-test("@platform session work records, drafts, ended work and search render in both themes on a narrow native Tools column", async () => {
+test("@platform session work records, drafts, ended work and search render in both themes in a narrow native lane", async () => {
   test.setTimeout(240_000);
   const herdr = await startHerdr();
   const github = workFixture(herdr);
@@ -24,8 +24,9 @@ test("@platform session work records, drafts, ended work and search render in bo
     await fitWindow(app, { width: 1440, height: 1000 });
     await workRepositoryReady(run.env.HIDE_STATE_DIR!);
     await enterWorkspace(page, "fixture");
-    await page.locator('[data-column-toggle="tools"]').click();
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    // Sessions pinned, so the lane stays docked through the sheets below (PRD right-lane B5).
+    await showTool(page, "agent_sessions");
+    await page.locator('[data-lane-pin="off"]').click();
     const first = Date.now();
     github.clock(first, first);
     const { session, child } = seedFirstWork(herdr, first);
@@ -56,7 +57,7 @@ test("@platform session work records, drafts, ended work and search render in bo
       await page.locator('[data-interface-language]').click();
       await page.locator('[data-language-option="ko"]').click();
       await page.keyboard.press("Escape");
-      const facts = { ...fixtureIdentity, theme, tools: await page.locator('[data-column="tools"]').boundingBox() };
+      const facts = { ...fixtureIdentity, theme, tools: await page.locator("[data-lane-frame]").boundingBox() };
       await captureElectronWindow(app, `record-chapters-children-${theme}`, facts);
       const missed = record.locator('[data-missed-work]', { hasText: MISSED });
       await missed.getByRole("button", { name: "무시", exact: true }).click();
@@ -72,9 +73,9 @@ test("@platform session work records, drafts, ended work and search render in bo
       await expect(page.locator('[data-palette-group="sessions"]')).toContainText(NEXT_GOAL, { timeout: 30_000 });
       await captureElectronWindow(app, `record-search-${theme}`, facts);
       await page.keyboard.press("Escape");
-      const divider = page.locator('[data-column-divider="tools"]');
-      for (let step = 0; step < 4; step += 1) await divider.press("ArrowRight");
-      await captureElectronWindow(app, `record-narrow-${theme}`, { ...facts, tools: await page.locator('[data-column="tools"]').boundingBox() });
+      const divider = page.locator('[data-lane-divider="lane"]');
+      for (let step = 0; step < 6; step += 1) await divider.press("ArrowRight");
+      await captureElectronWindow(app, `record-narrow-${theme}`, { ...facts, tools: await page.locator("[data-lane-frame]").boundingBox() });
       await page.locator('[data-open-settings]').click();
       await page.locator('[data-settings-tab="hideAi"]').click();
       await page.locator('[data-ai-agent-summary="true"]').click();
@@ -101,7 +102,7 @@ test("@platform session work records, drafts, ended work and search render in bo
       await page.locator('[data-settings-tab="general"]').click();
       await page.locator(`[data-theme-option="${theme}"]`).click();
       await page.keyboard.press("Escape");
-      await captureElectronWindow(app, `record-ended-${theme}`, { ...fixtureIdentity, theme, tools: await page.locator('[data-column="tools"]').boundingBox() });
+      await captureElectronWindow(app, `record-ended-${theme}`, { ...fixtureIdentity, theme, tools: await page.locator("[data-lane-frame]").boundingBox() });
     }
   } catch (error) { failures.push(error); }
   finally {

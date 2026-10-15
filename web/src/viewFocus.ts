@@ -49,12 +49,15 @@ function ownerOf(target: Element | null): KeyboardOwner | null {
   if (target?.closest('[role="menu"]')) return null;
   const workspace = target?.closest<HTMLElement>("[data-workspace-screen]")?.dataset.workspaceScreen;
   if (!target || !workspace) return { kind: "none" };
-  const tool = target.closest("[data-workspace-tools]");
+  // The files tool holds the View areas inside the lane, so an area is
+  // asked first; the rest of the lane (its header, the tree, another tool)
+  // is the tool's.
   const areaId = target.closest<HTMLElement>("[data-view-area-id]")?.dataset.viewAreaId;
+  const tool = target.closest("[data-lane]");
   const agentArea = target.closest<HTMLElement>("[data-agent-area-id]")?.dataset.agentAreaId;
   const paneId = target.closest<HTMLElement>("[data-pane-view]")?.dataset.paneView;
-  return tool ? { kind: "tool", workspace }
-    : areaId ? { kind: "view", workspace, areaId }
+  return areaId ? { kind: "view", workspace, areaId }
+    : tool ? { kind: "tool", workspace }
     : paneId ? { kind: "pane", workspace, paneId }
     : agentArea ? { kind: "agent", workspace, areaId: agentArea }
     : target.closest("[data-agent-areas]") ? { kind: "agent", workspace }
@@ -89,7 +92,7 @@ export function installKeyboardOwner(): () => void {
     const rest = useShellStore.getState().rest;
     const view = workspaceViewOf(rest);
     const checkout = frontCheckout(rest);
-    if (!view?.layout || !checkout || !view.views || workspaceKey(view) !== event.workspace) return;
+    if (!view?.layout || !checkout || view.tool !== "files" || workspaceKey(view) !== event.workspace) return;
     const located = locateDisplay(view.layout.root, event.id);
     if (!located) return;
     noteKeyboardOwner({ kind: "view", workspace: checkout.id, areaId: located.area.id });
@@ -124,7 +127,7 @@ export function closeShortcutPolicy(input: {
   if (owner.kind === "none") return { kind: "nothing", reason: "no keyboard owner" };
   if (owner.workspace !== workspace) return { kind: "nothing", reason: "keyboard owner is outside the front Workspace" };
   if (owner.kind === "agent") return { kind: "nothing", reason: "the Agent controls own the keyboard" };
-  if (owner.kind === "tool") return { kind: "nothing", reason: "the tool column owns the keyboard" };
+  if (owner.kind === "tool") return { kind: "nothing", reason: "the lane's tool owns the keyboard" };
   if (owner.kind === "view") return displayId
     ? { kind: "view", id: displayId }
     : { kind: "nothing", reason: "the focused View area has no visible display" };

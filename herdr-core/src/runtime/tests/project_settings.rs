@@ -579,8 +579,7 @@ fn project_memory_navigation_scopes_tools_without_a_front_workspace() {
     runtime.dispatch_json(&serde_json::to_vec(&serde_json::json!({"schema_version": SCHEMA_VERSION, "kind": "project_memory_navigate", "payload": {"device_id": crate::node::TEST_NODE, "workspace_id": "visible-id", "checkout_id": checkout.id, "request_id": "memory"}})).unwrap());
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
     assert_eq!(view.path, checkout.path);
-    assert!(view.tools);
-    assert_eq!(view.tool, crate::workspace_views::Tool::Memory);
+    assert_eq!(view.tool, Some(crate::workspace_views::Tool::Memory));
     assert_eq!(
         runtime
             .snapshot
@@ -622,7 +621,7 @@ fn delayed_memory_choice_changes_only_its_checkout_and_a_refusal_changes_neither
     runtime.sync_workspace_view();
     assert_ne!(
         runtime.snapshot.workspace_view.as_ref().unwrap().tool,
-        crate::workspace_views::Tool::Memory
+        Some(crate::workspace_views::Tool::Memory)
     );
     runtime.focus_checkout("visible-id", &first.id);
     runtime.sync_workspace_view();
@@ -633,11 +632,15 @@ fn delayed_memory_choice_changes_only_its_checkout_and_a_refusal_changes_neither
     runtime.sync_workspace_view();
     assert_eq!(
         runtime.snapshot.workspace_view.as_ref().unwrap().tool,
-        crate::workspace_views::Tool::Memory
+        Some(crate::workspace_views::Tool::Memory)
     );
     runtime.focus_checkout("visible-id", &first.id);
     runtime.sync_workspace_view();
-    assert_eq!(runtime.snapshot.workspace_view, before);
+    // The second checkout's lane call advances the store's call count, which
+    // every Workspace shares; this checkout's own view and call stay as they were.
+    let mut after = runtime.snapshot.workspace_view.clone().unwrap();
+    after.lane_calls = before.as_ref().unwrap().lane_calls;
+    assert_eq!(Some(after), before);
 }
 
 #[test]
@@ -751,13 +754,14 @@ fn a_later_local_memory_or_device_visit_supersedes_delayed_remote_memory() {
                 local.path
             );
             assert!(
-                !runtime
+                runtime
                     .workspace_views
                     .as_mut()
                     .unwrap()
                     .views
                     .entry("mini", &key.1)
-                    .tools
+                    .tool
+                    .is_none()
             );
             if visit_memory {
                 assert_eq!(

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Checkout, StripTab } from "./snapshot";
-import { agentEntries, bodyStep, columnFrame, dividerLanding, DEFAULT_SLOTS, NO_CALLS_SEEN, readCalls, slotsForStep, type ColumnSizes, type ColumnSlots } from "./workspace";
+import { agentEntries, laneFrame, laneLanding, NO_CALLS_SEEN, readCalls, treeLanding, type LaneInput, type LaneSizes } from "./workspace";
 
 const strip: StripTab[] = [
   { id: "herdr:1", kind: "herdr", source_id: "t1", label: "1", preview: false },
@@ -17,110 +17,105 @@ describe("the Workspace strips", () => {
   });
 });
 
-// The token values (`--size-agent-views-min`, `--size-file-views-min`,
-// `--size-panel-min`, `--size-file-views-ideal`, `--size-panel-ideal`,
-// `--spacing-sm`), so the steps read as the PRD states them.
-const sizes: ColumnSizes = { agentMin: 480, viewsMin: 360, toolsMin: 260, viewsIdeal: 640, toolsIdeal: 355, divider: 8 };
+// The token values (`--size-agent-views-min`, `--size-lane-min`,
+// `--size-lane-ideal`, `--size-tree-min`, `--size-tree-ideal`,
+// `--spacing-sm`), so the widths read as the PRD and the boards state them.
+const sizes: LaneSizes = { agentMin: 480, laneMin: 360, laneIdeal: 520, treeMin: 180, treeIdeal: 240, divider: 8 };
 
-const frame = (input: { views?: boolean; tools?: boolean; viewsWidth?: number | null; toolsWidth?: number | null; body: number; slots?: ColumnSlots }) =>
-  columnFrame({ views: input.views ?? false, tools: input.tools ?? false, viewsWidth: input.viewsWidth ?? null, toolsWidth: input.toolsWidth ?? null, body: input.body, sizes, slots: input.slots ?? DEFAULT_SLOTS });
+const frame = (input: Partial<Omit<LaneInput, "sizes">> & { body: number }) =>
+  laneFrame({ tool: null, pinned: false, tree: false, laneWidth: null, treeWidth: null, hasViews: true, shown: false, expanded: false, ...input, sizes });
 
-describe("the Workspace columns (PRD three-column-panel)", () => {
-  it("steps where the column minimums and their dividers fit: 1100 and 840 plus the dividers (D-07, B25)", () => {
-    expect([1116, 1115, 848, 847].map((body) => bodyStep(body, sizes))).toEqual(["wide", "mid", "mid", "narrow"]);
-    // Just over each step Agent Views still has its minimum.
-    expect(columnFrame({ views: true, tools: true, viewsWidth: null, toolsWidth: null, body: 1116, sizes, slots: DEFAULT_SLOTS }).agents).toBe(480);
-    expect(columnFrame({ views: true, tools: false, viewsWidth: null, toolsWidth: null, body: 848, sizes, slots: DEFAULT_SLOTS }).agents).toBe(480);
+describe("the right lane (PRD right-lane)", () => {
+  it("gives Agent Views the whole body while the lane is closed or put away (B1, B4)", () => {
+    expect(frame({ body: 1200 })).toMatchObject({ mode: "closed", agents: 1200 });
+    expect(frame({ tool: "files", body: 1200 })).toMatchObject({ mode: "hidden", agents: 1200, width: 520 });
   });
 
-  it("shows Agent Views alone with nothing on, and gives it the whole body (B1, B2)", () => {
-    expect(frame({ body: 1600 })).toEqual({ step: "wide", agents: 1600, views: null, tools: null });
+  it("draws an unpinned lane over Agent Views at its width, Agent Views keeping its own (B3)", () => {
+    expect(frame({ tool: "files", shown: true, body: 1200 })).toMatchObject({ mode: "overlay", agents: 1200, width: 520, document: 520, tree: null });
+    expect(frame({ tool: "agent_sessions", shown: true, laneWidth: 700, body: 1200 })).toMatchObject({ mode: "overlay", agents: 1200, width: 700 });
   });
 
-  it("docks every column that is on at its default width, Agent Views taking the rest (B1, D-12)", () => {
-    const wide = frame({ views: true, tools: true, body: 1600 });
-    expect(wide).toEqual({ step: "wide", agents: 1600 - 16 - 640 - 355, views: 640, tools: 355 });
-    expect(frame({ tools: true, body: 1600 })).toEqual({ step: "wide", agents: 1600 - 8 - 355, views: null, tools: 355 });
+  it("docks a pinned lane, Agent Views giving up its width and the divider's (B5, B7)", () => {
+    expect(frame({ tool: "files", pinned: true, body: 1200 })).toMatchObject({ mode: "docked", agents: 1200 - 8 - 520, width: 520 });
+    // The pin is the lane's, whichever tool shows and whether or not it was called.
+    expect(frame({ tool: "memory", pinned: true, body: 1200 })).toMatchObject({ mode: "docked", agents: 672 });
   });
 
-  it("keeps a stored width, but never under a column's minimum or over what leaves Agent Views its own (B21)", () => {
-    expect(frame({ views: true, viewsWidth: 100, body: 1600 }).views).toBe(360);
-    const greedy = frame({ views: true, tools: true, viewsWidth: 5000, toolsWidth: 300, body: 1200 });
-    expect(greedy.views).toBe(1200 - 16 - 300 - 480);
-    expect(greedy.agents).toBe(480);
-    const toolsGreedy = frame({ views: true, tools: true, toolsWidth: 5000, body: 1200 });
-    expect(toolsGreedy.views).toBe(360);
-    expect(toolsGreedy.agents).toBe(480);
+  it("keeps the stored width the same docked or drawn over, never under the lane's minimum (B6)", () => {
+    expect(frame({ tool: "files", pinned: true, laneWidth: 600, body: 1400 }).width).toBe(600);
+    expect(frame({ tool: "files", shown: true, laneWidth: 600, body: 1400 }).width).toBe(600);
+    expect(frame({ tool: "files", shown: true, laneWidth: 100, body: 1400 }).width).toBe(360);
   });
 
-  it("between the steps shows one column beside Agent Views, Tools giving way first unless it was called (B25, B26)", () => {
-    expect(frame({ views: true, tools: true, body: 1000 })).toMatchObject({ step: "mid", views: 1000 - 8 - 480, tools: null });
-    expect(frame({ views: true, tools: true, body: 1000, slots: { side: "tools", single: "tools" } })).toMatchObject({ views: null, tools: 355 });
-    // With only one of them on, that one shows.
-    expect(frame({ tools: true, body: 1000 })).toMatchObject({ views: null, tools: 355 });
+  it("widens the lane by the tree beside a document, so the document keeps its width (B10)", () => {
+    const tree = frame({ tool: "files", shown: true, tree: true, body: 1400 });
+    expect(tree).toMatchObject({ width: 520 + 8 + 240, document: 520, tree: 240, treeOnly: false });
+    // Docked, Agent Views gives up the tree's width too.
+    expect(frame({ tool: "files", pinned: true, tree: true, body: 1400 })).toMatchObject({ mode: "docked", agents: 1400 - 8 - 768, document: 520, tree: 240 });
+    // Another tool keeps the tree on without drawing it.
+    expect(frame({ tool: "changes", shown: true, tree: true, body: 1400 })).toMatchObject({ width: 520, tree: null });
   });
 
-  it("forgets a wide Tools call when entering mid, retaining only calls made there (B25, B26)", () => {
-    const called: ColumnSlots = { side: "tools", single: "tools" };
-    expect(frame({ views: true, tools: true, body: 1600, slots: called }).tools).toBe(355);
-    const entered = slotsForStep(called, "wide", "mid");
-    for (const body of [1100, 1115]) {
-      expect(frame({ views: true, tools: true, body, slots: entered })).toMatchObject({ views: body - 8 - 480, tools: null });
+  it("gives the tree the whole lane while no view is open, whether or not it is on (B12)", () => {
+    for (const tree of [true, false]) {
+      expect(frame({ tool: "files", shown: true, tree, hasViews: false, body: 1400 })).toMatchObject({ width: 520, tree: null, treeOnly: true });
     }
-    const midCall = slotsForStep(called, "mid", "mid");
-    expect(frame({ views: true, tools: true, body: 1100, slots: midCall })).toMatchObject({ views: null, tools: 355 });
-    const widened = slotsForStep(midCall, "mid", "wide");
-    expect(frame({ views: true, tools: true, body: 1100, slots: slotsForStep(widened, "wide", "mid") }).tools).toBeNull();
   });
 
-  it("starts a newly narrow body on Agent Views, while a first-measurement reveal still shows its called column (B27)", () => {
-    const called: ColumnSlots = { side: "views", single: "views" };
-    expect(frame({ views: true, body: 847, slots: slotsForStep(called, "mid", "narrow") }).agents).toBe(847);
-    expect(frame({ views: true, body: 847, slots: slotsForStep(called, null, "narrow") }).views).toBe(847);
-    expect(frame({ views: true, body: 846, slots: slotsForStep(called, "narrow", "narrow") }).views).toBe(846);
+  it("draws a pinned lane over Agent Views and keeps it up where docking would leave Agent Views under 480, and docks it again once the body widens (D-07, B19)", () => {
+    // A document of 520 and a tree of 240 with their divider, beside the lane's divider and 480, need 1256.
+    const narrow = frame({ tool: "files", pinned: true, tree: true, body: 1255 });
+    expect(narrow).toMatchObject({ mode: "overlay", narrowPin: true, agents: 1255, width: 768 });
+    const wide = frame({ tool: "files", pinned: true, tree: true, body: 1256 });
+    expect(wide).toMatchObject({ mode: "docked", narrowPin: false, agents: 480, width: 768 });
+    // Shrinking the window while pinned goes back over Agent Views, never hiding the lane.
+    expect(frame({ tool: "files", pinned: true, body: 1007 })).toMatchObject({ mode: "overlay", narrowPin: true });
+    expect(frame({ tool: "files", pinned: true, body: 1008 })).toMatchObject({ mode: "docked", agents: 480 });
   });
 
-  it("below the narrow step shows one column, Agent Views unless another that is on was called (B25, B27)", () => {
-    expect(frame({ views: true, tools: true, body: 700 })).toEqual({ step: "narrow", agents: 700, views: null, tools: null });
-    expect(frame({ views: true, body: 700, slots: { side: "views", single: "views" } })).toEqual({ step: "narrow", agents: null, views: 700, tools: null });
-    // A column that is off cannot fill the slot.
-    expect(frame({ body: 700, slots: { side: "views", single: "views" } }).agents).toBe(700);
+  it("opens the lane at any width, a body narrower than it giving up document width before tree width (B19)", () => {
+    expect(frame({ tool: "files", shown: true, body: 400 })).toMatchObject({ mode: "overlay", width: 400, document: 400 });
+    expect(frame({ tool: "files", shown: true, tree: true, body: 700 })).toMatchObject({ width: 700, document: 452, tree: 240 });
+    expect(frame({ tool: "files", shown: true, tree: true, body: 560 })).toMatchObject({ width: 560, document: 360, tree: 192 });
   });
 
-  it("places nothing beside Agent Views before the body is measured, so no terminal fits to a guess", () => {
-    expect(frame({ views: true, tools: true, body: 0 })).toMatchObject({ views: null, tools: null });
+  it("expands over the whole body while Agent Views keeps the width it had (B8)", () => {
+    expect(frame({ tool: "files", shown: true, expanded: true, tree: true, body: 1400 })).toMatchObject({ mode: "expanded", agents: 1400, width: 1400, tree: 240, document: 1400 - 8 - 240 });
+    expect(frame({ tool: "files", pinned: true, expanded: true, body: 1400 })).toMatchObject({ mode: "expanded", agents: 1400 - 8 - 520, width: 1400 });
   });
 
-  it("lands the File Views divider as its width, within the minimums (D-12, B20)", () => {
-    const shown = frame({ views: true, body: 1600 });
-    // The divider dragged 100px left widens File Views by 100px.
-    const x = 1600 - 640 - 8 - 100;
-    expect(dividerLanding({ divider: "views", x, body: 1600, frame: shown, sizes })).toEqual({ views_width: 740 });
-    expect(dividerLanding({ divider: "views", x: 0, body: 1600, frame: shown, sizes })).toEqual({ views_width: 1600 - 8 - 480 });
-    expect(dividerLanding({ divider: "views", x: 1590, body: 1600, frame: shown, sizes })).toEqual({ views_width: 360 });
+  it("places nothing before the body is measured, so no terminal fits to a guess", () => {
+    expect(frame({ tool: "files", pinned: true, body: 0 })).toMatchObject({ agents: 0, width: 0 });
   });
 
-  it("trades width between File Views and Tools at the divider between them, so Agent Views keeps its width", () => {
-    const shown = frame({ views: true, tools: true, body: 1600 });
-    const x = 1600 - 355 - 8 - 45;
-    const landed = dividerLanding({ divider: "tools", x, body: 1600, frame: shown, sizes });
-    expect(landed).toEqual({ views_width: 640 - 45, tools_width: 400 });
-    expect((landed.views_width ?? 0) + (landed.tools_width ?? 0)).toBe(640 + 355);
-    // File Views keeps its minimum.
-    expect(dividerLanding({ divider: "tools", x: 0, body: 1600, frame: shown, sizes })).toEqual({ views_width: 360, tools_width: 640 + 355 - 360 });
+  it("lands the docked lane's divider as the document width, within the minimums (B6)", () => {
+    const docked = frame({ tool: "files", pinned: true, body: 1600 });
+    // The divider dragged 100px left widens the lane by 100px.
+    expect(laneLanding({ x: 1600 - 520 - 8 - 100, body: 1600, frame: docked, sizes })).toEqual({ lane_width: 620 });
+    expect(laneLanding({ x: 0, body: 1600, frame: docked, sizes })).toEqual({ lane_width: 1600 - 8 - 480 });
+    expect(laneLanding({ x: 1590, body: 1600, frame: docked, sizes })).toEqual({ lane_width: 360 });
+    // With the tree beside the document, the tree keeps its width.
+    const tree = frame({ tool: "files", pinned: true, tree: true, body: 1600 });
+    expect(laneLanding({ x: 1600 - 768 - 8 - 32, body: 1600, frame: tree, sizes })).toEqual({ lane_width: 552 });
   });
 
-  it("lands a lone Tools divider as Tools' width against Agent Views", () => {
-    const shown = frame({ tools: true, body: 1600 });
-    expect(dividerLanding({ divider: "tools", x: 1600 - 8 - 500, body: 1600, frame: shown, sizes })).toEqual({ tools_width: 500 });
-    expect(dividerLanding({ divider: "tools", x: 1590, body: 1600, frame: shown, sizes })).toEqual({ tools_width: 260 });
+  it("trades width between the tree and the document, so the lane and Agent Views keep theirs (B10)", () => {
+    const tree = frame({ tool: "files", pinned: true, tree: true, body: 1600 });
+    const landed = treeLanding({ x: 300, frame: tree, sizes });
+    expect(landed).toEqual({ tree_width: 300, lane_width: 460 });
+    expect(treeLanding({ x: 10, frame: tree, sizes })).toEqual({ tree_width: 180, lane_width: 580 });
+    expect(treeLanding({ x: 700, frame: tree, sizes })).toEqual({ tree_width: 400, lane_width: 360 });
+    // Expanded, only the tree's width is kept, so the stored document width is not the body's.
+    const expanded = frame({ tool: "files", shown: true, expanded: true, tree: true, body: 1600 });
+    expect(treeLanding({ x: 300, frame: expanded, sizes })).toEqual({ tree_width: 300 });
   });
 });
 
 describe("readCalls", () => {
-  const view = (path: string, views_called: number, views_calls: number) => ({ device_id: "local", path, views_called, views_calls });
+  const view = (path: string, lane_called: number, lane_calls: number) => ({ device_id: "local", path, lane_called, lane_calls });
 
-  it("takes the first count as history, then shows File Views for a call to the Workspace in front", () => {
+  it("takes the first count as history, then shows the lane for a call to the Workspace in front", () => {
     const first = readCalls(NO_CALLS_SEEN, view("/a", 3, 5));
     expect(first).toMatchObject({ reset: true, call: false });
     const same = readCalls(first.seen, view("/a", 3, 5));

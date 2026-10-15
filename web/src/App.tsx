@@ -335,9 +335,6 @@ function CenterScreen({ actions }: { actions: Actions }) {
       // comes forward in its place.
       if (store.screen?.kind === "workspace") store.setOpening(null);
       else store.setScreen({ kind: "workspace" });
-      // A destination tool must take the narrow body's slot after arrival;
-      // calling it before the checkout moves would be reset by that move.
-      if ("checkoutId" in opening.target && opening.target.tool !== undefined) store.callColumn("tools");
       return;
     }
     store.setOpening(store.screen?.kind === "workspace" ? null : { ...opening, failure: progress });
