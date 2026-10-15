@@ -18,7 +18,7 @@ permissions: {}
 
 jobs:
   gate:
-    if: github.repository == 'modakbul-gongbang/hide'
+    if: github.repository == 'with-hide/hide'
     runs-on: ubuntu-latest
     permissions:
       contents: read

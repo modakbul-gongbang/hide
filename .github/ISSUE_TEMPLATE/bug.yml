@@ -5,9 +5,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        Read [CONTRIBUTING.md](https://github.com/modakbul-gongbang/hide/blob/main/CONTRIBUTING.md) first.
+        Read [CONTRIBUTING.md](https://github.com/with-hide/hide/blob/main/CONTRIBUTING.md) first.
 
-        Issues are only for bugs someone reproduced. Ideas, feature requests, questions and proposals belong in [Discussions](https://github.com/modakbul-gongbang/hide/discussions); an issue opened for them is closed automatically.
+        Issues are only for bugs someone reproduced. Ideas, feature requests, questions and proposals belong in [Discussions](https://github.com/with-hide/hide/discussions); an issue opened for them is closed automatically.
 
         Keep it to one screen and write it in your own words. A report over 8,000 characters is closed automatically. Leave out root-cause analysis, proposed fixes, patches and generated investigation output.
 

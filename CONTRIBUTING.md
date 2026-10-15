@@ -40,13 +40,13 @@ If you cannot reproduce the behavior, start a Discussion instead.
 
 ### Start a Discussion
 
-Use [Discussions](https://github.com/modakbul-gongbang/hide/discussions) for ideas, feature requests, questions, proposals and product-direction checks.
+Use [Discussions](https://github.com/with-hide/hide/discussions) for ideas, feature requests, questions, proposals and product-direction checks.
 Keep it short and write it for a person to read: the problem and why it matters, not the implementation your agent already produced.
 Votes and comments show interest; they do not promise the work, its priority, or a pull request.
 
 ### Report a vulnerability
 
-Report it privately through [a security advisory](https://github.com/modakbul-gongbang/hide/security/advisories/new), never in a public issue; [SECURITY.md](SECURITY.md) says how.
+Report it privately through [a security advisory](https://github.com/with-hide/hide/security/advisories/new), never in a public issue; [SECURITY.md](SECURITY.md) says how.
 
 ## Instructions for coding agents
 

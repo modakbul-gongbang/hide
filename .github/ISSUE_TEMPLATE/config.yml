@@ -1,13 +1,13 @@
 blank_issues_enabled: false
 contact_links:
   - name: Ideas and feature requests
-    url: https://github.com/modakbul-gongbang/hide/discussions/categories/ideas
+    url: https://github.com/with-hide/hide/discussions/categories/ideas
     about: Start a discussion for an idea, a feature request or a behavior change.
   - name: Questions
-    url: https://github.com/modakbul-gongbang/hide/discussions/categories/q-a
+    url: https://github.com/with-hide/hide/discussions/categories/q-a
     about: Ask in Discussions; issues are only for reproduced bugs.
   - name: Security vulnerability
-    url: https://github.com/modakbul-gongbang/hide/security/advisories/new
+    url: https://github.com/with-hide/hide/security/advisories/new
     about: Report privately. Do not open a public issue for a vulnerability.
   - name: Herdr runtime itself
     url: https://herdr.dev/docs
