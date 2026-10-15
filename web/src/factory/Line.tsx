@@ -102,7 +102,7 @@ function Row({ row, item }: { row: LineRow; item: InboxItem | undefined }) {
           {card.pr ? (
             <span className="flex shrink-0 items-center gap-xxs">
               <GitPullRequestIcon aria-hidden="true" className="size-(--size-icon-sm)" />
-              {card.pr.number}
+              #{card.pr.number}
             </span>
           ) : null}
         </span>

@@ -2,6 +2,7 @@ import type { UsageAmount, UsageRange } from "../generated/hided-ws";
 import { useInterfaceTranslation } from "../i18n/client";
 import { requireInterfaceLanguage } from "../i18n/locale";
 import { compactTokens, dollarAmount } from "../usageHistory";
+import { BoundedTokens } from "./usage-hide-ai";
 import { Hint } from "./ui/tooltip";
 
 export function UsageCost({ amount }: { amount: UsageAmount }) {
@@ -22,12 +23,12 @@ export function UsageCost({ amount }: { amount: UsageAmount }) {
   return <Hint label={`${value} · ${reasons}`} contentClassName="[overflow-wrap:anywhere]"><span tabIndex={0} data-usage-cost="true" data-cost-unavailable={unavailable} className="usage-cost">{value}{cost.stale || cost.incomplete || cost.partial && !unavailable ? <span className="text-micro text-muted-foreground"> *</span> : null}</span></Hint>;
 }
 
-export function UsageSummary({ amount, pending = false, exact = false, announce = false }: { amount: UsageAmount; pending?: boolean; exact?: boolean; announce?: boolean }) {
+export function UsageSummary({ amount, pending = false, exact = false, announce = false, tokensLowerBound = false }: { amount: UsageAmount; pending?: boolean; exact?: boolean; announce?: boolean; tokensLowerBound?: boolean }) {
   const { t, i18n } = useInterfaceTranslation();
   const language = requireInterfaceLanguage(i18n.language);
   return <div className="usage-summary" aria-live={announce ? "polite" : undefined} aria-atomic={announce || undefined}>
     <div><div className="text-micro text-muted-foreground">{t("usage.history.costHeading")}</div><div className="usage-summary-value">{pending ? t("usage.history.pending") : <UsageCost amount={amount} />}</div></div>
-    <div><div className="text-micro text-muted-foreground">{t("usage.history.newTokens")}</div><div className="usage-summary-value" data-usage-total="true">{pending ? t("usage.history.pending") : amount.calls ? exact ? new Intl.NumberFormat(language).format(amount.new_tokens) : compactTokens(amount.new_tokens, language) : t("usage.history.noData")}</div></div>
+    <div><div className="text-micro text-muted-foreground">{t("usage.history.newTokens")}</div><div className="usage-summary-value" data-usage-total="true">{pending ? t("usage.history.pending") : amount.calls ? <BoundedTokens text={exact ? new Intl.NumberFormat(language).format(amount.new_tokens) : compactTokens(amount.new_tokens, language)} bounded={tokensLowerBound} /> : t("usage.history.noData")}</div></div>
   </div>;
 }
 

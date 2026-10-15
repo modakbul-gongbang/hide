@@ -2469,21 +2469,26 @@ struct JudgePort {
     home: Option<PathBuf>,
 }
 
+/// The settings, the node whose CLIs answer and the sink that counts the
+/// attempt: everything a Factory judgment asks Hide AI with.
+type JudgeAi = (
+    hide_ai::AiSettings,
+    Arc<dyn crate::node_access::NodeLink>,
+    Arc<dyn hide_ai::AiUsageSink>,
+);
+
 /// The Hide AI settings the core holds, else the ones on disk.
-fn ai_settings(
-    runtime: &Weak<Mutex<Runtime>>,
-    home: Option<&Path>,
-) -> Option<(hide_ai::AiSettings, Arc<dyn crate::node_access::NodeLink>)> {
+fn ai_settings(runtime: &Weak<Mutex<Runtime>>, home: Option<&Path>) -> Option<JudgeAi> {
     let core = lock(runtime)?;
-    let (settings, node) = {
+    let (settings, node, usage) = {
         let core = guard(&core);
-        (core.factory_ai_settings(), core.own_node())
+        (core.factory_ai_settings(), core.own_node(), core.ai_usage())
     };
     drop(core);
     let settings = settings
         .or_else(|| home.and_then(|home| hide_ai::settings::load(home).ok()))
         .unwrap_or_default();
-    Some((settings, node))
+    Some((settings, node, usage))
 }
 
 /// The pick a judgment carries to Hide AI: the Factory AI the Factory chose
@@ -2557,9 +2562,9 @@ impl Judge for JudgePort {
         {
             return Err("factory_ai_effort_not_declared".into());
         }
-        let (settings, node) =
+        let (settings, node, usage) =
             ai_settings(&self.runtime, self.home.as_deref()).ok_or("core_stopped")?;
-        let router = crate::ai::factory_router(&node, &settings);
+        let router = crate::ai::factory_router(&node, &settings, &usage);
         match router
             .availability()
             .into_iter()
@@ -2593,7 +2598,7 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
             }
         };
         // The core ended: nothing is left to answer the judgment to.
-        let Some((settings, node)) = ai_settings(&runtime, home.as_deref()) else {
+        let Some((settings, node, usage)) = ai_settings(&runtime, home.as_deref()) else {
             return;
         };
         if router
@@ -2602,7 +2607,7 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
         {
             router = Some((
                 settings.clone(),
-                crate::ai::factory_router(&node, &settings),
+                crate::ai::factory_router(&node, &settings, &usage),
             ));
         }
         let Some((_, router)) = &router else { continue };

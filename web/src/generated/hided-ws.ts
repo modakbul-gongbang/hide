@@ -267,6 +267,10 @@ export interface UsageRange {
   limited: boolean;
   files_done: number;
   files_total: number;
+  /**
+   * The first retained day Hide AI was counted on; no earlier day is. Only the all-agents range carries it.
+   */
+  hide_ai_since: string | null;
 }
 export interface UsageDay {
   date: string;
@@ -286,6 +290,10 @@ export interface UsageDay {
    */
   agents: UsageContribution[];
   other_agents: number;
+  /**
+   * Only the all-agents range carries it, on a day Hide AI was counted; an agent's own range is that agent's sessions.
+   */
+  hide_ai: UsageHideAiDay | null;
 }
 export interface UsageAmount {
   calls: number;
@@ -317,6 +325,46 @@ export interface UsageContribution {
   agent: string;
   new_tokens: number;
   share_basis_points: number;
+}
+/**
+ * Hide's own background AI on one day. Its known part is already inside the day's amount.
+ */
+export interface UsageHideAiDay {
+  amount: UsageAmount1;
+  /**
+   * The known Hide AI new tokens over the day's new tokens.
+   */
+  share_basis_points: number;
+  /**
+   * @maxItems 5
+   */
+  features: UsageHideAiFeature[];
+  /**
+   * Attempts that were submitted and reported no usage. A count of calls, never tokens, so it is in no amount.
+   */
+  unknown_calls: number;
+}
+/**
+ * The sum of features. A lower bound (cost.partial) when unknown_calls is not zero.
+ */
+export interface UsageAmount1 {
+  calls: number;
+  new_tokens: number;
+  tokens: UsageTokens;
+  cost: UsageCost;
+}
+export interface UsageHideAiFeature {
+  /**
+   * The closed group a router request's feature id falls into; an id outside the list is other.
+   */
+  feature: "labels" | "memory" | "factory" | "issue" | "other";
+  amount: UsageAmount;
+  /**
+   * Provider ids of the models that answered, for the row's marks.
+   *
+   * @maxItems 8
+   */
+  providers: string[];
 }
 export interface UsageHistory {
   popover: UsageHistorySurface;

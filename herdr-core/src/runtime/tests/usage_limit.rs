@@ -309,6 +309,10 @@ fn limits_and_ledger_publications_preserve_each_others_values() {
                 ..Default::default()
             },
         }],
+        &query::Hide {
+            rows: &[],
+            limited: false,
+        },
         &[],
         None,
         crate::node::TEST_NODE,

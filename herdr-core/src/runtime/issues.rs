@@ -1328,12 +1328,14 @@ impl Runtime {
         });
         let worker_request = request_id.clone();
         let node = self.own_node();
+        let usage = self.ai_usage();
         if let Err(message) = self.spawn_issue_worker(
             "worktree-name",
             move || {
                 crate::ai::suggest_worktree_name(
                     &node,
                     &settings,
+                    &usage,
                     &worker_request,
                     &payload.prefix,
                     &payload.title,
