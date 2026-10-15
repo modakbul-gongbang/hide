@@ -404,7 +404,7 @@ pub(crate) fn register_woken(
             on_node,
         },
         worker.pane.into(),
-        worker.name.into(),
+        Some(worker.name.into()),
         Some(parent.into()),
         Some(worker.worktree.into()),
     )?;
@@ -1874,7 +1874,7 @@ mod tests {
         assert_eq!(
             (
                 record.pane.as_str(),
-                record.name.as_str(),
+                record.name.as_deref().unwrap_or_default(),
                 record.parent.as_deref(),
                 record.project.as_deref(),
                 record.ended,
