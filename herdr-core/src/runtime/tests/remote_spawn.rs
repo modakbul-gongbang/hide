@@ -278,7 +278,7 @@ fn spawner() -> Spawner {
         &crate::coordination::Mutation::Register {
             record: AgentRecord {
                 id: String::new(),
-                name: "sender".into(),
+                name: Some("sender".into()),
                 machine: crate::node::TEST_NODE.into(),
                 host_scope: "fixture".into(),
                 native_machine: "machine-local".into(),

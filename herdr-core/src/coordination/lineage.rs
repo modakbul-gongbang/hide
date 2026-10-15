@@ -509,7 +509,7 @@ mod tests {
     fn record(id: &str, pane: &str, session: &str, parent: Option<&str>) -> AgentRecord {
         AgentRecord {
             id: id.into(),
-            name: id.into(),
+            name: Some(id.into()),
             machine: crate::node::TEST_NODE.into(),
             host_scope: "fixture".into(),
             native_machine: "fixture-machine".into(),
@@ -629,7 +629,7 @@ mod tests {
     fn agent(record: &AgentRecord, tokens: BTreeMap<String, Value>) -> ProjectedAgent {
         ProjectedAgent {
             pane_id: record.pane.clone(),
-            name: Some(record.name.clone()),
+            name: record.name.clone(),
             workspace_id: "fixture".into(),
             tab_id: "fixture:tab".into(),
             cwd: None,

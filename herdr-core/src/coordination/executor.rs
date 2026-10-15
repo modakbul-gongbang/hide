@@ -121,6 +121,8 @@ fn actor_for(agent: &ProjectedAgent, device: &str, on_node: bool) -> Result<Acto
         } else {
             format!("remote:{device}:pane:{}", agent.pane_id)
         },
+        // Herdr's own identifier for the agent: its name, else its pane. It
+        // keys the pane, never labels it (`AgentRecord::wire_name`).
         name: agent.name.clone().unwrap_or_else(|| agent.pane_id.clone()),
         kind: agent.agent.clone().ok_or("native_identity_unavailable")?,
         device_id: device.into(),
@@ -139,13 +141,15 @@ fn record(
     agent: &ProjectedAgent,
     host: HostIdentity<'_>,
     instance: String,
-    name: String,
+    name: Option<String>,
     parent: Option<String>,
     project: Option<String>,
 ) -> Result<AgentRecord, String> {
     Ok(AgentRecord {
         id: String::new(),
-        name,
+        // A pane id is never a name: Herdr's fallback identifier for an
+        // agent it never named, or a name restating the pane, is none.
+        name: name.filter(|name| *name != agent.pane_id),
         machine: host.machine.into(),
         host_scope: host.scope.into(),
         native_machine: host.native_machine.into(),
@@ -266,7 +270,7 @@ pub(crate) fn run(
                     on_node,
                 },
                 instance,
-                name,
+                Some(name),
                 parent,
                 project,
             )?;
@@ -323,7 +327,7 @@ pub(crate) fn register_code_owned(
     }
     let record = AgentRecord {
         id: String::new(),
-        name: actor.name.clone(),
+        name: Some(actor.name.clone()),
         machine: actor.device_id.clone(),
         host_scope: actor.kind.clone(),
         native_machine: actor.kind.clone(),
@@ -553,7 +557,10 @@ fn spawn(
                     on_node,
                 },
                 native.pane_id.clone(),
-                actor.name.clone(),
+                // Herdr's name for the parent while it has one; a parent
+                // Herdr never named stays unnamed instead of taking its pane
+                // id for a name.
+                native.name.clone(),
                 None,
                 // A device's path names no project of the caller's machine.
                 machine.is_none().then(|| repo.clone()),
@@ -852,7 +859,7 @@ fn spawn(
                 on_node,
             },
             pane.into(),
-            name.clone(),
+            Some(name.clone()),
             reserved.mode.responsibility(&parent_id),
             reserved.path.clone(),
         )?;
@@ -1075,7 +1082,7 @@ pub(crate) fn link_fork(
                 on_node,
             },
             source.into(),
-            actor.name.clone(),
+            native_source.name.clone(),
             None,
             None,
         )?;
@@ -1108,7 +1115,7 @@ pub(crate) fn link_fork(
             on_node,
         },
         child.into(),
-        native_child.name.clone().unwrap_or_else(|| child.into()),
+        native_child.name.clone(),
         None,
         native_child.cwd.clone(),
     )?;
@@ -1157,6 +1164,37 @@ mod tests {
             registration_machine(Some(String::new()), crate::node::TEST_NODE),
             Err("invalid_registration".into())
         );
+    }
+
+    /// An agent Herdr never named is registered with no name: its pane id,
+    /// which Herdr offers as its identifier, is not a name, and neither is a
+    /// name that only restates the pane.
+    #[test]
+    fn registering_an_agent_herdr_never_named_stores_no_name() {
+        let herdr = FakeHerdr::start("coordination-unnamed", move |method, _| {
+            assert_eq!(method, "agent.list");
+            json!({"type":"agent_list","agents":[{
+                "pane_id":"w9J:p9R","workspace_id":"w9J","tab_id":"w9J:t1",
+                "terminal_id":"terminal","revision":1,"focused":false,
+                "agent_status":"idle","agent":"claude",
+                "agent_session":{"source":"herdr:claude","agent":"claude",
+                    "kind":"id","value":"parent-session"}}]})
+        });
+        let native = wait_native_identity(&herdr.connector(), "w9J:p9R", None, "claude").unwrap();
+        assert_eq!(native.name, None);
+        let host = || HostIdentity {
+            machine: crate::node::TEST_NODE,
+            scope: "scope",
+            native_machine: "machine",
+            on_node: true,
+        };
+        let make = |name: Option<String>| {
+            record(&native, host(), "terminal".into(), name, None, None).unwrap()
+        };
+        let unnamed = make(native.name.clone());
+        assert_eq!(unnamed.name, None);
+        assert_eq!(make(Some("w9J:p9R".into())).name, None);
+        assert_eq!(make(Some("lead".into())).name.as_deref(), Some("lead"));
     }
 
     #[test]
@@ -1237,7 +1275,7 @@ mod tests {
                 &Mutation::Register {
                     record: AgentRecord {
                         id: String::new(),
-                        name: "factory".into(),
+                        name: Some("factory".into()),
                         machine: crate::node::TEST_NODE.into(),
                         host_scope: "fixture".into(),
                         native_machine: "fixture-machine".into(),
@@ -1465,7 +1503,7 @@ mod tests {
             let (runtime, _, _, path) = fixture(root.path());
             let parent = AgentRecord {
                 id: String::new(),
-                name: "sender".into(),
+                name: Some("sender".into()),
                 machine: crate::node::TEST_NODE.into(),
                 host_scope: "fixture".into(),
                 native_machine: "fixture-machine".into(),
@@ -1564,7 +1602,7 @@ mod tests {
             .unwrap();
             let child = AgentRecord {
                 id: String::new(),
-                name: "recipient".into(),
+                name: Some("recipient".into()),
                 machine: crate::node::TEST_NODE.into(),
                 host_scope: "fixture".into(),
                 native_machine: "fixture-machine".into(),

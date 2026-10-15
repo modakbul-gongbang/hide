@@ -359,7 +359,7 @@ impl Runtime {
                 let ledger = self.delivery_state().ok()?;
                 let record = ledger.agents.iter().find(|record| record.id == id)?;
                 Some(MemoryPromotionAgentSnapshot {
-                    name: record.name.clone(),
+                    name: record.wire_name().to_owned(),
                     pane_id: (!record.ended).then(|| record.pane.clone()),
                 })
             }),
@@ -2838,8 +2838,12 @@ mod tests {
         );
         let ledger = runtime.lock().unwrap().delivery_state().unwrap();
         assert!(
-            ledger.agents.iter().any(|record| record.name
-                == crate::delivery::Actor::hide(HIDE_MEMORY_ROLE, "test-node").name),
+            ledger.agents.iter().any(|record| record.name.as_deref()
+                == Some(
+                    crate::delivery::Actor::hide(HIDE_MEMORY_ROLE, "test-node")
+                        .name
+                        .as_str()
+                )),
             "Hide is registered as the agent's origin"
         );
         let [spawn] = ledger.spawns.as_slice() else {
