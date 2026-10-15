@@ -2972,8 +2972,8 @@ function buildProjectsSidebar(tokens) {
   // centered under the checkout's kind glyph spans the segment's rows, and the
   // gap between two guides is the tab boundary. A tab of two or more agents wears
   // the tab glyph at the head of its guide, on the first row's line; a manual name
-  // adds one quiet 22px line carrying that glyph and the name, starting on the
-  // status-mark column (sidebar.tsx's TabSegmentHead).
+  // adds one quiet 22px line inside the guide instead, the glyph on the status-mark
+  // column and the name on the title column (sidebar.tsx's TabSegmentHead).
   function segment(id, {name = null, glyph = false, rows}) {
     const line = num(tokens, '--size-sidebar-line');
     const tabLine = line + num(tokens, '--spacing-xxs');
@@ -2983,9 +2983,11 @@ function buildProjectsSidebar(tokens) {
     const named = glyph && name !== null;
     const glyphX = glyphColumn + (kind - glyphSize) / 2;
     const guideX = glyphColumn + (kind - 1) / 2;
-    const guideTop = !glyph ? xs : named ? tabLine / 2 + glyphSize / 2 + air : xs + line / 2 + glyphSize / 2 + air;
+    const mark = num(tokens, '--size-agent-mark');
+    const markX = nameColumn + (mark - glyphSize) / 2;
+    const guideTop = !glyph || named ? xs : xs + line / 2 + glyphSize / 2 + air;
     const head = named
-      ? [frame(`${id}-line`, 'Tab line', {width: row, height: tabLine, layout: 'horizontal', alignItems: 'center', gap: nameColumn - glyphX - glyphSize, padding: [0, xs, 0, glyphX]}, [
+      ? [frame(`${id}-line`, 'Tab line', {width: row, height: tabLine, layout: 'horizontal', alignItems: 'center', gap: nameColumn + mark + xs - markX - glyphSize, padding: [0, xs, 0, markX]}, [
         icon(`${id}-glyph`, 'panels-top-left', {size: glyphSize, fill: '$--subtle-foreground'}),
         text(`${id}-name`, name, {size: '$--text-caption', fill: '$--subtle-foreground', width: 'fill_container'}),
       ])]
@@ -2995,10 +2997,15 @@ function buildProjectsSidebar(tokens) {
     return frame(id, 'Tab segment', {width: row, layout: 'vertical'}, [...head, ...rows, guide]);
   }
 
-  // An opened checkout and its unboxed tab segments, 8px apart.
+  // An opened checkout and its unboxed tab segments, 8px apart: the segments hang
+  // 2px under the checkout row, and the group's end carries the same 8px before
+  // the next row (sidebar.tsx's OpenAgentRows).
   function group(id, rows) {
     const [checkout, ...segments] = rows;
-    return frame(id, 'Opened checkout', {width: row, layout: 'vertical', gap: '$--spacing-sm'}, [checkout, ...segments]);
+    return frame(id, 'Opened checkout', {width: row, layout: 'vertical', gap: '$--spacing-xxs', padding: [0, 0, sm, 0]}, [
+      checkout,
+      frame(`${id}-segments`, 'Tab segments', {width: row, layout: 'vertical', gap: '$--spacing-sm'}, segments),
+    ]);
   }
 
   function fold(id, label, level) {
@@ -3472,7 +3479,7 @@ function buildProjectsSidebar(tokens) {
     try { return draw(); } finally { row = saved; }
   }
   function statusAxis(s) {
-    return atRow(240 - 2 * sm, () => frame(`psb-axis-${s}`, 'Approved tab segments · 240 px', {width: 240, layout: 'vertical', gap: '$--spacing-sm', padding: sm, fill: '$--sidebar', clip: true}, [
+    return atRow(240 - 2 * sm, () => frame(`psb-axis-${s}`, 'Approved tab segments · 240 px', {width: 240, layout: 'vertical', padding: [sm, sm, 0, sm], fill: '$--sidebar', clip: true}, [group(`psb-axis-g-${s}`, [
       checkoutRow(`psb-axis-checkout-${s}`, {name: 'main', kind: 'primary', age: '8m', marks: {working: 4, idle: 1}, expanded: true}),
       segment(`psb-axis-a-${s}`, {glyph: true, name: '아주 긴 한국어 탭 이름과 작업…', rows: [
         tree(`psb-axis-one-${s}`, {title: '탭 경계·여백 정리', status: 'working', age: '1m', selected: true}),
@@ -3483,7 +3490,7 @@ function buildProjectsSidebar(tokens) {
         tree(`psb-axis-four-${s}`, {title: 'PR 질문 표시 개선', status: 'working', age: '6m'}),
         tree(`psb-axis-five-${s}`, {title: '탐색 개선', status: 'seen', age: '11m'}),
       ]}),
-    ]));
+    ])]));
   }
   const approvedBuild = suffix => [...build(suffix), statusAxis(suffix)];
   return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx and core agent_state (session-first-ui B1-B10; agent-hierarchy-screens D-12, D-37 to D-42): one sidebar follows the selected device, under the window’s top row that names it after the traffic lights (PRD sidebar-titlebar-refresh D-15): the Search row, the Overview row, bounded Needs You and Done groups and default-open project checkouts, with no Home row (D-06). Pinned leads with the pin and Projects ends in Add project; both headers stick to the list’s top with a hairline (D-05). A project’s name is 600 while an agent there works and 400 otherwise, a project whose agents all sleep is folded behind a moon cell with its age, projects with no agents fold behind No agents N (D-01 to D-03), and under the pointer + and ⋯ stand over the badge (D-04). The footer adds Help before the gear (D-11, D-12), and checkout and folder menus carry Open in VS Code before the reveal (D-13). A Needs You row’s second line is the verb and what to do. Roots and orphans head an opened checkout; a root the operator opened draws its children and grandchildren as one-line tree rows with elbow rails and a chevron lane, five siblings and then N개 더, each row with its own PR icon and, folded, its descendant mark; an opened checkout is one line. Every root stands on one status axis right of the checkout glyph whatever tab holds it: a hairline guide under that glyph spans each tab’s rows with a gap between tabs, a tab of two or more agents wears the tab glyph at the head of its guide, and a manual name adds one quiet line. A plain folder’s glyph and name stand on the project row’s columns. A grandchild’s chevron opens its tree popover, and the popover’s last line opens the Overview Agents graph. Clean worktrees without agents start in No agents; closed agent worktrees and missing paths start in Cleanup. Explicit checkout folds persist and retain Needs You rows. Project and checkout menus, glyphs, age columns, the device rail and usage footer retain their existing behavior.', approvedBuild, approvedBuild);

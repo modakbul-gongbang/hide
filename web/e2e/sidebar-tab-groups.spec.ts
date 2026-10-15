@@ -92,14 +92,22 @@ test("2-1-2 tab segments share one root column right of the kind glyph, with gui
       expect(line.width).toBe(1);
       expect(Math.abs(line.x + line.width / 2 - center)).toBeLessThanOrEqual(0.5);
     }
-    // A tab glyph stands on the guide's column too, and the head adds no row: the first row keeps the 28px a singleton row has.
+    // A named tab's line stands inside its guide like a row: the guide starts beside it, its glyph is centered on the status-mark column and
+    // its name starts on the title column, so nothing of the tab stands on the checkout glyph's column.
+    const mark = marks[0]!;
     for (const tab of [herdr.tab, paired.tab.tab_id]) {
-      const head = await position(segment(page, tab).locator("svg").first());
-      expect(Math.abs(head.x + head.width / 2 - center)).toBeLessThanOrEqual(0.5);
+      const head = await position(segment(page, tab).locator("[data-sidebar-tab-line] svg"));
+      expect(Math.abs(head.x + head.width / 2 - (mark.x + mark.width / 2))).toBeLessThanOrEqual(0.5);
+      expect((await position(segment(page, tab).locator("[data-sidebar-tab-name]"))).x).toBe(titles[0]!.x);
+      const line = await position(segment(page, tab).locator("[data-sidebar-tab-line]"));
+      expect((await position(guide(page, tab))).y).toBeLessThan(line.y + line.height / 2);
     }
     const first = await position(segment(page, herdr.tab));
     const middle = await position(segment(page, single.tab.tab_id));
     const last = await position(segment(page, paired.tab.tab_id));
+    // The first segment hangs 2px under its folder's row, nearer it than the 8px between two segments.
+    const owner = await position(page.locator("[data-project-list] [data-project-menu] > div").first());
+    expect(first.y - owner.y - owner.height).toBe(2);
     expect(middle.y - first.y - first.height).toBe(8);
     expect(last.y - middle.y - middle.height).toBe(8);
     expect((await position(segment(page, single.tab.tab_id).locator("li[data-pane]"))).height).toBe(28);

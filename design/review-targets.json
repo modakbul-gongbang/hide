@@ -1563,8 +1563,8 @@
       "noSidewaysOverflow": true
     },
     "judgment": [
-      "Do all root status marks share one axis right of the checkout glyph, with each tab's guide centered under that glyph and its tab glyph on the guide's column at the head of its first row?",
-      "Does the named tab line read as a quiet head, and do neutral selection, Korean titles and trailing metadata match the approved Pen in both themes?"
+      "Do all root status marks share one axis right of the checkout glyph, with each tab's guide centered under that glyph and an unnamed tab's glyph on the guide's column at the head of its first row?",
+      "Does the named tab line read as a quiet head inside the guide, its glyph on the status-mark column and its name on the title column, and do neutral selection, Korean titles and trailing metadata match the approved Pen in both themes?"
     ]
   },
   "right-lane": {

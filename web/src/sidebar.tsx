@@ -1576,7 +1576,9 @@ function PurposeLine({ purpose, origin, age, raisedFrom }: { purpose: string | n
  */
 function OpenAgentRows({ checkout, groupTabs, deviceId, agentRows, sleeping, inset, glyphColumn, context }: { checkout: Checkout; groupTabs: boolean; deviceId: string; agentRows: BoardRow[]; sleeping: SleepingSession[]; inset: string; glyphColumn: string; context: TreeContext }) {
   const groups = useMemo(() => sidebarTabGroups(checkout, deviceId, agentRows, context.agents), [checkout, deviceId, agentRows, context.agents]);
-  return <ul className={cn("isolate", groupTabs && "mt-sm")} data-checkout-agents-open={checkout.id}>
+  // An opened checkout's agents hang just under it, apart only so its fill and a selected row's never merge, and the
+  // group's end carries the tab gap, so a row stands nearer its own checkout than the next one.
+  return <ul className={cn("isolate", groupTabs && "mt-xxs mb-sm")} data-checkout-agents-open={checkout.id}>
     {groups.map((group, index) => (
       <li key={group.tab?.id ?? "unplaced"} className={cn("relative", groupTabs && index > 0 && "mt-sm")} data-sidebar-tab-group={group.tab?.id ?? undefined}>
         {groupTabs ? <TabSegmentHead group={group} checkout={checkout} deviceId={deviceId} inset={inset} glyphColumn={glyphColumn} context={context} /> : null}
@@ -1593,8 +1595,9 @@ const TAB_LINE = "calc(var(--size-sidebar-line) + var(--spacing-xxs))";
 /**
  * A tab is a segment of its checkout's agent list, not a level (docs/UI_BEHAVIOR.md, Sidebar hierarchy): a hairline guide centered under the
  * checkout's kind glyph spans the segment's rows, and the gap between two guides is the tab boundary. A tab holding two or more agents wears
- * the tab glyph at the head of its guide, on the first row's line; a manual name adds one quiet line carrying that glyph and the name. Both
- * open the real tab, and the hint says its name and agent count.
+ * the tab glyph at the head of its guide, on the first row's line; a manual name adds one quiet line inside the guide instead, the glyph on
+ * the status-mark column and the name on the title column, so it reads as part of the checkout rather than beside it. Both open the real
+ * tab, and the hint says its name and agent count.
  */
 function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context }: { group: SidebarTabGroup; checkout: Checkout; deviceId: string; inset: string; glyphColumn: string; context: TreeContext }) {
   const { t } = useInterfaceTranslation();
@@ -1609,8 +1612,7 @@ function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context
   const open = () => context.actions.openSurface(tabSurface(checkout, tab!.id!, deviceId));
   // The guide starts under the glyph a head carries, and a row's own padding from the segment's edge without one.
   // It stands above a selected or hovered row's fill, so only a tab boundary breaks it; the list isolates its stacking so neither it nor the glyph rises over the sticky section header.
-  const guideTop = !group.glyph ? "var(--spacing-xs)"
-    : named ? `calc(${TAB_LINE} / 2 + var(--size-icon-sm) / 2 + var(--spacing-xxs))`
+  const guideTop = !group.glyph || named ? "var(--spacing-xs)"
     : `calc(var(--spacing-xs) + var(--size-sidebar-line) / 2 + var(--size-icon-sm) / 2 + var(--spacing-xxs))`;
   return (
     <>
@@ -1620,8 +1622,8 @@ function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context
           <Hint label={label} reveals>
             <button type="button" data-sidebar-tab={tab!.id!} disabled={removing} aria-label={label} className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring" onClick={open} />
           </Hint>
-          <span aria-hidden="true" className="pointer-events-none absolute top-1/2 -translate-x-1/2 -translate-y-1/2 text-subtle-foreground" style={{ left: center }}>{glyph}</span>
-          <span aria-hidden="true" data-sidebar-tab-name="true" className="pointer-events-none absolute inset-y-0 right-xs flex min-w-0 items-center text-caption text-subtle-foreground" style={{ left: inset }}><span className="truncate">{manual}</span></span>
+          <span aria-hidden="true" className="pointer-events-none absolute top-1/2 -translate-x-1/2 -translate-y-1/2 text-subtle-foreground" style={{ left: `calc(${inset} + var(--size-agent-mark) / 2)` }}>{glyph}</span>
+          <span aria-hidden="true" data-sidebar-tab-name="true" className="pointer-events-none absolute inset-y-0 right-xs flex min-w-0 items-center text-caption text-subtle-foreground" style={{ left: `calc(${inset} + var(--size-agent-mark) + var(--spacing-xs))` }}><span className="truncate">{manual}</span></span>
         </div>
       ) : group.glyph ? (
         <Hint label={label} reveals>
