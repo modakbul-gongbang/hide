@@ -2781,14 +2781,19 @@ mod tests {
         let (core_end, node_end) = hide_platform::ipc::LocalStream::pair().expect("a stream pair");
         let link = over_local_stream("inbound:node-a", core_end, None, Box::new(|_| {}))
             .expect("a local link");
-        // The node reads every request and answers none.
+        // The node reads the two requests and answers neither, holding its
+        // end until the test is done with the link.
         let (requests, written) = mpsc::channel();
+        let (finished, done) = mpsc::channel::<()>();
         let node = std::thread::spawn(move || {
             let mut reader = std::io::BufReader::new(node_end);
-            let mut line = String::new();
-            while reader.read_line(&mut line).is_ok_and(|read| read > 0) {
-                let _ = requests.send(std::mem::take(&mut line));
+            for _ in 0..2 {
+                let mut line = String::new();
+                if reader.read_line(&mut line).is_ok_and(|read| read > 0) {
+                    let _ = requests.send(line);
+                }
             }
+            let _ = done.recv();
         });
         let project = || Call::Project {
             path: "/repo".to_owned(),
@@ -2845,7 +2850,7 @@ mod tests {
             link.closed_reason().is_none(),
             "an unanswered call keeps the link"
         );
-        link.close("the test is over");
+        drop(finished);
         node.join().expect("the node thread");
     }
 
