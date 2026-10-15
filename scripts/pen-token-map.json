@@ -29,6 +29,8 @@
     "--color-emphasis-wash": "a derived alpha tint; pen has no opacity operator on a color token, so the canvas carries the resolved value under its own name",
     "--color-hover-wash": "a derived alpha tint",
     "--color-selected-wash": "a derived alpha tint",
+    "--diff-added-wash": "--diff-added at 15% for a diff's added rows (web/src/editor/PatchView.tsx); Pen has no opacity operator on a color token",
+    "--diff-removed-wash": "--diff-removed at 15% for a diff's removed rows (web/src/editor/PatchView.tsx)",
     "--color-selected": "a derived alpha tint of --primary at --opacity-selected-fill for selected sidebar and Sessions rows; Pen has no opacity operator on a color token",
     "--asbuilt-outline-indent": "as-built reference geometry the library drew for its own historical Component sheets, not a web token",
     "--asbuilt-tree-label-offset": "as-built reference geometry"

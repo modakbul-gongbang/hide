@@ -149,7 +149,7 @@ function themedXref(id, masterId, name, overrides = {}, descendants = {}) {
 // this document's text() helper needs them too, so they are read live from the
 // library itself rather than duplicated as a literal, keeping the same
 // never-drifts guarantee pen-tokens.mjs gives the generated set.
-const LIBRARY_AUTHORED_VARIABLES = ['--font-ui', '--font-mono', '--color-selected-wash', '--color-selected'];
+const LIBRARY_AUTHORED_VARIABLES = ['--font-ui', '--font-mono', '--color-selected-wash', '--color-selected', '--diff-added-wash', '--diff-removed-wash'];
 
 export const ALIAS = 'hideui';
 export const LIBRARY_PATH = './hide-ui.lib.pen';
