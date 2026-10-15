@@ -37,6 +37,7 @@ fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
             issue_links: Default::default(),
+            herdr_version: None,
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
@@ -101,6 +102,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
         kit: Default::default(),
         machine_name: None,
         dials_in: false,
+        herdr_behind: None,
     });
     runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
         target_id: "mini".to_owned(),
@@ -165,6 +167,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
         pane_hook_tokens: Default::default(),
         issue_tokens: Default::default(),
         issue_links: Default::default(),
+        herdr_version: None,
     };
 
     assert!(runtime.ingest_remote_session("mini", Ok(session.clone())));
@@ -269,6 +272,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
             issue_links: Default::default(),
+            herdr_version: None,
         })
     ));
     assert!(terminals.take().contains(&TerminalControl::Forget {
@@ -339,6 +343,7 @@ fn remote_file_results_are_scoped_and_generation_guarded() {
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
             issue_links: Default::default(),
+            herdr_version: None,
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
@@ -1101,6 +1106,7 @@ fn remote_pane_focus_uses_its_existing_request_outcome() {
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
             issue_links: Default::default(),
+            herdr_version: None,
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
@@ -1729,6 +1735,7 @@ fn a_device_pane_read_before_its_server_restarts_stays_read() {
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
             issue_links: Default::default(),
+            herdr_version: None,
         }
     };
     let unread = |runtime: &Runtime| {
@@ -1946,6 +1953,7 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
             issue_links: Default::default(),
+            herdr_version: None,
         }
     };
     let stored_agents = |runtime: &Runtime, target_id: &str| {
@@ -2233,6 +2241,7 @@ fn remote_purpose_runtime(version: &str) -> Runtime {
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
             issue_links: Default::default(),
+            herdr_version: None,
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),

@@ -266,7 +266,7 @@ test("the Help menu opens the shortcut sheet, copies the diagnostics, opens the 
     const popup = page.context().waitForEvent("page");
     await menu.locator('[data-help-item="report_issue"]').click();
     const opened = await popup;
-    expect(opened.url()).toBe("https://github.com/modakbul-gongbang/hide/issues/new");
+    expect(opened.url()).toBe("https://github.com/with-hide/hide/issues/new");
     await opened.close();
 
     // B14: Keyboard shortcuts opens the shortcut sheet.

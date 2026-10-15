@@ -496,6 +496,10 @@ pub(super) struct FileOpenPayload {
     /// (`open_file_in_front_view`). Only a shell with View areas sends it.
     #[serde(default)]
     pub(super) view: Option<super::view_areas::ViewWorkspace>,
+    /// The agent pane whose terminal link the operator clicked: the View
+    /// is that agent's (PRD view-opener-feedback D-02).
+    #[serde(default)]
+    pub(super) opener_pane: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -524,6 +528,9 @@ pub(super) struct RevealPathPayload {
     pub(super) workspace_id: String,
     pub(super) checkout_id: String,
     pub(super) is_directory: bool,
+    /// The agent pane whose terminal link named the path (D-02).
+    #[serde(default)]
+    pub(super) opener_pane: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1381,6 +1388,7 @@ pub(super) enum Event {
     PaneInputSubmitted(PaneTargetPayload),
     PaneInputSent(PaneTargetPayload),
     ResolveSession(PaneTargetPayload),
+    DeliverLettersNow(PaneTargetPayload),
     PaneVisit(PaneTargetPayload),
     AgentWake(AgentWakePayload),
     WakeSleepingSession(SleepingSessionPayload),
@@ -1392,6 +1400,8 @@ pub(super) enum Event {
     RemoteFileList(RemoteFileListPayload),
     FileOpen(FileOpenPayload),
     RevealPath(RevealPathPayload),
+    ViewComment(super::view_feedback::ViewCommentPayload),
+    ViewFeedbackSend(super::view_feedback::ViewFeedbackSendPayload),
     FileFocus(FileTabPayload),
     /// Keep Open: the preview tab becomes an ordinary tab in the same slot.
     FileKeepOpen(FileTabPayload),
@@ -1619,6 +1629,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pane_input_submitted" => decode!(PaneTargetPayload, PaneInputSubmitted),
         "pane_input_sent" => decode!(PaneTargetPayload, PaneInputSent),
         "resolve_session" => decode!(PaneTargetPayload, ResolveSession),
+        "deliver_letters_now" => decode!(PaneTargetPayload, DeliverLettersNow),
         "pane_visit" => decode!(PaneTargetPayload, PaneVisit),
         "agent_wake" => decode!(AgentWakePayload, AgentWake),
         "wake_sleeping_session" => decode!(SleepingSessionPayload, WakeSleepingSession),
@@ -1755,6 +1766,13 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "agent_layout" => decode!(AgentLayoutPayload, AgentLayout),
         "view_layout" => decode!(ViewLayoutPayload, ViewLayout),
         "browser_open" => decode!(BrowserOpenPayload, BrowserOpen),
+        "view_comment" => decode!(super::view_feedback::ViewCommentPayload, ViewComment),
+        "view_feedback_send" => {
+            decode!(
+                super::view_feedback::ViewFeedbackSendPayload,
+                ViewFeedbackSend
+            )
+        }
         "browser_state" => decode!(BrowserStatePayload, BrowserState),
         _ => Err(EventValidationError {
             kind: "event.unknown_kind",
@@ -1869,6 +1887,8 @@ impl Runtime {
             Event::AgentLayout(payload) => self.apply_agent_layout(payload),
             Event::ViewLayout(payload) => self.apply_view_layout(payload),
             Event::BrowserOpen(payload) => self.open_browser(payload),
+            Event::ViewComment(payload) => self.apply_view_comment(payload),
+            Event::ViewFeedbackSend(payload) => self.apply_view_feedback_send(payload),
             Event::BrowserState(payload) => self.record_browser_state(payload),
             Event::SessionsRefresh => self.request_sessions_refresh(),
             Event::LinksOpen(payload) => self.open_links(payload),
@@ -1924,6 +1944,7 @@ impl Runtime {
                 self.note_delivery_key(&payload.pane_id, "phone");
                 false
             }
+            Event::DeliverLettersNow(payload) => self.deliver_letters_now(&payload.pane_id),
             Event::PaneVisit(payload) => self.record_pane_visit(payload.pane_id),
             Event::AgentWake(payload) => self.request_agent_wake(payload),
             Event::WakeSleepingSession(payload) => self.request_dormant_wake(&payload.sleep_id),
@@ -2220,6 +2241,7 @@ impl Runtime {
                     self.input_requests.open(
                         request_id,
                         super::terminal_input::InputOrigin::TabCreate(admission_id),
+                        std::time::Instant::now(),
                     );
                     self.sync_input_requests();
                 }
@@ -3055,6 +3077,7 @@ impl Runtime {
                     self.input_requests.open(
                         request_id,
                         super::terminal_input::InputOrigin::Fork(pane_id.clone()),
+                        std::time::Instant::now(),
                     );
                     self.sync_input_requests();
                 }
@@ -3076,6 +3099,12 @@ impl Runtime {
             Event::RemoteFileList(payload) => self.request_remote_file_list(payload),
             Event::FileOpen(payload) if payload.view.is_some() && self.separate_view_areas() => {
                 let view = payload.view.as_ref().expect("matched above");
+                self.expect_view_opener(
+                    &(view.device_id.clone(), view.path.clone()),
+                    &payload.path,
+                    crate::view_layout::DisplayKind::File,
+                    payload.opener_pane.as_deref(),
+                );
                 self.open_file_in_front_view(
                     view,
                     &payload.workspace_id,
@@ -3104,6 +3133,12 @@ impl Runtime {
                     && let Some(key) =
                         self.workspace_key(&payload.workspace_id, &payload.checkout_id)
                 {
+                    self.expect_view_opener(
+                        &key,
+                        &payload.path,
+                        crate::view_layout::DisplayKind::File,
+                        payload.opener_pane.as_deref(),
+                    );
                     self.open_file_in_view(
                         &key,
                         &payload.workspace_id,

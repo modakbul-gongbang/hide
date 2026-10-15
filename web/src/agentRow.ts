@@ -130,12 +130,13 @@ export function branchChip(agent: Pick<AgentRow, "state">): string | null {
 
 /**
  * The row's accessible name: title, the device and branch chips the row
- * shows, kind, status word, then the sentence (docs/status-model.md). The
+ * shows, kind, status word, a letter waiting, then the sentence
+ * (docs/status-model.md). The
  * row's visible text is hidden from assistive technology, so everything it
  * shows has to be here.
  */
 export function rowAccessibleName(t: TFunction<"translation">, agent: AgentRow, device: string | null): string {
-  return [agent.identity_label, device, branchChip(agent), agentProductName(agent.agent_kind), statusText(t, agent.status_code), hideAiWords(t, agent.hide_ai), agent.detail].filter(Boolean).join(", ");
+  return [agent.identity_label, device, branchChip(agent), agentProductName(agent.agent_kind), statusText(t, agent.status_code), hideAiWords(t, agent.hide_ai), agent.letters_waiting ? t("agents.letterWaiting") : null, agent.detail].filter(Boolean).join(", ");
 }
 
 /**

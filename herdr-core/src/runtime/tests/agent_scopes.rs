@@ -98,6 +98,7 @@ fn a_task_is_its_root_and_every_descendant_with_their_projects_and_devices() {
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
             issue_links: Default::default(),
+            herdr_version: None,
         }),
         unreachable_since_unix_ms: None,
     }];
@@ -479,6 +480,7 @@ fn disconnected_devices_zero_the_physical_tile_but_keep_overview_members_from_th
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
             issue_links: Default::default(),
+            herdr_version: None,
         }),
         unreachable_since_unix_ms: None,
     }];

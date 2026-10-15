@@ -107,6 +107,7 @@ pub(super) fn session(workspaces: Vec<WorkspaceSnapshot>) -> RemoteSessionSnapsh
         pane_hook_tokens: Default::default(),
         issue_tokens: Default::default(),
         issue_links: Default::default(),
+        herdr_version: None,
     }
 }
 
@@ -286,6 +287,7 @@ fn a_device_checkout_recorded_before_grouping_is_the_same_record_after_it() {
         kit: Default::default(),
         machine_name: None,
         dials_in: false,
+        herdr_behind: None,
     });
     runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
         target_id: TARGET.to_owned(),
@@ -1509,6 +1511,7 @@ fn a_device_agent_chosen_brings_the_device_forward_and_moves_no_column() {
         kit: Default::default(),
         machine_name: None,
         dials_in: false,
+        herdr_behind: None,
     });
     runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
         target_id: TARGET.to_owned(),
@@ -1860,6 +1863,7 @@ fn regrouping_a_device_session_keeps_its_agents_lineage() {
             codex_daemon_running: None,
             codex_daemon_unreadable: None,
             codex_daemon_off: None,
+            herdr: None,
         },
     );
     assert_eq!(descendants(&runtime), vec![child]);
@@ -1977,6 +1981,7 @@ fn a_device_agent_pane_is_judged_against_its_own_kit() {
             codex_daemon_running: None,
             codex_daemon_unreadable: None,
             codex_daemon_off: None,
+            herdr: None,
         },
     );
     let after = children(&runtime);

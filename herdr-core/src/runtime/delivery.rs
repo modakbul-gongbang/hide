@@ -34,19 +34,26 @@ pub(crate) struct Observation {
     /// Input hide sent before it was consumed by that work, such as the
     /// answer to a menu.
     pub entered_working_at_unix_ms: u64,
+    /// The newest input the operator released by pressing Deliver now on
+    /// this pane's waiting letters (`deliver_letters_now`): input up to it is
+    /// no draft the bell waits for, since the operator saw the composer above
+    /// which the mark sits and chose to ring. Input after it is a draft again.
+    pub released_input_at_unix_ms: u64,
     pub session: Option<hide_session::session_activity::SessionActivityRequest>,
     pub host_scope: Option<String>,
     pub turn: Turn,
 }
 
 impl Observation {
-    /// Input hide routed after the last submission and the last start of
-    /// work: an unsent draft, a prompt Esc brought back, a recalled input.
+    /// Input hide routed after the last submission, the last start of work
+    /// and the input the operator last released: an unsent draft, a prompt
+    /// Esc brought back, a recalled input.
     pub(crate) fn unsent_draft(&self) -> bool {
         self.last_input_at_unix_ms
             > self
                 .last_submit_at_unix_ms
                 .max(self.entered_working_at_unix_ms)
+                .max(self.released_input_at_unix_ms)
     }
 
     /// A Factory's recipient as a letter target: no pane, no status.
@@ -60,6 +67,7 @@ impl Observation {
             last_input_at_unix_ms: 0,
             last_submit_at_unix_ms: 0,
             entered_working_at_unix_ms: 0,
+            released_input_at_unix_ms: 0,
             session: None,
             host_scope: None,
             turn: Turn::NotReported,
@@ -192,6 +200,7 @@ impl Runtime {
                     _ if draft_kept => now.saturating_sub(1),
                     _ => now,
                 },
+                released_input_at_unix_ms: previous.map_or(0, |old| old.released_input_at_unix_ms),
                 session,
                 host_scope: host_scope
                     .filter(|scope| scope.len() <= 4096)
@@ -470,6 +479,54 @@ impl Runtime {
             observation.last_submit_at_unix_ms = unix_milliseconds();
             self.sync_composer_mark(pane_id, unix_milliseconds());
         }
+    }
+
+    /// The operator pressed Deliver now on a pane whose letters wait on a
+    /// possible draft (docs/delivery.md, Delivering a held letter now). The
+    /// press says the composer holds nothing of theirs, so the input before
+    /// it no longer holds the bell, and the doorbell's next pass rings with
+    /// every guard it always applies and types the same line. A press the
+    /// mark no longer stands for (a key reached the pane, the letters went or
+    /// were taken in since the last pass) changes nothing and is logged.
+    pub(super) fn deliver_letters_now(&mut self, pane_id: &str) -> bool {
+        use crate::delivery::doorbell::WAITING_MARK_REST_MS;
+        let now = unix_milliseconds();
+        let refusal = match (
+            self.letters_waiting.get(pane_id).copied(),
+            self.delivery_observations.get_mut(pane_id),
+        ) {
+            (None, _) => Err("no_letter_waiting"),
+            (Some(_), None) => Err("pane_unavailable"),
+            (Some(_), Some(observation))
+                if !observation.unsent_draft()
+                    || now.saturating_sub(
+                        observation
+                            .last_input_at_unix_ms
+                            .max(observation.status_changed_at_unix_ms),
+                    ) < WAITING_MARK_REST_MS =>
+            {
+                Err("pane_not_at_rest")
+            }
+            (Some(letters), Some(observation)) => {
+                observation.released_input_at_unix_ms = observation.last_input_at_unix_ms;
+                Ok(letters)
+            }
+        };
+        let letters = match refusal {
+            Ok(letters) => letters,
+            Err(reason) => {
+                crate::diagnostic!(serde_json::json!({"component":"delivery",
+                    "kind":"deliver_now.refused","pane_id":pane_id,"reason":reason}));
+                return false;
+            }
+        };
+        crate::diagnostic!(serde_json::json!({"component":"delivery",
+            "kind":"deliver_now.released","pane_id":pane_id,"letters":letters}));
+        self.sync_composer_mark(pane_id, now);
+        let mut waiting = self.letters_waiting.clone();
+        waiting.remove(pane_id);
+        self.set_letters_waiting(waiting);
+        self.sync_session_state() | self.refresh_agent_scopes()
     }
 
     pub(crate) fn prepare_delivery(
@@ -834,12 +891,14 @@ impl Runtime {
             }));
         }
         self.hide_started = started;
+        let feedback = self.observe_feedback_letters(&ledger);
         self.delivery_ledger = Ok(ledger);
         let continued = self.settle_dormant_registrations();
         self.feed_link_parents();
         let lineage = (waiters_moved || started_moved) && self.refresh_agent_lineage();
         changed
             | reopened
+            | feedback
             | continued
             | lineage
             | self.sync_session_state()
@@ -873,7 +932,41 @@ impl Runtime {
     pub(crate) fn code_owned_authority_current(&self, caller: &str, actor: &Actor) -> bool {
         caller == actor.pane_id
             && (self.factory_recipient_current(actor)
-                || *actor == Actor::hide(crate::delivery::HIDE_MEMORY_ROLE, self.node.as_str()))
+                || *actor == Actor::hide(crate::delivery::HIDE_MEMORY_ROLE, self.node.as_str())
+                || *actor == Actor::operator(self.node.as_str()))
+    }
+
+    /// A delivery command the operator's Send makes, as the operator's own
+    /// identity, to the agent in `target` (PRD view-opener-feedback D-17).
+    /// Only the shell's `view_feedback_send` reaches this: neither a pane's
+    /// scoped connection nor the CLI can represent that event.
+    pub(crate) fn operator_prepare(
+        &self,
+        target: &str,
+        command: crate::delivery::Command,
+    ) -> Result<crate::delivery::worker::Prepared, String> {
+        let actor = Actor::operator(self.node.as_str());
+        let context = Context {
+            device_id: self.node.as_str().into(),
+            workspace_id: actor.pane_id.clone(),
+            checkout_id: actor.pane_id.clone(),
+            checkout_path: String::new(),
+        };
+        let target = self
+            .delivery_observations
+            .get(target)
+            .cloned()
+            .ok_or("target_unavailable")?;
+        Ok(crate::delivery::worker::Prepared::new(
+            self.delivery_client.clone().ok_or("delivery_unavailable")?,
+            Authority {
+                caller: actor.pane_id.clone(),
+                context,
+            },
+            actor,
+            Some(target),
+            command,
+        ))
     }
 
     /// A delivery client and authority for Hide's own `role`, the origin of
@@ -1259,6 +1352,7 @@ pub(crate) mod tests {
                         "input": observed.last_input_at_unix_ms,
                         "submit": observed.last_submit_at_unix_ms,
                         "working": observed.entered_working_at_unix_ms,
+                        "released": observed.released_input_at_unix_ms,
                         "scope": observed.host_scope, "turn": format!("{:?}", observed.turn),
                         "session": observed.session.as_ref().map(|session| json!({
                             "kind": session.reference_kind, "value": session.reference_value,
@@ -2261,6 +2355,16 @@ pub(crate) mod tests {
             &Actor::hide("other", crate::node::TEST_NODE)
         ));
         assert!(crate::delivery::reserved_name("hide:memory"));
+        // The operator's identity answers only as itself, and no pane can
+        // take its name (PRD view-opener-feedback D-17, B35).
+        let operator = Actor::operator(crate::node::TEST_NODE);
+        assert!(guard.code_owned_authority_current(&operator.pane_id, &operator));
+        assert!(!guard.code_owned_authority_current("sender", &operator));
+        assert!(crate::delivery::reserved_name("operator"));
+        assert!(crate::delivery::reserved_name(" Operator "));
+        assert!(crate::delivery::reserved_name("OPERATOR:x"));
+        assert!(!crate::delivery::reserved_name("operators"));
+        assert!(crate::delivery::reserved_name(&operator.pane_id));
         let forged = Actor {
             session: Some("forged".into()),
             ..Actor::factory("f-1", crate::node::TEST_NODE)

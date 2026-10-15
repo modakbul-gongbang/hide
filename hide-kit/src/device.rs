@@ -3,7 +3,9 @@
 //! The core uploads each build's parts into `<root>/<version>/` beside the
 //! helper, and the helper points `<root>/current` at its own version before
 //! it applies the kit, so the hooks, the `hide` link name
-//! a path that survives the next build (B16). The `herdr` CLI is the device's own.
+//! a path that survives the next build (B16). The `herdr` CLI is the pinned
+//! copy the build brought (`device_herdr`) when it brought one, and the
+//! device's own otherwise; the operator's own `herdr` is never changed.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -24,7 +26,12 @@ pub fn device_target(
     herdr_socket: &Path,
     stop: Arc<AtomicBool>,
 ) -> KitTarget {
-    let herdr_bin = find_herdr(home);
+    let pinned = crate::device_herdr::pinned_herdr(root);
+    let herdr_bin = if pinned.is_file() {
+        Some(pinned)
+    } else {
+        find_herdr(home)
+    };
     let relocated = std::env::var_os("HCOORD_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from);

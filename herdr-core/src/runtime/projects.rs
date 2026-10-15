@@ -4472,7 +4472,7 @@ fn pull_request_times(
 /// The arguments that resume `session_id` in `kind`'s CLI, or none for an id
 /// that is not one plain token: it reaches the agent's command line, where
 /// one that began with `-` would read as an option.
-fn resume_session_arguments(kind: &str, session_id: &str) -> Option<Vec<String>> {
+pub(super) fn resume_session_arguments(kind: &str, session_id: &str) -> Option<Vec<String>> {
     let proven = hide_session::Agent::from_kind(kind)
         .is_some_and(hide_session::Agent::requires_native_proof);
     let plain = if proven {

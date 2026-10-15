@@ -59,10 +59,14 @@ pub(crate) mod usage_ledger;
 mod usage_limit;
 mod view_areas;
 mod view_bookmarks;
+mod view_feedback;
 mod workspace_control;
 mod workspace_view;
 
-pub(crate) use factory::{WorkerProbe, factory_herdr_pane, factory_pane_id};
+pub(crate) use factory::{
+    DormantState, DormantWorker, FactoryPane, FactoryWake, WorkerProbe, factory_herdr_pane,
+    factory_pane_id,
+};
 pub use hosts::WorkspaceRemoteRoute;
 pub(crate) use kit::{DeviceKitAnswer, DeviceKitCall, DeviceKitWork, KitJob};
 pub use snapshot_delta::serialize_snapshot_delta;
@@ -1069,6 +1073,9 @@ pub struct Runtime {
     hide_started: crate::coordination::started::HideStarted,
     delivery_client: Option<crate::delivery::worker::Client>,
     delivery_observations: HashMap<String, delivery::Observation>,
+    /// View openers waiting for their document, Sends under way, and the
+    /// feedback worker (PRD view-opener-feedback).
+    view_feedback: view_feedback::FeedbackRuntime,
     /// The panes held as an unsent draft, kept across a restart so a daemon
     /// that starts over does not type a bell over what the operator typed
     /// (`composer_store.rs`); absent in a runtime with no state folder.
@@ -1080,6 +1087,10 @@ pub struct Runtime {
     /// Factory host; a letter to any other `factory:` name has no recipient.
     /// Each open Factory's id with its stall window (D-30, B24).
     factory_recipients: std::collections::BTreeMap<String, u64>,
+    /// The panes the open Factories' workers run in, as the Factory host last
+    /// published them: a sleep that closes a pane keeps whose conversation it
+    /// holds (#857).
+    factory_panes: HashMap<String, factory::FactoryPane>,
     /// The Factory screens' way to the engine thread; `None` when the host
     /// did not start.
     factory_screen: Option<crate::factory::ScreenPort>,
@@ -1109,6 +1120,9 @@ pub struct Runtime {
     pending_session_resolutions: BTreeMap<String, crate::agent_state::sessions::Resolution>,
     failed_session_resolutions: BTreeMap<String, crate::agent_state::sessions::Resolution>,
     delivery_holds: BTreeMap<String, crate::delivery::doorbell::Hold>,
+    /// The panes whose letters the operator is shown waiting on a possible
+    /// draft, with how many (`doorbell::letters_waiting`).
+    letters_waiting: BTreeMap<String, u32>,
     /// When the oldest Resolved row leaves the 24-hour window.
     session_window_deadline_unix_ms: u64,
     #[cfg(test)]
@@ -1135,6 +1149,9 @@ pub struct Runtime {
     /// The last connection test of each device, kept apart from the device
     /// rows because those are rebuilt with every catalog.
     remote_device_tests: HashMap<String, crate::model::DeviceTestSnapshot>,
+    /// Each device whose Herdr server its node last found older than the
+    /// pin after a kit pass (PRD device-herdr-update B8).
+    device_herdr_behind: HashMap<String, crate::model::HerdrBehindSnapshot>,
     /// Each device's helper connection and the consent it runs under.
     device_hosts: HashMap<String, hosts::DeviceHost>,
     /// When each device's lost or failed link is tried again.
@@ -1983,10 +2000,12 @@ impl Runtime {
             delivery_ledger,
             delivery_client: None,
             delivery_observations: HashMap::new(),
+            view_feedback: view_feedback::FeedbackRuntime::default(),
             composer_marks: Vec::new(),
             delivery_input_traced: HashMap::new(),
             composer_store: None,
             factory_recipients: std::collections::BTreeMap::new(),
+            factory_panes: HashMap::new(),
             factory_screen: None,
             delivery_overflow: HashSet::new(),
             delivery_connected: HashSet::new(),
@@ -2004,6 +2023,7 @@ impl Runtime {
             inbound_arrivals: HashMap::new(),
             retired_remote_syncs: Vec::new(),
             remote_device_tests: HashMap::new(),
+            device_herdr_behind: HashMap::new(),
             device_hosts: HashMap::new(),
             device_host_retries: HashMap::new(),
             last_host_generation: 0,
@@ -2127,6 +2147,7 @@ impl Runtime {
             pending_session_resolutions: BTreeMap::new(),
             failed_session_resolutions: BTreeMap::new(),
             delivery_holds: BTreeMap::new(),
+            letters_waiting: BTreeMap::new(),
             session_window_deadline_unix_ms: 0,
             #[cfg(test)]
             pane_header_derivations: 0,

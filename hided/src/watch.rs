@@ -686,6 +686,7 @@ pub(crate) mod tests {
                     pane_hook_tokens: Default::default(),
                     issue_tokens: Default::default(),
                     issue_links: Default::default(),
+                    herdr_version: None,
                 }),
                 files: herdr_core::RemoteFileListSnapshot::idle(),
                 catalog: Default::default(),

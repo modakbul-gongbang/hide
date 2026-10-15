@@ -82,9 +82,29 @@ describe("keys after a new tab or split", () => {
     const held = [{ request_id: "r1", state: "pending" as const, held_for: "w1:p9" }];
     useShellStore.setState({ rest: { terminal: { input_requests: held } } });
     observeInputRequests(held);
+    focusTerminalOf("w1:p9");
     noteTerminalFocus("w1:p9");
     expect(keyPayload("w1:p9", "YQ==")).toEqual({ pending_request: "r1", bytes_base64: "YQ==" });
-    observeInputRequests([{ request_id: "r1", state: "ready" }]);
+    const ready = [{ request_id: "r1", state: "ready" as const }];
+    useShellStore.setState({ rest: { terminal: { input_requests: ready } } });
+    observeInputRequests(ready);
+    expect(keyPayload("w1:p9", "YQ==")).toEqual({ pane_id: "w1:p9", bytes_base64: "YQ==" });
+  });
+
+  // A split's new pane can take keys before the keyboard has reached it: keys
+  // typed where the split was asked for still go to it, through the request.
+  it("keep following a ready request until the keyboard reaches its pane", () => {
+    focusTerminalOf("w1:p1");
+    armKeyTarget("r1");
+    const held = [{ request_id: "r1", state: "pending" as const, held_for: "w1:p9" }];
+    useShellStore.setState({ rest: { terminal: { input_requests: held } } });
+    observeInputRequests(held);
+    const ready = [{ request_id: "r1", state: "ready" as const }];
+    useShellStore.setState({ rest: { terminal: { input_requests: ready } } });
+    observeInputRequests(ready);
+    expect(keyPayload("w1:p1", "YQ==")).toEqual({ pending_request: "r1", bytes_base64: "YQ==" });
+    focusTerminalOf("w1:p9");
+    noteTerminalFocus("w1:p9");
     expect(keyPayload("w1:p9", "YQ==")).toEqual({ pane_id: "w1:p9", bytes_base64: "YQ==" });
   });
 
@@ -108,7 +128,11 @@ describe("keys after a new tab or split", () => {
     document.body.append(view);
     noteOperatorPointer({ target: inside } as unknown as Event);
     expect(keyPayload("w1:p9", "YQ==")).toEqual({ pending_request: "r1", bytes_base64: "YQ==" });
+    // Pointing elsewhere ends the mark, but what is typed into the fork's
+    // pane still waits behind what its request holds; another pane's keys go
+    // to that pane.
     noteOperatorPointer({ target: document.body } as unknown as Event);
-    expect(keyPayload("w1:p9", "YQ==")).toEqual({ pane_id: "w1:p9", bytes_base64: "YQ==" });
+    expect(keyPayload("w1:p9", "YQ==")).toEqual({ pending_request: "r1", bytes_base64: "YQ==" });
+    expect(keyPayload("w1:p1", "YQ==")).toEqual({ pane_id: "w1:p1", bytes_base64: "YQ==" });
   });
 });

@@ -367,6 +367,31 @@ While the shell drags something (a tab, a divider, a lane divider, a tree item),
 In a plain browser tab the view keeps its address on the toolbar row, level with a document header beside it, and below it reads `Pages open in the hide desktop app.`; a web address offers Open in browser, and nothing else is drawn in its place.
 [BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md) owns which addresses a page may hold, the `file:` boundary, and the page's lifetime.
 
+### View openers and comments
+
+A View an agent opened wears that agent's provider logo, 10 pixels, on the lower right corner of the tab's kind mark, which stays readable: a page, a file, a diff, an image or a PDF opened by `hide file open`, `hide diff open` or `hide browser open` from the agent's pane, or by the operator clicking a path or an address in that agent's terminal (PRD view-opener-feedback D-02, D-04, D-24).
+A View the operator opened from the Explorer, ⌘K, the file tree or a new tab's address field, and one a caller Hide could not bind to a pane opened, wears no mark.
+The mark follows the agent that last opened the View; a link inside the page and an agent's `hide browser` command keep it, and an address the operator types takes it off.
+Its hint, above the tab, says the agent's name, `Opened this · <product>` and `Click to go to its pane`, and the mark's accessible name says the same; only the mark's hint opens while the pointer is on it, not the tab's.
+Pressing it brings the agent's pane forward with the keyboard, leaving the View selected; an agent whose pane closed is found again by its session in another pane, and one found nowhere draws its mark dimmed with `(closed)` in the hint and goes nowhere.
+A pane whose agent opened Views that are open shows `N views` after its PR mark, a list of each View's kind mark, name, address or path and unsent comment count, counted once however many tabs show it; a row brings that View forward.
+
+Comments: a page's toolbar Comment button turns Comment mode on, with `Click an element or drag an area · Esc` over the page, an outline on the element under the pointer, and the page's clicks taken as comment targets until Comment or Esc turns it off.
+A file or a diff takes a comment from the `+` on the line under the pointer or the cursor, a drag down the gutter or the line numbers for a range, or ⇧⌘. (Ctrl+Shift+. on Windows and Linux) on selected text; a range of removed diff rows is on the old side, any other on the new.
+An image or a PDF takes one from an area dragged while its toolbar's Comment is on, which is disabled, with the reason in its hint, while the file cannot be read; a PDF comment names its page, and an area stays on the same content at any zoom.
+A note opens under its last line (beside an area), with `⌘↩ to add`, Add and Cancel; Esc cancels, an empty note cannot be added, and a View with 50 comments shows `50 / 50` and why in the note's place.
+On a page the note opens beside the picked element or area over the page's still, and a pin opens its comment there; a press beside either closes it, and the page takes the keyboard again.
+A comment shows under its line, or as a numbered pin and outline while Comment is on, with its number in its recipient's letter, edit and delete; a line comment's card is as wide as the visible text and stays beside the gutters when the lines scroll sideways.
+A deleted comment leaves `Comment deleted · Undo` on the View's line for a moment, and Undo brings it back at the same place and number; there is no confirmation.
+A comment whose lines changed moves with them, or says `Changed` and quotes what it was when no line with its text is left; a changed image or PDF marks its area comments `Changed`.
+
+A tab with unsent comments carries their count, orange while some came back undelivered, and one line under the View, never over the page, says `N comments · M views` with `Send N → <logo> <agent> ▾`; the line is not drawn while the View has none.
+Send N sends every unsent comment for that agent, from every View, as one letter from the operator ([delivery.md](delivery.md#the-operators-view-feedback)); ▾ offers `This view only`, the other agents in the checkout with their status marks (and logos only while the agent logo view mode shows them), and for a closed agent `Reopen and send`, which starts its session again in a new pane of the checkout and sends.
+A View the operator opened opens its Send as `Send N comments to…`, a choice of agent.
+After Send the comments leave the View and the line says `Sent N to <agent> · delivered when it rests` with Go to pane for a moment, or that it is delivered when its device is back; a Send that could not go keeps the comments and says why with Retry, which sends again to the same agent and the same Views that Send asked for (`This view only` stays one View), and a letter that expired brings its comments back marked `Not delivered` with Send again.
+
+Web owners: `web/src/ViewComments.tsx`, `web/src/viewFeedback.ts`, `web/src/editor/comments.ts`, `web/src/editor/useLineComments.tsx`; core owner: `herdr-core/src/runtime/view_feedback.rs`; test owners: `web/src/viewFeedback.test.ts`, `web/e2e/view-feedback.spec.ts`; the boards are `Screen / Workspace`'s `vof-*` in `design/hide-screens.pen`.
+
 ### Narrow windows
 
 Whether a pinned lane docks depends on the Workspace body's width, not the window's, so hiding the sidebar with ⌘B can dock it again.
@@ -385,13 +410,13 @@ The browser display's toolbar and its loading, load failed, and plain browser ta
 
 ### Agent panes and the Agents explorer
 
-A pane header is a quiet identity row: the ancestor path, the status mark, the agent's logo, title, the fork mark, the PR mark, the Not connected chip, and the retained overflow, zoom and close controls at the right end.
+A pane header is a quiet identity row: the ancestor path, the status mark, the agent's logo, title, the fork mark, the letters-waiting pill, the PR mark, the Not connected chip, and the retained overflow, zoom and close controls at the right end.
 A plain shell keeps its terminal mark.
 On an agent pane whose session Hide knows, the status mark, the logo and the title are one button: under the pointer they light together with the hint `세션 기록 보기`, and a press shows that session's record in the right lane, opening the lane when it is closed or put away and turning the Work tool to Sessions when it was left on PRs, since a record is drawn on Sessions, while the keyboard and the input cursor stay in the pane's terminal (PRD overview-device-tasks B22); the Overview's `lane에서 보기` lands the same way.
 A press while the lane already shows that record goes back to the Sessions list, and the fork mark and the PR mark keep their own presses outside the button (B23).
 A plain shell, and an agent pane whose session is not known yet, keeps the plain head with nothing to press; the head becomes the button in place once the session is known, on a device's pane as on this Mac's (B24).
 Over a narrow window the record shows in the lane floating over the panes (`web/src/PaneHeaderBand.tsx`, `PaneRecordButton`).
-The provider logo is drawn on a pane's own header, and in the heads and places that are about the agent or its provider itself: the start picker, Settings, the footer's usage chips and the Usage pages, the session record's head, the tree popover's head, the last-words popover's head, the phone's detail head, the Memory tab's Hide AI chip, the Factory card and the first-run tiles.
+The provider logo is drawn on a pane's own header, and in the heads and places that are about the agent or its provider itself: the start picker, Settings, the footer's usage chips and the Usage pages, the session record's head, the tree popover's head, the last-words popover's head, the phone's detail head, the Memory tab's Hide AI chip, the Factory card, the first-run tiles, and the corner of an agent-opened View tab's kind mark ([View openers and comments](#view-openers-and-comments)).
 The sidebar and Sessions rows and the Agent tabs draw it only by the operator's choice or while ⌥ is held ([Agent logo view mode](#agent-logo-view-mode)); ⌘K and the recent-pane list, the link sessions, the Overview's task cards, a session record's children and the phone's list lead with the status mark alone in both modes (PRD agent-mark-quiet).
 A pane header draws exactly one logo, the pane's own agent, for each of the seven supported agents: Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, the same logo Settings and the first-run choice draw.
 A row without a logo names its agent by product name (`Claude Code`, `Codex`, the adapter's label, never the raw kind) in its hover hint and its accessible name, and the pane header's logo and title say it the same way.
@@ -403,6 +428,10 @@ The PR mark is the one the Sessions row of the same agent draws (below): a pane 
 The fork mark, a small fork icon after the title, is drawn only on a pane Fork agent made; its tooltip and accessible name read `Forked from <source name>` while the source still runs the conversation it was forked from, and the mark is then a button, reachable by keyboard, that opens the source; once the source closed or moved on to another conversation it reads `Forked from another pane` and opens nothing (`web/src/PaneHeaderBand.tsx`, `PaneForkMark`; the fact is the core's, `PaneForkSnapshot.forked_from`).
 A delegated child and a handed-off root have none, and neither does a fork made while forks were children (PRD fork-operator-root B20, B21).
 A device's pane header wears the mark too, as its rows do, although a device's pane offers no fork.
+The letters-waiting pill follows the title and the fork mark while letters wait on the pane for a possible draft, as the core decides ([delivery.md](delivery.md#delivering-a-held-letter-now)): the envelope, the count from two letters, and `지금 전달` (`Deliver now`) on the popover fill with a border edge, which stands apart from both a focused and an unfocused header in Light and Dark.
+The whole pill is one button, reachable by keyboard and pressed with Enter, and its hover and accessible name read `대기 중인 편지 N통 지금 전달`; a pane narrower than the pane breakpoint drops the word and keeps the envelope and the count, and pressing it still delivers.
+Pressing sends `deliver_letters_now` and nothing else: the pill goes, and the bell line appears in the terminal as the doorbell types it, with no confirmation and no warning about a draft, because the pill sits right above the composer.
+No other hold of a letter reaches the screen, and nothing changes on the sender's pane (`web/src/components/letter-mark.tsx`).
 The B2 tree button starts the second row over the terminal: positive core state counts and a chevron open the existing tree popover, with no separate total or internal divider ([status-model.md](status-model.md#the-descendant-mark-and-the-tree-popover)).
 The state counts show working as a blue dot, reported results as a green check, child requests as a blue ring, unknown as a dim tilde, and resting as a dim ring; `! N` in warning colour is exclusively the core's operator-raised request count over the subtree.
 An ordinary child's question, approval or error adds to the blue request ring, not the operator's `!` count; a check is a reported completion, not verified delivery of a task.
@@ -481,6 +510,7 @@ A worktree whose unresolved agents are all delegated children has no checkout li
 An agent counts as a root when the core marks it so (`agent.state.root`): an orphan whose parent ended is a root, and a Factory worker is one too, since its spawn parent is the Factory's own identity and no pane in the list, so its worktree keeps its line.
 The primary, the focused checkout, a dirty or unpushed worktree and an Inactive or Cleanup one keep the line or fold they had.
 Each row with its own PRs carries the PR mark (Purpose, pinning, and PR chrome): one PR's state and `#number`, or each state's count for several, dimmed while GitHub cannot be read; its hover shows the PR card for one PR, and for several lists each PR with its state and title, any of which opens, with the last read time while GitHub cannot be read.
+A row whose pane has letters waiting on a possible draft carries a muted envelope just before its time, with no number, the quietest mark on the row; its accessible name says `Letter waiting`, and clicking the row goes to the pane as always, where the pill delivers them.
 A tree row that asks draws its verb and what on a second line until answered, and an AI question leaves that line once read; a blocked tree row draws its cause there instead, read or not.
 A raised row outside the tree keeps its request line until answered, dimmed after reading an AI question; an unread result line stays bright until read.
 Quiet detail lives in the tooltip, and no progress value is invented.
@@ -488,7 +518,7 @@ Hover, focus, selection and the open popover change fill and ring without adding
 A row is at least 28 high, or 44 with its second line, and grows with text scale rather than spilling.
 While a close names a pane, its row retains closing feedback.
 ⌥1 to ⌥9 select the first nine visible root occurrences top to bottom, counting duplicate raised/tree rows only once; tree children carry no number.
-Web owners: `web/src/PaneView.tsx`, `web/src/PaneHeaderBand.tsx`, `web/src/PaneRelations.tsx`, `web/src/components/sidebar-agent-row.tsx`, `web/src/components/agent-tree.tsx` (the verb, ask line, descendant mark, rails and chevron the three surfaces share), `web/src/components/pr-mark.tsx` and `web/src/prMark.ts` (the PR mark every surface draws), `web/src/components/agent-tree-popover.tsx`, and `web/src/sidebarTree.ts`.
+Web owners: `web/src/PaneView.tsx`, `web/src/PaneHeaderBand.tsx`, `web/src/PaneRelations.tsx`, `web/src/components/sidebar-agent-row.tsx`, `web/src/components/agent-tree.tsx` (the verb, ask line, descendant mark, rails and chevron the three surfaces share), `web/src/components/pr-mark.tsx` and `web/src/prMark.ts` (the PR mark every surface draws), `web/src/components/letter-mark.tsx` (the letters-waiting pill and envelope), `web/src/components/agent-tree-popover.tsx`, and `web/src/sidebarTree.ts`.
 
 ### Work Hide AI does for a home
 
@@ -1910,7 +1940,7 @@ A finished answer is shown only to the operator who asked in that popover.
 `PaneChildren.connection` carries the reason, whether Reopen is offered, and a Reopen's pending or refused state as a code, and `docs/status-model.md`, Not connected and what fixes it, owns what each one means; `web/src/paneConnectionRules.ts` names what each code asks of the operator.
 An Overview agent row reuses the same agent identity and state presentation as the sidebar and shared child popover; a missing row means the current live projection has no agent there.
 The header wash marks the pane Hide is showing, while the neutral split-pane outline marks the terminal that owns keyboard focus; moving keyboard focus into Overview keeps the shown wash and removes the terminal outline.
-Keys typed right after New tab or a split go to the new pane once Herdr names it, in the order typed, and keys typed while a pane's terminal is still opening reach it once it opens; nothing typed is dropped unless more than 64 KiB waits, which discards what waited, the pane can take a key only more than 3 seconds after it was typed, which discards that key because it is no longer what the operator means to run, or the keys have no pane to go to: the creation is refused or makes no pane, the new pane opens in the background, or the pane closes, is released or its terminal fails before it opens (`docs/ARCHITECTURE.md` names every reason).
+Keys typed right after New tab or a split go to the new pane once Herdr names it and its shell reads keys itself, in the order typed, so its line editor takes them: they are not echoed on a line above the first prompt, and a Backspace over a character typed in several bytes (a Hangul syllable) erases the whole character; a shell that does not read keys within 2 seconds of the first key, or a pane Herdr makes later than that, gets them as they were typed. Keys typed while a pane's terminal is still opening reach it once it opens; nothing typed is dropped unless more than 64 KiB waits, which discards what waited, the pane can take a key only more than 3 seconds after it was typed, which discards that key because it is no longer what the operator means to run, or the keys have no pane to go to: the creation is refused or makes no pane, the new pane opens in the background, or the pane closes, is released or its terminal fails before it opens (`docs/ARCHITECTURE.md` names every reason).
 Keyboard focus follows the core's answer, not the drawing, so a second ⌘D pressed before Herdr confirms the first splits the original pane again, as Herdr does.
 Keys typed after a click go to the pane clicked last, whatever order snapshots arrive in: the header may briefly follow an older snapshot, but keyboard focus does not leave the last-clicked pane until the core has answered that click, and a focus move the core makes afterwards (Herdr's own move, or a refused click) is followed.
 Unread weight is never reused to mean parent, child, delegated, or selected.
@@ -2203,7 +2233,7 @@ The app follows the phone's light or dark setting, draws text a quarter larger t
 
 ## Keyboard shortcuts per system
 
-Web owner: `web/src/shortcuts.ts` (the registry, the rule and its exceptions), `web/src/keys.ts` (terminal keys), `web/src/shortcutLabels.ts` (every chord a screen prints), `web/src/keyboard.ts` (the window listener); desktop owner: `desktop/src/main/menu.ts` (the menu's accelerators); test owners: `web/src/shortcuts.test.ts`, `web/src/shortcutsDoc.test.ts` (fails when the Every command table below and the registry disagree), `web/src/keys.test.ts`, `desktop/src/main/menu.test.ts`, and `web/e2e/chords.ts`, through which every web e2e presses its chords as the runner's system does.
+Web owner: `web/src/shortcuts.ts` (the registry, the rule and its exceptions), `web/src/keys.ts` (terminal keys), `web/src/shortcutLabels.ts` (every chord a screen prints), `web/src/keyboard.ts` (the window listener); desktop owner: `desktop/src/main/menu.ts` (the menu's accelerators); test owners: `web/src/shortcuts.test.ts`, `web/src/shortcutsDoc.test.ts` (fails when the Every command table below and the registry disagree), `web/src/keys.test.ts`, `desktop/src/main/menu.test.ts`, `web/e2e/korean-input.spec.ts` (Hangul composed through the browser's input-method path: the ⇧↩ order and a composing Escape), and `web/e2e/chords.ts`, through which every web e2e presses its chords as the runner's system does.
 
 The rest of this document writes chords as macOS has them; this section is how Windows and Linux press each one.
 Which system applies is the one the operator types on: the desktop app's, or the browser's for a browser tab, whatever system the daemon runs on.
@@ -2231,6 +2261,7 @@ Each exception has a dominant convention on Windows and Linux, or a chord the sy
 - Not yet handled: a browser tab's area cycle is Alt+` and Alt+Shift+` on Windows and Linux (Chrome keeps Ctrl+Tab, as it keeps ⌃Tab on macOS), and stock GNOME and KDE take both to switch between an app's windows, so on those desktops the cycle reaches the page only once the desktop's keys are changed or the cycle is bound to another chord in Settings, Shortcuts.
 - Move to Trash in the Explorer is Delete, as in Windows Explorer and the Linux file managers.
 - Inside a text field, a palette, a board or a document, no terminal holds the keyboard, so the system's own command key applies: ⌘↵ is Ctrl+Enter (send a form, open a ⌘P result to the side, open a pull request on GitHub), ⌘-click is Ctrl-click (a link, a pull request, an issue), and Ctrl+S saves the document in front as well as Ctrl+Shift+S.
+  A file or diff View's comment chord ⇧⌘. is Ctrl+Shift+. there for the same reason ([View openers and comments](#view-openers-and-comments)).
 - Tab digits follow the rule (Ctrl+Shift+1-9, as in WezTerm): Windows Terminal, GNOME Terminal and the browsers each use a different modifier, so no convention outweighs the rule.
 
 ### In a terminal
@@ -2246,6 +2277,10 @@ Each exception has a dominant convention on Windows and Linux, or a chord the sy
 Ctrl+C copies only while text is selected and clears the selection as it copies, as Windows Terminal does, so the next Ctrl+C interrupts; with nothing selected it reaches the program.
 Every other plain Ctrl key reaches the program, apart from text size (Ctrl+=, Ctrl+- and Ctrl+0).
 Settings, Shortcuts refuses a binding on the terminal's copy or paste chord.
+
+While an input method composes (Hangul, kana, pinyin), the keys in this table are the input method's and none is sent; a ⇧↩ that ends a syllable reaches the program after that syllable, never before it (`web/src/terminals.ts`).
+The syllable being composed is drawn in the terminal's own colours, underlined.
+Anywhere in the window, an Escape pressed while a field composes is the input method's too: it never closes the dialog, sheet or palette the field is in (`web/src/keyboard.ts`).
 
 ### Every command
 

@@ -47,6 +47,8 @@ export function generate(root = process.cwd()) {
   if (smallControl?.type !== 'number') throw new Error('Expected numeric --size-control-sm');
   const overviewPanel = tokens['--size-overview-panel-breakpoint'];
   if (overviewPanel?.type !== 'number') throw new Error('Expected numeric --size-overview-panel-breakpoint');
+  const paneBreakpoint = tokens['--size-pane-parent-breakpoint'];
+  if (paneBreakpoint?.type !== 'number') throw new Error('Expected numeric --size-pane-parent-breakpoint');
   const theme = [], mapped = [], light = [], dark = [], hideLight = [], hideDark = [], rest = [], fixed = [];
   for (const [name, token] of Object.entries(tokens)) {
     if (token.type === 'color') {
@@ -84,6 +86,8 @@ export function generate(root = process.cwd()) {
     `@custom-variant agent-tab-count-room (@container tab-title (min-width: ${smallControl.value * 2}px));`,
     // Below this window width the Overview's side panel opens over the tabs (PRD overview-device-tasks B65).
     `@custom-variant overview-narrow (@media (width < ${overviewPanel.value}px));`,
+    // A pane wide enough for its header to carry words beside its marks.
+    `@custom-variant pane-wide (@container pane (min-width: ${paneBreakpoint.value}px));`,
     '',
     '@theme static {',
     '  --color-*: initial;',

@@ -744,6 +744,7 @@ impl SessionReplica {
                     workspaces: issue_tokens.workspaces,
                 },
                 issue_links: BTreeMap::new(),
+                herdr_version: state.herdr_version.clone(),
             },
             agent_projection.excluded,
         ))

@@ -484,6 +484,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
         pane_capabilities: Arc::clone(&pane_capabilities),
         browser_routes,
         browser_control: Arc::new(browser_control::BrowserControl::default()),
+        browser_comments: Arc::default(),
         herdr_socket: env.herdr_socket_path.as_ref().map(std::path::PathBuf::from),
         allowed_origins: Arc::new(server::allowed_origins(port, env.vite_origin.as_deref())),
         clients: Arc::new(AtomicUsize::new(0)),

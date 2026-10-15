@@ -839,6 +839,7 @@ fn cross_machine_lineage_updates_agent_tab_placement_in_every_arrival_order() {
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
             issue_links: Default::default(),
+            herdr_version: None,
         };
             runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
                 target_id: "mini".into(),
@@ -1624,6 +1625,7 @@ fn pending_fork(runtime: &mut Runtime, source: &str, request_id: Option<&str>) {
         runtime.input_requests.open(
             request_id,
             super::terminal_input::InputOrigin::Fork(source.into()),
+            std::time::Instant::now(),
         );
         runtime.sync_input_requests();
     }

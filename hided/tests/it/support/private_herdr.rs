@@ -60,6 +60,12 @@ impl PrivateHerdr {
             "{} is not the pinned Herdr",
             bin.display()
         );
+        Self::start_any(bin, root)
+    }
+
+    /// A server of any Herdr release, such as an older one a device's
+    /// operator installed.
+    pub fn start_any(bin: PathBuf, root: &Path) -> Self {
         let home = root.join("home");
         std::fs::create_dir_all(&home).unwrap();
         let config = root.join("herdr-config.toml");

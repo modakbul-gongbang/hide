@@ -8,7 +8,7 @@ import { expect, type ElectronApplication, type Page } from "@playwright/test";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
+import { herdrBinary, startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import {
   claudeSettings, codexHooks, deviceBridges, deviceHome,
@@ -93,6 +93,11 @@ async function stopDeviceRun(setup: DeviceRun): Promise<void> {
     setup.device.stop();
     setup.local.stop();
   }
+}
+
+/** The release the pinned Herdr names for itself. */
+function herdrVersion(): string {
+  return spawnSync(herdrBinary(), ["--version"], { encoding: "utf8", timeout: 10_000 }).stdout.trim().split(/\s+/).pop()!;
 }
 
 /** The files Herdr's integrations for Claude Code and Codex leave in an account's home. */
@@ -252,6 +257,57 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
   }
 });
 
+// PRD device-herdr-update B1, B3, B5, B6, B13: the pinned Herdr the package
+// carries arrives beside the device's build, and Hide's own Herdr calls there
+// use it; the device's server already runs that release from the operator's
+// own `herdr`, so it is left as it is and its row shows no line. Removing the
+// device takes the copy no server runs.
+test("a device gets the pinned Herdr beside its build and leaves a server on that release alone", async () => {
+  const setup = await startDeviceRun("herdr", [ALIAS]);
+  const { home, device, run, helper, daemonLog } = setup;
+  let app: ElectronApplication | undefined;
+  try {
+    app = await relaunch(run.env);
+    const page = await shellPage(app);
+    await enterWorkspace(page, "fixture");
+    const state = JSON.parse(fs.readFileSync(path.join(run.env.HIDE_STATE_DIR!, "hided.json"), "utf8")) as { port: number; token: string };
+    const operatorHerdr = fs.readlinkSync(path.join(home, ".local", "bin", "herdr"));
+    await sendFrame(page, state, { kind: "register_device", payload: {
+      id: DEVICE, label: "SSH kit fixture", ssh_alias: ALIAS, herdr_socket_path: device.socket, host_consent: true,
+    } });
+    const handoffs = () => daemonEvents(daemonLog).filter((line) => line.kind === "herdr.handoff" && line.device_id === DEVICE);
+    await expect.poll(() => handoffs().length, { timeout: 120_000 }).toBeGreaterThan(0);
+    expect(handoffs()[0]!.outcome).toBe("current");
+
+    const copies = path.join(fs.realpathSync(helper), "herdr");
+    const copy = fs.readdirSync(copies).filter((name) => /^[0-9a-f]{16}$/.test(name));
+    expect(copy).toHaveLength(1);
+    expect(fs.readlinkSync(path.join(copies, "current"))).toBe(copy[0]);
+    expect(fs.readFileSync(path.join(copies, copy[0]!, "herdr")).equals(fs.readFileSync(herdrBinary()))).toBe(true);
+    expect(fs.readlinkSync(path.join(home, ".local", "bin", "herdr"))).toBe(operatorHerdr);
+
+    await page.locator("[data-open-settings]").click();
+    await page.locator('[data-settings-tab="devices"]').click();
+    await expect(page.locator(`[data-device-subtitle="${DEVICE}"]`)).toContainText(`Herdr ${herdrVersion()}`);
+    await expect(page.locator("[data-device-herdr-behind]")).toHaveCount(0);
+    await screenshot(page, "device-herdr-on-pin");
+
+    const beforeRemoval = daemonEvents(daemonLog).length;
+    await page.locator(`[data-device-menu="${DEVICE}"]`).click();
+    await page.locator(`[data-device-remove="${DEVICE}"]`).click();
+    await page.locator('[data-device-remove-go="true"]').click();
+    await expect.poll(() => daemonEvents(daemonLog).slice(beforeRemoval)
+      .find((line) => line.device_id === DEVICE && /^device\.kit_(removed|left)$/.test(line.kind ?? ""))?.kind, { timeout: 60_000 }).toBe("device.kit_removed");
+    expect(fs.existsSync(helper)).toBe(false);
+  } catch (error) {
+    console.log(fs.readFileSync(daemonLog, "utf8"));
+    throw error;
+  } finally {
+    await app?.close().catch(() => undefined);
+    await stopDeviceRun(setup);
+  }
+});
+
 // A device an older Hide ran carries that Hide's helper build, which
 // `current` leads to, and the bridge folder its gone pane service left. The
 // version-mismatch install points `current` at this build, which runs as
@@ -280,7 +336,8 @@ test("a device an older Hide ran keeps only this build and no dead bridge folder
     } });
     await expect.poll(() => daemonEvents(daemonLog).some((line) => line.kind === "apply.completed" && line.device_id === DEVICE), { timeout: 120_000 }).toBe(true);
 
-    const builds = fs.readdirSync(helper).filter((name) => name !== "current");
+    // The pinned Herdr's folder sits beside the builds and is no build.
+    const builds = fs.readdirSync(helper).filter((name) => name !== "current" && name !== "herdr");
     expect(builds).toHaveLength(1);
     expect(builds[0]).not.toBe(OLD_BUILD);
     expect(fs.readlinkSync(path.join(helper, "current"))).toBe(builds[0]);

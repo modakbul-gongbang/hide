@@ -15,7 +15,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Hint } from "./ui/tooltip";
 
 /** Where Report an issue goes: the repository's new-issue page. */
-export const NEW_ISSUE_URL = "https://github.com/modakbul-gongbang/hide/issues/new";
+export const NEW_ISSUE_URL = "https://github.com/with-hide/hide/issues/new";
 
 /** How long `Copied` stays beside Copy diagnostics. */
 const COPIED_SHOWN_MS = 1500;

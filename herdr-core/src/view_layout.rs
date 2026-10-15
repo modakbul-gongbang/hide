@@ -145,6 +145,10 @@ pub struct Display {
     /// navigation. Never stored: a restart loads every page once anyway.
     #[serde(skip)]
     pub load: u64,
+    /// The agent that last opened this View, absent for one the operator
+    /// opened (PRD view-opener-feedback D-02, D-03).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opener: Option<crate::view_feedback::Opener>,
 }
 
 impl Display {
@@ -334,6 +338,7 @@ impl Layout {
             title: None,
             pr: None,
             load: 0,
+            opener: None,
         }
     }
 

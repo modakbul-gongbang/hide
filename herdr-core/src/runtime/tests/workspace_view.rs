@@ -333,6 +333,7 @@ fn browser_authority_records_remote_session_and_catalog_revocations_before_reads
         pane_hook_tokens: Default::default(),
         issue_tokens: Default::default(),
         issue_links: Default::default(),
+        herdr_version: None,
     };
     let store = runtime.workspace_views.as_mut().unwrap();
     store.views.entry("mini", path);
@@ -398,6 +399,7 @@ fn a_device_that_stops_answering_carries_since_when() {
         pane_hook_tokens: Default::default(),
         issue_tokens: Default::default(),
         issue_links: Default::default(),
+        herdr_version: None,
     };
     let since = |runtime: &Runtime| runtime.snapshot.status.remote[0].unreachable_since_unix_ms;
     runtime.ingest_remote_session("mini", Ok(raw.clone()));

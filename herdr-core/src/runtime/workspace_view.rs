@@ -921,28 +921,32 @@ impl Runtime {
             }),
             None => None,
         };
-        let published = front.zip(view).map(|(key, view)| WorkspaceViewSnapshot {
-            device_id: view.device_id.clone(),
-            path: view.path.clone(),
-            tool: view.tool,
-            last_tool: view.last_tool,
-            work: view.work,
-            pinned: view.pinned,
-            tree: view.tree,
-            lane_width: view.lane_width,
-            tree_width: view.tree_width,
-            width_request_id: store
-                .width_request
-                .as_ref()
-                .filter(|(workspace, _)| workspace == key)
-                .map(|(_, request)| request.clone()),
-            lane_called: store.lane_called.get(key).copied().unwrap_or(0),
-            lane_calls: store.lane_calls,
-            resumed: Some(key) == store.resumable.as_ref(),
-            layout: self.view_layout_snapshot(key, &view.layout),
-            agent_layout: self
-                .arranges_agent_areas(&key.0)
-                .then(|| self.agent_layout_snapshot(key, &view.agent_layout)),
+        let published = front.zip(view).map(|(key, view)| {
+            let layout = self.view_layout_snapshot(key, &view.layout);
+            WorkspaceViewSnapshot {
+                device_id: view.device_id.clone(),
+                path: view.path.clone(),
+                tool: view.tool,
+                last_tool: view.last_tool,
+                work: view.work,
+                pinned: view.pinned,
+                tree: view.tree,
+                lane_width: view.lane_width,
+                tree_width: view.tree_width,
+                width_request_id: store
+                    .width_request
+                    .as_ref()
+                    .filter(|(workspace, _)| workspace == key)
+                    .map(|(_, request)| request.clone()),
+                lane_called: store.lane_called.get(key).copied().unwrap_or(0),
+                lane_calls: store.lane_calls,
+                resumed: Some(key) == store.resumable.as_ref(),
+                feedback: self.view_feedback_snapshot(key, &layout),
+                layout,
+                agent_layout: self
+                    .arranges_agent_areas(&key.0)
+                    .then(|| self.agent_layout_snapshot(key, &view.agent_layout)),
+            }
         });
         // The one global panel every existing reader gates on (the Changes
         // reader, the device Explorer watch, Memory) follows the front

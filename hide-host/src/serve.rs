@@ -768,6 +768,9 @@ pub struct Env {
     /// read of the same repository reuses for a worktree whose inputs did
     /// not move.
     pub worktrees: Arc<worktrees::Measured>,
+    /// The account's state folder, where View feedback screenshots are
+    /// staged and letter attachments placed (`crate::feedback`).
+    pub state: Option<PathBuf>,
 }
 
 /// The AI backends a node answering for this process keeps, shared by every
@@ -804,6 +807,8 @@ impl Env {
             factory: Arc::default(),
             label_locks: Arc::default(),
             worktrees: Arc::default(),
+            state: std::env::var_os("HOME")
+                .map(|home| hide_kit::layout::state_dir_from_process(Path::new(&home))),
         }
     }
 
@@ -820,6 +825,7 @@ impl Env {
             factory: Arc::default(),
             label_locks: Arc::default(),
             worktrees: Arc::default(),
+            state: None,
         }
     }
 
@@ -1406,6 +1412,18 @@ pub fn handle_with_progress(
             )?)
         }
         Call::Factory { call } => crate::factory::handle(call, &env.factory, progress),
+        Call::Feedback { call } => {
+            crate::feedback::handle(call, env.state.as_deref()).map_err(|reason| {
+                // A full attachments folder is a cap the screen names; any
+                // other refusal is the disk's.
+                let code = match reason.as_str() {
+                    hide_node_link::feedback::PLACE_FULL => ErrorCode::TooLarge,
+                    hide_node_link::feedback::SHOT_GONE => ErrorCode::NotFound,
+                    _ => ErrorCode::Io,
+                };
+                HostError::new(code, reason)
+            })
+        }
         // In a process, a reporting call stops through its reports; there is
         // no request to cancel.
         Call::Cancel { .. } => Ok(Value::Null),

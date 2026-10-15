@@ -16,11 +16,19 @@
 //! Herdr hands over on Unix only. A handoff that does not happen leaves the
 //! server as it was, as every earlier build did, so each outcome is a log
 //! record and nothing the connect fails on.
+//!
+//! A device's node keeps a rule of its own ([`device_update`], PRD
+//! device-herdr-update): Hide never starts a device's server, so the server
+//! on the device's registered socket is the operator's, and it is handed to
+//! the pinned copy the build brought whenever it runs an older stable
+//! release of Herdr (D-04, D-06). A failed handoff is tried once per server
+//! process and pin (D-13).
 
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use hide_kit::device_herdr::{BehindCause, HerdrUpdate};
 use hide_platform::fs::identity::file_id;
 use hide_platform::ipc::LocalStream;
 use hide_platform::process::{Image, image_of};
@@ -154,11 +162,37 @@ pub fn hand_off(ours: &Path, socket: &Path) -> Outcome {
             ours: version,
         };
     }
+    match hand_over(ours, &ours_file, &version, socket) {
+        Ok(Handed { to_pid, elapsed_ms }) => Outcome::HandedOff {
+            from_pid,
+            to_pid,
+            from_program: image.path,
+            elapsed_ms,
+        },
+        Err((stage, detail)) => Outcome::Failed { stage, detail },
+    }
+}
+
+/// A server that now runs the Herdr it was handed to.
+struct Handed {
+    to_pid: u32,
+    elapsed_ms: u64,
+}
+
+/// Has the server on `socket` hand its panes to `ours`, whose file is
+/// `ours_file` and whose version is `version`, and confirms the server on
+/// the socket runs it afterwards. A failure names its stage; the server
+/// stays as it was unless the stage is `confirm`.
+fn hand_over(
+    ours: &Path,
+    ours_file: &hide_platform::fs::identity::FileId,
+    version: &str,
+    socket: &Path,
+) -> Result<Handed, (&'static str, String)> {
     let started = Instant::now();
-    let handed = ours
-        .to_str()
+    ours.to_str()
         .ok_or_else(|| format!("{} is not a path Herdr can take", ours.display()))
-        .and_then(|ours| herdr_core::wire::live_handoff_params(ours, &version))
+        .and_then(|ours| herdr_core::wire::live_handoff_params(ours, version))
         .and_then(|params| {
             hide_herdr_client::request_with_timeout(
                 socket,
@@ -168,29 +202,215 @@ pub fn hand_off(ours: &Path, socket: &Path) -> Outcome {
             )
             .map_err(|error| error.to_string())
         })
-        .and_then(herdr_core::wire::live_handoff_done);
-    if let Err(detail) = handed {
-        return Outcome::Failed {
-            stage: "handoff",
-            detail,
+        .and_then(herdr_core::wire::live_handoff_done)
+        .map_err(|detail| ("handoff", detail))?;
+    match program_on(socket) {
+        Ok(Some((to_pid, now))) if now.file == *ours_file => Ok(Handed {
+            to_pid,
+            elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        }),
+        Ok(Some((pid, now))) => Err((
+            "confirm",
+            format!("the server (pid {pid}) runs {}", now.path.display()),
+        )),
+        Ok(None) => Err(("confirm", "no server answers after the handoff".to_owned())),
+        Err(error) => Err(("confirm", error.to_string())),
+    }
+}
+
+/// What a device's node does after its kit has applied: the server on the
+/// device's registered `socket` is handed to `pinned`, the copy of Herdr the
+/// build brought, when it runs an older stable release; `record` keeps the
+/// handoffs that failed, so each is tried once per server process and pin.
+/// Nothing here fails the kit pass: every outcome is an answer.
+pub fn device_update(pinned: &Path, socket: &Path, record: &Path) -> HerdrUpdate {
+    let failed = |stage: &str, reason: String, version: Option<&str>, server: Option<&str>| {
+        HerdrUpdate::Failed {
+            stage: stage.to_owned(),
+            reason,
+            version: version.map(str::to_owned),
+            server_version: server.map(str::to_owned),
+        }
+    };
+    let pinned_file = match file_id(pinned) {
+        Ok(file) => file,
+        Err(error) => return failed("pinned", error.to_string(), None, None),
+    };
+    let version = match version_of(pinned) {
+        Ok(version) => version,
+        Err(reason) => return failed("version", reason, None, None),
+    };
+    let from_pid = match program_on(socket) {
+        Ok(Some((pid, _))) => pid,
+        Ok(None) => return HerdrUpdate::NoServer { version },
+        Err(error) => return failed("program", error.to_string(), Some(&version), None),
+    };
+    let pong = match ask(socket, "ping", herdr_core::wire::ping_params())
+        .and_then(herdr_core::wire::server_pong)
+    {
+        Ok(pong) => pong,
+        Err(reason) => return failed("ping", reason, Some(&version), None),
+    };
+    let server_version = pong.version;
+    match device_step(&version, &server_version, pong.live_handoff) {
+        DeviceStep::Current => return HerdrUpdate::Current { version },
+        DeviceStep::Kept => {
+            return HerdrUpdate::Kept {
+                server_version,
+                version,
+            };
+        }
+        DeviceStep::CannotHandOff => {
+            return HerdrUpdate::Behind {
+                reason: format!("Herdr {server_version} cannot hand its panes over"),
+                server_version,
+                version,
+                cause: BehindCause::CannotHandOff,
+            };
+        }
+        DeviceStep::HandOver => {}
+    }
+    let known =
+        |stage: &str, reason: String| failed(stage, reason, Some(&version), Some(&server_version));
+    let attempt = match Attempt::of(socket, from_pid, pinned) {
+        Ok(attempt) => attempt,
+        Err(error) => return known("program", error.to_string()),
+    };
+    let attempts = match Attempts::read(record) {
+        Ok(attempts) => attempts,
+        Err(reason) => return known("record", reason),
+    };
+    if let Some(earlier) = attempts.failed(&attempt) {
+        return HerdrUpdate::Behind {
+            server_version,
+            version,
+            cause: BehindCause::HandoffFailed,
+            reason: format!("an earlier handoff of this server failed: {earlier}"),
         };
     }
-    match program_on(socket) {
-        Ok(Some((to_pid, now))) if now.file == ours_file => Outcome::HandedOff {
+    match hand_over(pinned, &pinned_file, &version, socket) {
+        Ok(Handed { to_pid, elapsed_ms }) => HerdrUpdate::HandedOff {
+            server_version,
+            version,
             from_pid,
             to_pid,
-            from_program: image.path,
-            elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            elapsed_ms,
         },
-        Ok(Some((pid, now))) => Outcome::Failed {
-            stage: "confirm",
-            detail: format!("the server (pid {pid}) runs {}", now.path.display()),
-        },
-        Ok(None) => Outcome::Failed {
-            stage: "confirm",
-            detail: "no server answers after the handoff".to_owned(),
-        },
-        Err(error) => failed("confirm", error),
+        Err((stage, detail)) => {
+            let reason = format!("{stage}: {detail}");
+            let kept = attempts.add(attempt, reason.clone()).write(record);
+            HerdrUpdate::Behind {
+                server_version,
+                version,
+                cause: BehindCause::HandoffFailed,
+                reason: match kept {
+                    Ok(()) => reason,
+                    Err(error) => format!("{reason}; the attempt was not recorded: {error}"),
+                },
+            }
+        }
+    }
+}
+
+/// What a device's server is due, from its Herdr's version, the pin's and
+/// whether the server can hand its panes over.
+#[derive(Debug, Eq, PartialEq)]
+enum DeviceStep {
+    /// The server already runs the pinned release, from whichever file.
+    Current,
+    /// A newer release, or one the pin does not order against: left alone.
+    Kept,
+    /// An older release that cannot hand its panes over.
+    CannotHandOff,
+    HandOver,
+}
+
+fn device_step(pinned: &str, server: &str, live_handoff: bool) -> DeviceStep {
+    if pinned == server {
+        return DeviceStep::Current;
+    }
+    match (release(pinned), release(server)) {
+        (Some(pinned), Some(server)) if pinned > server => {
+            if live_handoff {
+                DeviceStep::HandOver
+            } else {
+                DeviceStep::CannotHandOff
+            }
+        }
+        _ => DeviceStep::Kept,
+    }
+}
+
+/// The most failed handoffs a device keeps (engineering rule 15): one per
+/// server process, and a device runs only a few servers.
+const ATTEMPTS_KEPT: usize = 16;
+
+/// One handoff of one server process to one pinned copy.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+struct Attempt {
+    socket: PathBuf,
+    pid: u32,
+    /// The process's start, so a pid a restarted server reuses is a new
+    /// server (D-13).
+    started: u64,
+    pinned: PathBuf,
+}
+
+impl Attempt {
+    fn of(socket: &Path, pid: u32, pinned: &Path) -> io::Result<Self> {
+        Ok(Self {
+            socket: socket.to_path_buf(),
+            pid,
+            started: hide_platform::process::start_time(pid)?,
+            pinned: pinned.to_path_buf(),
+        })
+    }
+}
+
+#[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
+struct Attempts {
+    failed: Vec<FailedAttempt>,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct FailedAttempt {
+    #[serde(flatten)]
+    attempt: Attempt,
+    reason: String,
+}
+
+impl Attempts {
+    /// The record at `path`, empty when there is none yet.
+    fn read(path: &Path) -> Result<Self, String> {
+        match std::fs::read(path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|error| format!("{} is unreadable: {error}", path.display())),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(error) => Err(format!("{} could not be read: {error}", path.display())),
+        }
+    }
+
+    /// Why `attempt` failed before, when it did.
+    fn failed(&self, attempt: &Attempt) -> Option<&str> {
+        self.failed
+            .iter()
+            .find(|failed| failed.attempt == *attempt)
+            .map(|failed| failed.reason.as_str())
+    }
+
+    /// The record with `attempt` added and only the newest attempts kept.
+    fn add(mut self, attempt: Attempt, reason: String) -> Self {
+        self.failed.push(FailedAttempt { attempt, reason });
+        let over = self.failed.len().saturating_sub(ATTEMPTS_KEPT);
+        self.failed.drain(..over);
+        self
+    }
+
+    fn write(&self, path: &Path) -> Result<(), String> {
+        let bytes = serde_json::to_vec(self).map_err(|error| error.to_string())?;
+        hide_platform::fs::atomic::write_file(path, &bytes, hide_platform::fs::Access::Private)
+            .map(|_| ())
+            .map_err(|error| format!("{}: {error}", path.display()))
     }
 }
 
@@ -297,5 +517,65 @@ mod tests {
         ] {
             assert_eq!(takes_over(ours, server), takes, "{ours} over {server}");
         }
+    }
+
+    #[test]
+    fn a_device_server_is_handed_over_only_from_an_older_release_that_can() {
+        for (pinned, server, live_handoff, step) in [
+            ("0.9.3", "0.9.3", true, DeviceStep::Current),
+            ("0.9.3", "0.9.3", false, DeviceStep::Current),
+            ("0.9.3", "0.9.1", true, DeviceStep::HandOver),
+            ("0.10.0", "0.9.12", true, DeviceStep::HandOver),
+            ("0.9.3", "0.9.1", false, DeviceStep::CannotHandOff),
+            ("0.9.3", "0.9.4", true, DeviceStep::Kept),
+            ("0.9.3", "0.9.4", false, DeviceStep::Kept),
+            ("0.9.3", "0.9.4-preview.1", true, DeviceStep::Kept),
+            ("0.9.4-preview.1", "0.9.3", true, DeviceStep::Kept),
+        ] {
+            assert_eq!(
+                device_step(pinned, server, live_handoff),
+                step,
+                "{server} under pin {pinned}, live handoff {live_handoff}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_handoff_is_remembered_for_that_server_process_and_pin_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = dir.path().join("handoff.json");
+        let attempt = |pid, started, pinned: &str| Attempt {
+            socket: PathBuf::from("/home/me/.config/herdr/herdr.sock"),
+            pid,
+            started,
+            pinned: PathBuf::from(pinned),
+        };
+        let first = attempt(41, 7, "/root/herdr/aaaa/herdr");
+        Attempts::read(&record)
+            .unwrap()
+            .add(first.clone(), "handoff: refused".to_owned())
+            .write(&record)
+            .unwrap();
+
+        let read = Attempts::read(&record).unwrap();
+        assert_eq!(read.failed(&first), Some("handoff: refused"));
+        // A restarted server, even on the same pid, and a new pin are new.
+        assert_eq!(read.failed(&attempt(41, 8, "/root/herdr/aaaa/herdr")), None);
+        assert_eq!(read.failed(&attempt(41, 7, "/root/herdr/bbbb/herdr")), None);
+
+        let mut many = read;
+        for pid in 0..40 {
+            many = many.add(attempt(pid, 1, "/root/herdr/aaaa/herdr"), "x".to_owned());
+        }
+        assert_eq!(many.failed.len(), ATTEMPTS_KEPT);
+        assert_eq!(many.failed(&first), None, "the oldest attempts go first");
+    }
+
+    #[test]
+    fn an_unreadable_record_is_refused_rather_than_read_as_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = dir.path().join("handoff.json");
+        std::fs::write(&record, b"not json").unwrap();
+        assert!(Attempts::read(&record).is_err());
     }
 }

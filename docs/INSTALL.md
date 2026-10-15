@@ -25,7 +25,7 @@ pnpm --version
 
 ## Install a release
 
-Open the [hide Releases page](https://github.com/modakbul-gongbang/hide/releases).
+Open the [hide Releases page](https://github.com/with-hide/hide/releases).
 If it says there are no releases, continue with [Build and install from source](#build-and-install-from-source).
 
 Download both files for the same version:
@@ -138,7 +138,9 @@ Not supported is a gap, never a design choice.
 | Needs You count on the app icon | supported: a count on the Dock once macOS lets Hide notify | supported: a dot on the taskbar button, with the count in its description | unverified: drawn only by a desktop that shows launcher counts for the app's `.desktop` entry, which the folder package does not install |
 | Device node (a remote machine's files and Git) | supported | not supported: no device runs the Windows `hided` yet, so from Windows a device's files and Git stay unavailable | supported |
 | The Herdr server follows an app update ([Update](#update)) | supported | not supported: Herdr hands a running server to another Herdr on Unix only, so the server keeps the previous package's Herdr until it is stopped; changes when Herdr supports live handoff on Windows | supported (the remote mailbox lane hands a pinned server over) |
+| A connected device's Herdr follows an app update ([Connect another Mac](#connect-another-mac-over-ssh)) | supported for an Apple Silicon Mac device, whose system the Mac app carries (the device-kit e2e on an isolated SSH device; the remote mailbox lane's macOS nightly hands a Herdr 0.9.1 server to the pinned one) | not supported: no device runs the Windows `hided`, and Herdr hands a server over on Unix only; changes with a Windows device node and Windows live handoff | supported for a Linux x64 device, whose system the Linux package carries (the remote mailbox lane hands a Herdr 0.9.1 server to the pinned one); a Mac app's Linux device keeps its own Herdr until a package carries the Linux helper |
 | Move the core to another machine ([Move the core](#move-the-core-to-another-mac)) | supported | not supported: the core's login item is written for launchd only (`hide_platform::user_agents`), with no Windows or systemd form yet | not supported: same as Windows |
+| Comments on a page in Comment mode ([BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md#comment-mode)) | supported, from the window on the machine whose daemon holds the page; a screen of a linked node answers `comment_unavailable_here` because its daemon relays the core and cannot reach the page's gateway; changes when the node relays the gateway too | same as macOS (unverified: the overlay is the same Chromium code, not yet run on a Windows CI lane) | same as macOS (unverified on Linux the same way) |
 
 Unverified on Windows and Linux (the macOS assumptions below are left as they are, and no check on those systems has proved them):
 
@@ -163,7 +165,7 @@ You can also call the command by its full path without changing PATH.
 Clone the repository and build the release bundle:
 
 ```sh
-git clone https://github.com/modakbul-gongbang/hide.git
+git clone https://github.com/with-hide/hide.git
 cd hide
 pnpm install --frozen-lockfile
 HIDE_VERSION=<version> pnpm --dir desktop package
@@ -317,8 +319,12 @@ hide can show and drive a Herdr server on another machine.
 Open Settings, choose Devices, and add the machine with a label and the alias `~/.ssh/config` already knows it by; that alias is the only thing hide stores about it.
 Authentication stays with SSH: the alias's `IdentityFile`, or the running SSH agent, is what hide signs in with, and hide never asks for or keeps a password.
 
-The remote machine needs Herdr installed where a non-login shell finds it (`~/.local/bin`, Homebrew, or the system paths) and a running `herdr server`,.
+The remote machine needs Herdr installed where a non-login shell finds it (`~/.local/bin`, Homebrew, or the system paths) and a running `herdr server` the first time; hide does not install Herdr or start a server there.
 hide asks that machine `herdr status server --json` to learn where the server socket is, so nothing about the remote user or home directory is configured on this side.
+After that the machine's Herdr follows this app: when its system and processor are ones the app carries (an Apple Silicon Mac from the Mac app, a Linux x64 machine from the Linux package), each connection puts this app's pinned Herdr in `~/.hide/host-helper/herdr`, once per Herdr version, and moves the Herdr server on the registered socket onto it when that server runs an older Herdr release, with its panes and the agents in them still running.
+A server on another socket, one already on that version or newer, and a preview build are left as they are, and the `herdr` you installed there is never changed.
+Hide's own Herdr calls on that machine use the pinned copy, and an older copy is removed once no server there runs it.
+When the server cannot be moved, the machine's row says its Herdr is older than Hide's and what to do: restart Herdr there when its work is safe, and Hide moves it on the next connection, or update that machine's Herdr when it is too old to hand its panes over; a move that failed is not tried again for the same server.
 Adding the machine installs the same kit a first launch installs here, under that account's home, with the form listing each part and where it goes: Hide's helper and every part's files in `~/.hide/host-helper`, the `hide` link in `~/.local/bin`, the Claude Code and Codex hook entries.
 A machine allowed for the older `~/.local/share/hide/host-helper` is not asked again: its next connection installs in `~/.hide/host-helper`, re-points the `hide` link and the hook entries there, and then removes the old helper folder, the old `~/.local/state/hide/workspace-bridges`, and `~/.local/share/hide` and `~/.local/state/hide` when they are left empty.
 Once the helper runs from `~/.hide/host-helper`, a later step that fails (a hook entry or a link) shows on that machine's row while the old helper folder is kept as long as anything still names it, and the next connection finishes it; removing the old folders is retried on each connection and logged, not shown.
@@ -328,6 +334,7 @@ Its agent panes show labels and Workspace guidance as panes on this Mac do, with
 A machine allowed by an earlier version of Hide gets the whole kit on its next connection without asking again; a machine added without the helper installs nothing until you press Allow and install on its row.
 Only machines on the platform this build carries get the kit; another platform shows why on its row and is only viewed and driven.
 Removing a machine while it is connected takes Hide's hook entries, the `hide` link and the helper folder `~/.hide/host-helper` off it, and leaves `~/.hide/kit` and `~/.hide/agent-hooks`; removing it while it is not connected leaves them there, where they do no harm, and adding it again replaces them.
+When a Herdr server on that machine still runs the Herdr copy Hide moved it to, the helper folder stays with that copy and the removal says so; delete `~/.hide/host-helper` there once that server has stopped.
 Each device row in Settings shows whether the remote session is connected and, when it is not, the reason in the words the connection failed with; `Test` runs the SSH, authentication, Herdr, protocol, PTY, SFTP, and Git stages one after another and lists the first one that needs attention on that host.
 
 ## Move the core to another Mac
@@ -384,6 +391,7 @@ On Windows the server keeps the previous package's Herdr until you stop it ([Wha
 State under `~/.hide/state` and the desktop profile (`~/Library/Application Support/hide-desktop` on macOS, `%APPDATA%\hide-desktop` on Windows, `~/.config/hide-desktop` on Linux) both persist across an update.
 Files the previous Swift app left under `~/Library/Application Support/hide/` are not read by the current app, apart from `state.json`'s shortcut bindings, which are imported once, and can be deleted by hand.
 Each packaged launch replaces an outdated part of the kit on this machine, and each device connection does the same there, hook entries included; a part you removed stays removed.
+A connected device whose system the package carries also gets the app's pinned Herdr, and its Herdr server moves onto it when it runs an older release ([Connect another Mac](#connect-another-mac-over-ssh)); you do nothing on the device.
 When the core runs on another machine, a newer app updates it to its own build before it connects, once per connection, while agents keep running; if that fails, the window shows both builds with Retry, and the core goes on with its previous build.
 An updated app on the core's own machine updates the core the login item runs in the same way, and an older app there is told to update.
 

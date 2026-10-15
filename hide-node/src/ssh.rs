@@ -475,6 +475,9 @@ pub enum RemoteReadCommand {
     /// default server answers.
     HerdrServerStatus {
         socket: Option<String>,
+        /// The helper root whose pinned Herdr copy is asked first (PRD
+        /// device-herdr-update D-10), when the build brought one there.
+        helper_root: Option<String>,
     },
 }
 
@@ -482,6 +485,36 @@ pub enum RemoteReadCommand {
 /// installer's user prefix, Homebrew, and the system paths. A login shell
 /// would print its banners into the JSON, so the PATH is spelled out instead.
 const REMOTE_HERDR_PATH: &str = "$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
+
+/// The probe's `PATH`: the pinned Herdr copy under `helper_root` first,
+/// when the root is spelled plainly enough to sit inside double quotes, and
+/// [`REMOTE_HERDR_PATH`] after it, so a device the build brought no Herdr
+/// to answers from its own.
+fn remote_herdr_path(helper_root: Option<&str>) -> String {
+    let pinned = helper_root.and_then(|root| {
+        let plain = |rest: &str| {
+            !rest.is_empty()
+                && rest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"/._-".contains(&byte))
+        };
+        let spelled = match root.strip_prefix("~/") {
+            Some(rest) if plain(rest) => format!("$HOME/{rest}"),
+            None if root.starts_with('/') && plain(root) => root.to_owned(),
+            _ => return None,
+        };
+        Some(format!(
+            "{}/{}/{}",
+            spelled.trim_end_matches('/'),
+            hide_kit::device_herdr::HERDR_DIR,
+            hide_kit::CURRENT
+        ))
+    });
+    match pinned {
+        Some(pinned) => format!("{pinned}:{REMOTE_HERDR_PATH}"),
+        None => REMOTE_HERDR_PATH.to_owned(),
+    }
+}
 
 impl RemoteReadCommand {
     fn operation_id(&self) -> &'static str {
@@ -500,11 +533,16 @@ impl RemoteReadCommand {
 
     fn command_line(&self) -> RemoteResult<String> {
         match self {
-            Self::HerdrServerStatus { socket: None } => Ok(format!(
-                "PATH=\"{REMOTE_HERDR_PATH}\" herdr status server --json"
+            Self::HerdrServerStatus {
+                socket: None,
+                helper_root,
+            } => Ok(format!(
+                "PATH=\"{}\" herdr status server --json",
+                remote_herdr_path(helper_root.as_deref())
             )),
             Self::HerdrServerStatus {
                 socket: Some(socket),
+                helper_root,
             } => {
                 if !valid_remote_socket_path(socket) {
                     return Err(remote_error(
@@ -517,8 +555,9 @@ impl RemoteReadCommand {
                     ));
                 }
                 Ok(format!(
-                    "HERDR_SOCKET_PATH={} PATH=\"{REMOTE_HERDR_PATH}\" herdr status server --json",
-                    shell_quote(socket)
+                    "HERDR_SOCKET_PATH={} PATH=\"{}\" herdr status server --json",
+                    shell_quote(socket),
+                    remote_herdr_path(helper_root.as_deref())
                 ))
             }
             Self::GitStatus { root } => {
@@ -583,7 +622,11 @@ pub fn parse_herdr_server_status(
     host_id: &str,
     output: &RemoteCommandOutput,
 ) -> RemoteResult<RemoteHerdrServerStatus> {
-    let operation_id = RemoteReadCommand::HerdrServerStatus { socket: None }.operation_id();
+    let operation_id = RemoteReadCommand::HerdrServerStatus {
+        socket: None,
+        helper_root: None,
+    }
+    .operation_id();
     if output.exit_status == EXIT_COMMAND_NOT_FOUND {
         return Err(remote_error(
             operation_id,
@@ -683,6 +726,9 @@ pub struct RusshRemoteClient {
     /// The Herdr socket the device registration names, for a host whose
     /// server does not listen at its default path.
     herdr_socket: Option<String>,
+    /// The helper root Hide installs under on the device, whose pinned Herdr
+    /// the status read asks first.
+    helper_root: Option<String>,
     /// The device's one SSH connection, shared by every clone.
     connection: Arc<Connection>,
 }
@@ -1008,6 +1054,7 @@ impl RusshRemoteClient {
             runtime,
             herdr_status: Arc::new(Mutex::new(None)),
             herdr_socket: None,
+            helper_root: None,
         })
     }
 
@@ -1139,6 +1186,13 @@ impl RusshRemoteClient {
         self
     }
 
+    /// Asks the pinned Herdr under `root` on the host first, when there is
+    /// one (PRD device-herdr-update D-10).
+    pub fn with_helper_root(mut self, root: Option<String>) -> Self {
+        self.helper_root = root;
+        self
+    }
+
     pub fn host(&self) -> &SshAlias {
         &self.host
     }
@@ -1151,6 +1205,7 @@ impl RusshRemoteClient {
         }
         let output = self.exec_read_only(RemoteReadCommand::HerdrServerStatus {
             socket: self.herdr_socket.clone(),
+            helper_root: self.helper_root.clone(),
         })?;
         let status = parse_herdr_server_status(&self.host.host_id, &output)?;
         let socket = status.socket.clone();
@@ -2564,9 +2619,12 @@ mod tests {
 
     #[test]
     fn herdr_server_status_command_runs_without_a_login_shell() {
-        let command = RemoteReadCommand::HerdrServerStatus { socket: None }
-            .command_line()
-            .expect("status command");
+        let command = RemoteReadCommand::HerdrServerStatus {
+            socket: None,
+            helper_root: None,
+        }
+        .command_line()
+        .expect("status command");
         assert_eq!(
             command,
             "PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin\" herdr status server --json"
@@ -2574,9 +2632,37 @@ mod tests {
     }
 
     #[test]
+    fn the_status_read_asks_the_pinned_herdr_under_the_helper_root_first() {
+        let command = |root: &str| {
+            RemoteReadCommand::HerdrServerStatus {
+                socket: None,
+                helper_root: Some(root.to_owned()),
+            }
+            .command_line()
+            .unwrap()
+        };
+        assert_eq!(
+            command("~/.hide/host-helper"),
+            "PATH=\"$HOME/.hide/host-helper/herdr/current:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin\" herdr status server --json"
+        );
+        assert_eq!(
+            command("/srv/hide/helper/"),
+            "PATH=\"/srv/hide/helper/herdr/current:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin\" herdr status server --json"
+        );
+        // A root that would need quoting is not spelled into the shell line.
+        for odd in ["~/a\"b", "/tmp/$(x)", "relative", "/tmp/a b"] {
+            assert!(
+                command(odd).starts_with("PATH=\"$HOME/.local/bin:"),
+                "{odd}"
+            );
+        }
+    }
+
+    #[test]
     fn a_registered_herdr_socket_is_asked_for_by_name_and_quoted() {
         let command = RemoteReadCommand::HerdrServerStatus {
             socket: Some("/tmp/hide verify/herdr.sock".to_owned()),
+            helper_root: None,
         }
         .command_line()
         .expect("status command");
@@ -2587,7 +2673,8 @@ mod tests {
         for invalid in ["relative.sock", "/tmp/a\nb.sock", "/"] {
             assert!(
                 RemoteReadCommand::HerdrServerStatus {
-                    socket: Some(invalid.to_owned())
+                    socket: Some(invalid.to_owned()),
+                    helper_root: None,
                 }
                 .command_line()
                 .is_err(),
