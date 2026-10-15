@@ -5,7 +5,7 @@ use crate::turns::{
 };
 use crate::{
     Agent, AppendedBytes, ParsedSession, Result, SESSION_LINE_LIMIT_BYTES, SessionCursor,
-    SessionError, SkipReason, parse_events_into,
+    SessionError, SkipReason, parse_events_followed,
 };
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -376,7 +376,10 @@ impl ConversationCursor {
             ..ParsedSession::default()
         };
         let mut found = crate::links::LinkAccumulator::default();
+        let mut consumed = 0;
+        let window_start = start_offset.saturating_sub(self.cursor.pending.len() as u64);
         for fragment in appended.split_inclusive(|byte| *byte == b'\n') {
+            consumed += fragment.len();
             let line_start = offset.saturating_sub(pending.len() as u64 + discarded_bytes);
             offset += fragment.len() as u64;
             let complete = fragment.last() == Some(&b'\n');
@@ -443,12 +446,27 @@ impl ConversationCursor {
                     continue;
                 }
             }
-            let line = parse_events_into(
+            let text = String::from_utf8_lossy(&pending);
+            let mut line = parse_events_followed(
                 agent,
-                &String::from_utf8_lossy(&pending),
+                &text,
                 line_start,
                 &mut found,
+                Some(&appended[consumed..]),
             );
+            if line.held_command && has_more && line_start <= window_start {
+                // A command that opens a full window cannot wait for a reply
+                // beyond it: holding would stall the reader, so it is decided
+                // on what the window shows, as a whole-file reader does.
+                line = parse_events_followed(agent, &text, line_start, &mut found, None);
+            }
+            if line.held_command {
+                // A command whose reply is not written yet: read it again
+                // with the poll that holds the reply, so neither is lost.
+                offset = line_start;
+                pending.clear();
+                break;
+            }
             parsed.events.extend(line.events);
             parsed.event_offsets.extend(line.event_offsets);
             parsed.skipped_lines += line.skipped_lines;

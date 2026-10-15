@@ -1,4 +1,5 @@
 use super::*;
+use hide_ai::{AiUsageSink, ModelTokens};
 use hide_node_link::{LinkAnswer, LinkError, sessions::ReaderFeatures};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -60,7 +61,7 @@ fn finish(engine: &mut Engine, node: &OwnNode) -> Report {
             },
         );
         if engine.agents.iter().all(|work| !work.progress.reading) {
-            return engine.report();
+            return engine.report(true);
         }
     }
     panic!("fixture backfill did not complete");
@@ -83,7 +84,7 @@ fn usage_worker_resumes_a_partly_read_unchanged_file_after_restart() {
     std::fs::write(&source, body).unwrap();
     let path = home.path().join("ledger.sqlite3");
     let node = OwnNode::new(home.path());
-    let mut first = Engine::open(&path, "physical-device".into()).unwrap();
+    let mut first = Engine::open(&path, "physical-device".into(), AiUsageQueue::new()).unwrap();
     for _ in 0..100 {
         first.step(
             &node,
@@ -109,7 +110,7 @@ fn usage_worker_resumes_a_partly_read_unchanged_file_after_restart() {
         .sum::<u64>();
     assert!(partial > 0 && partial < 5000);
     drop(first);
-    let mut restarted = Engine::open(&path, "physical-device".into()).unwrap();
+    let mut restarted = Engine::open(&path, "physical-device".into(), AiUsageQueue::new()).unwrap();
     // A transient refusal after that persisted partial read must not turn
     // its unchanged stamp into an EOF proof either.
     node.fail_read.store(true, Ordering::SeqCst);
@@ -132,7 +133,7 @@ fn usage_worker_resumes_a_partly_read_unchanged_file_after_restart() {
     assert!(restarted.agents.iter().any(|work| work.progress.reading && work.progress.failure == Some("usage_read_failed")));
     drop(restarted);
     node.fail_read.store(false, Ordering::SeqCst);
-    let mut restarted = Engine::open(&path, "physical-device".into()).unwrap();
+    let mut restarted = Engine::open(&path, "physical-device".into(), AiUsageQueue::new()).unwrap();
     assert_eq!(
         finish(&mut restarted, &node)
             .projection
@@ -151,7 +152,7 @@ fn usage_worker_keeps_totals_after_restart_copy_and_source_deletion() {
     let source = fixture(home.path(), "first");
     let path = home.path().join("ledger.sqlite3");
     let node = OwnNode::new(home.path());
-    let mut first = Engine::open(&path, "physical-device".into()).unwrap();
+    let mut first = Engine::open(&path, "physical-device".into(), AiUsageQueue::new()).unwrap();
     let report = finish(&mut first, &node);
     let amount = &report.projection.as_ref().unwrap().year.all.amount;
     assert_eq!(amount.calls, 1);
@@ -167,7 +168,7 @@ fn usage_worker_keeps_totals_after_restart_copy_and_source_deletion() {
     let copy = source.with_file_name("copied.jsonl");
     std::fs::copy(&source, &copy).unwrap();
     std::fs::remove_file(&source).unwrap();
-    let mut restarted = Engine::open(&path, "physical-device".into()).unwrap();
+    let mut restarted = Engine::open(&path, "physical-device".into(), AiUsageQueue::new()).unwrap();
     for _ in 0..100 {
         restarted.step(
             &node,
@@ -178,7 +179,7 @@ fn usage_worker_keeps_totals_after_restart_copy_and_source_deletion() {
         );
     }
     assert_eq!(
-        &restarted.report().projection.unwrap().year.all.amount,
+        &restarted.report(true).projection.unwrap().year.all.amount,
         amount
     );
     assert!(
@@ -192,9 +193,9 @@ fn usage_worker_keeps_totals_after_restart_copy_and_source_deletion() {
     std::fs::remove_file(copy).unwrap();
     drop(restarted);
     assert_eq!(
-        Engine::open(&path, "physical-device".into())
+        Engine::open(&path, "physical-device".into(), AiUsageQueue::new())
             .unwrap()
-            .report()
+            .report(true)
             .projection
             .unwrap()
             .year
@@ -211,7 +212,7 @@ fn usage_worker_refusal_keeps_backfill_open_and_recovers_from_durable_progress()
     let path = home.path().join("ledger.sqlite3");
     let node = OwnNode::new(home.path());
     node.fail_read.store(true, Ordering::SeqCst);
-    let mut first = Engine::open(&path, "physical-device".into()).unwrap();
+    let mut first = Engine::open(&path, "physical-device".into(), AiUsageQueue::new()).unwrap();
     for _ in 0..100 {
         first.step(
             &node,
@@ -221,7 +222,7 @@ fn usage_worker_refusal_keeps_backfill_open_and_recovers_from_durable_progress()
             },
         );
     }
-    let failed = first.report();
+    let failed = first.report(true);
     let claude = failed
         .progress
         .iter()
@@ -232,7 +233,7 @@ fn usage_worker_refusal_keeps_backfill_open_and_recovers_from_durable_progress()
     assert_eq!(failed.projection.unwrap().year.all.amount.calls, 0);
     drop(first);
     node.fail_read.store(false, Ordering::SeqCst);
-    let mut restarted = Engine::open(&path, "physical-device".into()).unwrap();
+    let mut restarted = Engine::open(&path, "physical-device".into(), AiUsageQueue::new()).unwrap();
     assert_eq!(
         finish(&mut restarted, &node)
             .projection
@@ -255,6 +256,7 @@ fn usage_worker_sleeps_without_windows_and_joins_when_its_owner_ends() {
         home.path().join("ledger.sqlite3"),
         "physical-device".into(),
         node.clone(),
+        AiUsageQueue::new(),
         move |report| {
             sent.send(report).unwrap();
         },
@@ -268,4 +270,101 @@ fn usage_worker_sleeps_without_windows_and_joins_when_its_owner_ends() {
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
     ));
     assert_eq!(node.calls.load(Ordering::SeqCst), 0);
+}
+
+fn queue_with(feature: &str, models: &[ModelTokens]) -> Arc<AiUsageQueue> {
+    let queue = AiUsageQueue::new();
+    queue.attempt(feature, hide_ai::ProviderId::CLAUDE, models);
+    queue
+}
+
+fn answered() -> ModelTokens {
+    ModelTokens {
+        model: "claude-fixture".into(),
+        input: 100,
+        output: 20,
+        cache_read: 0,
+        cache_write: 0,
+        cache_write_1h: 0,
+        reasoning: None,
+        lower_bound: false,
+    }
+}
+
+#[test]
+fn hide_ai_calls_are_stored_while_hidden_and_make_no_new_report_until_a_window_shows() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ledger.sqlite3");
+    let queue = queue_with("context_label", &[answered()]);
+    let mut engine = Engine::open(&path, "physical-device".into(), Arc::clone(&queue)).unwrap();
+    let before = engine.report(false);
+    // The batch is written, but nothing a hidden window shows has moved.
+    queue.attempt("context_label", hide_ai::ProviderId::CLAUDE, &[answered()]);
+    engine.flush_ai(true);
+    assert!(engine.ai_dirty);
+    assert_eq!(engine.report(false), before);
+    // The newest is read the moment a window shows.
+    let shown = engine.report(true);
+    assert_ne!(shown, before);
+    let day = shown
+        .projection
+        .unwrap()
+        .year
+        .all
+        .days
+        .last()
+        .cloned()
+        .unwrap();
+    assert_eq!(day.hide_ai.unwrap().features[0].amount.calls, 2);
+    assert!(!engine.ai_dirty);
+}
+
+#[test]
+fn hide_ai_is_read_back_after_a_restart_and_a_second_batch_adds_to_the_day() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ledger.sqlite3");
+    let queue = AiUsageQueue::new();
+    let mut engine = Engine::open(&path, "physical-device".into(), Arc::clone(&queue)).unwrap();
+    queue.attempt("context_label", hide_ai::ProviderId::CLAUDE, &[answered()]);
+    engine.flush_ai(true);
+    queue.attempt("worktree_name", hide_ai::ProviderId::CLAUDE, &[answered()]);
+    queue.attempt("context_label", hide_ai::ProviderId::CLAUDE, &[]);
+    engine.flush_ai(true);
+    drop(engine);
+    let mut restarted = Engine::open(&path, "physical-device".into(), AiUsageQueue::new()).unwrap();
+    let day = restarted
+        .report(true)
+        .projection
+        .unwrap()
+        .year
+        .all
+        .days
+        .last()
+        .cloned()
+        .unwrap();
+    let hide_ai = day.hide_ai.unwrap();
+    assert_eq!(hide_ai.amount.calls, 2);
+    assert_eq!(hide_ai.unknown_calls, 1);
+    let ids: Vec<_> = hide_ai
+        .features
+        .iter()
+        .map(|f| f.feature.as_str())
+        .collect();
+    assert_eq!(ids, ["labels", "issue"]);
+}
+
+#[test]
+fn a_flush_writes_at_most_once_a_second_unless_it_is_the_last() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ledger.sqlite3");
+    let queue = AiUsageQueue::new();
+    let mut engine = Engine::open(&path, "physical-device".into(), Arc::clone(&queue)).unwrap();
+    queue.attempt("context_label", hide_ai::ProviderId::CLAUDE, &[answered()]);
+    engine.flush_ai(false);
+    assert!(
+        !engine.ai_dirty,
+        "a second has not passed since the engine opened"
+    );
+    engine.flush_ai(true);
+    assert!(engine.ai_dirty);
 }

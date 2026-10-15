@@ -93,6 +93,14 @@ const GIT_WATCH_RETRY: Duration = Duration::from_secs(30);
 const GIT_WATCH_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 /// One repository lookup on the node while the watched set changes.
 const REPOSITORY_TIMEOUT: Duration = Duration::from_secs(10);
+/// The most reports a Git watch keeps for the coordinator to take. One past
+/// it is dropped, and the drop is kept as one mark that every project is read
+/// again (`git_watch.mailbox_full`), so a coordinator that falls behind costs
+/// a read of each project, never a queue that grows with time.
+const GIT_WATCH_MAILBOX: usize = 256;
+/// How long the reader's end waits for its stopped watch threads, each of
+/// which ends on the node's next report (a heartbeat comes every second).
+const GIT_WATCH_STOP_WAIT: Duration = Duration::from_secs(3);
 
 /// One Git watch on the node that holds the repositories, over every
 /// project's common directory (`Call::GitWatch`). The coordinator drains its
@@ -109,6 +117,11 @@ const REPOSITORY_TIMEOUT: Duration = Duration::from_secs(10);
 /// without idle polling and another daemon-to-core event path.
 struct GitWatch {
     node: std::sync::Arc<dyn crate::node_access::NodeLink>,
+    /// The forwarding threads of watches that were stopped, until each has
+    /// ended: a stopped watch ends on its next report, not at once.
+    stopping: Stopping,
+    thread_ended: ThreadEnded,
+    threads_ended: std::sync::mpsc::Receiver<()>,
     subscription: Option<GitSubscription>,
     /// The watch `subscription` replaced, until `subscription` is watching.
     outgoing: Option<GitSubscription>,
@@ -125,24 +138,57 @@ struct GitWatch {
     requested_roots: Vec<PathBuf>,
 }
 
+/// The forwarding threads of stopped watches, shared with each watch so the
+/// one being dropped hands its thread over.
+type Stopping = std::sync::Arc<std::sync::Mutex<Vec<std::thread::JoinHandle<()>>>>;
+
+/// Told once by each forwarding thread as it ends, so the reader's end
+/// waits for its stopped watches without polling.
+type ThreadEnded = std::sync::mpsc::Sender<()>;
+
+/// What a running watch reported and the coordinator has not taken yet, at
+/// most [`GIT_WATCH_MAILBOX`] reports.
+#[derive(Default)]
+struct Mailbox {
+    reports: Vec<GitWatchReport>,
+    /// A report was dropped because the mailbox was full.
+    overflowed: bool,
+    /// Why the watch ended, once it has; kept apart from the reports so a
+    /// full mailbox never loses it.
+    ended: Option<String>,
+}
+
+fn lock(mailbox: &std::sync::Mutex<Mailbox>) -> std::sync::MutexGuard<'_, Mailbox> {
+    mailbox
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// A running `Call::GitWatch` and its reports. Dropping it stops the watch,
-/// which ends on the node within one report.
+/// which ends on the node within one report, and hands its forwarding thread
+/// to [`GitWatch::stopping`], which joins it.
 struct GitSubscription {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    reports: std::sync::mpsc::Receiver<Result<GitWatchReport, String>>,
+    mailbox: std::sync::Arc<std::sync::Mutex<Mailbox>>,
     /// The node has said it is watching; a change before that may be missed.
     watching: bool,
+    thread: Option<std::thread::JoinHandle<()>>,
+    stopping: Stopping,
 }
 
 impl GitSubscription {
     fn start(
         node: &std::sync::Arc<dyn crate::node_access::NodeLink>,
         common_dirs: Vec<String>,
+        stopping: &Stopping,
+        thread_ended: &ThreadEnded,
     ) -> Option<Self> {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let (sender, reports) = std::sync::mpsc::channel();
+        let mailbox = std::sync::Arc::new(std::sync::Mutex::new(Mailbox::default()));
         let node = std::sync::Arc::clone(node);
         let stopped = std::sync::Arc::clone(&stop);
+        let forwarded = std::sync::Arc::clone(&mailbox);
+        let thread_ended = thread_ended.clone();
         let started = std::thread::Builder::new()
             .name("hide-git-watch".to_owned())
             .spawn(move || {
@@ -151,21 +197,35 @@ impl GitSubscription {
                     Call::GitWatch { common_dirs },
                     GIT_WATCH_TIMEOUT,
                     |report| {
-                        !stopped.load(std::sync::atomic::Ordering::Relaxed)
-                            && sender.send(Ok(report)).is_ok()
+                        if stopped.load(std::sync::atomic::Ordering::Relaxed) {
+                            return false;
+                        }
+                        // The heartbeat only lets a stopped watch end; the
+                        // coordinator has nothing to take from it.
+                        if !matches!(report, GitWatchReport::Quiet) {
+                            let mut mailbox = lock(&forwarded);
+                            if mailbox.reports.len() < GIT_WATCH_MAILBOX {
+                                mailbox.reports.push(report);
+                            } else {
+                                mailbox.overflowed = true;
+                            }
+                        }
+                        true
                     },
                 );
-                let reason = match ended {
+                lock(&forwarded).ended = Some(match ended {
                     Ok(()) => "the Git watch ended".to_owned(),
                     Err(error) => error.to_string(),
-                };
-                let _ = sender.send(Err(reason));
+                });
+                let _ = thread_ended.send(());
             });
         match started {
-            Ok(_) => Some(Self {
+            Ok(thread) => Some(Self {
                 stop,
-                reports,
+                mailbox,
                 watching: false,
+                thread: Some(thread),
+                stopping: std::sync::Arc::clone(stopping),
             }),
             Err(error) => {
                 crate::diagnostic!(serde_json::json!({
@@ -177,16 +237,33 @@ impl GitSubscription {
     }
 }
 
+impl GitSubscription {
+    /// Takes what the watch reported since the last call.
+    fn take(&self) -> Mailbox {
+        std::mem::take(&mut *lock(&self.mailbox))
+    }
+}
+
 impl Drop for GitSubscription {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            self.stopping
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(thread);
+        }
     }
 }
 
 impl GitWatch {
     fn new(node: std::sync::Arc<dyn crate::node_access::NodeLink>) -> Self {
+        let (thread_ended, threads_ended) = std::sync::mpsc::channel();
         Self {
             node,
+            stopping: Stopping::default(),
+            thread_ended,
+            threads_ended,
             subscription: None,
             outgoing: None,
             retry_at: None,
@@ -286,6 +363,8 @@ impl GitWatch {
                 .iter()
                 .map(|common| common.to_string_lossy().into_owned())
                 .collect(),
+            &self.stopping,
+            &self.thread_ended,
         );
         if self.subscription.is_none() {
             self.owes_reread = true;
@@ -314,9 +393,10 @@ impl GitWatch {
             .as_ref()
             .is_some_and(|subscription| subscription.watching);
         if let Some(subscription) = self.subscription.as_mut() {
-            while let Ok(report) = subscription.reports.try_recv() {
+            let mailbox = subscription.take();
+            for report in mailbox.reports {
                 match report {
-                    Ok(GitWatchReport::Watching { unwatched }) => {
+                    GitWatchReport::Watching { unwatched } => {
                         subscription.watching = true;
                         for (common, message) in unwatched {
                             crate::diagnostic!(serde_json::json!({
@@ -325,38 +405,51 @@ impl GitWatch {
                             }));
                         }
                     }
-                    Ok(GitWatchReport::Changed { common_dirs }) => changed.extend(common_dirs),
-                    Ok(GitWatchReport::Overflow { reason }) => {
+                    GitWatchReport::Changed { common_dirs } => changed.extend(common_dirs),
+                    GitWatchReport::Overflow { reason } => {
                         crate::diagnostic!(serde_json::json!({
                             "component": "worktrees", "kind": "git_watch.overflow",
                             "message": reason, "projects": self.registered.len()
                         }));
                         every = true;
                     }
-                    Ok(GitWatchReport::Quiet) => {}
-                    Err(reason) => ended = Some(reason),
+                    GitWatchReport::Quiet => {}
                 }
             }
+            if mailbox.overflowed {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "worktrees", "kind": "git_watch.mailbox_full",
+                    "cap": GIT_WATCH_MAILBOX, "projects": self.registered.len()
+                }));
+                every = true;
+            }
+            ended = mailbox.ended;
         }
         if let Some(outgoing) = self.outgoing.as_mut() {
-            let mut gone = false;
-            while let Ok(report) = outgoing.reports.try_recv() {
+            let mailbox = outgoing.take();
+            for report in mailbox.reports {
                 match report {
-                    Ok(GitWatchReport::Changed { common_dirs }) => changed.extend(common_dirs),
+                    GitWatchReport::Changed { common_dirs } => changed.extend(common_dirs),
                     // The old watch lost changes while it still stood as
                     // cover: its replacement owes every project a read.
-                    Ok(GitWatchReport::Overflow { reason }) => {
+                    GitWatchReport::Overflow { reason } => {
                         crate::diagnostic!(serde_json::json!({
                             "component": "worktrees", "kind": "git_watch.overflow",
                             "message": reason, "replaced": true
                         }));
                         self.owes_reread = true;
                     }
-                    Ok(_) => {}
-                    Err(_) => gone = true,
+                    _ => {}
                 }
             }
-            if gone {
+            if mailbox.overflowed {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "worktrees", "kind": "git_watch.mailbox_full",
+                    "cap": GIT_WATCH_MAILBOX, "replaced": true
+                }));
+                self.owes_reread = true;
+            }
+            if mailbox.ended.is_some() {
                 crate::diagnostic!(serde_json::json!({
                     "component": "worktrees", "kind": "git_watch.ended", "replaced": true
                 }));
@@ -387,6 +480,47 @@ impl GitWatch {
             self.subscription = None;
             self.owes_reread = true;
             self.retry_at = Some(now + GIT_WATCH_RETRY);
+        }
+        self.reap();
+    }
+
+    /// Ends the watch while no renderer is attached: nothing takes its
+    /// reports then, and a watch left running would keep the node watching
+    /// for as long as the window stays closed. The next [`Self::reconcile`]
+    /// starts it again, and once it is watching every project is read, as
+    /// after any lapse in cover.
+    fn rest(&mut self) {
+        if self.subscription.is_none() && self.outgoing.is_none() {
+            return;
+        }
+        self.subscription = None;
+        self.outgoing = None;
+        self.owes_reread = true;
+        self.retry_at = Some(Instant::now());
+        crate::diagnostic!(serde_json::json!({
+            "component": "worktrees", "kind": "git_watch.rested",
+            "projects": self.registered.len()
+        }));
+        self.reap();
+    }
+
+    /// Joins the stopped watches' threads that have ended.
+    fn reap(&mut self) {
+        let mut stopping = self
+            .stopping
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (ended, running): (Vec<_>, Vec<_>) = stopping
+            .drain(..)
+            .partition(std::thread::JoinHandle::is_finished);
+        *stopping = running;
+        drop(stopping);
+        for thread in ended {
+            if thread.join().is_err() {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "worktrees", "kind": "git_watch.thread_panicked"
+                }));
+            }
         }
     }
 
@@ -420,6 +554,36 @@ impl GitWatch {
     }
 }
 
+impl Drop for GitWatch {
+    /// Stops every watch and waits a bounded time for their threads, each of
+    /// which ends on the node's next report; one still running then (a node
+    /// that sends nothing) is named in the log and left to its call's end.
+    fn drop(&mut self) {
+        self.subscription = None;
+        self.outgoing = None;
+        let deadline = Instant::now() + GIT_WATCH_STOP_WAIT;
+        loop {
+            self.reap();
+            let running = self
+                .stopping
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .len();
+            if running == 0 {
+                return;
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() || self.threads_ended.recv_timeout(left).is_err() {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "worktrees", "kind": "git_watch.stop_unconfirmed",
+                    "threads": running
+                }));
+                return;
+            }
+        }
+    }
+}
+
 pub struct WorktreeReader {
     inner: BackgroundRead<ObservedRequest, (ObservedRequest, Vec<ProjectAnswer>)>,
     git_watch: GitWatch,
@@ -438,6 +602,12 @@ impl WorktreeReader {
             git_watch,
             git_generations: BTreeMap::new(),
         }
+    }
+
+    /// Ends the Git watch while no renderer is attached; the next
+    /// [`Self::read_if_due`] starts it again (`GitWatch::rest`).
+    pub fn rest(&mut self) {
+        self.git_watch.rest();
     }
 
     pub fn read_if_due(&mut self, request: WorktreeRequest) -> Option<WorktreeAnswer> {
@@ -522,11 +692,17 @@ fn read_observed(
             }
             // Only an explicit read (a refresh, an Overview opening) asks
             // every worktree again; a Git change or a new base is read from
-            // the worktrees whose inputs moved.
-            let reuse_unchanged = cached.is_some_and(|(cached_generation, cached, _)| {
-                cached_generation == generation
-                    && cached.request.generation == observation.request.generation
-            });
+            // the worktrees whose inputs moved. So is a project's first read
+            // when nothing has asked an explicit one since the core started
+            // (both generations start at 0): its node kept what it measured
+            // across the restart, and reuses only what did not move.
+            let reuse_unchanged = match cached {
+                Some((cached_generation, cached, _)) => {
+                    cached_generation == generation
+                        && cached.request.generation == observation.request.generation
+                }
+                None => *generation == 0 && observation.request.generation == 0,
+            };
             let project = read(node, &observation.request, reuse_unchanged);
             cache.insert(
                 root.clone(),
@@ -1031,6 +1207,48 @@ mod tests {
             .collect()
     }
 
+    /// A project's first read since the core started reuses what its node
+    /// kept across the restart; once a refresh or an Overview opening asked
+    /// an explicit read, a first read measures every worktree.
+    #[test]
+    fn a_first_read_since_start_reuses_and_one_after_an_explicit_ask_does_not() {
+        struct Recording(std::sync::Mutex<Vec<bool>>);
+        impl crate::node_access::NodeLink for Recording {
+            fn call(
+                &self,
+                call: Call,
+                _timeout: Duration,
+            ) -> Result<hide_node_link::link::LinkAnswer, hide_node_link::link::LinkError>
+            {
+                if let Call::Worktrees {
+                    reuse_unchanged, ..
+                } = call
+                {
+                    self.0.lock().unwrap().push(reuse_unchanged);
+                }
+                Ok(serde_json::Value::Null.into())
+            }
+        }
+        let asked = |generation: u64, project_generation: u64| {
+            let node = Recording(std::sync::Mutex::default());
+            let mut request = projects(&["/a"]).remove(0);
+            request.generation = project_generation;
+            let observation = ProjectObservation {
+                request,
+                git_generation: 0,
+            };
+            read_observed(
+                &node,
+                &std::sync::Mutex::default(),
+                &(generation, 0, vec![observation]),
+            );
+            node.0.into_inner().unwrap()
+        };
+        assert_eq!(asked(0, 0), [true], "nothing explicit was asked");
+        assert_eq!(asked(1, 0), [false], "a refresh");
+        assert_eq!(asked(0, 1), [false], "an Overview opening");
+    }
+
     fn watching() -> GitWatchReport {
         GitWatchReport::Watching {
             unwatched: Vec::new(),
@@ -1238,6 +1456,99 @@ mod tests {
             vec![PathBuf::from("/a")]
         );
         assert!(driver.watch.outgoing.is_none());
+    }
+
+    /// A coordinator that falls behind keeps at most [`GIT_WATCH_MAILBOX`]
+    /// reports; the ones dropped past it become one read of every project,
+    /// named once in the log, and a heartbeat is never kept at all.
+    #[test]
+    fn a_full_mailbox_keeps_its_cap_and_reads_every_project_once() {
+        let mut driver = Driver::new();
+        let watch = driver.next_watch(&["/a", "/b"]);
+        driver.watch.reconcile(&projects(&["/a", "/b"]));
+        driver.report(&watch, watching());
+        let forward = |driver: &Driver, report: GitWatchReport| {
+            watch.send(report).unwrap();
+            driver
+                .forwarded
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the node forwarded the report");
+        };
+        let held = |driver: &Driver| {
+            lock(&driver.watch.subscription.as_ref().unwrap().mailbox)
+                .reports
+                .len()
+        };
+        forward(&driver, GitWatchReport::Quiet);
+        assert_eq!(held(&driver), 0, "a heartbeat is not kept");
+        for _ in 0..GIT_WATCH_MAILBOX + 10 {
+            forward(
+                &driver,
+                GitWatchReport::Changed {
+                    common_dirs: vec!["/a/.git".to_owned()],
+                },
+            );
+        }
+        assert_eq!(held(&driver), GIT_WATCH_MAILBOX);
+        let ((), records) = crate::diagnostics::capture(|| driver.watch.collect());
+        assert_eq!(
+            driver.watch.pending.keys().cloned().collect::<Vec<_>>(),
+            vec![PathBuf::from("/a"), PathBuf::from("/b")],
+            "what was dropped may have named any project"
+        );
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record["kind"] == "git_watch.mailbox_full")
+                .count(),
+            1
+        );
+        assert_eq!(held(&driver), 0);
+    }
+
+    /// A watch rested while no renderer is attached ends on the node at its
+    /// next report and its thread is joined; the next reconcile starts it
+    /// again and, once it is watching, every project is read, since the rest
+    /// was a lapse in cover.
+    #[test]
+    fn a_rested_watch_ends_on_the_node_and_its_restart_reads_every_project() {
+        let mut driver = Driver::new();
+        let first = driver.next_watch(&["/a", "/b"]);
+        let both = projects(&["/a", "/b"]);
+        driver.watch.reconcile(&both);
+        driver.report(&first, watching());
+        driver.watch.rest();
+        assert!(driver.watch.subscription.is_none());
+        first.send(GitWatchReport::Quiet).unwrap();
+        driver
+            .forwarded
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the node forwarded the report");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !driver.watch.stopping.lock().unwrap().is_empty() {
+            assert!(
+                Instant::now() < deadline,
+                "the rested watch's thread never ended"
+            );
+            std::thread::yield_now();
+            driver.watch.reap();
+        }
+        assert!(
+            first.send(GitWatchReport::Quiet).is_err(),
+            "the node's watch call has returned"
+        );
+
+        let second = driver.next_watch(&["/a", "/b"]);
+        driver.watch.reconcile(&both);
+        assert!(
+            driver.watch.pending.is_empty(),
+            "nothing is read before the watch is up"
+        );
+        driver.report(&second, watching());
+        assert_eq!(
+            driver.watch.pending.keys().cloned().collect::<Vec<_>>(),
+            vec![PathBuf::from("/a"), PathBuf::from("/b")]
+        );
     }
 }
 

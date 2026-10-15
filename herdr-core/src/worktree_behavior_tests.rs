@@ -535,6 +535,7 @@ fn next_answer(
 /// watch saw from its start: on Linux a file made in a folder the watch has
 /// not yet heard of can be reported as that folder alone
 /// (`hide_platform::watch`).
+#[allow(clippy::disallowed_methods)] // a polling helper: the watch's mailbox has no blocking take, so it sleeps between looks, bounded by a deadline
 fn changes_before_sentinel(
     sentinel: &Repository,
     reader: &mut WorktreeReader,
@@ -557,13 +558,27 @@ fn changes_before_sentinel(
         .subscription
         .as_mut()
         .expect("the Git watch started");
-    let next = |subscription: &mut crate::worktrees::GitSubscription| match subscription
-        .reports
-        .recv_timeout(Duration::from_secs(15))
-    {
-        Ok(Ok(report)) => report,
-        Ok(Err(reason)) => panic!("the Git watch ended: {reason}"),
-        Err(_) => panic!("the sentinel {name} never reached the watch"),
+    let mut queued = std::collections::VecDeque::new();
+    let mut next = |subscription: &mut crate::worktrees::GitSubscription| {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if let Some(report) = queued.pop_front() {
+                return report;
+            }
+            let mailbox = subscription.take();
+            assert!(!mailbox.overflowed, "the watch dropped reports");
+            if let Some(reason) = mailbox.ended {
+                panic!("the Git watch ended: {reason}");
+            }
+            queued.extend(mailbox.reports);
+            if queued.is_empty() {
+                assert!(
+                    Instant::now() < deadline,
+                    "the sentinel {name} never reached the watch"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
     };
     while !subscription.watching {
         if let GitWatchReport::Watching { unwatched } = next(subscription) {

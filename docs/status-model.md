@@ -264,7 +264,8 @@ Regression owners: `a_parent_declared_as_a_pane_token_is_the_lineage`, `a_child_
 ## The descendant mark and the tree popover
 
 `agent_state/escalation.rs::lift` gives each row one `descendant_mark` over its whole subtree (PRD D-40): `raised` with the number of raised descendants if there are any, else `working` with the number of working descendants, else none.
-The shell draws it as `! N` in the warning colour or `● N` in the working colour, and only where those descendants are hidden: a folded sidebar parent, a Sessions row whose tree is closed, and a Factory card.
+The shell draws only the `raised` kind, as `! N` in the warning colour, and only where those descendants are hidden: a folded sidebar parent, a Sessions row whose tree is closed, and a Factory card.
+The `working` kind is still computed and draws nowhere: a parent waiting on its children shows its blue ring and the working child's line, and the operator did not read `● N` (PRD session-record-redesign D-04).
 Idle, done and unknown descendants add nothing, so a mark never says only that children exist.
 `row.state.tree_rank` orders siblings in every tree: asking or raised, itself or below it, first; then working; then finished and unread; then the rest.
 The sidebar tree under an opened root is `agent_scope.sidebar_tree.visible_rows` from `agent_state/tally/lineage.rs::sidebar_tree`: children and grandchildren wherever they work, two levels only, with the digit shortcuts on roots alone.
@@ -758,8 +759,12 @@ Regression owners: `runtime::tests::session_state`, `request_view::tests`, and `
 
 ### The Sessions work record
 
-Sessions rows keep their live group and navigation and add a record action and a warning-coloured flag for open missed work.
-The record's title follows the same summary/native/manual rules, with the current status, own task verdict, created outputs, missed work, own chapters and expandable children in that order.
+Sessions rows keep their live group and navigation and add a record action; they carry no missed-work flag.
+The record's title follows the same summary/native/manual rules, with the current status, the PRs the session and every descendant created, the assigned work as a checklist with each task's missed work under it, and expandable children in that order.
+The PRs come from the record's `outputs`, which already hold every descendant's PR with its source session and name; no wire field was added.
+The checklist lists tasks first-asked first with the finished count over the total.
+A missed item belongs to the task of its turn: the turn starts at the request whose offset is the item's `turn_offset`, and that request carries the `task_ids`; items whose turn is not a task or is gone, and descendants' items, follow the checklist.
+The operator's words show behind a UI-only toggle and are never stored; the newest request not yet judged shows as `지금` while the session works.
 An assigned task is Done only after its last END is Done and all assigned PRs are merged; review, failed CI, unfinished, blocked and question remain distinct states, while waiting uses Doing.
 Descendant results can hold the parent's assigned task open, but do not duplicate the child's chapters or requests in the parent's own work.
 Children show three visual indentation levels, five siblings initially and a More action for the rest.
@@ -768,14 +773,14 @@ A missed item is work nobody holds once the session closes: a problem the agent 
 Measuring, checking or verifying the assigned task's result, even when the agent calls it a follow-up, the task's own remainder, merge, install and app replacement steps stay with the task verdict, the pull request and CI, and are not missed work; neither is anything already recorded in an issue or pull request by number or link.
 Records written before `context_label.v10` may still hold such an item with the `leftover` kind.
 Missed items are durable Open, Resolved, Issue or Dismissed records.
-Dismiss can be undone, a resolved item reopened, and every closed status sits under `닫힘 N` until expanded.
-The Sessions top group includes open missed work as soon as a session is resolved, or once it leaves the list under the existing 24-hour rule, within the project's Copied history window (90 days by default).
-It is folded by default, scoped with the visible checkout, project or Home, and renewed live activity returns the item to its live session row.
+Dismiss can be undone and a resolved item reopened; a closed item stays in the record as one muted line under its task with its status word.
+The Sessions top group holds every open missed item in the visible checkout, project or Home, of live and ended sessions, within the project's Copied history window (90 days by default).
+It is folded by default, newest first, and a session that works again keeps its items in the group.
 
-With summaries Off, the same record shows native/manual title, native status, outputs, children and every saved raw request newest first.
+With summaries Off, the same record shows native/manual title, native status, outputs, children and every saved raw request oldest first, the last five open and the earlier ones behind `이전 요청 N`.
 It hides verdicts, chapters, tasks, END labels, missed items and their actions; turning summaries on restores old judgments and leaves the Off-period requests unjudged.
 This record does not change the phone surface or the live Sessions grouping rules.
-Regression owners: `links::store::ledger::tests`, `labels::tests`, `runtime::tests::session_work`, `web/src/sessionWork.test.ts`, and the isolated session-work-ledger browser and desktop flows.
+Regression owners: `links::store::ledger::tests`, `labels::tests`, `runtime::tests::session_work`, `web/src/sessionWork.test.ts`, `web/src/SessionRecord.test.tsx`, the command-record tests in `hide-session/tests/it/conversation_cursor.rs`, and the isolated session-work-ledger browser and desktop flows.
 
 ### Delegated escalation
 

@@ -13,7 +13,7 @@ pub(crate) fn spawn_worker(
     runtime: &Arc<Mutex<Runtime>>,
     notifier: ChangeNotifier,
 ) -> Result<Worker, &'static str> {
-    let (path, device, own) = {
+    let (path, device, own, ai) = {
         let guard = runtime.lock().map_err(|_| "usage_runtime_unavailable")?;
         let directory = guard
             .state_path
@@ -24,10 +24,11 @@ pub(crate) fn spawn_worker(
             hide_kit::layout::usage_store(directory),
             guard.node.to_string(),
             guard.own_node(),
+            Arc::clone(&guard.ai_usage),
         )
     };
     let weak = Arc::downgrade(runtime);
-    let worker = Worker::spawn(path, device, own, move |report| {
+    let worker = Worker::spawn(path, device, own, ai, move |report| {
         let value = Publication::prepare(report, crate::links::now_ms());
         if let Some(runtime) = weak.upgrade()
             && let Ok(mut guard) = runtime.lock()
@@ -46,6 +47,11 @@ pub(crate) fn spawn_worker(
 }
 
 impl Runtime {
+    /// The sink a router is built with, so what it spends is counted.
+    pub(crate) fn ai_usage(&self) -> Arc<dyn hide_ai::AiUsageSink> {
+        Arc::clone(&self.ai_usage) as Arc<dyn hide_ai::AiUsageSink>
+    }
+
     pub(super) fn feed_usage_ledger(&self) {
         if let Some(client) = &self.usage_ledger_client {
             client.activity(Activity {

@@ -127,7 +127,12 @@ if MODE == "no_result_frame":
 if MODE == "init_frame_only":
     emit({"type": "system", "subtype": "init", "session_id": "s-1"}, code=1)
 
-USAGE = {"input_tokens": 1188, "output_tokens": 468}
+USAGE = {"input_tokens": 1188, "output_tokens": 468,
+         "cache_creation_input_tokens": 600, "cache_read_input_tokens": 4000,
+         "cache_creation": {"ephemeral_1h_input_tokens": 100, "ephemeral_5m_input_tokens": 500}}
+MODEL_USAGE = {"claude-haiku-4-5-20251001": {
+    "inputTokens": 1188, "outputTokens": 468, "cacheReadInputTokens": 4000,
+    "cacheCreationInputTokens": 600, "costUSD": 0.0045}}
 BASE = {
     "type": "result",
     "session_id": "s-1",
@@ -135,6 +140,7 @@ BASE = {
     "duration_ms": 5100,
     "total_cost_usd": 0.0045,
     "usage": USAGE,
+    "modelUsage": MODEL_USAGE,
     "permission_denials": [],
 }
 

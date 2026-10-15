@@ -27,7 +27,7 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     const record = page.locator("[data-session-record]");
     const tasks = record.locator('[data-record-work]').first().locator('[data-record-task]');
     await expect(tasks).toHaveCount(1, { timeout: 45_000 });
-    await expect(tasks.first()).toContainText("Done");
+    await expect(tasks.first().locator('[data-task-state="done"]')).toBeVisible();
     await expect(record.locator('[data-record-output="pr"]')).toHaveCount(2, { timeout: 45_000 });
     await page.locator(`[data-pane-view="${herdr.panes[0]}"] .xterm-helper-textarea`).focus();
     await page.keyboard.type(NEXT_GOAL);
@@ -47,12 +47,15 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     await expect(record).toContainText(FIRST_GOAL);
     await expect(record).toContainText(NEXT_GOAL);
     await expect(record.locator('[data-record-output="pr"]')).toHaveCount(3, { timeout: 45_000 });
-    await expect(tasks).toContainText(["CI failed", "Done"]);
+    // First asked first: the finished task, then the one whose PR failed CI.
+    expect(await tasks.evaluateAll((rows) => rows.map((row) => row.querySelector("[data-task-state]")?.getAttribute("data-task-state")))).toEqual(["done", "ci_failed"]);
     await record.locator(`[data-record-child="${child}"] > summary`).click();
     await expect(record.locator(`[data-record-child="${child}"] [data-record-task]`)).toContainText("자식 연결 검증");
     const missed = record.locator("[data-missed-work]", { hasText: MISSED });
     await missed.getByRole("button", { name: "Dismiss", exact: true }).click();
-    await record.getByText("Closed 1", { exact: true }).click();
+    // A closed one is a muted line that says how it closed; Undo shows under the pointer.
+    await expect(missed).toHaveAttribute("data-missed-status", "dismissed");
+    await missed.hover();
     await missed.getByRole("button", { name: "Undo", exact: true }).click();
     await expect(missed).toHaveAttribute("data-missed-status", "open");
     await page.keyboard.press(chord("search"));
@@ -65,14 +68,15 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     await page.locator('[data-settings-tab="hideAi"]').click();
     await page.locator('[data-ai-agent-summary="true"]').click();
     await page.keyboard.press("Escape");
-    await expect(record.locator('[data-record-verdict]')).toHaveCount(0);
+    await expect(record.locator('[data-record-words]')).toHaveCount(0);
     await expect(record.locator('[data-record-task]')).toHaveCount(0);
-    await expect(record.locator('[data-record-missed]')).toHaveCount(0);
+    await expect(record.locator('[data-missed-work]')).toHaveCount(0);
     await expect(record.locator('[data-record-request]')).toHaveCount(3);
     await expect(record.locator('[data-record-output="pr"]')).toHaveCount(3);
     await expect(record.getByRole('heading', { level: 2 })).toHaveText('Claude');
     await expect(record.locator('[data-record-child] > summary')).toContainText('Claude');
-    await expect(record.locator('[data-output-source]')).toHaveText(Array(4).fill('Claude'));
+    // Only the child's pull request names its maker; the session's own say nothing.
+    await expect(record.locator('[data-output-source]')).toHaveText(['Claude']);
   } finally { daemon?.stop(); herdr.stop(); }
 });
 
@@ -92,7 +96,7 @@ test("@platform cancel leaves missed work open and retry reconciles an issue who
     await expect(root).toContainText(FIRST_GOAL, { timeout: 45_000 });
     await root.hover();
     await page.locator(`[data-session-record-button="${herdr.panes[0]}"]`).click();
-    const missed = page.locator("[data-missed-work]", { hasText: MISSED });
+    const missed = page.locator("[data-session-record] [data-missed-work]", { hasText: MISSED });
     await missed.locator('[data-missed-issue]').click({ timeout: 45_000 });
     const form = page.locator('[data-new-issue]');
     await expect(form.locator('[data-new-issue-title]')).toHaveValue("한국어 요청 줄바꿈 확인", { timeout: 30_000 });
@@ -107,7 +111,6 @@ test("@platform cancel leaves missed work open and retry reconciles an issue who
     expect(created.title).toBe("한국어 요청 줄바꿈 확인");
     await form.locator('[data-new-issue-create]').click();
     await expect(form).toHaveCount(0, { timeout: 30_000 });
-    await page.getByText("Closed 1", { exact: true }).click();
     await expect(missed).toHaveAttribute("data-missed-status", "issue");
     await expect(missed.getByRole("button", { name: "#77", exact: true })).toBeVisible();
     const calls = fs.readFileSync(github.calls, "utf8").trim().split("\n").map((line) => JSON.parse(line) as string[]);
@@ -131,7 +134,7 @@ test("@platform GitHub connection retry preserves the edited preview and creates
     await expect(root).toContainText(FIRST_GOAL, { timeout: 45_000 });
     await root.hover();
     await page.locator(`[data-session-record-button="${herdr.panes[0]}"]`).click();
-    const missed = page.locator('[data-missed-work]', { hasText: MISSED });
+    const missed = page.locator('[data-session-record] [data-missed-work]', { hasText: MISSED });
     await missed.locator('[data-missed-issue]').click({ timeout: 45_000 });
     const form = page.locator('[data-new-issue]');
     await expect(form.getByText("Couldn't read GitHub. Retry to check the connection; your edits stay here.")).toBeVisible({ timeout: 30_000 });

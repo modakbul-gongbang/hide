@@ -152,6 +152,7 @@ impl Runtime {
             node,
             sessions_node,
             ai_node: self.own_node(),
+            ai_usage: self.ai_usage(),
             database: self.memory_database_path(),
             checkout_path: context.checkout_path,
             reader,

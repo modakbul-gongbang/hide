@@ -51,7 +51,7 @@ it.each([
     expect(items).toHaveLength(3);
     expect(items.map((item) => item.querySelector('[role="img"]')?.getAttribute("aria-label"))).toEqual(words.map((word) => "#" + word));
     expect(items.map((item) => item.getAttribute("aria-label"))).toEqual(words.map((word, index) => `#${word} · 검증 ${index} · 소유 세션 ${index}`));
-    expect(items.map((item) => item.textContent)).toEqual(["231검증 0소유 세션 0", "232검증 1소유 세션 1", "233검증 2소유 세션 2"]);
+    expect(items.map((item) => item.textContent)).toEqual(["#" + "231검증 0소유 세션 0", "#" + "232검증 1소유 세션 1", "#" + "233검증 2소유 세션 2"]);
     await act(async () => items[1]!.click());
     expect(opened.map((pull) => pull.url)).toEqual(["https://example.invalid/pull/232"]);
     expect(rowOpens).toBe(0);
