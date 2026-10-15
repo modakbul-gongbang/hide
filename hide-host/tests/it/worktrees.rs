@@ -12,8 +12,10 @@ use hide_host::worktrees::{ConfirmedRemoval, ignored_repositories};
 
 /// The node's documented 45-second read includes discovering the main
 /// worktree and its metadata, not just measuring the rows afterwards.
-/// Each Git answer here takes less than its individual 15-second limit;
-/// renewing the repository budget would nevertheless outlive its caller.
+/// Each Git answer here takes 10 seconds, five under its individual
+/// 15-second limit so a loaded machine cannot time out the first one;
+/// renewing the repository budget after discovery would end the read near
+/// 55 seconds, five past what the assertion allows.
 #[test]
 fn a_public_read_spends_one_deadline_on_discovery_metadata_and_measurement() {
     use std::time::{Duration, Instant};
@@ -32,10 +34,20 @@ fn a_public_read_spends_one_deadline_on_discovery_metadata_and_measurement() {
         let elapsed = started.elapsed();
         eprintln!("public repository read returned after {elapsed:?}");
         // Five seconds allows owned-child/pipe cleanup and scheduler delay,
-        // but cannot hide even one renewed 14-second preliminary command.
+        // but cannot hide even one renewed 10-second preliminary command.
         assert!(elapsed < Duration::from_secs(50), "{elapsed:?}");
-        assert!(facts.unavailable_reason.is_some(), "{facts:?}");
-        assert!(facts.worktrees.is_empty(), "{facts:?}");
+        // Every answer is delayed, so the read cannot finish inside the one
+        // deadline; whichever part it reached last, the repository or its
+        // worktree's measurement, says it was not finished.
+        let measured_none = !facts.worktrees.is_empty()
+            && facts
+                .worktrees
+                .iter()
+                .all(|worktree| worktree.unavailable_reason.is_some());
+        assert!(
+            facts.unavailable_reason.is_some() || measured_none,
+            "{facts:?}"
+        );
         return;
     }
 
@@ -71,7 +83,7 @@ fn a_public_read_spends_one_deadline_on_discovery_metadata_and_measurement() {
     if args.first().is_some_and(|arg| arg == "--version") {
         return;
     }
-    std::thread::sleep(std::time::Duration::from_secs(14));
+    std::thread::sleep(std::time::Duration::from_secs(10));
     let status = std::process::Command::new(std::env::var_os("HIDE_TEST_REAL_GIT").unwrap())
         .args(args).status().unwrap();
     std::process::exit(status.code().unwrap_or(1));
