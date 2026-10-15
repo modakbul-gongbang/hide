@@ -671,7 +671,7 @@ fn each_runtimes_payload_reads_as_its_action() {
         Some(Action::Shell("git status".into()))
     );
     // Cursor 2026.10.14: an edit arrives as `Write`; a shell call's empty cwd
-    // falls back to the workspace; `beforeReadFile` names its file at the top.
+    // falls back to the workspace.
     assert_eq!(
         call(
             r#"{"hook_event_name":"preToolUse","tool_name":"Write","tool_input":{"file_path":"/r/c.txt","content":"x"},"workspace_roots":["/r"]}"#,
@@ -691,14 +691,6 @@ fn each_runtimes_payload_reads_as_its_action() {
             action: Action::Shell("git status".into()),
             cwd: Some("/r".into())
         })
-    );
-    assert_eq!(
-        call(
-            r#"{"hook_event_name":"beforeReadFile","file_path":"/r/.env","content":"x","workspace_roots":["/r"]}"#,
-            HookDialect::Cursor
-        )
-        .map(|call| call.action),
-        Some(read("/r/.env"))
     );
     // Grok 1.0.52: camelCase keys.
     assert_eq!(

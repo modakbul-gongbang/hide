@@ -6,8 +6,7 @@
 //! versions Hide installs into: Claude Code 2.1.300 (`Edit`, `Write`,
 //! `NotebookEdit`, `Read` with `file_path` or `notebook_path`), Codex 0.162.1
 //! (`apply_patch` with the patch text in `command`), Cursor 2026.10.14
-//! (`Read` and `Write`, an edit included, with `file_path`, and
-//! `beforeReadFile` with a top-level `file_path`), Grok 1.0.52 (`read_file`
+//! (`Read` and `Write`, an edit included, with `file_path`), Grok 1.0.52 (`read_file`
 //! with `path`, `search_replace` and `write` with `file_path`), OpenCode
 //! 1.18.30 (`read`, `edit`, `write` with `filePath`, `apply_patch` with
 //! `patchText`), Pi 1.0.4 and omp 18.7.0 (`read`, `edit`, `write` with
@@ -62,7 +61,7 @@ const PATH_KEYS: [&str; 5] = [
 const PATCH_KEYS: [&str; 3] = ["command", "patchText", "patch"];
 
 /// The pre-tool payload of a command hook (Claude Code, Codex, Cursor,
-/// Grok), or Cursor's `beforeReadFile`. A payload cut at the read limit is
+/// Grok). A payload cut at the read limit is
 /// read for its tool and path from the bytes that arrived.
 pub fn read_hook(payload: &[u8], truncated: bool, dialect: HookDialect) -> Option<ToolCall> {
     if truncated {
@@ -94,14 +93,6 @@ pub fn read_hook(payload: &[u8], truncated: bool, dialect: HookDialect) -> Optio
         .flatten()
         .find(|cwd| !cwd.is_empty())
         .map(PathBuf::from);
-    // Cursor's `beforeReadFile` names its file at the top.
-    if value.get("hook_event_name").and_then(Value::as_str) == Some("beforeReadFile") {
-        let path = value.get("file_path").and_then(Value::as_str)?;
-        return Some(ToolCall {
-            action: Action::Read(vec![path.to_owned()]),
-            cwd,
-        });
-    }
     let action = action(tool?, input?)?;
     Some(ToolCall { action, cwd })
 }
