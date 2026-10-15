@@ -637,7 +637,8 @@ The total is `max(ATTACHED_TAB_LIMIT, shown_count)`, at most six tabs, so an uns
 Herdr renders a pane for every attached client, so the core releases tabs outside that bounded set through the ordinary session drop.
 A released pane keeps its projection entry carrying `released`; the shell disposes its terminal and redraws from Herdr's frame on the next visit.
 Terminal metadata belongs to each session pane, independently of which pane is selected.
-An acknowledged new tab awaiting its layout, or a selected pane that retired, cannot erase other retained tabs' metadata; each authoritative layout still prunes panes that actually closed.
+A selection that moves, including a switch to another checkout, an acknowledged new tab awaiting its layout, or a selected pane that retired clears only the selected pane's presentation and cannot erase other retained tabs' metadata; each authoritative layout still prunes panes that actually closed.
+The shell disposes a parked terminal whose entry is missing, so a single list without a retained pane throws its renderer away even when the next list brings the pane back.
 The attach window continues to release its oldest tab normally, and returning to an evicted tab restores its PTY content with a new renderer.
 The idle tick attaches every shown tab's panes, while focus, read and sleep-visit state follow only the active area's tab.
 All shown tabs count as on screen for sleep prevention.

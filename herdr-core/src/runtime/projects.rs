@@ -2534,7 +2534,7 @@ impl Runtime {
             self.snapshot.ui_state.selected_pane_id = None;
             self.snapshot.terminal.pane_id = None;
             self.snapshot.focused.pane_id = None;
-            self.clear_terminal_projection();
+            self.clear_selected_terminal_state();
             if self
                 .snapshot
                 .status
