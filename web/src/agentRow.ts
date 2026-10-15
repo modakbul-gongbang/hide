@@ -8,7 +8,7 @@ import { agentProductName } from "./agentAdapters";
 import { hideAiWords } from "./hideAiOrigin";
 import type { TFunction } from "i18next";
 import { statusText } from "./agentStatus";
-import { toneClass } from "./lineage";
+import { markToneClass, toneClass } from "./lineage";
 import type { AgentRow, MarkCounts, TabAgent } from "./snapshot";
 
 /**
@@ -73,7 +73,7 @@ export function lineTone(line: RowLine, agent: Pick<AgentRow, "state">): string 
  * do.
  */
 export function markTone(agent: Pick<TabAgent, "state">): string {
-  return toneClass(agent.state.mark_tone);
+  return markToneClass(agent.state.mark_tone);
 }
 
 /** A badge's counts: a folded parent's descendants (no `idle`), or a project's or checkout's agents. */
@@ -87,9 +87,9 @@ const BADGE_ORDER: { state: keyof MarkCounts; symbol: string; tone: string }[] =
   { state: "approval", symbol: "!", tone: "text-warning" },
   { state: "question", symbol: "?", tone: "text-warning" },
   { state: "working", symbol: "●", tone: "text-agent-working" },
-  { state: "stopped", symbol: "◐", tone: "text-subtle-foreground" },
+  { state: "stopped", symbol: "◐", tone: "text-status-seen" },
   { state: "done", symbol: "✓", tone: "text-success" },
-  { state: "idle", symbol: "○", tone: "text-subtle-foreground" },
+  { state: "idle", symbol: "○", tone: "text-status-seen" },
 ];
 
 /**

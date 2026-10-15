@@ -6,9 +6,10 @@
 // the swatches resolve through the same variables the System parts use; the only
 // literals are the hex and pixel labels, which are read off the variable values so
 // they cannot disagree with the swatch beside them. The color ladder is the one
-// section that varies by theme, drawn once inside a `Light` frame and once inside a
-// `Dark` frame (`theme: {Mode: ...}`); the scale, spacing, radius and control/icon
-// sizes below it do not change by theme, so they are drawn once.
+// section that varies by theme, drawn inside a `Light` and a `Dark` frame
+// (`theme: {Mode: ...}`) for the Neutral palette and again for the Hide palette
+// (`theme: {Mode: ..., Palette: 'Hide'}`); the scale, spacing, radius and
+// control/icon sizes below it do not change by theme, so they are drawn once.
 
 const WIDTH = 1180;
 
@@ -45,16 +46,20 @@ const variable = (variables, name) => {
   return entry.value;
 };
 
-// A color variable's own value is the Mode-themed array gen-pen.mjs writes
-// ([{value}, {value, theme:{Mode:"Dark"}}]), not a plain hex string; a caption
-// that prints "the hex under this swatch" has to pick the one entry that matches
-// the palette block it is drawn inside, at generation time, the same theme the
-// swatch's own `$--` fill will resolve to when Pen renders that block.
-const hexFor = (variables, name, mode) => {
+// A color variable's own value is the themed array gen-pen.mjs writes
+// ([{value}, {value, theme:{Mode:"Dark"}}], then the Hide entries
+// {theme:{Palette:"Hide"}} and {theme:{Mode:"Dark", Palette:"Hide"}} when the
+// color differs in Hide), not a plain hex string; a caption that prints "the hex
+// under this swatch" has to pick the one entry that matches the palette block it
+// is drawn inside, at generation time, the same entry the swatch's own `$--` fill
+// resolves to when Pen renders that block: the Hide entry when there is one, else
+// the Neutral entry both palettes share.
+const hexFor = (variables, name, mode, palette = 'Neutral') => {
   const entry = variables[`--${name}`];
   if (!entry) throw new Error(`Foundations sheet needs --${name}, which the canvas does not carry`);
   const list = Array.isArray(entry.value) ? entry.value : [{value: entry.value}];
-  const found = list.find(v => (mode === 'Dark' ? v.theme?.Mode === 'Dark' : !v.theme));
+  const matches = want => v => (v.theme?.Mode ?? 'Light') === mode && (v.theme?.Palette ?? 'Neutral') === want;
+  const found = list.find(matches(palette)) ?? list.find(matches('Neutral'));
   if (!found) throw new Error(`--${name} has no ${mode} value`);
   return found.value;
 };
@@ -69,7 +74,7 @@ function swatchLadder(variables, key, steps) {
   })), {gap: 0, alignItems: 'start'});
 }
 
-function chips(variables, key, entries, mode) {
+function chips(variables, key, entries, mode, palette) {
   return row(key, 'Chips', entries.map(([token, label]) => ({
     type: 'frame', id: id(key, token), name: label, layout: 'vertical', gap: '$--spacing-md', width: 'fill_container',
     padding: '$--spacing-lg', fill: '$--card', stroke: '$--border', strokeWidth: '$--size-hairline',
@@ -78,21 +83,36 @@ function chips(variables, key, entries, mode) {
       {type: 'rectangle', id: id(key, token, 'dot'), name: 'Colour', width: 24, height: 24, fill: `$--${token}`, cornerRadius: '$--radius-sm'},
       column(`${key}-${token}-text`, 'Text', [
         text(`${key}-${token}-label`, label, {size: '$--text-body'}),
-        value(`${key}-${token}-value`, hexFor(variables, token, mode)),
+        value(`${key}-${token}-value`, hexFor(variables, token, mode, palette)),
       ], {gap: '$--spacing-xxs'}),
     ],
   })), {gap: '$--spacing-md', alignItems: 'start'});
 }
 
-function textInks(variables, key, inks, mode) {
+function textInks(variables, key, inks, mode, palette) {
   // --text-display reads well across a full 1180 sheet with short names (the old
   // single-ladder Foundations); inside a PALETTE_WIDTH column carrying hide's
   // longer shadcn ink names (subtle-foreground, muted-foreground) it overflows,
   // so this row uses --text-title instead.
   return row(key, 'Inks', inks.map(([token, label]) => column(`${key}-${token}`, label, [
     text(`${key}-${token}-word`, label, {size: '$--text-title', fill: `$--${token}`, weight: '600'}),
-    value(`${key}-${token}-value`, hexFor(variables, token, mode)),
+    value(`${key}-${token}-value`, hexFor(variables, token, mode, palette)),
   ], {width: 'fit_content', gap: '$--spacing-xs'})), {gap: '$--spacing-lg', alignItems: 'start'});
+}
+
+const ANSI = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'];
+
+// The terminal's sixteen colors as two rows of eight, normal over bright, each a
+// cell of its own color with its hex under it, over the terminal's background.
+function terminalColors(variables, key, mode, palette) {
+  const line = (bright) => row(`${key}-${bright ? 'bright' : 'normal'}`, bright ? 'Bright' : 'Normal', ANSI.map(name => {
+    const token = `terminal-${bright ? 'bright-' : ''}${name}`;
+    return column(`${key}-${token}`, token, [
+      {type: 'rectangle', id: id(key, token, 'cell'), name: 'Colour', width: 'fill_container', height: 24, fill: `$--${token}`, cornerRadius: '$--radius-xs'},
+      value(`${key}-${token}-value`, hexFor(variables, token, mode, palette).slice(1)),
+    ], {gap: '$--spacing-xxs'});
+  }), {gap: '$--spacing-xs', alignItems: 'start'});
+  return column(key, 'Terminal', [line(false), line(true)], {gap: '$--spacing-sm'});
 }
 
 // The palette varies by theme, so it is the one section drawn twice: once inside a
@@ -104,18 +124,22 @@ function textInks(variables, key, inks, mode) {
 // size to resolve against under a `fit_content` ancestor.
 const PALETTE_WIDTH = 540;
 
-function palette(variables, mode) {
-  return column(`palette-${mode.toLowerCase()}`, mode, [
-    column(`palette-${mode}-base`, 'Base', [
-      swatchLadder(variables, `pal-${mode}-surface`, [['background', 'background'], ['sidebar', 'sidebar'], ['card', 'card'], ['popover', 'popover'], ['secondary', 'secondary']]),
-      textInks(variables, `pal-${mode}-ink`, [['foreground', 'foreground'], ['subtle-foreground', 'subtle-foreground'], ['muted-foreground', 'muted-foreground'], ['primary', 'primary']], mode),
+function palette(variables, mode, paletteName = 'Neutral') {
+  // Neutral keeps its original node ids so a reference into the sheet still lands.
+  const p = paletteName === 'Neutral' ? mode : `hide-${mode}`;
+  const theme = paletteName === 'Neutral' ? {Mode: mode} : {Mode: mode, Palette: paletteName};
+  return column(`palette-${p.toLowerCase()}`, `${paletteName} ${mode}`, [
+    column(`palette-${p}-base`, 'Base', [
+      swatchLadder(variables, `pal-${p}-surface`, [['background', 'background'], ['sidebar', 'sidebar'], ['card', 'card'], ['popover', 'popover'], ['secondary', 'secondary']]),
+      textInks(variables, `pal-${p}-ink`, [['foreground', 'foreground'], ['subtle-foreground', 'subtle-foreground'], ['muted-foreground', 'muted-foreground'], ['primary', 'primary']], mode, paletteName),
     ], {gap: '$--spacing-md'}),
-    chips(variables, `pal-${mode}-accent`, [['accent-choice-lime', 'lime'], ['accent-choice-sky', 'sky'], ['accent-choice-violet', 'violet'], ['accent-choice-amber', 'amber']], mode),
-    chips(variables, `pal-${mode}-semantic`, [['agent-working', 'agent working'], ['success', 'success'], ['warning', 'warning'], ['destructive', 'destructive']], mode),
-    chips(variables, `pal-${mode}-pr`, [['pr-failed', 'PR failed'], ['pr-pending', 'PR pending'], ['pr-mergeable', 'PR mergeable']], mode),
-    chips(variables, `pal-${mode}-pr-settled`, [['pr-draft', 'PR draft'], ['pr-merged', 'PR merged'], ['pr-closed', 'PR closed']], mode),
-    chips(variables, `pal-${mode}-diff`, [['diff-added', 'diff added'], ['diff-removed', 'diff removed'], ['border', 'border'], ['ring', 'ring']], mode),
-  ], {gap: '$--spacing-lg', width: PALETTE_WIDTH, clip: true, padding: '$--spacing-xl', fill: '$--background', cornerRadius: '$--radius-lg', theme: {Mode: mode}});
+    terminalColors(variables, `pal-${p}-terminal`, mode, paletteName),
+    chips(variables, `pal-${p}-accent`, [['accent-choice-lime', 'lime'], ['accent-choice-sky', 'sky'], ['accent-choice-violet', 'violet'], ['accent-choice-amber', 'amber']], mode, paletteName),
+    chips(variables, `pal-${p}-semantic`, [['agent-working', 'agent working'], ['success', 'success'], ['warning', 'warning'], ['destructive', 'destructive']], mode, paletteName),
+    chips(variables, `pal-${p}-pr`, [['pr-failed', 'PR failed'], ['pr-pending', 'PR pending'], ['pr-mergeable', 'PR mergeable']], mode, paletteName),
+    chips(variables, `pal-${p}-pr-settled`, [['pr-draft', 'PR draft'], ['pr-merged', 'PR merged'], ['pr-closed', 'PR closed']], mode, paletteName),
+    chips(variables, `pal-${p}-diff`, [['diff-added', 'diff added'], ['diff-removed', 'diff removed'], ['border', 'border'], ['ring', 'ring']], mode, paletteName),
+  ], {gap: '$--spacing-lg', width: PALETTE_WIDTH, clip: true, padding: '$--spacing-xl', fill: '$--background', cornerRadius: '$--radius-lg', theme});
 }
 
 function typeScale(variables, key, steps) {
@@ -162,7 +186,10 @@ export function foundations(variables) {
         text('title-sub', 'Medium density, light and dark. Four-step surface ladder, 1px hairlines, no drop shadows. Every value on this sheet is read from the canvas variables that gen-pen.mjs writes from design/tokens.json, and the sheet itself is redrawn by the same run.', {size: '$--text-subhead', fill: '$--subtle-foreground', width: 'fill_container'}),
       ], {gap: '$--spacing-sm'}),
 
-      section('palette', 'Palette', 'The Mode theme axis: the same variables, each with a Light value and a Dark value.', row('palette-frames', 'Themes', [palette(v, 'Light'), palette(v, 'Dark')], {gap: '$--spacing-xl', alignItems: 'start'})),
+      section('palette', 'Palette', 'Two theme axes on the same variables: Mode gives each color a Light and a Dark value, and Palette chooses the Neutral color theme (the default, which every System and Component frame draws) or the Hide color theme the app opens in. A color Hide does not change is the same in both.', column('palette-themes', 'Palettes', [
+        row('palette-frames', 'Neutral', [palette(v, 'Light'), palette(v, 'Dark')], {gap: '$--spacing-xl', alignItems: 'start'}),
+        row('palette-hide-frames', 'Hide', [palette(v, 'Light', 'Hide'), palette(v, 'Dark', 'Hide')], {gap: '$--spacing-xl', alignItems: 'start'}),
+      ], {gap: '$--spacing-xl'})),
 
       section('type', 'Type scale', 'Inter with ss03 in the app. pen renders plain Inter, so glyph shapes here are approximate; sizes are exact. Terminal and editor sizes render in JetBrains Mono, standing in for SF Mono.', typeScale(v, 'type-scale', [
         ['text-micro', '12 unread agent updates'], ['text-caption', 'Badge and metadata text'], ['text-body', 'Sidebar rows and control labels use this size'],

@@ -132,7 +132,10 @@ fn read(native: &Path, facts: &mut PathFacts, bytes: &mut usize) -> PathFact {
         let main_root = comparison(&repository.main_root());
         if !facts.repositories.contains_key(&main_root) {
             let (notes, remote_urls) = match repository.config() {
-                Ok(config) => (Ok(config.notes), config.remote_urls),
+                Ok(config) => {
+                    let urls = config.remote_urls();
+                    (Ok(config.notes), urls)
+                }
                 Err(error) => (Err(error), None),
             };
             *bytes = bytes.saturating_add(main_root.len() + notes_bytes(&notes));

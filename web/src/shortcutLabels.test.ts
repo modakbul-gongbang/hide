@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createInterfaceI18n } from "./i18n/instance";
 import { commandTitle } from "./commandTitle";
-import { bindingProblemText, passthroughText, sheetRowTitle } from "./shortcutLabels";
+import { agentPeekKeyOn, bindingProblemText, passthroughText, sheetRowTitle } from "./shortcutLabels";
 import { REGISTRY, sheetRows } from "./shortcuts";
 
 describe("command labels", () => {
@@ -35,5 +35,14 @@ describe("binding problems", () => {
     expect(bindingProblemText({ code: "browser_reserved", chord: "⌘W", macos: true }, t)).toBe("⌘W is kept by Chrome or macOS.");
     expect(bindingProblemText({ code: "browser_reserved", chord: "Ctrl+T", macos: false }, t)).toBe("Ctrl+T is kept by Chrome or the system.");
     expect(bindingProblemText({ code: "terminal_paste", chord: "Ctrl+Shift+V" }, t)).toBe("Ctrl+Shift+V pastes into a terminal.");
+  });
+});
+
+describe("the key that peeks at the agent logos", () => {
+  it("is the Agents hold's own modifier on this system, and absent where the host has none", () => {
+    expect(agentPeekKeyOn(undefined, "electron", "mac")).toBe("⌥");
+    expect(agentPeekKeyOn(undefined, "electron", "pc")).toBe("Alt");
+    expect(agentPeekKeyOn(undefined, "browser", "mac")).toBeNull();
+    expect(agentPeekKeyOn(undefined, "browser", "pc")).toBeNull();
   });
 });
