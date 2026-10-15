@@ -8,12 +8,12 @@
 //! out of them. Each folder has a cap; a write past it is refused whole.
 
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use hide_node_link::feedback::{
-    FEEDBACK_FILE, FeedbackCall, File, MAX_CALL_BYTES, MAX_FILE_BYTES, MAX_KEPT_LETTERS,
-    MAX_LETTER_FILES, MAX_PLACED_BYTES, MAX_STAGED_SHOT_BYTES, MAX_STAGED_SHOTS, PLACE_FULL,
-    Placed, SHOT_GONE, valid_letter_file_name, valid_letter_folder, valid_shot_name,
+    FeedbackCall, File, MAX_CALL_BYTES, MAX_FILE_BYTES, MAX_KEPT_LETTERS, MAX_LETTER_FILES,
+    MAX_PLACED_BYTES, MAX_STAGED_SHOT_BYTES, MAX_STAGED_SHOTS, PLACE_FULL, Placed, SHOT_GONE,
+    valid_letter_file_name, valid_letter_folder, valid_shot_name,
 };
 use hide_platform::fs::private;
 use serde_json::Value;
@@ -298,16 +298,10 @@ fn folder_usage(folder: &Path) -> Result<(usize, u64), String> {
     Ok((count, bytes))
 }
 
-/// Where the feedback file of a letter sits beside its screenshots.
-pub fn feedback_file(state: &Path, letter: &str) -> PathBuf {
-    hide_kit::layout::letter_attachments(state)
-        .join(letter)
-        .join(FEEDBACK_FILE)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hide_node_link::feedback::FEEDBACK_FILE;
 
     const LETTER: &str = "view-feedback-0f8fad5b-d9cb-469f-a165-70867728950e";
 
@@ -340,7 +334,12 @@ mod tests {
         assert!(private::is_private(&folder).unwrap());
         assert!(private::is_private(&folder.join(&shot)).unwrap());
         assert_eq!(
-            std::fs::read(feedback_file(state.path(), LETTER)).unwrap(),
+            std::fs::read(
+                hide_kit::layout::letter_attachments(state.path())
+                    .join(LETTER)
+                    .join(FEEDBACK_FILE)
+            )
+            .unwrap(),
             b"all of it"
         );
     }

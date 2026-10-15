@@ -152,10 +152,13 @@ impl Actor {
 /// A name or pane a pane may never claim: it would read as a Factory, as
 /// Hide itself or as the operator.
 pub(crate) fn reserved_name(value: &str) -> bool {
+    // A name that reads as the operator's once trimmed or in another case is
+    // the operator's too: the labeler trims a sender's name.
+    let operator = value.trim().to_lowercase();
     value.starts_with(FACTORY_PREFIX)
         || value.starts_with(HIDE_PREFIX)
-        || value.starts_with(OPERATOR_PREFIX)
-        || value == OPERATOR_NAME
+        || operator.starts_with(OPERATOR_PREFIX)
+        || operator == OPERATOR_NAME
 }
 
 /// A pane's native session as a letter pull or a Factory question guard names

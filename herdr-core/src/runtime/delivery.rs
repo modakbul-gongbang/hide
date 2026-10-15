@@ -2179,6 +2179,9 @@ pub(crate) mod tests {
         assert!(guard.code_owned_authority_current(&operator.pane_id, &operator));
         assert!(!guard.code_owned_authority_current("sender", &operator));
         assert!(crate::delivery::reserved_name("operator"));
+        assert!(crate::delivery::reserved_name(" Operator "));
+        assert!(crate::delivery::reserved_name("OPERATOR:x"));
+        assert!(!crate::delivery::reserved_name("operators"));
         assert!(crate::delivery::reserved_name(&operator.pane_id));
         let forged = Actor {
             session: Some("forged".into()),
