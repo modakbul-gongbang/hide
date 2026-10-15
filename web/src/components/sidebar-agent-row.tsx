@@ -192,7 +192,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       <span className={cn("flex min-w-0 flex-1 items-start gap-xs", tree && "py-xs")}>
         <span className="pointer-events-none flex min-h-(--size-sidebar-line) shrink-0 items-center gap-xs">
           <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.wait ? "waiting" : agent.status_code} />
-          {/* In a project's tree the Hide AI group says who started the row; alone, the Hide owl stands beside the status mark (PRD agent-mark-quiet D-04). The provider's logo is only on the pane's own header. */}
+          {/* A Hide AI row is never in a tree; the Hide owl stands beside the status mark (PRD agent-mark-quiet D-04). The provider's logo is only on the pane's own header. */}
           {agent.hide_ai && !tree ? <HideMark className="size-(--size-agent-badge-compact)" /> : null}
         </span>
         <span className="flex min-w-0 flex-1 flex-col">

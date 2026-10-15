@@ -9,9 +9,8 @@ import { cn } from "./lib/utils";
 // tooltip and label.
 
 /**
- * Hide's own mark, the owl face at a small size: the head of the Hide AI group
- * in a project's tree, and the mark a Hide AI-started row draws alone in the
- * place of the provider logo (PRD agent-mark-quiet D-04). The full
+ * Hide's own mark, the owl face at a small size: the mark a Hide AI-started
+ * row draws beside its status mark in the place of the provider logo (PRD agent-mark-quiet D-04). The full
  * square mark is used at every size (docs/BRAND.md); decorative, because the
  * words `Hide AI` stand beside it or in the row's name.
  */
