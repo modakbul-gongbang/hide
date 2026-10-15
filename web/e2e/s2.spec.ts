@@ -607,7 +607,7 @@ test("the shortcut sheet marks the moved chords and ⌘F reaches the agent's own
     // and, once the Factory opens (src/factory/launch.ts), Open Factory (software-factory-ui B2).
     // The two numbered families each fold into one row and have no browser chord;
     // they never carry a Chrome move note (electron-digit-shortcuts-hints B3).
-    await expect(page.locator("[data-shortcut]")).toHaveCount(FACTORY_OPEN ? 44 : 43);
+    await expect(page.locator("[data-shortcut]")).toHaveCount(FACTORY_OPEN ? 48 : 47);
     for (const title of ["Overview", "Focus sidebar", "Add to backlog"]) await expect(page.locator("[data-shortcut-sheet]")).toContainText(title);
     // Add to backlog moves in a macOS browser, where Chrome keeps ⌘⇧M for its profiles; Alt+Shift+M is free on Windows and Linux.
     // Assert the exact moved commands, including the unchanged platform exceptions.

@@ -243,6 +243,9 @@ pub struct WorkspaceViewSnapshot {
     /// The tool the lane shows, or null while it is closed. An unpinned
     /// lane is drawn over the agents only once a call opened it (D-02).
     pub tool: Option<crate::workspace_views::Tool>,
+    /// The tool the lane last showed, null for a lane that never showed
+    /// one; the tool the next open returns to.
+    pub last_tool: Option<crate::workspace_views::Tool>,
     /// The Work tool's basis and scope, kept for this Workspace.
     pub work: crate::workspace_views::WorkView,
     /// Whether the lane is pinned beside Agent Views (D-03).

@@ -72,6 +72,7 @@ A pinned lane docks in any window where its minimums (360px of documents, 180px 
 Expand gives the lane the whole body between the sidebar and the rail, with the file tree as a column beside the documents; Expand again or Escape returns to the pin, widths and terminal layout as they were, no terminal resizes meanwhile, and Agent Views under an expanded lane take no pointer or keyboard.
 While the keyboard is in the lane, a document, a page or the tool, the Zoom pane chord (⇧⌘↩, Alt+Shift+Enter on Windows and Linux) is Expand and Expand again, so one key fills the window with whatever the operator works in; anywhere else it zooms the focused pane, and the Expand tooltip shows the chord.
 Close (the header's ×, the pressed rail icon, or the tool's chord) closes the lane and leaves the file tree as it was; it closes no view, and the Files badge counts what stays open.
+A close keeps the tool the lane showed, so ⌘E and Show right lane bring it back on that tool.
 
 The files tool shows the View areas below, with their tabs, splits, previews and browser displays, each page inside its area's bounds.
 The active document's header starts with the tree button, the checkout's name, then the path in ` › ` steps, cutting a long path at its start so the file name stays; a browser display's toolbar carries the same tree button.
@@ -83,7 +84,9 @@ Closing the last view leaves the lane on Files in that state, and ⌘E on a Work
 
 Opening a file, a diff or a page from the tree, Changes, ⌘P, a terminal link, Open in Browser or Open server opens the lane on Files, over the agents or docked as its pin says, with the opened tab in its active View area; another tool showing gives way to Files.
 Select in File Tree, a reveal, or a terminal link that names a folder opens Files with the tree on and the row unfolded and selected.
-⌘E (`Toggle right lane`) closes the lane while it shows and otherwise brings it back on the tool it holds, Files when it holds none; the desktop app's View menu names it and `Toggle File Tree`, and a chord bound to either in Settings, Shortcuts keeps doing the same.
+⌘E (`Toggle right lane`) closes the lane while it shows and otherwise brings it back on the tool it last showed in that Workspace, whichever way the lane was closed (its × button, the pressed rail icon, ⌘E or a tool's chord), and on Files for a Workspace whose lane never showed a tool; the tool is kept with the Workspace, so it holds after an app restart, and the path menu's Show right lane brings back the same tool.
+⌥⌘1, ⌥⌘2, ⌥⌘3 and ⌥⌘4 (`Toggle Work tool`, `Toggle Memory tool`, `Toggle Files tool`, `Toggle Changes tool`; Alt+Shift+1-4 on Windows and Linux) press the rail's first to fourth icon: the lane opens on that tool, or closes when it already shows it, and the icon's hover hint ends with the chord (`Memory · <project>  ⌥⌘2`).
+The desktop app's View menu names the lane commands and `Toggle File Tree`, and a chord bound to any of them in Settings, Shortcuts keeps doing the same.
 Each sends the value the lane should end at, so the same command arriving twice lands where it did once.
 A right-click or the menu key on the Workspace's path offers Show or Hide right lane with the same effect.
 A file read opens the files tool when its document is ready, in the Agent tab that requested it.
@@ -2280,6 +2283,10 @@ The sheet carries no row or explanation for a command the removed native app alo
 | Toggle left sidebar | `⌘B` | `Ctrl+Shift+B` | `⌘B` | `Ctrl+Shift+B` |
 | Toggle device rail | none | none | none | none |
 | Toggle right lane | `⌘E` | `Ctrl+Shift+E` | `⌘E` | `Ctrl+Shift+E` |
+| Toggle Work tool | `⌥⌘1` | `Alt+Shift+1` | `⌥⌘1` | `Alt+Shift+1` |
+| Toggle Memory tool | `⌥⌘2` | `Alt+Shift+2` | `⌥⌘2` | `Alt+Shift+2` |
+| Toggle Files tool | `⌥⌘3` | `Alt+Shift+3` | `⌥⌘3` | `Alt+Shift+3` |
+| Toggle Changes tool | `⌥⌘4` | `Alt+Shift+4` | `⌥⌘4` | `Alt+Shift+4` |
 | Toggle File Tree | `⇧⌘E` | `Alt+Shift+E` | `⇧⌘E` | `Alt+Shift+E` |
 | Find in pane | `⌘F` | `Ctrl+Shift+F` | `⌘F` | `Ctrl+Shift+F` |
 | Save file | `⌘S` | `Ctrl+Shift+S` | `⌘S` | `Ctrl+Shift+S` |

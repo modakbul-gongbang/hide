@@ -128,6 +128,33 @@ pub fn report(socket_path: &Path, pane_id: &str, counters: PaneCounters) -> Resu
     .map(|_| ())
 }
 
+/// The session Herdr reports for the agent in a pane, or none when it reports
+/// none (no agent there, or an integration that has not reported one yet).
+///
+/// It is what tells the pane's agent from a session that only runs the same
+/// hooks in the pane's environment: Herdr takes a nested `claude -p` session's
+/// report for no more than a report, and keeps the pane's own (measured on the
+/// pinned Herdr 0.9.3, where `/clear` replaced the pane's session and a nested
+/// session's `startup` did not).
+pub fn pane_session(socket_path: &Path, pane_id: &str) -> Result<Option<String>, ApiError> {
+    request_with_timeout(
+        socket_path,
+        "pane.get",
+        json!({ "pane_id": pane_id }),
+        REPORT_TIMEOUT,
+    )
+    .map(|answer| session_of(&answer))
+}
+
+/// The session in a `pane.get` answer (`PaneInfo.agent_session`).
+fn session_of(answer: &serde_json::Value) -> Option<String> {
+    answer
+        .pointer("/pane/agent_session/value")?
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
 /// The last report that did not reach Herdr, kept so the failure is a
 /// sentence in `doctor` and in Settings rather than a pane that quietly
 /// reads as uninstrumented (engineering rules 4 and 10).
@@ -241,6 +268,23 @@ mod tests {
             params["tokens"]["hide_hooks"],
             (HOOK_VERSION - 1).to_string()
         );
+    }
+
+    #[test]
+    fn the_pane_session_is_the_one_herdr_reports_for_its_agent() {
+        // A `pane.get` answer of the pinned Herdr 0.9.3 (private server,
+        // 2026-10-15), trimmed to the fields around the one read.
+        let answer = json!({"type":"pane_info","pane":{"pane_id":"w1:p1","agent":"claude",
+            "agent_status":"idle","agent_session":{"source":"herdr:claude","agent":"claude",
+            "kind":"id","value":"76e51bb1-98e0-46ff-9b61-e8eeace65386"},"revision":6}});
+        assert_eq!(
+            session_of(&answer).as_deref(),
+            Some("76e51bb1-98e0-46ff-9b61-e8eeace65386")
+        );
+        // "If no native session reference is stored, the field is omitted."
+        let none = json!({"type":"pane_info","pane":{"pane_id":"w1:p1","agent":"claude"}});
+        assert_eq!(session_of(&none), None);
+        assert_eq!(session_of(&json!({})), None);
     }
 
     #[test]

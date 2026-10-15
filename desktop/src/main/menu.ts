@@ -14,7 +14,7 @@ import type { TFunction } from "i18next";
 import { commandTitle } from "../../../web/src/commandTitle";
 import { FACTORY_OPEN } from "../../../web/src/factory/launch";
 import { SETUP_COMMAND } from "../../../web/src/host";
-import { AREA_COMMANDS, effectiveRegistry, isCycleCommand, isNumberedCommand, REGISTRY, systemRegistry, type Chord, type Command, type CommandId, type EffectiveRegistry, type KeySystem } from "../../../web/src/shortcuts";
+import { AREA_COMMANDS, LANE_TOOL_COMMANDS, effectiveRegistry, isCycleCommand, isNumberedCommand, REGISTRY, systemRegistry, type Chord, type Command, type CommandId, type EffectiveRegistry, type KeySystem } from "../../../web/src/shortcuts";
 
 const KEY_NAMES: Record<string, string> = {
   Enter: "Return",
@@ -74,6 +74,7 @@ export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pa
     "sidebar_projects",
     "toggle_device_rail",
     "toggle_lane",
+    ...LANE_TOOL_COMMANDS,
     "toggle_file_tree",
     null,
     "text_larger",
