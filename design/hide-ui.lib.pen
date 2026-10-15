@@ -38273,6 +38273,18 @@
               }
             },
             {
+              "type": "rectangle",
+              "id": "lane-rail-divider",
+              "name": "Project | checkout divider",
+              "width": 20,
+              "height": 1,
+              "fill": "$--border",
+              "margin": [
+                "$--spacing-xs",
+                0
+              ]
+            },
+            {
               "id": "lane-rail-files",
               "type": "ref",
               "ref": "lane-tool",
@@ -38429,16 +38441,38 @@
               "fontWeight": "600"
             },
             {
+              "type": "icon",
+              "id": "lane-header-scope-glyph",
+              "name": "Scope icon",
+              "width": 12,
+              "height": 12,
+              "icon": "git-branch",
+              "library": "lucide",
+              "fill": "$--subtle-foreground",
+              "margin": [
+                0,
+                0,
+                0,
+                2
+              ]
+            },
+            {
               "type": "text",
               "id": "lane-header-scope",
-              "name": " · settings-ui",
-              "content": " · settings-ui",
+              "name": "settings-ui",
+              "content": "settings-ui",
               "fill": "$--subtle-foreground",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "400",
               "textGrowth": "fixed-width",
-              "width": "fill_container"
+              "width": "fill_container",
+              "margin": [
+                0,
+                0,
+                0,
+                2
+              ]
             },
             {
               "id": "lane-header-pin",
@@ -38910,7 +38944,7 @@
                           "content": "Files"
                         },
                         "lane-header-scope": {
-                          "content": " · settings-ui"
+                          "content": "settings-ui"
                         }
                       }
                     }
@@ -38945,7 +38979,10 @@
                           "content": "Work"
                         },
                         "lane-header-scope": {
-                          "content": " · all of hide"
+                          "content": "all of hide"
+                        },
+                        "lane-header-scope-glyph": {
+                          "icon": "folder"
                         },
                         "lane-header-pin": {
                           "fill": "$--secondary"
@@ -38987,7 +39024,7 @@
                           "content": "Changes"
                         },
                         "lane-header-scope": {
-                          "content": " · settings-ui"
+                          "content": "settings-ui"
                         },
                         "lane-header-expand": {
                           "fill": "$--secondary"
@@ -39808,7 +39845,7 @@
                           "content": "Files"
                         },
                         "lane-header-scope": {
-                          "content": " · settings-ui"
+                          "content": "settings-ui"
                         }
                       }
                     }
@@ -39843,7 +39880,10 @@
                           "content": "Work"
                         },
                         "lane-header-scope": {
-                          "content": " · all of hide"
+                          "content": "all of hide"
+                        },
+                        "lane-header-scope-glyph": {
+                          "icon": "folder"
                         },
                         "lane-header-pin": {
                           "fill": "$--secondary"
@@ -39885,7 +39925,7 @@
                           "content": "Changes"
                         },
                         "lane-header-scope": {
-                          "content": " · settings-ui"
+                          "content": "settings-ui"
                         },
                         "lane-header-expand": {
                           "fill": "$--secondary"

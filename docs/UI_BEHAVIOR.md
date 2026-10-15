@@ -54,7 +54,9 @@ Only when the window's frame itself cannot draw does the line take the whole win
 The Workspace body, under the top row, is Agent Views (the Agent area), one right lane, and the tool rail, 48px wide, at the window's right edge.
 The rail lists Work, Memory, Files and Changes from the top, the Project's tools before the checkout's, each an icon alone (a kanban board, a brain, files, a file diff) whose name and scope are its hint on hover and its accessible name, and the lane shows one of them at a time: Files (the View areas and the file tree), Changes (History), Work (Sessions and PRs), and Memory.
 A rail icon is drawn pressed, with a primary bar at the rail's edge, while the lane shows its tool; pressing it opens the lane on that tool, and pressing the pressed one closes the lane.
-Each icon's hint names the tool and its scope (`Files · settings-ui`, `Sessions · all of hide`); the tools have no chords of their own.
+Each icon's hint names the tool and its scope (`Files · settings-ui`, `Work · all of hide`); the tools have no chords of their own.
+A short rule between Memory and Files marks where the Project's tools end and the checkout's begin (PRD work-tab-pr-lens D-37); it is derived from each tool's scope, so a tool of the other scope moves it.
+The lane header names the tool, then its scope behind one small icon, a folder for the Project (Work, Memory) and a branch for the checkout (Files, Changes), in the scope text's colour; the icon is decoration, and the accessible name stays the hint's `name · scope`.
 While the lane does not show Files, its icon carries a badge counting the views open, also given as its accessible description; Memory's carries a dot while its Project has questions waiting.
 The rail's `…` menu holds Toggle File Tree with its chord, Pin or Unpin, and Expand.
 A Workspace seen for the first time shows Agent Views alone, its lane closed.
