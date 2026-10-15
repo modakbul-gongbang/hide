@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use hide_agent_adapter::HookDialect;
 use hide_agent_hooks::basic;
-use hide_agent_hooks::counters::{self, Change, Reporter};
+use hide_agent_hooks::counters::{self, Change, Reporter, SubagentInput};
 use hide_agent_hooks::diagnosis::Diagnosis;
 use hide_agent_hooks::guidance::{self, GuidanceAgent};
 use hide_agent_hooks::report;
@@ -234,9 +234,9 @@ fn count_basic(dialect: HookDialect, event: HookEvent, started: Instant) {
         return;
     }
     let change = match (dialect, event) {
-        (_, HookEvent::SessionStart) => Change::Reset,
-        (_, HookEvent::SubagentStart) => Change::Started,
-        (_, HookEvent::SubagentStop) => Change::Stopped,
+        (_, HookEvent::SessionStart) => Change::SessionStarted,
+        (_, HookEvent::SubagentStart) => Change::Started(None),
+        (_, HookEvent::SubagentStop) => Change::Stopped(None),
         (HookDialect::Grok, HookEvent::Stop) => {
             let Some((payload, truncated)) =
                 read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)
@@ -258,7 +258,8 @@ fn count_basic(dialect: HookDialect, event: HookEvent, started: Instant) {
         agent: Some(dialect.adapter().id),
         session: None,
     };
-    report_count(&home, event, change, who);
+    // No session is read, so there is none to compare with Herdr's.
+    report_count(&home, event, change, who, false);
 }
 
 /// Prints one JSON answer. On Windows every agent runs its hook under
@@ -409,7 +410,13 @@ fn run_hook(arguments: &[String], started: Instant) {
         runtime.is_some_and(|runtime| runtime.dialect().adapter().prompt_hook.is_some());
     // The prompt event reads its payload for the prompt digest even without
     // Memory; a Memory read works from the same bytes.
-    let payload = if (event == HookEvent::UserPromptSubmit && runtime.is_some()) || memory_injection
+    // A count reads the same input: the session it came from, the subagent it
+    // is about and the subagents a turn end lists.
+    let counts = event != HookEvent::UserPromptSubmit
+        && !runtime.is_some_and(|runtime| runtime.dialect().adapter().subagent_counts.is_none());
+    let payload = if (event == HookEvent::UserPromptSubmit && runtime.is_some())
+        || memory_injection
+        || counts
     {
         read_stdin_before_deadline(started + PROMPT_PAYLOAD_BUDGET)
     } else {
@@ -421,11 +428,6 @@ fn run_hook(arguments: &[String], started: Instant) {
         }
         _ => hide_agent_hooks::delivery::Prompt::default(),
     };
-    // The session the event came from, when its input was read whole: what
-    // lets a restore tell this session's counts from another one's.
-    let session = payload
-        .as_ref()
-        .and_then(|(bytes, truncated)| hide_agent_hooks::delivery::read_session(bytes, *truncated));
     // Claude Code's hook inside Grok leaves the letters where they are: the
     // session that runs it is not the pane's Claude Code.
     let takes_letters = runtime != Some(AgentRuntime::ClaudeCode)
@@ -534,19 +536,38 @@ fn run_hook(arguments: &[String], started: Instant) {
         }
         return;
     }
-    if runtime.is_some_and(|runtime| runtime.dialect().adapter().subagent_counts.is_none()) {
+    if !counts {
         return;
     }
+    // The session the event came from, when its input was read whole: what
+    // tells the pane's own session from another one's, and a restore this
+    // session's counts from another one's.
+    let input = payload
+        .as_ref()
+        .map(|(bytes, truncated)| SubagentInput::read(bytes, *truncated))
+        .unwrap_or_default();
     let who = Reporter {
         agent: runtime.map(AgentRuntime::id),
-        session: session.as_deref(),
+        session: input.session.as_deref(),
     };
-    report_count(&home, event, Change::of(event), who);
+    report_count(&home, event, Change::of(runtime, event, &input), who, true);
 }
 
 /// Applies `change` to this pane's count and reports the pane's totals to
 /// Herdr. Outside a Herdr pane there is no pane to describe.
-fn report_count(home: &std::path::Path, event: HookEvent, change: Change, who: Reporter<'_>) {
+///
+/// With `compare_session`, the event's session is compared with the one Herdr
+/// reports for the pane's agent, and an event of another session (a nested
+/// `claude -p` that a user's own hook starts runs these hooks with the pane's
+/// environment) changes and reports nothing. A Herdr that cannot say, or names
+/// no session, leaves every event the pane's.
+fn report_count(
+    home: &std::path::Path,
+    event: HookEvent,
+    change: Change<'_>,
+    who: Reporter<'_>,
+    compare_session: bool,
+) {
     let Some(pane_id) = std::env::var("HERDR_PANE_ID")
         .ok()
         .filter(|value| !value.is_empty())
@@ -557,7 +578,15 @@ fn report_count(home: &std::path::Path, event: HookEvent, change: Change, who: R
     // reads out of the hook file; the report's own source is fixed in
     // `report::metadata_source`, because Herdr refuses the marker's `@`.
     let socket_path = report::socket_path(home);
-    let outcome = match (counters::change(home, &pane_id, change, who), &socket_path) {
+    let pane_session = match &socket_path {
+        Ok(path) if compare_session => report::pane_session(path, &pane_id).ok().flatten(),
+        _ => None,
+    };
+    let applied = counters::change_for_pane(home, &pane_id, change, who, pane_session.as_deref());
+    if applied.as_ref().is_ok_and(|applied| applied.foreign) {
+        return;
+    }
+    let outcome = match (applied.map(|applied| applied.counters), &socket_path) {
         (Ok(counters), Ok(path)) => report_latest(home, path, &pane_id, counters),
         (Err(error), _) => Err(hide_herdr_client::ApiError::Transport(format!(
             "the pane's count could not be changed: {error}"
