@@ -76,7 +76,7 @@ pub(super) fn shell(
                 // `touch` may be about to make.
                 if !target
                     && candidate.chars().any(char::is_whitespace)
-                    && at.is_some_and(|at| text_word(&program, words, at))
+                    && at.is_some_and(|at| text_word(&program, words, at, candidate != word))
                     && std::fs::symlink_metadata(&path).is_err()
                 {
                     continue;
@@ -107,29 +107,108 @@ fn program(word: &str) -> String {
     }
 }
 
-/// The parts of a word that may name a path: the word, and the value of a
-/// `--name=value` or `NAME=value` word. A word still holding an expansion
-/// (`$HOME`, `$(...)`, a backtick) is not read, since its path is unknown.
-/// Whether word `at` of a command is text rather than a path: an option's
-/// value (`-m`, `--title`), what `echo` and `printf` print, or the pattern or
-/// script a search or a stream editor takes first.
-fn text_word(program: &str, words: &[String], at: usize) -> bool {
-    let Some(before) = at.checked_sub(1).and_then(|before| words.get(before)) else {
-        return false;
+/// Options whose value is text: a message, a title, a body, a script.
+const TEXT_OPTIONS: &[&str] = &[
+    "-m",
+    "--message",
+    "-t",
+    "--title",
+    "-b",
+    "--body",
+    "--subject",
+    "--notes",
+    "--description",
+    "--comment",
+    "-c",
+    "-e",
+    "--eval",
+    "--expression",
+    "--regexp",
+];
+/// The letters that end a short-option cluster taking a text value (`-am`).
+const TEXT_LETTERS: &[char] = &['m', 'b', 'c', 'e'];
+/// The options of a search or a stream editor that take a value, which is
+/// not its pattern or script slot.
+const VALUE_OPTIONS: &[&str] = &[
+    "-A",
+    "-B",
+    "-C",
+    "-m",
+    "-g",
+    "-t",
+    "-T",
+    "-f",
+    "-e",
+    "-j",
+    "--glob",
+    "--type",
+    "--type-not",
+    "--max-count",
+    "--context",
+    "--before-context",
+    "--after-context",
+    "--file",
+    "--regexp",
+    "--threads",
+    "--arg",
+    "--argjson",
+];
+
+/// Whether word `at` of a command, or its `--name=value` value when `value`,
+/// is text rather than a path: the value of an option that takes text
+/// (`-m`, `--title`), what `echo` and `printf` print, or the pattern or script
+/// a search or a stream editor takes first. Any other word may name a file
+/// about to be made, so it is read as a path.
+fn text_word(program: &str, words: &[String], at: usize, value: bool) -> bool {
+    let text_option = |option: &str| {
+        TEXT_OPTIONS.contains(&option)
+            || short(option).is_some_and(|letters| letters.ends_with(TEXT_LETTERS))
     };
-    if before.starts_with('-') && before != "-" && before != "--" && !before.contains('=') {
+    if value {
+        return words[at]
+            .split_once('=')
+            .is_some_and(|(option, _)| option.starts_with('-') && text_option(option));
+    }
+    if at
+        .checked_sub(1)
+        .and_then(|before| words.get(before))
+        .is_some_and(|before| text_option(before))
+    {
         return true;
     }
     match program {
         "echo" | "printf" => true,
-        "grep" | "egrep" | "fgrep" | "rg" | "sed" | "awk" | "jq" => words[1..]
-            .iter()
-            .position(|word| !word.starts_with('-'))
-            .is_some_and(|first| first + 1 == at),
+        "grep" | "egrep" | "fgrep" | "rg" | "sed" | "awk" | "jq" => {
+            // A pattern given as `-e` or `-f` leaves no pattern slot.
+            if words[1..at]
+                .iter()
+                .any(|word| matches!(word.as_str(), "-e" | "-f" | "--regexp" | "--file"))
+            {
+                return false;
+            }
+            let mut index = 1;
+            while let Some(word) = words.get(index) {
+                if word == "--" {
+                    return index + 1 == at;
+                }
+                if !word.starts_with('-') || word == "-" {
+                    return index == at;
+                }
+                index += if VALUE_OPTIONS.contains(&word.as_str()) {
+                    2
+                } else {
+                    1
+                };
+            }
+            false
+        }
         _ => false,
     }
 }
 
+/// The parts of a word that may name a path: the word, and the value of a
+/// `--name=value` or `NAME=value` word. A word still holding an expansion
+/// (`$HOME`, `$(...)`, a backtick) is not read, since its path is unknown.
 fn path_words(word: &str) -> Vec<&str> {
     let readable = |candidate: &&str| {
         !candidate.is_empty()

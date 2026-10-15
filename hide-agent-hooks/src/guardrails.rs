@@ -645,10 +645,19 @@ const STATUS_BUDGET: Duration = Duration::from_secs(2);
 /// clean`, the one such command that removes them. It takes no lock a
 /// concurrent `git add` would meet. `None` when Git did not answer in time
 /// or at all.
+///
+/// The repository is the agent's to configure and the hook runs with the
+/// operator's rights, so Git runs no fsmonitor command, and no `GIT_*`
+/// variable the hook inherited points it at another repository or config.
 pub fn git_dirty(root: &Path, untracked: bool) -> Option<bool> {
     let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
     command
-        .args(["--no-optional-locks", "-C"])
+        .args(["-c", "core.fsmonitor=false", "--no-optional-locks", "-C"])
         .arg(root)
         .args([
             "status",
@@ -767,7 +776,14 @@ pub fn refusal_for(
         return None;
     }
     let call = call()?;
-    let cwd = call.cwd.or_else(|| std::env::current_dir().ok())?;
+    // A relative working folder is the hook's own, which the runtime started
+    // it in; read against itself it would name no project.
+    let here = std::env::current_dir().ok();
+    let cwd = match call.cwd {
+        Some(cwd) if cwd.is_relative() => here?.join(cwd),
+        Some(cwd) => cwd,
+        None => here?,
+    };
     // One `git status` per checkout and question, however many commands of
     // the call would discard changes there.
     let asked = std::cell::RefCell::new(std::collections::HashMap::new());

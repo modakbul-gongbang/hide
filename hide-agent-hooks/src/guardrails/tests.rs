@@ -524,6 +524,9 @@ fn protected_files_are_refused_to_tools_and_shell_words() {
         // A new file named with a space is a path, not prose.
         "cp a.txt 'my cert.pem'",
         "touch 'a b.key'",
+        "touch -a 'a b.key'",
+        "tee -a 'my cert.pem'",
+        "rg -e x 'my api.key'",
         "echo x >> .env.local",
         "docker run --env-file=.env image",
         "cd src && cat ../.env",
@@ -542,6 +545,10 @@ fn protected_files_are_refused_to_tools_and_shell_words() {
         "gh pr create --title 'rotate server.pem' --body x",
         "echo 'renew the server.pem'",
         "rg 'load the api.key' src",
+        "rg -A 3 'load the api.key' src",
+        "git commit --message='rotate server.pem'",
+        "git commit -am 'rotate server.pem'",
+        "gh pr create --title='renew api.key' --body='x'",
     ] {
         assert_eq!(fixture.shell(repo, command), None, "{command}");
     }
@@ -956,4 +963,29 @@ fn a_payload_cut_at_the_limit_still_names_its_file() {
         None,
         "a cut command is not decided on"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn the_status_read_runs_no_command_the_repository_configures() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    let marker = dir.path().join("ran");
+    let monitor = dir.path().join("monitor.sh");
+    std::fs::write(
+        &monitor,
+        format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&monitor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    git(
+        &repo,
+        &["config", "core.fsmonitor", monitor.to_str().unwrap()],
+    );
+    std::fs::write(repo.join("a.txt"), "x").unwrap();
+    assert_eq!(git_dirty(&repo, true), Some(true));
+    assert!(!marker.exists(), "the repository's fsmonitor ran");
 }
