@@ -35,6 +35,7 @@ test("⌘E reopens the tool the lane last showed, however it was closed, and Fil
     // The rail icon hints show their chord after the name and scope.
     await page.locator('[data-lane-tool="memory"]').hover();
     await expect(page.locator('[data-slot="tooltip-content"]')).toContainText(commandLabel("toggle_lane_memory"));
+    await screenshot(page, "lane-last-tool-rail-hint");
     await page.locator('[data-lane-tool="memory"]').click();
     await shows(page, "memory");
     await screenshot(page, "lane-last-tool-memory-hint");
@@ -80,7 +81,8 @@ test("⌥⌘1-4 open the lane on the rail's first to fourth tool and close it on
       await expect(page.locator(`[data-lane-tool="${tool}"]`)).toHaveAttribute("aria-pressed", "true");
       expect(commandLabel(id), `rail position ${index + 1}`).toMatch(String(index + 1));
     }
-    await page.keyboard.press(chord("toggle_lane_memory"));
+    // The loop ended on the last tool, so its chord closes the lane.
+    await page.keyboard.press(chord(`toggle_lane_${TOOLS[TOOLS.length - 1]!}`));
     await closed(page);
     await page.keyboard.press(chord("toggle_lane_changes"));
     await shows(page, "changes");
