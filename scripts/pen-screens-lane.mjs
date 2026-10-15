@@ -112,7 +112,9 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
   function header(id, tool, scope, {pinned, expanded}) {
     return themedXref(id, 'lane-header', 'Lane header', {width: 'fill_container'}, {
       'lane-header-tool': {content: tool},
-      'lane-header-scope': {content: ` · ${scope}`},
+      'lane-header-scope': {content: scope},
+      // The scope's icon: a folder for the Project's tools, the default branch glyph for the checkout's (PRD work-tab-pr-lens D-37).
+      ...(tool === 'Work' ? {'lane-header-scope-glyph': {icon: 'folder'}} : {}),
       ...(pinned ? {'lane-header-pin': {fill: '$--secondary'}, 'lane-header-pin/lane-pin-glyph': {fill: '$--primary', stroke: '$--primary'}} : {}),
       ...(expanded ? {'lane-header-expand': {fill: '$--secondary'}, 'lane-header-expand/ZIZFR': {icon: 'minimize-2', fill: '$--foreground'}} : {}),
     });
