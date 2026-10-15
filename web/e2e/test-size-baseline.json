@@ -48,10 +48,6 @@
       "lines": 140,
       "expect": 41
     },
-    "s8.spec.ts::a Project's Sessions: history, filters, a read-only session, failures and two windows": {
-      "lines": 244,
-      "expect": 88
-    },
     "worktree-delete.spec.ts::an open deletion dialog receives refreshed Git facts and retires Discard through an A-to-B-to-A return": {
       "lines": 136,
       "expect": 32
