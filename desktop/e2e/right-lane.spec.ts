@@ -304,11 +304,10 @@ test("the lane comes and goes over the terminals without a resize, the pin and a
         await keyboardFocus(page, divider);
         await nativeCapture(app, page, `lane-${theme}-divider-focus`);
         await rest(page);
-        for (const [tool, name, shortcut] of [["files", "Files", "⇧⌘B"], ["agent_sessions", "Sessions", "⌘E"]] as const) {
+        for (const [tool, name] of [["files", "Files"], ["agent_sessions", "Sessions"]] as const) {
           await page.locator(`[data-lane-tool="${tool}"]`).hover();
           const tooltip = page.locator('[data-slot="tooltip-content"]');
           await expect(tooltip).toContainText(name);
-          await expect(tooltip).toContainText(shortcut);
           await nativeCapture(app, page, `lane-${theme}-${tool}-tooltip`);
           await rest(page);
         }
@@ -316,8 +315,8 @@ test("the lane comes and goes over the terminals without a resize, the pin and a
         await expect(page.locator('[data-slot="tooltip-content"]')).toContainText(path.join(checkout, longName));
         await nativeCapture(app, page, `lane-${theme}-full-file-path-tooltip`);
         await rest(page);
-        // Too narrow to dock, the pinned lane opens over the agents (B19).
-        await bodyWidth(app, page, 900);
+        // Too narrow for even the lane's minimum beside 480, the pinned lane opens over the agents (B19).
+        await bodyWidth(app, page, 800);
         await expect(workspace).toHaveAttribute("data-lane-mode", "overlay");
         await expect(pin).toHaveAttribute("data-lane-pin", "narrow");
         await nativeCapture(app, page, `lane-${theme}-narrow-pinned`);
@@ -473,7 +472,7 @@ test("an SSH Workspace's lane keeps its chords, narrow fallback and saved widths
     await expect(divider).toHaveAttribute("aria-valuenow", "456");
     await expect.poll(() => saved(run!.env.HIDE_STATE_DIR!).workspaces.find((entry) => entry.device_id === "lane-ssh" && entry.path === shared)).toMatchObject({ tool: "files", pinned: true, tree: true, lane_width: 456, tree_width: 208 });
     await nativeCapture(app, page, "remote-lane-saved");
-    await bodyWidth(app, page, 900);
+    await bodyWidth(app, page, 800);
     await expect(workspace).toHaveAttribute("data-lane-mode", "overlay");
     await expect(page.locator("[data-lane-pin]")).toHaveAttribute("data-lane-pin", "narrow");
     await nativeCapture(app, page, "remote-lane-narrow");

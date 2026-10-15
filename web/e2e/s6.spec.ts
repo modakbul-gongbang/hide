@@ -189,7 +189,7 @@ test("Main, Overview and a Workspace with its lane, tools and delegated child", 
     await page.keyboard.press("Escape");
     await screenshot(page, "s6-lane-docked");
 
-    // ⌘⇧B closes the lane without closing a view; the Files icon counts the
+    // ⌘E closes the lane without closing a view; the Files icon counts the
     // views it keeps, and the keyboard that was in the lane goes back to the
     // focused pane (B2, B7, B17). Opening it brings the same tabs, docked.
     await settled();

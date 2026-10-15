@@ -101,9 +101,10 @@ export type LaneInput = {
 /**
  * The body as it is drawn. The lane's width is the same pinned or not (B6);
  * a tree beside a document adds its own width, so the document keeps its
- * width (B10). A pinned lane docks only where Agent Views keeps its minimum
- * beside it, and otherwise is drawn over it and stays (D-07), so a window
- * that narrows and widens again moves between the two by width alone.
+ * width (B10). A pinned lane docks wherever its minimums fit beside Agent
+ * Views' own, giving up its width first, and only a body too narrow for even
+ * those draws it over them, where it stays (D-07); a window that narrows and
+ * widens again moves between the two by width alone.
  */
 export function laneFrame(input: LaneInput): LaneFrame {
   const { tool, body, sizes } = input;
@@ -113,11 +114,16 @@ export function laneFrame(input: LaneInput): LaneFrame {
   const treeWant = Math.max(sizes.treeMin, input.treeWidth ?? sizes.treeIdeal);
   const want = documentWant + (treeBeside ? treeWant + sizes.divider : 0);
   const visible = tool !== null && (input.pinned || input.shown || input.expanded);
-  const docks = input.pinned && body - sizes.divider - want >= sizes.agentMin;
+  // A pinned lane docks wherever its minimums and Agent Views' fit side by
+  // side, giving up its own width first; only a body too narrow for even
+  // those draws it over the agents (D-07).
+  const least = sizes.laneMin + (treeBeside ? sizes.treeMin + sizes.divider : 0);
+  const docks = input.pinned && body - sizes.divider - least >= sizes.agentMin;
   const mode: LaneMode = tool === null ? "closed" : !visible ? "hidden" : input.expanded ? "expanded" : docks ? "docked" : "overlay";
   if (body <= 0) return { mode, agents: 0, width: 0, document: 0, tree: null, treeOnly, narrowPin: false };
-  const agents = docks ? body - sizes.divider - want : body;
-  const width = mode === "expanded" ? body : Math.min(want, body);
+  const docked = docks ? Math.min(want, body - sizes.divider - sizes.agentMin) : 0;
+  const agents = docks ? body - sizes.divider - docked : body;
+  const width = mode === "expanded" ? body : docks ? docked : Math.min(want, body);
   let tree: number | null = null;
   if (treeBeside) {
     // Expanded, the document takes the body the tree leaves; otherwise a

@@ -65,7 +65,7 @@ A lane put away keeps its documents, tabs, scroll, previews and searches, and it
 Another Workspace coming in front, from this window or another, starts with its unpinned lane put away unless an open or a reveal brought it there.
 Pinned (a filled pin; an empty one says `Pin · keep it beside the agents`), the lane docks beside Agent Views, which narrow by its width once, and it stays through a terminal click; unpinned (`Unpin · back over the agents`), Agent Views take their width back and the lane is over them again.
 The pin is the lane's, whatever tool it shows, and a pinned lane closed and opened again comes back docked.
-A window that would leave Agent Views less than 480px beside a pinned lane opens the lane over them as if unpinned, though it stays through a terminal click; the pin stays filled and its tooltip says `Pin · too narrow, drawn over`, and widening the window docks the lane again.
+A pinned lane docks in any window where its minimums (360px of documents, 180px of tree) fit beside 480px of Agent Views, giving up its own width first and taking its stored width back as the window widens; a window too narrow for even that opens the lane over them as if unpinned, though it stays through a terminal click, with the pin still filled and its tooltip saying `Pin · too narrow, drawn over`.
 Expand gives the lane the whole body between the sidebar and the rail, with the file tree as a column beside the documents; Expand again or Escape returns to the pin, widths and terminal layout as they were, no terminal resizes meanwhile, and Agent Views under an expanded lane take no pointer or keyboard.
 Close (the header's ×, the pressed rail icon, or the tool's chord) closes the lane and turns the file tree off; it closes no view, and the Files badge counts what stays open.
 
@@ -360,7 +360,7 @@ In a plain browser tab the view keeps its address on the toolbar row, level with
 ### Narrow windows
 
 Whether a pinned lane docks depends on the Workspace body's width, not the window's, so hiding the sidebar with ⌘B can dock it again.
-A pinned lane docks while Agent Views keep their 480px minimum beside it and its divider; in a narrower body it opens over Agent Views with its pin still filled and stays through a terminal click, and widening the body docks it again.
+A pinned lane docks while its minimums and Agent Views' 480px fit side by side with its divider, the lane narrowing first; in a body too narrow for even those it opens over Agent Views with its pin still filled and stays through a terminal click, and widening the body docks it again.
 The lane opens at any width: in a body narrower than the lane it takes the whole body, giving up document width down to its 360px minimum first and tree width after.
 When the View areas cannot all have their minimum, only the active area shows, with an area switcher to the others.
 Widening the window brings back what the Workspace stores, the lane's tool, pin, tree, widths and the area sizes, because none of these narrow arrangements is stored, and another Workspace's lane never changes while one is narrow.
