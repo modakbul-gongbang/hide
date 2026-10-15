@@ -17,6 +17,10 @@ import { workspaceViewOf } from "./workspace";
 import { commandLabel } from "./shortcutLabels";
 import { TreeButton } from "./TreeButton";
 import { useInterfaceTranslation } from "./i18n/client";
+import { MessageSquarePlusIcon } from "lucide-react";
+import { commentsOn, COMMENTS_PER_VIEW, useFeedbackStore, noteBrowserComment } from "./viewFeedback";
+import { useViewFeedback } from "./ViewComments";
+import { keySystem } from "./host";
 
 // A browser display (issue 155): its toolbar and the place its page shows.
 // In the desktop app the page is a native view the host lays over the slot
@@ -110,6 +114,7 @@ function HostedPage({ display, workspace, actions }: { display: ViewDisplaySnaps
           </Hint>
         )}
         <AddressField address={address} onSubmit={(url) => actions.navigateBrowser(display.id, url)} />
+        <BrowserCommentButton display={display} workspace={workspace} address={address} actions={actions} />
       </div>
       <div ref={slot} className="relative min-h-0 min-w-0 flex-1" data-browser-slot={display.id}>
         {page?.failure ? (
@@ -234,4 +239,94 @@ export function BrowserHost({ actions }: { actions: Actions }) {
     // `record` reads everything through the stores and refs.
   }, []);
   return null;
+}
+
+/**
+ * Comment on a page (PRD view-opener-feedback B9-B11, B32): while it is on,
+ * hided holds the page and draws the overlay in it, so a click or a drag
+ * there makes a comment rather than reaching the page. The pins are the
+ * page's own comments, those left at the address it shows now; they are sent
+ * again whenever the core's comments change. Comment again, or Esc in the
+ * page, ends it; so does leaving the View.
+ */
+function BrowserCommentButton({ display, workspace, address, actions }: { display: ViewDisplaySnapshot; workspace: string; address: string; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const mode = useFeedbackStore((s) => s.browser[display.id] ?? null);
+  const on = mode?.on === true;
+  const feedback = useViewFeedback();
+  const areaId = useShellStore((s) => {
+    const layout = workspaceViewOf(s.rest)?.layout;
+    return layout ? (locateDisplay(layout.root, display.id)?.area.id ?? null) : null;
+  });
+  const view = parseWorkspaceKey(workspace);
+  const comments = commentsOn(feedback, display.id);
+  const pins = comments
+    .filter((comment) => comment.url === address && (comment.anchor.kind === "element" || comment.anchor.kind === "area"))
+    .map((comment) => ({
+      id: comment.id,
+      number: comment.number,
+      rect: comment.anchor.kind === "element" || comment.anchor.kind === "area" ? comment.anchor.rect : null,
+      note: comment.note,
+      late: comment.not_delivered,
+      area: comment.anchor.kind === "area",
+    }));
+  const full = comments.length >= COMMENTS_PER_VIEW;
+  const strings = {
+    hint: t("feedback.hint.browser"),
+    placeholder: t("feedback.note.placeholder"),
+    shortcut: t("feedback.note.shortcut", { chord: keySystem() === "mac" ? "⌘↩" : "Ctrl+Enter" }),
+    add: t("feedback.note.add"),
+    cancel: t("common.cancel"),
+    save: t("feedback.note.save"),
+    remove: t("feedback.note.delete"),
+    full: t("feedback.note.full", { count: COMMENTS_PER_VIEW }),
+  };
+  const request = JSON.stringify({ pins, full, strings });
+  const send = (turnOn: boolean) => {
+    if (!view || !areaId) return;
+    actions.browserComment({ workspace: view, area_id: areaId, display_id: display.id, on: turnOn, ...(turnOn ? JSON.parse(request) : {}) });
+  };
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  // The page's pins follow the core's comments while Comment is on.
+  useEffect(() => {
+    if (on) sendRef.current(true);
+  }, [on, request]);
+  // Leaving the View ends its Comment.
+  useEffect(
+    () => () => {
+      if (useFeedbackStore.getState().browser[display.id]?.on) {
+        sendRef.current(false);
+        noteBrowserComment(display.id, { on: false, reason: null });
+      }
+    },
+    [display.id],
+  );
+  const reason = !on && mode?.reason ? mode.reason : null;
+  const words = reason
+    ? reason === "display_busy" || reason === "comment_limit" || reason === "comment_unavailable_here"
+      ? t(`feedback.unavailable.${reason}`)
+      : t("feedback.unavailable.other", { reason })
+    : on
+      ? t("feedback.commentStop")
+      : t("feedback.commentOn");
+  return (
+    <Hint label={words} shortcut={on ? "Esc" : undefined}>
+      <Button
+        variant={on ? "default" : "ghost"}
+        size="sm"
+        className={on ? "" : reason ? "text-warning" : "text-muted-foreground"}
+        aria-pressed={on}
+        disabled={!areaId || !view}
+        data-browser-comment={on ? "on" : "off"}
+        onClick={() => {
+          noteBrowserComment(display.id, { on: !on, reason: null });
+          send(!on);
+        }}
+      >
+        <MessageSquarePlusIcon />
+        {t("feedback.comment")}
+      </Button>
+    </Hint>
+  );
 }

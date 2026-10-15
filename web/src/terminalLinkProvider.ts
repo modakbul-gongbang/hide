@@ -29,8 +29,9 @@ export type FoundPath = NonNullable<ProbedPath>;
 
 /** Where a clicked link goes; `actions.ts` implements it. */
 export type TerminalLinkActions = {
-  openLink(url: string, external: boolean): void;
-  openTerminalPath(found: FoundPath, line: number | null, column: number | null, external: boolean, mode?: "auto" | "source"): void;
+  /** `pane` is the terminal the link was clicked in: its agent becomes the View's opener (PRD view-opener-feedback D-02). */
+  openLink(url: string, external: boolean, pane?: string): void;
+  openTerminalPath(found: FoundPath, line: number | null, column: number | null, external: boolean, mode?: "auto" | "source", pane?: string): void;
 };
 
 /** Paths whose answer is kept; the oldest goes first. */
@@ -219,13 +220,13 @@ export async function resolveGroups(
 /** Per-terminal link state: whether the pointer is over a link, so a click on one is not also the program's. */
 export type LinkState = { hovered: boolean; link?: { range: IBufferRange; resolved: TerminalContextLink } | null };
 
-function open(actions: TerminalLinkActions, resolved: TerminalContextLink, event: MouseEvent, selecting: boolean): void {
+function open(actions: TerminalLinkActions, resolved: TerminalContextLink, event: MouseEvent, selecting: boolean, paneId: string): void {
   // A press that dragged across the link selected its text; the release is not a click.
   if (selecting) return;
   const external = holdsCommandKey(event);
   const { target, found } = resolved;
-  if (target.kind === "url") actions.openLink(target.url, external);
-  else if (found) actions.openTerminalPath(found, target.line, target.column, external);
+  if (target.kind === "url") actions.openLink(target.url, external, paneId);
+  else if (found) actions.openTerminalPath(found, target.line, target.column, external, "auto", paneId);
 }
 
 function rangeOf(candidate: LinkCandidate, top: number): IBufferRange {
@@ -285,7 +286,7 @@ export function registerTerminalLinks(term: Terminal, paneId: string, state: Lin
         const links: ILink[] = chosen.map(({ candidate, resolved, range }) => ({
           range,
           text: candidate.text,
-          activate: (event) => open(actions(), resolved, event, term.hasSelection()),
+          activate: (event) => open(actions(), resolved, event, term.hasSelection(), paneId),
           hover: () => {
             state.hovered = true;
             state.link = { range, resolved };
@@ -319,7 +320,7 @@ export function osc8Handler(paneId: string, state: LinkState, actions: () => Ter
         return;
       }
       if (target.kind === "url") {
-        open(actions(), { target, found: null }, event, false);
+        open(actions(), { target, found: null }, event, false, paneId);
         return;
       }
       const bridge = hostBridge();
@@ -333,7 +334,7 @@ export function osc8Handler(paneId: string, state: LinkState, actions: () => Ter
         // An unanswered path was logged by the check itself.
         if (!answers.has(target.path)) return;
         const found = answers.get(target.path) ?? null;
-        if (found) open(actions(), { target, found }, event, false);
+        if (found) open(actions(), { target, found }, event, false, paneId);
         else diagnostic("terminal link: the linked file does not exist");
       });
     },

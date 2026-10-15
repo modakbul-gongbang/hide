@@ -31,7 +31,10 @@ import {
   lineNumbers,
   type ViewUpdate,
 } from "@codemirror/view";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { viewComments } from "./comments";
+import { fileModel, useLineComments } from "./useLineComments";
+import type { PatchComments } from "./PatchView";
 import { useInterfaceTranslation } from "../i18n/client";
 import type { EditorDocumentSnapshot } from "../snapshot";
 import { splitFrontmatter } from "./frontmatter";
@@ -101,6 +104,7 @@ export function CodeMirrorEditor({
   held = false,
   onDraft,
   onSave,
+  comments,
 }: {
   tabId: string;
   /** The display this view draws and its document, scoped to its Workspace: the selection and scroll are kept under it. */
@@ -117,6 +121,8 @@ export function CodeMirrorEditor({
   onDraft: (contents: string) => void;
   /** Saves the document: the editor's own Mod-s (docs/UI_BEHAVIOR.md, Keyboard shortcuts per system). */
   onSave: () => void;
+  /** The View it draws, which takes the operator's comments (PRD view-opener-feedback B12). */
+  comments: PatchComments;
 }) {
   const { t } = useInterfaceTranslation();
   const phrasesRef = useRef(editorPhrases(t));
@@ -146,6 +152,11 @@ export function CodeMirrorEditor({
   // The pane belongs to Live mode's markdown only; source mode and every
   // other kind keep one buffer (D-11).
   const split = document.document_kind === "markdown" && live && splitFrontmatter(contents) !== null;
+  // The body under a frontmatter pane starts after its lines; a comment is numbered in the whole file.
+  const offset = split ? (splitFrontmatter(contents)?.front.split("\n").length ?? 1) - 1 : 0;
+  const model = useMemo(() => fileModel(contents, offset), [contents, offset]);
+  const [shownBody, setShownBody] = useState<EditorView | null>(null);
+  const commentHost = useLineComments({ view: shownBody, ...comments, model, rows: model.lines().length - offset, saved: contents });
 
   const combined = () =>
     (frontView.current?.state.doc.toString() ?? "") + (bodyView.current?.state.doc.toString() ?? "");
@@ -214,6 +225,7 @@ export function CodeMirrorEditor({
         doc: parts ? parts.body : initial,
         extensions: [
           ...shared,
+          viewComments(commentHost),
           lineNumbers(),
           highlightActiveLineGutter(),
           search({ top: true }),
@@ -227,6 +239,7 @@ export function CodeMirrorEditor({
       parent: bodyHost.current,
     });
     bodyView.current = bodyEditor;
+    setShownBody(bodyEditor);
     let frontEditor: EditorView | null = null;
     if (parts && frontHost.current) {
       frontEditor = new EditorView({
@@ -293,6 +306,7 @@ export function CodeMirrorEditor({
       if (drawn || !place) rememberPlace(placeKey, { anchor: selection.anchor, head: selection.head, top: topLine(bodyEditor) });
       bodyView.current = null;
       frontView.current = null;
+      setShownBody(null);
       bodyEditor.destroy();
       frontEditor?.destroy();
     };

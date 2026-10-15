@@ -1,7 +1,12 @@
 import { EditorState } from "@codemirror/state";
 import { Decoration, EditorView, gutter, GutterMarker } from "@codemirror/view";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { Actions } from "../actions";
+import type { ViewDisplaySnapshot } from "../snapshot";
+import type { ViewWorkspace } from "../viewLayout";
+import { viewComments } from "./comments";
 import { patchLines } from "./patch";
+import { diffModel, useLineComments } from "./useLineComments";
 import { baseTheme, scaleTheme } from "./theme";
 
 class NumberMarker extends GutterMarker {
@@ -32,11 +37,17 @@ const unwrappedTheme = EditorView.theme({
   ".cm-line": { width: "max-content", minWidth: "100%" },
 });
 
-export function PatchView({ text, wrap, scale }: { text: string; wrap: boolean; scale: number }) {
+/** The View a diff shows, which takes the operator's comments (PRD view-opener-feedback B12). */
+export type PatchComments = { display: ViewDisplaySnapshot; workspace: ViewWorkspace; actions: Actions };
+
+export function PatchView({ text, wrap, scale, comments }: { text: string; wrap: boolean; scale: number; comments: PatchComments }) {
   const host = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState<EditorView | null>(null);
+  const rows = useMemo(() => patchLines(text), [text]);
+  const model = useMemo(() => diffModel(rows), [rows]);
+  const commentHost = useLineComments({ view, ...comments, model, rows: rows.length, saved: text });
   useEffect(() => {
     if (!host.current || !text) return;
-    const rows = patchLines(text);
     const doc = text.endsWith("\n") ? text.slice(0, -1) : text;
     let from = 0;
     const decorations = Decoration.set(rows.flatMap((row) => {
@@ -59,6 +70,7 @@ export function PatchView({ text, wrap, scale }: { text: string; wrap: boolean; 
         // diff answers ⌘W, copy and scrolling rather than leaving them to
         // the row it was opened from.
         EditorView.contentAttributes.of({ tabindex: "0" }),
+        viewComments(commentHost),
         gutter({ class: "cm-patch-old", lineMarker: (_view, line) => {
           const number = rows[_view.state.doc.lineAt(line.from).number - 1]?.oldLine;
           return number === null || number === undefined ? null : new NumberMarker(number);
@@ -70,8 +82,12 @@ export function PatchView({ text, wrap, scale }: { text: string; wrap: boolean; 
         EditorView.decorations.of(decorations),
       ],
     });
-    const view = new EditorView({ state, parent: host.current });
-    return () => view.destroy();
-  }, [text, wrap, scale]);
+    const editor = new EditorView({ state, parent: host.current });
+    setView(editor);
+    return () => {
+      setView(null);
+      editor.destroy();
+    };
+  }, [text, wrap, scale, rows, commentHost]);
   return <div ref={host} className="min-h-0 min-w-0 flex-1" data-patch-view="true" />;
 }

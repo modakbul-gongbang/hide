@@ -9,6 +9,7 @@ import { StatusMark } from "./components/status-mark";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { PaneForkMark, PaneHeaderBand, PanePrChip } from "./PaneHeaderBand";
+import { PaneViews } from "./ViewComments";
 import { PaneConnectionChip } from "./PaneConnection";
 import { AncestorPath, usePaneMenu, type TerminalMenuContext } from "./PaneRelations";
 import { chordLabel, commandLabel } from "./shortcutLabels";
@@ -307,6 +308,7 @@ export const PaneView = memo(function PaneView({
         </Hint>
         {agentKind ? <PaneForkMark pane={pane} actions={actions} /> : null}
         {agentKind ? <PanePrChip paneId={paneId} actions={actions} /> : null}
+        {agentKind ? <PaneViews paneId={paneId} name={title} actions={actions} /> : null}
         <span className="flex-1" />
         <PaneConnectionChip pane={pane} actions={actions} local={local} />
         {zoomed ? (

@@ -17,6 +17,7 @@ import { panesEnglish } from "./resources/panes";
 import { sessionsEnglish } from "./resources/sessions";
 import { searchEnglish } from "./resources/search";
 import { documentsEnglish } from "./resources/documents";
+import { feedbackEnglish } from "./resources/feedback";
 import { editorSearchEnglish } from "./resources/editorSearch";
 import { shellEnglish } from "./resources/shell";
 import { issuesEnglish } from "./resources/issues";
@@ -52,6 +53,7 @@ describe("interface resources", () => {
     shellEnglish,
     editorSearchEnglish,
       documentsEnglish,
+      feedbackEnglish,
       searchEnglish,
       panesEnglish,
       explorerEnglish,

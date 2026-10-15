@@ -8,6 +8,7 @@ import { isOperatorFocus, numbered } from "./operatorFocus";
 import { noteArrival, probeEnabled } from "./probe";
 import { useShellStore, type TerminalChunk } from "./store";
 import { hostKind } from "./host";
+import { noteBrowserComment } from "./viewFeedback";
 
 export type DispatchFn = (event: {
   schema_version: number;
@@ -190,6 +191,11 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
       }
       if (frame.type === "file_bytes_error") {
         receiveBytesError(frame.payload as unknown as { request_id: string; reason: string });
+        return;
+      }
+      if (frame.type === "browser_comment") {
+        const answer = frame.payload as unknown as { display_id: string; on: boolean; reason: string | null };
+        noteBrowserComment(answer.display_id, { on: answer.on, reason: answer.reason });
         return;
       }
       if (frame.type === "attachment_refused") {

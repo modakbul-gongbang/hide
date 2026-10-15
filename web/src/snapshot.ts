@@ -1022,6 +1022,99 @@ export type ViewDisplaySnapshot = {
   title?: string | null;
   /** A browser display's load stamp: it moves when the core asks the page to load `url` (an open or a navigate). */
   load?: number | null;
+  /** The agent that last opened it (PRD view-opener-feedback D-03); absent for a View the operator opened. */
+  opener?: ViewOpener;
+  /** Its unsent comments, and of those the ones whose letter expired (B14, B29); absent for none. */
+  comments?: number;
+  not_delivered?: number;
+};
+
+/** An agent that opened a View (`ViewOpenerSnapshot`). */
+export type ViewOpener = {
+  name: string;
+  /** The agent's Herdr kind, for its logo and product name. */
+  provider: string;
+  device_id: string;
+  /** The pane the agent is in now; absent while it is closed (B6). */
+  pane_id?: string | null;
+  /** Whether `Reopen and send` can start its session again (D-10). */
+  resumable: boolean;
+};
+
+export type ViewRect = { x: number; y: number; width: number; height: number };
+
+/** Where a comment points (`view_feedback::Anchor`). A region is in fractions of its image or PDF page. */
+export type ViewCommentAnchor =
+  | { kind: "lines"; start: number; end: number; lines: string[]; side?: "old" | "new" }
+  | { kind: "element"; selector: string; text: string; rect: ViewRect; source?: string }
+  | { kind: "area"; rect: ViewRect }
+  | { kind: "region"; page?: number; rect: ViewRect };
+
+export type ViewComment = {
+  id: string;
+  /** The displays of the layout it shows on. */
+  display_ids: string[];
+  kind: "file" | "diff" | "browser";
+  path: string;
+  url?: string;
+  committed?: boolean;
+  anchor: ViewCommentAnchor;
+  note: string;
+  shot: boolean;
+  changed: boolean;
+  not_delivered: boolean;
+  revision?: string;
+  /** The group it is sent with, `""` for a View no agent opened. */
+  group: string;
+  /** Its place in its group's letter, from 1 (B11). */
+  number: number;
+};
+
+/** Everyone with open comments in the checkout (B30). */
+export type ViewFeedbackGroup = {
+  key: string;
+  recipient?: ViewOpener;
+  comments: number;
+  views: number;
+  not_delivered: number;
+  display_ids: string[];
+};
+
+/** A View an agent opened that the layout shows, once per thing shown (B8). */
+export type OpenedView = {
+  pane_id: string;
+  view_id: string;
+  kind: "file" | "diff" | "browser";
+  label: string;
+  path: string;
+  url?: string;
+  comments: number;
+};
+
+/** Where a Send stands (`contracts/snapshot-wire-enums.json`: `view_feedback_send_state`). */
+export type ViewFeedbackSendState = "sending" | "sent" | "waiting" | "reopening" | "failed";
+/** Why a Send did not go (`contracts/snapshot-wire-enums.json`: `view_feedback_send_reason`). */
+export type ViewFeedbackSendReason = "attachments_full" | "letter_unsaved" | "letters_full" | "shot_copy" | "reopen_failed" | "closed";
+
+export type ViewFeedbackSend = {
+  request_id: string;
+  state: ViewFeedbackSendState;
+  count: number;
+  to: string;
+  pane_id?: string;
+  device?: string;
+  reason?: ViewFeedbackSendReason;
+  at_unix_ms: number;
+};
+
+/** The operator's comments on the front Workspace's Views (`ViewFeedbackSnapshot`). */
+export type ViewFeedback = {
+  comments: ViewComment[];
+  groups: ViewFeedbackGroup[];
+  opened: OpenedView[];
+  send?: ViewFeedbackSend;
+  /** The comment the last delete removed, which Undo brings back (B43). */
+  deleted?: string;
 };
 
 export type ViewAreaSnapshot = import("./areaLayout").Area<ViewDisplaySnapshot>;
