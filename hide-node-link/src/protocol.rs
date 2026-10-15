@@ -118,7 +118,11 @@ use crate::error::HostError;
 /// Older peers cannot decode the hook answer and are refused at Hello.
 /// 32: link reads carry bounded raw requests and tool-output issue sightings.
 /// Older helpers cannot supply a session work record and are upgraded at Hello.
-pub const PROTOCOL_VERSION: u32 = 32;
+/// 33: `session_work_turn` answers the one turn a backlog item came from and
+/// replaces `session_work_context`, whose issue templates fed the removed AI
+/// issue draft, and a disk row carries its volume's size. A helper on 32
+/// does not know the new call and is upgraded.
+pub const PROTOCOL_VERSION: u32 = 33;
 
 /// How a pane's shell is started so that it marks its first prompt
 /// ([`Call::ShellIntegration`]): the command the pane runs, the shell and
@@ -514,11 +518,10 @@ pub enum Call {
     LabelTranscript {
         request: hide_session::label_transcript::LabelTranscriptRequest,
     },
-    /// The one original turn and bounded checkout issue templates used by
-    /// the operator's editable issue preview. No other turn is returned.
-    SessionWorkContext {
+    /// The one original turn a backlog item came from, for its panel's
+    /// origin and the Start prompt. No other turn is returned.
+    SessionWorkTurn {
         request: hide_session::label_transcript::WorkTurnRequest,
-        checkout_path: String,
     },
     /// Metadata-only activity using the same native ownership proof as labels.
     SessionActivity {
@@ -789,7 +792,7 @@ impl Call {
             | Self::ListeningPorts
             | Self::VolumeFree { .. }
             | Self::LabelTranscript { .. }
-            | Self::SessionWorkContext { .. }
+            | Self::SessionWorkTurn { .. }
             | Self::SessionActivity { .. }
             | Self::LinkFiles { .. }
             | Self::LinkRead { .. }

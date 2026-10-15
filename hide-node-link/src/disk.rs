@@ -104,5 +104,8 @@ pub struct DiskUsage {
     pub unavailable_code: Option<String>,
     pub layers: Option<DiskLayers>,
     pub volume_free_bytes: Option<u64>,
+    /// The size of that volume, for the Projects tab's `여유 X / 전체 Y`.
+    #[serde(default)]
+    pub volume_total_bytes: Option<u64>,
     pub folders: Vec<LayerFolder>,
 }

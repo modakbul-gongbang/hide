@@ -28,6 +28,7 @@ fn issue_runtime() -> Runtime {
     let mut workspace = workspace("w", "Repo", "/repo", vec![checkout]);
     workspace.is_git = true;
     workspace.home_issues = ProjectIssuesSnapshot {
+        public: None,
         repository: Some("acme/project".into()),
         issues: (1..=4).map(issue).collect(),
         overflow: false,
@@ -307,6 +308,7 @@ fn a_pass_that_cannot_read_dependencies_keeps_the_blockers_read_before() {
             projects: vec![GithubProjectSnapshot {
                 viewer: None,
                 issues: ProjectIssuesSnapshot {
+                    public: None,
                     repository: Some("acme/project".into()),
                     issues: vec![issue(1), blocked],
                     overflow: false,

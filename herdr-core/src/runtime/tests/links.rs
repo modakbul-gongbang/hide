@@ -446,6 +446,7 @@ fn links_runtime(pull_requests: Vec<PullRequestSnapshot>, read: bool) -> Runtime
             viewer: None,
             root_path: "/repo".into(),
             issues: ProjectIssuesSnapshot {
+                public: None,
                 repository: Some("Acme/Project".into()),
                 issues: Vec::new(),
                 overflow: false,

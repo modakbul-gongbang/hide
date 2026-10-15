@@ -13,6 +13,8 @@ pub const CONTINUED_TASK_LIMIT: usize = 2;
 pub const LEDGER_QUEUE_LIMIT: usize = 512;
 pub const SEARCH_LIMIT: usize = 50;
 pub const LEDGER_RPC_LIMIT: usize = 16;
+/// Typed backlog attempts kept: the newest complete ones are dropped past it.
+pub const BACKLOG_INTENT_LIMIT: usize = 512;
 /// Descendant edges below a root; traversal also includes the root itself.
 pub const LEDGER_DEPTH_LIMIT: usize = 32;
 
@@ -34,29 +36,85 @@ pub struct IssueAttempt {
     pub url: Option<String>,
 }
 
+/// A backlog item typed into the backlog's input or the quick add (PRD
+/// overview-device-tasks D-34): the shell's intent key names one item across
+/// every retry and restart, so a retry never makes a second issue.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BacklogIntent {
+    pub intent: String,
+    pub device: String,
+    pub project: String,
+    pub workspace_id: String,
+}
+
+/// Whose GitHub create an attempt is: a missed-work line's, or a typed item's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AttemptKey {
+    Missed(MissedSource),
+    Intent(BacklogIntent),
+}
+
+/// A typed item whose create was not confirmed, kept across restarts so its
+/// retry still converges on one issue.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingBacklog {
+    pub intent: BacklogIntent,
+    pub title: String,
+    pub started_at_unix_ms: u64,
+}
+
+/// Where a backlog item came from, when a missed-work line made it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BacklogOrigin {
+    pub session: SessionIdentity,
+    pub missed: MissedWork,
+}
+
 /// Short store operations asked by a worker, never waited on by Runtime.
 #[derive(Clone, Debug)]
 pub enum LedgerCall {
     Record(SessionIdentity),
     ReserveIssue {
-        source: MissedSource,
+        key: AttemptKey,
         repository: String,
         title: String,
         body: String,
         at_unix_ms: u64,
     },
     StartIssue {
-        source: MissedSource,
+        key: AttemptKey,
         title: String,
         body: String,
         at_unix_ms: u64,
     },
+    /// The issue exists: a missed line turns `backlog` with the item's key,
+    /// a typed item's attempt completes.
     FinishIssue {
-        source: MissedSource,
+        key: AttemptKey,
         number: u64,
         url: String,
     },
-    UnknownIssue(MissedSource),
+    UnknownIssue(AttemptKey),
+    /// A missed line became a memo (`backlog_key` is the memo's task key).
+    BacklogLocal {
+        source: MissedSource,
+        backlog_key: String,
+    },
+    /// The item was undone: the missed line it came from is open again and
+    /// its attempt is forgotten, so the next `백로그로` makes a new item.
+    ReleaseBacklog {
+        backlog_key: String,
+    },
+    /// The operator cleared a typed item that failed.
+    DismissBacklog {
+        intent: String,
+    },
+    /// Typed items whose create is not confirmed.
+    PendingBacklog,
+    /// The missed line a backlog item came from, if one did.
+    BacklogOrigin {
+        backlog_key: String,
+    },
 }
 
 #[derive(Debug)]
@@ -64,6 +122,8 @@ pub enum LedgerAnswer {
     Record(Box<SessionRecord>),
     Attempt(IssueAttempt),
     Saved,
+    Pending(Vec<PendingBacklog>),
+    Origin(Option<Box<BacklogOrigin>>),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -127,8 +187,12 @@ pub enum MissedKind {
 pub enum MissedStatus {
     Open,
     Resolved,
+    /// A GitHub issue Hide made from it before the backlog existed, or one
+    /// the session's own turn made and reported.
     Issue,
     Dismissed,
+    /// `백로그로` made an item of it: `backlog_key` names the item.
+    Backlog,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,6 +207,9 @@ pub struct MissedWork {
     pub turn_witness: Option<String>,
     pub issue_repository: Option<String>,
     pub issue_number: Option<u64>,
+    /// The backlog item `백로그로` made, as a task key
+    /// (`github:owner/repo#7`, `local:/path#3`).
+    pub backlog_key: Option<String>,
     pub creating: bool,
 }
 

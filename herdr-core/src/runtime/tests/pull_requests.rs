@@ -71,6 +71,7 @@ fn pr_runtime(pull_requests: Vec<PullRequestSnapshot>) -> Runtime {
             viewer: None,
             root_path: "/repo".into(),
             issues: ProjectIssuesSnapshot {
+                public: None,
                 repository: Some("acme/project".into()),
                 issues: (1..=4).map(issue).collect(),
                 overflow: false,

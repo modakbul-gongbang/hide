@@ -92,7 +92,6 @@ pub struct Core {
 
 impl Drop for Core {
     fn drop(&mut self) {
-        lock_recover(&self.runtime).cancel_session_issue_draft();
         // First: the Factory engine sends through delivery and ends the
         // verify runs and judgments it started (rule 14).
         if let Some(mut factory) = self.factory.take() {

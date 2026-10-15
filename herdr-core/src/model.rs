@@ -1334,17 +1334,22 @@ pub struct ProjectAsleepSnapshot {
 /// A Git project's allocated disk: every worktree and the shared Git
 /// directory, counted once, as the catalog sums them (`disk_total_bytes`).
 /// `total_bytes` is known only once every part is measured; `measuring`
-/// says the project is the one named for measuring (`card_measure_disk`
-/// with its `workspace_id`) and its size has not come back yet.
+/// says the Projects tab's sweep is measuring it now and `queued` that it
+/// will (PRD overview-device-tasks B53), both drawn over the last size.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ProjectDiskSnapshot {
     pub total_bytes: Option<u64>,
     pub unavailable_reason: Option<String>,
     pub measuring: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub queued: bool,
     /// Free space of the project's volume when it was measured; known
     /// whether or not every checkout could be measured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub free_bytes: Option<u64>,
+    /// The size of that volume.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume_total_bytes: Option<u64>,
     /// What the checkouts that could be measured add up to. `total_bytes`
     /// stays absent while any checkout is unavailable; this is the subtotal
     /// the entrance may show beside it.
@@ -3482,8 +3487,6 @@ impl AgentStartChoice {
 /// by id and ignores one it did not ask for.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct IssueWorkSnapshot {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub draft: Option<SessionIssueDraftSnapshot>,
     pub create: Option<IssueCreateSnapshot>,
     pub detail: Option<IssueDetailSnapshot>,
     pub name: Option<WorktreeNameSnapshot>,
@@ -3491,18 +3494,95 @@ pub struct IssueWorkSnapshot {
     /// The latest `github_search`; absent from the wire until the first one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search: Option<GithubSearchSnapshot>,
+    /// Backlog items on their way, the ones that failed, and the newest made
+    /// (PRD overview-device-tasks B29, B30, B40, B41, B44, B45).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub backlog: Vec<BacklogItemSnapshot>,
+    /// The latest `되돌리기` (B32).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub undo: Option<BacklogUndoSnapshot>,
+    /// Where the item the backlog panel or the Start dialog shows came from
+    /// (B31, B33).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<BacklogOriginSnapshot>,
 }
 
-/// The editable preview of one missed item. No external write precedes Create.
+/// One backlog item made from the backlog's input, the quick add or a
+/// missed line, named by the shell's intent key.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct SessionIssueDraftSnapshot {
-    pub source: crate::links::ledger::MissedSource,
-    pub phase: String,
-    pub workspace_id: Option<String>,
-    pub repository: Option<String>,
+pub struct BacklogItemSnapshot {
+    pub intent: String,
+    pub workspace_id: String,
     pub title: String,
-    pub body: String,
-    pub message: Option<String>,
+    pub phase: BacklogPhase,
+    /// The item's task key once it exists.
+    pub task_key: Option<String>,
+    /// Why it was not made, on `failed`.
+    pub failure: Option<BacklogFailure>,
+    /// The missed line it is made from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub missed: Option<crate::links::ledger::MissedSource>,
+    pub at_unix_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BacklogPhase {
+    Waiting,
+    Creating,
+    Created,
+    Failed,
+}
+
+/// The reason line a failed item shows: the four GitHub categories, a queue
+/// past its bound, an answer Hide could not confirm, and a store refusal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BacklogFailure {
+    NotInstalled,
+    NotLoggedIn,
+    NoGithubRemote,
+    NetworkOrRateLimit,
+    QueueFull,
+    Unconfirmed,
+    Refused,
+}
+
+impl From<hide_node_link::gh::GithubFailureCategory> for BacklogFailure {
+    fn from(category: hide_node_link::gh::GithubFailureCategory) -> Self {
+        use hide_node_link::gh::GithubFailureCategory as Category;
+        match category {
+            Category::NotInstalled => Self::NotInstalled,
+            Category::NotLoggedIn => Self::NotLoggedIn,
+            Category::NoGithubRemote => Self::NoGithubRemote,
+            Category::NetworkOrRateLimit => Self::NetworkOrRateLimit,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct BacklogUndoSnapshot {
+    pub task_key: String,
+    /// `working`, `done` or `failed`.
+    pub phase: String,
+    pub failure: Option<BacklogFailure>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct BacklogOriginSnapshot {
+    pub task_key: String,
+    /// `reading`, `ready` or `failed`.
+    pub phase: String,
+    /// Absent once read when no missed line made the item.
+    pub session: Option<crate::links::ledger::SessionIdentity>,
+    pub session_title: Option<String>,
+    /// The missed line's own words and the assigned task its turn belonged to.
+    pub missed_text: Option<String>,
+    pub task_name: Option<String>,
+    /// The turn's request and answer, for the Start prompt only; read on
+    /// this device and never sent to GitHub (D-21).
+    pub request: Option<String>,
+    pub answer: Option<String>,
 }
 
 /// The latest GitHub search (`github_search`), matched by the web's own
@@ -4815,6 +4895,9 @@ pub struct DiskUsageSnapshot {
     /// Free space of the volume the measured path sits on, in bytes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub volume_free_bytes: Option<u64>,
+    /// The size of that volume.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume_total_bytes: Option<u64>,
     /// The folders behind the layer cells. The core keeps them so a cleanup
     /// can move them; the wire never carries a path.
     #[serde(skip)]
@@ -6630,6 +6713,70 @@ mod wire_enum_tests {
             &WorkerTextSource::ALL,
         );
         checked.insert("factory_diagnosis_source");
+
+        use crate::agent_state::tally::tasks::TaskState as OverviewTaskState;
+        let task_states = [
+            OverviewTaskState::NeedsYou,
+            OverviewTaskState::Blocked,
+            OverviewTaskState::Working,
+            OverviewTaskState::Waiting,
+            OverviewTaskState::Done,
+            OverviewTaskState::Resting,
+            OverviewTaskState::Cleanup,
+        ];
+        for variant in task_states {
+            match variant {
+                OverviewTaskState::NeedsYou
+                | OverviewTaskState::Blocked
+                | OverviewTaskState::Working
+                | OverviewTaskState::Waiting
+                | OverviewTaskState::Done
+                | OverviewTaskState::Resting
+                | OverviewTaskState::Cleanup => {}
+            }
+        }
+        assert_wire(&contract, "task_state", &task_states);
+        checked.insert("task_state");
+
+        use crate::model::{BacklogFailure, BacklogPhase};
+        let backlog_phases = [
+            BacklogPhase::Waiting,
+            BacklogPhase::Creating,
+            BacklogPhase::Created,
+            BacklogPhase::Failed,
+        ];
+        for variant in backlog_phases {
+            match variant {
+                BacklogPhase::Waiting
+                | BacklogPhase::Creating
+                | BacklogPhase::Created
+                | BacklogPhase::Failed => {}
+            }
+        }
+        assert_wire(&contract, "backlog_phase", &backlog_phases);
+        checked.insert("backlog_phase");
+        let backlog_failures = [
+            BacklogFailure::NotInstalled,
+            BacklogFailure::NotLoggedIn,
+            BacklogFailure::NoGithubRemote,
+            BacklogFailure::NetworkOrRateLimit,
+            BacklogFailure::QueueFull,
+            BacklogFailure::Unconfirmed,
+            BacklogFailure::Refused,
+        ];
+        for variant in backlog_failures {
+            match variant {
+                BacklogFailure::NotInstalled
+                | BacklogFailure::NotLoggedIn
+                | BacklogFailure::NoGithubRemote
+                | BacklogFailure::NetworkOrRateLimit
+                | BacklogFailure::QueueFull
+                | BacklogFailure::Unconfirmed
+                | BacklogFailure::Refused => {}
+            }
+        }
+        assert_wire(&contract, "backlog_failure", &backlog_failures);
+        checked.insert("backlog_failure");
 
         let unchecked = contract
             .keys()

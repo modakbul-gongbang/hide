@@ -1195,16 +1195,12 @@ pub fn handle_with_progress(
             let home = env.home("label_session_home_unavailable")?;
             label_transcript(Path::new(&home), &request)
         }
-        Call::SessionWorkContext {
-            request,
-            checkout_path,
-        } => {
+        Call::SessionWorkTurn { request } => {
             let home = env.home("session_work_home_unavailable")?;
-            to_value(crate::session_work::read(
-                Path::new(&home),
-                &request,
-                &checkout_path,
-            )?)
+            to_value(
+                hide_session::label_transcript::read_work_turn(Path::new(&home), &request)
+                    .map_err(|reason| HostError::new(ErrorCode::Io, reason))?,
+            )
         }
         Call::SessionActivity { request } => {
             let home = env.home("session_activity_home_unavailable")?;

@@ -42,7 +42,6 @@ pub mod reporting;
 pub mod root;
 pub mod save;
 pub mod serve;
-pub mod session_work;
 pub mod sessions;
 pub mod shell_integration;
 pub mod usage;

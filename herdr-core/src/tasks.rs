@@ -96,6 +96,10 @@ pub struct TaskSourceSnapshot {
     pub last_read_at_unix_ms: Option<u64>,
     /// The operator chose this source in Settings rather than the default.
     pub chosen: bool,
+    /// A GitHub source's repository is public; `None` when GitHub has not
+    /// said, which the shell shows as `공개일 수 있음` (D-35). Absent for Local.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public: Option<bool>,
 }
 
 /// What an issue's panel reads when it opens, beyond the task itself (PRD
@@ -272,6 +276,7 @@ pub fn github_tasks(
         }),
         last_read_at_unix_ms: status.last_success_at_unix_ms,
         chosen,
+        public: issues.public,
     };
     ProjectTasksSnapshot {
         source: Some(source),
@@ -299,6 +304,7 @@ pub fn local_tasks(project_path: &str, read: LocalRead<'_>, chosen: bool) -> Pro
             failure,
             last_read_at_unix_ms: None,
             chosen,
+            public: None,
         }),
         tasks: project
             .map(|project| {
@@ -401,6 +407,7 @@ mod tests {
 
     fn answered() -> ProjectIssuesSnapshot {
         ProjectIssuesSnapshot {
+            public: None,
             repository: Some("acme/app".into()),
             issues: vec![
                 issue("acme/app", 170, "OPEN"),

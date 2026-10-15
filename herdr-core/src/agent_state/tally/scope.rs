@@ -121,7 +121,8 @@ pub struct Scope {
     pub listed: Vec<Listed>,
     pub places: BTreeMap<String, Place>,
     pub places_live: bool,
-    pub graph: super::graph::Graph,
+    #[serde(skip_serializing_if = "super::tasks::Tasks::is_empty")]
+    pub tasks: super::tasks::Tasks,
     pub closes: BTreeMap<String, super::close::Consequence>,
     pub prs: crate::agent_state::work::board::Board,
     pub raised: Vec<Raised>,
@@ -493,10 +494,19 @@ pub(super) fn scope(
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct GraphInput {
+struct TaskInput {
     is_git: bool,
-    checkouts: Vec<(bool, bool, bool, Option<crate::model::PullRequestBadge>)>,
+    label: String,
+    checkouts: Vec<TaskCheckoutInput>,
 }
+
+type TaskCheckoutInput = (
+    bool,
+    bool,
+    bool,
+    bool,
+    Option<crate::model::PullRequestBadge>,
+);
 
 #[derive(Clone, Debug, PartialEq)]
 struct CheckoutInput {
@@ -508,7 +518,7 @@ struct CheckoutInput {
 
 #[derive(Clone, Debug, PartialEq)]
 struct PlaceInput {
-    graph_facts: GraphInput,
+    task_facts: TaskInput,
     device: String,
     project: String,
     home: bool,
@@ -633,16 +643,18 @@ impl Cache {
                 .iter()
                 .flat_map(|d| &d.projects)
                 .map(|p| PlaceInput {
-                    graph_facts: GraphInput {
+                    task_facts: TaskInput {
                         is_git: p.is_git,
+                        label: p.label.clone(),
                         checkouts: p
                             .checkouts
                             .iter()
                             .map(|c| {
                                 (
                                     c.is_primary,
+                                    c.is_worktree,
+                                    c.exists,
                                     c.landed,
-                                    c.worktree.as_ref().is_some_and(|w| w.missing),
                                     c.pull_request.as_ref().map(|p| p.badge),
                                 )
                             })
@@ -724,7 +736,7 @@ impl Cache {
             .iter()
             .flat_map(|d| d.agents.iter().map(move |a| (a.pane_id.as_str(), d.id)))
             .collect();
-        let mut graph_members = Vec::new();
+        let mut task_places = Vec::new();
         for device in &devices {
             let by_pane: HashMap<_, _> = device
                 .agents
@@ -732,18 +744,23 @@ impl Cache {
                 .rev()
                 .map(|agent| (agent.pane_id.as_str(), *agent))
                 .collect();
-            for project in device.projects.iter().filter(|p| !p.is_home) {
-                for member in members(&[project], &device.agents) {
-                    graph_members.push(super::graph::GraphMember {
-                        project,
-                        agent: by_pane[member.pane_id.as_str()],
-                        checkout_id: member.checkout_id,
-                        device_label: device.label,
-                    });
+            for project in &device.projects {
+                for checkout in &project.checkouts {
+                    for pane in checkout.tabs.iter().flat_map(|t| &t.panes) {
+                        if let Some(agent) = by_pane.get(pane.id.as_str()) {
+                            task_places.push(super::tasks::Place {
+                                device_id: device.id,
+                                device_label: device.label,
+                                project,
+                                checkout_id: checkout.id.as_str(),
+                                agent,
+                            });
+                        }
+                    }
                 }
             }
         }
-        let graph_lineage = super::graph::Lineage::new(graph_members);
+        let mut tasks = super::tasks::Forest::new(task_places).project();
         let mut overall_listed = Vec::new();
         let mut overall_members = Vec::new();
         let mut overall_projects = Vec::new();
@@ -794,12 +811,9 @@ impl Cache {
                         .map(|row| (row.number, row.group))
                         .collect(),
                 );
-                projected.graph = super::graph::project(
-                    project,
-                    &projected.members,
-                    &device.agents,
-                    &graph_lineage,
-                );
+                projected.tasks = tasks
+                    .remove(&(project.device_id.clone(), project.id.clone()))
+                    .unwrap_or_default();
                 for checkout in &project.checkouts {
                     let pane_ids: HashSet<_> = checkout
                         .tabs

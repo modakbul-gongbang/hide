@@ -673,15 +673,6 @@ pub(super) struct SessionsRefreshPayload {
     pub(super) device_id: Option<String>,
 }
 
-/// Without a `workspace_id` the measurement is the right panel's, the
-/// focused checkout's project. With one it names that local Git project for
-/// a web Overview's facts line, whatever is focused, and measures it again.
-#[derive(Debug, Default, Deserialize)]
-pub(super) struct CardMeasureDiskPayload {
-    #[serde(default)]
-    pub(super) workspace_id: Option<String>,
-}
-
 #[derive(Debug, Deserialize)]
 pub(super) struct ArchiveOpenPayload {
     pub(super) kind: String,
@@ -886,8 +877,6 @@ pub(super) struct IssueCreatePayload {
     pub(super) title: String,
     #[serde(default)]
     pub(super) body: String,
-    #[serde(default)]
-    pub(super) missed: Option<crate::links::ledger::MissedSource>,
 }
 
 /// `issue_detail_request`: one issue's body, labels, author, assignees and
@@ -1430,8 +1419,11 @@ pub(super) enum Event {
     SessionRecordClose,
     SessionWorkSearch(super::links::RecordSearchPayload),
     SessionMissedStatus(super::links::MissedStatusPayload),
-    SessionIssueDraft(crate::links::ledger::MissedSource),
-    SessionIssueDraftCancel,
+    BacklogAdd(super::backlog::BacklogAddPayload),
+    BacklogRetry(super::backlog::BacklogIntentPayload),
+    BacklogDismiss(super::backlog::BacklogIntentPayload),
+    BacklogUndo(super::backlog::BacklogItemPayload),
+    BacklogOrigin(super::backlog::BacklogItemPayload),
     FactoryAction(Box<super::factory::FactoryActionPayload>),
     FactoryTaskOpen(super::factory::FactoryTaskOpenPayload),
     FactoryTaskClose,
@@ -1507,7 +1499,8 @@ pub(super) enum Event {
     CleanupConfirm(CleanupConfirmPayload),
     CleanupDismiss,
     CardRefresh,
-    CardMeasureDisk(CardMeasureDiskPayload),
+    CardMeasureDisk,
+    DiskWatch(super::disk_sweep::DiskWatchPayload),
     ReconnectPane(FocusPanePayload),
     PetSetVisible(PetVisibilityPayload),
     PetToggleVisible,
@@ -1666,8 +1659,11 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "session_record_close" => Ok(Event::SessionRecordClose),
         "session_work_search" => decode!(super::links::RecordSearchPayload, SessionWorkSearch),
         "session_missed_status" => decode!(super::links::MissedStatusPayload, SessionMissedStatus),
-        "session_issue_draft" => decode!(crate::links::ledger::MissedSource, SessionIssueDraft),
-        "session_issue_draft_cancel" => Ok(Event::SessionIssueDraftCancel),
+        "backlog_add" => decode!(super::backlog::BacklogAddPayload, BacklogAdd),
+        "backlog_retry" => decode!(super::backlog::BacklogIntentPayload, BacklogRetry),
+        "backlog_dismiss" => decode!(super::backlog::BacklogIntentPayload, BacklogDismiss),
+        "backlog_undo" => decode!(super::backlog::BacklogItemPayload, BacklogUndo),
+        "backlog_origin" => decode!(super::backlog::BacklogItemPayload, BacklogOrigin),
         "factory_action" => serde_json::from_value::<super::factory::FactoryActionPayload>(payload)
             .map(|payload| Event::FactoryAction(Box::new(payload)))
             .map_err(|_| invalid_payload(&kind)),
@@ -1749,9 +1745,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "agent_start_in_checkout" => decode!(AgentStartInCheckoutPayload, AgentStartInCheckout),
         "card_refresh" => Ok(Event::CardRefresh),
         // An older client sends `{}`; a payload that is absent reads the same.
-        "card_measure_disk" => serde_json::from_value::<Option<CardMeasureDiskPayload>>(payload)
-            .map(|payload| Event::CardMeasureDisk(payload.unwrap_or_default()))
-            .map_err(|_| invalid_payload(&kind)),
+        "card_measure_disk" => Ok(Event::CardMeasureDisk),
+        "disk_watch" => decode!(super::disk_sweep::DiskWatchPayload, DiskWatch),
         "reconnect_pane" => decode!(FocusPanePayload, ReconnectPane),
         "pet_set_visible" => decode!(PetVisibilityPayload, PetSetVisible),
         "pet_toggle_visible" => Ok(Event::PetToggleVisible),
@@ -1889,8 +1884,11 @@ impl Runtime {
             Event::SessionRecordClose => self.close_session_record(),
             Event::SessionWorkSearch(payload) => self.search_work_sessions(payload),
             Event::SessionMissedStatus(payload) => self.set_missed_status(payload),
-            Event::SessionIssueDraft(payload) => self.draft_missed_issue(payload),
-            Event::SessionIssueDraftCancel => self.cancel_session_issue_draft(),
+            Event::BacklogAdd(payload) => self.add_backlog(payload),
+            Event::BacklogRetry(payload) => self.retry_backlog(payload),
+            Event::BacklogDismiss(payload) => self.dismiss_backlog(payload),
+            Event::BacklogUndo(payload) => self.undo_backlog(payload),
+            Event::BacklogOrigin(payload) => self.read_backlog_origin(payload),
             Event::FactoryAction(payload) => self.factory_action(*payload),
             Event::FactoryTaskOpen(payload) => self.factory_task_open(payload),
             Event::FactoryTaskClose => self.factory_task_close(),
@@ -3658,16 +3656,14 @@ impl Runtime {
                 self.reread_focused_project();
                 true
             }
-            Event::CardMeasureDisk(payload) => match payload.workspace_id {
-                Some(workspace_id) => self.measure_project_disk(&workspace_id),
-                None => {
-                    // The delete confirmation states the size it is about to
-                    // delete, so it is measured when the dialog opens rather
-                    // than shown from whenever the card last looked.
-                    self.remeasure_disk();
-                    true
-                }
-            },
+            Event::CardMeasureDisk => {
+                // The delete confirmation states the size it is about to
+                // delete, so it is measured when the dialog opens rather
+                // than shown from whenever the card last looked.
+                self.remeasure_disk();
+                true
+            }
+            Event::DiskWatch(payload) => self.watch_disk(payload),
             Event::GitWorktreeOpen(payload) => self.open_git_worktree(payload.checkout_path),
             Event::GitWorktreeSetBase(payload) => {
                 self.set_git_worktree_base(payload.repository_root, payload.branch)

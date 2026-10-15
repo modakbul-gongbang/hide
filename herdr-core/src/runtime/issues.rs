@@ -846,9 +846,6 @@ impl Runtime {
     /// in the store at once and written by the coordinator; a GitHub one is
     /// `gh issue create` on a worker.
     pub(super) fn create_issue(&mut self, payload: IssueCreatePayload) -> bool {
-        if payload.missed.is_some() {
-            return self.create_missed_issue(payload);
-        }
         let Some((node, workspace)) = self.issue_project(&payload.workspace_id) else {
             self.set_error(
                 "issue_create.unknown_project",
@@ -983,6 +980,36 @@ impl Runtime {
                 .retain(|known| known.reference != issue.reference);
             project.issues.issues.insert(0, issue);
             project.issues.issues.truncate(ISSUE_LIMIT);
+        }
+        match node {
+            None => self.refresh_pull_requests(project_path),
+            Some(node) => self.reread_node_github(node, project_path),
+        }
+        self.refresh_issue_rows(node);
+    }
+
+    /// An issue the backlog closed (`되돌리기`) leaves the open list at once;
+    /// the next read confirms it.
+    pub(super) fn forget_created_issue(
+        &mut self,
+        node: Option<&str>,
+        project_path: &str,
+        reference: &crate::issues::IssueReference,
+    ) {
+        let github = match node {
+            None => Some(&mut self.github),
+            Some(node) => self.device_github.get_mut(node),
+        };
+        if let Some(project) = github.and_then(|github| {
+            github
+                .projects
+                .iter_mut()
+                .find(|project| project.root_path == project_path)
+        }) {
+            project
+                .issues
+                .issues
+                .retain(|known| known.reference != *reference);
         }
         match node {
             None => self.refresh_pull_requests(project_path),

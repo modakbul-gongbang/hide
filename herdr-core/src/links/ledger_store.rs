@@ -55,6 +55,15 @@ INSERT INTO ledger_requests(device,agent,id,offset,at,text,author)
  FROM sessions WHERE last_request IS NOT NULL AND trim(last_request)!='';
 ";
 
+/// The backlog (PRD overview-device-tasks D-13, D-34): which item a missed
+/// line became, and the typed items' durable GitHub attempts.
+pub(super) const SCHEMA_V3: &str = "
+ALTER TABLE ledger_missed ADD COLUMN backlog_key TEXT;
+CREATE TABLE ledger_backlog(intent TEXT PRIMARY KEY, device TEXT NOT NULL, project TEXT NOT NULL,
+ workspace TEXT NOT NULL, repo TEXT NOT NULL, title TEXT NOT NULL, started_at INTEGER NOT NULL,
+ state TEXT NOT NULL, number INTEGER, url TEXT);
+";
+
 fn encoded(value: &impl serde::Serialize) -> Result<String, String> {
     serde_json::to_string(value).map_err(|_| "ledger_value_invalid".to_owned())
 }
@@ -136,14 +145,65 @@ fn key(session: &SessionIdentity) -> SessionKey {
     }
 }
 
-fn issue_attempt(
-    tx: &Transaction<'_>,
-    source: &MissedSource,
-) -> Result<Option<IssueAttempt>, String> {
-    tx.query_row("SELECT repo,title,body,started_at,number,url FROM ledger_issue_attempts WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4",
-        params![source.session.device_id,source.session.agent,source.session.session_id,source.id],|r|Ok(IssueAttempt {
-            repository:r.get(0)?, title:r.get(1)?, body:r.get(2)?, started_at_unix_ms:r.get(3)?,reconcile:true,number:r.get(4)?,url:r.get(5)?,
-        })).optional().map_err(failed)
+fn issue_attempt(tx: &Transaction<'_>, key: &AttemptKey) -> Result<Option<IssueAttempt>, String> {
+    match key {
+        AttemptKey::Missed(source) => tx.query_row("SELECT repo,title,body,started_at,number,url FROM ledger_issue_attempts WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4",
+            params![source.session.device_id,source.session.agent,source.session.session_id,source.id],|r|Ok(IssueAttempt {
+                repository:r.get(0)?, title:r.get(1)?, body:r.get(2)?, started_at_unix_ms:r.get(3)?,reconcile:true,number:r.get(4)?,url:r.get(5)?,
+            })).optional().map_err(failed),
+        AttemptKey::Intent(intent) => tx.query_row("SELECT repo,title,started_at,number,url FROM ledger_backlog WHERE intent=?1",
+            params![intent.intent],|r|Ok(IssueAttempt {
+                repository:r.get(0)?, title:r.get(1)?, body:String::new(), started_at_unix_ms:r.get(2)?,reconcile:true,number:r.get(3)?,url:r.get(4)?,
+            })).optional().map_err(failed),
+    }
+}
+
+fn ledger_missed_rows(
+    connection: &rusqlite::Connection,
+    session: &SessionIdentity,
+) -> Result<Vec<MissedWork>, String> {
+    let mut missed_items = Vec::new();
+    let mut statement=connection.prepare("SELECT missed,kind,text,status,at,turn_offset,issue_repo,issue_number, \
+        EXISTS(SELECT 1 FROM ledger_issue_attempts a WHERE a.device=m.device AND a.agent=m.agent AND a.id=m.id \
+        AND a.missed=m.missed AND a.state='creating'),turn_witness,backlog_key FROM ledger_missed m WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY at DESC").map_err(failed)?;
+    let missed = statement
+        .query_map(
+            params![session.device_id, session.agent, session.session_id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, u64>(4)?,
+                    r.get::<_, u64>(5)?,
+                    r.get::<_, Option<String>>(6)?,
+                    r.get::<_, Option<u64>>(7)?,
+                    r.get::<_, bool>(8)?,
+                    r.get::<_, Option<String>>(9)?,
+                    r.get::<_, Option<String>>(10)?,
+                ))
+            },
+        )
+        .map_err(failed)?;
+    for missed in missed {
+        let (id, kind, text, status, at, offset, repo, number, creating, witness, backlog_key) =
+            missed.map_err(failed)?;
+        missed_items.push(MissedWork {
+            id,
+            kind: decoded(kind)?,
+            text,
+            status: decoded(status)?,
+            at_unix_ms: at,
+            turn_offset: offset,
+            turn_witness: witness,
+            issue_repository: repo,
+            issue_number: number,
+            backlog_key,
+            creating,
+        });
+    }
+    Ok(missed_items)
 }
 
 pub(super) fn apply_reader(
@@ -316,7 +376,7 @@ impl LinkStore {
         let answer = match call {
             LedgerCall::Record(_) => unreachable!(),
             LedgerCall::ReserveIssue {
-                source,
+                key,
                 repository,
                 title,
                 body,
@@ -325,24 +385,39 @@ impl LinkStore {
                 if !hide_node_link::gh::is_repository(&repository) {
                     return Err("ledger_issue_repository_invalid".into());
                 }
-                let existing = issue_attempt(&tx, &source)?;
-                if let Some(attempt) = existing {
+                if let Some(attempt) = issue_attempt(&tx, &key)? {
                     if !attempt.repository.eq_ignore_ascii_case(&repository) {
                         return Err("ledger_issue_repository_changed".into());
                     }
                     LedgerAnswer::Attempt(attempt)
                 } else {
-                    let status:Option<String> = tx.query_row("SELECT status FROM ledger_missed WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4",
-                        params![source.session.device_id,source.session.agent,source.session.session_id,source.id],|r|r.get(0)).optional().map_err(failed)?;
-                    if status.as_deref() != Some(encoded(&MissedStatus::Open)?.as_str()) {
-                        return Err("ledger_missed_not_open".into());
-                    }
                     let title = crate::local_issues::validated_title(&title)
                         .map_err(|_| "ledger_issue_title_invalid")?;
                     let body = crate::local_issues::validated_body(&body)
                         .map_err(|_| "ledger_issue_body_invalid")?;
-                    tx.execute("INSERT INTO ledger_issue_attempts VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'creating',NULL,NULL,NULL)",
-                        params![source.session.device_id,source.session.agent,source.session.session_id,source.id,repository,title,body,at_unix_ms as i64]).map_err(failed)?;
+                    match &key {
+                        AttemptKey::Missed(source) => {
+                            let status:Option<String> = tx.query_row("SELECT status FROM ledger_missed WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4",
+                                params![source.session.device_id,source.session.agent,source.session.session_id,source.id],|r|r.get(0)).optional().map_err(failed)?;
+                            if status.as_deref() != Some(encoded(&MissedStatus::Open)?.as_str()) {
+                                return Err("ledger_missed_not_open".into());
+                            }
+                            tx.execute("INSERT INTO ledger_issue_attempts VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'creating',NULL,NULL,NULL)",
+                                params![source.session.device_id,source.session.agent,source.session.session_id,source.id,repository,title,body,at_unix_ms as i64]).map_err(failed)?;
+                        }
+                        AttemptKey::Intent(intent) => {
+                            tx.execute("DELETE FROM ledger_backlog WHERE rowid IN (SELECT rowid FROM ledger_backlog WHERE state='complete' OR state='dismissed' ORDER BY started_at DESC LIMIT -1 OFFSET ?1)",
+                                params![(BACKLOG_INTENT_LIMIT / 2) as i64]).map_err(failed)?;
+                            let kept: i64 = tx
+                                .query_row("SELECT COUNT(*) FROM ledger_backlog", [], |r| r.get(0))
+                                .map_err(failed)?;
+                            if kept >= BACKLOG_INTENT_LIMIT as i64 {
+                                return Err("ledger_backlog_capacity".into());
+                            }
+                            tx.execute("INSERT INTO ledger_backlog VALUES(?1,?2,?3,?4,?5,?6,?7,'creating',NULL,NULL)",
+                                params![intent.intent,intent.device,intent.project,intent.workspace_id,repository,title,at_unix_ms as i64]).map_err(failed)?;
+                        }
+                    }
                     LedgerAnswer::Attempt(IssueAttempt {
                         repository,
                         title,
@@ -355,7 +430,7 @@ impl LinkStore {
                 }
             }
             LedgerCall::StartIssue {
-                source,
+                key,
                 title,
                 body,
                 at_unix_ms,
@@ -364,19 +439,19 @@ impl LinkStore {
                     .map_err(|_| "ledger_issue_title_invalid")?;
                 let body = crate::local_issues::validated_body(&body)
                     .map_err(|_| "ledger_issue_body_invalid")?;
-                let changed=tx.execute("UPDATE ledger_issue_attempts SET title=?5,body=?6,started_at=?7,state='creating',failure=NULL WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4 AND number IS NULL",
-                    params![source.session.device_id,source.session.agent,source.session.session_id,source.id,title,body,at_unix_ms as i64]).map_err(failed)?;
+                let changed = match &key {
+                    AttemptKey::Missed(source) => tx.execute("UPDATE ledger_issue_attempts SET title=?5,body=?6,started_at=?7,state='creating',failure=NULL WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4 AND number IS NULL",
+                        params![source.session.device_id,source.session.agent,source.session.session_id,source.id,title,body,at_unix_ms as i64]).map_err(failed)?,
+                    AttemptKey::Intent(intent) => tx.execute("UPDATE ledger_backlog SET title=?2,started_at=?3,state='creating' WHERE intent=?1 AND number IS NULL",
+                        params![intent.intent,title,at_unix_ms as i64]).map_err(failed)?,
+                };
                 if changed != 1 {
                     return Err("ledger_issue_attempt_missing".into());
                 }
                 LedgerAnswer::Saved
             }
-            LedgerCall::FinishIssue {
-                source,
-                number,
-                url,
-            } => {
-                let attempt = issue_attempt(&tx, &source)?.ok_or("ledger_issue_attempt_missing")?;
+            LedgerCall::FinishIssue { key, number, url } => {
+                let attempt = issue_attempt(&tx, &key)?.ok_or("ledger_issue_attempt_missing")?;
                 let reference = crate::issues::IssueReference::parse(&url, None)
                     .map_err(|_| "ledger_issue_url_invalid")?;
                 if !reference
@@ -387,19 +462,102 @@ impl LinkStore {
                 {
                     return Err("ledger_issue_answer_mismatched".into());
                 }
-                tx.execute("UPDATE ledger_issue_attempts SET state='complete',number=?5,url=?6,failure=NULL WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4",
-                    params![source.session.device_id,source.session.agent,source.session.session_id,source.id,number as i64,url]).map_err(failed)?;
-                let changed=tx.execute("UPDATE ledger_missed SET status=?5,issue_repo=?6,issue_number=?7 WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4",
-                    params![source.session.device_id,source.session.agent,source.session.session_id,source.id,encoded(&MissedStatus::Issue)?,attempt.repository,number as i64]).map_err(failed)?;
-                if changed != 1 {
-                    return Err("ledger_missed_missing".into());
+                match &key {
+                    AttemptKey::Missed(source) => {
+                        tx.execute("UPDATE ledger_issue_attempts SET state='complete',number=?5,url=?6,failure=NULL WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4",
+                            params![source.session.device_id,source.session.agent,source.session.session_id,source.id,number as i64,url]).map_err(failed)?;
+                        let backlog_key = crate::tasks::github_key(&reference);
+                        let changed=tx.execute("UPDATE ledger_missed SET status=?5,issue_repo=?6,issue_number=?7,backlog_key=?8 WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4",
+                            params![source.session.device_id,source.session.agent,source.session.session_id,source.id,encoded(&MissedStatus::Backlog)?,attempt.repository,number as i64,backlog_key]).map_err(failed)?;
+                        if changed != 1 {
+                            return Err("ledger_missed_missing".into());
+                        }
+                    }
+                    AttemptKey::Intent(intent) => {
+                        tx.execute("UPDATE ledger_backlog SET state='complete',number=?2,url=?3 WHERE intent=?1",
+                            params![intent.intent,number as i64,url]).map_err(failed)?;
+                    }
                 }
                 LedgerAnswer::Saved
             }
-            LedgerCall::UnknownIssue(source) => {
-                tx.execute("UPDATE ledger_issue_attempts SET state='unknown' WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4 AND number IS NULL",
-                    params![source.session.device_id,source.session.agent,source.session.session_id,source.id]).map_err(failed)?;
+            LedgerCall::UnknownIssue(key) => {
+                match &key {
+                    AttemptKey::Missed(source) => tx.execute("UPDATE ledger_issue_attempts SET state='unknown' WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4 AND number IS NULL",
+                        params![source.session.device_id,source.session.agent,source.session.session_id,source.id]).map_err(failed)?,
+                    AttemptKey::Intent(intent) => tx.execute("UPDATE ledger_backlog SET state='unknown' WHERE intent=?1 AND number IS NULL",
+                        params![intent.intent]).map_err(failed)?,
+                };
                 LedgerAnswer::Saved
+            }
+            LedgerCall::BacklogLocal {
+                source,
+                backlog_key,
+            } => {
+                let changed = tx.execute("UPDATE ledger_missed SET status=?5,backlog_key=?6 WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4 AND status=?7",
+                    params![source.session.device_id,source.session.agent,source.session.session_id,source.id,encoded(&MissedStatus::Backlog)?,backlog_key,encoded(&MissedStatus::Open)?]).map_err(failed)?;
+                if changed != 1 {
+                    return Err("ledger_missed_not_open".into());
+                }
+                LedgerAnswer::Saved
+            }
+            LedgerCall::ReleaseBacklog { backlog_key } => {
+                tx.execute("DELETE FROM ledger_issue_attempts WHERE EXISTS(SELECT 1 FROM ledger_missed m WHERE m.device=ledger_issue_attempts.device AND m.agent=ledger_issue_attempts.agent AND m.id=ledger_issue_attempts.id AND m.missed=ledger_issue_attempts.missed AND m.backlog_key=?1)",
+                    params![backlog_key]).map_err(failed)?;
+                tx.execute("UPDATE ledger_missed SET status=?2,issue_repo=NULL,issue_number=NULL,backlog_key=NULL WHERE backlog_key=?1",
+                    params![backlog_key,encoded(&MissedStatus::Open)?]).map_err(failed)?;
+                LedgerAnswer::Saved
+            }
+            LedgerCall::DismissBacklog { intent } => {
+                tx.execute("UPDATE ledger_backlog SET state='dismissed' WHERE intent=?1 AND state!='complete'",
+                    params![intent]).map_err(failed)?;
+                LedgerAnswer::Saved
+            }
+            LedgerCall::PendingBacklog => {
+                let mut statement = tx.prepare("SELECT intent,device,project,workspace,title,started_at FROM ledger_backlog WHERE state='creating' OR state='unknown' ORDER BY started_at").map_err(failed)?;
+                let rows = statement
+                    .query_map([], |r| {
+                        Ok(PendingBacklog {
+                            intent: BacklogIntent {
+                                intent: r.get(0)?,
+                                device: r.get(1)?,
+                                project: r.get(2)?,
+                                workspace_id: r.get(3)?,
+                            },
+                            title: r.get(4)?,
+                            started_at_unix_ms: r.get(5)?,
+                        })
+                    })
+                    .map_err(failed)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(failed)?;
+                drop(statement);
+                LedgerAnswer::Pending(rows)
+            }
+            LedgerCall::BacklogOrigin { backlog_key } => {
+                let found: Option<(String, String, String)> = tx
+                    .query_row(
+                        "SELECT device,agent,id FROM ledger_missed WHERE backlog_key=?1 LIMIT 1",
+                        params![backlog_key],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    )
+                    .optional()
+                    .map_err(failed)?;
+                let origin = match found {
+                    None => None,
+                    Some((device_id, agent, session_id)) => {
+                        let session = SessionIdentity {
+                            device_id,
+                            agent,
+                            session_id,
+                        };
+                        let missed = ledger_missed_rows(&tx, &session)?
+                            .into_iter()
+                            .find(|m| m.backlog_key.as_deref() == Some(backlog_key.as_str()))
+                            .ok_or("ledger_missed_missing")?;
+                        Some(Box::new(BacklogOrigin { session, missed }))
+                    }
+                };
+                LedgerAnswer::Origin(origin)
             }
         };
         tx.commit().map_err(failed)?;
@@ -782,10 +940,10 @@ impl LinkStore {
                     return Err("ledger_status_invalid".to_owned());
                 }
                 let changed=tx.execute("UPDATE ledger_missed SET status=?5,issue_repo=NULL,issue_number=NULL,resolved_issue_number=NULL,resolved_turn_offset=NULL \
-                    WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4 AND status!=?6 \
+                    WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4 AND status!=?6 AND status!=?7 \
                     AND NOT EXISTS(SELECT 1 FROM ledger_issue_attempts a WHERE a.device=?1 AND a.agent=?2 \
                     AND a.id=?3 AND a.missed=?4 AND a.state='creating')",
-                    params![session.device_id,session.agent,session.session_id,id,encoded(status)?,encoded(&MissedStatus::Issue)?]).map_err(failed)?;
+                    params![session.device_id,session.agent,session.session_id,id,encoded(status)?,encoded(&MissedStatus::Issue)?,encoded(&MissedStatus::Backlog)?]).map_err(failed)?;
                 if changed == 0 {
                     return Err("ledger_missed_unavailable".to_owned());
                 }
@@ -1080,46 +1238,7 @@ impl LinkStore {
     }
 
     fn ledger_missed(&self, session: &SessionIdentity) -> Result<Vec<MissedWork>, String> {
-        let mut missed_items = Vec::new();
-        let mut statement=self.connection.prepare("SELECT missed,kind,text,status,at,turn_offset,issue_repo,issue_number, \
-            EXISTS(SELECT 1 FROM ledger_issue_attempts a WHERE a.device=m.device AND a.agent=m.agent AND a.id=m.id \
-            AND a.missed=m.missed AND a.state='creating'),turn_witness FROM ledger_missed m WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY at DESC").map_err(failed)?;
-        let missed = statement
-            .query_map(
-                params![session.device_id, session.agent, session.session_id],
-                |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, String>(2)?,
-                        r.get::<_, String>(3)?,
-                        r.get::<_, u64>(4)?,
-                        r.get::<_, u64>(5)?,
-                        r.get::<_, Option<String>>(6)?,
-                        r.get::<_, Option<u64>>(7)?,
-                        r.get::<_, bool>(8)?,
-                        r.get::<_, Option<String>>(9)?,
-                    ))
-                },
-            )
-            .map_err(failed)?;
-        for missed in missed {
-            let (id, kind, text, status, at, offset, repo, number, creating, witness) =
-                missed.map_err(failed)?;
-            missed_items.push(MissedWork {
-                id,
-                kind: decoded(kind)?,
-                text,
-                status: decoded(status)?,
-                at_unix_ms: at,
-                turn_offset: offset,
-                turn_witness: witness,
-                issue_repository: repo,
-                issue_number: number,
-                creating,
-            });
-        }
-        Ok(missed_items)
+        ledger_missed_rows(&self.connection, session)
     }
 
     /// What a later turn of `session` continues. A session the ledger has

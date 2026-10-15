@@ -79,6 +79,10 @@ pub struct ProjectIssuesSnapshot {
     /// follows it (PRD link-graph D-35). Reader provenance, not a wire field.
     #[serde(skip)]
     pub repository_id: Option<String>,
+    /// Whether the repository is public, `None` until GitHub said
+    /// (`공개`, PRD overview-device-tasks D-35).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public: Option<bool>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]

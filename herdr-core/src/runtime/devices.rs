@@ -316,7 +316,7 @@ impl Runtime {
         self.device_machine_ids.remove(device_id);
         self.device_ports.remove(device_id);
         self.device_disk.remove(device_id);
-        self.device_disk_project.remove(device_id);
+        self.forget_disk_sweep(device_id);
         self.device_github.remove(device_id);
         self.device_github_reads
             .retain(|(device, _), _| device != device_id);

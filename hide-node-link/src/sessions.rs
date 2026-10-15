@@ -3,13 +3,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Bounded material returned by `Call::SessionWorkContext`, read on its node.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct WorkContext {
-    pub turn: hide_session::label_transcript::WorkTurn,
-    pub templates: String,
-}
-
 /// Independently implemented reader operations, not provider installation
 /// or permission to start an agent.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]

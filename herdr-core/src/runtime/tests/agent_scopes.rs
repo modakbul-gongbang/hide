@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent_state::tally::tasks::TaskState;
 use crate::model::{PullRequestChecks, PullRequestSnapshot};
 
 fn rows() -> Vec<SidebarAgentSnapshot> {
@@ -13,30 +14,20 @@ fn rows() -> Vec<SidebarAgentSnapshot> {
 }
 
 #[test]
-fn graph_cross_project_chips_preserve_order_counts_and_stable_device_context() {
-    // Incoming main PR 749 screen: Build before Spec, then Docs; no local
-    // delegation chip, and a chip toward the core's own machine carries no
-    // label, which the shell names in its language.
+fn a_task_is_its_root_and_every_descendant_with_their_projects_and_devices() {
+    // PRD overview-device-tasks B10, B13-B15: the task belongs to its root's
+    // project; a child in another project of the same device is `→ sasu`, a
+    // child on another device is `→ mini` there and a dashed, uncounted
+    // entry on that device's project.
     let mut runtime = runtime();
     let local_id = runtime.snapshot.navigator.devices[0].id.clone();
     let mut agents = rows();
-    agents[0].identity_label = "Lead".into();
     agents[1].pane_id = "spec".into();
-    agents[1].identity_label = "Spec".into();
-    agents[1].state.graph_rank = 1;
-    agents[1].last_activity = "2026-10-08T01:00:00Z".into();
     agents[1].lineage_parent_pane_id = Some("root".into());
-    let mut build = agents[1].clone();
-    build.pane_id = "build".into();
-    build.identity_label = "Build".into();
-    build.last_activity = "2026-10-08T02:00:00Z".into();
-    let mut docs = build.clone();
-    docs.pane_id = "docs".into();
-    docs.identity_label = "Docs".into();
-    docs.state.graph_rank = 3;
-    let mut helper = build.clone();
+    let mut helper = agents[1].clone();
     helper.pane_id = "helper".into();
-    agents.extend([build, docs, helper]);
+    helper.lineage_parent_pane_id = None;
+    agents.push(helper);
     runtime.snapshot.navigator.agents = agents;
     let project = |id: &str, names: &[&str]| {
         let mut project = workspace(
@@ -53,53 +44,29 @@ fn graph_cross_project_chips_preserve_order_counts_and_stable_device_context() {
     };
     runtime.snapshot.navigator.workspaces = vec![
         project("ide", &["root", "helper"]),
-        project("sasu", &["spec", "build"]),
-        project("docs", &["docs"]),
+        project("sasu", &["spec"]),
     ];
     assert!(runtime.refresh_agent_scopes());
-    let chips = &runtime.snapshot.navigator.workspaces[0]
-        .agent_scope
-        .graph
-        .cross["root"];
+    let ide = &runtime.snapshot.navigator.workspaces[0].agent_scope.tasks;
     assert_eq!(
-        chips
+        ide.cards
             .iter()
-            .map(|c| (c.project_id.as_str(), c.count))
+            .map(|c| c.root.as_str())
             .collect::<Vec<_>>(),
-        [("sasu", 2), ("docs", 1)]
+        ["root", "helper"],
+        "working before resting"
     );
-    assert_eq!(chips[0].names, ["Build", "Spec"]);
-    assert_eq!(chips[0].box_id, "build");
-    assert!(chips[0].device.is_none());
+    assert_eq!(ide.cards[0].members, ["root", "spec"]);
+    assert_eq!(ide.cards[0].out_projects[0].project_id, "sasu");
     assert!(
-        runtime.snapshot.navigator.workspaces[0]
-            .agent_scope
-            .graph
-            .cross["helper"]
-            .is_empty()
-    );
-    assert_eq!(
         runtime.snapshot.navigator.workspaces[1]
             .agent_scope
-            .graph
-            .cross["spec"][0]
-            .names,
-        ["Lead"]
+            .tasks
+            .cards
+            .is_empty(),
+        "a child is no task of its own"
     );
     assert!(!runtime.refresh_agent_scopes());
-    runtime.snapshot.navigator.agents[2].identity_label = "Builder".into();
-    assert!(
-        runtime.refresh_agent_scopes(),
-        "a label change updates chip names"
-    );
-    assert_eq!(
-        runtime.snapshot.navigator.workspaces[0]
-            .agent_scope
-            .graph
-            .cross["root"][0]
-            .names,
-        ["Builder", "Spec"]
-    );
 
     let mut remote_device = crate::workspace::local_device(&crate::node::test_node(), None);
     remote_device.id = "other-device".into();
@@ -108,8 +75,10 @@ fn graph_cross_project_chips_preserve_order_counts_and_stable_device_context() {
     runtime.snapshot.navigator.devices.push(remote_device);
     let mut remote_project = project("remote-docs", &["remote:other-device:pane:p1"]);
     remote_project.device_id = "other-device".into();
-    let mut remote_agent = runtime.snapshot.navigator.agents[3].clone();
+    let mut remote_agent = runtime.snapshot.navigator.agents[1].clone();
     remote_agent.pane_id = "remote:other-device:pane:p1".into();
+    remote_agent.lineage_parent_pane_id = Some("root".into());
+    remote_agent.group = "needs_you".into();
     runtime.snapshot.status.remote = vec![RemoteStatusSnapshot {
         target_id: "other-device".into(),
         state: "connected".into(),
@@ -132,118 +101,170 @@ fn graph_cross_project_chips_preserve_order_counts_and_stable_device_context() {
         }),
     }];
     assert!(runtime.refresh_agent_scopes());
-    let remote_chips = &runtime.snapshot.status.remote[0]
+    let root = &runtime.snapshot.navigator.workspaces[0]
+        .agent_scope
+        .tasks
+        .cards[0];
+    assert_eq!(
+        root.members,
+        ["root", "spec", "remote:other-device:pane:p1"]
+    );
+    assert_eq!(root.out_devices[0].device_id, "other-device");
+    assert_eq!(root.out_devices[0].label.as_deref(), Some("mini"));
+    let remote = &runtime.snapshot.status.remote[0]
         .session
         .as_ref()
         .unwrap()
         .workspaces[0]
         .agent_scope
-        .graph
-        .cross["remote:other-device:pane:p1"];
-    assert_eq!(remote_chips[0].project_device_id, local_id);
-    assert_eq!(remote_chips[0].device.as_ref().unwrap().label, None);
-    let chips = &runtime.snapshot.navigator.workspaces[0]
-        .agent_scope
-        .graph
-        .cross["root"];
-    assert_eq!(chips[2].project_id, "remote-docs");
+        .tasks;
+    assert!(remote.cards.is_empty());
     assert_eq!(
-        chips[2].device.as_ref().unwrap().label.as_deref(),
-        Some("mini")
+        remote.needs_you, 0,
+        "a delegated child's demand is not counted twice"
     );
-    runtime.snapshot.status.remote[0].state = "disconnected".into();
-    assert!(runtime.refresh_agent_scopes());
+    assert_eq!(remote.incoming[0].root, "root");
+    assert_eq!(remote.incoming[0].root_device_id, local_id);
     assert_eq!(
+        remote.incoming[0].root_device_label, None,
+        "the core's own machine is named by the shell"
+    );
+
+    // An unresolved parent machine leaves the child an ordinary task there (B15).
+    runtime.snapshot.status.remote[0]
+        .session
+        .as_mut()
+        .unwrap()
+        .agents[0]
+        .lineage_parent_pane_id = None;
+    assert!(runtime.refresh_agent_scopes());
+    let remote = &runtime.snapshot.status.remote[0]
+        .session
+        .as_ref()
+        .unwrap()
+        .workspaces[0]
+        .agent_scope
+        .tasks;
+    assert!(remote.incoming.is_empty());
+    assert_eq!(remote.cards[0].root, "remote:other-device:pane:p1");
+    assert_eq!(remote.needs_you, 1);
+    assert!(
         runtime.snapshot.navigator.workspaces[0]
             .agent_scope
-            .graph
-            .cross["root"][2]
-            .count,
-        1,
-        "last-known disconnected chips remain visible"
+            .tasks
+            .cards[0]
+            .out_devices
+            .is_empty()
     );
 }
 
 #[test]
-fn graph_folds_count_hidden_marks_on_the_nearest_visible_ancestor() {
+fn tasks_stand_by_state_and_fold_a_merged_worktree_as_cleanup() {
+    // B7, B9: Needs You, blocked, working, waiting, done, then resting and
+    // the cleanup fold; the stage bar follows the task's PRs and worktrees.
     let mut runtime = runtime();
-    let mut agents = rows();
-    agents[0].state.graph_rank = 1;
-    agents[1].state.graph_rank = 3;
-    agents[1].symbol = "○".into();
-    agents[1].lineage_parent_pane_id = Some("root".into());
-    agents[0].lineage_child_pane_ids = vec!["child".into()];
-    agents[1].lineage_child_pane_ids = vec!["leaf".into()];
-    let mut leaf = agents[1].clone();
-    leaf.pane_id = "leaf".into();
-    leaf.symbol = "✓".into();
-    leaf.lineage_parent_pane_id = Some("child".into());
-    agents.push(leaf);
-    for (pane, symbol) in [("blocked", "\u{25b2}"), ("stopped", "\u{25d0}")] {
-        let mut hidden = agents[1].clone();
-        hidden.pane_id = pane.into();
-        hidden.symbol = symbol.into();
-        hidden.lineage_parent_pane_id = Some("child".into());
-        agents.push(hidden);
-    }
-    runtime.snapshot.navigator.agents = agents;
-    let mut main = checkout(
-        "project",
-        "main",
-        "/fixture",
-        Some(pane("root", "/fixture")),
-    );
-    main.is_primary = true;
-    let child = checkout("project", "child", "/child", Some(pane("child", "/child")));
-    let mut leaf = checkout("project", "leaf", "/leaf", Some(pane("leaf", "/leaf")));
-    leaf.is_worktree = true;
-    leaf.landed = true;
-    leaf.tabs[0]
-        .panes
-        .extend([pane("blocked", "/leaf"), pane("stopped", "/leaf")]);
-    let mut project = workspace("project", "Project", "/fixture", vec![main, child, leaf]);
+    let mut base = rows().remove(1);
+    base.lineage_parent_pane_id = None;
+    let agent = |id: &str, group: &str, demand: &str, activity: &str| {
+        let mut agent = base.clone();
+        agent.pane_id = id.into();
+        agent.group = group.into();
+        agent.demand = demand.into();
+        agent.activity = activity.into();
+        agent
+    };
+    let mut waiting = agent("waiting", "working", "none", "stopped");
+    waiting.wait = Some(crate::model::AgentWait::Children);
+    runtime.snapshot.navigator.agents = vec![
+        agent("resting", "seen", "none", "stopped"),
+        agent("merged", "seen", "none", "stopped"),
+        agent("done", "done", "none", "stopped"),
+        waiting,
+        agent("working", "working", "none", "working"),
+        agent("blocked", "needs_you", "error", "stopped"),
+        agent("asks", "needs_you", "question", "stopped"),
+    ];
+    let names = [
+        "resting", "merged", "done", "waiting", "working", "blocked", "asks",
+    ];
+    let mut checkouts: Vec<_> = names
+        .iter()
+        .map(|name| {
+            checkout(
+                "project",
+                name,
+                &format!("/{name}"),
+                Some(pane(name, &format!("/{name}"))),
+            )
+        })
+        .collect();
+    checkouts[0].is_primary = true;
+    let merged = &mut checkouts[1];
+    merged.is_worktree = true;
+    let mut project = workspace("project", "Project", "/fixture", checkouts);
     project.is_git = true;
     runtime.snapshot.navigator.workspaces = vec![project];
+    // The merged PR reaches the row through its session's link record.
+    let pull = crate::request_view::AgentPullRequestSnapshot {
+        number: 7,
+        title: "Seven".into(),
+        url: "https://github.com/acme/ide/pull/7".into(),
+        badge: crate::model::PullRequestBadge::Merged,
+        checks: PullRequestChecks::Passing,
+        review: None,
+        is_draft: false,
+        head_branch: "seven".into(),
+        closing_issues: vec![],
+        live: true,
+        duty: true,
+        created: true,
+        settled_at_unix_ms: None,
+    };
+    let row = &mut runtime.snapshot.navigator.agents[1];
+    row.request = Some(crate::request_view::AgentRequestSnapshot {
+        verb: crate::agent_state::RequestVerb::Idle,
+        verb_since_unix_ms: 0,
+        line: None,
+        end: None,
+        request: None,
+        later_by: None,
+        reply: None,
+        pull_requests: vec![pull],
+    });
+    row.state.pr = crate::agent_state::sessions::own_prs(row);
     assert!(runtime.refresh_agent_scopes());
-    let graph = &runtime.snapshot.navigator.workspaces[0].agent_scope.graph;
-    assert_eq!(graph.attention, 1);
-    assert_eq!(graph.checkouts["child"].fold, Some("resting"));
-    assert_eq!(graph.checkouts["leaf"].fold, Some("cleanup"));
-    assert_eq!(graph.tucked[graph.variants[8]]["root"]["idle"], 1);
-    assert_eq!(graph.tucked[graph.variants[8]]["root"]["done"], 1);
-    assert_eq!(graph.tucked[graph.variants[8]]["root"]["error"], 1);
-    assert_eq!(graph.tucked[graph.variants[8]]["root"]["stopped"], 1);
-    assert_eq!(graph.tucked[graph.variants[12]]["child"]["done"], 1);
-    assert!(graph.tucked[graph.variants[15]].is_empty());
-    let relations = &runtime.snapshot.navigator.devices[0].agent_scope.relations;
+    let tasks = &runtime.snapshot.navigator.workspaces[0].agent_scope.tasks;
     assert_eq!(
-        relations["root"]
+        tasks
+            .cards
             .iter()
-            .map(|g| g.checkout_id.as_str())
+            .map(|c| (c.root.as_str(), c.state))
             .collect::<Vec<_>>(),
-        ["main", "child", "leaf"]
+        [
+            ("asks", TaskState::NeedsYou),
+            ("blocked", TaskState::Blocked),
+            ("working", TaskState::Working),
+            ("waiting", TaskState::Waiting),
+            ("done", TaskState::Done),
+            ("resting", TaskState::Resting),
+            ("merged", TaskState::Cleanup),
+        ]
     );
+    assert_eq!(tasks.needs_you, 2);
+    let stage = |id: &str| tasks.cards.iter().find(|c| c.root == id).unwrap().stage;
+    assert_eq!(stage("merged"), Some(4));
     assert_eq!(
-        relations["root"][1].rows[0].caption_parent.as_deref(),
-        Some("root")
+        stage("resting"),
+        None,
+        "a conversation in the primary checkout has no bar"
     );
-    assert_eq!(
-        relations["child"][0]
-            .rows
-            .iter()
-            .map(|r| (r.pane_id.as_str(), r.depth, r.tag))
-            .collect::<Vec<_>>(),
-        [("child", 0, Some("here")), ("root", 1, Some("parent"))]
-    );
-    assert!(!runtime.refresh_agent_scopes());
-    runtime.snapshot.navigator.workspaces[0].checkouts[2].landed = false;
+    runtime.snapshot.navigator.workspaces[0].checkouts[1].exists = false;
     assert!(
         runtime.refresh_agent_scopes(),
-        "Git-only cleanup changes invalidate folds"
+        "a removed worktree leaves nothing to clean"
     );
-    let graph = &runtime.snapshot.navigator.workspaces[0].agent_scope.graph;
-    assert_eq!(graph.checkouts["leaf"].fold, Some("resting"));
-    assert!(graph.tucked[graph.variants[12]].is_empty());
+    let tasks = &runtime.snapshot.navigator.workspaces[0].agent_scope.tasks;
+    assert_eq!(tasks.cards.last().unwrap().state, TaskState::Resting);
 }
 
 #[test]
@@ -383,7 +404,7 @@ fn scopes_keep_first_overview_owner_last_badge_owner_and_restore_rebuilt_catalog
         project.agent_scope.requests.counts[&crate::agent_state::RequestVerb::Working],
         1
     );
-    assert_eq!(project.agent_scope.graph.checkouts["first"].rank, 1);
+    assert_eq!(project.agent_scope.tasks.cards[0].checkouts, ["first"]);
     assert_eq!(project.agent_scope.members[0].checkout_id, "first");
     assert_eq!(project.agent_scope.places["root"].checkout_id, "first");
     assert_eq!(runtime.snapshot.navigator.agent_scope.listed.len(), 3);
