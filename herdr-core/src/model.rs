@@ -5,6 +5,13 @@ use serde::{Deserialize, Serialize};
 
 pub const SCHEMA_VERSION: u32 = 2;
 
+fn serialize_optional_shared<T: Serialize, S: serde::Serializer>(
+    value: &Option<Arc<T>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    value.as_deref().serialize(serializer)
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CoreOptions {
     pub schema_version: u32,
@@ -61,6 +68,7 @@ pub struct CoreOptions {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Snapshot {
+    pub usage: crate::usage::model::UsageSnapshot,
     pub schema_version: u32,
     pub delivery_watches: Vec<crate::delivery::watch::View>,
     pub navigator: NavigatorSnapshot,
@@ -134,6 +142,12 @@ pub struct Snapshot {
     /// a shell opens one; its own revisioned section.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link_panel: Option<crate::links::LinkPanelSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(serialize_with = "serialize_optional_shared")]
+    pub session_record: Option<Arc<crate::links::ledger::SessionRecordSnapshot>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(serialize_with = "serialize_optional_shared")]
+    pub session_work_search: Option<Arc<crate::links::ledger::SessionSearchSnapshot>>,
     /// The Factory screens' summary and their actions' answers (PRD
     /// software-factory-ui), absent until the Factory host first hands one
     /// over. Its own revisioned section, stamped by edit number, so the
@@ -225,35 +239,41 @@ impl<T: Serialize> Serialize for Edited<T> {
     }
 }
 
-/// What the front Workspace shows: whether its File Views and Tools columns
-/// are on, the Tools column's tool, the two columns' widths, and its View
-/// area tree. The editor's `active_tab_id` is the document of the active
-/// area's active display.
+/// What the front Workspace shows: its right lane (the tool, the pin, the
+/// file tree and both widths) and its View area tree (PRD right-lane D-11).
+/// The editor's `active_tab_id` is the document of the active area's active
+/// display.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WorkspaceViewSnapshot {
     pub device_id: String,
     pub path: String,
-    /// Whether the File Views column is on (PRD three-column-panel D-08).
-    pub views: bool,
-    /// Whether the Tools column is on.
-    pub tools: bool,
-    /// The one tool the Tools column holds, kept while the column is off.
-    pub tool: crate::workspace_views::Tool,
-    /// The File Views column's width in CSS pixels, or null for the shell's
-    /// default until it is resized.
-    pub views_width: Option<u32>,
-    /// The Tools column's width, the same way.
-    pub tools_width: Option<u32>,
+    /// The tool the lane shows, or null while it is closed. An unpinned
+    /// lane is drawn over the agents only once a call opened it (D-02).
+    pub tool: Option<crate::workspace_views::Tool>,
+    /// The tool the lane last showed, null for a lane that never showed
+    /// one; the tool the next open returns to.
+    pub last_tool: Option<crate::workspace_views::Tool>,
+    /// The Work tool's basis and scope, kept for this Workspace.
+    pub work: crate::workspace_views::WorkView,
+    /// Whether the lane is pinned beside Agent Views (D-03).
+    pub pinned: bool,
+    /// Whether the files tool shows the file tree column (D-05).
+    pub tree: bool,
+    /// The lane's width in CSS pixels, or null for the shell's default
+    /// until it is resized.
+    pub lane_width: Option<u32>,
+    /// The tree column's width, the same way.
+    pub tree_width: Option<u32>,
     /// The last width request the core accepted for this Workspace. Runtime
     /// only, so a shell can distinguish its latest intent from an older echo.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub width_request_id: Option<String>,
-    /// The number of this Workspace's last File Views call, 0 for none since
-    /// the core started; a number past `views_calls` as the shell last read
-    /// it is a call the shell shows in a narrow body (D-07).
-    pub views_called: u64,
-    /// How many File Views calls the core has numbered, in any Workspace.
-    pub views_calls: u64,
+    /// The number of this Workspace's last lane call, 0 for none since the
+    /// core started; a number past `lane_calls` as the shell last read it is
+    /// a call the shell shows by drawing the lane (D-02, B16).
+    pub lane_called: u64,
+    /// How many lane calls the core has numbered, in any Workspace.
+    pub lane_calls: u64,
     /// Whether this is the Workspace the operator last chose, now or before a
     /// restart, which the shell opens on; any other front starts on Main
     /// (D-11).
@@ -355,6 +375,10 @@ pub struct ViewDisplaySnapshot {
     pub url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// The pull request a card display shows, by number; absent for every
+    /// other kind.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr: Option<u32>,
     /// A browser display's load stamp: a larger one than the host last
     /// loaded asks it to load `url` again. Zero for a file or a diff.
     #[serde(skip_serializing_if = "load_unset")]
@@ -529,10 +553,67 @@ pub struct NavigatorSnapshot {
     /// list. `workspaces` remains the one authoritative row collection so
     /// search, focus, and project navigation never lose a folded project.
     pub inactive_projects: Vec<InactiveProjectGroupSnapshot>,
+    /// Each device's projects with no agent row and no sleeping
+    /// conversation, folded after its active projects and before its
+    /// Inactive fold (PRD sidebar-titlebar-refresh D-01). Pinned projects,
+    /// the project in front and Inactive projects are never here; the open
+    /// state is the `no_agents/<device>` key of `session_open_folds`.
+    pub no_agent_projects: Vec<InactiveProjectGroupSnapshot>,
     pub agents: Vec<SidebarAgentSnapshot>,
+    /// The checkouts Hide AI started an agent in, by device and path. A list
+    /// beside the checkouts, not a field on them, because a checkout row is
+    /// rebuilt from Git and Herdr at several places and would lose a value
+    /// laid on it; the shell joins it by `(device_id, path)`.
+    pub hide_ai_checkouts: Vec<HideAiCheckoutSnapshot>,
     /// Durable absent-pane sessions are not live agents or pane addresses.
     pub sleeping_sessions: Vec<crate::agent_sleep::SleepingSessionSnapshot>,
-    pub provider_usage: Vec<ProviderUsageSnapshot>,
+}
+
+/// Hide AI started this agent, read from the coordination ledger's record of
+/// the spawn and never from a branch name. `task` is what it was started for.
+///
+/// A kind with a home makes the row the home's: it leaves the operator's
+/// lists and reaches Needs You only on the operator's turn (PRD
+/// hide-ai-work-home D-06, D-13). A kind this build has no home for keeps
+/// its mark and stays an operator row (D-19).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct HideAiSnapshot {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<crate::coordination::SpawnTask>,
+    /// The screen that owns this agent's work; absent for a kind this build
+    /// has no home for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub home: Option<crate::coordination::TaskHome>,
+    /// The catalog Project whose home shows the work, once the home has
+    /// recorded the attempt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    /// What the home waits for the operator to do, beyond what the agent
+    /// itself asks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn: Option<HomeTurn>,
+}
+
+/// The home's turn: the operator is to act on the work the agent did
+/// (D-14). The agent's own question, approval or block is the row's demand,
+/// not this.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum HomeTurn {
+    /// The pull request is open, ready, passing or unchecked, and nobody
+    /// asked for changes: it waits for the operator's review.
+    PrReview { pr_number: u64 },
+    /// Checks failed and the agent is not at work on them.
+    CiFailed { pr_number: u64 },
+}
+
+/// A checkout Hide AI made for an agent it started.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct HideAiCheckoutSnapshot {
+    pub device_id: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<crate::coordination::SpawnTask>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -541,77 +622,6 @@ pub struct InactiveProjectGroupSnapshot {
     pub expanded: bool,
     /// IDs in the same recent-activity order as `NavigatorSnapshot.workspaces`.
     pub project_ids: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct ProviderUsageSnapshot {
-    pub provider: String,
-    pub label: String,
-    pub window_minutes: u64,
-    pub state: String,
-    pub used_percent: Option<f64>,
-    pub resets_at_unix_seconds: Option<u64>,
-    pub message: Option<String>,
-    pub last_checked_at_unix_ms: Option<u64>,
-    pub last_success_at_unix_ms: Option<u64>,
-    pub last_error_kind: Option<String>,
-    pub buckets: Vec<ProviderUsageBucketSnapshot>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct ProviderUsageBucketSnapshot {
-    pub label: String,
-    pub state: String,
-    pub used_percent: Option<f64>,
-    pub resets_at_unix_seconds: Option<u64>,
-    pub message: Option<String>,
-}
-
-impl ProviderUsageSnapshot {
-    pub fn initial_rows() -> Vec<Self> {
-        hide_agent_adapter::ADAPTERS
-            .iter()
-            .filter(|row| row.usage.is_some())
-            .map(|row| Self::loading(row.herdr.name, row.label))
-            .collect()
-    }
-
-    pub fn loading(provider: impl Into<String>, label: impl Into<String>) -> Self {
-        Self {
-            provider: provider.into(),
-            label: label.into(),
-            window_minutes: 10_080,
-            state: "loading".to_owned(),
-            used_percent: None,
-            resets_at_unix_seconds: None,
-            message: Some("Checking usage…".to_owned()),
-            last_checked_at_unix_ms: None,
-            last_success_at_unix_ms: None,
-            last_error_kind: None,
-            buckets: Vec::new(),
-        }
-    }
-
-    pub fn unavailable(
-        provider: impl Into<String>,
-        label: impl Into<String>,
-        message: impl Into<String>,
-        checked_at_unix_ms: u64,
-    ) -> Self {
-        Self {
-            provider: provider.into(),
-            label: label.into(),
-            window_minutes: 10_080,
-            state: "unavailable".to_owned(),
-            used_percent: None,
-            resets_at_unix_seconds: None,
-            message: Some(message.into()),
-            last_checked_at_unix_ms: (checked_at_unix_ms > 0).then_some(checked_at_unix_ms),
-            last_success_at_unix_ms: None,
-            last_error_kind: None,
-            buckets: Vec::new(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -976,6 +986,9 @@ pub struct DeviceTestStageSnapshot {
 /// rule 4).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SidebarAgentSnapshot {
+    /// Raw Herdr session bound to destructive close approval, never a label fallback.
+    #[serde(skip_serializing)]
+    pub close_session: Option<crate::sidebar::SessionAgentSessionPayload>,
     pub state: crate::agent_state::RowState,
     pub resolved: Option<crate::agent_state::sessions::Resolution>,
     /// Resolved within the last 24 hours, so Sessions still lists it under Resolved.
@@ -997,11 +1010,17 @@ pub struct SidebarAgentSnapshot {
     /// cannot stand in for this.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub herdr_name: Option<String>,
-    /// Whether this agent is the pane Hide's Fork made from its declared
-    /// parent (`wire::FORK_TOKEN`). Any child has a parent; only a fork is a
-    /// fork of it, and a name cannot tell them apart once the agent is woken.
+    /// What this pane declares about the agent it was forked from: the
+    /// source's pane and the digest of the session it hosted
+    /// (`wire::fork_declaration`). A fork is the operator's root, so this is
+    /// provenance and never enters ownership.
     #[serde(skip_serializing)]
-    pub started_as_fork: bool,
+    pub declared_fork: Option<(String, Option<String>)>,
+    /// Present on a pane Hide's Fork agent made, after its title on every
+    /// row and header that draws the fork mark
+    /// (`agent_state::apply_fork_sources`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<ForkSourceSnapshot>,
     pub pane_id: String,
     pub workspace_label: String,
     /// The checkout the agent's pane is in, once the navigator has placed it.
@@ -1114,6 +1133,11 @@ pub struct SidebarAgentSnapshot {
     /// declaration is compared with when this row is its parent.
     #[serde(skip_serializing)]
     pub lineage_session: Option<String>,
+    /// Hide's server mark as the pane carries it (`wire::SERVER_MARK_TOKEN`):
+    /// which Herdr server a saved `state_change_seq` for this pane can be
+    /// compared on.
+    #[serde(skip_serializing)]
+    pub server_mark: Option<String>,
     /// Ownership, derived from the lineage alone: a root is the operator's own
     /// work, a descendant is work the root delegated. It is the fourth derived
     /// axis beside demand, activity and read, and it is advice rather than a
@@ -1201,6 +1225,11 @@ pub struct SidebarAgentSnapshot {
     /// read, so it does not make `row_facts` present.
     #[serde(skip_serializing)]
     pub(crate) reply_wait: bool,
+    /// Hide AI started this agent (PRD hide-ai-origin-mark D-01). Set by the
+    /// runtime from the coordination ledger, so a session read never makes
+    /// it; absent from the wire for every other agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hide_ai: Option<HideAiSnapshot>,
     /// The request view's part of the row: the verb and since when, the
     /// request and reply lines, the pull requests (`request_view.rs`).
     /// Absent until the core has built it.
@@ -1292,6 +1321,10 @@ pub struct WorkspaceSnapshot {
     /// search, tab state, and every non-sidebar consumer.
     pub inactive_checkouts: InactiveCheckoutGroupSnapshot,
     pub session_folds: SessionCheckoutFolds,
+    /// What the project's agents are doing, which the sidebar row draws as
+    /// its name's weight and its sleeping fold (PRD sidebar-titlebar-refresh
+    /// D-02, D-03, D-20).
+    pub agent_presence: ProjectAgentPresenceSnapshot,
     /// What `Remove project…` would close, counted by the core so the
     /// confirmation names the same panes the close will send to Herdr
     /// (D-10). Both are zero for a project Herdr has no pane in, which is
@@ -1307,6 +1340,28 @@ pub struct WorkspaceSnapshot {
     /// The disk cleanup review or run of this project, while there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cleanup: Option<crate::live::cleanup::CleanupSnapshot>,
+}
+
+/// What a project's agents are doing, decided by the core so the shell only
+/// draws it (`project_context::agent_presence`).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ProjectAgentPresenceSnapshot {
+    /// An awake agent here shows ▲ ! ? ● ◐ or ✓; resting, sleeping or no
+    /// agents leave it false.
+    pub working: bool,
+    /// Present while the project has a sleeping agent and no awake one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asleep: Option<ProjectAsleepSnapshot>,
+}
+
+/// A project whose every agent sleeps: it starts folded each time it falls
+/// asleep, and stays open once the operator opens it until an agent wakes
+/// (the `asleep/<project>` key of `session_open_folds`, D-19).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ProjectAsleepSnapshot {
+    /// When the most recent of its agents fell asleep, in Unix milliseconds.
+    pub since_unix_ms: u64,
+    pub expanded: bool,
 }
 
 /// A Git project's allocated disk: every worktree and the shared Git
@@ -1643,13 +1698,17 @@ impl StripTabSnapshot {
 
 /// Preserve the established numeric label when a projection has no newer number.
 pub fn tab_number(raw_label: &str, fallback: u32) -> u32 {
+    automatic_tab_number(raw_label).unwrap_or(fallback)
+}
+
+fn automatic_tab_number(raw_label: &str) -> Option<u32> {
     let trimmed = raw_label.trim();
     trimmed
         .strip_prefix("Tab ")
         .unwrap_or(trimmed)
         .trim()
         .parse()
-        .unwrap_or(fallback)
+        .ok()
 }
 
 /// A custom name wins; automatic names follow the focused pane's identity.
@@ -1660,12 +1719,7 @@ pub fn display_tab_label(
     process: Option<&str>,
 ) -> String {
     let trimmed = raw_label.trim();
-    let automatic_number = trimmed
-        .strip_prefix("Tab ")
-        .unwrap_or(trimmed)
-        .trim()
-        .parse::<u32>()
-        .ok();
+    let automatic_number = automatic_tab_number(raw_label);
     if !trimmed.is_empty() && automatic_number.is_none() {
         return trimmed.to_owned();
     }
@@ -1676,6 +1730,25 @@ pub fn display_tab_label(
         .find(|name| !name.is_empty())
         .map(str::to_owned)
         .unwrap_or_else(|| format!("Tab {}", automatic_number.unwrap_or(number)))
+}
+
+/// Sidebar names use only the operator's name, never a pane's automatic title.
+fn sidebar_tab_naming<S: serde::Serializer>(
+    naming: &TabNaming,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    #[derive(Serialize)]
+    struct SidebarName<'a> {
+        manual_name: Option<&'a str>,
+        number: u32,
+    }
+    let raw = naming.raw.trim();
+    let numeric = automatic_tab_number(raw).is_some();
+    SidebarName {
+        manual_name: (!raw.is_empty() && !numeric).then_some(raw),
+        number: naming.number,
+    }
+    .serialize(serializer)
 }
 
 /// Why a quiet row is waiting rather than finished or stopped.
@@ -1832,7 +1905,7 @@ pub struct TabRenameSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TabSnapshot {
-    #[serde(skip_serializing)]
+    #[serde(rename = "sidebar", serialize_with = "sidebar_tab_naming")]
     pub naming: TabNaming,
     pub agent: Option<TabAgentSnapshot>,
     pub id: Option<String>,
@@ -1850,6 +1923,12 @@ pub struct TabSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PaneSnapshot {
+    /// Internal incarnation used to bind a close approval to its terminal.
+    #[serde(skip_serializing)]
+    pub terminal_id: Option<String>,
+    /// Herdr could not restore this terminal. Never inferred from its cwd or agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_terminal_id: Option<String>,
     pub id: String,
     /// The three names a pane can be shown by, in the order the header prefers
     /// them. The core ships the ingredients rather than a chosen title so the
@@ -2105,6 +2184,18 @@ pub struct ServerEndpointSnapshot {
     pub port: u16,
 }
 
+/// The agent a fork was forked from. Both fields are present only while the
+/// source's pane still hosts the session the fork was made from; a source
+/// that closed or moved on to another conversation leaves both absent, and
+/// the mark then names no pane and opens nothing.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ForkSourceSnapshot {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
 /// What the pane header needs to know about forking this pane.
 ///
 /// Both facts come from Herdr: whether the pane runs an agent whose own fork
@@ -2118,7 +2209,9 @@ pub struct ServerEndpointSnapshot {
 pub struct PaneForkSnapshot {
     pub available: bool,
     pub reason: Option<String>,
-    pub forked_from_pane_id: Option<String>,
+    /// Present when this pane is a fork, as its row's `forked_from`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<ForkSourceSnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -2241,6 +2334,11 @@ pub struct TerminalSnapshot {
 pub struct InputRequestSnapshot {
     pub request_id: String,
     pub state: InputRequestState,
+    /// The pane a pending request's keys wait for, once it exists and holds
+    /// the keyboard: a fork's pane until its agent has started. The shell
+    /// keeps sending against the request while that pane has the keyboard.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub held_for: Option<String>,
 }
 
 /// Where keys sent against a creation request stand: kept until Herdr
@@ -2450,6 +2548,63 @@ impl ThemePreference {
     }
 }
 
+/// Whether the sidebar, the Sessions list and the tab bar draw an agent's
+/// provider logo before its title (PRD agent-logo-view-mode D-02). Hidden is the
+/// quiet default, so an update never changes a screen on its own (D-03).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentLogoMode {
+    Shown,
+    #[default]
+    Hidden,
+}
+
+impl AgentLogoMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Shown => "shown",
+            Self::Hidden => "hidden",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "shown" => Some(Self::Shown),
+            "hidden" => Some(Self::Hidden),
+            _ => None,
+        }
+    }
+}
+
+/// The palette every window draws in (Settings > Appearance > Color theme),
+/// independent of the Mode above: Hide is the landing page's Owl Field
+/// colors, Neutral the grey chrome. Hide is the default, including for a store
+/// written before the choice existed (hide-color-theme D-04).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorTheme {
+    #[default]
+    Hide,
+    Neutral,
+}
+
+impl ColorTheme {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Hide => "hide",
+            Self::Neutral => "neutral",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "hide" => Some(Self::Hide),
+            "neutral" => Some(Self::Neutral),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionsProviderFilter {
@@ -2512,7 +2667,7 @@ pub struct ProjectSessionsSnapshot {
 }
 
 /// Project Memory on the wire: the Project a shell opened Memory for in its
-/// Tools column's Memory tab.
+/// lane's Memory tool.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct MemorySnapshot {
     pub project: Option<ProjectMemorySnapshot>,
@@ -2530,6 +2685,9 @@ pub struct ProjectMemorySnapshot {
     /// The first read of the Project's Memory has not answered yet.
     pub loading: bool,
     pub enabled: bool,
+    pub consent_required: bool,
+    /// Cards currently eligible for injection, excluding merged promotions.
+    pub usable_cards: usize,
     /// Live cards against the store's cap.
     pub capacity_reached: bool,
     /// Live cards, the most recently changed first.
@@ -2539,24 +2697,27 @@ pub struct ProjectMemorySnapshot {
     /// repository file, then promotions that ended without a pull request.
     pub questions: Vec<MemoryQuestionSnapshot>,
     pub analysis: MemoryAnalysisState,
+    /// Only the card admitted by the running check, never the whole backlog.
+    pub checking_card: Option<u64>,
+    /// The UTC-day budget's next reset, drawn in the viewer's timezone.
+    pub check_resume_at_unix_ms: Option<u64>,
     /// The card the last forget took away, which Undo brings back (B24).
     pub forgotten: Option<u64>,
     /// The operator's Memory action still running for this Project; another
     /// waits for it.
     pub pending_action: Option<MemoryAction>,
+    pub preparing_hooks: bool,
+    pub action_failure: Option<MemoryAction>,
     /// The one card shown in full (`memory_expand`).
     pub expanded: Option<MemoryCardSnapshot>,
     /// The matcher's answer to the shell's `memory_search`.
     pub search: Option<MemorySearchSnapshot>,
 }
 
-/// Why a Project's Memory is not kept here.
+/// Why a Project's Memory cannot be read.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum MemoryUnavailableSnapshot {
-    /// The Project's sessions run on a connected device; Memory is kept
-    /// only for this Mac's (B16).
-    RemoteDevice { device_name: String },
     /// The Project left the catalog.
     Unregistered,
     /// The store could not be read; the reason is in the diagnostic log.
@@ -2571,6 +2732,9 @@ pub struct MemoryRowSnapshot {
     pub number: u64,
     pub title: String,
     pub kind: MemoryCardKind,
+    /// Bounded text for each card in an active promotion's disclosure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_preview: Option<String>,
     /// Sources that are the operator's own words.
     pub human_source_count: usize,
     /// Distinct sessions given the card in full (D-18).
@@ -2585,14 +2749,20 @@ pub struct MemoryRowSnapshot {
     /// absent for a card that is not, was dismissed or whose pull request
     /// closed unmerged (B30-B32).
     pub promotion: Option<MemoryPromotionSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document_comparison: Option<MemoryDocumentSnapshot>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct MemoryPromotionSnapshot {
     pub state: MemoryPromotionState,
+    /// The durable attempt's start, never the time the shell first saw it.
+    pub started_at_unix_ms: u64,
     /// The agent putting the card in the repository, while it runs.
     pub agent: Option<MemoryPromotionAgentSnapshot>,
     pub pr_number: Option<u64>,
+    /// The durable original target, absent when legacy provenance is unknown.
+    pub pr_url: Option<String>,
     /// The repository-relative file the card went into, once the agent said.
     pub target_path: Option<String>,
     /// Why GitHub could not say whether an `unconfirmed` attempt's pull
@@ -2613,6 +2783,12 @@ pub enum MemoryPromotionState {
     /// came (gh missing or logged out, or failing reads): the attempt is
     /// still followed, and restoring GitHub settles it.
     Unconfirmed,
+    /// The card's decision is not built yet and another branch builds it:
+    /// that branch's pull request carries the card into its file.
+    Building,
+    /// The card's decision is not built and no branch builds it; the card is
+    /// asked about once.
+    Unbuilt,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -2623,10 +2799,34 @@ pub struct MemoryPromotionAgentSnapshot {
     pub pane_id: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MemoryDocumentSnapshot {
+    pub authority: hide_memory::DocumentAuthority,
+    pub document: String,
+    pub document_at_unix_ms: Option<u64>,
+    pub operator_at_unix_ms: Option<u64>,
+}
+
+impl From<&hide_memory::DocumentComparison> for MemoryDocumentSnapshot {
+    fn from(comparison: &hide_memory::DocumentComparison) -> Self {
+        Self {
+            authority: comparison.authority,
+            document: comparison.document.clone(),
+            document_at_unix_ms: comparison.document_at_unix_ms,
+            operator_at_unix_ms: comparison.operator_at_unix_ms,
+        }
+    }
+}
+
 /// One thing the Memory tab asks the operator (B28-B32).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MemoryQuestionSnapshot {
+    DocsDisagree {
+        number: u64,
+        title: String,
+        document: MemoryDocumentSnapshot,
+    },
     /// "저장소 문서로 올릴까요?" with the counts that crossed the bar.
     Promote {
         number: u64,
@@ -2635,8 +2835,74 @@ pub enum MemoryQuestionSnapshot {
         human_session_count: usize,
         pulled_session_count: usize,
     },
-    /// The agent ended without a pull request: "PR 없이 끝남", try again.
-    Failed { number: u64, title: String },
+    /// The attempt ended with no pull request, try again: "PR 없이 끝남", or,
+    /// when its agent never started, why.
+    Failed {
+        number: u64,
+        title: String,
+        start_failure: Option<MemoryStartFailure>,
+    },
+    /// The card's decision is not built and no branch builds it: "아직 안
+    /// 만든 결정", with what the agent saw, until the operator leaves it.
+    Unbuilt {
+        number: u64,
+        title: String,
+        reason: Option<String>,
+    },
+}
+
+/// Why a failed promotion's agent never started, as its spawn answered.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MemoryStartFailure {
+    pub code: MemoryStartFailureCode,
+    /// The last line the new pane's shell showed for `shell_starting`, at
+    /// most [`MemoryStartFailure::DETAIL_CHARS`] characters, or the reason
+    /// a worker could not process a card; the other
+    /// answers' words are the diagnostic log's (`promotion.start_failed`).
+    pub detail: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryStartFailureCode {
+    /// The new pane's shell stopped in its startup files (a question).
+    ShellStarting,
+    /// The agent's start ended at the shell without the agent, twice.
+    AgentNotStarted,
+    CardNotProcessed,
+    /// Any other answer: the device, the lock, Herdr's refusal.
+    Other,
+}
+
+impl MemoryStartFailure {
+    pub const DETAIL_CHARS: usize = 160;
+
+    /// The failure a promotion keeps (`hide_memory::Promotion::failure`), a
+    /// spawn's refusal code with its detail after a unit separator.
+    pub fn of(failure: &str) -> Self {
+        let short = |text: &str| {
+            let text = text.trim();
+            (!text.is_empty()).then(|| text.chars().take(Self::DETAIL_CHARS).collect())
+        };
+        match crate::coordination::split_refusal(failure) {
+            (crate::agent_start::SHELL_STARTING, detail) => Self {
+                code: MemoryStartFailureCode::ShellStarting,
+                detail: detail.and_then(short),
+            },
+            ("card_not_processed", detail) => Self {
+                code: MemoryStartFailureCode::CardNotProcessed,
+                detail: detail.and_then(short),
+            },
+            (code, _) => Self {
+                code: if code == "agent_not_started" {
+                    MemoryStartFailureCode::AgentNotStarted
+                } else {
+                    MemoryStartFailureCode::Other
+                },
+                detail: None,
+            },
+        }
+    }
 }
 
 /// What a card is; the same words the extraction and `hide memory show`
@@ -2648,6 +2914,7 @@ pub enum MemoryCardKind {
     Decision,
     Lesson,
     Fact,
+    Preference,
 }
 
 /// One card in full, as a row expanded in place shows it (B19, B21).
@@ -2655,6 +2922,8 @@ pub enum MemoryCardKind {
 pub struct MemoryCardSnapshot {
     pub number: u64,
     pub body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document_comparison: Option<hide_memory::DocumentComparison>,
     /// Repository-relative files the card rests on (B27).
     pub cited_paths: Vec<String>,
     /// The most recent first.
@@ -2699,6 +2968,8 @@ pub enum MemoryAnalysisState {
     /// Memory is on but Hide AI is off or cannot answer, so no new card is
     /// made; existing cards are still given.
     AiNotReady,
+    Checking,
+    CheckBudgetExhausted,
 }
 
 /// One operator action on a Project's Memory (`memory_action`).
@@ -2715,6 +2986,8 @@ pub enum MemoryAction {
     Promote,
     /// "안 올림": not until the card changes (B29).
     Dismiss,
+    CardRight,
+    DocRight,
 }
 
 impl MemoryAction {
@@ -2727,6 +3000,8 @@ impl MemoryAction {
             Self::Undo => "undo",
             Self::Promote => "promote",
             Self::Dismiss => "dismiss",
+            Self::CardRight => "card_right",
+            Self::DocRight => "doc_right",
         }
     }
 }
@@ -2961,6 +3236,13 @@ pub struct UiStateSnapshot {
     pub expanded_inactive_project_device_ids: Vec<String>,
     #[serde(default)]
     pub project_base_branches: BTreeMap<String, String>,
+    /// Private choices keyed by machine plus canonical main-worktree root.
+    /// Missing fields retain legacy path-based issue/base behavior.
+    #[serde(default)]
+    pub project_settings: BTreeMap<String, crate::project_settings::ProjectSettings>,
+    /// Bounded transient write receipts; never restored or saved as choices.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub project_settings_writes: BTreeMap<String, crate::project_settings::WriteStatus>,
     /// Agent panes whose descendants the operator opened in the sidebar tree.
     /// Absence is the default folded state, so a row with children starts
     /// folded and shows its descendant badge until the operator opens it.
@@ -3007,13 +3289,21 @@ pub struct UiStateSnapshot {
     pub device_registrations: Vec<DeviceRegistration>,
     #[serde(default = "default_accent_hex")]
     pub accent_hex: String,
-    /// The web shell's color theme.
+    /// The web shell's mode (Light, Dark or System).
     #[serde(default)]
     pub theme: ThemePreference,
+    /// Whether list rows and tabs draw the agent's logo (`agent_logo_mode_set`).
+    #[serde(default)]
+    pub agent_logo_mode: AgentLogoMode,
+    /// The palette every window draws in; `color_theme_set` owns it.
+    #[serde(default)]
+    pub color_theme: ColorTheme,
     /// None follows each client's system language. Raw JSON preserves an
     /// invalid stored selection through unrelated saves without publishing it.
     #[serde(default, serialize_with = "serialize_interface_language")]
     pub interface_language: Option<serde_json::Value>,
+    #[serde(default)]
+    pub usage: crate::usage::prefs::UsagePreferences,
     /// The first-run agent choice (issue 517), a reading of this Mac's kit
     /// record (the one place that knows whether it was asked and answered):
     /// `None` until the kit has answered once, `Pending` while the record
@@ -3030,11 +3320,13 @@ pub struct UiStateSnapshot {
     #[serde(default)]
     pub first_run: Option<FirstRun>,
     /// Whether the desktop app shows an OS notification when a root agent
-    /// newly needs the operator or finishes (Settings > General, PRD
-    /// first-run-onboarding D-21). Off until the operator turns it on, so an
-    /// existing install starts without it (D-08).
+    /// newly needs the operator (Settings > Notifications).
     #[serde(default)]
     pub desktop_notifications: bool,
+    /// Done notifications are independent of Needs You; a fresh install
+    /// leaves them off. Persistence migrates the former shared switch.
+    #[serde(default)]
+    pub desktop_notifications_done: bool,
     /// The screens whose one-line introduction was shown once (B43).
     #[serde(default)]
     pub screen_intros_seen: BTreeSet<ScreenIntro>,
@@ -3087,6 +3379,11 @@ pub struct UiStateSnapshot {
     // The store owns persistence; the shell only reads the derived unread axis.
     #[serde(default, skip_serializing)]
     pub pane_read_records: BTreeMap<String, PaneReadRecord>,
+    /// The panes whose last stop finished work, keyed by pane id, so a
+    /// completion a restored Herdr server no longer reports is still shown
+    /// (`agent_state::apply_completions`). The store owns it.
+    #[serde(default, skip_serializing)]
+    pub pane_completions: BTreeMap<String, PaneCompletion>,
     /// Each agent pane's request-view verb and when it took it, so the time
     /// a row has waited survives a restart (PRD overview-request-view D-40).
     /// The store owns it; the shell reads it on the row.
@@ -3189,6 +3486,33 @@ pub struct PaneReadRecord {
     /// works and finishes a second time (PRD B5, B6, B8).
     #[serde(default)]
     pub descendant_signals: BTreeSet<DescendantSignal>,
+    /// The server mark (`wire::SERVER_MARK_TOKEN`) of the Herdr server
+    /// `state_change_seq` was read on. Herdr's sequence restarts with its
+    /// server, so the record is compared with the pane only on that server;
+    /// none means no server can be named, as for a record saved before marks.
+    #[serde(default)]
+    pub server: Option<String>,
+    /// The pane no longer matched this record when Hide last judged it, and
+    /// the operator has not read it since. Saved whenever it changes, so a
+    /// restart that loses Herdr's sequence carries the verdict over rather
+    /// than judging the pane again from numbers that no longer compare.
+    #[serde(default)]
+    pub unread: bool,
+}
+
+/// A pane whose last stop finished work, as Hide last saw it. Herdr's
+/// restored server can report such a pane as only ready (it does for a
+/// restored Claude), and this is what keeps its completion through that.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PaneCompletion {
+    /// The digest of the session that finished (`wire::session_digest`).
+    #[serde(default)]
+    pub session: Option<String>,
+    /// The server mark and Herdr sequence the completion was last seen at.
+    #[serde(default)]
+    pub server: Option<String>,
+    #[serde(default)]
+    pub state_change_seq: Option<u64>,
 }
 
 /// The scale a pane has until the user zooms it.
@@ -3278,6 +3602,8 @@ impl AgentStartChoice {
 /// by id and ignores one it did not ask for.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct IssueWorkSnapshot {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft: Option<SessionIssueDraftSnapshot>,
     pub create: Option<IssueCreateSnapshot>,
     pub detail: Option<IssueDetailSnapshot>,
     pub name: Option<WorktreeNameSnapshot>,
@@ -3285,6 +3611,18 @@ pub struct IssueWorkSnapshot {
     /// The latest `github_search`; absent from the wire until the first one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search: Option<GithubSearchSnapshot>,
+}
+
+/// The editable preview of one missed item. No external write precedes Create.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SessionIssueDraftSnapshot {
+    pub source: crate::links::ledger::MissedSource,
+    pub phase: String,
+    pub workspace_id: Option<String>,
+    pub repository: Option<String>,
+    pub title: String,
+    pub body: String,
+    pub message: Option<String>,
 }
 
 /// The latest GitHub search (`github_search`), matched by the web's own
@@ -3423,6 +3761,87 @@ pub struct IssueUpdateSnapshot {
 pub struct PrWorkSnapshot {
     pub link: Option<PrLinkSnapshot>,
     pub feedback: Option<PrFeedbackSnapshot>,
+    /// The decision cards open now, one per pull request, newest last, at
+    /// most [`PR_CARD_LIMIT`] (PRD work-tab-pr-lens D-06).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cards: Vec<PrCardSnapshot>,
+}
+
+/// Cards kept at once; the least recently asked for is dropped.
+pub const PR_CARD_LIMIT: usize = 8;
+
+/// What a pull request's card reads beyond the list: its body, changed files,
+/// unresolved review threads and what a merge may be, per head commit. A part
+/// that could not be read is named in `failed` and drawn as
+/// `읽지 못함 · 다시 시도` (B52); the others stand.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct PrCardSnapshot {
+    pub workspace_id: String,
+    pub number: u32,
+    /// A read is in flight; the parts below are the last read's.
+    pub reading: bool,
+    /// The head commit the parts were read at, which a merge is conditioned on.
+    pub head: Option<String>,
+    pub body: Option<String>,
+    pub files: Option<Vec<PrCardFile>>,
+    /// How many files the pull request changes in all; more than `files`
+    /// holds when GitHub's page was full.
+    pub files_total: u32,
+    pub threads: Option<Vec<PrCardThread>>,
+    pub merge: Option<PrCardMerge>,
+    /// `body`, `files` or `threads`, whichever the last read could not get.
+    pub failed: Vec<&'static str>,
+    /// hide-ai's summary of the pull request at `head`; absent while it is
+    /// off, paused by the usage limit, failed or not made yet (B37).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// The Merge or branch update asked for from this card, and how it went.
+    pub write: Option<PrWriteSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrCardFile {
+    pub path: String,
+    pub additions: u32,
+    pub deletions: u32,
+    /// Marked `linguist-generated` in the project's `.gitattributes`, or a
+    /// well-known lock file (D-27).
+    pub generated: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrCardThread {
+    pub reviewer: Option<String>,
+    pub path: String,
+    pub line: Option<u32>,
+    pub text: String,
+}
+
+/// What the repository lets a merge be (D-21).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct PrCardMerge {
+    /// The methods the repository allows, in the order Merge offers them.
+    pub methods: Vec<hide_node_link::gh::PrMergeMethod>,
+    /// The base branch has a merge queue: the button adds to it.
+    pub queue: bool,
+    /// The signed-in account may write to the repository.
+    pub can_merge: bool,
+}
+
+/// One GitHub write asked for from a card (D-22, B31-B34).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrWriteSnapshot {
+    /// `merge` or `update_branch`.
+    pub action: &'static str,
+    /// The head commit the operator was shown.
+    pub head: String,
+    pub method: Option<hide_node_link::gh::PrMergeMethod>,
+    /// `working`, `done` or `failed`.
+    pub phase: &'static str,
+    /// Why it failed, as a code the card words with what to do:
+    /// `head_moved`, `denied`, `conflict`, `not_mergeable`, `unreachable`
+    /// or `failed`. The text GitHub gave goes to the diagnostic log.
+    pub reason: Option<&'static str>,
 }
 
 /// `pr_link_issue`'s progress: the issue made (a new one), the link Hide
@@ -3448,7 +3867,7 @@ pub struct PrLinkSnapshot {
 
 /// One failed check of a pull request, by the name GitHub shows and the page
 /// that says why.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct PrFailedCheck {
     pub name: String,
     pub url: Option<String>,
@@ -3467,6 +3886,8 @@ pub struct PrChangeRequest {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PrFeedbackSnapshot {
     pub request_id: String,
+    pub device_id: String,
+    pub root: String,
     pub pr_number: u32,
     /// `reading`, `ready` or `failed`.
     pub phase: String,
@@ -3507,6 +3928,8 @@ impl Default for UiStateSnapshot {
             expanded_inactive_checkout_project_paths: Vec::new(),
             expanded_inactive_project_device_ids: Vec::new(),
             project_base_branches: BTreeMap::new(),
+            project_settings: BTreeMap::new(),
+            project_settings_writes: BTreeMap::new(),
             expanded_agent_pane_ids: Vec::new(),
             sessions_expanded_agent_pane_ids: Vec::new(),
             selected_path: None,
@@ -3526,11 +3949,15 @@ impl Default for UiStateSnapshot {
             device_registrations: Vec::new(),
             accent_hex: default_accent_hex(),
             theme: ThemePreference::Dark,
+            agent_logo_mode: AgentLogoMode::Hidden,
+            color_theme: ColorTheme::Hide,
             interface_language: None,
+            usage: Default::default(),
             agent_onboarding: None,
             agent_onboarding_agents: Vec::new(),
             first_run: None,
             desktop_notifications: false,
+            desktop_notifications_done: false,
             screen_intros_seen: BTreeSet::new(),
             sidebar_width: default_sidebar_width(),
             font_size: default_font_size(),
@@ -3538,6 +3965,7 @@ impl Default for UiStateSnapshot {
             editor_text_scale: DEFAULT_PANE_TEXT_SCALE,
             conversation_pane_ids: BTreeSet::new(),
             pane_read_records: BTreeMap::new(),
+            pane_completions: BTreeMap::new(),
             request_verbs: BTreeMap::new(),
             agent_sleep_after_hours: None,
             project_issue_sources: BTreeMap::new(),
@@ -4006,6 +4434,100 @@ pub struct PullRequestSnapshot {
     /// nothing about this repository's branch of the same name.
     #[serde(default)]
     pub cross_repository: bool,
+    /// What the Work tab's PRs list groups by (PRD work-tab-pr-lens D-08):
+    /// the GitHub values the 5-minute read adds, none of them parsed from a
+    /// body or a repository's own script (D-05).
+    #[serde(default)]
+    pub work: PullRequestWork,
+}
+
+/// How a pull request stands against its base, GitHub's `mergeStateStatus`
+/// (PRD work-tab-pr-lens D-20). A value this build does not know reads as
+/// `Unknown`, which keeps the pull request where it was.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeState {
+    #[default]
+    Unknown,
+    Clean,
+    HasHooks,
+    /// Merge is allowed but a check that is not required failed.
+    Unstable,
+    Dirty,
+    Behind,
+    Blocked,
+    Draft,
+}
+
+impl MergeState {
+    pub fn parse(value: &str) -> Self {
+        match value.to_ascii_uppercase().as_str() {
+            "CLEAN" => Self::Clean,
+            "HAS_HOOKS" => Self::HasHooks,
+            "UNSTABLE" => Self::Unstable,
+            "DIRTY" => Self::Dirty,
+            "BEHIND" => Self::Behind,
+            "BLOCKED" => Self::Blocked,
+            "DRAFT" => Self::Draft,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewRequestKind {
+    User,
+    Team,
+}
+
+/// One person or team a review was asked of.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct ReviewRequest {
+    pub kind: ReviewRequestKind,
+    pub name: String,
+}
+
+/// Whether a review was asked of the signed-in account.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewAsk {
+    #[default]
+    None,
+    /// Asked of the account itself.
+    Direct,
+    /// Asked of a team the account is in and not of the account.
+    Team,
+}
+
+/// The GitHub values the Work tab's PRs list and the card read beyond the
+/// badge, checks and review: see [`PullRequestSnapshot::work`].
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct PullRequestWork {
+    pub author: Option<String>,
+    pub author_is_bot: bool,
+    /// The signed-in account wrote it.
+    pub mine: bool,
+    pub merge_state: MergeState,
+    pub review_requests: Vec<ReviewRequest>,
+    pub asked_of_me: ReviewAsk,
+    /// The checks of an open pull request that failed, by name, and how many
+    /// are still running: the second line's `✗ <name>` and `CI · N`.
+    pub failed_checks: Vec<PrFailedCheck>,
+    pub pending_checks: u32,
+    /// Its place in the base branch's merge queue, from 1; absent when it is
+    /// not queued.
+    pub queue_position: Option<u32>,
+    /// When the latest review request on it was made, which `리뷰 · N시간째`
+    /// counts from.
+    pub review_requested_at_unix_ms: Option<u64>,
+    /// The sessions the link record says made or worked on it, and the
+    /// checkouts (paths) they ran in. Core only: the runtime attaches them
+    /// from the record (`runtime/links.rs`), the grouping reads them.
+    #[serde(skip)]
+    pub sessions: Vec<String>,
+    #[serde(skip)]
+    pub checkouts: Vec<String>,
 }
 
 impl PullRequestSnapshot {
@@ -4019,7 +4541,7 @@ impl Serialize for PullRequestSnapshot {
         use serde::ser::SerializeStruct;
         // The head commit, the repository and the created and closed times
         // stay off the wire: only the core compares them.
-        let mut out = serializer.serialize_struct("PullRequestSnapshot", 13)?;
+        let mut out = serializer.serialize_struct("PullRequestSnapshot", 14)?;
         out.serialize_field("closing_issues", &self.closing_issues)?;
         out.serialize_field("title", &self.title)?;
         out.serialize_field("checks", &self.checks)?;
@@ -4033,6 +4555,7 @@ impl Serialize for PullRequestSnapshot {
         out.serialize_field("merged_at_unix_ms", &self.merged_at_unix_ms)?;
         out.serialize_field("updated_at_unix_ms", &self.updated_at_unix_ms)?;
         out.serialize_field("state", &self.state())?;
+        out.serialize_field("work", &self.work)?;
         out.end()
     }
 }
@@ -4073,8 +4596,51 @@ pub struct GithubProjectSnapshot {
     /// The repository's main worktree, which is what identifies a project.
     pub root_path: String,
     pub status: GithubStatusSnapshot,
+    /// The account `gh` is signed in as, which "mine" is judged against;
+    /// absent before the first successful read.
+    #[serde(default)]
+    pub viewer: Option<String>,
     /// One entry per branch that has a pull request.
     pub pull_requests: Vec<PullRequestSnapshot>,
+}
+
+/// How a project's read ended, as the re-read clock counts it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GithubReadOutcome {
+    /// The pull requests and the issues were read.
+    Read,
+    /// The pull requests were read and the issues were not. The re-read
+    /// clock backs off as from a failure, so issues that fail every time
+    /// (a fork with its issues turned off) are not asked for every minute,
+    /// while the pull requests the answer holds are current.
+    IssuesFailed,
+    /// The pull requests were not read.
+    Failed,
+    /// The repository has no GitHub remote: there is nothing to ask GitHub,
+    /// and nothing changes that until its remotes do.
+    NoRemote,
+}
+
+impl GithubReadOutcome {
+    /// Whether the answer holds the project's pull requests as GitHub has
+    /// them now.
+    pub fn pull_requests_read(self) -> bool {
+        matches!(self, Self::Read | Self::IssuesFailed)
+    }
+}
+
+impl GithubProjectSnapshot {
+    pub fn read_outcome(&self) -> GithubReadOutcome {
+        if self.status.failure_category == Some(GithubFailureCategory::NoGithubRemote) {
+            GithubReadOutcome::NoRemote
+        } else if !self.pull_requests_read {
+            GithubReadOutcome::Failed
+        } else if !self.issues_read {
+            GithubReadOutcome::IssuesFailed
+        } else {
+            GithubReadOutcome::Read
+        }
+    }
 }
 
 /// Every repository's pull-request state, keyed by main worktree path.
@@ -4538,6 +5104,8 @@ pub struct BackgroundAiSnapshot {
     pub chosen: bool,
     /// The `에이전트 요약` switch: agent labels are asked for and shown.
     pub agent_summary: bool,
+    /// The `PR 요약` switch: a pull request's card asks for a summary.
+    pub pr_summary: bool,
     /// One row per agent Hide AI knows, in the fixed order. An agent that is
     /// not on this Mac is still a row, because "not here" and "not signed in"
     /// are different answers.
@@ -4551,6 +5119,10 @@ pub struct BackgroundAiSnapshot {
     /// Why the saved choice could not be read or written. The defaults are in
     /// use while this is set; it is never left empty to stand for success.
     pub unavailable_reason: Option<String>,
+    /// The Usage limit: the share of an agent's week Hide AI may use before a
+    /// background request moves to the next agent of the order. `None` is
+    /// No limit (PRD hide-ai-usage-limit D-01).
+    pub usage_limit: Option<u8>,
 }
 
 impl BackgroundAiSnapshot {
@@ -4565,6 +5137,8 @@ impl BackgroundAiSnapshot {
                 .map(|provider| BackgroundAiProviderSnapshot::unread(*provider))
                 .collect(),
             agent_summary: true,
+            pr_summary: true,
+            usage_limit: Some(hide_ai::DEFAULT_LIMIT_PERCENT),
             ..Self::default()
         }
     }
@@ -4616,6 +5190,21 @@ pub struct BackgroundAiProviderSnapshot {
     /// `--model` (B36). True for the agents measured against nothing yet.
     pub cli_default: bool,
     pub models_unavailable_reason: Option<String>,
+    /// The agent's weekly usage as the toolbar's usage read last answered it;
+    /// absent when it gave no figure, and then the agent is never held back
+    /// by the usage limit (PRD hide-ai-usage-limit D-07).
+    pub weekly: Option<BackgroundAiWeekly>,
+    /// The weekly figure is at or past the usage limit: this agent cannot
+    /// answer a request Hide AI starts on its own (D-02).
+    pub past_limit: bool,
+}
+
+/// One agent's weekly usage: the share spent and when the window resets.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct BackgroundAiWeekly {
+    pub used_percent: f64,
+    /// Unix milliseconds, when the agent said.
+    pub resets_at_ms: Option<u64>,
 }
 
 impl BackgroundAiProviderSnapshot {
@@ -4649,12 +5238,17 @@ pub struct BackgroundAiRefusalSnapshot {
     /// The agent that cannot answer: Runs on.
     pub provider: String,
     /// The router's availability class for it: `usage_limited`,
-    /// `needs_login`, `not_installed`, `unavailable` or `unsupported`.
+    /// `past_limit` (at or past the operator's usage limit), `needs_login`,
+    /// `not_installed`, `unavailable` or `unsupported`.
     pub reason: String,
     /// When a usage limit ends, as unix milliseconds, when the agent said.
     pub retry_at_ms: Option<u64>,
     /// The listed agent answering instead; absent when none can (B42).
     pub using: Option<String>,
+    /// For `past_limit`: the agent's weekly share and the limit it is past,
+    /// so the screen says `past your 90% limit` from the core's own numbers.
+    pub used_percent: Option<f64>,
+    pub limit: Option<u8>,
 }
 
 /// What the Settings diagnosis says about agent hooks (PRD B27, B28, D-31,
@@ -4853,6 +5447,7 @@ impl Snapshot {
 
         Self {
             schema_version: SCHEMA_VERSION,
+            usage: crate::usage::model::UsageSnapshot::initial(options.node_id.as_str()),
             delivery_watches: Vec::new(),
             navigator: NavigatorSnapshot {
                 agent_scope: Default::default(),
@@ -4867,9 +5462,10 @@ impl Snapshot {
                 )],
                 workspaces: Vec::new(),
                 inactive_projects: Vec::new(),
+                no_agent_projects: Vec::new(),
                 agents: Vec::new(),
+                hide_ai_checkouts: Vec::new(),
                 sleeping_sessions: Vec::new(),
-                provider_usage: ProviderUsageSnapshot::initial_rows(),
             },
             overlay: OverlaySnapshot {
                 kind: None,
@@ -4973,6 +5569,8 @@ impl Snapshot {
             memory: None,
             link_summaries: None,
             link_panel: None,
+            session_record: None,
+            session_work_search: None,
             factory: None,
             factory_task: None,
         }
@@ -5004,133 +5602,24 @@ impl PetSnapshot {
 /// per-event scalars, which now include find state.
 /// Owned copy retained by the runtime to stamp revisions by comparison, so
 /// no mutation site needs dirty-tracking discipline.
-#[derive(Clone, Debug, PartialEq)]
-pub struct RestSections {
-    pub delivery_watches: Vec<crate::delivery::watch::View>,
-    pub navigator: NavigatorSnapshot,
-    pub sessions: SessionsSnapshot,
-    pub card: CheckoutCardSnapshot,
-    pub git_worktrees: Option<ProjectWorktreesSnapshot>,
-    pub git_worktrees_loading: bool,
-    pub git_worktrees_remote: bool,
-    pub worktree_removal: Option<WorktreeRemovalSnapshot>,
-    pub task_operation: Option<TaskOperationSnapshot>,
-    pub repository_clone: Option<RepositoryCloneSnapshot>,
-    pub explorer_operation: Option<ExplorerOperationSnapshot>,
-    pub issue_work: IssueWorkSnapshot,
-    pub pr_work: PrWorkSnapshot,
-    pub overlay: OverlaySnapshot,
-    pub tab: TabSnapshot,
-    pub connection: ConnectionSnapshot,
-    pub zoomed: Option<String>,
-    pub focused: FocusedSnapshot,
-    pub pane_layouts: Vec<PaneLayoutSnapshot>,
-    pub terminal_pane_id: Option<String>,
-    pub terminal_closed: bool,
-    pub terminal_exit_code: Option<i32>,
-    pub terminal_panes: Vec<TerminalPaneSnapshot>,
-    pub terminal_input_requests: Vec<InputRequestSnapshot>,
-    pub terminal_headers: BTreeMap<String, crate::agent_state::header::Header>,
-    pub ui_state: UiStateSnapshot,
-    pub ime: ImeSnapshot,
-    pub status: StatusSnapshot,
-    pub pet: PetSnapshot,
-    pub recent_closed: RecentClosedSnapshot,
-    pub workspace_view: Option<WorkspaceViewSnapshot>,
-    pub browser_views: Vec<BrowserViewInventoryRow>,
-    pub browser_scopes: Vec<BrowserAreaScopeRow>,
-    browser_views_revision: Option<u64>,
-}
-
-impl RestSections {
-    pub fn capture(snapshot: &Snapshot) -> Self {
-        Self {
-            delivery_watches: snapshot.delivery_watches.clone(),
-            navigator: snapshot.navigator.clone(),
-            sessions: snapshot.sessions.clone(),
-            card: snapshot.card.clone(),
-            git_worktrees: snapshot.git_worktrees.clone(),
-            git_worktrees_loading: snapshot.git_worktrees_loading,
-            git_worktrees_remote: snapshot.git_worktrees_remote,
-            worktree_removal: snapshot.worktree_removal.clone(),
-            task_operation: snapshot.task_operation.clone(),
-            repository_clone: snapshot.repository_clone.clone(),
-            explorer_operation: snapshot.explorer_operation.clone(),
-            issue_work: snapshot.issue_work.clone(),
-            pr_work: snapshot.pr_work.clone(),
-            overlay: snapshot.overlay.clone(),
-            tab: snapshot.tab.clone(),
-            connection: snapshot.connection.clone(),
-            zoomed: snapshot.zoomed.clone(),
-            focused: snapshot.focused.clone(),
-            pane_layouts: snapshot.pane_layouts.clone(),
-            terminal_pane_id: snapshot.terminal.pane_id.clone(),
-            terminal_closed: snapshot.terminal.closed,
-            terminal_exit_code: snapshot.terminal.exit_code,
-            terminal_panes: snapshot.terminal.panes.clone(),
-            terminal_input_requests: snapshot.terminal.input_requests.clone(),
-            terminal_headers: snapshot.terminal.headers.clone(),
-            ui_state: snapshot.ui_state.clone(),
-            ime: snapshot.ime.clone(),
-            status: snapshot.status.clone(),
-            pet: snapshot.pet.clone(),
-            recent_closed: snapshot.recent_closed.clone(),
-            workspace_view: snapshot.workspace_view.clone(),
-            browser_views: snapshot.browser_views.clone(),
-            browser_scopes: snapshot.browser_scopes.clone(),
-            browser_views_revision: snapshot.browser_views_revision,
-        }
-    }
-
-    /// Field-by-field equality against the live snapshot, so the unchanged
-    /// case costs a comparison instead of a clone.
-    pub fn matches(&self, snapshot: &Snapshot) -> bool {
-        self.delivery_watches == snapshot.delivery_watches
-            && self.navigator == snapshot.navigator
-            && self.sessions == snapshot.sessions
-            && self.card == snapshot.card
-            && self.git_worktrees == snapshot.git_worktrees
-            && self.git_worktrees_loading == snapshot.git_worktrees_loading
-            && self.git_worktrees_remote == snapshot.git_worktrees_remote
-            && self.worktree_removal == snapshot.worktree_removal
-            && self.task_operation == snapshot.task_operation
-            && self.repository_clone == snapshot.repository_clone
-            && self.explorer_operation == snapshot.explorer_operation
-            && self.issue_work == snapshot.issue_work
-            && self.pr_work == snapshot.pr_work
-            && self.overlay == snapshot.overlay
-            && self.tab == snapshot.tab
-            && self.connection == snapshot.connection
-            && self.zoomed == snapshot.zoomed
-            && self.focused == snapshot.focused
-            && self.pane_layouts == snapshot.pane_layouts
-            && self.terminal_pane_id == snapshot.terminal.pane_id
-            && self.terminal_closed == snapshot.terminal.closed
-            && self.terminal_exit_code == snapshot.terminal.exit_code
-            && self.terminal_panes == snapshot.terminal.panes
-            && self.terminal_input_requests == snapshot.terminal.input_requests
-            && self.terminal_headers == snapshot.terminal.headers
-            && self.ui_state == snapshot.ui_state
-            && self.ime == snapshot.ime
-            && self.status == snapshot.status
-            && self.pet == snapshot.pet
-            && self.recent_closed == snapshot.recent_closed
-            && self.workspace_view == snapshot.workspace_view
-            && self.browser_views_revision == snapshot.browser_views_revision
-    }
-}
+mod rest;
+pub use rest::{RestSections, RestWire};
 
 /// One delta response taken from the runtime, holding everything the wire
 /// needs and nothing that reaches back into the runtime.
 ///
 /// Taking a payload is what runs under the runtime lock; serializing it is
-/// what must not. The three large sections ride the reference-counted copies
-/// the runtime already retains for revision stamping, so taking one copies no
-/// section body - it bumps three refcounts.
+/// what must not. Sections ride the reference-counted copies the runtime
+/// already retains for revision stamping, so taking one copies no section body.
 pub struct SnapshotDeltaPayload {
+    /// Cursor normalized to zero on reset, for negotiated semantic deltas.
+    pub have_revision: u64,
+    /// Complete immutable state for typed internal projections.
+    pub current_rest: Arc<RestSections>,
     pub schema_version: u32,
     pub revision: u64,
     pub rest: Option<Arc<RestSections>>,
+    pub usage: Option<Arc<crate::usage::model::UsageSnapshot>>,
     pub editor: Option<Arc<EditorSnapshot>>,
     pub changes: Option<Arc<ChangesSnapshot>>,
     /// The visible View documents (PRD S7 contract 3.1); always `None` in a
@@ -5141,6 +5630,8 @@ pub struct SnapshotDeltaPayload {
     pub memory: Option<Arc<MemorySnapshot>>,
     pub link_summaries: Option<Arc<crate::links::LinkSummariesSnapshot>>,
     pub link_panel: Option<Arc<crate::links::LinkPanelSnapshot>>,
+    pub session_record: Option<Arc<crate::links::ledger::SessionRecordSnapshot>>,
+    pub session_work_search: Option<Arc<crate::links::ledger::SessionSearchSnapshot>>,
     pub factory: Option<crate::factory::screen::FactorySection>,
     /// `Some(None)`: the open Task page closed since the reader's revision.
     pub factory_task: Option<Option<crate::factory::screen::FactoryTaskSection>>,
@@ -5168,7 +5659,12 @@ pub struct DocumentsDelta {
 pub struct SnapshotDeltaWire<'a> {
     pub schema_version: u32,
     pub revision: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rest_format: Option<&'static str>,
     pub rest: Option<RestWire<'a>>,
+    /// Usage-only changes never resend the navigator or unrelated UI state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<&'a crate::usage::model::UsageSnapshot>,
     pub editor: Option<&'a EditorSnapshot>,
     pub changes: Option<&'a ChangesSnapshot>,
     /// Absent unless a visible View document changed for this reader, and
@@ -5193,6 +5689,10 @@ pub struct SnapshotDeltaWire<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link_panel: Option<&'a crate::links::LinkPanelSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_record: Option<&'a crate::links::ledger::SessionRecordSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_work_search: Option<&'a crate::links::ledger::SessionSearchSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub factory: Option<&'a crate::factory::screen::FactorySection>,
     /// `null` when the page closed since the reader's revision.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -5206,11 +5706,29 @@ pub struct SnapshotDeltaWire<'a> {
 }
 
 impl<'a> SnapshotDeltaWire<'a> {
+    /// Only clients which negotiated this representation receive nested omissions.
+    pub fn granular(payload: &'a SnapshotDeltaPayload) -> Self {
+        let mut wire = Self::borrow(payload);
+        wire.rest_format = Some("semantic-rest-v1");
+        wire.rest = payload.rest.as_deref().map(|rest| RestWire {
+            rest,
+            have_revision: payload.have_revision,
+            legacy: false,
+        });
+        wire
+    }
+
     pub fn borrow(payload: &'a SnapshotDeltaPayload) -> Self {
         Self {
             schema_version: payload.schema_version,
             revision: payload.revision,
-            rest: payload.rest.as_deref().map(RestWire::borrow),
+            rest_format: None,
+            rest: payload.rest.as_deref().map(|rest| RestWire {
+                rest,
+                have_revision: 0,
+                legacy: true,
+            }),
+            usage: payload.usage.as_deref(),
             editor: payload.editor.as_deref(),
             changes: payload.changes.as_deref(),
             documents: payload.documents.as_ref().map(|documents| DocumentsWire {
@@ -5226,6 +5744,8 @@ impl<'a> SnapshotDeltaWire<'a> {
             memory: payload.memory.as_deref(),
             link_summaries: payload.link_summaries.as_deref(),
             link_panel: payload.link_panel.as_deref(),
+            session_record: payload.session_record.as_deref(),
+            session_work_search: payload.session_work_search.as_deref(),
             factory: payload.factory.as_ref(),
             factory_task: payload.factory_task.as_ref().map(Option::as_ref),
             find: &payload.find,
@@ -5243,91 +5763,6 @@ pub struct DocumentsWire<'a> {
 pub struct ChangedDocumentWire<'a> {
     pub tab_id: &'a str,
     pub document: &'a EditorDocumentSnapshot,
-}
-
-#[derive(Serialize)]
-pub struct RestWire<'a> {
-    pub delivery_watches: &'a [crate::delivery::watch::View],
-    pub navigator: &'a NavigatorSnapshot,
-    pub sessions: &'a SessionsSnapshot,
-    pub card: &'a CheckoutCardSnapshot,
-    pub git_worktrees: &'a Option<ProjectWorktreesSnapshot>,
-    pub git_worktrees_loading: bool,
-    pub git_worktrees_remote: bool,
-    pub worktree_removal: &'a Option<WorktreeRemovalSnapshot>,
-    pub task_operation: &'a Option<TaskOperationSnapshot>,
-    pub repository_clone: &'a Option<RepositoryCloneSnapshot>,
-    pub explorer_operation: &'a Option<ExplorerOperationSnapshot>,
-    pub issue_work: &'a IssueWorkSnapshot,
-    pub pr_work: &'a PrWorkSnapshot,
-    pub overlay: &'a OverlaySnapshot,
-    pub tab: &'a TabSnapshot,
-    pub connection: &'a ConnectionSnapshot,
-    pub zoomed: &'a Option<String>,
-    pub focused: &'a FocusedSnapshot,
-    pub pane_layouts: &'a [PaneLayoutSnapshot],
-    pub terminal: TerminalMetaWire<'a>,
-    pub ui_state: &'a UiStateSnapshot,
-    pub ime: &'a ImeSnapshot,
-    pub status: &'a StatusSnapshot,
-    pub pet: &'a PetSnapshot,
-    pub recent_closed: &'a RecentClosedSnapshot,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace_view: &'a Option<WorkspaceViewSnapshot>,
-    pub browser_views: &'a [BrowserViewInventoryRow],
-    pub browser_scopes: &'a [BrowserAreaScopeRow],
-}
-
-impl<'a> RestWire<'a> {
-    fn borrow(rest: &'a RestSections) -> Self {
-        Self {
-            delivery_watches: &rest.delivery_watches,
-            navigator: &rest.navigator,
-            sessions: &rest.sessions,
-            card: &rest.card,
-            git_worktrees: &rest.git_worktrees,
-            git_worktrees_loading: rest.git_worktrees_loading,
-            git_worktrees_remote: rest.git_worktrees_remote,
-            worktree_removal: &rest.worktree_removal,
-            task_operation: &rest.task_operation,
-            repository_clone: &rest.repository_clone,
-            explorer_operation: &rest.explorer_operation,
-            issue_work: &rest.issue_work,
-            pr_work: &rest.pr_work,
-            overlay: &rest.overlay,
-            tab: &rest.tab,
-            connection: &rest.connection,
-            zoomed: &rest.zoomed,
-            focused: &rest.focused,
-            pane_layouts: &rest.pane_layouts,
-            terminal: TerminalMetaWire {
-                pane_id: &rest.terminal_pane_id,
-                closed: rest.terminal_closed,
-                exit_code: rest.terminal_exit_code,
-                panes: &rest.terminal_panes,
-                input_requests: &rest.terminal_input_requests,
-                headers: &rest.terminal_headers,
-            },
-            ui_state: &rest.ui_state,
-            ime: &rest.ime,
-            status: &rest.status,
-            pet: &rest.pet,
-            recent_closed: &rest.recent_closed,
-            workspace_view: &rest.workspace_view,
-            browser_views: &rest.browser_views,
-            browser_scopes: &rest.browser_scopes,
-        }
-    }
-}
-
-#[derive(Serialize)]
-pub struct TerminalMetaWire<'a> {
-    pub pane_id: &'a Option<String>,
-    pub closed: bool,
-    pub exit_code: Option<i32>,
-    pub panes: &'a [TerminalPaneSnapshot],
-    pub input_requests: &'a [InputRequestSnapshot],
-    pub headers: &'a BTreeMap<String, crate::agent_state::header::Header>,
 }
 
 #[cfg(test)]
@@ -5355,6 +5790,62 @@ mod interface_language_tests {
         ] {
             assert_eq!(InterfaceLanguage::from_system(tag), expected, "{tag}");
         }
+    }
+}
+
+#[cfg(test)]
+mod memory_start_failure_tests {
+    use super::{MemoryStartFailure, MemoryStartFailureCode};
+
+    /// The failed card shows why its agent never started: the question its
+    /// shell stopped at, and never more than that one line.
+    #[test]
+    fn a_start_failure_carries_its_code_and_at_most_the_question_line() {
+        let question = crate::coordination::refusal(
+            crate::agent_start::SHELL_STARTING,
+            "[oh-my-zsh] Would you like to update? [Y/n]",
+        );
+        assert_eq!(
+            MemoryStartFailure::of(&question),
+            MemoryStartFailure {
+                code: MemoryStartFailureCode::ShellStarting,
+                detail: Some("[oh-my-zsh] Would you like to update? [Y/n]".to_owned()),
+            }
+        );
+        let long =
+            crate::coordination::refusal(crate::agent_start::SHELL_STARTING, &"y".repeat(400));
+        assert_eq!(
+            MemoryStartFailure::of(&long)
+                .detail
+                .map(|line| line.chars().count()),
+            Some(MemoryStartFailure::DETAIL_CHARS)
+        );
+        assert_eq!(
+            MemoryStartFailure::of(crate::agent_start::SHELL_STARTING).detail,
+            None,
+            "a screen that could not be read"
+        );
+        assert_eq!(
+            MemoryStartFailure::of("agent_not_started"),
+            MemoryStartFailure {
+                code: MemoryStartFailureCode::AgentNotStarted,
+                detail: None,
+            }
+        );
+        assert_eq!(
+            MemoryStartFailure::of("agent_not_installed"),
+            MemoryStartFailure {
+                code: MemoryStartFailureCode::Other,
+                detail: None,
+            }
+        );
+        assert_eq!(
+            MemoryStartFailure::of("card_not_processed\u{1f}The owning guide is unavailable"),
+            MemoryStartFailure {
+                code: MemoryStartFailureCode::CardNotProcessed,
+                detail: Some("The owning guide is unavailable".to_owned()),
+            }
+        );
     }
 }
 
@@ -5743,13 +6234,15 @@ mod wire_enum_tests {
             MemoryCardKind::Decision,
             MemoryCardKind::Lesson,
             MemoryCardKind::Fact,
+            MemoryCardKind::Preference,
         ];
         for variant in card_kinds {
             match variant {
                 MemoryCardKind::Rule
                 | MemoryCardKind::Decision
                 | MemoryCardKind::Lesson
-                | MemoryCardKind::Fact => {}
+                | MemoryCardKind::Fact
+                | MemoryCardKind::Preference => {}
             }
         }
         assert_wire(&contract, "memory_card_kind", &card_kinds);
@@ -5759,12 +6252,16 @@ mod wire_enum_tests {
             MemoryAnalysisState::Idle,
             MemoryAnalysisState::Analyzing,
             MemoryAnalysisState::AiNotReady,
+            MemoryAnalysisState::Checking,
+            MemoryAnalysisState::CheckBudgetExhausted,
         ];
         for variant in analysis_states {
             match variant {
                 MemoryAnalysisState::Idle
                 | MemoryAnalysisState::Analyzing
-                | MemoryAnalysisState::AiNotReady => {}
+                | MemoryAnalysisState::AiNotReady
+                | MemoryAnalysisState::Checking
+                | MemoryAnalysisState::CheckBudgetExhausted => {}
             }
         }
         assert_wire(&contract, "memory_analysis_state", &analysis_states);
@@ -5776,6 +6273,8 @@ mod wire_enum_tests {
             MemoryPromotionState::Merged,
             MemoryPromotionState::Failed,
             MemoryPromotionState::Unconfirmed,
+            MemoryPromotionState::Building,
+            MemoryPromotionState::Unbuilt,
         ];
         for variant in promotion_states {
             match variant {
@@ -5783,11 +6282,30 @@ mod wire_enum_tests {
                 | MemoryPromotionState::PrOpen
                 | MemoryPromotionState::Merged
                 | MemoryPromotionState::Failed
-                | MemoryPromotionState::Unconfirmed => {}
+                | MemoryPromotionState::Unconfirmed
+                | MemoryPromotionState::Building
+                | MemoryPromotionState::Unbuilt => {}
             }
         }
         assert_wire(&contract, "memory_promotion_state", &promotion_states);
         checked.insert("memory_promotion_state");
+
+        let start_failures = [
+            MemoryStartFailureCode::ShellStarting,
+            MemoryStartFailureCode::AgentNotStarted,
+            MemoryStartFailureCode::CardNotProcessed,
+            MemoryStartFailureCode::Other,
+        ];
+        for variant in start_failures {
+            match variant {
+                MemoryStartFailureCode::ShellStarting
+                | MemoryStartFailureCode::CardNotProcessed
+                | MemoryStartFailureCode::AgentNotStarted
+                | MemoryStartFailureCode::Other => {}
+            }
+        }
+        assert_wire(&contract, "memory_start_failure_code", &start_failures);
+        checked.insert("memory_start_failure_code");
 
         let actions = [
             MemoryAction::Enable,
@@ -5797,6 +6315,8 @@ mod wire_enum_tests {
             MemoryAction::Undo,
             MemoryAction::Promote,
             MemoryAction::Dismiss,
+            MemoryAction::CardRight,
+            MemoryAction::DocRight,
         ];
         for variant in actions {
             match variant {
@@ -5806,7 +6326,9 @@ mod wire_enum_tests {
                 | MemoryAction::Forget
                 | MemoryAction::Undo
                 | MemoryAction::Promote
-                | MemoryAction::Dismiss => {}
+                | MemoryAction::Dismiss
+                | MemoryAction::CardRight
+                | MemoryAction::DocRight => {}
             }
             assert_eq!(serde_json::to_value(variant).unwrap(), variant.as_str());
         }
@@ -5906,6 +6428,15 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "screen_intro", &intros);
         checked.insert("screen_intro");
+
+        let logo_modes = [AgentLogoMode::Shown, AgentLogoMode::Hidden];
+        for variant in logo_modes {
+            match variant {
+                AgentLogoMode::Shown | AgentLogoMode::Hidden => {}
+            }
+        }
+        assert_wire(&contract, "agent_logo_mode", &logo_modes);
+        checked.insert("agent_logo_mode");
 
         let kit_availability = [
             hide_kit::Availability::Available,
@@ -6238,6 +6769,15 @@ mod wire_enum_tests {
             &WorkerTextSource::ALL,
         );
         checked.insert("factory_diagnosis_source");
+
+        let color_themes = [ColorTheme::Hide, ColorTheme::Neutral];
+        for variant in color_themes {
+            match variant {
+                ColorTheme::Hide | ColorTheme::Neutral => {}
+            }
+        }
+        assert_wire(&contract, "color_theme", &color_themes);
+        checked.insert("color_theme");
 
         let unchecked = contract
             .keys()

@@ -40,6 +40,7 @@ fn identity(fixture: &Fixture) -> Result<NodeIdentity> {
         herdr_bin: std::env::var_os("HIDE_E2E_HERDR_BIN")
             .map(std::path::PathBuf::from)
             .context("HIDE_E2E_HERDR_BIN")?,
+        worktree_facts: None,
     })
 }
 
@@ -2317,13 +2318,15 @@ fn a_node_checkouts_pull_request_is_read_with_the_cores_login_by_repository_name
             &["remote", "add", "origin", "git@github.com:acme/app.git"],
         )?;
         let head = git(&project, &["rev-parse", "HEAD"])?;
-        // The core machine's `gh` answers only for that repository, named.
+        // The core machine's `gh` answers only for that repository, named, and
+        // for the signed-in account's login, which a PR read asks first.
         let gh = fixture.core_home().join("bin/gh");
         std::fs::write(
             &gh,
             format!(
                 r#"#!/bin/sh
 [ "$1 $2" = "auth status" ] && exit 0
+[ "$1 $2" = "api user" ] && {{ echo viewer; exit 0; }}
 [ "$GH_REPO" = "acme/app" ] || {{ echo "no repository named" >&2; exit 1; }}
 case "$1 $2" in
   "pr list") case "$4" in
@@ -2331,6 +2334,7 @@ case "$1 $2" in
       *) echo '[{{"number":7,"statusCheckRollup":[]}}]' ;;
     esac ;;
   "repo view") echo '{{"nameWithOwner":"acme/app","id":"R_1"}}' ;;
+  "api graphql") echo '{{"data":{{"repository":{{"pullRequests":{{"nodes":[]}}}}}}}}' ;;
   *) echo '[]' ;;
 esac
 "#

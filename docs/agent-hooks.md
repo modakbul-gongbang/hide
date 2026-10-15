@@ -33,8 +33,10 @@ The file keeps its mode, a new one is created 0600, and a file that is a symlink
 Entries belonging to other tools are counted before and after, and a regression test asserts they survive.
 
 Six events are registered: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `SubagentStart`, `SubagentStop`, and `Stop`.
-`SessionEnd` is not registered by either, so the `Stop` sweep is what closes a turn out.
-`PreToolUse` selects `Bash|AskUserQuestion|ExitPlanMode` in Claude Code and `Bash|request_user_input` in Codex (`install::hook_matcher`, the one function the writer and Codex's trust check both read), so a file edit or a search never starts the helper.
+`SessionEnd` is not registered by either: a session's record is read only while Herdr reports that session for the pane, so a session that ends needs no event to be forgotten.
+`PreToolUse` selects `Bash|AskUserQuestion|ExitPlanMode` in Claude Code and `Bash|request_user_input|request_user_input_async` in Codex (`install::hook_matcher`, the one function the writer and Codex's trust check both read), so a file edit or a search never starts the helper.
+Codex matches a tool by its whole name: with a hook on `request_user_input` alone, the async question tool of 0.162.1 never reached the helper (measured 2026-10-15 in an isolated `CODEX_HOME`), so each question tool is named.
+An entry of Hide's whose matcher differs from the one written today reads Outdated at its own version, so the next kit pass rewrites it and records its Codex trust, with no version bump for the other agents.
 The version-seven marker makes earlier entries Outdated until the normal kit pass at launch, connection or Reinstall replaces Hide's entries and records their exact Codex trust.
 Already-running sessions pick up the changed hooks when restarted.
 
@@ -50,12 +52,14 @@ A card whose promotion merged into the repository keeps its index line but point
 The instruction explains supervised delegation (`hide agent spawn --parent here …`, with an automatic watch) and independent operator handoff (`hide agent spawn …`, without parent or automatic watch); both preserve focus and record origin.
 It also says that `--machine <device id>`, used from the machine that runs Hide, starts the agent on a connected device (an agent on a device is refused with `machine_not_permitted`), where the id is the `device_id` `hide workspace info` shows and the `machine` `hide agent list` shows for agents there, and that `--repo` and `--path` are then that device's paths.
 It also tells the agent to run `hide factory add` to put work into a Factory instead of adding a GitHub label (see [factory.md](factory.md)).
-The same envelope adds Workspace commands only after `hide workspace bootstrap` and `hide workspace info` confirm a renderer-connected Workspace for the caller and report its actual capabilities.
+The same envelope adds Workspace commands only after `hide workspace info --hook` confirms a renderer-connected Workspace for the caller and report its actual capabilities.
 The probe does not need a pane id: the daemon binds a caller inside a Herdr pane to that pane, and any other local caller, such as a tool shell or hook inside Codex's shared app-server daemon or a plain terminal, to the registered checkout holding its cwd (`docs/ARCHITECTURE.md`, the Workspace CLI).
 The guidance names that checkout path, so a session can read which Workspace its commands reach.
 The helper uses the `hide` CLI beside it in the kit folder, or the CLI on `PATH` when none is there; on a device that is the helper root's current build, whose `hide` reaches this Mac's daemon through the device's return route (PRD device-parity B15).
 The hook starts nothing and installs nothing; when the CLI does not answer within its two-second bound the session starts without Workspace guidance and the next one tries again (B26).
-A session on a device the core dials gets no Project Memory index: the core answers Memory only for its own machine's panes and those of a node that dials in (PRD core-host-node-move Q20), and the Memory store is never copied to a device, so that device's `UserPromptSubmit` omits Memory context (B25).
+A session on any linked device receives its Project Memory index and prompt context from the core's one store through the same pane-scoped return route as letters.
+The device's node resolves the attested checkout to its own Project identity; the store is never copied to the device.
+An unavailable link or a helper without a Memory reader refuses the read immediately with a diagnostic reason; hooks continue without context within their existing budget.
 A connected device pane can still receive pending letters through its sibling `hide` CLI and the return route within the same two-second caller budget; [delivery.md](delivery.md#safe-intake-and-manual-fallback) owns that intake and confirmation contract.
 An ordinary Claude Code or Codex session started in a connected Herdr pane receives the same conditional guidance as a Hide-managed session when Hide's hook is installed in that runtime's configuration on that machine.
 A disconnected pane, a cwd outside every registered checkout, an unavailable renderer, or an unsupported Browser surface receives no Workspace capability claim.
@@ -72,8 +76,9 @@ Every Codex Hide starts passes `--no-daemon`, so a Codex Hide starts runs its ho
 The kit no longer turns the daemon off on its own: it only reads whether the machine's Codex has the setting, for that flag, and a machine where an earlier Hide turned it off keeps it off.
 `src/codex_daemon.rs` is the one place that changes the setting or stops the daemon, through `codex features disable daemon_auto_start` and `codex app-server daemon stop`, and only for the operator's own confirmed request from a not connected Codex pane's popover (`docs/ARCHITECTURE.md`, The install kit; `docs/status-model.md`, Not connected, and what fixes it).
 The kit reads the setting with the capability (`KitReport.codex_daemon_on`) and whether a daemon answers (`KitReport.codex_daemon_running`), which is what tells a Codex session on the shared server from one that started before the hook.
-The SessionStart command hook has an eight-second timeout, including two bounded two-second CLI probes; a failed probe leaves the existing purpose and Memory context intact.
-An issued credential remains unclaimed for at most 30 seconds until a CLI receives and acknowledges a Workspace response.
+The SessionStart command hook has an eight-second timeout, including one bounded two-second CLI probe (`workspace info --hook`), which it asks beside Memory; a failed probe leaves the existing purpose and Memory context intact.
+A persistent credential (the reference SessionStart hands the session as `HIDE_CAP_REF`) remains unclaimed for at most 30 seconds until a CLI receives and acknowledges a Workspace response.
+A one-shot Workspace command is never claimed: the daemon revokes its credential when the command's connection ends, and the CLI removes its reference; a `hide browser` relay claims its credential, one-shot or not, because the daemon starts a relay only for a claimed one.
 The CLI writes the claimed marker only after the daemon acknowledges that claim, so a caller killed before acknowledgement leaves an unclaimed reference that expires.
 A repeated SessionStart in the same attested pane reuses its live persistent reference, including when an earlier hook stopped after claiming but before delivering context.
 The SSH bridge tracks every reference it issues and revokes the corresponding daemon token when its file disappears, its unclaimed period expires, its eight-hour lifetime ends, its pane shell exits, or its one-shot caller exits.
@@ -102,10 +107,27 @@ This delivery path has its own bounded private diagnostics; Memory's request run
 
 Memory has one store, `project-memory.sqlite3` in the core's state folder, which only the core opens, whichever machine the agent runs on (PRD core-host-node-move D-12, B14).
 The hook asks for it through `hide workspace memory --event <event> --runtime <runtime> --session <id>`, the same pane credential and node link its letters come by, on its own thread beside the letter pull; on another machine the request goes through that machine's node to the core.
+These reads and SessionStart guidance use one typed proof-and-answer request through the local bootstrap service, forwarded with the node's fresh caller proof when the core is elsewhere (NodeLink protocol 31).
+The service accepts only the `LetterPull`, `Memory` and read-only `WorkspaceInfo` variants of `HookCommand`, never Workspace actions or letter confirmation, and reuses the ordinary core executors after credential validation.
+A letter or Memory one-shot token stays inside the core and is revoked before the answer is sent, even if the caller ended or the request unwound; no reusable credential is returned by those two reads.
+The guidance read returns the same persistent reference and scoped capabilities that bootstrap followed by info returned, in one child and one proof exchange.
+The node owns that reference file; a failed answer removes only a newly issued reference, and the core claims a guidance credential only after its proof answer is accepted.
+A live `HIDE_CAP_REF` must agree with the fresh proof and, on a node, its own link; a letter or Memory read does not claim or extend that persistent reference.
+An absent named reference falls back to the fresh proof and records `hook.reference_missing` with the request identity, never its path or token.
+Local and device refusals include the same `next_action` recovery advice.
+The selected route receives one request with no retry through another transport; ambiguous node bridges are refused before any command is sent.
+Every write and read uses the time remaining from the request's start, so partial responses cannot renew the deadline.
+Requests and responses are capped at 16 KiB and 64 KiB, and the existing bootstrap and node proof worker caps still apply.
+The letter and Memory children run independently and in parallel under their existing caller deadlines and fail-open outcomes.
 The core takes the Project from the caller's attested checkout, read by that checkout's own node, never from anything the hook sends.
 The lookup performs no provider or embedding call, transcript scan, child-process launch, or database write, and runs off the core's runtime lock.
 Missing, locked, corrupt, stale, over-limit, unresolved-Project, and over-deadline stores return no Memory context, and the hook still exits zero.
-The hook waits for the answer until 1,250 ms after it starts, where the letter pull ends too, so Memory never makes a turn wait longer; the core spends at most 1 s on it once admitted, and candidate, item, and token counts are hard bounded.
+Memory waits for its answer until 1,250 ms after the inner hook starts; the 1,650 ms intake budget reserves its last 400 ms for letter confirmation after a successful stdout flush.
+The prompt supervisor bounds the inner helper at 1,850 ms from the outer helper's start, so the Memory read budget is not the entire prompt hook duration.
+SessionStart has the same Memory read budget, a separate two-second Workspace CLI probe asked beside it when its thread starts, and later count-report calls with their own two-second timeouts; its installed runtime entry has an eight-second timeout.
+The core sets a one-second Memory answer deadline, but owner-scope reply waiting has no receive timeout and a remote call applies its timeout separately to admission, write and answer.
+That deadline is not an enforced end-to-end execution cutoff: the caller can continue without Memory while an admitted daemon job still runs.
+Candidate, item and token counts remain hard bounded; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#project-memory-cost-contract) owns the measurement conditions and this limit.
 A node whose link to the core is down refuses at once with `hide_unavailable`; the hook then records `memory.unavailable`, or `memory.deadline` for an answer that did not come in time, at most once per ten minutes in its private diagnostics, and the turn goes on without Memory.
 A panic on the thread that asks is recorded the same way as `memory.panicked`.
 Stdin is read through a nonblocking descriptor until EOF, the size cap, or the 500 ms payload wait.
@@ -133,9 +155,49 @@ Two things keep that from recurring: `report::tests` sends one report at a fake 
 `hide_sub_blocked` is defined and never written: neither shipped adapter can observe a blocked subagent from the four available events, so the count stays unknown rather than being drawn as a zero.
 A token that is not a count is dropped rather than coerced.
 
-`SessionStart` resets the pane, so a new session in a reused pane never inherits the last one's numbers.
-`Stop` sweeps `working` to zero, because the turn is over and a `SubagentStop` that never arrived cannot leave a count behind.
+A record belongs to one session.
+The first event of another session that the pane's agent now is starts the record over, so a new session in a reused pane never inherits the last one's numbers.
+A `SessionStart` of the same session (a resume or a compaction) keeps them, since its background subagents still run; a runtime whose input names no session resets at `SessionStart`.
 A pane Herdr has stopped listing has its record swept on the next session bootstrap.
+
+#### Which session is the pane's
+
+A session that is not the pane's agent runs the same hooks in the pane's environment: the operator's own Stop hook that starts `claude -p` is one, and it reset the pane's count to zero after every turn of a session that ran subagents (twenty-one of the forty panes on the operator's machine on 2026-10-15 held such a session's record).
+The hook therefore asks Herdr, before it changes anything, which session it reports for the pane's agent (`pane.get`, `agent_session`).
+An event of any other session changes nothing and reports nothing, and an event that names no session counts as another one.
+A pane for which Herdr reports no session, or does not answer, takes every event as its own, as before; an answer that cannot be had is written down as the pane's last report failure (`doctor` and Settings show it), so a pane that fell back to counting every session says so.
+Herdr is the authority and the hook's environment is not: `CLAUDE_CODE_ENTRYPOINT` says `sdk-cli` inside the nested session, but a user's own program can start a session that says `cli`.
+
+The rule that makes Herdr's answer the right one is Herdr's, in `src/terminal/state.rs` of the pinned tag (`session_report_allows_session_replacement` and `conflicting_same_owner_session_ref`, called from `set_agent_session_ref_for_session_start`).
+For `herdr:claude`, a `pane.report_agent_session` of another session replaces the pane's only when its `session_start_source` is `clear`, `resume` or `compact`; a `startup` of another session is dropped.
+Every `claude -p` session reports `startup`, and so does the pane's own first session, which has no earlier one to conflict with.
+The Socket API reference does not document this, so `real_herdr::the_pinned_herdr_keeps_a_panes_session_against_a_nested_startup_and_follows_clear_resume_and_compact` pins it against the pinned binary in the `os contract` lane, and a Herdr bump that changes the rule fails there.
+Two limits follow from the rule:
+
+- A nested session that reports `resume` (a `claude -p --resume`) replaces the pane's session in Herdr itself, and Hide follows Herdr.
+- For `herdr:codex` the rule lets a `startup` replace the session; Herdr's own Codex hook script ignores a session whose id differs from `CODEX_THREAD_ID`, which is how a nested Codex session stays out, and Hide relies on that script for Codex.
+
+A pane's own `SessionStart` can reach the socket before Herdr's own hook has reported the new session (Claude Code runs a start's hooks in parallel).
+Hide then reads it against the old session and ignores it, and the new session's next counted event starts its record from zero, so the old session's numbers are never added to (`claude_subagent_counts::a_new_session_whose_start_beats_herdrs_own_report_starts_a_fresh_record_at_its_next_event`).
+Until that event the pane's tokens still show the old session's counts.
+
+What an event costs beyond the count it always made: one `pane.get` over the local socket, before the lock is taken, for `SessionStart`, `SubagentStart`, `SubagentStop` and a `Stop`, and none for an event that changes no count and finds the record already naming its session.
+`UserPromptSubmit` and `PreToolUse` never reach the count (the prompt hook and the spawn guard take them), and `PostToolUse` is not registered, so a tool call adds nothing.
+
+#### Which subagents run
+
+Claude Code names every subagent (`agent_id`) and sends three facts that the count follows (Claude Code 2.1.300, measured in an interactive session):
+
+- The parent's `Stop` fires while background subagents still run, and both `Stop` and `SubagentStop` list them in `background_tasks` with `type` `subagent` and `status` `running`.
+- A subagent that waits on its own background command ends its turn, which sends a `SubagentStop`; when the command ends it runs again and sends a `SubagentStart` with the same `agent_id`. Every pause is a stop, so counting stops counted one subagent as done at every pause.
+- A subagent stopped with the `TaskStop` tool sends no `SubagentStop` at all; the next `Stop`'s list no longer holds it.
+
+So the record keeps the running ids and the ids that finished, per session.
+A start adds the id (and takes a resumed subagent back out of `done`), a stop of a running id moves it to `done` once, and a repeated stop, or the stop of an id that never started, changes nothing.
+The parent's `Stop` replaces the running ids with the ones it lists: a subagent it no longer lists left without a stop reaching the hook and stops working, without being counted done.
+A `Stop` that lists nothing (an input cut off, or a Claude Code that sends no `background_tasks`) changes nothing; nothing sweeps, since no signal says a running subagent ended.
+The running ids are capped at 256 per session, the remembered finished ids at 256 (the oldest go first, and the done count keeps them); crossing the running cap fails the event and is written down as the pane's last report failure.
+Codex and the runtimes whose input carries no subagent id keep the older rule: a start adds one, a stop moves one to done, and the turn's `Stop` sets `working` to what the runtime lists, none for Codex.
 
 ### After Herdr hands off or restarts
 
@@ -165,7 +227,7 @@ For each listed agent that carries no `hide_hooks` token and that Hide has an ad
 
 The version is put back for the same agent because a hook is installed in a runtime's configuration and not in a session.
 The counts are put back only for the same session, and nothing relies on `SessionStart` having reset the record: a session that started after the record was written and before the connection is the case the session id tells apart.
-What the counts can still be is the record's last word for that session: a subagent that ended with no `SubagentStop` reaching the helper still counts as working until the session's next `Stop`, exactly as it did before the loss.
+What the counts can still be is the record's last word for that session: a subagent that ended with no `SubagentStop` reaching the helper still counts as working until the session's next `Stop` lists the subagents that run (or, for a runtime that lists none, ends the turn), exactly as it did before the loss.
 A record that changed while the report was on its way is sent again, as the helper does, so Herdr ends on the latest count.
 A report merges token by token, so when the second read finds the counts no longer vouched for (the session changed, or another agent's record replaced the file) the restorer clears the two count tokens with `null` instead of leaving the first report's values on the pane.
 
@@ -190,14 +252,18 @@ A hook that fails must never be what breaks the operator's agent.
 Exiting zero is not the same as saying nothing.
 The outcome of every report is recorded in `~/.hide/agent-hooks/last-report-failure.json`: a failure writes the pane, the event, the socket and Herdr's answer, and the next success removes the file, so it describes the hook's current state rather than its history.
 `Diagnosis` reads it back as `last_report_failure`, `doctor` prints it as a `Last report failed:` line, and the Settings group shows it as an error note above the restart advice, because with a refused report on record a restart is not the fix.
-The Settings screen learns of it because the coordinator re-reads the diagnosis once a second while the Settings agents tab is on screen (`settings_observed`, the same flag the Hide AI tab sets), and reads nothing while it is not.
+The Settings screen learns of it through the existing kit worker, with the next diagnosis due one second after the previous read finishes while a window observes Settings (`settings_observed`, the same flag the Hide AI tab sets).
+The same worker reads once at startup and after a successful install; ordinary refreshes stop when Settings is unobserved.
+Diagnosis and installation are serialized, so a pre-install answer cannot overtake a later install, and neither read makes the session coordinator wait.
+Shutdown stops admission, closes the fixed node to end its current call and joins the worker; a retiring answer is not published.
 
 ## Native questions from Factory workers
 
-The same `PreToolUse` helper refuses Claude Code's `AskUserQuestion` and `ExitPlanMode`, and Codex's `request_user_input`, only after the core proves the caller is the current Task-held Factory worker.
+The same `PreToolUse` helper refuses Claude Code's `AskUserQuestion` and `ExitPlanMode`, and Codex's `request_user_input` and `request_user_input_async`, only after the core proves the caller is the current Task-held Factory worker.
 The model receives a deny reason directing it to `hide factory ask`; an operator-started session and every other pane retain their native question UI.
 OpenCode's `question` tool and omp's `ask` are refused the same way through Hide's plugin and extension ([OpenCode: Hide's plugin](#opencode-hides-plugin), [Pi and omp: Hide's extension](#pi-and-omp-hides-extension)).
 Pinned Codex 0.160.1 was exercised with a trusted Bash positive control and a genuine plan-mode `request_user_input`: both reached PreToolUse and the question's native tool result and model reply carried the denial.
+Codex 0.162.1's `request_user_input_async` was exercised the same way in an isolated `CODEX_HOME`: a hook that denied it reached the model as the tool result "Tool call blocked by PreToolUse hook", so the redirect holds for the async tool too.
 The ordinary launch mode remains unchanged.
 
 `hide workspace factory-question-guard --session <native-id> --runtime <runtime>` uses the authenticated pane-scoped route, a bounded fresh native identity read and the already-open Factory's current Task worker.
@@ -279,7 +345,8 @@ omp is a fork of Pi with the same extension shape, so Hide writes one source, `h
 `hide-agent-hooks/src/pi_extension.rs` declares both files on the owned script file of [OpenCode's plugin](#opencode-hides-plugin), so they are written, judged and removed by the same code.
 The first line, `// hide-extension@<version> sha256=<hash of the rest>`, works as the plugin's does; the body holds `const HELPER`, `const AGENT = "pi"` or `"omp"` and `const VERSION`, and the two files differ only in `AGENT`, so the other agent's file copied into a folder reads Outdated and is replaced.
 The file is plain JavaScript that is also TypeScript, as Herdr's own extension for these agents is, so both hosts load it without a build step.
-It is written on Windows too: on a `windows-latest` runner on 2026-10-11, Pi 1.0.4 (Node 22) and omp 18.7.0 (Bun 1.3.14) loaded an extension from `%USERPROFILE%\.pi\agent\extensions` and `%USERPROFILE%\.omp\agent\extensions`, emitted `session_start` to it, and its `spawn` of an absolute `.exe` path with no shell crossed stdin and stdout and ended with `SIGKILL`; `hide-agent-hooks/tests/it/windows_scripts.rs` runs this build's file for both on Windows as it does OpenCode's plugin.
+It is written on Windows too: on a `windows-latest` runner on 2026-10-11, Pi 1.0.4 (Node 22) and omp 18.7.0 (Bun 1.3.14) loaded an extension from `%USERPROFILE%\.pi\agent\extensions` and `%USERPROFILE%\.omp\agent\extensions`, emitted `session_start` to it, and its `spawn` of an absolute `.exe` path with no shell crossed stdin and stdout and ended with `SIGKILL`; `hide-agent-hooks/tests/it/windows_scripts.rs` runs this build's file for both on Windows as it does OpenCode's plugin, with the session file named by a `C:\` path as Windows reports it.
+A session file counts as saved when it is absolute in either system's spelling (`path.posix.isAbsolute` or `path.win32.isAbsolute`, the check Herdr's own Pi integration makes), so the same string is judged alike on every system; a relative path is an unsaved session.
 The agent's own folder (`~/.pi/agent`, `~/.omp/agent`) is never created, and only those default folders get the file: an omp profile or a `PI_CODING_AGENT_DIR` folder gets none.
 
 The extension does nothing outside a Herdr pane (no `HERDR_ENV=1`, `HERDR_PANE_ID` and `HERDR_SOCKET_PATH`), in an agent started from another Pi's or omp's shell (`PI_SESSION_ID`, `OMPCODE=1`, which those hosts set for every shell they start), or with no helper at its path; like OpenCode's plugin it does not ask whether a Hide daemon owns that Herdr, and the helper answers `{}` when none does.
@@ -359,7 +426,8 @@ Two pieces are written per agent into the agent's own files, and nothing else; a
   An agent's own folder (`~/.claude`) is never created for the stub: the hook code reads that folder as the agent's settings being there, so a pass that made it would write a hook on the next pass that it did not write on this one, and a second apply would not be a no-op; the row says the agent has not created its folder yet, and the stub goes in on the pass after it has.
 - The agent hook, for the agents below marked as done; for OpenCode this piece is Hide's plugin, and for Pi and omp Hide's extension, which carry the guidance with the rest ([OpenCode: Hide's plugin](#opencode-hides-plugin), [Pi and omp: Hide's extension](#pi-and-omp-hides-extension)).
   It is one entry per event the agent's documentation names, in the agent's own format, whose command is `hide-agent-hooks hook --runtime <agent id> --event <event>`.
-  `hide-agent-hooks` writes it (`src/guidance.rs`) and nothing else does, under the marker `hide-guidance@3` that proves an entry is Hide's and separates a current one from an older one; an entry of `@1`, which only knew the session start, or of `@2`, is Hide's own and replaced by the next pass.
+  `hide-agent-hooks` writes it (`src/guidance.rs`) and nothing else does, under the marker `hide-guidance@4` that proves an entry is Hide's and separates a current one from an older one; an entry of `@1`, which only knew the session start, of `@2`, or of `@3`, is Hide's own and replaced by the next pass.
+  Version 4 prepares Cursor's Windows payload before starting the helper; the next pass replaces version 3's lazy PowerShell pipe too.
   Where the session start adds context (Cursor), its output is the worktree-purpose instruction, including the sentence that points at `hide factory add`, one fixed line that points at `hide browser help`, and the live Workspace guidance when the daemon answers, in the field the agent documents.
   It prints no Memory index, because a Memory receipt is read back only from a session Hide reads it from: Claude Code's, Codex's, Pi's and omp's files and OpenCode's database.
   A second delivery of the same session prints the same guidance: the output is a pure function of the daemon's answer, and a test runs the hook twice and compares.
@@ -617,8 +685,13 @@ The forms follow what each runtime documents or, where its documentation is sile
 - Codex documents `commandWindows` as a Windows override without saying what runs it (<https://developers.openai.com/codex/hooks>). Its source at `rust-v0.160.0`, and the same code at `rust-v0.155.1`, the oldest Codex Hide installs into, runs a command through the session's shell (`core/src/session/mod.rs`, `build_hooks_config`), which on Windows is PowerShell 7 or else Windows PowerShell, started `-NoProfile -Command <command>` (`shell-command/src/shell_detect.rs`, `default_user_shell`; `core/src/shell.rs`, `derive_exec_args`), and through `%COMSPEC% /C` only when the session reports no shell (`hooks/src/engine/command_runner.rs`, `build_command`). The file is that machine's, so the guard is written as `command`.
 - A Codex session that falls back to `cmd` cannot read the PowerShell guard: its hooks fail with cmd's syntax error, the turn goes on without Hide's context, and nothing else on the machine changes.
 - Grok runs a command that holds a space as `pwsh -NoProfile -NonInteractive -Command <command>`, with Windows PowerShell when PowerShell 7 is not found and Git Bash only when neither is, or when `GROK_SHELL` names it, with the event on stdin (its shipped hooks guide, `10-hooks.md`: "under the detected Windows shell (pwsh, Windows PowerShell, or Git Bash)"; the order is its source's, `xai-grok-config/src/shell.rs`, `detect_windows_shell`, at grok-build `2bdd1d6a`). Windows PowerShell is part of every Windows, so the Git Bash fallback is reached only through `GROK_SHELL`; a `GROK_SHELL=bash` makes the guard a bash syntax error, whose exit 2 Grok reads as a refusal of every shell call, and `GROK_SHELL=cmd` a cmd error, which Grok lets through without Hide's hook. Grok skips a handler that carries `args`, so its entry is the string form Codex's is.
-- The Cursor CLI on Windows writes the event to a temporary file and runs `Get-Content <file> -Raw | & { $input | <command> }` as a script under PowerShell 7, else Windows PowerShell, never a POSIX shell (read from its 2026.10.01 Windows package, `executeCommandScript` and its shell executor; the documentation says nothing of Windows). The command is one element of that pipeline, where an `if` cannot stand, so Hide's is a script block that pipes its input to the helper while the helper is there and, for `preToolUse`, answers allow itself when it is gone. PowerShell writes a UTF-8 byte order mark before the event it pipes (Cursor's forum, threads 166794 and 168407), and Windows PowerShell 5.1 writes one at each pipe the event crosses, so the helper behind Hide's `$input |` receives two there and one under PowerShell 7 (measured on a `windows-latest` runner on 2026-10-11); the helper drops every leading mark before reading the JSON.
-On that runner the first Windows PowerShell 5.1 start of a fresh machine took 2.4 seconds to write the event, past the guard's 500 ms read budget, and the guard then lets the call run; later starts wrote it within 70 ms.
+- The Cursor CLI on Windows writes the event to a temporary file and runs `Get-Content <file> -Raw | & { $input | <command> }` as a script under PowerShell 7, else Windows PowerShell, never a POSIX shell (read from its 2026.10.01 Windows package, `executeCommandScript` and its shell executor; the documentation says nothing of Windows).
+The command is one element of that pipeline, where an `if` cannot stand, so Hide's is a script block that runs the helper while it is there and, for `preToolUse`, answers allow itself when it is gone.
+Inside the block, `$payload = $input | Out-String -Stream` prepares the native pipeline's text before `$payload | & <helper>` starts the helper, using the same mode as PowerShell's native input formatter.
+PowerShell otherwise starts the external process before initializing its input formatter ([`NativeCommandProcessor.cs`](https://github.com/PowerShell/PowerShell/blob/master/src/System.Management.Automation/engine/NativeCommandProcessor.cs), `ProcessInputWriter.Start`), so a cold formatter can consume the helper's 500 ms payload budget before writing the event; the helper then answers allow without inspecting the call (issue 987).
+Preparing the text first pays the formatter's cold initialization before the helper's unchanged deadline.
+PowerShell writes a UTF-8 byte order mark before the event it pipes (Cursor's forum, threads 166794 and 168407), and Windows PowerShell 5.1 can write one at each pipe the event crosses; the earlier lazy pipe produced two there and one under PowerShell 7 (measured on a `windows-latest` runner on 2026-10-11).
+The helper drops every leading mark before reading the JSON.
 - A Cursor CLI started from Git Bash, or with `MSYSTEM` or `EXEPATH` in its environment, evaluates that PowerShell wrapper with bash, which exits 2, and Cursor then refuses every tool call of a session with any hook in `hooks.json`, Hide's or another's (Cursor's forum, thread 168129, open with staff confirmation). Hide's entry cannot change the wrapper Cursor builds, and Herdr's own Cursor integration, which the kit installs with Hide's hook, puts a PowerShell `sessionStart` entry into the same file on Windows (`powershell -NoProfile -ExecutionPolicy Bypass -File <herdr-agent-state.ps1> session`, observed from the pinned Herdr 0.9.3's `integration install cursor` on a Windows runner), so Hide's entry adds no case Herdr's does not already have.
 
 PowerShell starts before the helper on every Windows hook, which Codex does for any hook there; the 1,250 ms Memory wait above counts from the helper's own start.

@@ -1,5 +1,5 @@
 //! Lifecycle, completion, read and ownership axes, including lineage.
-use super::turn::{derive_from_axes, sort_agents};
+use super::turn::{AgentGroup, derive_from_axes, group_of, sort_agents};
 use crate::labels::analysis::LabelEnd;
 use crate::model::{AgentWait, PaneReadRecord, SidebarAgentSnapshot};
 use crate::sidebar::SessionAgentPayload;
@@ -70,6 +70,38 @@ pub enum Ownership {
     Operator,
     /// Delegated work. Its demands stay with its parent.
     Delegated,
+    /// Work Hide AI started for a screen that owns it, its home (PRD
+    /// hide-ai-work-home D-13). The row stays in the agent data, so links,
+    /// search, tabs and the phone still reach it, but it belongs to no
+    /// operator list: it reaches Needs You on the operator's turn alone, and
+    /// is Seen otherwise, never Working or Done. `operator_turn` is the
+    /// home's own turn (a pull request to review, a failed check), beside
+    /// the agent's own demand, which every row carries.
+    HideAi { operator_turn: bool },
+}
+
+/// Names each fork's source (`SidebarAgentSnapshot::forked_from`). A fork is
+/// the operator's root, so its source is provenance that no ownership,
+/// grouping, unread or close rule reads. The source is named only while its
+/// pane still hosts the session the fork was made from, as a parent is.
+fn apply_fork_sources(agents: &mut [SidebarAgentSnapshot], by_pane: &BTreeMap<String, usize>) {
+    for index in 0..agents.len() {
+        let Some((pane, session)) = agents[index].declared_fork.clone() else {
+            agents[index].forked_from = None;
+            continue;
+        };
+        let source = by_pane.get(&pane).copied().filter(|&source| {
+            source != index
+                && crate::wire::session_holds(
+                    session.as_deref(),
+                    agents[source].lineage_session.as_deref(),
+                )
+        });
+        agents[index].forked_from = Some(crate::model::ForkSourceSnapshot {
+            pane_id: source.map(|_| pane),
+            label: source.map(|source| agents[source].identity_label.clone()),
+        });
+    }
 }
 
 /// Adds a tree view without reordering, duplicating, or changing the axes of
@@ -108,6 +140,7 @@ pub fn apply_lineage(
                 })
         })
         .collect::<BTreeMap<_, _>>();
+    apply_fork_sources(agents, &by_pane);
     let mut parents = agents
         .iter()
         .map(|agent| {
@@ -481,9 +514,23 @@ pub(crate) fn axes_of(agent: &SidebarAgentSnapshot) -> (AgentDemand, AgentActivi
 pub fn ownership_of(agent: &SidebarAgentSnapshot) -> Ownership {
     if agent.delegated {
         Ownership::Delegated
+    } else if let Some(home) = agent.hide_ai.as_ref().filter(|mark| mark.home.is_some()) {
+        Ownership::HideAi {
+            operator_turn: home.turn.is_some(),
+        }
     } else {
         Ownership::Operator
     }
+}
+
+/// Whether a row belongs in the lists that enumerate the operator's own work
+/// (the sidebar tree's roots, Sessions, Overview's requests and graph, the
+/// phone): a row its home owns is listed only while it is in Needs You, the
+/// one place the home calls the operator out (PRD hide-ai-work-home D-13).
+/// This is the one decision, so no list filters on its own.
+pub fn listed_for_operator(agent: &SidebarAgentSnapshot) -> bool {
+    !matches!(ownership_of(agent), Ownership::HideAi { .. })
+        || group_of(agent) == AgentGroup::NeedsYou
 }
 
 /// The demand axis of a projected row, for callers outside this module.
@@ -541,6 +588,71 @@ pub struct ReadRecordChange {
     pub evicted: bool,
 }
 
+/// One connection to a Herdr server, as the read axis needs to know it.
+///
+/// Herdr's `state_change_seq` restarts with its server, and a restored
+/// server reports each pane in steps: first with sequence 0, then `unknown`
+/// while it detects the agent again, then settled (measured on the pinned
+/// 0.9.3 across a live handoff and a cold restore). A sequence saved on one
+/// server says nothing about one read on another, so a saved state names the
+/// server it was read on (`PaneReadRecord::server`), and the pane says which
+/// server it is on through Hide's mark (`wire::SERVER_MARK_TOKEN`), which
+/// Herdr drops with its server.
+#[derive(Clone, Debug)]
+pub struct ReadConnection {
+    /// The mark this connection writes on a pane that carries none, once a
+    /// state saved for the pane names it.
+    pub mark: String,
+    /// The panes Herdr has reported settled since this connection began. A
+    /// pane is judged against a state saved on another server once, the
+    /// first time it is settled here.
+    pub settled: HashSet<String>,
+}
+
+impl ReadConnection {
+    pub fn new(mark: String) -> Self {
+        Self {
+            mark,
+            settled: HashSet::new(),
+        }
+    }
+
+    /// The server a state saved for `agent` now names: the mark the pane
+    /// carries, or, on a pane that carries none, the one this connection is
+    /// writing on it.
+    fn server_of<'a>(&'a self, agent: &'a SidebarAgentSnapshot) -> &'a str {
+        agent.server_mark.as_deref().unwrap_or(&self.mark)
+    }
+
+    /// Whether a state saved on `server` was read on the server `agent` is
+    /// on now, so its sequence compares with the pane's. A state saved
+    /// before servers were named is compared as it always was: Hide cannot
+    /// tell which server it came from, and calling it read on a guess would
+    /// lose news, so a sequence that no longer matches reads as unread.
+    fn compares(&self, server: Option<&str>, agent: &SidebarAgentSnapshot) -> bool {
+        server.is_none_or(|server| server == self.server_of(agent))
+    }
+
+    /// Whether `record` is judged by sequence against `agent`: saved on its
+    /// server, and saved from a settled pane. A record saved while the pane
+    /// was still being restored names no sequence worth comparing.
+    fn judges_by_sequence(&self, record: &PaneReadRecord, agent: &SidebarAgentSnapshot) -> bool {
+        self.compares(record.server.as_deref(), agent) && record_settled(record)
+    }
+}
+
+/// Whether Herdr has settled this pane: it knows what the agent is doing and
+/// has numbered that state on this server. A restored server lists a pane
+/// at sequence 0 and then `unknown` before it does.
+fn settled(agent: &SidebarAgentSnapshot) -> bool {
+    agent.state_change_seq != Some(0) && axes_of(agent).1 != AgentActivity::Unknown
+}
+
+/// Whether a record was saved from a settled pane (`settled`).
+fn record_settled(record: &PaneReadRecord) -> bool {
+    record.state_change_seq != Some(0) && record.activity != AgentActivity::Unknown.name()
+}
+
 /// What the operator is looking at on this pane right now, including what
 /// its descendants are asking for or have finished.
 fn read_fingerprint(agent: &SidebarAgentSnapshot) -> PaneReadRecord {
@@ -551,20 +663,22 @@ fn read_fingerprint(agent: &SidebarAgentSnapshot) -> PaneReadRecord {
         activity: agent.activity.clone(),
         completed: agent.completed,
         descendant_signals: agent.descendant_signals.clone(),
+        server: None,
+        unread: false,
     }
 }
 
 /// Whether a completion the row shows is one the operator has not seen.
 ///
-/// A completion is news only when it appears. Herdr drops a finished pane
-/// from `done` to `idle` without moving its sequence when it marks the pane's
-/// tab seen, which can land after the operator's focus has left the pane; that
-/// is Herdr's bookkeeping, not an event the operator missed (#901).
+/// A completion is news only when it appears: one going away is the agent
+/// working again, which its own change already says, or a restored server
+/// that no longer reports it.
 fn completion_is_news(record_completed: bool, current_completed: bool) -> bool {
     current_completed && !record_completed
 }
 
-/// Whether a record still covers what the row shows now.
+/// Whether a record still covers what the row shows now, on the server the
+/// record was read on.
 ///
 /// The row's own fields have to match exactly, except that a completion
 /// going away is not news (`completion_is_news`). A descendant signal is news
@@ -582,68 +696,81 @@ fn record_covers(record: &PaneReadRecord, current: &PaneReadRecord) -> bool {
             .is_subset(&record.descendant_signals)
 }
 
-/// Rebases process-local sequence values after a Herdr connection bootstrap.
-/// A restored agent keeps its read mark only when its process-local sequence
-/// moved backwards, its stable session identity (when one was recorded), and
-/// its operator-visible state still match. A sequence that moved forward is
-/// new work completed while Hide was disconnected and must remain unread. The
-/// pending set lets an agent that appears after the first restored topology be
-/// reconciled when detection catches up.
-pub fn reconcile_read_records(
-    agents: &[SidebarAgentSnapshot],
-    records: &mut BTreeMap<String, PaneReadRecord>,
-    pending: &mut HashSet<String>,
-) -> Vec<ReadRecordChange> {
-    let mut changes = Vec::new();
-    for agent in agents {
-        if !pending.remove(&agent.pane_id) {
+/// Whether a pane first settled on a new server shows something the
+/// operator had not read: another agent session, a demand it did not have,
+/// or a change between working and stopped. A completion it reports again is
+/// the one it had, and a demand gone is nothing to look at.
+fn restored_is_news(record: &PaneReadRecord, agent: &SidebarAgentSnapshot) -> bool {
+    let another_session = record.session_id.is_some()
+        && agent.session_id.is_some()
+        && record.session_id != agent.session_id;
+    let new_demand = agent.demand != AgentDemand::None.name() && agent.demand != record.demand;
+    another_session || new_demand || agent.activity != record.activity
+}
+
+/// Shows each finished pane's completion through a Herdr server that no
+/// longer reports it, and saves which panes finished. Runs before the
+/// lineage, which hands a completion up to the pane's ancestors.
+///
+/// A completion is kept while the same session has not changed since:
+/// on the server it was seen on, while the pane's sequence is the one it was
+/// seen at; on a new server, when the pane first settles stopped. Returns
+/// whether the saved completions changed.
+pub fn apply_completions(
+    agents: &mut [SidebarAgentSnapshot],
+    completions: &mut BTreeMap<String, crate::model::PaneCompletion>,
+    connection: &ReadConnection,
+) -> bool {
+    let mut changed = false;
+    for agent in agents.iter_mut() {
+        if !settled(agent) {
             continue;
         }
-        let Some(record) = records.get(&agent.pane_id) else {
-            continue;
-        };
-        let session_matches =
-            record.session_id.is_none() || record.session_id.as_ref() == agent.session_id.as_ref();
-        let sequence_reset = matches!(
-            (record.state_change_seq, agent.state_change_seq),
-            (Some(previous), Some(current)) if current < previous
-        );
-        if !sequence_reset
-            || !session_matches
-            || record.demand != agent.demand
-            || record.activity != agent.activity
-            || completion_is_news(record.completed, agent.completed)
-        {
-            continue;
-        }
-        // Only the row's own sequence is rebased. A descendant signal that
-        // arrived while Hide was disconnected stays outside the record, so
-        // the read pass still finds it as news (PRD B5).
-        let mut current = read_fingerprint(agent);
-        current.descendant_signals = record.descendant_signals.clone();
-        if record != &current {
-            records.insert(agent.pane_id.clone(), current.clone());
-            changes.push(ReadRecordChange {
-                pane_id: agent.pane_id.clone(),
-                record: current,
-                evicted: false,
-            });
+        let server = Some(connection.server_of(agent).to_owned());
+        let kept = agent.completed
+            || (axes_of(agent).1 == AgentActivity::Stopped
+                && completions.get(&agent.pane_id).is_some_and(|saved| {
+                    saved.session.is_some()
+                        && saved.session == agent.lineage_session
+                        && if connection.compares(saved.server.as_deref(), agent) {
+                            saved.state_change_seq == agent.state_change_seq
+                        } else {
+                            !connection.settled.contains(&agent.pane_id)
+                        }
+                }));
+        agent.completed |= kept;
+        // A completion with no session to prove it later is never carried,
+        // so it is not saved either.
+        if kept && agent.lineage_session.is_some() {
+            let current = crate::model::PaneCompletion {
+                session: agent.lineage_session.clone(),
+                server,
+                state_change_seq: agent.state_change_seq,
+            };
+            if completions.get(&agent.pane_id) != Some(&current) {
+                completions.insert(agent.pane_id.clone(), current);
+                changed = true;
+            }
+        } else {
+            changed |= completions.remove(&agent.pane_id).is_some();
         }
     }
-    changes
+    changed
 }
 
 /// Drops records only when an authoritative pane topology says the pane is
-/// gone. Agent detection may legitimately be empty or incomplete while a
-/// restored server rebuilds its agent list, so it is never an eviction source.
+/// gone, and with them the descendant signals other records keep for it.
+/// Agent detection may legitimately be empty or incomplete while a restored
+/// server rebuilds its agent list, so it is never an eviction source.
 pub fn prune_read_records(
     records: &mut BTreeMap<String, PaneReadRecord>,
     live_pane_ids: &HashSet<String>,
     scope: ReadRecordScope<'_>,
 ) -> Vec<ReadRecordChange> {
+    let gone = |pane_id: &str| scope.owns(pane_id) && !live_pane_ids.contains(pane_id);
     let evicted = records
         .keys()
-        .filter(|pane_id| scope.owns(pane_id) && !live_pane_ids.contains(*pane_id))
+        .filter(|pane_id| gone(pane_id))
         .cloned()
         .collect::<Vec<_>>();
     let mut changes = Vec::with_capacity(evicted.len());
@@ -655,7 +782,32 @@ pub fn prune_read_records(
             evicted: true,
         });
     }
+    for (pane_id, record) in records.iter_mut() {
+        let before = record.descendant_signals.len();
+        record
+            .descendant_signals
+            .retain(|signal| !gone(&signal.pane_id));
+        if record.descendant_signals.len() != before {
+            changes.push(ReadRecordChange {
+                pane_id: pane_id.clone(),
+                record: record.clone(),
+                evicted: false,
+            });
+        }
+    }
     changes
+}
+
+/// Drops the saved completions of panes an authoritative topology says are
+/// gone. Returns whether any went.
+pub fn prune_completions(
+    completions: &mut BTreeMap<String, crate::model::PaneCompletion>,
+    live_pane_ids: &HashSet<String>,
+    scope: ReadRecordScope<'_>,
+) -> bool {
+    let before = completions.len();
+    completions.retain(|pane_id, _| !scope.owns(pane_id) || live_pane_ids.contains(pane_id));
+    completions.len() != before
 }
 
 /// Raises the operator-focused pane's read record and sets every row's read
@@ -668,15 +820,35 @@ pub fn prune_read_records(
 /// nothing here reads Herdr's `done` or `idle` or a token's `_new` suffix to
 /// decide it. Running it twice over the same agents and the same pane changes
 /// nothing the second time (engineering rule 11).
+///
+/// A record saved on another Herdr server, or while its pane was still being
+/// restored, is carried over rather than compared: until the pane settles on
+/// this server it keeps the verdict it was saved with, and when it settles a
+/// read record is moved onto this server unless the pane shows something new
+/// (`restored_is_news`).
+/// The verdict a record holds is saved whenever it changes, so a restart
+/// that loses Herdr's numbers cannot turn an unread pane read or the reverse.
 pub fn apply_read_state(
     agents: &mut [SidebarAgentSnapshot],
     records: &mut BTreeMap<String, PaneReadRecord>,
+    connection: &mut ReadConnection,
     operator_pane_id: Option<&str>,
 ) -> Vec<ReadRecordChange> {
     let mut changes = Vec::new();
+    // What each settled pane sends up its lineage now. A signal a record
+    // keeps for a pane that is not settled, or not listed while its lineage
+    // tokens are being written again after a restart, stays.
+    let emitted = agents
+        .iter()
+        .filter(|agent| settled(agent))
+        .map(|agent| (agent.pane_id.clone(), descendant_signals_of(agent)))
+        .collect::<BTreeMap<_, _>>();
     for agent in agents.iter_mut() {
+        let settled_here = settled(agent);
+        let first_settled = settled_here && connection.settled.insert(agent.pane_id.clone());
         if operator_pane_id == Some(agent.pane_id.as_str()) {
-            let current = read_fingerprint(agent);
+            let mut current = read_fingerprint(agent);
+            current.server = Some(connection.server_of(agent).to_owned());
             if records.get(&agent.pane_id) != Some(&current) {
                 records.insert(agent.pane_id.clone(), current.clone());
                 changes.push(ReadRecordChange {
@@ -687,23 +859,41 @@ pub fn apply_read_state(
             }
             continue;
         }
-        // A descendant signal that has gone away is dropped from the record
-        // so the same descendant can be news again later; dropping never
-        // changes the read axis, because a subset stays a subset. A completion
-        // that has gone away is dropped the same way, so a pane that reports
-        // done again at the same sequence is news again (#901).
         let Some(record) = records.get_mut(&agent.pane_id) else {
             continue;
         };
-        let before = record.descendant_signals.len();
-        record
-            .descendant_signals
-            .retain(|signal| agent.descendant_signals.contains(signal));
-        let completion_left = record.completed && !agent.completed;
-        if completion_left {
-            record.completed = false;
+        let mut moved = false;
+        let carried = (first_settled && !connection.compares(record.server.as_deref(), agent))
+            || !record_settled(record);
+        if settled_here && carried && !record.unread {
+            if restored_is_news(record, agent) {
+                record.unread = true;
+            } else {
+                record.state_change_seq = agent.state_change_seq;
+                record.server = Some(connection.server_of(agent).to_owned());
+                record.session_id = agent.session_id.clone().or(record.session_id.take());
+                record.demand = agent.demand.clone();
+                record.activity = agent.activity.clone();
+                record.completed = agent.completed;
+            }
+            moved = true;
+        } else if settled_here && record.server.is_none() {
+            // Judged by sequence as before, once, then named for this server.
+            record.server = Some(connection.server_of(agent).to_owned());
+            moved = true;
         }
-        if completion_left || record.descendant_signals.len() != before {
+        // A descendant signal that has gone away is dropped from the record
+        // so the same descendant can be news again later; dropping never
+        // changes the read axis, because a subset stays a subset. It has gone
+        // away only when the descendant is settled and no longer sends it.
+        let before = record.descendant_signals.len();
+        record.descendant_signals.retain(|signal| {
+            emitted
+                .get(&signal.pane_id)
+                .is_none_or(|now| now.contains(signal))
+        });
+        moved |= record.descendant_signals.len() != before;
+        if moved {
             changes.push(ReadRecordChange {
                 pane_id: agent.pane_id.clone(),
                 record: record.clone(),
@@ -712,7 +902,20 @@ pub fn apply_read_state(
         }
     }
 
-    derive_read_state(agents, records, operator_pane_id);
+    derive_read_state(agents, records, connection, operator_pane_id);
+    for agent in agents.iter() {
+        let Some(record) = records.get_mut(&agent.pane_id) else {
+            continue;
+        };
+        if record.unread != agent.unread && connection.judges_by_sequence(record, agent) {
+            record.unread = agent.unread;
+            changes.push(ReadRecordChange {
+                pane_id: agent.pane_id.clone(),
+                record: record.clone(),
+                evicted: false,
+            });
+        }
+    }
     changes
 }
 
@@ -725,16 +928,22 @@ pub fn apply_read_state(
 pub(crate) fn derive_read_state(
     agents: &mut [SidebarAgentSnapshot],
     records: &BTreeMap<String, PaneReadRecord>,
+    connection: &ReadConnection,
     operator_pane_id: Option<&str>,
 ) {
     for agent in agents.iter_mut() {
         // The pane the operator is looking at is read as of now whether or not
         // the ledger has caught up in this dispatch, so the two projections
-        // agree regardless of which one the runtime builds first.
+        // agree regardless of which one the runtime builds first. A record
+        // saved on another server keeps the verdict it was saved with.
         let read = operator_pane_id == Some(agent.pane_id.as_str())
-            || records
-                .get(&agent.pane_id)
-                .is_some_and(|record| record_covers(record, &read_fingerprint(agent)));
+            || records.get(&agent.pane_id).is_some_and(|record| {
+                if connection.judges_by_sequence(record, agent) {
+                    record_covers(record, &read_fingerprint(agent))
+                } else {
+                    !record.unread
+                }
+            });
         agent.unread = !read;
         derive_from_axes(agent);
     }
@@ -800,11 +1009,17 @@ pub(crate) fn agent_activity(agent: &SessionAgentPayload) -> AgentActivity {
     }
 }
 
-/// Whether this stopped pane has actually completed work: Herdr's `done`.
+/// Whether this stopped pane has actually completed work: Herdr's `done`, or
+/// its `idle` with the completion it keeps (`completion_seq`) after its
+/// tab-scoped seen turned `done` into `idle`. A ready pane has no completion.
 /// It is deliberately separate from activity and read state; Herdr's
 /// tab-scoped seen value never decides Hide's pane-level read axis.
 pub(crate) fn agent_completed(agent: &SessionAgentPayload) -> bool {
-    agent.agent_status.as_deref() == Some("done")
+    match agent.agent_status.as_deref() {
+        Some("done") => true,
+        Some("idle") => agent.completion_seq.is_some(),
+        _ => false,
+    }
 }
 
 /// A tab holding only delegated agent children stays out of the operator strip.

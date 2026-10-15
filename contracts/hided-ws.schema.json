@@ -24,6 +24,10 @@
         "schema_version": { "type": "integer", "const": 2 },
         "client_kind": { "type": "string", "enum": ["web", "desktop"] },
         "have_revision": { "type": "integer", "minimum": 0 },
+        "snapshot_format": {
+          "description": "Explicitly requests independently retained rest fields, with nested navigator, terminal and status omissions. Missing keeps schema-2 complete-rest replacement. Unknown formats close with schema_mismatch (4003).",
+          "const": "semantic-rest-v1"
+        },
         "have_core": {
           "description": "The `core_instance` of the daemon frame that came before the snapshot `have_revision` was read from. A core started since (a move, a rollback or an update) answers a whole snapshot whatever `have_revision` says, since each core numbers its own revisions.",
           "type": "string",
@@ -57,7 +61,7 @@
       }
     },
     "memoryHookAsk": {
-      "description": "`hide workspace memory`: an agent hook's Project Memory, answered by the core from the one store it owns whichever machine the agent runs on, as a workspace_result without a shell. The Project is the one holding the caller pane's attested checkout, read by that checkout's own node; the request never names it. Only the core's own node and a node that dials in have Memory; a device the core dials is refused with memory_unavailable, and the node of a machine whose link to the core is down refuses its callers at once with hide_unavailable. result is {context, outcome, count?}: context is the Memory text or null, a prompt's cards with their signed receipt and a session start's card index without one, and outcome one of provided (with count), empty, disabled, unavailable, deadline, project_unresolved. The prompt is at most its first 8 KiB, and the core spends at most 1 s on the answer.",
+      "description": "`hide workspace memory`: an agent hook's Project Memory, answered by the core from the one store it owns whichever machine the agent runs on, as a workspace_result without a shell. The Project is the one holding the caller pane's attested checkout, read by that checkout's own node; the request never names it. The core's own node and any registered linked device have Memory through that device's node, regardless of connection direction; a link that is down or a helper without a Memory reader refuses immediately with a diagnostic reason, and a disconnected node refuses its callers with hide_unavailable. No store is copied to the device. result is {context, outcome, count?}: context is the Memory text or null, a prompt's cards with their signed receipt and a session start's card index without one, and outcome one of provided (with count), empty, disabled, unavailable, deadline, project_unresolved. The prompt is at most its first 8 KiB, and the core spends at most 1 s on the answer.",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "request_id", "event", "runtime", "session"],
@@ -144,7 +148,19 @@
       "required": ["type", "payload"],
       "properties": {
         "type": { "type": "string", "enum": ["daemon", "snapshot", "delta", "terminal", "error", "directory_list", "directory_unavailable", "path_refused", "project_target", "file_bytes_error", "directory_changed", "file_index_result", "attachment_refused", "open_external_result", "clone_target", "core_move", "core_link", "agent_notice"] },
-        "payload": { "type": "object" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "rest_format": {
+              "description": "Present only after snapshot_format negotiation. Each rest field replaces one semantic value; omissions retain, explicit null/empty values clear. Navigator, terminal and status merge their independently revisioned fields. Cursor zero/reset carries all fields.",
+              "const": "semantic-rest-v1"
+            },
+            "usage": {
+              "description": "The independently revisioned top-level usage section in a snapshot or delta. Delta omission preserves the previous value; an empty nodes array clears it. A fresh snapshot, including a future-cursor reset, always carries the complete section. Usage-only changes do not resend rest.",
+              "$ref": "#/$defs/usageSnapshot"
+            }
+          }
+        },
         "message": { "type": "string" }
       }
     },
@@ -205,36 +221,395 @@
         "device_id": { "type": "string" }
       }
     },
-    "providerUsage": {
-      "description": "One row of a snapshot's `navigator.provider_usage`: a provider's seven-day account window as herdr-core/src/usage.rs reads it (docs/AI_PROVIDERS.md, Weekly usage display). state is `loading` until the first read answers, `available` for a current read, `stale` for a success kept while the provider is offline (message says how old), `fallback` for Codex's latest local session window, and `unavailable` with message saying why, a window whose reset has passed included. used_percent and resets_at_unix_seconds are null in `loading` and `unavailable`. buckets are scoped windows under the row, such as one model's own weekly limit.",
+    "usageSnapshot": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "label", "window_minutes", "state", "used_percent", "resets_at_unix_seconds", "message", "last_checked_at_unix_ms", "last_success_at_unix_ms", "last_error_kind", "buckets"],
+      "required": [
+        "nodes"
+      ],
       "properties": {
-        "provider": { "type": "string" },
-        "label": { "type": "string" },
-        "window_minutes": { "type": "integer", "minimum": 0 },
-        "state": { "type": "string", "enum": ["loading", "available", "stale", "fallback", "unavailable"] },
-        "used_percent": { "type": ["number", "null"] },
-        "resets_at_unix_seconds": { "type": ["integer", "null"], "minimum": 0 },
-        "message": { "type": ["string", "null"] },
-        "last_checked_at_unix_ms": { "type": ["integer", "null"], "minimum": 0 },
-        "last_success_at_unix_ms": { "type": ["integer", "null"], "minimum": 0 },
-        "last_error_kind": { "type": ["string", "null"] },
-        "buckets": { "type": "array", "items": { "$ref": "#/$defs/providerUsageBucket" } }
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nodeUsage"
+          }
+        }
       }
     },
-    "providerUsageBucket": {
-      "description": "A scoped window under a providerUsage row. state is the row's own `available` or `stale` while the bucket has a value, and `unavailable` with message when its line could not be read or its reset has passed.",
+    "nodeUsage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["label", "state", "used_percent", "resets_at_unix_seconds", "message"],
+      "required": [
+        "node",
+        "agents",
+        "history"
+      ],
       "properties": {
-        "label": { "type": "string" },
-        "state": { "type": "string", "enum": ["available", "stale", "unavailable"] },
-        "used_percent": { "type": ["number", "null"] },
-        "resets_at_unix_seconds": { "type": ["integer", "null"], "minimum": 0 },
-        "message": { "type": ["string", "null"] }
+        "node": {
+          "type": "string"
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/agentUsage"
+          }
+        },
+        "history": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/usageHistory"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "agentUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "limits",
+        "consumption"
+      ],
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "limits": {
+          "$ref": "#/$defs/limitCell"
+        },
+        "consumption": {
+          "$ref": "#/$defs/consumptionCell"
+        }
+      }
+    },
+    "limitCell": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "unsupported"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "loading"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "cause",
+            "last_checked_at_ms"
+          ],
+          "properties": {
+            "state": {
+              "const": "unavailable"
+            },
+            "cause": {
+              "$ref": "#/$defs/usageCause"
+            },
+            "last_checked_at_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "value",
+            "freshness",
+            "observed_at_ms"
+          ],
+          "properties": {
+            "state": {
+              "const": "reading"
+            },
+            "value": {
+              "$ref": "#/$defs/limitReading"
+            },
+            "freshness": {
+              "type": "string",
+              "enum": [
+                "fresh",
+                "stale",
+                "fallback"
+              ]
+            },
+            "observed_at_ms": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "usageCause": {
+      "type": "string",
+      "enum": [
+        "signed_out",
+        "not_installed",
+        "offline",
+        "timed_out",
+        "rate_limited",
+        "format_changed",
+        "capped",
+        "no_records"
+      ]
+    },
+    "limitReading": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "windows"
+      ],
+      "properties": {
+        "windows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/windowReading"
+          },
+          "maxItems": 16
+        }
+      }
+    },
+    "windowKind": {
+      "type": "string",
+      "enum": [
+        "five_hour",
+        "weekly",
+        "monthly"
+      ]
+    },
+    "windowReading": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "scope",
+        "outcome"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/windowKind"
+        },
+        "scope": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "all"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "label"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "model"
+                },
+                "label": {
+                  "type": "string",
+                  "maxLength": 64
+                }
+              }
+            }
+          ]
+        },
+        "outcome": {
+          "$ref": "#/$defs/windowOutcome"
+        }
+      }
+    },
+    "windowOutcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "not_started"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "used_percent",
+            "resets_at_s"
+          ],
+          "properties": {
+            "state": {
+              "const": "open"
+            },
+            "used_percent": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "resets_at_s": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "reset_at_s"
+          ],
+          "properties": {
+            "state": {
+              "const": "expired"
+            },
+            "reset_at_s": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "not_offered"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "cause"
+          ],
+          "properties": {
+            "state": {
+              "const": "unreadable"
+            },
+            "cause": {
+              "$ref": "#/$defs/usageCause"
+            }
+          }
+        }
+      ]
+    },
+    "usagePreferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pinned",
+        "hidden"
+      ],
+      "properties": {
+        "pinned": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "agent",
+              "window"
+            ],
+            "properties": {
+              "agent": {
+                "type": "string"
+              },
+              "window": {
+                "$ref": "#/$defs/windowKind"
+              }
+            }
+          },
+          "maxItems": 3
+        },
+        "hidden": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 7
+        }
+      }
+    },
+    "usagePinSetPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "window",
+        "enabled"
+      ],
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "window": {
+          "$ref": "#/$defs/windowKind"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "usageHiddenSetPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "hidden"
+      ],
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "hidden": {
+          "type": "boolean"
+        }
       }
     },
     "uiStateUsageHints": {
@@ -277,7 +652,9 @@
               "pane_id": { "type": "string" },
               "title": { "type": "string" },
               "state": { "type": "string", "enum": ["needs_you", "done"] },
-              "place": { "type": "string" }
+              "place": { "type": "string" },
+              "status_code": { "description": "The root row's status word code. Optional for older frames.", "type": ["string", "null"], "enum": ["error", "question", "approval", "working", "done", "idle", "unknown", "waiting", "stopped", "attached", "sleeping", "waking", "sleep_failed", null] },
+              "detail": { "description": "The core's chosen row detail, untranslated; absent or null means the original state-and-project body.", "type": ["string", "null"], "maxLength": 80 }
             }
           }
         },
@@ -310,6 +687,28 @@
       "required": ["language"],
       "additionalProperties": false,
       "properties": { "language": { "$ref": "#/$defs/interfaceLanguage" } }
+    },
+    "agentLogoMode": {
+      "description": "Whether the sidebar, the Sessions list and the tab bar draw an agent's provider logo before its title. Hidden is the default and what a store without the field, or with a value this build does not know, publishes.",
+      "enum": ["shown", "hidden"]
+    },
+    "agentLogoModeSetPayload": {
+      "description": "Payload of agent_logo_mode_set. This event alone edits the core preference; ui_state_update never changes it, and a mode the event does not name is refused and changes nothing.",
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "properties": { "mode": { "$ref": "#/$defs/agentLogoMode" } }
+    },
+    "colorTheme": {
+      "description": "The palette every window draws in, `ui_state.color_theme`: hide is the landing page's Owl Field colors and the default (a store without the field opens hide), neutral the grey chrome. Independent of `ui_state.theme`, which picks light, dark or system. A stored value the core does not know opens hide with the diagnostic ui_state.color_theme_unknown.",
+      "enum": ["hide", "neutral"]
+    },
+    "colorThemeSetPayload": {
+      "description": "Payload of color_theme_set. This event alone edits the color theme; ui_state_update never changes it, a value outside colorTheme is refused, and the current value again saves nothing.",
+      "type": "object",
+      "required": ["color_theme"],
+      "additionalProperties": false,
+      "properties": { "color_theme": { "$ref": "#/$defs/colorTheme" } }
     },
     "closeReason": {
       "type": "string",
@@ -540,6 +939,587 @@
         "version": { "type": "string" },
         "schema_version": { "type": "integer", "const": 2 },
         "clients": { "type": "integer", "minimum": 0, "maximum": 8 }
+      }
+    },
+  "consumptionCell": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "unsupported"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "loading"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "cause",
+            "last_checked_at_ms"
+          ],
+          "properties": {
+            "state": {
+              "const": "unavailable"
+            },
+            "cause": {
+              "$ref": "#/$defs/usageCause"
+            },
+            "last_checked_at_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "value",
+            "freshness",
+            "observed_at_ms"
+          ],
+          "properties": {
+            "state": {
+              "const": "reading"
+            },
+            "value": {
+              "$ref": "#/$defs/consumptionReading"
+            },
+            "freshness": {
+              "type": "string",
+              "enum": [
+                "fresh",
+                "stale",
+                "fallback"
+              ]
+            },
+            "observed_at_ms": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "usageTokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input",
+        "output",
+        "cache_read",
+        "cache_write",
+        "cache_write_1h",
+        "reasoning"
+      ],
+      "properties": {
+        "input": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_read": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_write": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_write_1h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasoning": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "usageCost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "micro_usd",
+        "partial",
+        "waiting",
+        "stale",
+        "incomplete",
+        "unpriced_models",
+        "other_unpriced_models"
+      ],
+      "properties": {
+        "micro_usd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "waiting": {
+          "type": "boolean"
+        },
+        "stale": {
+          "type": "boolean"
+        },
+        "incomplete": {
+          "type": "boolean"
+        },
+        "unpriced_models": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string"
+          }
+        },
+        "other_unpriced_models": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "usageAmount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "calls",
+        "new_tokens",
+        "tokens",
+        "cost"
+      ],
+      "properties": {
+        "calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "new_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens": {
+          "$ref": "#/$defs/usageTokens"
+        },
+        "cost": {
+          "$ref": "#/$defs/usageCost"
+        }
+      }
+    },
+    "usageContribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "new_tokens",
+        "share_basis_points"
+      ],
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "new_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "share_basis_points": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        }
+      }
+    },
+    "usageHideAiFeature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["feature", "amount", "providers"],
+      "properties": {
+        "feature": {
+          "enum": ["labels", "memory", "factory", "issue", "other"],
+          "description": "The closed group a router request's feature id falls into; an id outside the list is other."
+        },
+        "amount": { "$ref": "#/$defs/usageAmount" },
+        "providers": {
+          "type": "array",
+          "maxItems": 8,
+          "items": { "type": "string" },
+          "description": "Provider ids of the models that answered, for the row's marks."
+        }
+      }
+    },
+    "usageHideAiDay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "share_basis_points", "features", "unknown_calls"],
+      "description": "Hide's own background AI on one day. Its known part is already inside the day's amount.",
+      "properties": {
+        "amount": {
+          "$ref": "#/$defs/usageAmount",
+          "description": "The sum of features. A lower bound (cost.partial) when unknown_calls is not zero."
+        },
+        "share_basis_points": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000,
+          "description": "The known Hide AI new tokens over the day's new tokens."
+        },
+        "features": {
+          "type": "array",
+          "maxItems": 5,
+          "items": { "$ref": "#/$defs/usageHideAiFeature" }
+        },
+        "unknown_calls": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Attempts that were submitted and reported no usage. A count of calls, never tokens, so it is in no amount."
+        }
+      }
+    },
+    "usageDay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "date",
+        "week",
+        "weekday",
+        "today",
+        "recent_week",
+        "level",
+        "pending",
+        "amount",
+        "top_agents",
+        "agents",
+        "other_agents",
+        "hide_ai"
+      ],
+      "properties": {
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "week": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 52
+        },
+        "weekday": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
+        },
+        "today": {
+          "type": "boolean"
+        },
+        "recent_week": {
+          "type": "boolean"
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "pending": {
+          "type": "boolean"
+        },
+        "amount": {
+          "$ref": "#/$defs/usageAmount"
+        },
+        "top_agents": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/usageContribution"
+          }
+        },
+        "agents": { "type": "array", "maxItems": 6, "items": { "$ref": "#/$defs/usageContribution" } },
+        "other_agents": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hide_ai": {
+          "anyOf": [{ "$ref": "#/$defs/usageHideAiDay" }, { "type": "null" }],
+          "description": "Only the all-agents range carries it, on a day Hide AI was counted; an agent's own range is that agent's sessions."
+        }
+      }
+    },
+    "usageRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "calendar_start",
+        "calendar_end",
+        "days",
+        "amount",
+        "since",
+        "active_days",
+        "observed_days",
+        "peak",
+        "current_streak",
+        "longest_streak",
+        "reading",
+        "limited",
+        "files_done",
+        "files_total",
+        "hide_ai_since"
+      ],
+      "properties": {
+        "calendar_start": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Inclusive civil-date calendar bound owned by the core."
+        },
+        "calendar_end": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Inclusive civil-date calendar bound owned by the core."
+        },
+        "days": {
+          "type": "array",
+          "maxItems": 371,
+          "items": {
+            "$ref": "#/$defs/usageDay"
+          },
+          "description": "Sparse recorded days, including calls with zero new tokens. The shell fills omitted dates inside the inclusive calendar bounds."
+        },
+        "amount": {
+          "$ref": "#/$defs/usageAmount"
+        },
+        "since": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "active_days": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observed_days": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "peak": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "date",
+                "new_tokens"
+              ],
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "new_tokens": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "current_streak": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "longest_streak": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reading": {
+          "type": "boolean"
+        },
+        "limited": {
+          "type": "boolean"
+        },
+        "files_done": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "files_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hide_ai_since": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The first retained day Hide AI was counted on; no earlier day is. Only the all-agents range carries it."
+        }
+      }
+    },
+    "usageShare": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contribution",
+        "since",
+        "lifetime",
+        "providers"
+      ],
+      "properties": {
+        "contribution": {
+          "$ref": "#/$defs/usageContribution"
+        },
+        "since": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lifetime": {
+          "$ref": "#/$defs/usageAmount"
+        },
+        "providers": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "usageHistorySurface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "range",
+        "shares"
+      ],
+      "properties": {
+        "range": {
+          "$ref": "#/$defs/usageRange"
+        },
+        "shares": {
+          "type": "array",
+          "maxItems": 6,
+          "items": {
+            "$ref": "#/$defs/usageShare"
+          }
+        }
+      }
+    },
+    "usageHistory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "popover",
+        "year"
+      ],
+      "properties": {
+        "popover": {
+          "$ref": "#/$defs/usageHistorySurface"
+        },
+        "year": {
+          "$ref": "#/$defs/usageHistorySurface"
+        }
+      }
+    },
+    "consumptionReading": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "popover",
+        "year",
+        "retained"
+      ],
+      "properties": {
+        "popover": {
+          "$ref": "#/$defs/usageRange"
+        },
+        "year": {
+          "$ref": "#/$defs/usageRange"
+        },
+        "retained": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "since",
+                "amount",
+                "providers"
+              ],
+              "properties": {
+                "since": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "amount": {
+                  "$ref": "#/$defs/usageAmount"
+                },
+                "providers": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
       }
     }
   }

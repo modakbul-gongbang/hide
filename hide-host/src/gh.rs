@@ -32,18 +32,21 @@ impl GhFailure {
 // at this external boundary and preserve unknown errors verbatim as network failures.
 fn classify_failure(reason: String, exit_code: Option<i32>) -> GhFailure {
     let lower = reason.to_ascii_lowercase();
-    let category = if exit_code == Some(4)
-        || lower.contains("not logged")
-        || lower.contains("gh auth login")
-        || lower.contains("token") && lower.contains("invalid")
-    {
-        GithubFailureCategory::NotLoggedIn
-    } else if lower.contains("no git remotes")
+    // The no-remote answer is read first: it ends by naming `gh auth login`
+    // as the way to add a host (gh 2.76), and read as a login failure it
+    // would be asked again on every read.
+    let category = if lower.contains("no git remotes")
         || lower.contains("none of the git remotes")
         || lower.contains("not a github repository")
         || lower.contains("no github remote")
     {
         GithubFailureCategory::NoGithubRemote
+    } else if exit_code == Some(4)
+        || lower.contains("not logged")
+        || lower.contains("gh auth login")
+        || lower.contains("token") && lower.contains("invalid")
+    {
+        GithubFailureCategory::NotLoggedIn
     } else {
         GithubFailureCategory::NetworkOrRateLimit
     };
@@ -155,7 +158,7 @@ fn run_gh_for(
         .map_err(|_| GhFailure::network("gh stderr reader failed".to_owned()))?
         .map_err(|error| GhFailure::network(format!("gh stderr: {error}")))?;
     let status = status?;
-    if !status.success() {
+    if !status.success() && !answered_with_errors(arguments, &stdout) {
         let reason = String::from_utf8_lossy(&stderr).trim().to_owned();
         return Err(classify_failure(
             if reason.is_empty() {
@@ -168,6 +171,19 @@ fn run_gh_for(
     }
     String::from_utf8(stdout)
         .map_err(|error| GhFailure::network(format!("gh output was not UTF-8: {error}")))
+}
+
+/// Whether a `gh api graphql` that exited non-zero printed GitHub's answer:
+/// `gh` exits 1 whenever the answer carries `errors`, though GitHub answered
+/// the rest. A repository or issue one alias names that does not resolve is
+/// `null` in `data` with a `NOT_FOUND` error beside it (gh 2.76, 2026-10-14),
+/// so the answer is the command's output and the core reads its `errors`
+/// alias by alias. An answer with no `data` (bad credentials, a refused
+/// query) stays a failure.
+fn answered_with_errors(arguments: &[&str], stdout: &[u8]) -> bool {
+    arguments.starts_with(&["api", "graphql"])
+        && serde_json::from_slice::<serde_json::Value>(stdout)
+            .is_ok_and(|answer| answer.get("data").is_some_and(serde_json::Value::is_object))
 }
 
 // Every case drives a fake `gh` shell script.
@@ -292,7 +308,7 @@ esac"#,
         );
         for (stderr, expected) in [
             (
-                "none of the git remotes configured for this repository point to a known GitHub host",
+                "None of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`",
                 GithubFailureCategory::NoGithubRemote,
             ),
             (
@@ -305,6 +321,43 @@ esac"#,
             assert_eq!(failure.category, expected);
             assert_eq!(failure.reason, stderr);
         }
+    }
+
+    /// `gh api graphql` exits 1 when one alias does not resolve, with the
+    /// others answered on stdout (gh 2.76): that answer reaches the core.
+    #[test]
+    fn a_graphql_answer_with_an_unresolved_alias_is_output_and_one_without_data_fails() {
+        const PARTIAL: &str = r#"{"data":{"r0":{"issue":{"number":7}},"r1":null},"errors":[{"type":"NOT_FOUND","path":["r1"],"message":"Could not resolve to a Repository with the name acme/gone."}]}"#;
+        let query = "query=query HideLinkedIssues {}";
+        let fixture = GhFixture::new(&format!(
+            r#"
+case "$1 $2" in
+  "api graphql") printf '%s' '{PARTIAL}'; printf 'gh: Could not resolve' >&2; exit 1;;
+  "pr list") printf '{{"data":{{}}}}'; printf 'HTTP 502' >&2; exit 1;;
+esac"#
+        ));
+        let answer = run_gh(
+            &fixture.binary,
+            None,
+            &["api", "graphql", "-f", query],
+            FIXTURE_DEADLINE,
+        )
+        .expect("the answered aliases are output");
+        assert_eq!(answer, PARTIAL);
+        // Only a GraphQL answer is taken from a failed command.
+        let failure = run_gh(&fixture.binary, None, &PR_LIST, FIXTURE_DEADLINE).unwrap_err();
+        assert_eq!(failure.reason, "HTTP 502");
+        let fixture = GhFixture::new(
+            r#"printf '{"message":"Bad credentials"}'; printf 'gh: Bad credentials (HTTP 401)' >&2; exit 1"#,
+        );
+        let failure = run_gh(
+            &fixture.binary,
+            None,
+            &["api", "graphql", "-f", query],
+            FIXTURE_DEADLINE,
+        )
+        .unwrap_err();
+        assert_eq!(failure.reason, "gh: Bad credentials (HTTP 401)");
     }
 
     #[test]
@@ -358,7 +411,7 @@ esac"#,
     }
 
     #[test]
-    fn a_pull_request_takes_only_its_body_write_and_its_two_reads() {
+    fn a_pull_request_takes_only_its_body_write_its_two_reads_and_the_two_conditioned_writes() {
         let fixture = GhFixture::new(r#"printf 'ok'"#);
         let run = |arguments: &[&str]| {
             run_gh(
@@ -372,6 +425,22 @@ esac"#,
             &["pr", "view", "12", "--json", "body"][..],
             &["pr", "view", "12", "--json", PR_FEEDBACK_FIELDS],
             &["pr", "edit", "12", "--body", "Closes #7"],
+            &[
+                "pr",
+                "merge",
+                "12",
+                "--squash",
+                "--match-head-commit",
+                "0123456789abcdef0123456789abcdef01234567",
+            ],
+            &[
+                "api",
+                "--method",
+                "PUT",
+                "repos/acme/app/pulls/12/update-branch",
+                "-f",
+                "expected_head_sha=0123456789abcdef0123456789abcdef01234567",
+            ],
         ] {
             if let Err(failure) = run(allowed) {
                 panic!("{allowed:?} must run: {}", failure.reason);
@@ -384,6 +453,15 @@ esac"#,
             &["pr", "edit", "12", "--body", "y", "--title", "z"],
             &["pr", "view", "12", "--json", "body,title"],
             &["pr", "merge", "12"],
+            &[
+                "pr",
+                "merge",
+                "12",
+                "--admin",
+                "--match-head-commit",
+                "0123456789abcdef0123456789abcdef01234567",
+            ],
+            &["pr", "merge", "12", "--squash"],
             &["pr", "comment", "12", "--body", "y"],
             &["pr", "review", "12", "--approve"],
             &["pr", "close", "12"],

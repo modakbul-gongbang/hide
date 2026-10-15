@@ -679,7 +679,7 @@ impl Runtime {
         }));
         if route == PaneFindRoute::Agent {
             // The keys went into the agent's own search box.
-            self.note_delivery_key(pane_id);
+            self.note_delivery_key(pane_id, "find");
         }
         self.snapshot.find = PaneFindSnapshot {
             pane_id: Some(pane_id.to_owned()),
@@ -1234,19 +1234,16 @@ impl Runtime {
         }
     }
 
-    /// Drops the rendered terminal state before selecting a pane in another
-    /// checkout. Herdr's globally focused pane may belong to another
-    /// workspace, so retaining the attach set here would let the next sync
-    /// update redraw stale terminal content while the selected checkout has
-    /// no pane yet.
-    ///
-    /// The layouts are not dropped. They describe every tab in the session,
-    /// they are Herdr's and not this selection's, and emptying them to mark a
-    /// selection in progress is what made the canvas pass through a blank
-    /// frame on the way to the tab the operator asked for.
-    pub(super) fn clear_terminal_projection(&mut self) {
+    /// A selection that moves, goes missing or retires clears only its own
+    /// presentation. The terminal pane entries are the session's, not the
+    /// selection's: each one leaves when its pane leaves the session, and a
+    /// pane outside the attach window keeps its entry as `released`. The
+    /// shell disposes a parked terminal whose entry is gone, so emptying the
+    /// list for a checkout switch or a pending creation threw away every
+    /// retained tab's renderer, and the layouts likewise stay, or the canvas
+    /// passes through a blank frame on the way to the tab asked for.
+    pub(super) fn clear_selected_terminal_state(&mut self) {
         self.snapshot.zoomed = None;
-        self.snapshot.terminal.panes.clear();
         self.snapshot.terminal.closed = false;
         self.snapshot.terminal.exit_code = None;
     }
@@ -1339,7 +1336,7 @@ impl Runtime {
         self.select_terminal_pane(pane_id);
     }
     pub(super) fn reset_terminal_projection(&mut self, pane_id: Option<String>) {
-        self.clear_terminal_projection();
+        self.clear_selected_terminal_state();
         self.select_terminal_pane(pane_id);
     }
     /// Opens or focuses the file tab for one path in a checkout Hide is

@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
-import { countSent, rest, screenshot } from "./wire";
+import { countSent, rest, screenshot, showProjectRow } from "./wire";
 import { quietFor } from "./wait";
 
 test.describe.configure({ timeout: 120_000 });
@@ -61,7 +61,7 @@ test("the sidebar's edge drags between its bounds, lands once, survives a reload
     const edge = page.locator("[data-sidebar-edge]");
     const main = page.locator("main");
     // Open the folder's Workspace so a terminal sits beside the sidebar.
-    await page.locator("[data-project]", { hasText: /^notes/ }).locator("[data-checkout]").click();
+    await (await showProjectRow(page, page.locator("[data-project]", { hasText: /^notes/ }).locator("[data-checkout]"))).click();
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await expect(page.locator(".xterm").first()).toBeVisible({ timeout: 20_000 });
     await rest(page);

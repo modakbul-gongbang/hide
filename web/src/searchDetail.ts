@@ -73,6 +73,8 @@ export function detailOf(rest: SnapshotRest | null, entry: SearchEntry, now: num
   const device = entry.chip?.label ?? searchDevices(rest ?? ({} as SnapshotRest)).find((scope) => scope.device.id === entry.deviceId)?.name;
   const base = { relations, tags: [] as string[], pills: [] as EntryStatus[] };
   switch (entry.kind) {
+    case "session":
+      return { ...base, kind: t("sessionWork.sessions"), title: entry.title, facts: present([[t("sessionWork.requests"), entry.subtitle], [t("search.fact.checkout"), entry.place]]), action: t("sessionWork.record") };
     case "agent": {
       return {
         ...base,
@@ -80,7 +82,7 @@ export function detailOf(rest: SnapshotRest | null, entry: SearchEntry, now: num
         title: entry.title,
         pills: entry.status ? [entry.status] : [],
         tags: device ? [device] : [],
-        facts: present([[t("search.fact.checkout"), entry.place], [t("search.fact.lastWords"), lastWords(entry)]]),
+        facts: present([[t("search.fact.checkout"), entry.place], [t("search.fact.pr"), (entry.agent?.request?.pull_requests ?? []).map((pr) => `#${pr.number}`).join(", ")], [t("search.fact.lastWords"), lastWords(entry)]]),
         action: t("search.goToAgent"),
       };
     }

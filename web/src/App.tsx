@@ -1,6 +1,6 @@
 import { InterfaceLanguageBoundary, translate, useInterfaceTranslation } from "./i18n/client";
 import { agentCapacityNotice } from "./agentLayout";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { createActions, type Actions } from "./actions";
 import { identity, moveBuffer, tabBufferKey, type BufferKey } from "./buffers";
 import { BrowserHost } from "./BrowserDisplay";
@@ -25,16 +25,19 @@ import { StartPanelHost } from "./StartPanel";
 import { FONT_SIZE_BASE, usableAccent, usableFontSize } from "./settings";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./sidebar";
+import { TitleRow } from "./TitleRow";
+import { readEditorAvailability } from "./host";
+import { RegionFailed, RenderBoundary, ShellFailed, SidebarFailed, TitleRowFailed } from "./RenderBoundary";
 import { focusedRemoteDevice, frontCheckout } from "./snapshot";
-import { OPEN_ANSWER_TIMEOUT_MS, openingProgress, startupScreen } from "./navigation";
+import { OPEN_ANSWER_TIMEOUT_MS, openingProgress, startupScreen, waitingForSavedWorkspace } from "./navigation";
 import { useShellStore } from "./store";
 import { AddProjectDialog } from "./AddProjectDialog";
 import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
 import { applyEditorTheme } from "./editor/theme";
 import { applyGridHolds, applyTerminalTheme, attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
-import { primaryValue, readTheme, resolveTheme } from "./theme";
+import { PALETTE_HIDE_CLASS, primaryValue, readColorTheme, readTheme, resolveTheme } from "./theme";
 import { TooltipProvider } from "./components/ui/tooltip";
-import { useUsageWindowHint } from "./components/weekly-usage";
+import { useUsageWindowHint } from "./components/usage";
 import { useUiStore } from "./ui";
 import { WorkspaceScreen } from "./WorkspaceScreen";
 import { connectShell, type DispatchFn } from "./ws";
@@ -47,6 +50,8 @@ export function App() {
   useUsageWindowHint(actions);
   useFactoryNotifications(actions);
   useAgentNotifications(actions);
+  // Open in VS Code is offered only where the desktop app found it (D-14).
+  useEffect(() => readEditorAvailability(), []);
 
   useEffect(() => {
     const session = connectShell({
@@ -159,16 +164,22 @@ export function App() {
 
   // The theme is the core's too (D-14, D-15): System follows the OS
   // appearance while it changes, and the terminals are re-colored in place.
+  // The color theme rides on the same root as one more class
+  // (hide-color-theme D-10), so a change of either re-colors once.
   const storedTheme = useShellStore((s) => s.rest?.ui_state?.theme);
+  const storedColorTheme = useShellStore((s) => s.rest?.ui_state?.color_theme);
   useEffect(() => {
     const { choice, unknown } = readTheme(storedTheme);
     if (unknown) useShellStore.getState().noteDiagnostic("ui_state.theme is not one this page knows; Dark is shown");
+    const palette = readColorTheme(storedColorTheme);
+    if (palette.unknown) useShellStore.getState().noteDiagnostic("ui_state.color_theme is not one this page knows; Hide is shown");
     const query = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
       const theme = resolveTheme(choice, query.matches);
       const root = document.documentElement.classList;
       root.toggle("dark", theme === "dark");
       root.toggle("light", theme === "light");
+      root.toggle(PALETTE_HIDE_CLASS, palette.choice === "hide");
       applyTerminalTheme();
       applyEditorTheme();
     };
@@ -176,7 +187,7 @@ export function App() {
     if (choice !== "system") return;
     query.addEventListener("change", apply);
     return () => query.removeEventListener("change", apply);
-  }, [storedTheme]);
+  }, [storedTheme, storedColorTheme]);
 
   // A reconnect cancels an in-flight drag or cycle; the registration text
   // stays because its component is not remounted (PRD S2 B14).
@@ -232,34 +243,58 @@ export function App() {
     void refreshRecoveryDrafts();
   }, [connection, openDocuments, host]);
 
+  // Each part fails on its own and this component, which owns the socket,
+  // stays mounted (`RenderBoundary`). A notice, an overlay or the browser
+  // displays' bridge that cannot draw is left out on its own, since nothing
+  // in its place would be something to act on.
+  const notices: [string, ReactNode][] = [
+    ["connection", <ConnectionBadge actions={actions} />],
+    ["notice", <NoticeBar actions={actions} />],
+    ["agent_close_notice", <AgentCloseNotice actions={actions} />],
+    ["draft_recovery", <DraftRecoveryLine actions={actions} />],
+    ["workspace_notices", <WorkspaceNotices actions={actions} />],
+  ];
+  const overlays: [string, ReactNode][] = [
+    ["overview", <OverviewModal actions={actions} />],
+    ["cycle", <CycleOverlay />],
+    ["confirm_close", <ConfirmClose actions={actions} />],
+    ["confirm_trash", <ConfirmTrash actions={actions} />],
+    ["palette", <Palette actions={actions} />],
+    ["start_panel", <StartPanelHost actions={actions} />],
+    ["shortcuts", <ShortcutSheetGate actions={actions} />],
+    ["settings", <SettingsGate actions={actions} />],
+    ["first_run", <FirstRunWizard actions={actions} />],
+    ["workspace_dialogs", <WorkspaceDialogs actions={actions} />],
+    ["add_project", <AddProjectDialog actions={actions} />],
+    ["browser", <BrowserHost actions={actions} />],
+  ];
+  const leftOut = ([region, node]: [string, ReactNode]) => (
+    <RenderBoundary key={region} region={region} fallback={null}>
+      {node}
+    </RenderBoundary>
+  );
   return (
     <TooltipProvider>
       <InterfaceLanguageBoundary />
-      <div className="relative flex h-full flex-col bg-background text-foreground">
-        <ConnectionBadge actions={actions} />
-        <NoticeBar actions={actions} />
-        <AgentCloseNotice actions={actions} />
-        <DraftRecoveryLine actions={actions} />
-        <WorkspaceNotices actions={actions} />
-        <div className="flex min-h-0 flex-1">
-          <Sidebar actions={actions} />
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <CenterScreen actions={actions} />
-          </main>
+      <RenderBoundary region="shell" fallback={<ShellFailed />}>
+        <div className="relative flex h-full flex-col bg-background text-foreground">
+          <RenderBoundary region="title" fallback={<TitleRowFailed />}>
+            <TitleRow actions={actions} />
+          </RenderBoundary>
+          {notices.map(leftOut)}
+          <div className="flex min-h-0 flex-1">
+            <RenderBoundary region="sidebar" fallback={<SidebarFailed />}>
+              <Sidebar actions={actions} />
+            </RenderBoundary>
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <RenderBoundary region="screen" fallback={<RegionFailed />}>
+                <CenterScreen actions={actions} />
+              </RenderBoundary>
+            </main>
+          </div>
+          {overlays.map(leftOut)}
         </div>
-        <OverviewModal actions={actions} />
-        <CycleOverlay />
-        <ConfirmClose actions={actions} />
-        <ConfirmTrash actions={actions} />
-        <Palette actions={actions} />
-        <StartPanelHost actions={actions} />
-        <ShortcutSheetGate actions={actions} />
-        <SettingsGate actions={actions} />
-        <FirstRunWizard actions={actions} />
-        <WorkspaceDialogs actions={actions} />
-        <AddProjectDialog actions={actions} />
-        <BrowserHost actions={actions} />
-      </div>
+      </RenderBoundary>
     </TooltipProvider>
   );
 }
@@ -283,6 +318,7 @@ function CenterScreen({ actions }: { actions: Actions }) {
   const front = useShellStore((s) => frontCheckout(s.rest)?.id ?? null);
   const hasView = useShellStore((s) => Boolean(s.rest?.workspace_view));
   const first = useShellStore((s) => startupScreen(s.rest, front !== null));
+  const restoring = useShellStore((s) => waitingForSavedWorkspace(s.rest) && s.rest?.status?.herdr?.state === "connected");
   const loaded = useShellStore((s) => s.rest !== null);
   const remoteFront = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
   const opening = useUiStore((s) => s.opening);
@@ -299,8 +335,12 @@ function CenterScreen({ actions }: { actions: Actions }) {
       return;
     }
     if (progress === "landed") {
-      store.setOpening(null);
-      store.setScreen({ kind: "workspace" });
+      // A Workspace already in front keeps an Overview the operator opened
+      // over it while the core was still answering: the layer is theirs, not
+      // the open's. From All projects or an Overview screen the Workspace
+      // comes forward in its place.
+      if (store.screen?.kind === "workspace") store.setOpening(null);
+      else store.setScreen({ kind: "workspace" });
       return;
     }
     store.setOpening(store.screen?.kind === "workspace" ? null : { ...opening, failure: progress });
@@ -323,13 +363,16 @@ function CenterScreen({ actions }: { actions: Actions }) {
       useUiStore.getState().setScreen({ kind: first });
       return undefined;
     }
+    // A connected Herdr's saved choice is still being restored, rather than
+    // an unanswered connection. Its catalog/View decides when it settles.
+    if (restoring) return undefined;
     // A Herdr or a device that never answers must not hold the page on a
     // blank screen; a device gets longer, since it is reached over SSH.
     const timer = window.setTimeout(() => {
       if (useUiStore.getState().screen === null) useUiStore.getState().setScreen({ kind: "main" });
     }, remoteFront ? 15_000 : 3000);
     return () => window.clearTimeout(timer);
-  }, [screen, loaded, first, remoteFront]);
+  }, [screen, loaded, first, remoteFront, restoring]);
   if (screen === null) {
     return (
       <div className="flex flex-1 items-center justify-center text-caption text-muted-foreground" data-center-screen="starting">

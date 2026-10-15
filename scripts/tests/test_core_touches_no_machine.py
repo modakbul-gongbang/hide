@@ -56,6 +56,13 @@ class CoreTouchesNoMachine(unittest.TestCase):
                                             'fn advice() -> &\'static str { "see std::fs" }\n'})
         self.assertEqual(check.findings(root / 'herdr-core/src/name.rs'), [])
 
+    def test_http_clients_are_machine_access_even_through_an_import_alias(self):
+        clients = ('ureq', 'reqwest', 'hyper', 'attohttpc', 'isahc', 'curl')
+        root, check = self.tree({'network.rs': '\n'.join(
+            f'use {client} as transport_{index};' for index, client in enumerate(clients))})
+        found = check.findings(root / 'herdr-core/src/network.rs')
+        self.assertEqual(len(found), len(clients), found)
+
     def test_a_module_file_declared_behind_cfg_test_is_test_code(self):
         root, check = self.tree({'lib.rs': '#[cfg(test)]\nmod fake;\n#[cfg(all(test, unix))]\nmod fixture;\nmod real;\n',
                                  'fake.rs': 'fn f() { std::fs::read("x"); }\n',

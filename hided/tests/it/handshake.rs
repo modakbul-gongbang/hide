@@ -285,6 +285,76 @@ async fn valid_handshake_receives_snapshot() {
     running.stop();
 }
 
+#[tokio::test]
+async fn semantic_snapshot_negotiation_keeps_legacy_complete_and_refuses_unknown_formats() {
+    let (_dir, running) = start().await;
+    let mut legacy = connect(running.port, None).await;
+    legacy.send(handshake(&running.token, 2)).await.unwrap();
+    let initial = first_frame(&mut legacy).await;
+    assert!(initial["payload"].get("rest_format").is_none());
+    let mut modern = connect(running.port, None).await;
+    modern
+        .send(Message::Text(
+            json!({"token": running.token, "schema_version": 2,
+        "snapshot_format": "semantic-rest-v1"})
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let full = first_frame(&mut modern).await;
+    assert_eq!(full["type"], "snapshot");
+    assert_eq!(full["payload"]["rest_format"], "semantic-rest-v1");
+    assert!(full["payload"]["rest"]["navigator"]["workspaces"].is_array());
+    assert!(
+        full["payload"]["rest"]
+            .get("workspace_view")
+            .unwrap()
+            .is_null()
+    );
+    let mut ui = full["payload"]["rest"]["ui_state"].clone();
+    ui["sidebar_width"] = json!(401);
+    modern
+        .send(Message::Text(
+            json!({"schema_version": 2, "kind": "ui_state_update",
+        "payload": ui})
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    for (socket, partial) in [(&mut modern, true), (&mut legacy, false)] {
+        let delta = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let frame = first_frame(socket).await;
+                if frame["payload"]["rest"]["ui_state"]["sidebar_width"] == 401 {
+                    break frame;
+                }
+            }
+        })
+        .await
+        .expect("the UI update reaches both independent readers");
+        assert_eq!(delta["type"], "delta");
+        if partial {
+            assert!(delta["payload"]["rest"].get("navigator").is_none());
+        } else {
+            assert!(delta["payload"]["rest"]["navigator"]["workspaces"].is_array());
+        }
+    }
+    let mut unknown = connect(running.port, None).await;
+    unknown
+        .send(Message::Text(
+            json!({"token": running.token, "schema_version": 2,
+        "snapshot_format": "future-format"})
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(wait_close(&mut unknown).await, Some(4003));
+    running.stop();
+}
+
 /// Settings reads the daemon from this frame: what it is, where its state
 /// lives and which Herdr it attaches with. The token never travels back.
 #[tokio::test]
@@ -1267,7 +1337,17 @@ async fn a_change_in_a_watched_checkout_is_announced() {
     std::fs::create_dir_all(checkout.join("src")).unwrap();
     seed_registration(&env.state_dir, "w-alpha", &checkout);
     let running = hided::start_daemon(env).await.expect("start daemon");
-    let mut socket = live_socket(&running).await;
+    // A window that draws, as the web shell names itself: the Explorer watch
+    // runs only while one does.
+    let mut socket = connect(running.port, None).await;
+    socket
+        .send(Message::Text(
+            json!({"token": running.token, "schema_version": 2, "client_kind": "web"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
     // The watcher arms after the daemon's first snapshot read; let it settle
     // so the change below is not missed by a watcher that was not up yet.
     tokio::time::sleep(Duration::from_millis(750)).await;

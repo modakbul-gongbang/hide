@@ -4,9 +4,11 @@
 // a view draws the sentence and how the mark and badge are coloured, so the
 // sidebar and any other list of agents (the Overview) cannot disagree.
 
+import { agentProductName } from "./agentAdapters";
+import { hideAiWords } from "./hideAiOrigin";
 import type { TFunction } from "i18next";
 import { statusText } from "./agentStatus";
-import { toneClass } from "./lineage";
+import { markToneClass, toneClass } from "./lineage";
 import type { AgentRow, MarkCounts, TabAgent } from "./snapshot";
 
 /**
@@ -71,7 +73,7 @@ export function lineTone(line: RowLine, agent: Pick<AgentRow, "state">): string 
  * do.
  */
 export function markTone(agent: Pick<TabAgent, "state">): string {
-  return toneClass(agent.state.mark_tone);
+  return markToneClass(agent.state.mark_tone);
 }
 
 /** A badge's counts: a folded parent's descendants (no `idle`), or a project's or checkout's agents. */
@@ -85,9 +87,9 @@ const BADGE_ORDER: { state: keyof MarkCounts; symbol: string; tone: string }[] =
   { state: "approval", symbol: "!", tone: "text-warning" },
   { state: "question", symbol: "?", tone: "text-warning" },
   { state: "working", symbol: "●", tone: "text-agent-working" },
-  { state: "stopped", symbol: "◐", tone: "text-subtle-foreground" },
+  { state: "stopped", symbol: "◐", tone: "text-status-seen" },
   { state: "done", symbol: "✓", tone: "text-success" },
-  { state: "idle", symbol: "○", tone: "text-subtle-foreground" },
+  { state: "idle", symbol: "○", tone: "text-status-seen" },
 ];
 
 /**
@@ -133,7 +135,18 @@ export function branchChip(agent: Pick<AgentRow, "state">): string | null {
  * shows has to be here.
  */
 export function rowAccessibleName(t: TFunction<"translation">, agent: AgentRow, device: string | null): string {
-  return [agent.identity_label, device, branchChip(agent), agent.agent_kind, statusText(t, agent.status_code), agent.detail].filter(Boolean).join(", ");
+  return [agent.identity_label, device, branchChip(agent), agentProductName(agent.agent_kind), statusText(t, agent.status_code), hideAiWords(t, agent.hide_ai), agent.detail].filter(Boolean).join(", ");
+}
+
+/**
+ * What a fork's mark says (PRD fork-operator-root B8, B9): the source by its title
+ * while it still runs the conversation the fork came from, else that it came from
+ * another pane. Null on a row that is not a fork.
+ */
+export function forkLabel(t: TFunction<"translation">, agent: Pick<AgentRow, "forked_from">): string | null {
+  const source = agent.forked_from;
+  if (!source) return null;
+  return source.pane_id && source.label ? t("panes.fork.forkedFrom", { name: source.label }) : t("panes.fork.forked");
 }
 
 /** A row in a drawn agent tree: the row, its device, and how deep it sits under the root drawn above it. */

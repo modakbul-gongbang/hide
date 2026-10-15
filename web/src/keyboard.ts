@@ -198,7 +198,7 @@ export function installKeyboard(actions: Actions): () => void {
       const target = numberedTarget(numbered.family, numbered.number, useShellStore.getState());
       if (!target) return;
       if (numbered.family === "tabs") actions.focusTab(target);
-      else actions.openAgent(target);
+      else actions.openListedAgent(target);
       return;
     }
     switch (id) {
@@ -243,8 +243,6 @@ export function installKeyboard(actions: Actions): () => void {
         return actions.openSearch();
       case "open_file":
         return actions.openFilePalette();
-      case "toggle_right_panel":
-        return actions.toggleFileViews();
       case "toggle_left_sidebar":
         return actions.toggleLeftSidebar();
       case "overview":
@@ -257,8 +255,18 @@ export function installKeyboard(actions: Actions): () => void {
         return actions.focusSidebarMode("agents");
       case "toggle_device_rail":
         return actions.toggleDeviceRail();
-      case "toggle_explorer":
-        return actions.toggleTools();
+      case "toggle_lane":
+        return actions.toggleLane();
+      case "toggle_lane_work":
+        return actions.toggleTool("work");
+      case "toggle_lane_files":
+        return actions.toggleTool("files");
+      case "toggle_lane_changes":
+        return actions.toggleTool("changes");
+      case "toggle_lane_memory":
+        return actions.toggleTool("memory");
+      case "toggle_file_tree":
+        return actions.toggleFileTree();
       case "find_in_pane": {
         // One chord, two surfaces, chosen by where the operator works: the
         // View area they are in finds in its document, anywhere else the
@@ -279,8 +287,15 @@ export function installKeyboard(actions: Actions): () => void {
         return actions.split("right");
       case "split_down":
         return actions.split("down");
-      case "toggle_zoom":
+      case "toggle_zoom": {
+        // One chord for "this, full size", chosen by where the operator
+        // works: in the right lane it expands the lane and back, anywhere
+        // else it zooms the focused terminal pane.
+        const owner = event ? keyboardOwner() : keyboardCommandOwner();
+        const lane = ui().drawnLane.mode;
+        if ((owner.kind === "view" || owner.kind === "tool") && lane !== "closed" && lane !== "hidden") return ui().setLaneExpanded(!ui().laneExpanded);
         return actions.toggleZoom();
+      }
       case "close_pane":
         return actions.closePane();
       case "text_larger":

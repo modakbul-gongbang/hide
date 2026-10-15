@@ -50,14 +50,14 @@ export function buildAgentTreeParts(tokens) {
     caption('ath-verb-t', '승인', '$--warning', {weight: '600'}),
   ]);
 
-  // PR mark (web/src/components/pr-mark.tsx): the state's icon in its colour,
-  // the number in the subtle ink and `+N` for the other PRs; no border, a fill
-  // only under the pointer; dimmed while GitHub cannot be read. The compact
-  // variant hides the number where the row already names the pull request.
+  // PR mark (web/src/components/pr-mark.tsx): the state's icon in its colour
+  // and the number in the subtle ink; several PRs are one mark per state, its
+  // count in the state's colour. No border, a fill only under the pointer;
+  // dimmed while GitHub cannot be read. The compact variant hides the number
+  // where the row already names the pull request.
   const prIcon = frame(AGENT_TREE_MASTERS.prIcon, 'PR mark', {reusable: true, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', width: 'fit_content', height: PR}, [
     icon('ath-pr-g', 'git-pull-request', {size: PR, fill: '$--pr-failed'}),
     caption('ath-pr-n', '924', '$--subtle-foreground', {mono: true}),
-    {...caption('ath-pr-more', '+1', '$--muted-foreground', {mono: true}), enabled: false},
   ]);
 
   // Descendant mark: `! N` raised, else `● N` working, on a folded parent only (B17).
@@ -67,13 +67,21 @@ export function buildAgentTreeParts(tokens) {
     caption('ath-mark-n', '2', '$--warning', {weight: '600', mono: true}),
   ]);
 
-  // Tree button: the pane header's tree icon and direct child count, no word (B21).
+  // Child states start the button; a tree icon keeps compact access when no count is drawn.
   const treeButton = frame(AGENT_TREE_MASTERS.treeButton, 'Tree button', {
     reusable: true, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', height: DETAIL, padding: [0, '$--spacing-xs'],
     cornerRadius: '$--radius-xs', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner',
   }, [
     icon('ath-tb-tree', 'list-tree', {size: ICON, fill: '$--muted-foreground'}),
-    caption('ath-tb-n', '8', '$--subtle-foreground', {mono: true}),
+    {...caption('ath-tb-disconnected', '⊘', '$--muted-foreground', {mono: true}), enabled: false},
+    frame('ath-tb-counts', 'Child state counts', {enabled:false,layout:'horizontal',gap:'$--spacing-xxs',alignItems:'center'}, [
+      ...[['raised','!','$--warning'],['working','●','$--agent-working'],['result','✓','$--success'],['waiting','○','$--agent-working'],['unknown','~','$--muted-foreground'],['idle','○','$--muted-foreground']].map(([key,symbol,fill])=>frame(`ath-tb-${key}`,key,{enabled:false,layout:'horizontal',alignItems:'center'},[
+        frame(`ath-tb-${key}-mark`,'Status mark',{width:MARK,height:MARK,layout:'horizontal',alignItems:'center',justifyContent:'center'},[
+          ...(['●','○'].includes(symbol) ? [{type:'ellipse',id:`ath-tb-${key}-symbol`,width:DOT,height:DOT,...(symbol==='●'?{fill}:{stroke:fill,strokeWidth:HAIR,strokeAlignment:'inner'})}] : [caption(`ath-tb-${key}-symbol`,symbol,fill,{size:'$--text-micro',mono:true})]),
+        ]),
+        caption(`ath-tb-${key}-n`,'1',fill,{size:'$--text-micro',mono:true}),
+      ])),
+    ]),
     icon('ath-tb-chev', 'chevron-down', {size: ICON, fill: '$--muted-foreground'}),
   ]);
 
@@ -97,7 +105,6 @@ export function buildAgentTreeParts(tokens) {
           {type: 'ellipse', id: 'ath-row-ring', name: 'Ring', width: DOT, height: DOT, stroke: '$--agent-working', strokeWidth: HAIR, strokeAlignment: 'inner'},
           {...caption('ath-row-glyph', '!', '$--warning', {mono: true, weight: '600'}), enabled: false},
         ]),
-        frame('ath-row-provider', 'Provider artwork', {width: 14, height: 14, fill: {type: 'image', enabled: true, url: '../web/src/assets/agent-claude.png', mode: 'contain'}}, []),
         {...text('ath-row-title', '에이전트 제목', {fill: '$--subtle-foreground'}), textGrowth: 'fixed-width', width: 'fill_container'},
         ref('ath-row-pr', AGENT_TREE_MASTERS.prIcon, 'PR mark'),
         ref('ath-row-desc', AGENT_TREE_MASTERS.mark, 'Descendant mark', {enabled: false}),
@@ -114,7 +121,12 @@ export function buildAgentTreeParts(tokens) {
     const id = name => `ath-${suffix}-${name}`;
     const verbs = ['승인', '답변', '확인', '초안'].map((word, index) => cell(`Verb ${index + 1}`, ref(id(`verb-${index}`), AGENT_TREE_MASTERS.verb, 'Verb', {}, {'ath-verb-t': {content: word}})));
     const icons = PR_STATES.map(([state, glyph, fill, label]) => cell(label, ref(id(`pr-${state}`), AGENT_TREE_MASTERS.prIcon, 'PR mark', {}, {'ath-pr-g': {icon: glyph, fill}})));
-    const more = cell('여러 PR (+N)', ref(id('pr-more'), AGENT_TREE_MASTERS.prIcon, 'PR mark', {}, {'ath-pr-more': {enabled: true}}));
+    // Several PRs: each state's icon and count in its colour, worst first (a mergeable and a merged PR read green 1 purple 1).
+    const counted = [['mergeable', 1], ['merged', 1]].map(([state, count]) => {
+      const [, glyph, fill] = PR_STATES.find(([key]) => key === state);
+      return ref(id(`pr-more-${state}`), AGENT_TREE_MASTERS.prIcon, 'PR mark', {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': {content: String(count), fill}});
+    });
+    const more = cell('여러 PR (상태별 개수)', frame(id('pr-more'), 'PR state counts', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: 'fit_content'}, counted));
     const stale = cell('흐림 (GitHub 못 읽음)', ref(id('pr-stale'), AGENT_TREE_MASTERS.prIcon, 'PR mark', {opacity: DIMMED}, {'ath-pr-g': {icon: 'git-pull-request', fill: '$--pr-pending'}}));
     const hover = cell('포인터 아래', ref(id('pr-hover'), AGENT_TREE_MASTERS.prIcon, 'PR mark', {fill: '$--accent', cornerRadius: '$--radius-xs', padding: [0, '$--spacing-xxs']}));
     const compact = cell('좁은 변형 (번호 없음)', ref(id('pr-compact'), AGENT_TREE_MASTERS.prIcon, 'PR mark', {}, {'ath-pr-g': {icon: 'git-pull-request', fill: '$--pr-mergeable'}, 'ath-pr-n': {enabled: false}}));
@@ -124,7 +136,11 @@ export function buildAgentTreeParts(tokens) {
     ];
     const buttons = [
       cell('Tree button rest', ref(id('tb-rest'), AGENT_TREE_MASTERS.treeButton, 'Tree button')),
-      cell('Tree button open', ref(id('tb-open'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill: '$--secondary'}, {'ath-tb-n': {content: '2'}})),
+      cell('Tree button open', ref(id('tb-open'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill: '$--secondary'})),
+      cell('Tree button with child states', ref(id('tb-counts'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-tree':{enabled:false},'ath-tb-counts':{enabled:true},...Object.fromEntries(['working','result','waiting','unknown','idle'].map(key=>[`ath-tb-${key}`,{enabled:true}]))})),
+      cell('Ask band compact child button', ref(id('tb-raised'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-tree':{enabled:false},'ath-tb-counts':{enabled:true},'ath-tb-raised':{enabled:true},'ath-tb-raised-n':{content:'2'}})),
+      cell('Tree button with unknown child', ref(id('tb-unknown'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-tree':{enabled:false},'ath-tb-counts':{enabled:true},'ath-tb-unknown':{enabled:true}})),
+      cell('Unavailable child states, topology kept', ref(id('tb-disconnected'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-tree':{enabled:false},'ath-tb-disconnected':{enabled:true}})),
     ];
     const rows = [
       cell('Root, opened', ref(id('row-root'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-chev': {icon: 'chevron-down'}, 'ath-row-ring': {enabled: false}, 'ath-row-dot': {enabled: true}, 'ath-row-title': {content: '루트 에이전트', fill: '$--foreground'}, 'ath-row-pr/ath-pr-g': {fill: '$--pr-mergeable'}})),
@@ -144,7 +160,7 @@ export function buildAgentTreeParts(tokens) {
     layout: 'vertical', gap: '$--spacing-xl', padding: '$--spacing-xl', fill: '$--card', cornerRadius: '$--radius-lg', width: 'fit_content',
   }, [
     text(`${id}-title`, 'Agent tree parts', {size: '$--text-headline', weight: '600'}),
-    text(`${id}-spec`, 'web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the one PR mark every PR surface draws (web/src/components/pr-mark.tsx): the state\'s icon in its colour (failed red, pending amber, mergeable green, draft grey, merged purple, closed dim), the number and +N for the other PRs, no border, a fill under the pointer, dimmed while GitHub cannot be read, and a compact variant without the number; the one descendant mark a folded parent wears, ! N raised else ● N working; the pane header\'s tree button, a tree icon and the direct child count; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, plus a device line only for a child on another machine. Sessions rows, the pane header, the sidebar row and the tree popover all draw the same PR mark.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
+    text(`${id}-spec`, 'web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the one PR mark every PR surface draws (web/src/components/pr-mark.tsx): the state\'s icon in its colour (failed red, pending amber, mergeable green, draft grey, merged purple, closed dim), the number for one PR and, for several, each state\'s icon and count in that state\'s colour, worst first, no border, a fill under the pointer, dimmed while GitHub cannot be read, and a compact variant without the number; the one descendant mark a folded parent wears, ! N raised else ● N working; the pane header\'s tree button, state counts without a separate total or internal divider, a tree icon when no count is drawn; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, plus a device line only for a child on another machine. Sessions rows, the pane header, the sidebar row and the tree popover all draw the same PR mark.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
     frame(`${id}-masters`, 'Masters', {layout: 'horizontal', gap: '$--spacing-xl', alignItems: 'start'}, [verb, prIcon, mark, treeButton, row]),
     themeFrame(`${id}-light`, 'Light', states('l')),
     themeFrame(`${id}-dark`, 'Dark', states('d')),

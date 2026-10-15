@@ -100,8 +100,8 @@ test("Add a project picks a folder with the native picker, and a cancel or a ref
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
 
-    // Over Home, with a project listed, the Projects title's + still opens the same dialog, and its × closes it.
-    await page.locator("[data-home-destination]").click();
+    // Over All projects, the page a first run stays on, with a project listed, the Projects title's + still opens the same dialog, and its × closes it.
+    await expect(page.locator("[data-overview-page]")).toBeVisible();
     await expect(page.locator("[data-main-add-project]")).toHaveCount(0);
     await add.click();
     await expect(dialog).toBeVisible();

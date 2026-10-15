@@ -24,10 +24,6 @@
       "lines": 323,
       "expect": 115
     },
-    "overview-prs.spec.ts::a project's PRs tab: grouped pull requests, Link issue, Assign and Clean up": {
-      "lines": 290,
-      "expect": 103
-    },
     "overview.spec.ts::a project's Overview: tiles, the Agents graph, and the Issues board": {
       "lines": 827,
       "expect": 328
@@ -44,9 +40,9 @@
       "lines": 221,
       "expect": 72
     },
-    "s6.spec.ts::Main, Overview and a Workspace with its columns, tools and delegated child": {
-      "lines": 388,
-      "expect": 150
+    "s6.spec.ts::Main, Overview and a Workspace with its lane, tools and delegated child": {
+      "lines": 245,
+      "expect": 87
     },
     "s7.spec.ts::Open to the side shows one document twice: edits and Korean input reach both, each keeps its place, and closing keeps unsaved text": {
       "lines": 143,

@@ -366,7 +366,7 @@ function NotificationsStep({ actions, reopened, primary }: StepProps) {
   // even after Turn on was pressed while macOS still asks (B21).
   const leave = (notifications: boolean | undefined) => {
     if (reopened) {
-      if (notifications !== undefined && notifications !== enabled) actions.setDesktopNotifications(notifications);
+      if (notifications !== undefined) actions.setDesktopNotifications(notifications, notifications ? undefined : false);
       useSetupWalk.getState().go("project");
     } else actions.advanceFirstRun("notifications", notifications);
   };

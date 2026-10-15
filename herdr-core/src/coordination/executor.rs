@@ -1,4 +1,5 @@
 use super::{AgentRecord, Command, Mutation, SpawnRecord, resolve_actor, view};
+use crate::agent_start::ShellStart;
 use crate::delivery::{
     Actor,
     worker::{Authority, Client, Effect},
@@ -120,6 +121,8 @@ fn actor_for(agent: &ProjectedAgent, device: &str, on_node: bool) -> Result<Acto
         } else {
             format!("remote:{device}:pane:{}", agent.pane_id)
         },
+        // Herdr's own identifier for the agent: its name, else its pane. It
+        // keys the pane, never labels it (`AgentRecord::wire_name`).
         name: agent.name.clone().unwrap_or_else(|| agent.pane_id.clone()),
         kind: agent.agent.clone().ok_or("native_identity_unavailable")?,
         device_id: device.into(),
@@ -138,13 +141,15 @@ fn record(
     agent: &ProjectedAgent,
     host: HostIdentity<'_>,
     instance: String,
-    name: String,
+    name: Option<String>,
     parent: Option<String>,
     project: Option<String>,
 ) -> Result<AgentRecord, String> {
     Ok(AgentRecord {
         id: String::new(),
-        name,
+        // A pane id is never a name: Herdr's fallback identifier for an
+        // agent it never named, or a name restating the pane, is none.
+        name: name.filter(|name| *name != agent.pane_id),
         machine: host.machine.into(),
         host_scope: host.scope.into(),
         native_machine: host.native_machine.into(),
@@ -265,7 +270,7 @@ pub(crate) fn run(
                     on_node,
                 },
                 instance,
-                name,
+                Some(name),
                 parent,
                 project,
             )?;
@@ -304,12 +309,8 @@ fn publish_tokens(client: &Client, connector: &dyn ApiConnector, id: &str) -> Re
         .iter()
         .find(|record| record.id == id)
         .ok_or("agent_unavailable")?;
-    if let Some(parent) = child
-        .parent
-        .as_ref()
-        .and_then(|id| ledger.agents.iter().find(|record| &record.id == id))
-    {
-        super::lineage::write_record(connector, child, parent)?;
+    if let Some(related) = super::lineage::related(child, &ledger) {
+        super::lineage::write_record(connector, child, related)?;
     }
     Ok(())
 }
@@ -326,7 +327,7 @@ pub(crate) fn register_code_owned(
     }
     let record = AgentRecord {
         id: String::new(),
-        name: actor.name.clone(),
+        name: Some(actor.name.clone()),
         machine: actor.device_id.clone(),
         host_scope: actor.kind.clone(),
         native_machine: actor.kind.clone(),
@@ -522,6 +523,7 @@ fn spawn(
         branch,
         path,
         args,
+        task,
     } = &command
     else {
         return Err("invalid_spawn".into());
@@ -534,6 +536,9 @@ fn spawn(
         || args.len() > 128
         || args.iter().map(String::len).sum::<usize>() > 8192
         || args.iter().any(|arg| arg.contains('\0'))
+        || task.as_ref().is_some_and(|task| {
+            task.kind.home().is_none() || task.target.as_deref().is_some_and(|t| !super::key(t))
+        })
     {
         return Err("invalid_spawn".into());
     }
@@ -621,7 +626,10 @@ fn spawn(
                     on_node,
                 },
                 native.pane_id.clone(),
-                actor.name.clone(),
+                // Herdr's name for the parent while it has one; a parent
+                // Herdr never named stays unnamed instead of taking its pane
+                // id for a name.
+                native.name.clone(),
                 None,
                 // A device's path names no project of the caller's machine.
                 machine.is_none().then(|| repo.clone()),
@@ -694,6 +702,9 @@ fn spawn(
     let (spawn_id, on_device) = (reserved.id.clone(), reserved.machine.is_some());
     let placed = (|| -> Result<Value, String> {
         if reserved.pane.is_none() {
+            // How the pane's shell says it has finished starting, recorded
+            // with the pane so every later start in it waits the same way.
+            let shell;
             // Reconcile a worktree whose creation reply was interrupted. The
             // existing local/device connector and checkout owner are shared with
             // the product's worktree/start path; no spawn-specific SSH exists.
@@ -705,14 +716,22 @@ fn spawn(
             )
             .map_err(|error| format!("{error}"))?;
             let existing = crate::wire::listed_worktree_path(listed, branch)?;
-            let (checkout, pane) = if let Some(existing) = existing {
+            let (checkout, pane, seed_tab) = if let Some(existing) = existing {
                 if path.as_ref().is_some_and(|path| path != &existing) {
                     return Err("checkout_path_conflict".into());
                 }
                 let owner = crate::checkout_owner::OwnerOpen::Worktree {
                     path: existing.clone(),
                     repository_root: repo.clone(),
-                    label: name.clone(),
+                    label: if existing == *repo {
+                        repo.trim_end_matches('/')
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or(repo)
+                            .to_owned()
+                    } else {
+                        branch.clone()
+                    },
                 };
                 // The persistent unique tab label makes an interrupted tab-create
                 // discoverable before a retry could create another child pane.
@@ -726,40 +745,58 @@ fn spawn(
                 let snapshot =
                     crate::wire::snapshot_response(snapshot).map_err(|_| "snapshot_unavailable")?;
                 let label = format!("hide:{}", reserved.id);
-                let existing_pane = snapshot
+                let launch = crate::agent_start::shell_launch(node.as_deref(), &reserved.id);
+                // A tab under the spawn's label is one this spawn opened, with
+                // the launch when there is one; a workspace under it holds
+                // Herdr's own first tab, which was never replaced.
+                let labelled_tab = snapshot
                     .tabs
                     .iter()
                     .find(|tab| tab.label == label)
                     .and_then(|tab| snapshot.panes.iter().find(|pane| pane.tab_id == tab.tab_id))
-                    .or_else(|| {
-                        snapshot
-                            .workspaces
-                            .iter()
-                            .find(|workspace| workspace.label == label)
-                            .and_then(|workspace| {
-                                snapshot
-                                    .panes
-                                    .iter()
-                                    .find(|pane| pane.workspace_id == workspace.workspace_id)
-                            })
-                    })
-                    .map(|pane| pane.pane_id.clone());
+                    .map(|pane| (pane.pane_id.clone(), true));
+                let existing_pane = labelled_tab.or_else(|| {
+                    snapshot
+                        .workspaces
+                        .iter()
+                        .find(|workspace| workspace.label == label)
+                        .and_then(|workspace| {
+                            snapshot
+                                .panes
+                                .iter()
+                                .find(|pane| pane.workspace_id == workspace.workspace_id)
+                        })
+                        .map(|pane| (pane.pane_id.clone(), false))
+                });
+                let mut seed_tab = None;
                 let pane = match existing_pane {
-                    Some(pane) => pane,
+                    Some((pane, launched)) => {
+                        shell = ShellStart::of_tab(launched, launch.as_ref());
+                        pane
+                    }
                     None => {
-                        crate::live::open_owner_tab(
+                        let tab = crate::live::open_owner_tab(
                             connector.as_ref(),
                             &owner,
                             &existing,
                             &label,
                             false,
-                            Default::default(),
+                            launch
+                                .as_ref()
+                                .map(|launch| launch.env.clone())
+                                .unwrap_or_default(),
+                            launch.as_ref().map(|launch| launch.command.as_slice()),
                         )
-                        .map_err(|error| format!("{error:?}"))?
-                        .pane_id
+                        .map_err(|error| format!("{error:?}"))?;
+                        shell = ShellStart::of_tab(tab.launched, launch.as_ref());
+                        seed_tab = tab.initial_label.map(|label| super::naming::SeedTab {
+                            id: tab.tab_id,
+                            label,
+                        });
+                        tab.pane_id
                     }
                 };
-                (existing, pane)
+                (existing, pane, seed_tab)
             } else {
                 let mut params = crate::wire::worktree_create_params(repo, branch, None, false)?;
                 params["label"] = json!(format!("hide:{}", reserved.id));
@@ -774,7 +811,31 @@ fn spawn(
                 )
                 .map_err(|error| format!("{error}"))?;
                 let created = crate::wire::created_worktree(result)?;
-                (created.path, created.pane_id)
+                let launch = crate::agent_start::shell_launch(node.as_deref(), &reserved.id);
+                let tab = crate::live::replace_tab(
+                    connector.as_ref(),
+                    crate::live::OwnedTab {
+                        initial_label: Some(created.tab_label),
+                        workspace_id: created.workspace_id,
+                        tab_id: created.tab_id,
+                        pane_id: created.pane_id,
+                        launched: false,
+                    },
+                    &created.path,
+                    &format!("hide:{}", reserved.id),
+                    false,
+                    launch
+                        .as_ref()
+                        .map(|launch| launch.env.clone())
+                        .unwrap_or_default(),
+                    launch.as_ref().map(|launch| launch.command.as_slice()),
+                );
+                shell = ShellStart::of_tab(tab.launched, launch.as_ref());
+                let seed_tab = tab.initial_label.map(|label| super::naming::SeedTab {
+                    id: tab.tab_id,
+                    label,
+                });
+                (created.path, tab.pane_id, seed_tab)
             };
             // The terminal is recorded with the pane, so a later attempt can
             // tell this pane from one Herdr gives the same id afterwards.
@@ -784,16 +845,20 @@ fn spawn(
                 authority,
                 actor,
                 Mutation::Advance {
+                    seed_tab,
                     id: reserved.id.clone(),
                     path: Some(checkout),
                     pane: Some(pane),
                     terminal: Some(terminal),
+                    shell: shell.program().map(str::to_owned),
                     child: None,
                 },
             )?)
             .map_err(|_| "spawn_unavailable")?;
         }
-        let pane = reserved.pane.as_deref().ok_or("spawn_unavailable")?;
+        let pane = reserved.pane.clone().ok_or("spawn_unavailable")?;
+        let pane = pane.as_str();
+        let shell = ShellStart::launched(reserved.shell.clone());
         let observed = agents(connector.as_ref())?;
         let live = observed
             .iter()
@@ -804,18 +869,32 @@ fn spawn(
             if reserved.child.is_some() {
                 return Err("child_identity_changed".into());
             }
-            // This spawn already had its start typed here, and Herdr still
-            // holds the name with no agent while the shell is back at its
-            // prompt: the start ended without the agent. Asking the same
-            // intent again answers that, rather than typing the start again
-            // each time; a new attempt closes this pane and starts afresh.
-            if observed.iter().any(|agent| {
-                agent.pane_id == pane
-                    && agent.name.as_deref() == Some(name)
-                    && agent.agent.is_none()
-            }) && shell_alone(connector.as_ref(), pane) == Ok(true)
-            {
-                return Err("agent_not_started".into());
+            if reserved.typed > 0 {
+                // A start of this spawn was typed here already. While Herdr
+                // holds its name with no agent (`launch_pending`), it gives
+                // that name to whatever agent shows in this terminal and
+                // refuses another start here, so nothing is typed while the
+                // agent may still be starting: asking again later answers it.
+                let held = observed.iter().any(|agent| {
+                    agent.pane_id == pane
+                        && agent.name.as_deref() == Some(name)
+                        && agent.agent.is_none()
+                });
+                if held && !name_released(connector.as_ref(), name) {
+                    return Err("native_identity_unavailable".into());
+                }
+                // Herdr gave that start up. Only a shell back at rest, with
+                // nothing of its own in the foreground, takes the start again,
+                // and only once: a start typed into a question at startup is
+                // typed again at the prompt that followed, and a second one
+                // that ends the same way is the answer.
+                if reserved.typed >= 2 || shell_alone(connector.as_ref(), pane) != Ok(true) {
+                    return Err("agent_not_started".into());
+                }
+                crate::diagnostic!(json!({
+                    "component": "spawn", "kind": "start.resent", "spawn": reserved.id,
+                    "pane_id": pane,
+                }));
             }
             close_unstarted_attempts(connector.as_ref(), &*state(client)?, &reserved, &observed);
             crate::live::start_agent(
@@ -823,11 +902,21 @@ fn spawn(
                 node.as_deref(),
                 &reserved.id,
                 pane,
+                shell,
                 name,
                 kind,
                 args.clone(),
                 codex_daemon,
             )?;
+            reserved = serde_json::from_value(mutate(
+                client,
+                authority,
+                actor,
+                Mutation::Typed {
+                    id: reserved.id.clone(),
+                },
+            )?)
+            .map_err(|_| "spawn_unavailable")?;
         }
         let native = wait_native_identity(connector.as_ref(), pane, Some(name), kind)?;
         let mut child = record(
@@ -839,7 +928,7 @@ fn spawn(
                 on_node,
             },
             pane.into(),
-            name.clone(),
+            Some(name.clone()),
             reserved.mode.responsibility(&parent_id),
             reserved.path.clone(),
         )?;
@@ -860,8 +949,12 @@ fn spawn(
             client,
             authority,
             actor,
-            Mutation::Complete { id: reserved.id },
+            Mutation::Complete {
+                id: reserved.id.clone(),
+            },
         )?;
+        // The receipt-driven lineage worker alone owns naming. Keeping it
+        // out of this path also keeps completed replay entirely offline.
         let ledger = state(client)?;
         Ok(view(
             ledger
@@ -882,6 +975,20 @@ fn spawn(
             reason
         }
     })
+}
+
+/// Whether Herdr has let go of `name`. Herdr holds the name of a start whose
+/// agent never showed until that start's own deadline, and settles a passed
+/// deadline only when the name is read, which this `agent.get` is.
+fn name_released(connector: &dyn ApiConnector, name: &str) -> bool {
+    crate::wire::agent_target_params(name)
+        .map_err(hide_herdr_client::ApiError::Transport)
+        .and_then(|params| {
+            request_with_connector(connector, "agent.get", params, Duration::from_secs(2))
+        })
+        .is_err_and(|error| {
+            matches!(error, hide_herdr_client::ApiError::Remote { code, .. } if code == "agent_not_found")
+        })
 }
 
 /// Whether `pane`'s shell alone holds its terminal: no program it started
@@ -1007,14 +1114,14 @@ fn device_unreachable(
 
 pub(crate) fn link_fork(
     context: &crate::live::LiveContext,
-    parent: &str,
+    source: &str,
     child: &str,
 ) -> Result<(), String> {
     let runtime = context.runtime.upgrade().ok_or("delivery_unavailable")?;
     let (client, authority, actor) = runtime
         .lock()
         .map_err(|_| "delivery_unavailable")?
-        .coordination_fork_context(parent)?;
+        .coordination_fork_context(source)?;
     let CoordinationContext {
         connector,
         host_scope,
@@ -1023,41 +1130,41 @@ pub(crate) fn link_fork(
         ..
     } = self::context(&client, &actor.device_id)?;
     let observed = agents(connector.as_ref())?;
-    let native_parent = observed
+    let native_source = observed
         .iter()
-        .find(|agent| agent.pane_id == parent)
+        .find(|agent| agent.pane_id == source)
         .ok_or("parent_unavailable")?;
     let ledger = state(&client)?;
-    let parent_id = if let Some(parent) = ledger
+    let source_id = if let Some(existing) = ledger
         .agents
         .iter()
         .find(|record| !record.ended && record.actor.same_identity(&actor))
     {
-        parent.id.clone()
+        existing.id.clone()
     } else {
-        let parent_record = record(
-            native_parent,
+        let source_record = record(
+            native_source,
             HostIdentity {
                 machine: &actor.device_id,
                 scope: &host_scope,
                 native_machine: &native_machine,
                 on_node,
             },
-            parent.into(),
-            actor.name.clone(),
+            source.into(),
+            native_source.name.clone(),
             None,
             None,
         )?;
-        let parent_value = mutate(
+        let source_value = mutate(
             &client,
             &authority,
             &actor,
             Mutation::Register {
-                record: parent_record,
+                record: source_record,
                 check: false,
             },
         )?;
-        parent_value["id"]
+        source_value["id"]
             .as_str()
             .ok_or("parent_unavailable")?
             .to_owned()
@@ -1066,7 +1173,7 @@ pub(crate) fn link_fork(
         connector.as_ref(),
         child,
         None,
-        native_parent.agent.as_deref().ok_or("parent_unavailable")?,
+        native_source.agent.as_deref().ok_or("parent_unavailable")?,
     )?;
     let mut child_record = record(
         &native_child,
@@ -1077,10 +1184,13 @@ pub(crate) fn link_fork(
             on_node,
         },
         child.into(),
-        native_child.name.clone().unwrap_or_else(|| child.into()),
-        Some(parent_id),
+        native_child.name.clone(),
+        None,
         native_child.cwd.clone(),
     )?;
+    // The fork is the operator's own work: no parent supervises it, and the
+    // source it was forked from is its origin, which its fork mark names.
+    child_record.origin = Some(source_id);
     child_record.forked = true;
     let value = mutate(
         &client,
@@ -1123,6 +1233,37 @@ mod tests {
             registration_machine(Some(String::new()), crate::node::TEST_NODE),
             Err("invalid_registration".into())
         );
+    }
+
+    /// An agent Herdr never named is registered with no name: its pane id,
+    /// which Herdr offers as its identifier, is not a name, and neither is a
+    /// name that only restates the pane.
+    #[test]
+    fn registering_an_agent_herdr_never_named_stores_no_name() {
+        let herdr = FakeHerdr::start("coordination-unnamed", move |method, _| {
+            assert_eq!(method, "agent.list");
+            json!({"type":"agent_list","agents":[{
+                "pane_id":"w9J:p9R","workspace_id":"w9J","tab_id":"w9J:t1",
+                "terminal_id":"terminal","revision":1,"focused":false,
+                "agent_status":"idle","agent":"claude",
+                "agent_session":{"source":"herdr:claude","agent":"claude",
+                    "kind":"id","value":"parent-session"}}]})
+        });
+        let native = wait_native_identity(&herdr.connector(), "w9J:p9R", None, "claude").unwrap();
+        assert_eq!(native.name, None);
+        let host = || HostIdentity {
+            machine: crate::node::TEST_NODE,
+            scope: "scope",
+            native_machine: "machine",
+            on_node: true,
+        };
+        let make = |name: Option<String>| {
+            record(&native, host(), "terminal".into(), name, None, None).unwrap()
+        };
+        let unnamed = make(native.name.clone());
+        assert_eq!(unnamed.name, None);
+        assert_eq!(make(Some("w9J:p9R".into())).name, None);
+        assert_eq!(make(Some("lead".into())).name.as_deref(), Some("lead"));
     }
 
     #[test]
@@ -1203,7 +1344,7 @@ mod tests {
                 &Mutation::Register {
                     record: AgentRecord {
                         id: String::new(),
-                        name: "factory".into(),
+                        name: Some("factory".into()),
                         machine: crate::node::TEST_NODE.into(),
                         host_scope: "fixture".into(),
                         native_machine: "fixture-machine".into(),
@@ -1254,6 +1395,7 @@ mod tests {
                         branch: "factory/801".into(),
                         path: None,
                         args: Vec::new(),
+                        task: None,
                     },
                 },
                 1,
@@ -1264,10 +1406,12 @@ mod tests {
                     &mut self.ledger,
                     &self.actor,
                     &Mutation::Advance {
+                        seed_tab: None,
                         id: reserved["id"].as_str().unwrap().into(),
                         path: Some("/fixture.worktrees/801".into()),
                         pane: Some(pane.into()),
                         terminal: terminal.map(Into::into),
+                        shell: None,
                         child: None,
                     },
                     1,
@@ -1428,7 +1572,7 @@ mod tests {
             let (runtime, _, _, path) = fixture(root.path());
             let parent = AgentRecord {
                 id: String::new(),
-                name: "sender".into(),
+                name: Some("sender".into()),
                 machine: crate::node::TEST_NODE.into(),
                 host_scope: "fixture".into(),
                 native_machine: "fixture-machine".into(),
@@ -1495,6 +1639,7 @@ mod tests {
                 branch: "topic".into(),
                 path: None,
                 args: Vec::new(),
+                task: None,
             };
             let spawn = super::super::apply(
                 &mut state,
@@ -1513,10 +1658,12 @@ mod tests {
                 &mut state,
                 &actor,
                 &Mutation::Advance {
+                    seed_tab: None,
                     id: spawn.clone(),
                     path: Some("/fixture/topic".into()),
                     pane: Some("recipient".into()),
                     terminal: None,
+                    shell: None,
                     child: None,
                 },
                 now,
@@ -1524,7 +1671,7 @@ mod tests {
             .unwrap();
             let child = AgentRecord {
                 id: String::new(),
-                name: "recipient".into(),
+                name: Some("recipient".into()),
                 machine: crate::node::TEST_NODE.into(),
                 host_scope: "fixture".into(),
                 native_machine: "fixture-machine".into(),

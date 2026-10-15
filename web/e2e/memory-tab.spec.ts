@@ -1,4 +1,4 @@
-// The Tools column's Memory tab on a real core through an isolated pinned
+// The lane's Memory tool on a real core through an isolated pinned
 // Herdr, hided and browser (PRD project-memory-v2 D-17, B19). The fixture is
 // disposable and never uses an operator checkout, socket, app or Memory store.
 
@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
-import { countSent, showTool } from "./wire";
+import { countSent, showProjectRow, showTool } from "./wire";
 
 test.describe.configure({ timeout: 90_000 });
 
@@ -26,18 +26,18 @@ test("Memory opens the front checkout's Project and shows it off until the opera
     const last = new Map<string, Record<string, unknown>>();
     countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await page.locator("[data-project]", { hasText: "memory-repo" }).locator("[data-checkout]").first().click();
+    await (await showProjectRow(page, page.locator("[data-project]", { hasText: "memory-repo" }).locator("[data-checkout]").first())).click();
     await showTool(page, "memory");
 
     // The tab names its Project; the core answers with the Project's switch,
     // off for a Project that never turned Memory on, and its disclosure.
     await expect.poll(() => last.get("memory_open")?.workspace_id).toBeTruthy();
-    const tab = page.locator('[data-tool="memory"]');
+    const tab = page.locator('[data-lane="memory"]');
     await expect(tab.locator('[data-memory="off"]')).toBeVisible({ timeout: 15_000 });
     await expect(tab.locator('[data-memory-switch="off"]')).toBeEnabled();
     await expect(tab).toContainText("Use Auto memory");
     // Nothing to ask and no cards: no dot, no card list, no data to delete.
-    await expect(page.locator('[data-tool-dot="memory"]')).toHaveCount(0);
+    await expect(page.locator('[data-lane-tool-dot="memory"]')).toHaveCount(0);
     await expect(tab.locator("[data-memory-cards]")).toHaveCount(0);
     await expect(tab.locator('[data-memory-delete="link"]')).toHaveCount(0);
   } finally {

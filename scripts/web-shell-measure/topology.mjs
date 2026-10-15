@@ -22,7 +22,8 @@ const cdpPort = process.env.MEASURE_CDP_PORT;
 const paneId = process.env.MEASURE_PANE_ID;
 const switchTab = process.env.MEASURE_SWITCH_TAB;
 const rounds = Number(process.env.MEASURE_TOPOLOGY_ROUNDS ?? 20);
-if (!cdpPort || !paneId || !switchTab) throw new Error("MEASURE_CDP_PORT, MEASURE_PANE_ID and MEASURE_SWITCH_TAB are required");
+const zoomOnly = process.env.MEASURE_TOPOLOGY_ZOOM_ONLY === "1";
+if (!cdpPort || !paneId || (!zoomOnly && !switchTab)) throw new Error("MEASURE_CDP_PORT, MEASURE_PANE_ID and MEASURE_SWITCH_TAB are required");
 
 // The browser column of the shortcut table on a Mac (`shortcuts.ts`).
 const META = 4;
@@ -156,6 +157,11 @@ let measuredTab = null;
 measuredTab = (await backToMeasuredTab()).tab;
 for (let round = 0; round < rounds; round += 1) {
   await focusPane(paneId);
+  if (zoomOnly) {
+    await measure("zoom", () => press(CHORDS.zoom));
+    await measure("unzoom", () => press(CHORDS.zoom));
+    continue;
+  }
   const split = await measure("split", () => press(CHORDS.split));
   // A timed-out sample is kept as one; the round goes on only if the pane
   // came after all, and the next round starts from the measured tab.
@@ -199,5 +205,5 @@ for (let round = 0; round < rounds; round += 1) {
 page.close();
 console.log(JSON.stringify({
   method: "page clock; key_ms = first keydown of the chord (CDP Input.dispatchKeyEvent, delivered as a renderer keydown to the focused terminal and handled by the web shell's keydown path) or the tab click; screen = first animation frame whose DOM shows the change; frame = first animation frame after it in which the subject terminal shows it (text in a new pane, a new grid in a resized one); nearest-rank percentiles computed by summarize.py topology",
-  load, pane_id: paneId, rounds, samples,
+  load, pane_id: paneId, rounds, zoom_only: zoomOnly, samples,
 }, null, 2));

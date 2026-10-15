@@ -264,6 +264,34 @@ function unreadable(result: ChildResult): string {
   return `unreadable answer (exit ${result.code ?? result.signal ?? "none"})${stderr ? `: ${stderr}` : ""}`;
 }
 
+/**
+ * The records a `hide` verb wrote on standard error, one JSON object with a
+ * `kind` per line, for the host log: what `hide connect` did on its way (a
+ * daemon of another build replaced, a Herdr server handed to this app's
+ * Herdr) is lost with the child otherwise. Only flat values are kept.
+ */
+export function cliRecords(stderr: string): { event: string; fields: Record<string, string | number | boolean | null> }[] {
+  const records: { event: string; fields: Record<string, string | number | boolean | null> }[] = [];
+  for (const line of stderr.split("\n")) {
+    let value: unknown;
+    try {
+      value = JSON.parse(line.trim());
+    } catch {
+      continue;
+    }
+    if (!value || typeof value !== "object" || typeof (value as { kind?: unknown }).kind !== "string") continue;
+    const { kind, ...rest } = value as Record<string, unknown>;
+    const fields = Object.fromEntries(
+      Object.entries(rest).filter(
+        (entry): entry is [string, string | number | boolean | null] =>
+          entry[0] !== "component" && (entry[1] === null || ["string", "number", "boolean"].includes(typeof entry[1])),
+      ),
+    );
+    records.push({ event: kind as string, fields });
+  }
+  return records;
+}
+
 export function parseConnect(result: ChildResult): ConnectAnswer {
   if (result.spawnError) return { kind: "failed", reason: "start_failed", detail: result.spawnError };
   if (result.timedOut) return { kind: "failed", reason: "no_response", detail: "hide connect timed out" };

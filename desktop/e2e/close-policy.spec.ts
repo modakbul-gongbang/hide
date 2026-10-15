@@ -29,11 +29,8 @@ async function inWorkspace(label: string, body: (session: Session) => Promise<vo
     const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
     await enterWorkspace(page);
     // The window is a CI runner's screen wide on every machine; zoomed out,
-    // the body still reaches the wide step, so
-    // File Views and Tools show side by side as these steps assume (PRD
-    // three-column-panel D-07).
+    // the lane over the agents leaves both panes in sight.
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.6));
-    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-workspace-body", "wide");
     if (evidence) fs.writeFileSync(path.join(evidence, `${label}-identity.json`), JSON.stringify({ ...identity, daemonPid: run.daemonPid(), state: run.env.HIDE_STATE_DIR, socket: herdr.socket }, null, 2));
     const capture = (name: string) => {
       if (evidence && process.platform === "darwin") {
@@ -60,15 +57,14 @@ test("Command W closes the keyboard's display or pane, never its tab", async () 
     await page.keyboard.press("Meta+KeyW");
     await expect(editor).toHaveCount(0);
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
-    // The last view closed turns File Views off and leaves Tools showing.
-    await expect(page.locator('[data-column="views"]')).toHaveCount(0);
-    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
-    capture("native-close-view-tools");
-    await page.locator('[data-tool-tab="explorer"]').focus();
+    // The last view closed leaves the tree filling the lane (PRD right-lane B12).
+    await expect(page.locator('[data-lane-tree="only"] [data-explorer]')).toBeVisible();
+    capture("native-close-view-tree");
+    await page.locator('[data-explorer-row$="/notes.md"]').focus();
     await page.keyboard.press("Meta+KeyW");
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
     await page.keyboard.press("Meta+KeyE");
-    await expect(page.locator('[data-column="tools"]')).toHaveCount(0);
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
     await page.locator(`[data-terminal-host="${herdr.panes[1]}"]`).click();
     await page.keyboard.press("Meta+KeyW");
     await expect(page.locator(`[data-pane-view="${herdr.panes[1]}"]`)).toHaveCount(0, { timeout: 15_000 });

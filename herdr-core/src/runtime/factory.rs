@@ -134,6 +134,17 @@ pub(crate) fn factory_herdr_pane<'a>(node: Option<&str>, pane: &'a str) -> Optio
 const LINEAGE_LIMIT: usize = 16;
 
 impl Runtime {
+    /// Factory authority is narrower than the shared node file readers:
+    /// only the core's own node and an inbound node may run its work.
+    pub(crate) fn factory_linked_node(
+        &self,
+        device: &str,
+    ) -> Result<super::hosts::LinkedNode, String> {
+        self.factory_node(device)
+            .map_err(|refusal| refusal.reason)?;
+        self.linked_node(device).map_err(str::to_owned)
+    }
+
     /// What a worker start on the machine `node` names holds on to: that
     /// machine's Herdr and node, the core's own or a node linked to it (Q17).
     pub(crate) fn factory_start_control(
@@ -147,7 +158,7 @@ impl Runtime {
         } else {
             "device_unavailable"
         })?;
-        let (_, node) = self.linked_node(device)?;
+        let (_, node) = self.factory_linked_node(device)?;
         Ok(crate::factory::StartControl {
             device: device.to_owned(),
             connector,
@@ -169,7 +180,7 @@ impl Runtime {
                 .delivery_connector(&control.device)
                 .is_some_and(|connector| std::sync::Arc::ptr_eq(&connector, &control.connector))
             && self
-                .linked_node(&control.device)
+                .factory_linked_node(&control.device)
                 .is_ok_and(|(_, node)| std::sync::Arc::ptr_eq(&node, &control.node))
     }
 
@@ -204,7 +215,7 @@ impl Runtime {
         let connector = self
             .delivery_connector(device)
             .ok_or("device_unavailable")?;
-        let (_, node) = self.linked_node(device)?;
+        let (_, node) = self.factory_linked_node(device)?;
         let herdr_pane = match &worker.pane {
             Some(pane) => Some(
                 factory_herdr_pane(worker.node.as_deref(), pane)
@@ -353,7 +364,8 @@ impl Runtime {
         expected: &crate::workspace_control::Context,
         hint: Option<&str>,
     ) -> Result<crate::factory::FactoryCaller, String> {
-        self.linked_node(device).map_err(|_| "factory_local_only")?;
+        self.factory_linked_node(device)
+            .map_err(|_| "factory_local_only")?;
         let context = self
             .workspace_control_query(device, caller, Query::Info)
             .map_err(|refusal| refusal.reason.to_owned())?
@@ -406,7 +418,7 @@ impl Runtime {
         // it (Q17). A pane on a device the core dials cannot be one of
         // them, and must not open an SSH API channel under this short
         // question budget.
-        if self.linked_node(device).is_err() {
+        if self.factory_linked_node(device).is_err() {
             return Err("factory_guard_local_only".into());
         }
         let crate::workspace_control::Caller::Pane(pane) =
@@ -1033,11 +1045,7 @@ impl Runtime {
     /// When `provider`'s usage limit resets, while the usage rows show a
     /// window used up (B58).
     pub(crate) fn factory_usage_limit(&self, provider: &str, now_unix_ms: u64) -> Option<u64> {
-        usage_limit(
-            &self.snapshot.navigator.provider_usage,
-            provider,
-            now_unix_ms,
-        )
+        usage_limit(&self.snapshot.usage, provider, now_unix_ms)
     }
 
     /// The operator's explicit interface language, `None` when the choice is
@@ -1062,23 +1070,13 @@ impl Runtime {
 /// The latest reset of a used-up window of `provider` still ahead of now,
 /// in milliseconds: the main row or any bucket at 100 percent.
 fn usage_limit(
-    rows: &[crate::model::ProviderUsageSnapshot],
+    usage: &crate::usage::model::UsageSnapshot,
     provider: &str,
     now_unix_ms: u64,
 ) -> Option<u64> {
-    let row = rows.iter().find(|row| row.provider == provider)?;
-    std::iter::once((row.used_percent, row.resets_at_unix_seconds))
-        .chain(
-            row.buckets
-                .iter()
-                .map(|bucket| (bucket.used_percent, bucket.resets_at_unix_seconds)),
-        )
-        .filter_map(|(used, resets)| match (used, resets) {
-            (Some(used), Some(resets)) if used >= 100.0 => Some(resets.saturating_mul(1_000)),
-            _ => None,
-        })
-        .filter(|resets| *resets > now_unix_ms)
-        .max()
+    usage
+        .exhausted_until(provider, now_unix_ms / 1000)
+        .map(|seconds| seconds.saturating_mul(1000))
 }
 
 #[cfg(test)]
@@ -1087,13 +1085,13 @@ mod tests {
     use crate::coordination::AgentRecord;
     use crate::delivery::ledger::Ledger;
     use crate::model::SidebarAgentSnapshot;
-    use crate::model::{ProviderUsageBucketSnapshot, ProviderUsageSnapshot};
+    use crate::usage::model::*;
     use std::sync::Arc;
 
     fn agent(id: &str, pane: &str, parent: Option<&str>) -> AgentRecord {
         AgentRecord {
             id: id.into(),
-            name: id.into(),
+            name: Some(id.into()),
             machine: crate::node::TEST_NODE.into(),
             host_scope: "fixture".into(),
             native_machine: "fixture-machine".into(),
@@ -1447,37 +1445,48 @@ mod tests {
         assert!(!other.factory_spawned);
     }
 
-    fn row(provider: &str, used: f64, bucket: Option<(f64, u64)>) -> ProviderUsageSnapshot {
-        ProviderUsageSnapshot {
-            provider: provider.into(),
-            label: provider.into(),
-            window_minutes: 10_080,
-            state: "available".into(),
-            used_percent: Some(used),
-            resets_at_unix_seconds: Some(5_000),
-            message: None,
-            last_checked_at_unix_ms: None,
-            last_success_at_unix_ms: None,
-            last_error_kind: None,
-            buckets: bucket
-                .map(|(used, resets)| ProviderUsageBucketSnapshot {
-                    label: "Current session".into(),
-                    state: "available".into(),
-                    used_percent: Some(used),
-                    resets_at_unix_seconds: Some(resets),
-                    message: None,
-                })
-                .into_iter()
-                .collect(),
+    fn row(provider: &str, used: f64, five_hour: Option<(f64, u64)>) -> AgentUsage {
+        let mut windows = vec![WindowReading {
+            kind: WindowKind::Weekly,
+            scope: Scope::All,
+            outcome: WindowOutcome::Open {
+                used_percent: used,
+                resets_at_s: 5000,
+            },
+        }];
+        if let Some((used_percent, resets_at_s)) = five_hour {
+            windows.push(WindowReading {
+                kind: WindowKind::FiveHour,
+                scope: Scope::All,
+                outcome: WindowOutcome::Open {
+                    used_percent,
+                    resets_at_s,
+                },
+            });
+        }
+        AgentUsage {
+            agent: provider.into(),
+            limits: Cell::Reading {
+                value: LimitReading { windows },
+                freshness: Freshness::Fresh,
+                observed_at_ms: 1,
+            },
+            consumption: Cell::Unsupported,
         }
     }
 
     #[test]
     fn a_used_up_window_limits_its_runtime_until_its_reset() {
-        let rows = [
-            row("claude", 40.0, Some((100.0, 2_000))),
-            row("codex", 99.0, None),
-        ];
+        let rows = UsageSnapshot {
+            nodes: vec![NodeUsage {
+                node: crate::node::TEST_NODE.into(),
+                history: None,
+                agents: vec![
+                    row("claude", 40.0, Some((100.0, 2_000))),
+                    row("codex", 99.0, None),
+                ],
+            }],
+        };
         assert_eq!(usage_limit(&rows, "claude", 1_000_000), Some(2_000_000));
         assert_eq!(
             usage_limit(&rows, "claude", 2_000_000),
@@ -1489,7 +1498,10 @@ mod tests {
             None,
             "99 percent still runs"
         );
-        assert_eq!(usage_limit(&[], "claude", 0), None);
+        assert_eq!(
+            usage_limit(&UsageSnapshot { nodes: Vec::new() }, "claude", 0),
+            None
+        );
     }
 
     /// A worker row with the status model's axes set directly.

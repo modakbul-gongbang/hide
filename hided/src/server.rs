@@ -125,7 +125,7 @@ pub struct AppState {
     /// the core re-reads the pull requests whose checks are running (PRD
     /// overview-request-view D-32).
     pub request_view_demand: Arc<crate::demand::ObservationDemand>,
-    /// What the Settings General tab reads about this daemon, sent once after
+    /// What Settings > About reads about this daemon, sent once after
     /// a handshake. No token, no environment beyond the paths it names.
     pub daemon_info: Arc<Value>,
     /// Settings > Mobile and the phones it pairs (`mobile/`).
@@ -146,6 +146,8 @@ pub(crate) struct Handshake {
     pub(crate) schema_version: u32,
     pub(crate) client_kind: Option<String>,
     pub(crate) have_revision: Option<u64>,
+    /// Absent keeps the schema-2 complete-rest transition contract.
+    pub(crate) snapshot_format: Option<String>,
     /// The `core_instance` of the daemon frame before the snapshot the
     /// client's revision came from. A revision counts only on the core that
     /// numbered it: a core moved, rolled back or updated numbers its own.
@@ -155,6 +157,14 @@ pub(crate) struct Handshake {
     pub(crate) have_terminal_sequence: Option<u64>,
     /// The epoch of the hub that gave the cursor.
     pub(crate) have_terminal_epoch: Option<String>,
+}
+
+impl Handshake {
+    fn supported_snapshot_format(&self) -> bool {
+        self.snapshot_format
+            .as_deref()
+            .is_none_or(|format| format == "semantic-rest-v1")
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -626,13 +636,21 @@ async fn ws_upgrade(
 /// takes only a credential `node` vouched for over `link`. A browser never
 /// reaches it, so it has no Origin to check, and the shell's token, a phone
 /// and a credential of this machine or of another device are refused.
+/// `attested` is the caller the node proved when the stream opened, which
+/// the command's check reads in place of asking the node again.
 pub async fn serve_link_connection(
     state: AppState,
     node: String,
     link: hide_node::ssh::RemoteHost,
+    attested: Option<crate::pane_auth::StreamAttestation>,
     io: tokio::io::DuplexStream,
 ) {
-    let route = LinkRoute { state, node, link };
+    let route = LinkRoute {
+        state,
+        node,
+        link,
+        attested: attested.map(Arc::new),
+    };
     let router = Router::new()
         .route("/ws", get(link_ws_upgrade))
         .with_state(route);
@@ -648,6 +666,7 @@ struct LinkRoute {
     state: AppState,
     node: String,
     link: hide_node::ssh::RemoteHost,
+    attested: Option<Arc<crate::pane_auth::StreamAttestation>>,
 }
 
 async fn link_ws_upgrade(ws: WebSocketUpgrade, State(route): State<LinkRoute>) -> Response {
@@ -655,7 +674,12 @@ async fn link_ws_upgrade(ws: WebSocketUpgrade, State(route): State<LinkRoute>) -
 }
 
 async fn link_client_loop(mut socket: WebSocket, route: LinkRoute) {
-    let LinkRoute { state, node, link } = route;
+    let LinkRoute {
+        state,
+        node,
+        link,
+        attested,
+    } = route;
     let handshake = match tokio::time::timeout(FIRST_FRAME_TIMEOUT, socket.recv()).await {
         Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<Handshake>(&text).ok(),
         _ => None,
@@ -664,7 +688,7 @@ async fn link_client_loop(mut socket: WebSocket, route: LinkRoute) {
         refuse(&mut socket, CloseReason::InvalidToken, None).await;
         return;
     };
-    if handshake.schema_version != SCHEMA_VERSION {
+    if handshake.schema_version != SCHEMA_VERSION || !handshake.supported_snapshot_format() {
         refuse(&mut socket, CloseReason::SchemaMismatch, None).await;
         return;
     }
@@ -681,6 +705,7 @@ async fn link_client_loop(mut socket: WebSocket, route: LinkRoute) {
                 handshake.token,
                 capability.one_shot,
                 Some((node, link)),
+                attested,
             )
             .await;
         }
@@ -771,7 +796,7 @@ async fn client_loop(
             return;
         }
     };
-    if handshake.schema_version != SCHEMA_VERSION {
+    if handshake.schema_version != SCHEMA_VERSION || !handshake.supported_snapshot_format() {
         refuse(&mut socket, CloseReason::SchemaMismatch, None).await;
         return;
     }
@@ -783,6 +808,7 @@ async fn client_loop(
                 connection,
                 handshake.token,
                 capability.one_shot,
+                None,
                 None,
             )
             .await;
@@ -836,6 +862,7 @@ async fn screen_loop(
         Some(core) if Some(core) != own_core => 0,
         _ => handshake.have_revision.unwrap_or(0),
     };
+    let granular = handshake.snapshot_format.as_deref() == Some("semantic-rest-v1");
     let mut notify = state.core.notify.subscribe();
     // A change in a watched folder is announced on this socket beside the
     // snapshot stream; the client re-reads the one folder it names (B2).
@@ -886,7 +913,7 @@ async fn screen_loop(
             return;
         }
     }
-    let Ok(first) = send_snapshot(&mut socket, &state, &mut have_revision).await else {
+    let Ok(first) = send_snapshot(&mut socket, &state, &mut have_revision, granular).await else {
         client_gone(&state, connection, renderer, desktop);
         return;
     };
@@ -924,7 +951,7 @@ async fn screen_loop(
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
-                match send_snapshot(&mut socket, &state, &mut have_revision).await {
+                match send_snapshot(&mut socket, &state, &mut have_revision, granular).await {
                     // A whole snapshot resets the client's terminals too.
                     Ok(FrameKind::Snapshot) => {
                         if let Some(terminals) = &terminals {
@@ -1167,7 +1194,7 @@ const FACTORY_REQUEST_LIMIT: usize = 256 * 1024;
 const FACTORY_ANSWER_TIMEOUT: Duration = Duration::from_secs(100);
 
 /// What a refused delivery or agent command asks of its caller.
-fn delivery_next_action(code: &str) -> &'static str {
+pub(crate) fn delivery_next_action(code: &str) -> &'static str {
     match herdr_core::coordination::split_refusal(code).0 {
         "agent_pane_required" => {
             "Run the command inside a pane where the agent is running; an agent on Codex's shared daemon needs a session started with --no-daemon"
@@ -1192,7 +1219,10 @@ fn delivery_next_action(code: &str) -> &'static str {
             "Use a new intent, or repeat the request this intent was first used for"
         }
         "agent_not_started" => {
-            "The agent's start ended in its pane without the agent; check that pane for why, then spawn with a new intent"
+            "The agent's start ended in its pane without the agent and was not typed again; check that pane for why, then spawn with a new intent"
+        }
+        "shell_starting" => {
+            "The new pane's shell had not finished starting; answer what its startup files ask in that pane, then spawn with a new intent"
         }
         _ => "Check the current agent pane and retry the same intent",
     }
@@ -1203,6 +1233,11 @@ fn delivery_next_action(code: &str) -> &'static str {
 /// reason stays the code.
 fn refusal_answer(reason: String, next_action: &'static str) -> (String, String) {
     match herdr_core::coordination::split_refusal(&reason) {
+        (code @ "shell_starting", Some(screen)) if !screen.is_empty() => (
+            code.to_owned(),
+            format!("{next_action}. Its screen ends with: {screen}"),
+        ),
+        (code @ "shell_starting", _) => (code.to_owned(), next_action.to_owned()),
         (code, Some("")) => (
             code.to_owned(),
             "No other device is connected; connect one in Settings > Devices, then retry"
@@ -1290,6 +1325,7 @@ async fn scoped_client_loop(
     token: String,
     one_shot: bool,
     source: Option<(String, hide_node::ssh::RemoteHost)>,
+    attested: Option<Arc<crate::pane_auth::StreamAttestation>>,
 ) {
     let previous = state.clients.fetch_add(1, Ordering::SeqCst);
     if previous >= MAX_CLIENTS {
@@ -1431,9 +1467,9 @@ async fn scoped_client_loop(
                                 if !binding.question_guard_source_matches(command_source.as_ref().map(|(node, link)| (node.as_str(), link))) {
                                     return Err(("factory_guard_connection_mismatch".to_owned(), "Continue the tool call"));
                                 }
-                                registry.validate_question_guard(&query_token, herdr_socket.as_deref(), &core, guard_deadline)
+                                registry.validate_question_guard(&query_token, herdr_socket.as_deref(), &core, attested.as_deref(), guard_deadline)
                             } else {
-                                registry.validate(&query_token, herdr_socket.as_deref(), &core)
+                                registry.validate(&query_token, herdr_socket.as_deref(), &core, attested.as_deref())
                             }
                                 .map_err(|reason| (reason.to_owned(), crate::pane_auth::refusal_next_action(reason)))?;
                             if command.needs_renderer() && renderers.load(Ordering::SeqCst) == 0 {
@@ -1492,12 +1528,7 @@ async fn scoped_client_loop(
                                         .any(|view| view.view_id == display_id && view.selected)})
                                 }
                                 ScopedRequest::Delivery(command, hint) => {
-                                    core.prepare_delivery(&cap.context.device_id, &cap.pane_id, &cap.context, hint, command)
-                                        .and_then(|prepared| prepared.run(Duration::from_secs(5)))
-                                        .map_err(|code| {
-                                            let next = delivery_next_action(&code);
-                                            (code, next)
-                                        })?
+                                    crate::hook_request::delivery(&core, &cap, command, hint)?
                                 }
                                 ScopedRequest::Factory(command, hint) => {
                                     core.prepare_factory(&cap.context.device_id, &cap.pane_id, &cap.context, hint, command)
@@ -1514,14 +1545,7 @@ async fn scoped_client_loop(
                                         })?
                                 }
                                 ScopedRequest::MemoryHook(ask) => {
-                                    let deadline = std::time::Instant::now() + herdr_core::memory_hook::WITHIN;
-                                    let scope = core.memory_scope(&cap.context).map_err(|reason| {
-                                        herdr_core::diagnostic!(json!({"component":"memory","kind":"hook.unavailable","pane":cap.pane_id,"device":cap.context.device_id,"reason":reason}));
-                                        ("memory_unavailable".to_owned(), "Continue without Project Memory")
-                                    })?;
-                                    serde_json::to_value(herdr_core::memory_hook::answer(&scope, &ask, deadline)).map_err(|_| {
-                                        ("result_encoding_failed".to_owned(), "Continue without Project Memory")
-                                    })?
+                                    crate::hook_request::memory(&core, &cap, &ask)?
                                 }
                                 ScopedRequest::Links(query) => {
                                     let scope = core.links_scope(&cap.context).ok_or((
@@ -3542,17 +3566,15 @@ pub fn classify_frame(have_revision: u64, payload_revision: Option<u64>) -> Opti
     Some(FrameKind::Delta)
 }
 
-async fn read_delta(state: &AppState, have_revision: u64) -> Result<Value, ()> {
-    let snapshot = state
-        .core
-        .snapshot(have_revision)
-        .map_err(|error| log_snapshot_failure("core", &error))?;
-    if snapshot.bytes.is_empty() {
-        log_snapshot_failure("empty", "the core returned no bytes");
-        return Err(());
-    }
-    serde_json::from_slice(&snapshot.bytes)
-        .map_err(|error| log_snapshot_failure("decode", &error.to_string()))
+async fn read_delta(
+    state: &AppState,
+    have_revision: u64,
+) -> Result<herdr_core::SnapshotDeltaPayload, ()> {
+    let core = Arc::clone(&state.core);
+    tokio::task::spawn_blocking(move || core.snapshot(have_revision))
+        .await
+        .map_err(|error| log_snapshot_failure("reader", &error.to_string()))?
+        .map_err(|error| log_snapshot_failure("core", &error))
 }
 
 /// A frame the daemon could not produce ends the client's loop, so the
@@ -3573,32 +3595,46 @@ async fn send_snapshot(
     socket: &mut WebSocket,
     state: &AppState,
     have_revision: &mut u64,
+    granular: bool,
 ) -> Result<FrameKind, ()> {
     let mut payload = read_delta(state, *have_revision).await?;
-    let kind = match classify_frame(
-        *have_revision,
-        payload.get("revision").and_then(Value::as_u64),
-    ) {
+    let kind = match classify_frame(*have_revision, Some(payload.revision)) {
         Some(kind) => kind,
         None => {
             payload = read_delta(state, 0).await?;
             FrameKind::Snapshot
         }
     };
-    if let Some(revision) = payload.get("revision").and_then(Value::as_u64) {
-        *have_revision = revision;
-    }
-    let envelope = json!({
-        "type": match kind {
-            FrameKind::Snapshot => "snapshot",
-            FrameKind::Delta => "delta",
-        },
-        "payload": payload,
-    });
+    let revision = payload.revision;
+    // One encoding, on a transport worker, after typed ownership has left
+    // both Runtime and the dispatch owner thread.
+    let envelope = tokio::task::spawn_blocking(move || {
+        #[derive(serde::Serialize)]
+        struct Envelope<'a> {
+            #[serde(rename = "type")]
+            kind: &'static str,
+            payload: herdr_core::SnapshotDeltaWire<'a>,
+        }
+        serde_json::to_string(&Envelope {
+            kind: match kind {
+                FrameKind::Snapshot => "snapshot",
+                FrameKind::Delta => "delta",
+            },
+            payload: if granular {
+                herdr_core::SnapshotDeltaWire::granular(&payload)
+            } else {
+                herdr_core::SnapshotDeltaWire::borrow(&payload)
+            },
+        })
+    })
+    .await
+    .map_err(|error| log_snapshot_failure("encoder", &error.to_string()))?
+    .map_err(|error| log_snapshot_failure("encode", &error.to_string()))?;
     socket
-        .send(Message::Text(envelope.to_string().into()))
+        .send(Message::Text(envelope.into()))
         .await
         .map_err(|_| ())?;
+    *have_revision = revision;
     Ok(kind)
 }
 
@@ -3615,14 +3651,21 @@ fn renderer_count(state: &AppState, arrived: bool) {
         state.renderers.fetch_sub(1, Ordering::SeqCst)
     };
     match (arrived, previous) {
-        (true, 0) => dispatch_ui_attached(&state.core, true),
-        (false, 1) => dispatch_ui_attached(&state.core, false),
+        (true, 0) => renderers_drawn(state, true),
+        (false, 1) => renderers_drawn(state, false),
         _ => {}
     }
 }
 
+/// Tells every owner of screen-only reads whether a renderer draws: the core
+/// (`ui_attached`) and the Explorer watch.
+pub(crate) fn renderers_drawn(state: &AppState, attached: bool) {
+    state.watch.set_drawn(attached);
+    dispatch_ui_attached(&state.core, attached);
+}
+
 /// Tells the core whether any window draws its snapshot.
-pub(crate) fn dispatch_ui_attached(core: &CoreHandle, attached: bool) {
+fn dispatch_ui_attached(core: &CoreHandle, attached: bool) {
     let event = json!({
         "schema_version": SCHEMA_VERSION,
         "kind": "ui_attached",
@@ -3941,6 +3984,15 @@ mod tests {
             delivery_next_action("machine_unknown"),
         );
         assert!(none.contains("No other device is connected"), "{none}");
+        let (code, next) = refusal_answer(
+            "shell_starting\u{1f}[oh-my-zsh] Would you like to update? [Y/n]".to_owned(),
+            delivery_next_action("shell_starting"),
+        );
+        assert_eq!(code, "shell_starting");
+        assert!(
+            next.ends_with("[oh-my-zsh] Would you like to update? [Y/n]"),
+            "{next}"
+        );
         for code in [
             "spawn_busy",
             "machine_not_permitted",
@@ -3949,6 +4001,7 @@ mod tests {
             "agent_not_installed",
             "intent_conflict",
             "agent_not_started",
+            "shell_starting",
         ] {
             let (reason, next) = refusal_answer(code.to_owned(), delivery_next_action(code));
             assert_eq!(reason, code);

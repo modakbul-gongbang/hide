@@ -261,8 +261,20 @@ impl Mapper<'_> {
             Moves::Registration => self.table(&self.ids.registrations, value),
             Moves::Checkout => self.table(&self.ids.checkouts, value),
             Moves::Fold => {
+                // A device's own folds carry its id; a sleeping project's
+                // fold carries the project's (PRD sidebar-titlebar-refresh D-19).
                 if let Some(device) = value.strip_prefix("cleanup/") {
                     to(self.change.device(device).map(|id| format!("cleanup/{id}")))
+                } else if let Some(device) = value.strip_prefix("no_agents/") {
+                    to(self
+                        .change
+                        .device(device)
+                        .map(|id| format!("no_agents/{id}")))
+                } else if let Some(project) = value.strip_prefix("asleep/") {
+                    match self.table(&self.ids.registrations, project) {
+                        Mapped::To(id) => Mapped::To(format!("asleep/{id}")),
+                        other => other,
+                    }
                 } else {
                     self.table(&self.ids.registrations, value)
                 }
@@ -766,8 +778,18 @@ fn still_naming(value: &Value, change: &OwnerChange, at: &str) -> Option<String>
     let qualified = format!("remote:{old_id}:");
     // A new owner known by its node id keeps that id as the owner's.
     let alias = old_id != change.new_owner;
-    let carries = |text: &str| text.starts_with(&qualified);
-    let is_alias = |text: &str| alias && (text == old_id || text == format!("cleanup/{old_id}"));
+    // A sleeping project's fold names the project after its own prefix.
+    let carries = |text: &str| {
+        text.strip_prefix("asleep/")
+            .unwrap_or(text)
+            .starts_with(&qualified)
+    };
+    let is_alias = |text: &str| {
+        alias
+            && (text == old_id
+                || text == format!("cleanup/{old_id}")
+                || text == format!("no_agents/{old_id}"))
+    };
     match value {
         Value::String(text) if carries(text) => Some(at.to_owned()),
         Value::String(text)
@@ -973,6 +995,12 @@ mod tests {
                 (own_workspace(), device_project(M, M_ROOT)),
                 (format!("cleanup/{ALIAS}"), format!("cleanup/{C}")),
                 (format!("cleanup/{X}"), format!("cleanup/{X}")),
+                (format!("no_agents/{ALIAS}"), format!("no_agents/{C}")),
+                (format!("no_agents/{X}"), format!("no_agents/{X}")),
+                (
+                    format!("asleep/{}", own_workspace()),
+                    format!("asleep/{}", device_project(M, M_ROOT)),
+                ),
             ],
             other => panic!("no shapes for {other}"),
         }
@@ -1036,6 +1064,7 @@ mod tests {
                     pane.clone(),
                     json!({"demand": "none", "activity": "idle", "descendant_signals": [{"pane_id": panes[index]}]}),
                 )).collect()),
+                "pane_completions": keyed("pane", json!({"session": "s", "server": "m", "state_change_seq": 4})),
                 "request_verbs": keyed("pane", json!({"verb": "review"})),
                 "pane_terminal_sizes": keyed("pane", json!([80, 24])),
                 "resolved_sessions": keyed("pane", json!({"at_unix_ms": 1})),
@@ -1070,11 +1099,11 @@ mod tests {
             WORKSPACE_VIEWS,
             json!({"schema_version": 2, "workspaces": [
                 {"device_id": M, "path": M_ROOT, "agent_layout": layout(&tabs[0]),
-                 "view_bookmarks": {tabs[0].clone(): {"a1": "d1"}}, "layout": {"root": {"area": {"id": "a1"}}}},
+                 "view_bookmarks": {tabs[0].clone(): {"a1": "d1"}}, "view_owner": tabs[0], "view_presentations": {tabs[0].clone(): {"views": false, "layout": {"root": {"area": {"id": "a3"}}}}}, "layout": {"root": {"area": {"id": "a1"}}}},
                 {"device_id": ALIAS, "path": C_ROOT, "agent_layout": layout(&tabs[1]),
-                 "view_bookmarks": {tabs[1].clone(): {"a1": "d2"}}, "layout": {}},
+                 "view_bookmarks": {tabs[1].clone(): {"a1": "d2"}}, "view_owner": tabs[1], "view_presentations": {tabs[1].clone(): {"views": true, "layout": {}}}, "layout": {}},
                 {"device_id": X, "path": X_ROOT, "agent_layout": layout(&tabs[2]),
-                 "view_bookmarks": {tabs[2].clone(): {"a1": "d3"}}, "layout": {}},
+                 "view_bookmarks": {tabs[2].clone(): {"a1": "d3"}}, "view_owner": tabs[2], "view_presentations": {tabs[2].clone(): {"views": false, "layout": {}}}, "layout": {}},
             ]}),
         );
         write(
@@ -1540,6 +1569,30 @@ mod tests {
             read(&state.join(MARKER_FILE))["node"],
             json!(M),
             "the owner is unchanged"
+        );
+    }
+
+    #[test]
+    fn a_sleeping_or_no_agents_fold_still_naming_the_old_id_is_found() {
+        let change = forward();
+        let asleep = format!("asleep/remote:{ALIAS}:project:{C_ROOT}");
+        let no_agents = format!("no_agents/{ALIAS}");
+        for (state, place) in [
+            (json!({ asleep.clone(): true }), format!("/{asleep}")),
+            (json!({"folds": [asleep.clone()]}), "/folds/0".to_owned()),
+            (json!({ no_agents.clone(): true }), format!("/{no_agents}")),
+            (json!({"folds": [no_agents]}), "/folds/0".to_owned()),
+        ] {
+            assert_eq!(still_naming(&state, &change, ""), Some(place), "{state}");
+        }
+        let moved = format!("asleep/remote:{C}:project:{C_ROOT}");
+        assert_eq!(
+            still_naming(
+                &json!({ moved: true, "no_agents/studio": true }),
+                &change,
+                ""
+            ),
+            None
         );
     }
 

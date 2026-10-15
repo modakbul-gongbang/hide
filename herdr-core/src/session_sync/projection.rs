@@ -30,6 +30,8 @@ pub(crate) struct ProjectedTab {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ProjectedPane {
+    pub terminal_id: String,
+    pub restore_error: Option<String>,
     pub(crate) foreground_process: Option<String>,
     pub(crate) agent_status: String,
     pub(crate) pane_id: String,
@@ -57,6 +59,10 @@ pub(crate) struct ProjectedAgent {
     pub(crate) declared_parent_session: Option<String>,
     pub(crate) lineage_session: Option<String>,
     pub(crate) state_change_seq: u64,
+    /// Present while the agent's current stop finished work, whoever has
+    /// looked at it since: Herdr's `done` turning `idle` when it marks the
+    /// tab seen leaves it in place.
+    pub(crate) completion_seq: Option<u64>,
     pub(crate) tokens: BTreeMap<String, Value>,
 }
 
@@ -114,6 +120,7 @@ impl ProjectionState {
                     declared_parent_session: agent.declared_parent_session.clone(),
                     lineage_session: agent.lineage_session.clone(),
                     state_change_seq: Some(agent.state_change_seq),
+                    completion_seq: agent.completion_seq,
                     tokens: agent.tokens.clone(),
                     // The coordinator's label worker lays these on.
                     label: None,
@@ -136,6 +143,11 @@ impl ProjectionState {
             .panes
             .iter()
             .map(|pane| SessionPanePayload {
+                terminal_id: Some(pane.terminal_id.clone()),
+                failed_terminal_id: pane
+                    .restore_error
+                    .as_ref()
+                    .map(|_| pane.terminal_id.clone()),
                 foreground_process: pane.foreground_process.clone(),
                 pane_id: pane.pane_id.clone(),
                 tokens: pane.tokens.clone(),

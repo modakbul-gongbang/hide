@@ -444,6 +444,7 @@ fn close_of_an_already_closed_view_returns_a_no_change_result() {
 #[test]
 fn selecting_a_hidden_view_reveals_only_when_requested() {
     let (mut runtime, _dir) = caller_fixture();
+    runtime.sync_agent_lineage_layouts();
     let key = (crate::node::TEST_NODE, "/checkouts/b");
     let layout = &mut runtime
         .workspace_views
@@ -460,7 +461,7 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
         .unwrap()
         .context;
     let before = runtime.snapshot.navigator.focused_workspace_id.clone();
-    let called = |runtime: &Runtime| runtime.workspace_views.as_ref().unwrap().views_calls;
+    let called = |runtime: &Runtime| runtime.workspace_views.as_ref().unwrap().lane_calls;
     runtime
         .workspace_control_action(
             crate::node::TEST_NODE,
@@ -478,9 +479,9 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
     assert_eq!(runtime.snapshot.navigator.focused_workspace_id, before);
     assert!(
         !views_of(&runtime, key),
-        "a background select leaves File Views off"
+        "right-lane B17: a background select leaves the caller's lane as it was"
     );
-    assert_eq!(called(&runtime), 0, "a background select calls no column");
+    assert_eq!(called(&runtime), 0, "a background select calls no lane");
     runtime
         .workspace_control_action(
             crate::node::TEST_NODE,
@@ -497,17 +498,19 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
         .unwrap();
     assert_eq!(
         runtime.snapshot.navigator.focused_workspace_id.as_deref(),
-        Some("workspace-b")
+        Some("workspace-b"),
+        "{:?}",
+        runtime.snapshot.status.last_error
     );
-    assert!(views_of(&runtime, key), "a reveal turns File Views on");
-    // The shell shows a called File Views in a narrow body; a call from the
-    // CLI reaches it only as this count rising (PRD three-column-panel D-07).
-    assert_eq!(called(&runtime), 1, "a reveal calls File Views");
+    assert!(views_of(&runtime, key), "a reveal opens the files lane");
+    // The shell shows a called lane over the terminals; a call from the CLI
+    // reaches it only as this count rising (PRD right-lane B1, B16).
+    assert_eq!(called(&runtime), 1, "a reveal calls the lane");
     let numbered = runtime
         .workspace_views
         .as_ref()
         .unwrap()
-        .views_called
+        .lane_called
         .get(&(key.0.to_owned(), key.1.to_owned()))
         .copied();
     assert_eq!(
@@ -526,7 +529,7 @@ fn views_of(runtime: &Runtime, key: (&str, &str)) -> bool {
         .workspaces
         .iter()
         .find(|view| view.is(key.0, key.1))
-        .map(|view| view.views)
+        .map(|view| view.tool == Some(crate::workspace_views::Tool::Files))
         .unwrap()
 }
 
@@ -536,6 +539,7 @@ fn file_open_reads_outside_the_runtime_then_places_once_in_the_callers_workspace
     let root = dir.path().to_string_lossy().into_owned();
     runtime.snapshot.navigator.workspaces[1].path = root.clone();
     runtime.snapshot.navigator.workspaces[1].checkouts[0].path = root.clone();
+    runtime.sync_agent_lineage_layouts();
     let path = dir.path().join("보고서.md");
     std::fs::write(&path, "hello\n").unwrap();
     let expected = runtime
@@ -1746,9 +1750,8 @@ fn checkout_callers_in_one_checkout_keep_separate_retry_records() {
 }
 
 #[test]
-fn hide_memory_answers_only_a_caller_on_this_machine_in_the_checkout_it_named() {
-    // PRD project-memory-v2 B16, D-22: a device's Memory is its own; a device
-    // the core dials has none (PRD core-host-node-move Q20).
+fn hide_memory_refuses_a_disconnected_or_unknown_caller_and_a_changed_checkout() {
+    // Memory requires a ready reader and the caller's attested checkout.
     let (mut runtime, _dir) = caller_fixture();
     runtime
         .snapshot
@@ -1779,13 +1782,11 @@ fn hide_memory_answers_only_a_caller_on_this_machine_in_the_checkout_it_named() 
             .prepare_memory(device, pane, &expected, command())
             .err()
     };
-    for device in ["studio", "remote:fixture"] {
-        assert_eq!(
-            refused(device, "pane-b").as_deref(),
-            Some("memory_device_unsupported"),
-            "{device}"
-        );
-    }
+    assert_eq!(refused("studio", "pane-b").as_deref(), Some("link_down"));
+    assert_eq!(
+        refused("remote:fixture", "pane-b").as_deref(),
+        Some("unregistered")
+    );
     assert_eq!(
         refused(crate::node::TEST_NODE, "pane-a").as_deref(),
         Some("caller_context_changed")

@@ -65,8 +65,10 @@ export function branchProblem(name: string): MessageKey | null {
 export type MenuItem = {
   id:
     | "new_worktree"
+    | "project_settings"
     | "new_tab_primary"
     | "reveal_external"
+    | "open_in_editor"
     | "copy_path"
     | "issue_source"
     | "issue_source_auto"
@@ -105,6 +107,8 @@ export type MenuHost = {
   node: string;
   /** The device this screen runs on, whose files the OS file manager shows (`screenMachine.ts`). */
   screen: string;
+  /** The desktop app found VS Code on this computer; a browser tab, or a computer without it, offers no Open in VS Code (D-14). */
+  editor: boolean;
 };
 
 /** The device a receipt names; the core's own node when it names none. */
@@ -125,6 +129,17 @@ function revealItem(workspace: Workspace, host: MenuHost, t: TFunction<"translat
 }
 
 /**
+ * Open in VS Code, for a checkout or a plain folder (PRD sidebar-titlebar-refresh
+ * D-13, D-14): offered only where the desktop app found VS Code, and disabled
+ * with Reveal's reason on another device's checkout, whose folder is not here.
+ */
+function editorItem(workspace: Workspace, host: MenuHost, t: TFunction<"translation">, separated: boolean): MenuItem[] {
+  if (!host.editor) return [];
+  const unavailable = workspace.device_id !== host.screen ? t("explorer.revealHereOnly") : null;
+  return [{ id: "open_in_editor", label: t("workspace.menu.openInVsCode"), unavailable, ...(separated ? { separated } : {}) }];
+}
+
+/**
  * The project row's menu on any device, registered or not (PRD
  * sidebar-context-menus D-02, D-14): open the project, start work in it, find
  * its folder, then keep or drop it. A row Herdr shows without a registration
@@ -132,10 +147,13 @@ function revealItem(workspace: Workspace, host: MenuHost, t: TFunction<"translat
  * and pins it in the same event, and Remove closes its panes, after which the
  * row leaves with Herdr's workspace because there is no registration to keep it.
  */
-export function projectMenu(workspace: Workspace, host: MenuHost, t: TFunction<"translation">, storedIssueSource?: string): MenuItem[] {
+export function projectMenu(workspace: Workspace, host: MenuHost, t: TFunction<"translation">, storedIssueSource?: string, folder = false): MenuItem[] {
   const primary = primaryCheckout(workspace);
-  const reveal = revealItem(workspace, host, t, true);
+  // A plain folder is its own checkout, so its row opens it in VS Code too (D-13).
+  const editor = folder ? editorItem(workspace, host, t, true) : [];
+  const reveal = revealItem(workspace, host, t, editor.length === 0);
   return [
+    ...(!workspace.is_home ? [{ id: "project_settings" as const, label: t("projectSettings.title"), unavailable: null }] : []),
     { id: "new_worktree", label: t("workspace.menu.newWorktree"), unavailable: workspace.is_git === false ? t("workspace.unavailable.notGit") : null },
     {
       id: "new_tab_primary",
@@ -143,8 +161,9 @@ export function projectMenu(workspace: Workspace, host: MenuHost, t: TFunction<"
       unavailable: !primary ? t("workspace.unavailable.noDefault") : primary.exists ? null : t("workspace.unavailable.defaultMissing"),
       shortcut: host.newTabChord,
     },
+    ...editor,
     ...reveal,
-    { id: "copy_path", label: t("workspace.menu.copyPath"), unavailable: null, ...(reveal.length ? {} : { separated: true }) },
+    { id: "copy_path", label: t("workspace.menu.copyPath"), unavailable: null, ...(reveal.length || editor.length ? {} : { separated: true }) },
     ...issueSourceItem(workspace, storedIssueSource, t),
     { id: workspace.pinned ? "unpin" : "pin", label: workspace.pinned ? t("workspace.menu.unpin") : t("workspace.menu.pin"), unavailable: null, separated: true },
     { id: "remove_project", label: t("workspace.menu.removeProject"), unavailable: null },
@@ -204,7 +223,7 @@ export function folderMenu(
   purposeProblem: string | null = null,
   storedIssueSource?: string,
 ): MenuItem[] {
-  const project = projectMenu(workspace, host, t, storedIssueSource);
+  const project = projectMenu(workspace, host, t, storedIssueSource, true);
   const [first, ...rest] = checkoutMenu(workspace, checkout, host, t, purposeProblem).filter((item) => FOLDER_CHECKOUT_ITEMS.has(item.id));
   return first ? [...project, { ...first, separated: true }, ...rest.map((item) => ({ ...item, separated: false }))] : project;
 }
@@ -254,6 +273,7 @@ export function checkoutMenu(workspace: Workspace, checkout: Checkout, host: Men
     { id: "set_primary", label: t("workspace.menu.setPrimary"), unavailable: primaryProblem(workspace, checkout, host.node, t) },
     { id: "copy_branch", label: t("workspace.menu.copyBranch"), unavailable: checkout.branch ? null : t("workspace.unavailable.detached") },
     { id: "copy_path", label: t("workspace.menu.copyPath"), unavailable: null },
+    ...editorItem(workspace, host, t, false),
     ...revealItem(workspace, host, t, false),
   );
   // Never disabled: what deleting would lose is the dialog's to say, with

@@ -480,6 +480,16 @@ pub fn agent_group_for(
             AgentGroup::Seen
         };
     }
+    if let Ownership::HideAi { operator_turn } = ownership {
+        // Its home shows the work's progress and result; the operator is
+        // called out only for what the operator has to do: the agent's own
+        // question or block, read like any row's, or the home's turn.
+        return if operator_turn || blocked || (demand != AgentDemand::None && unread) {
+            AgentGroup::NeedsYou
+        } else {
+            AgentGroup::Seen
+        };
+    }
     if blocked || (demand != AgentDemand::None && unread) {
         AgentGroup::NeedsYou
     } else if waiting {
@@ -567,13 +577,23 @@ pub(crate) fn agent_requires_close_status_check(
 /// would have shown one keeps the status word alone, so a pane with no label
 /// plugin behind it still reads as it did before (PRD B6, B13).
 ///
+/// A native question waiting now (`question`, see [`native_question_line`])
+/// is what is being asked, in the agent's own words: it stands in for an
+/// `expected_reply` the label has not made for this turn, and before a
+/// `progress` that describes the work around the question rather than the
+/// question itself. An `expected_reply` still wins, as the shorter "what to
+/// do"; the worker clears it whenever the agent runs again, so one present
+/// beside a waiting question was made for this turn.
+///
 /// Returns whether the status word is drawn and the sentence beside it.
 pub(crate) fn agent_second_line(
     group: AgentGroup,
     demand: AgentDemand,
     expected_reply: Option<&str>,
+    question: Option<&str>,
     progress: Option<&str>,
 ) -> (bool, Option<String>) {
+    let expected_reply = expected_reply.or(question);
     // An unresolved demand keeps its request whatever group the row sits in:
     // a read question in Seen and a delegated child's approval still say what
     // they are asking, so a view can keep that line until the request is
@@ -594,6 +614,32 @@ pub(crate) fn agent_second_line(
         Some(sentence) => (false, Some(sentence.to_owned())),
         None => (true, None),
     }
+}
+
+/// The second line of a native question waiting now: the first line of
+/// its text, one line and cut on a character boundary to the width of an
+/// `expected_reply`, ending in `…` when cut. A plan waiting for approval has
+/// none: its text is a document whose first line is whatever heading the
+/// agent chose, not what is asked, so its row keeps the status word unless
+/// the label says more. Content the read did not carry stays absent.
+pub(crate) fn native_question_line(
+    turn: Option<&hide_session::turns::UserTurnFact>,
+) -> Option<String> {
+    use crate::sidebar::MAX_EXPECTED_REPLY_CHARS;
+    let turn = turn.filter(|turn| turn.kind == hide_session::turns::UserTurnKind::Question)?;
+    let line = turn
+        .content
+        .as_ref()?
+        .text()
+        .lines()
+        .find_map(|line| crate::display_text::one_line(line, MAX_EXPECTED_REPLY_CHARS + 1))?;
+    if line.chars().count() <= MAX_EXPECTED_REPLY_CHARS {
+        return Some(line);
+    }
+    let mut cut: String = line.chars().take(MAX_EXPECTED_REPLY_CHARS - 1).collect();
+    cut.truncate(cut.trim_end().len());
+    cut.push('\u{2026}');
+    Some(cut)
 }
 
 /// The one ordering every agent surface reads: the two sidebar views, the pet
@@ -663,10 +709,12 @@ pub(crate) fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
     } else {
         agent_status_code(demand, activity, agent.completed, unread)
     };
+    let question = native_question_line(agent.user_turn.as_ref());
     let (status_word_visible, detail) = agent_second_line(
         group,
         demand,
         agent.expected_reply.as_deref(),
+        question.as_deref(),
         agent.progress.as_deref(),
     );
     agent.status_word_visible = status_word_visible;
@@ -781,7 +829,7 @@ pub(crate) fn verb_of(
 /// The notification state machine. Transport and subscription policy stay
 /// in hided; the status transition and descendant raise live with agent state.
 pub mod push {
-    use super::super::tally::phone::{AgentKey, Projection};
+    use super::super::tally::phone::{AgentKey, PhoneAgent, Projection};
     use std::collections::{BTreeMap, BTreeSet};
     use std::time::Duration;
     /// What a root agent's notification says, or would say.
@@ -845,6 +893,10 @@ pub mod push {
         pub key: AgentKey,
         pub title: String,
         pub state: NoticeState,
+        /// The row's own status code and already-chosen second-line sentence.
+        /// Delivery notices carry neither; no transport generates a sentence.
+        pub status_code: Option<String>,
+        pub detail: Option<String>,
         /// The project (`project`, or the part of `project · branch` before the
         /// branch separator); empty when the agent has no place.
         pub place: String,
@@ -854,14 +906,9 @@ pub mod push {
     /// to Needs You; a delegated row never notifies on its own (PRD B9).
     /// Existing human delivery notices own undelivered-letter and
     /// unconfirmed-watch notifications.
-    fn effective(projection: &Projection) -> BTreeMap<AgentKey, (Effective, String, String)> {
-        let mut roots: BTreeMap<AgentKey, (Effective, String, String)> = BTreeMap::new();
+    fn effective(projection: &Projection) -> BTreeMap<AgentKey, (Effective, &PhoneAgent)> {
+        let mut roots = BTreeMap::new();
         for agent in projection.agents() {
-            let place = agent
-                .place
-                .as_deref()
-                .map(|place| place.split(" · ").next().unwrap_or(place).to_owned())
-                .unwrap_or_default();
             let state = if agent.root_pane_id != agent.pane_id {
                 // Its root carries any raise; clear a delegated row's previous
                 // state without a disappearance grace.
@@ -871,7 +918,7 @@ pub mod push {
             } else {
                 Effective::from_group(&agent.group)
             };
-            roots.insert(agent.key(), (state, agent.title.clone(), place));
+            roots.insert(agent.key(), (state, agent));
         }
         roots
     }
@@ -921,7 +968,7 @@ pub mod push {
             };
             let mut notices = Vec::new();
             let mut seen = BTreeSet::new();
-            for (key, (state, title, place)) in &now {
+            for (key, (state, agent)) in &now {
                 let before = last
                     .get(key)
                     .copied()
@@ -933,9 +980,15 @@ pub mod push {
                 if let Some(announced) = state.announced() {
                     notices.push(Notice {
                         key: key.clone(),
-                        title: title.clone(),
+                        title: agent.title.clone(),
                         state: announced,
-                        place: place.clone(),
+                        status_code: Some(agent.status_code.clone()),
+                        detail: agent.detail.clone(),
+                        place: agent
+                            .place
+                            .as_deref()
+                            .map(|place| place.split(" · ").next().unwrap_or(place).to_owned())
+                            .unwrap_or_default(),
                     });
                 } else if *state == Effective::Seen
                     && matches!(before, Effective::NeedsYou | Effective::Done)

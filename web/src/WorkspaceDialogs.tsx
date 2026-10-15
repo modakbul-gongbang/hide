@@ -1,3 +1,4 @@
+import { projectBaseBranch } from "./projectSettings";
 // The project and checkout management dialogs (PRD S5 B11-B17): a worktree
 // creation, a purpose edit and a worktree deletion. Each sends the one core
 // event that owns the change and then reads the core's own receipt for it
@@ -24,6 +25,7 @@ import { PrDelegateDialog, PrLinkDialog, PrNewIssueDialog } from "./PrDialogs";
 import { translate, useInterfaceTranslation } from "./i18n/client";
 import { localDeviceId, type Checkout, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
+import { summariesEnabled } from "./hideAi";
 import { useUiStore } from "./ui";
 import {
   PURPOSE_HARD_LIMIT,
@@ -66,6 +68,8 @@ function deviceLabel(workspace: Workspace): string | null {
 export function WorkspaceDialogs({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const dialog = useUiStore((s) => s.workspaceDialog);
+  const draft = useShellStore((s) => s.rest?.issue_work?.draft);
+  const summary = useShellStore((s) => summariesEnabled(s.rest?.status?.background_ai));
   // Re-read on every snapshot so a dialog follows its row (a purpose saved
   // elsewhere, a gate that changed) rather than a copy from when it opened.
   useShellStore((s) => s.rest?.navigator?.workspaces);
@@ -74,6 +78,10 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
   // dialog still reports the result, so the dialog keeps the last row it saw.
   const lastSeen = useRef<{ key: string; target: { workspace: Workspace; checkout: Checkout | null } } | null>(null);
   const close = () => useUiStore.getState().setWorkspaceDialog(null);
+  if (summary && draft?.workspace_id) {
+    const place = findTarget(draft.workspace_id);
+    if (place) return <NewIssueDialog key={`missed:${draft.source.session.device_id}:${draft.source.session.session_id}:${draft.source.id}`} actions={actions} workspace={place.workspace} draft={draft} onClose={() => actions.cancelMissedIssueDraft()} />;
+  }
   if (!dialog) return null;
   const key = JSON.stringify(dialog);
   const found = findTarget(dialog.workspaceId, "checkoutId" in dialog ? dialog.checkoutId : undefined);
@@ -115,7 +123,7 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
   if (dialog.kind === "pr_link" || dialog.kind === "pr_new_issue" || dialog.kind === "pr_delegate") {
     const pr = target.workspace.pull_requests?.find((row) => row.number === dialog.prNumber);
     const task = dialog.kind === "pr_link" ? target.workspace.tasks?.tasks.find((row) => row.key === dialog.issueKey) : undefined;
-    if (pr && dialog.kind === "pr_delegate") return <PrDelegateDialog key={pr.number} actions={actions} workspace={target.workspace} pr={pr} onClose={close} />;
+    if (pr && dialog.kind === "pr_delegate") return <PrDelegateDialog key={`${pr.number}:${dialog.intent ?? "fix"}`} actions={actions} workspace={target.workspace} pr={pr} intent={dialog.intent} onClose={close} />;
     if (pr && dialog.kind === "pr_new_issue") return <PrNewIssueDialog key={pr.number} actions={actions} workspace={target.workspace} pr={pr} onClose={close} />;
     if (pr && task) return <PrLinkDialog key={`${pr.number}:${task.key}`} actions={actions} workspace={target.workspace} pr={pr} task={task} onClose={close} />;
     return (
@@ -271,7 +279,8 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
   const { t } = useInterfaceTranslation();
   const branches = workspace.branches ?? [];
   const [branch, setBranch] = useState("");
-  const [base, setBase] = useState(workspace.default_branch && branches.includes(workspace.default_branch) ? workspace.default_branch : (branches[0] ?? ""));
+  const [base, setBase] = useState(() => projectBaseBranch(useShellStore.getState().rest, workspace).branch);
+  const missingBase = projectBaseBranch(useShellStore((state) => state.rest), workspace).missing;
   // The remembered kind and model, not a terminal (PRD home-device-rail B36); Terminal only is the menu's first item.
   const [agent, setAgent] = useState<AgentSelection>(() => rememberedSelection(useShellStore.getState().rest?.ui_state?.agent_start));
   const [purpose, setPurpose] = useState("");
@@ -323,6 +332,7 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
               <Input value={branch} disabled={working} autoComplete="off" spellCheck={false} placeholder="feature/name" className="mt-xxs" mono onChange={(event) => setBranch(event.target.value)} data-worktree-branch="true" />
             </label>
             {problem ? <Note tone="warn">{t(problem)}</Note> : null}
+            {missingBase ? <Note tone="warn">{t("projectSettings.branchMissing", { branch: missingBase, fallback: base })}</Note> : null}
             <label className="block text-body text-subtle-foreground">
               {t("workspace.base")}
               <Select value={base || undefined} disabled={working || branches.length === 0} onValueChange={(value) => setBase(value)}>

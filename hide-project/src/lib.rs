@@ -271,16 +271,66 @@ pub mod git {
             Ok(parse_branch_value(&text, branch, "issue"))
         }
 
-        /// Every branch's description and issue in the repository's config,
-        /// each read as [`Repository::branch_description`] and
-        /// [`Repository::branch_issue`] read one branch; a branch with
-        /// neither is not listed.
-        pub fn branch_notes(&self) -> Result<BTreeMap<String, BranchNote>, String> {
+        /// What the repository's config says, from one read of it: every
+        /// branch's note and the URL of every remote.
+        pub fn config(&self) -> Result<Config, String> {
             let path = self.common_dir.join("config");
             let text = read_small(&path, CONFIG_LIMIT)
                 .map_err(|error| format!("repository config could not be read: {error}"))?;
-            Ok(parse_branch_notes(&text))
+            let (remotes, remotes_complete) = parse_remotes(&text);
+            Ok(Config {
+                notes: parse_branch_notes(&text),
+                remotes,
+                remotes_complete,
+            })
         }
+    }
+
+    /// One read of a repository's config.
+    #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    pub struct Config {
+        /// Every branch's description and issue, each read as
+        /// [`Repository::branch_description`] and [`Repository::branch_issue`]
+        /// read one branch; a branch with neither is not listed.
+        pub notes: BTreeMap<String, BranchNote>,
+        /// Each remote's `url`, in the order the config names them. Remotes
+        /// set only outside the repository (the account's `~/.gitconfig`) are
+        /// not seen.
+        pub remotes: Vec<Remote>,
+        /// Whether `remotes` is every remote the repository has: false when
+        /// the config includes another file, which may name more, or a
+        /// section header never closes (the lines after it are not read).
+        pub remotes_complete: bool,
+    }
+
+    impl Config {
+        /// The first `url` the config's own `origin` remote names, found
+        /// whether or not the list is complete: an `include` cannot take away
+        /// an origin the file itself names. The name matches exactly, so
+        /// `"Origin"` is another remote.
+        pub fn origin_url(&self) -> Option<&str> {
+            self.remotes
+                .iter()
+                .find(|remote| remote.name == "origin")
+                .map(|remote| remote.url.as_str())
+        }
+
+        /// Every remote URL, or `None` when the list may be missing some.
+        pub fn remote_urls(&self) -> Option<Vec<String>> {
+            self.remotes_complete.then(|| {
+                self.remotes
+                    .iter()
+                    .map(|remote| remote.url.clone())
+                    .collect()
+            })
+        }
+    }
+
+    /// One `url` of a remote, by the remote's name.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct Remote {
+        pub name: String,
+        pub url: String,
     }
 
     /// What a repository's config says of one branch.
@@ -492,6 +542,89 @@ pub mod git {
         notes
     }
 
+    /// Each `remote.<name>.url` value, and whether the list is complete: not
+    /// when an `include` or `includeIf` section may bring in more (the rest of
+    /// the file is still read), nor when a section header never closes (the
+    /// read stops there). Section names are matched without case, in both
+    /// `[remote "origin"]` and the older `[remote.origin]` spelling, and a
+    /// key may follow its header on the same line, as Git reads it.
+    fn parse_remotes(config: &str) -> (Vec<Remote>, bool) {
+        let mut remotes = Vec::new();
+        let mut complete = true;
+        let mut name: Option<String> = None;
+        for raw_line in config.lines() {
+            let mut line = raw_line.trim();
+            if let Some(body) = line.strip_prefix('[') {
+                let Some((header, rest)) = split_section_header(body) else {
+                    return (remotes, false);
+                };
+                let section_end = header
+                    .find(|character: char| {
+                        character.is_whitespace() || matches!(character, '"' | '.')
+                    })
+                    .unwrap_or(header.len());
+                let (section, subsection) = header.split_at(section_end);
+                if section.eq_ignore_ascii_case("include")
+                    || section.eq_ignore_ascii_case("includeIf")
+                {
+                    complete = false;
+                }
+                name = section
+                    .eq_ignore_ascii_case("remote")
+                    .then(|| remote_name(subsection.trim()))
+                    .flatten();
+                line = rest.trim();
+            }
+            let Some(remote) = &name else {
+                continue;
+            };
+            if line.is_empty() || line.starts_with(['#', ';']) {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            if key.trim().eq_ignore_ascii_case("url") {
+                let value = parse_config_value(value.trim());
+                if !value.is_empty() {
+                    remotes.push(Remote {
+                        name: remote.clone(),
+                        url: value,
+                    });
+                }
+            }
+        }
+        (remotes, complete)
+    }
+
+    /// The remote a `[remote ...]` header names: the quoted subsection as
+    /// written, or, in the older `[remote.name]` spelling, the name in lower
+    /// case as Git folds it.
+    fn remote_name(subsection: &str) -> Option<String> {
+        match subsection.strip_prefix('.') {
+            Some(name) => Some(name.to_ascii_lowercase()),
+            None => parse_quoted(subsection),
+        }
+    }
+
+    /// A section header after its `[`: the text up to the `]` outside its
+    /// quoted subsection name, and what follows on the line; `None` for a
+    /// header that never closes.
+    fn split_section_header(body: &str) -> Option<(&str, &str)> {
+        let mut quoted = false;
+        let mut escaped = false;
+        for (index, character) in body.char_indices() {
+            match character {
+                _ if escaped => escaped = false,
+                '\\' if quoted => escaped = true,
+                '"' => quoted = !quoted,
+                ']' if !quoted => return Some((&body[..index], &body[index + 1..])),
+                _ => {}
+            }
+        }
+        None
+    }
+
     fn parse_branch_section(line: &str) -> Option<String> {
         let body = line.strip_prefix('[')?.strip_suffix(']')?.trim();
         let (section, rest) = body.split_once(char::is_whitespace)?;
@@ -640,14 +773,14 @@ pub mod git {
                 .status()
                 .unwrap();
             assert!(made.success());
-            assert!(repository.branch_notes().is_err());
+            assert!(repository.config().is_err());
 
             fs::remove_file(&config).unwrap();
             fs::write(&config, vec![b'#'; CONFIG_LIMIT as usize + 1]).unwrap();
-            assert!(repository.branch_notes().is_err());
+            assert!(repository.config().is_err());
             fs::write(&config, "[branch \"main\"]\n\tdescription = kept\n").unwrap();
             assert_eq!(
-                repository.branch_notes().unwrap()["main"]
+                repository.config().unwrap().notes["main"]
                     .description
                     .as_deref(),
                 Some("kept")
@@ -673,7 +806,7 @@ pub mod git {
             }
             assert_eq!(repository.head_oid().as_deref(), Some(FIRST));
             assert_eq!(
-                repository.branch_notes().unwrap()["main"]
+                repository.config().unwrap().notes["main"]
                     .description
                     .as_deref(),
                 Some("linked")
@@ -762,6 +895,76 @@ pub mod git {
                 parse_branch_value(config, "topic", "issue").as_deref(),
                 Some("owner/repository#42")
             );
+        }
+
+        #[test]
+        fn a_config_names_its_remotes_urls_and_an_include_or_open_header_leaves_them_unknown() {
+            let urls = |config: &str| {
+                let (remotes, complete) = parse_remotes(config);
+                complete.then(|| {
+                    remotes
+                        .into_iter()
+                        .map(|remote| remote.url)
+                        .collect::<Vec<_>>()
+                })
+            };
+            let config = concat!(
+                "[core]\n\tbare = false\n",
+                "[remote \"origin\"]\n\turl = git@github.com:acme/app.git\n",
+                "\tfetch = +refs/heads/*:refs/remotes/origin/*\n",
+                "[Remote.upstream]\n\tURL = \"https://github.com/acme/upstream\" # kept\n",
+                "[branch \"main\"]\n\tremote = origin\n",
+                "[remote \"a]b\"] url = https://github.com/acme/inline\n",
+            );
+            assert_eq!(
+                urls(config),
+                Some(vec![
+                    "git@github.com:acme/app.git".to_owned(),
+                    "https://github.com/acme/upstream".to_owned(),
+                    "https://github.com/acme/inline".to_owned(),
+                ])
+            );
+            assert_eq!(urls("[core]\n\tbare = false\n"), Some(Vec::new()));
+            for include in [
+                "[include]\n\tpath = more",
+                "[includeIf \"gitdir:~/\"]\n\tpath = more",
+                "[remote \"origin\"\n\turl = https://github.com/acme/app",
+            ] {
+                assert_eq!(urls(include), None, "{include}");
+            }
+        }
+
+        fn origin(config: &str) -> Option<String> {
+            let (remotes, remotes_complete) = parse_remotes(config);
+            Config {
+                remotes,
+                remotes_complete,
+                ..Config::default()
+            }
+            .origin_url()
+            .map(str::to_owned)
+        }
+
+        /// The origin is found as Git spells it, by its exact name, and an
+        /// `include` cannot hide an origin the file itself names.
+        #[test]
+        fn the_origin_url_is_the_origin_remotes_own_url() {
+            let config = "[core]\n\turl = not-this\n[remote \"upstream\"]\n\turl = git@github.com:other/app.git\n[remote \"origin\"]\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n\turl = git@github.com:acme/app.git\n";
+            assert_eq!(
+                origin(config).as_deref(),
+                Some("git@github.com:acme/app.git")
+            );
+            assert_eq!(origin("[remote \"upstream\"]\n\turl = x\n"), None);
+            assert_eq!(
+                origin("[Remote  \"origin\"]\n# a note\n\tURL = git@github.com:acme/app.git\n")
+                    .as_deref(),
+                Some("git@github.com:acme/app.git")
+            );
+            assert_eq!(origin("[remote \"Origin\"]\n\turl = x\n"), None);
+            assert_eq!(origin("[remote.origin]\n\turl = y\n").as_deref(), Some("y"));
+            let included = "[include]\n\tpath = more\n[remote \"origin\"]\n\turl = z\n";
+            assert_eq!(origin(included).as_deref(), Some("z"));
+            assert!(!parse_remotes(included).1, "the list is still unknown");
         }
 
         /// One pass over the config reads every branch as the one-branch

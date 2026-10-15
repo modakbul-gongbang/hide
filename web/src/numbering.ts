@@ -1,4 +1,4 @@
-import { deviceScope, scopeOccurrences } from "./agentScope";
+import { deviceScope } from "./agentScope";
 // What ⌘n and ⌥n select, and the number each tab and agent row carries
 // while a hold reveals it (PRD electron-digit-shortcuts-hints D-02). The
 // number is the screen order at that moment, first to ninth: the strip's
@@ -10,9 +10,10 @@ import type { AgentLayout } from "./agentLayout";
 import type { TreeRow } from "./agentRow";
 import { frontDeviceId } from "./devices";
 import { deviceListedAgents } from "./navigation";
-import { projectRows, activeCheckouts, inactiveCheckouts, folderCheckout } from "./projects";
+import { projectRows, activeCheckouts, inactiveCheckouts, folderCheckout, projectExpanded } from "./projects";
 import { checkoutAgentRows } from "./projectBoard";
-import { contextWorkspaces, contextAgents, contextHome } from "./remote";
+import { sidebarTabGroups } from "./sidebarTabs";
+import { contextWorkspaces, contextAgents } from "./remote";
 import { DIGITS, type Digit } from "./shortcuts";
 import type { AgentRow, Checkout, SnapshotRest } from "./snapshot";
 import { agentEntries } from "./workspace";
@@ -49,15 +50,14 @@ function sidebarAgentOrder(state: { rest: SnapshotRest | null; agents: AgentRow[
   const agents = contextAgents(rest, state.agents);
   const workspaces = contextWorkspaces(rest);
   const listed = deviceListedAgents(rest?.status?.remote, rest?.navigator?.devices, state.agents, frontDeviceId(rest));
-  const projects = projectRows(workspaces, rest?.navigator?.inactive_projects ?? [], listed, scope, raisedOpen);
+  const projects = projectRows(workspaces, rest?.navigator ?? {}, listed, scope, raisedOpen);
   const rows: { row: TreeRow; place: string | null }[] = [];
   const append = (agent: AgentRow, place: string | null = null) => rows.push({ row: { agent, device: null, depth: 0, descendants: (agent.lineage_child_pane_ids ?? []).length }, place });
   for (const row of projects) if (row.kind === "raised") for (const item of [...row.agents, ...(row.expanded ? row.more : [])]) append(item.agent);
-  const home = contextHome(rest);
-  if (home) for (const agent of scopeOccurrences(home.agent_scope.sidebar_tree.rows, agents)) append(agent, "home");
   const collapsed = rest?.ui_state?.session_collapsed_checkout_ids ?? [];
   const checkout = (workspace: import("./snapshot").Workspace, value: Checkout) => {
-    for (const row of checkoutAgentRows(workspace, agents, "sidebar").get(value.id) ?? []) {
+    const grouped = sidebarTabGroups(value, workspace.device_id, checkoutAgentRows(workspace, agents, "sidebar").get(value.id) ?? [], agents);
+    for (const row of grouped.flatMap((group) => group.rows)) {
       // Digits number the roots; an opened root's children and grandchildren take none.
       if (row.depth === 0 && (!collapsed.includes(value.id) || row.agent.state.needs_you)) append(row.agent, value.id);
     }
@@ -67,10 +67,13 @@ function sidebarAgentOrder(state: { rest: SnapshotRest | null; agents: AgentRow[
     const workspace = row.workspace;
     const folder = folderCheckout(workspace);
     if (folder) {
-      if (!workspace.session_folds?.cleanup.includes(folder.id)) checkout(workspace, folder);
+      // A folder has no project fold of its own, only the sleeping one (D-03).
+      const asleep = workspace.agent_presence?.asleep;
+      if (!workspace.session_folds?.cleanup.includes(folder.id) && (!asleep || asleep.expanded)) checkout(workspace, folder);
       continue;
     }
-    if (workspace.expanded === false) continue;
+    if (!projectExpanded(workspace)) continue;
+    // A checkout Hide AI made with no operator agent in it has no row, so the numbers follow the drawing without a rule of their own.
     for (const value of activeCheckouts(workspace)) checkout(workspace, value);
     if (workspace.session_folds?.empty_open) for (const value of workspace.checkouts.filter((value) => workspace.session_folds!.empty.includes(value.id))) checkout(workspace, value);
     if (workspace.inactive_checkouts.expanded) for (const value of inactiveCheckouts(workspace)) checkout(workspace, value);

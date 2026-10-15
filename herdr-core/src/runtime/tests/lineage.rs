@@ -277,7 +277,12 @@ fn a_cross_checkout_badge_names_the_branch_the_sidebar_shows() {
 fn lineage_cross_checkout_tree_and_orphan_keep_the_canonical_rows_and_axes() {
     let mut rows = lineage_rows();
     let mut records = std::collections::BTreeMap::new();
-    crate::agent_state::apply_read_state(&mut rows, &mut records, Some("child"));
+    crate::agent_state::apply_read_state(
+        &mut rows,
+        &mut records,
+        &mut crate::agent_state::ReadConnection::new("server".to_owned()),
+        Some("child"),
+    );
     let original = rows
         .iter()
         .map(|row| {
@@ -431,6 +436,7 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
     crate::agent_state::apply_read_state(
         &mut attention,
         &mut runtime.snapshot.ui_state.pane_read_records,
+        &mut crate::agent_state::ReadConnection::new("server".to_owned()),
         None,
     );
     assert!(
@@ -2574,4 +2580,323 @@ fn a_quiet_row_waits_on_children_then_a_proven_device_then_a_reply() {
     crate::agent_state::apply_lineage(&mut rows, &[], &[]);
     assert_eq!(wait_of(&rows, "child"), None);
     assert_eq!(wait_of(&rows, "parent"), None);
+}
+
+/// A source and its fork as Herdr lists them once the fork's pane names the
+/// source (`lineage::desired`); `fork_session` is the fork's own session.
+fn fork_rows(fork_session: &str) -> Vec<SidebarAgentSnapshot> {
+    let session = crate::sidebar::fixture_lineage_session();
+    project_agents(crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [
+        {"id":"source-control","pane_id":"source","agent_status":"working","state_change_seq":1,"tokens":{"task":"Source"}},
+        {"id":"fork-control","pane_id":"fork","agent_status":"working","state_change_seq":2,"tokens":{
+            "task":"Fork","fork_pane":"source","fork_session":fork_session,"fork_source_session":session}}
+    ]})).unwrap()).agents
+}
+
+// PRD fork-operator-root B11, B12, B19: the fork names its source and is the
+// operator's own work, with nothing of the source's lineage on either row.
+#[test]
+fn a_fork_names_its_source_and_stays_the_operators_own_work() {
+    let row = |rows: &[SidebarAgentSnapshot], id: &str| {
+        rows.iter().find(|row| row.pane_id == id).unwrap().clone()
+    };
+    let mut rows = fork_rows(&crate::sidebar::fixture_lineage_session());
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    let fork = row(&rows, "fork");
+    assert_eq!(
+        fork.forked_from,
+        Some(crate::model::ForkSourceSnapshot {
+            pane_id: Some("source".into()),
+            label: Some("Source".into()),
+        })
+    );
+    assert!(!fork.delegated);
+    assert_eq!(fork.lineage_parent_pane_id, None);
+    assert_eq!(fork.spawn_origin_pane_id, None);
+    let source = row(&rows, "source");
+    assert_eq!(source.forked_from, None);
+    assert_eq!(source, {
+        let mut alone = fork_rows("unrelated");
+        alone.retain(|row| row.pane_id == "source");
+        crate::agent_state::apply_lineage(&mut alone, &[], &[]);
+        alone.remove(0)
+    });
+
+    // A source that runs another conversation now, or has closed, is still
+    // where the fork came from, but no longer a pane to name or go to (B9).
+    rows.iter_mut()
+        .find(|row| row.pane_id == "source")
+        .unwrap()
+        .lineage_session = Some("another".into());
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    let unnamed = Some(crate::model::ForkSourceSnapshot::default());
+    assert_eq!(row(&rows, "fork").forked_from, unnamed);
+    rows.retain(|row| row.pane_id != "source");
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    assert_eq!(row(&rows, "fork").forked_from, unnamed);
+
+    // A pane that runs a new conversation is no longer the fork (B10).
+    let mut rows = fork_rows("an-earlier-conversation");
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    assert_eq!(row(&rows, "fork").forked_from, None);
+}
+
+/// PRD hide-ai-origin-mark B1, B3, B11, B13: the mark and the checkout list
+/// come from the ledger's record of who started the spawn, on this machine
+/// and on a connected device, and only for the session the record holds.
+#[test]
+fn rows_and_checkouts_hide_started_are_marked_from_the_ledger_alone() {
+    use crate::coordination::started::tests::{Child, hide_started_ledger, memory_task};
+    let mut runtime = cross_machine_runtime();
+    attest_cross_machine_sessions(&mut runtime);
+    let node = runtime.node.to_string();
+    let ledger = hide_started_ledger(
+        &node,
+        "hide-memory-m72",
+        memory_task("m72"),
+        Child {
+            machine: &node,
+            pane: "local-child",
+            session: "s-local-child",
+        },
+    );
+    runtime.publish_delivery(Arc::new(ledger), false);
+
+    let child = local_lineage_agent(&runtime, "local-child");
+    assert_eq!(
+        child.hide_ai.as_ref().and_then(|mark| mark.task.clone()),
+        memory_task("m72")
+    );
+    assert!(
+        local_lineage_agent(&runtime, "local-parent")
+            .hide_ai
+            .is_none()
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.hide_ai_checkouts,
+        [crate::model::HideAiCheckoutSnapshot {
+            device_id: node.clone(),
+            path: "/repo.worktrees/hide-memory-m72".into(),
+            task: memory_task("m72"),
+        }]
+    );
+
+    // An agent that took the pane later holds another session: no mark.
+    for agent in &mut runtime.snapshot.navigator.agents {
+        if agent.pane_id == "local-child" {
+            agent.lineage_session = crate::wire::session_digest("s-another-agent");
+        }
+    }
+    runtime.refresh_agent_lineage();
+    assert!(
+        local_lineage_agent(&runtime, "local-child")
+            .hide_ai
+            .is_none()
+    );
+
+    // A device's agent is registered under the id the core names its pane by,
+    // and its spawn under the device's own id, as a spawn on a device leaves them.
+    let ledger = hide_started_ledger(
+        &node,
+        "hide-memory-m43",
+        memory_task("m43"),
+        Child {
+            machine: "mini",
+            pane: "remote:mini:pane:remote-child",
+            session: "s-remote-child",
+        },
+    );
+    runtime.publish_delivery(Arc::new(ledger), false);
+    assert!(
+        remote_lineage_agent(&runtime, "remote:mini:pane:remote-child")
+            .hide_ai
+            .is_some()
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.hide_ai_checkouts[0].device_id,
+        "mini"
+    );
+}
+
+/// PRD hide-ai-origin-mark Risks: the new snapshot fields move only when an
+/// agent or checkout Hide started appears or ends. A ledger publish that
+/// moves neither (here another agent registering) stamps no new revision.
+#[test]
+fn publishing_the_ledger_moves_the_snapshot_only_when_what_hide_started_moves() {
+    use crate::coordination::started::tests::{
+        Child, hide_started_ledger, memory_task, pane_on, register,
+    };
+    let mut runtime = cross_machine_runtime();
+    attest_cross_machine_sessions(&mut runtime);
+    runtime.refresh_agent_lineage();
+    let node = runtime.node.to_string();
+    let mut revision = runtime.snapshot_delta_payload(0).revision;
+    let mut moved = |runtime: &mut Runtime| {
+        let next = runtime.snapshot_delta_payload(revision);
+        let moved = next.rest.is_some();
+        revision = next.revision;
+        moved
+    };
+
+    let mut ledger = hide_started_ledger(
+        &node,
+        "hide-memory-m72",
+        memory_task("m72"),
+        Child {
+            machine: &node,
+            pane: "local-child",
+            session: "s-local-child",
+        },
+    );
+    runtime.publish_delivery(Arc::new(ledger.clone()), false);
+    assert!(moved(&mut runtime), "an agent Hide started appears once");
+
+    runtime.publish_delivery(Arc::new(ledger.clone()), false);
+    assert!(!moved(&mut runtime), "the same ledger again moves nothing");
+
+    let other = pane_on(&node, "someone-else", "other");
+    register(&mut ledger, &other);
+    runtime.publish_delivery(Arc::new(ledger.clone()), false);
+    assert!(
+        !moved(&mut runtime),
+        "another agent registering moves nothing Hide started"
+    );
+
+    for record in &mut ledger.agents {
+        if record.origin.is_some() {
+            record.ended = true;
+        }
+    }
+    runtime.publish_delivery(Arc::new(ledger), false);
+    assert!(moved(&mut runtime), "the agent ending publishes once");
+    assert!(
+        local_lineage_agent(&runtime, "local-child")
+            .hide_ai
+            .is_none()
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.hide_ai_checkouts.len(),
+        1,
+        "its checkout stays listed after the agent ends"
+    );
+}
+
+/// PRD hide-ai-work-home D-14, B8, B9, B10 through the core: the tracker's
+/// facts about an attempt's pull request, the agent's activity and the
+/// ledger's record of who started it make the row's group and turn, and a
+/// change of the pull request moves the published row without a new session
+/// read.
+#[test]
+fn a_hide_started_row_follows_its_attempts_pull_request_into_and_out_of_needs_you() {
+    use crate::coordination::started::tests::{Child, hide_started_ledger, memory_task};
+    use crate::model::{HomeTurn, PullRequestChecks};
+    use crate::runtime::memory_promotion::{HomeAttempt, HomePull};
+    let mut runtime = cross_machine_runtime();
+    attest_cross_machine_sessions(&mut runtime);
+    let node = runtime.node.to_string();
+    // Hide's agent has no pane parent: the operator would have it as a root.
+    for agent in &mut runtime.snapshot.navigator.agents {
+        if agent.pane_id == "local-child" {
+            agent.declared_parent_pane_id = None;
+            agent.spawned_from_machine_id = None;
+        }
+    }
+    let mut project = workspace("project", "Project", "/repo", Vec::new());
+    project.device_id.clone_from(&node);
+    runtime.snapshot.navigator.workspaces = vec![project];
+    let ledger = hide_started_ledger(
+        &node,
+        "hide-memory-m72",
+        memory_task("m72"),
+        Child {
+            machine: &node,
+            pane: "local-child",
+            session: "s-local-child",
+        },
+    );
+    let agent_id = ledger.spawns[0].child.clone().unwrap();
+    runtime.publish_delivery(Arc::new(ledger), false);
+
+    let state = |runtime: &Runtime| {
+        let row = local_lineage_agent(runtime, "local-child");
+        (
+            row.group.clone(),
+            row.hide_ai.as_ref().and_then(|mark| mark.turn),
+            row.hide_ai
+                .as_ref()
+                .and_then(|mark| mark.workspace_id.clone()),
+        )
+    };
+    let machine = runtime.node.clone();
+    let attempt = |pull: Option<HomePull>| {
+        HashMap::from([(
+            agent_id.clone(),
+            HomeAttempt {
+                node: machine.clone(),
+                root: "/repo".into(),
+                pull,
+            },
+        )])
+    };
+    let pull = |checks, draft, changes_requested| {
+        Some(HomePull {
+            number: 924,
+            draft,
+            checks,
+            changes_requested,
+        })
+    };
+    // Followed, but with no pull request yet: progress only, nothing calls the operator.
+    runtime.apply_homes(attempt(None));
+    assert_eq!(
+        state(&runtime),
+        ("seen".into(), None, Some("project".into()))
+    );
+    // Ready and passing: the pull request waits for the operator, and stays.
+    runtime.apply_homes(attempt(pull(PullRequestChecks::Passing, false, false)));
+    assert_eq!(
+        state(&runtime),
+        (
+            "needs_you".into(),
+            Some(HomeTurn::PrReview { pr_number: 924 }),
+            Some("project".into())
+        )
+    );
+    // Reading it changes nothing: the turn is the home's, not an unread flag.
+    for agent in &mut runtime.snapshot.navigator.agents {
+        agent.unread = false;
+    }
+    runtime.refresh_agent_lineage();
+    assert_eq!(state(&runtime).0, "needs_you");
+    // A requested change, a draft or checks still running hand the turn back.
+    for (checks, draft, changes) in [
+        (PullRequestChecks::Passing, false, true),
+        (PullRequestChecks::Passing, true, false),
+        (PullRequestChecks::Pending, false, false),
+    ] {
+        runtime.apply_homes(attempt(pull(checks, draft, changes)));
+        assert_eq!(state(&runtime).0, "seen", "{checks:?} {draft} {changes}");
+    }
+    // Failed checks are the operator's once the agent has stopped working on
+    // them, and the row follows the agent's own activity without a new fact.
+    let activity = |runtime: &mut Runtime, value: &str| {
+        for agent in &mut runtime.snapshot.navigator.agents {
+            if agent.pane_id == "local-child" {
+                agent.activity = value.into();
+            }
+        }
+        runtime.refresh_agent_lineage();
+    };
+    activity(&mut runtime, "working");
+    runtime.apply_homes(attempt(pull(PullRequestChecks::Failed, false, false)));
+    assert_eq!(state(&runtime).1, None, "the agent is fixing them");
+    activity(&mut runtime, "stopped");
+    assert_eq!(
+        state(&runtime).1,
+        Some(HomeTurn::CiFailed { pr_number: 924 })
+    );
+    assert_eq!(state(&runtime).0, "needs_you");
+    // The attempt leaving the table (merged, closed or failed) leaves Needs You.
+    runtime.apply_homes(HashMap::new());
+    assert_eq!(state(&runtime), ("seen".into(), None, None));
 }

@@ -20,6 +20,7 @@ import { fixtureProgram } from "./platform-fixture";
 import { chooseTheme, countSent, rest, rowGeometry, screenshot } from "./wire";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { quietFor } from "./wait";
+import { initGithubRepository } from "./github-remote";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -56,6 +57,9 @@ function fakeGh(dir: string, url: string): string {
     `const key = process.argv.slice(2, 4).join(" ");
 const answers = { "pr list": ${JSON.stringify(pulls)}, "repo view": '{"nameWithOwner":"acme/repo"}', "issue list": "[]" };
 if (key === "auth status") process.exit(0);
+if (key === "api user") { console.log("example-user"); process.exit(0); }
+if (process.argv.slice(2).join(" ").includes("review-requested:@me")) { console.log("[]"); process.exit(0); }
+if (process.argv.slice(2).join(" ").includes("HidePrFacts")) { console.log('{"data":{"repository":{"pullRequests":{"nodes":[]}}}}'); process.exit(0); }
 if (key in answers) { console.log(answers[key]); process.exit(0); }
 console.error("unsupported: " + process.argv.slice(2).join(" "));
 process.exit(1);
@@ -97,7 +101,7 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
   try {
     const repo = path.join(herdr.root, "repo");
     fs.mkdirSync(repo);
-    git(repo, ["init"]);
+    initGithubRepository(repo);
     fs.writeFileSync(path.join(repo, "README.md"), "# repo\n");
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "initial"]);
@@ -127,6 +131,19 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await expect(glyph).toHaveCSS("cursor", "pointer");
     await expect(primary.locator("[data-checkout-pr-glyph]")).toHaveCount(0);
     await expect(primary.locator("[data-checkout]")).toHaveAttribute("data-checkout-kind", "primary");
+
+    // B4: on All projects, where a first run starts, no Workspace is in front, so the glyph opens
+    // the default browser, which a browser tab shows as a new page; nothing opens in hide.
+    await expect(page.locator("[data-overview-page]")).toBeVisible();
+    const focusBeforeExternal = sent.get("focus_checkout") ?? 0;
+    const popup = page.context().waitForEvent("page");
+    await glyph.click();
+    const opened = await popup;
+    expect(opened.url()).toBe(url);
+    await opened.close();
+    await expect(page.locator("[data-main-screen]")).toBeVisible();
+    expect(sent.get("focus_checkout") ?? 0).toBe(focusBeforeExternal);
+    expect(sent.get("browser_open") ?? 0).toBe(0);
 
     // B5, B6, B7: the row's card, after the tooltip's delay: the badge in the
     // review decision, the number, Open PR, the title, and every row with a
@@ -158,20 +175,6 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await page.keyboard.press("Escape");
     await expect(card).toHaveCount(0);
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
-    await page.locator("[data-go-main]").click();
-    await expect(page.locator("[data-main-screen]")).toBeVisible();
-    const focusBeforeExternal = sent.get("focus_checkout") ?? 0;
-
-    // B4: on All projects no Workspace is in front, so the glyph opens the
-    // default browser, which a browser tab shows as a new page; nothing opens in hide.
-    const popup = page.context().waitForEvent("page");
-    await glyph.click();
-    const opened = await popup;
-    expect(opened.url()).toBe(url);
-    await opened.close();
-    await expect(page.locator("[data-main-screen]")).toBeVisible();
-    expect(sent.get("focus_checkout") ?? 0).toBe(focusBeforeExternal);
-    expect(sent.get("browser_open") ?? 0).toBe(0);
 
     // B1: with the worktree's Workspace in front, the glyph opens the pull
     // request as a browser display of that Workspace, and the row neither
@@ -262,18 +265,6 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await expect(plain.locator('[data-checkout-card-row="review"]')).toHaveCount(0);
     await rest(page);
     await expect(plain).toHaveCount(0);
-
-    // Escape leaves the shared Overview page and closes the hovered row's card.
-    await page.locator("[data-go-main]").click();
-    await page.getByRole("tab", { name: "repo", exact: true }).click();
-    await expect(page.locator("[data-overview-screen]")).toBeVisible();
-    await feature.locator("[data-checkout]").hover();
-    await expect(card).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(card).toHaveCount(0);
-    await expect(page.locator("[data-overview-screen]")).toHaveCount(0);
-    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
-    await rest(page);
 
     await chooseTheme(page, "light");
     await feature.locator("[data-checkout]").hover();

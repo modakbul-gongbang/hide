@@ -18,9 +18,7 @@ use tokio::sync::broadcast;
 
 use crate::terminal_hub::TerminalHub;
 
-pub struct SnapshotReply {
-    pub bytes: Vec<u8>,
-}
+pub type SnapshotReply = herdr_core::SnapshotDeltaPayload;
 
 type MoveSourceAnswer =
     Result<(herdr_core::MoveSource, serde_json::Value), herdr_core::MoveSourceRefusal>;
@@ -525,10 +523,12 @@ impl CoreHandle {
 
     /// What a hook's Memory read for the pane in `context` is answered from,
     /// as the core knows it now; the node call and the store read run on the
-    /// caller's blocking task.
+    /// caller's blocking task. The owner's answer is waited for until the
+    /// hook's `deadline` at most, the one its node call and store read share.
     pub fn memory_scope(
         &self,
         context: &Context,
+        deadline: std::time::Instant,
     ) -> Result<herdr_core::memory_hook::Scope, &'static str> {
         let (reply, rx) = mpsc::channel();
         self.commands
@@ -537,7 +537,11 @@ impl CoreHandle {
                 reply,
             })
             .map_err(|_| "core_unavailable")?;
-        rx.recv().map_err(|_| "core_unavailable")?
+        match rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
+            Ok(scope) => scope,
+            Err(mpsc::RecvTimeoutError::Timeout) => Err("core_deadline"),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err("core_unavailable"),
+        }
     }
 
     /// The Projects a `hide links` read may answer from, as the core knows
@@ -744,6 +748,13 @@ fn owner_loop(
             .map(std::path::PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from)),
     );
+    // What the node measured of each repository's worktrees outlives the
+    // daemon, in the core's state folder.
+    own_node = own_node.keeping_worktree_facts_in(hide_kit::layout::worktree_facts(
+        std::path::Path::new(&options.app_state_path)
+            .parent()
+            .unwrap_or(std::path::Path::new(".")),
+    ));
     // The install kit's parts ship beside this binary in the app bundle; a
     // daemon anywhere else installs nothing (PRD device-parity D-19).
     if let Some(kit_dir) = std::env::current_exe()
@@ -964,8 +975,7 @@ fn owner_loop(
                 have_revision,
                 reply,
             } => {
-                let bytes = core.snapshot_delta(have_revision);
-                let _ = reply.send(Ok(SnapshotReply { bytes }));
+                let _ = reply.send(core.snapshot_delta_payload(have_revision));
             }
             Command::Shutdown => break,
         }

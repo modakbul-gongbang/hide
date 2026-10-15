@@ -82,6 +82,14 @@ function TooltipContent({ ref, className, side = "top", align = "center", sideOf
         sideOffset={sideOffset}
         className={cn("pointer-events-none z-50 max-w-(--size-tooltip-max-width) text-balance rounded-sm border border-border bg-popover px-sm py-xs text-caption text-popover-foreground shadow-lg", className)}
         {...props}
+        onMouseDown={(event) => {
+          props.onMouseDown?.(event);
+          // A hint that can be hovered may hold a button. Pressing it must not
+          // move focus: the hint is drawn outside any dialog it opened from,
+          // and the dialog's focus trap would take focus back and close the
+          // hint before the click lands. The button still gets its click.
+          if (event.target instanceof Element && event.target.closest("button, a")) event.preventDefault();
+        }}
       >
         {children}
       </TooltipPrimitive.Content>
@@ -143,6 +151,7 @@ function useHintOpen() {
 function Hint({
   label,
   shortcut,
+  contentClassName,
   side,
   reveals = false,
   active = true,
@@ -150,6 +159,7 @@ function Hint({
 }: {
   label: string;
   shortcut?: ReactNode;
+  contentClassName?: string;
   side?: "top" | "right" | "bottom" | "left";
   reveals?: boolean;
   /** False while the control says all of this itself (a visible word), so no hint opens. */
@@ -162,7 +172,7 @@ function Hint({
       <TooltipTrigger asChild aria-label={reveals ? undefined : label} {...triggerProps}>
         {children}
       </TooltipTrigger>
-      <TooltipContent side={side}>
+      <TooltipContent side={side} className={contentClassName}>
         <span className="inline-flex items-center gap-sm whitespace-pre-line">
           {label}
           {shortcut ? <span className="text-muted-foreground">{shortcut}</span> : null}

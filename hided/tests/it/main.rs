@@ -9,6 +9,7 @@ mod connect_stop;
 mod core_move;
 mod handshake;
 mod held_letter_notice;
+mod herdr_handoff;
 mod mobile;
 mod node_contract;
 mod node_home;
@@ -21,6 +22,7 @@ mod private_herdr;
 mod real_herdr;
 mod remote_core;
 mod remote_delivery;
+mod responsive_state;
 mod seat;
 #[cfg(unix)]
 mod support;

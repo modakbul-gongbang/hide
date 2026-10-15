@@ -10,6 +10,7 @@ mod ai;
 mod changes;
 mod checkout_owner;
 mod codex_launch;
+mod composer_store;
 pub mod coordination;
 pub mod delivery;
 mod device_catalog;
@@ -35,6 +36,7 @@ pub mod herdr_contract;
 pub mod issues;
 mod kit;
 mod labels;
+mod latest_file;
 pub mod links;
 pub mod live;
 pub mod local_issues;
@@ -49,6 +51,7 @@ mod persistence;
 pub mod pet;
 mod ports;
 mod project_context;
+mod project_settings;
 mod reader;
 mod recent_closed;
 pub mod remote;
@@ -62,6 +65,7 @@ pub mod tasks;
 mod terminal_attachments;
 pub mod terminal_reports;
 mod usage;
+pub mod usage_ledger;
 mod view_bookmarks;
 mod view_layout;
 pub mod wire;
@@ -75,6 +79,10 @@ pub use ai::{hide_ai_asks, hide_ai_ready_here, hide_ai_settings_path, stored_hid
 pub use handle::Core;
 pub use model::{
     CoreOptions, DeviceRegistration, LinkOrigin, SCHEMA_VERSION, Snapshot, SnapshotDeltaPayload,
+};
+pub use model::{
+    RemoteFileListSnapshot, RemoteSessionSnapshot, RemoteStatusSnapshot, RestSections,
+    RightPanelSection, SnapshotDeltaWire,
 };
 pub use runtime::WorkspaceRemoteRoute;
 pub use runtime::core_move::{MoveProject, MoveSource, MoveSourceRefusal, ReleaseSource};

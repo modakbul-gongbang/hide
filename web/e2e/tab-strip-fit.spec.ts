@@ -39,7 +39,9 @@ type Strip = {
 
 async function strip(page: Page, column: "agent" | "view" = "agent"): Promise<Strip> {
   return page.locator(`[data-${column}-tab-bar] [role=tablist]`).evaluate((list) => {
-    const shown = (node: Element | null) => node !== null && getComputedStyle(node).display !== "none";
+    // A title can be inside a hidden density wrapper; measure rendered boxes,
+    // which include ancestor visibility, rather than only its own display.
+    const shown = (node: Element | null) => node !== null && node.getClientRects().length > 0;
     // The tabs' room is what the bar leaves beside its own controls: the zone
     // holding the strip and New tab, less New tab.
     const zone = list.parentElement!;
@@ -146,7 +148,8 @@ test("Selecting an Agent tab moves the title width to it, and the selected tab s
   const { tabs, stop } = await startStrip(page, 16);
   try {
     // Selecting another tab moves the title width to it in the same frame.
-    expect((await check(page, 1500)).stage).toBe("others-compact");
+    // The tool rail takes its width from the strip's room (PRD right-lane B1).
+    expect((await check(page, 1500 + 48)).stage).toBe("others-compact");
     const before = await strip(page);
     expect(before.tabs.filter((tab) => !tab.selected).every((tab) => tab.width < TITLE_MIN)).toBe(true);
     const target = before.tabs.findIndex((tab) => !tab.selected);
@@ -186,23 +189,23 @@ test("File View tabs use the same shrinking strip and transfer the longest title
     const tabs = page.locator("[data-view-tab-bar] [role=tab]");
     for (const name of names) await page.locator(`[data-explorer-row="${toPage(root)}/${name}"]`).dblclick();
     await expect(tabs).toHaveCount(names.length);
+    // Pinned, the lane docks with a divider that widens it (PRD right-lane B5, B6).
+    await page.locator("[data-lane-pin]").click();
     const stages = new Set<Fit>();
     for (const width of [2400, 2200, 2000, 1900, 1800, 1700, 1600, 1500, 1400, 1300, 1200]) {
       await page.setViewportSize({ width, height: 1000 });
       await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
-      const workspace = page.locator("[data-workspace-screen]");
-      if (await workspace.getAttribute("data-file-views") === "hidden") await page.locator('[data-column-toggle="views"]').click();
       await expect(page.locator("[data-view-tab-bar]")).toBeVisible();
-      const handle = page.locator('[data-column-divider="views"]');
+      const handle = page.locator('[data-lane-divider="lane"]');
       const divider = await handle.count() ? await handle.boundingBox() : null;
-      const body = await page.locator('[data-column-row="true"]').boundingBox();
+      const body = await page.locator("[data-lane-row]").boundingBox();
       if (divider && body) {
         await page.mouse.move(divider.x + divider.width / 2, divider.y + 150);
         await page.mouse.down();
         await page.mouse.move(body.x + 10, divider.y + 150, { steps: 4 });
         await page.mouse.up();
       }
-      await expect(page.locator("[data-column-guide]")).toHaveCount(0);
+      await expect(page.locator("[data-lane-guide]")).toHaveCount(0);
       await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
       // A divider release commits once through the core; observe that final
       // geometry rather than sampling the optimistic drag's guide frame.

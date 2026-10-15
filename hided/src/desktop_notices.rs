@@ -115,6 +115,8 @@ fn frame<'a>(notices: &[Notice], clear: impl Iterator<Item = &'a AgentKey>) -> V
                 "pane_id": notice.key.pane_id,
                 "title": notice.title,
                 "state": notice.state.as_str(),
+                "status_code": notice.status_code,
+                "detail": notice.detail,
                 "place": notice.place,
             })).collect::<Vec<_>>(),
             "clear": clear.map(AgentKey::tag).collect::<Vec<_>>(),
@@ -194,5 +196,38 @@ mod tests {
         assert!(!notices.wanted());
         assert!(notices.set(2, true));
         assert_eq!(judged(&notices, &rest("needs_you", "question")), None);
+    }
+
+    /// status-model.md: the root's detail, not a child's line or a newly
+    /// generated sentence, reaches both transports; copy changes alone are
+    /// not state transitions and must not repeat a notification.
+    #[test]
+    fn each_notice_carries_the_roots_chosen_sentence_and_status() {
+        for (group, demand, status, detail) in [
+            (
+                "needs_you",
+                "question",
+                "question",
+                Some("배포할 환경을 골라 주세요"),
+            ),
+            ("needs_you", "approval", "approval", Some("계획 승인 대기")),
+            ("needs_you", "error", "error", Some("로그인이 필요해요")),
+            ("done", "none", "done", Some("배포 완료")),
+            ("done", "none", "stopped", Some("테스트 세 개 남음")),
+            ("needs_you", "approval", "approval", None),
+        ] {
+            let notices = DesktopNotices::default();
+            notices.set(7, true);
+            judged(&notices, &rest("working", "none"));
+            let mut asking = rest(group, demand);
+            asking["navigator"]["agents"][0]["status_code"] = json!(status);
+            asking["navigator"]["agents"][0]["detail"] = json!(detail);
+            let frame = judged(&notices, &asking).expect("a new notice");
+            let notice = &frame["payload"]["notices"][0];
+            assert_eq!(notice["status_code"], status);
+            assert_eq!(notice["detail"], json!(detail));
+            asking["navigator"]["agents"][0]["detail"] = json!("새 문장");
+            assert_eq!(judged(&notices, &asking), None);
+        }
     }
 }

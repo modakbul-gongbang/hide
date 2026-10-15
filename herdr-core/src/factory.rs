@@ -2084,7 +2084,8 @@ impl WorkerRuntime for CoreWorkers {
 
     /// The usage row the agent's adapter declares (D-52).
     fn usage_limited(&mut self, runtime: AgentRuntime) -> Option<UnixMs> {
-        let provider = runtime.adapter().usage?.adapter().herdr.name;
+        runtime.adapter().usage.limit_sources().next()?;
+        let provider = runtime.adapter().herdr.name;
         let core = self.runtime().ok()?;
         guard(&core).factory_usage_limit(provider, now_ms())
     }
@@ -2237,6 +2238,7 @@ fn start_worker(
             branch: request.branch.clone(),
             path,
             args,
+            task: None,
         },
     )
     .map_err(|reason| spawn_failure(&reason))?;
@@ -2451,7 +2453,7 @@ impl Machines for CoreMachines {
         let link = match node {
             None => core.own_node(),
             Some(node) => {
-                core.linked_node(node)
+                core.factory_linked_node(node)
                     .map_err(|reason| Failure::environment("machine", EnvSignal::NodeLink, reason))?
                     .1
             }
@@ -2668,21 +2670,26 @@ struct JudgePort {
     home: Option<PathBuf>,
 }
 
+/// The settings, the node whose CLIs answer and the sink that counts the
+/// attempt: everything a Factory judgment asks Hide AI with.
+type JudgeAi = (
+    hide_ai::AiSettings,
+    Arc<dyn crate::node_access::NodeLink>,
+    Arc<dyn hide_ai::AiUsageSink>,
+);
+
 /// The Hide AI settings the core holds, else the ones on disk.
-fn ai_settings(
-    runtime: &Weak<Mutex<Runtime>>,
-    home: Option<&Path>,
-) -> Option<(hide_ai::AiSettings, Arc<dyn crate::node_access::NodeLink>)> {
+fn ai_settings(runtime: &Weak<Mutex<Runtime>>, home: Option<&Path>) -> Option<JudgeAi> {
     let core = lock(runtime)?;
-    let (settings, node) = {
+    let (settings, node, usage) = {
         let core = guard(&core);
-        (core.factory_ai_settings(), core.own_node())
+        (core.factory_ai_settings(), core.own_node(), core.ai_usage())
     };
     drop(core);
     let settings = settings
         .or_else(|| home.and_then(|home| hide_ai::settings::load(home).ok()))
         .unwrap_or_default();
-    Some((settings, node))
+    Some((settings, node, usage))
 }
 
 /// The pick a judgment carries to Hide AI: the Factory AI the Factory chose
@@ -2756,9 +2763,9 @@ impl Judge for JudgePort {
         {
             return Err("factory_ai_effort_not_declared".into());
         }
-        let (settings, node) =
+        let (settings, node, usage) =
             ai_settings(&self.runtime, self.home.as_deref()).ok_or("core_stopped")?;
-        let router = crate::ai::factory_router(&node, &settings);
+        let router = crate::ai::factory_router(&node, &settings, &usage);
         match router
             .availability()
             .into_iter()
@@ -2792,7 +2799,7 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
             }
         };
         // The core ended: nothing is left to answer the judgment to.
-        let Some((settings, node)) = ai_settings(&runtime, home.as_deref()) else {
+        let Some((settings, node, usage)) = ai_settings(&runtime, home.as_deref()) else {
             return;
         };
         if router
@@ -2801,7 +2808,7 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
         {
             router = Some((
                 settings.clone(),
-                crate::ai::factory_router(&node, &settings),
+                crate::ai::factory_router(&node, &settings, &usage),
             ));
         }
         let Some((_, router)) = &router else { continue };
@@ -3809,7 +3816,7 @@ mod tests {
         for (index, actor) in [parent.clone(), child.clone()].into_iter().enumerate() {
             ledger.agents.push(crate::coordination::AgentRecord {
                 id: format!("agent-{}", index + 1),
-                name: actor.name.clone(),
+                name: Some(actor.name.clone()),
                 machine: actor.device_id.clone(),
                 host_scope: "fixture".into(),
                 native_machine: "fixture".into(),

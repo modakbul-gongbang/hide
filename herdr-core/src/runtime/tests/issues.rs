@@ -268,6 +268,7 @@ fn a_linked_checkout_names_its_task_in_the_projects_task_list() {
             closed_at_unix_ms: None,
             head_oid: None,
             cross_repository: false,
+            work: Default::default(),
         });
     runtime.sync_issues();
     assert!(runtime.sync_tasks());
@@ -304,6 +305,7 @@ fn a_pass_that_cannot_read_dependencies_keeps_the_blockers_read_before() {
         blocked.blocked_by = blocked_by;
         GithubSnapshot {
             projects: vec![GithubProjectSnapshot {
+                viewer: None,
                 issues: ProjectIssuesSnapshot {
                     repository: Some("acme/project".into()),
                     issues: vec![issue(1), blocked],
@@ -383,6 +385,7 @@ fn a_project_without_github_reads_local_issues_and_links_by_branch_number() {
         .github
         .projects
         .push(crate::model::GithubProjectSnapshot {
+            viewer: None,
             root_path: "/repo".into(),
             status: crate::model::GithubStatusSnapshot {
                 unavailable_reason: Some("none of the git remotes point to GitHub".into()),
@@ -572,6 +575,7 @@ fn a_task_prompt_is_handed_to_its_agent_start_and_kept_for_a_retry() {
             purpose_error: None,
             unconfirmed_purpose_token: None,
             issue_error: None,
+            shell: crate::agent_start::ShellStart::Plain,
         }),
     ));
     let pending = runtime.pending_task_agent_start(id).unwrap();
@@ -752,6 +756,7 @@ fn search_event(request_id: &str, query: &str) -> Vec<u8> {
 fn searching(runtime: &mut Runtime, run: u64, request_id: &str, query: &str) {
     runtime.github_search.runs = run;
     runtime.github_search.active = Some(crate::runtime::issues::ActiveSearch {
+        invalidated: false,
         run,
         request: crate::runtime::issues::SearchRequest {
             request_id: request_id.into(),

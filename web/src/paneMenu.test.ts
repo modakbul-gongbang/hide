@@ -3,7 +3,7 @@ import { paneMenuItems, terminalMenuItems, type TerminalMenuContext } from "./Pa
 import type { PaneRow } from "./snapshot";
 
 const pane = { id: "w1:p1", children: null, lineage_path: [] } as unknown as PaneRow;
-const chords = { copy: "⌘C", paste: "⌘V", find: "⌘F", splitRight: "⌘D", splitDown: "⌘⇧D", zoom: "⌥⌘↩" };
+const chords = { copy: "⌘C", paste: "⌘V", find: "⌘F", splitRight: "⌘D", splitDown: "⌘⇧D", zoom: "⇧⌘↩" };
 const context = (over: Partial<TerminalMenuContext>): TerminalMenuContext => ({ selection: false, zoomed: false, paneCount: 2, chords, ...over });
 
 describe("a right-click in a terminal", () => {
@@ -18,6 +18,29 @@ describe("a right-click in a terminal", () => {
     expect(terminalMenuItems(pane, "reviewer", context({})).some((item) => item.id === "copy")).toBe(false);
   });
 
+  it("offers URL opening and copying before the ordinary terminal actions", () => {
+    const items = terminalMenuItems(pane, "reviewer", context({ link: { target: { kind: "url", url: "https://example.test/docs" }, found: null } }));
+    expect(items.slice(0, 4).map((item) => item.label)).toEqual(["Open in Hide", "Open in default browser", "Copy link", "Paste"]);
+    expect(items[3]?.separated).toBe(true);
+  });
+
+  it("lets an HTML link open its rendered page, its source, its default app or its file manager", () => {
+    const items = terminalMenuItems(pane, "reviewer", context({
+      link: { target: { kind: "path", path: "report.HTML", line: 12, column: null }, found: { real: "/project/report.HTML", kind: "file" }, inCheckout: true },
+      reveal: { label: "explorer.revealFinder" },
+    }));
+    expect(items.slice(0, 5).map((item) => item.label)).toEqual(["Open in browser", "Open source", "Open in default application", "Reveal in Finder", "Copy path"]);
+  });
+
+  it("treats a directory named .html as a folder and names the host's actual file manager", () => {
+    const items = terminalMenuItems(pane, "reviewer", context({
+      link: { target: { kind: "path", path: "./pages.html", line: null, column: null }, found: { real: "/project/pages.html", kind: "directory" } },
+      reveal: { label: "explorer.revealFileExplorer" },
+    }));
+    expect(items.slice(0, 4).map((item) => item.label)).toEqual(["Open", "Open in default application", "Reveal in File Explorer", "Copy path"]);
+    expect(items.some((item) => item.id === "link_source")).toBe(false);
+  });
+
   it("zooms a pane that has siblings, unzooms a zoomed one, and says why a lone pane cannot zoom", () => {
     const zoom = (over: Partial<TerminalMenuContext>) => terminalMenuItems(pane, "reviewer", context(over)).find((item) => item.id === "toggle_zoom");
     expect(zoom({ paneCount: 2 })).toMatchObject({ label: "Zoom pane", unavailable: null });
@@ -26,28 +49,31 @@ describe("a right-click in a terminal", () => {
   });
 });
 
-describe("the pane menu's Fork agent item", () => {
-  const forkItem = (fork?: PaneRow["fork"], sleep_action?: PaneRow["sleep_action"]) =>
-    paneMenuItems({ id: "w1:p1", children: null, lineage_path: [], fork, sleep_action } as unknown as PaneRow, "reviewer").find((item) => item.id === "fork_agent");
+// PRD fork-operator-root B2, B3, D-03: both placements share one availability.
+describe("the pane menu's Fork agent items", () => {
+  const forkItems = (fork?: PaneRow["fork"], sleep_action?: PaneRow["sleep_action"]) =>
+    paneMenuItems({ id: "w1:p1", children: null, lineage_path: [], fork, sleep_action } as unknown as PaneRow, "reviewer").filter((item) => item.id === "fork_agent" || item.id === "fork_agent_side");
 
-  it("is offered on a pane the core can fork", () => {
-    expect(forkItem({ available: true })).toMatchObject({ label: "Fork agent", unavailable: null });
+  it("offers both placements on a pane the core can fork", () => {
+    expect(forkItems({ available: true })).toMatchObject([
+      { id: "fork_agent", label: "Fork agent", unavailable: null },
+      { id: "fork_agent_side", label: "Fork agent to the side", unavailable: null },
+    ]);
   });
 
-  it("is drawn disabled with the core's reason on an agent that cannot fork yet", () => {
-    expect(forkItem({ available: false, reason: "This agent has not reported its conversation yet" })).toMatchObject({
-      unavailable: "This agent has not reported its conversation yet",
-    });
+  it("draws both disabled with the core's reason on an agent that cannot fork yet", () => {
+    const reason = "This agent has not reported its conversation yet";
+    expect(forkItems({ available: false, reason })).toMatchObject([{ unavailable: reason }, { unavailable: reason }]);
   });
 
-  it("is absent on a shell and on an agent with no fork command", () => {
-    expect(forkItem({ available: false, reason: null })).toBeUndefined();
-    expect(forkItem()).toBeUndefined();
+  it("offers neither on a shell and on an agent with no fork command", () => {
+    expect(forkItems({ available: false, reason: null })).toEqual([]);
+    expect(forkItems()).toEqual([]);
   });
 
-  it("sits with Sleep agent, apart from the copy items", () => {
+  it("follows Sleep agent, apart from the copy items", () => {
     const items = paneMenuItems({ id: "w1:p1", children: null, lineage_path: [], fork: { available: true }, sleep_action: { available: true } } as unknown as PaneRow, "reviewer");
-    expect(items.map((item) => item.id)).toEqual(["sleep_agent", "fork_agent", "copy_name", "copy_pane_id", "close_pane"]);
+    expect(items.map((item) => item.id)).toEqual(["sleep_agent", "fork_agent", "fork_agent_side", "copy_name", "copy_pane_id", "close_pane"]);
     expect(items.filter((item) => item.separated).map((item) => item.id)).toEqual(["close_pane"]);
   });
 });

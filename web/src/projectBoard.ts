@@ -1,4 +1,4 @@
-import { scopeOccurrences, scopeRows, type AgentTreeScope, type AgentScope } from "./agentScope";
+import { scopeOccurrences, scopeRows, type AgentTreeScope } from "./agentScope";
 // The Overview's Issues view (PRD task-agents-views, reworked issue-first
 // on 2026-09-28 and issues-only by PRD overview-lenses-issues) as pure
 // functions over the snapshot, for one Project or for All projects. Every
@@ -245,8 +245,18 @@ function firstAction(stage: Stage, canStart: boolean, checkout: Checkout | null,
   return null;
 }
 
-function card(id: string, workspace: Workspace, scope: BoardScope, checkout: Checkout | null, task: Task, stage: Stage, rows: BoardRow[], now: number): TaskCard {
-  const tree = checkout?.agent_scope.tree;
+/**
+ * The agents a card carries: the checkout's rows and the core's tree over
+ * them, which picks the ones the card names. A card with none is a backlog
+ * issue, or another issue the checkout's pull request closes, which shows
+ * the pull request while its agents stay on the issue the checkout works on
+ * (D-07).
+ */
+type CardAgents = { rows: BoardRow[]; tree: AgentTreeScope } | null;
+
+function card(id: string, workspace: Workspace, scope: BoardScope, checkout: Checkout | null, task: Task, stage: Stage, agents: CardAgents, now: number): TaskCard {
+  const rows = agents?.rows ?? [];
+  const tree = agents?.tree ?? null;
   const shown = tree ? scopeRows(tree.shown, rows.map((row) => row.agent)) : [];
   const more = tree?.more ?? 0;
   const branch = checkout?.branch ?? checkout?.label ?? null;
@@ -356,23 +366,24 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
     const git = workspace.is_git === true;
     const worked = new Set<string>();
     for (const checkout of workspace.checkouts) {
-      const rows = rowsByCheckout.get(checkout.id) ?? [];
+      // `rowsByCheckout` reads the same device tree, so the tree's picks are among these rows.
+      const agents = { rows: rowsByCheckout.get(checkout.id) ?? [], tree: checkout.agent_scope.tree };
       const task = checkout.task_key ? (tasks.get(checkout.task_key) ?? null) : null;
       if (task) worked.add(task.key);
       if (!(checkout.is_worktree && git)) {
-        if (task && rows.length > 0) cards.push(card(`checkout:${checkout.id}`, workspace, scope, checkout, task, "working", rows, now));
+        if (task && agents.rows.length > 0) cards.push(card(`checkout:${checkout.id}`, workspace, scope, checkout, task, "working", agents, now));
         continue;
       }
       const stage = stageOf(checkout);
-      if (task) cards.push(card(`checkout:${checkout.id}`, workspace, scope, checkout, task, stage, rows, now));
-      // Another issue the same pull request closes shows that pull request too.
+      if (task) cards.push(card(`checkout:${checkout.id}`, workspace, scope, checkout, task, stage, agents, now));
+      // Another issue the same pull request closes shows that pull request too, without the checkout's agents.
       let closes = false;
       for (const key of checkout.closes_task_keys ?? []) {
         const closed = tasks.get(key);
         if (!closed || worked.has(key)) continue;
         worked.add(key);
         closes = true;
-        cards.push(card(`closes:${checkout.id}:${key}`, workspace, scope, checkout, closed, stage, [], now));
+        cards.push(card(`closes:${checkout.id}:${key}`, workspace, scope, checkout, closed, stage, null, now));
       }
       if (task || closes) continue;
       const pr = checkout.pull_request;
@@ -383,7 +394,7 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
       if (!task.open) continue;
       openIssues += 1;
       if (worked.has(task.key)) continue;
-      backlog.push(card(`task:${workspace.id}:${task.key}`, workspace, scope, null, task, "backlog", [], now));
+      backlog.push(card(`task:${workspace.id}:${task.key}`, workspace, scope, null, task, "backlog", null, now));
     }
   }
   backlog.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
@@ -621,133 +632,4 @@ export function allProjectsStats(workspaces: readonly (Workspace | null)[]): All
 /** A day the way an issue states it, by this machine's calendar: `Sep 27`, `9월 27일`. */
 export function issueDate(unixMs: number, language: string): string {
   return formatDateTime(requireInterfaceLanguage(language), unixMs, { month: "short", day: "numeric" });
-}
-
-// --- pull requests (PRD overview-lenses-prs) -------------------------------------
-
-/** Whose move a pull request waits on (D-11, D-32): the operator's, an agent fixing it, nobody though it is blocked, or merged. */
-export type PrGroup = "turn" | "fixing" | "blocked" | "merged";
-
-export const PR_GROUP_LABEL: Record<PrGroup, MessageKey> = {
-  turn: "board.prGroup.turn",
-  fixing: "board.prGroup.fixing",
-  blocked: "board.prGroup.blocked",
-  merged: "board.prGroup.merged",
-};
-
-/** The issue a pull request works on: the task when the source lists it, else the reference its body closes. */
-export type PrIssue = { key: string; label: string; url: string | null; task: Task | null };
-
-/** What `Clean up` on a merged row removes (B20): the worktree with its folder, or only its record. */
-export type PrCleanup = "worktree" | "record";
-
-/** One pull request row of the PRs tab (B3-B8). */
-export type PrRow = {
-  number: number;
-  title: string;
-  url: string;
-  state: PrState;
-  group: PrGroup;
-  pr: PullRequest;
-  branch: string;
-  /** The checkout on its branch, a worktree whose folder is gone included. */
-  checkout: Checkout | null;
-  issue: PrIssue | null;
-  /** The checkout's agents and the agent whose session made it (overview-request-view D-45), the ones that need the operator first, for the marks (B4). */
-  agents: AgentRow[];
-  /** The checkout's agents with their ancestors, root first, for the unfolded row (B5). */
-  lineage: BoardRow[];
-  /** An agent there finished and was not looked at yet: the yellow `Review` (D-48). */
-  needsLook: boolean;
-  review: "review_required" | "changes_requested" | "approved" | null;
-  /** When it last changed, or merged, for the time column. */
-  at: number | null;
-  /** `▷ Assign` stands in the hover slot (B6, B15). */
-  delegate: boolean;
-  /** The issue cell offers Link issue (B7, B9): an open pull request with no issue, where its source can link one. */
-  linkable: boolean;
-  cleanup: PrCleanup | null;
-};
-
-export type PrBoard = {
-  counts: AgentScope["prs"]["counts"];
-  groups: { group: PrGroup; rows: PrRow[] }[];
-  /** Open pull requests, or null until GitHub has answered (B22). */
-  open: number | null;
-  /** `gh` has not answered yet for this project (B22). */
-  reading: boolean;
-  /** That the last read failed, with the value's age; the reason is in the log (B22). */
-  failure: ReadFailure | null;
-};
-
-/**
- * The PRs tab (D-11, D-32, D-52) for one project: its pull requests grouped
- * by whose move it is. A merged one is `Recently merged`, newest merge first; an
- * open one whose branch's checkout has a working agent is `Agent is fixing`;
- * otherwise failed checks or a change request make it `CI failed · no agent
- * assigned`, and every other open one (asking for review, approved, an
- * agent finished there, a draft) is the operator's. A group with no row is
- * not drawn. The core sends only the pull requests the tab shows.
- */
-export function buildPullRequests(project: BoardProject, now: number): PrBoard {
-  const { workspace, agents } = project;
-  const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
-  const board = workspace.agent_scope.prs;
-  const local = workspace.tasks?.source?.kind === "local";
-  const rows: PrRow[] = [];
-  for (const pr of workspace.pull_requests ?? []) {
-    const branch = pr.head_branch ?? "";
-    // The checkout the core connected it to (a settled pull request only at the
-    // exact commit), never a branch of the same name: a branch used again for
-    // new work is not the merged pull request's worktree to clean up.
-    const state = board.rows.find((row) => row.number === pr.number);
-    if (!state) throw new Error(`Missing core PR row: ${pr.number}`);
-    const checkout = state.checkout_id === null ? null : workspace.checkouts.find((c) => c.id === state.checkout_id);
-    if (checkout === undefined) throw new Error(`Missing PR checkout: ${state.checkout_id}`);
-    const agentsHere = scopeOccurrences(state.agents, agents);
-    const merged = pr.state === "merged";
-    const review = merged ? null : pr.review;
-    const group = state.group;
-    const issue = state.issue ? { ...state.issue, task: state.issue.task_key ? tasks.get(state.issue.task_key) ?? null : null } : null;
-    const folderGone = checkout !== null && (!checkout.exists || checkout.worktree?.missing === true);
-    const worktree = checkout?.is_worktree === true && checkout.is_primary !== true;
-    rows.push({
-      number: pr.number,
-      title: pr.title,
-      url: pr.url,
-      state: pr.state,
-      group,
-      pr,
-      branch,
-      checkout,
-      issue,
-      agents: agentsHere,
-      lineage: scopeOccurrences(state.lineage, agents).map((agent, index) => ({ agent, depth: state.lineage[index]!.depth })),
-      needsLook: state.needs_look,
-      review,
-      at: merged ? (pr.merged_at_unix_ms ?? null) : (pr.updated_at_unix_ms ?? null),
-      delegate: group === "blocked",
-      linkable: !merged && issue === null && (!local || (worktree && !folderGone)),
-      cleanup: merged && worktree ? (folderGone ? "record" : "worktree") : null,
-    });
-  }
-  const byNumber = new Map(rows.map((row) => [row.number, row]));
-  const groups = board.groups.map((group) => ({ group: group.group, rows: group.numbers.map((number) => {
-    const row = byNumber.get(number);
-    if (!row) throw new Error(`Missing grouped PR: ${number}`);
-    return row;
-  }) }));
-  const status = workspace.checkouts.find((checkout) => checkout.github)?.github ?? null;
-  // A repository with no GitHub remote has no pull requests, which is an answer, not a failure (design 13).
-  const noRemote = status?.failure_category === "no_github_remote";
-  const answered = status?.last_success_at_unix_ms != null || noRemote;
-  const failed = !noRemote && (status?.stale === true || (status?.unavailable_reason != null && !status.available));
-  const age = status?.last_success_at_unix_ms != null ? Math.max(0, Math.floor((now - status.last_success_at_unix_ms) / 60_000)) : null;
-  return {
-    groups,
-    counts: board.counts,
-    open: answered ? board.open : null,
-    reading: !answered && !failed,
-    failure: failed ? { project: null, source: "GitHub", value: age === null ? "none" : { minutes: age } } : null,
-  };
 }

@@ -1,17 +1,17 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { LoaderCircleIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import { ChevronRightIcon, LoaderCircleIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { isHtmlFile } from "./browserViews";
 import { holdShellDrag } from "./shellDrag";
 import { EntryPointMenu } from "./components/entry-menu";
+import { FileMark } from "./components/file-mark";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { useEscapeLayer } from "./components/ui/layer";
 import { Input } from "./components/ui/input";
 import { Hint } from "./components/ui/tooltip";
 import {
-  disclosureMark,
   explorerMenuItems,
   explorerRows,
   filteredRows,
@@ -82,12 +82,36 @@ function rowHeight(): number {
   return Number.parseFloat(value) || 24;
 }
 
+/** Where a row of `depth` starts its chevron: the tree's inset, then one
+ * indent per level, VS Code's twistie column. */
+function rowInset(depth: number): string {
+  return `calc(var(--spacing-sm) + var(--size-tree-indent) * ${depth})`;
+}
+
+/** One hairline per ancestor level, under that ancestor's chevron, so a deep
+ * row shows which folder it sits in; each row draws its own segment. */
+function IndentGuides({ depth }: { depth: number }) {
+  return Array.from({ length: depth }, (_, level) => (
+    <span
+      key={level}
+      aria-hidden="true"
+      data-explorer-guide={level}
+      className="pointer-events-none absolute inset-y-0 w-(--size-hairline) bg-border"
+      style={{ left: `calc(${rowInset(level)} + var(--size-tree-mark) / 2)` }}
+    />
+  ));
+}
+
 function baseName(path: string): string {
   const parts = path.split("/").filter(Boolean);
   return parts[parts.length - 1] ?? path;
 }
 
-export function ExplorerTree({ actions }: { actions: Actions }) {
+/**
+ * `hint` is the line under the filter and `footer` the line at the bottom,
+ * which the lane's tree column fills (PRD right-lane B9, B12).
+ */
+export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint?: string; footer?: string }) {
   const { t } = useInterfaceTranslation();
   const checkout = useShellStore((s) => explorerContext(s.rest).checkout);
   const device = useShellStore((s) => explorerContext(s.rest).device);
@@ -409,6 +433,11 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           />
         </span>
       </div>
+      {hint ? (
+        <p className="shrink-0 truncate px-md pt-xs text-micro text-muted-foreground" data-lane-tree-hint="true">
+          {hint}
+        </p>
+      ) : null}
       <div className="flex shrink-0 items-center gap-xs border-b border-border px-md py-xs text-caption text-subtle-foreground">
         <Hint label={rootPath} reveals>
         <span className="min-w-0 flex-1 truncate" data-explorer-root="true">
@@ -585,6 +614,11 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           onTrash={requestTrash}
         />
       ) : null}
+      {footer ? (
+        <p className="shrink-0 truncate border-t border-border px-md py-xs text-micro text-muted-foreground" data-lane-tree-footer="true">
+          {footer}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -639,10 +673,11 @@ function DraftRowView({
   };
   return (
     <div
-      className="absolute inset-x-0 flex items-center pr-md text-body"
+      className="absolute inset-x-0 flex items-center pr-md text-subhead"
       data-explorer-draft={rename ? "rename" : "create"}
-      style={{ top: 0, height: "var(--size-pane-child-row)", paddingLeft: `calc(var(--size-lineage-indent) * ${depth})`, transform: `translateY(${top}px)` }}
+      style={{ top: 0, height: "var(--size-pane-child-row)", paddingLeft: `calc(${rowInset(depth)} + var(--size-tree-mark))`, transform: `translateY(${top}px)` }}
     >
+      <IndentGuides depth={depth} />
       <Input
         autoFocus
         value={value}
@@ -762,13 +797,13 @@ function ExplorerRowView({
       data-selected={selected ? "true" : "false"}
       data-decoration={row.decoration?.status ?? ""}
       data-drop={over ? "true" : "false"}
-      className={`absolute inset-x-0 flex cursor-default items-center gap-xs pr-md text-body ${
-        selected ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent"
+      className={`absolute inset-x-0 flex cursor-default items-center gap-xs pr-md text-subhead text-foreground ${
+        selected ? "bg-secondary" : "hover:bg-accent"
       } ${over ? "bg-secondary" : ""}`}
       style={{
         top: 0,
         height: "var(--size-pane-child-row)",
-        paddingLeft: `calc(var(--size-lineage-indent) * ${row.depth})`,
+        paddingLeft: rowInset(row.depth),
         transform: `translateY(${top}px)`,
       }}
       onPointerDown={(event) => {
@@ -800,13 +835,12 @@ function ExplorerRowView({
       }}
       onDragEnd={() => setOver(false)}
     >
-      <span className="w-[var(--size-lineage-chevron)] shrink-0 text-center text-caption text-muted-foreground" aria-hidden="true">
-        {disclosureMark(row)}
+      <IndentGuides depth={row.depth} />
+      <span className="flex size-(--size-tree-mark) shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true">
+        {row.isDirectory ? <ChevronRightIcon className={`size-(--size-tree-mark) ${row.expanded ? "rotate-90" : ""}`} /> : null}
       </span>
-      <span className={`shrink-0 ${row.icon.color}`} style={{ fontFamily: "seti" }} aria-hidden="true">
-        {row.icon.glyph}
-      </span>
-      <span className="min-w-0 flex-1 truncate">{row.name}</span>
+      <FileMark icon={row.icon} className="size-(--size-tree-mark)" />
+      <span className={`min-w-0 flex-1 truncate ${!row.isDirectory && row.decoration ? gitBadgeColor(row.decoration.status) : ""}`}>{row.name}</span>
       {needsRefresh ? (
         <Hint label={t("explorer.unwatched")}>
           <Button

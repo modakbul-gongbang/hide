@@ -75,8 +75,13 @@ fn run_coordinator(
     // A refresh asked for while a list was out, owed when it answers.
     let mut agents_refresh_owed = false;
     let mut next_operation_tick = Instant::now() + ASYNC_OPERATION_TICK_INTERVAL;
-    let mut next_hook_diagnosis_refresh = Instant::now();
-    let mut catalog_cache: Option<CatalogCache> = None;
+    let mut catalog_cache = CatalogState {
+        wake: Some(RepublishWaker {
+            sender: sender.clone(),
+            pending: Arc::clone(&republish_pending),
+        }),
+        ..Default::default()
+    };
     // Herdr events received since the last publish, for the stage records of
     // Hide-started operations (PRD instant-pane-topology D-14).
     let mut arrivals: Vec<HerdrArrival> = Vec::new();
@@ -99,21 +104,6 @@ fn run_coordinator(
     } else {
         None
     };
-    // The hook-install state is two small file reads of this machine's own
-    // configuration, which its node makes, so the local coordinator takes it
-    // once before the first connect. It is not a poll: it changes only when
-    // the kit installs or the operator removes, and the kit worker
-    // republishes it after each install (PRD B36). The install itself is the
-    // kit's (`crate::kit`).
-    let hook_node = context
-        .is_local()
-        .then(|| context.node().map(Arc::clone))
-        .flatten();
-    if let Some(node) = hook_node.as_deref()
-        && let Some(diagnosis) = crate::kit::hook_diagnosis(node, context.log_target())
-    {
-        publish_hook_diagnosis(&context, diagnosis);
-    }
     // Kept for the AI settings and the counter sweep below, which read this
     // machine's files themselves.
     let hook_home = context.is_local().then(|| home_path.clone()).flatten();
@@ -140,7 +130,7 @@ fn run_coordinator(
     // The rows read the operator's logins, which are the core's own node's.
     let mut usage_reader = usage_paths
         .zip(context.node().map(Arc::clone))
-        .map(|(paths, node)| crate::usage::ProviderUsageReader::new(paths, node));
+        .map(|(paths, node)| crate::usage::UsageDriver::new(paths, node));
     // A listening port is its machine's: the local coordinator looks at this
     // machine's, and a node that dials this core is asked for its own.
     let mut ports_reader = context
@@ -212,12 +202,13 @@ fn run_coordinator(
                     subscription: next_subscription,
                     snapshot_at,
                 }) => {
-                    if context.is_local() && !begin_local_read_record_reconciliation(&context) {
+                    if !begin_read_connection(&context) {
                         stop_subscription(&mut subscription);
                         return;
                     }
                     replica = Some(next_replica);
                     subscription = Some(next_subscription);
+                    catalog_cache.connection = subscription_generation;
                     reconcile_until = snapshot_at + RECONCILE_GRACE;
                     active_tab_reads.clear();
                     if let Err(message) = sync_reader.reset() {
@@ -242,20 +233,16 @@ fn run_coordinator(
                     agents_refresh_owed = false;
                     next_operation_tick = Instant::now() + ASYNC_OPERATION_TICK_INTERVAL;
                     if let Some(writer) = lineage_writer.as_mut()
-                        && let Some(runtime) = context.runtime.upgrade()
+                        && let Some((state, marks)) = lineage_inputs(&context)
                     {
-                        let state = runtime
-                            .lock()
-                            .ok()
-                            .and_then(|guard| guard.delivery_state().ok());
-                        if let Some(state) = state {
-                            writer.observe(
-                                &state,
-                                &replica.as_ref().unwrap().state.agents,
-                                true,
-                                snapshot_started_at,
-                            );
-                        }
+                        writer.reconnected();
+                        writer.observe(
+                            &state,
+                            &replica.as_ref().unwrap().state.agents,
+                            &marks,
+                            true,
+                            snapshot_started_at,
+                        );
                     }
                     if let (Some(restorer), Some(current)) =
                         (hook_token_restorer.as_mut(), replica.as_ref())
@@ -399,8 +386,9 @@ fn run_coordinator(
         // nothing else (PRD labels-in-hided B29). The usage reader also runs
         // while background Memory analysis needs the weekly figure (PRD
         // project-memory-v2 D-10 b).
+        let window_attached = window_reads(&context, worktree_reader.as_mut());
         let run_background_reads =
-            subscription.is_some() && !defer_background_reads && read_ui_attached(&context);
+            subscription.is_some() && !defer_background_reads && window_attached;
         let read_usage = subscription.is_some()
             && !defer_background_reads
             && (run_background_reads || read_memory_reads_usage(&context));
@@ -410,8 +398,8 @@ fn run_coordinator(
                 stop_subscription(&mut subscription);
                 return;
             };
-            if let Some(provider_usage) = reader.read_if_due(activity)
-                && !publish_provider_usage(&context, provider_usage)
+            if let Some(usage) = reader.read_if_due(activity)
+                && !publish_usage(&context, usage)
             {
                 stop_subscription(&mut subscription);
                 return;
@@ -435,30 +423,6 @@ fn run_coordinator(
                     Ok(false) => {}
                     Err(error) => {
                         log_sync_failure(&context, "process.publish_failed", Some(current), &error)
-                    }
-                }
-            }
-
-            if let Some(node) = hook_node.as_deref() {
-                // While the Settings agents tab is on screen the diagnosis is
-                // read back once a second, because the hook helper records a
-                // report it could not deliver from its own process and that
-                // record is the one thing that distinguishes "installed but
-                // refused" from "this session started first". Off screen,
-                // nothing is read.
-                if Instant::now() >= next_hook_diagnosis_refresh {
-                    next_hook_diagnosis_refresh = Instant::now() + HOOK_DIAGNOSIS_REFRESH_INTERVAL;
-                    let Some(observed) = read_settings_observed(&context) else {
-                        stop_subscription(&mut subscription);
-                        return;
-                    };
-                    if observed
-                        && let Some(diagnosis) =
-                            crate::kit::hook_diagnosis(node, context.log_target())
-                        && !publish_hook_diagnosis(&context, diagnosis)
-                    {
-                        stop_subscription(&mut subscription);
-                        return;
                     }
                 }
             }
@@ -796,15 +760,9 @@ fn run_coordinator(
                             let (native_changed, requested) =
                                 agent_tick_changes(current, &agents, catalog_cache.as_ref());
                             if let Some(writer) = lineage_writer.as_mut()
-                                && let Some(runtime) = context.runtime.upgrade()
+                                && let Some((state, marks)) = lineage_inputs(&context)
                             {
-                                let state = runtime
-                                    .lock()
-                                    .ok()
-                                    .and_then(|guard| guard.delivery_state().ok());
-                                if let Some(state) = state {
-                                    writer.observe(&state, &agents, native_changed, started_at);
-                                }
+                                writer.observe(&state, &agents, &marks, native_changed, started_at);
                             }
                             if let Some(restorer) = hook_token_restorer.as_mut() {
                                 restorer.observe(&agents, false);
@@ -1203,7 +1161,7 @@ fn stand_in_unconfirmed_cwds(
 fn publish_replica(
     context: &SessionSyncContext,
     replica: &mut SessionReplica,
-    catalog_cache: &mut Option<CatalogCache>,
+    catalog_cache: &mut CatalogState,
     purpose_mirror: &mut Option<live::PurposeMirror>,
     labels: &mut Option<LabelWorker>,
     arrivals: &mut Vec<HerdrArrival>,
@@ -1323,54 +1281,75 @@ fn publish_replica(
         unconfirmed_created_purposes,
         created_tab_clamps,
         runtime_paths,
+        accepted_tabs,
     ) = match runtime.lock() {
-        Ok(guard) => (
-            guard.node().clone(),
-            guard.snapshot().ui_state.workspace_registrations.clone(),
-            guard.worktree_catalog(),
-            guard.unconfirmed_created_purpose_values(),
-            guard.created_tab_clamps(),
-            guard.catalog_paths(),
-        ),
+        Ok(mut guard) => {
+            guard.begin_catalog_coordinator();
+            (
+                guard.node().clone(),
+                guard.snapshot().ui_state.workspace_registrations.clone(),
+                guard.worktree_catalog(),
+                guard.unconfirmed_created_purpose_values(),
+                guard.created_tab_clamps(),
+                guard.catalog_paths(),
+                guard
+                    .snapshot()
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| &workspace.checkouts)
+                    .flat_map(|checkout| {
+                        checkout
+                            .tabs
+                            .iter()
+                            .filter_map(|tab| Some((tab.id.clone()?, checkout.path.clone())))
+                    })
+                    .collect::<HashMap<_, _>>(),
+            )
+        }
         Err(_) => return false,
     };
     drop(runtime);
 
-    // The node is asked about every path the catalog and the reconcile read,
-    // here and outside the lock; a set it answered recently is not asked
-    // again until the catalog's own refresh interval runs out.
+    // The reader owns the only blocking work. Its answer describes facts,
+    // never a session to replay; build from the current replica below.
     let mut wanted = workspace::PathIndex::wanted(&node, &registrations, &[], &worktrees);
     wanted.extend(Runtime::session_cwds(&payload));
     wanted.extend(created_tab_clamps.iter().map(|clamp| clamp.path.clone()));
-    let recent = catalog_cache.as_ref().filter(|cache| {
-        cache.asked == wanted && cache.built_at.elapsed() < CATALOG_REFRESH_INTERVAL
+    let reader = catalog_cache
+        .reader
+        .get_or_insert_with(|| path_facts::PathReader::new(context, catalog_cache.wake.clone()));
+    let answer = reader.poll(path_facts::Request {
+        connection: catalog_cache.connection,
+        paths: wanted.clone(),
     });
-    let recent_at = recent.map(|cache| cache.built_at);
-    let (paths, asked) = match recent {
-        Some(cache) => (Arc::clone(&cache.paths), cache.asked.clone()),
-        None => match context
-            .node()
-            .ok_or_else(|| "this target has no node".to_owned())
-            .and_then(|link| workspace::PathIndex::ask(link.as_ref(), wanted.clone()))
-        {
-            Ok(paths) => (Arc::new(paths), wanted),
-            Err(error) => {
-                crate::diagnostic!(json!({
-                    "component": "session_sync",
-                    "kind": "catalog.path_facts_failed",
-                    "target": context.log_target(),
-                    "message": error,
-                }));
-                // The previous answer stands, the runtime's own before this
-                // coordinator has one, read by names where it is silent, and
-                // the next publish asks again.
-                let previous = catalog_cache
-                    .as_ref()
-                    .map(|cache| Arc::clone(&cache.paths))
-                    .unwrap_or(runtime_paths);
-                (previous, BTreeSet::new())
+    let mut built_at = catalog_cache
+        .as_ref()
+        .map(|cache| cache.built_at)
+        .unwrap_or_else(Instant::now);
+    let previous = catalog_cache
+        .as_ref()
+        .map(|cache| Arc::clone(&cache.paths))
+        .unwrap_or(runtime_paths);
+    let paths = match answer {
+        Some(Ok(paths)) => {
+            built_at = Instant::now();
+            if *previous == paths {
+                previous
+            } else {
+                Arc::new(paths)
             }
-        },
+        }
+        Some(Err(error)) => {
+            crate::diagnostic!(json!({
+                "component": "session_sync",
+                "kind": "catalog.path_facts_failed",
+                "target": context.log_target(),
+                "message": error,
+            }));
+            previous
+        }
+        None => previous,
     };
 
     // The catalog is built here, outside the lock, from the cwd the runtime
@@ -1395,30 +1374,44 @@ fn publish_replica(
         clamped = copy;
         &clamped
     };
-    let spaces = Runtime::session_spaces(birth_free, &paths);
+    let mut spaces = Runtime::session_spaces(birth_free, &paths);
+    // An unanswered cwd has no authority to invent a folder project. Known
+    // tabs retain their accepted checkout in the runtime's reconcile.
+    for space in &mut spaces {
+        space.cwds.retain(|cwd| paths.knows(cwd));
+        for layout in &birth_free.layouts {
+            if layout.workspace_id == space.id
+                && let Some(path) = accepted_tabs.get(&layout.tab_id)
+                && layout.panes.iter().any(|pane| {
+                    Runtime::pane_cwd(birth_free, &pane.pane_id)
+                        .is_some_and(|cwd| !paths.knows(&cwd))
+                })
+                && !space.cwds.contains(path)
+            {
+                space.cwds.push(path.clone());
+            }
+        }
+    }
     let cache_is_fresh = catalog_cache.as_ref().is_some_and(|cache| {
         Arc::ptr_eq(&cache.paths, &paths)
             && cache.registrations == registrations
             && cache.spaces == spaces
             && cache.worktrees == worktrees
-            && cache.built_at.elapsed() < CATALOG_REFRESH_INTERVAL
     });
     if !cache_is_fresh {
         let workspaces =
             workspace::build_catalog(&node, &registrations, &spaces, &worktrees, &paths);
-        // An answer reused from the cache keeps its age, so the node is asked
-        // again once the interval runs out however often the session moves.
-        let built_at = recent_at.unwrap_or_else(Instant::now);
-        *catalog_cache = Some(CatalogCache {
+        catalog_cache.cache = Some(CatalogCache {
             registrations: registrations.clone(),
             spaces,
             worktrees,
             workspaces,
-            asked,
             paths,
             built_at,
             purposes_synced: None,
         });
+    } else if let Some(cache) = catalog_cache.as_mut() {
+        cache.built_at = built_at;
     }
     let cache = catalog_cache
         .as_mut()
@@ -1435,6 +1428,7 @@ fn publish_replica(
     }
     let precomputed = PrecomputedCatalog {
         registrations,
+        worktrees: cache.worktrees.clone(),
         workspaces: cache.workspaces.clone(),
         paths: Arc::clone(&cache.paths),
     };
@@ -1505,22 +1499,12 @@ fn spawn_focus_readback(
             let mut slot = Slot(runtime.clone(), true);
             let mut next = Some(first);
             while let Some(identity) = next.take() {
-                let result = live::confirm_pane_focus(connector.as_ref(), &identity.target_id);
-                if let Err(error) = &result {
-                    crate::diagnostic!(json!({
-                        "component": "pane_focus",
-                        "kind": "pane.focus.stream_readback_failed",
-                        "pane_id": identity.target_id,
-                        "serial": identity.serial,
-                        "connection_generation": identity.live_generation,
-                        "message": error.message(),
-                    }));
-                }
+                let answer = live::confirm_pane_focus(connector.as_ref(), &identity.target_id);
                 let Some(runtime) = runtime.upgrade() else {
                     return;
                 };
                 let (changed, following) = match runtime.lock() {
-                    Ok(mut guard) => guard.finish_pane_focus_readback(identity, result.is_ok()),
+                    Ok(mut guard) => guard.finish_pane_focus_readback(identity, answer),
                     Err(_) => return,
                 };
                 drop(runtime);
@@ -1666,19 +1650,32 @@ fn observe_labels(worker: &mut LabelWorker, replica: &SessionReplica) {
     worker.observe(&agents, Some(&live), Instant::now(), now_unix_ms);
 }
 
-/// Marks persisted read records before the first projection from a fresh
-/// connection. Restored topology and agent detection can arrive on different
-/// ticks, so the runtime keeps this bounded set until each pane is observed or
-/// the authoritative topology drops it.
-fn begin_local_read_record_reconciliation(context: &SessionSyncContext) -> bool {
+/// Starts the read axis's view of this connection before its first
+/// projection: the server reached may be the one lost or a restored one, and
+/// only the panes' marks tell (`agent_state::ReadConnection`).
+fn begin_read_connection(context: &SessionSyncContext) -> bool {
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
     let Ok(mut guard) = runtime.lock() else {
         return false;
     };
-    guard.begin_local_read_record_reconciliation();
+    guard.begin_read_connection(context.read_target());
     true
+}
+
+/// What the lineage writer reads from the runtime in one lock: the delivery
+/// ledger and the panes that should carry this connection's mark.
+fn lineage_inputs(
+    context: &SessionSyncContext,
+) -> Option<(
+    Arc<crate::delivery::ledger::Ledger>,
+    BTreeMap<String, String>,
+)> {
+    let runtime = context.runtime.upgrade()?;
+    let guard = runtime.lock().ok()?;
+    let ledger = guard.delivery_state().ok()?;
+    Some((ledger, guard.wanted_server_marks(context.read_target())))
 }
 
 /// Forgets the host's published panes before a fresh snapshot is asked for,
@@ -1726,15 +1723,15 @@ fn publish_failure(context: &SessionSyncContext, error: SessionFetchError) -> bo
     true
 }
 
-fn publish_provider_usage(
+fn publish_usage(
     context: &SessionSyncContext,
-    provider_usage: Vec<crate::model::ProviderUsageSnapshot>,
+    usage: Vec<crate::usage::model::AgentUsage>,
 ) -> bool {
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
     let changed = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_provider_usage(provider_usage),
+        Ok(mut guard) => guard.ingest_usage(usage),
         Err(_) => return false,
     };
     drop(runtime);
@@ -1749,52 +1746,44 @@ fn read_usage_activity(context: &SessionSyncContext) -> Option<crate::usage::Usa
     runtime.lock().ok().map(|guard| guard.usage_activity())
 }
 
-/// Whether background Memory analysis wants the weekly usage read.
+/// Whether the weekly usage read runs with no window attached: Memory analysis
+/// wants it, or the usage limit needs a fresh figure.
 fn read_memory_reads_usage(context: &SessionSyncContext) -> bool {
     context
         .runtime
         .upgrade()
-        .and_then(|runtime| runtime.lock().ok().map(|guard| guard.memory_reads_usage()))
+        .and_then(|runtime| {
+            runtime
+                .lock()
+                .ok()
+                .map(|guard| guard.reads_usage_headless())
+        })
         .unwrap_or(false)
 }
 
 /// Whether a window draws the snapshot; a gone runtime reads as attached,
 /// and the loop's own check ends the coordinator.
+/// Whether a renderer is attached, so the readers only a window uses run on
+/// this wake. With none, the worktree reader's Git watch is ended too
+/// (`WorktreeReader::rest`): nothing takes its reports while the window is
+/// closed, and the next read after a renderer is back starts it again.
+fn window_reads(
+    context: &SessionSyncContext,
+    worktree_reader: Option<&mut crate::worktrees::WorktreeReader>,
+) -> bool {
+    let attached = read_ui_attached(context);
+    if !attached && let Some(reader) = worktree_reader {
+        reader.rest();
+    }
+    attached
+}
+
 fn read_ui_attached(context: &SessionSyncContext) -> bool {
     context
         .runtime
         .upgrade()
         .and_then(|runtime| runtime.lock().ok().map(|guard| guard.ui_attached()))
         .unwrap_or(true)
-}
-
-/// Whether the Settings agents tab is on screen. `None` means the runtime is
-/// gone.
-fn read_settings_observed(context: &SessionSyncContext) -> Option<bool> {
-    let runtime = context.runtime.upgrade()?;
-    let observed = runtime.lock().ok()?.settings_observed();
-    drop(runtime);
-    Some(observed)
-}
-
-/// Hands the runtime the hook-install judgement, which was read on this
-/// thread rather than under the mutex.
-fn publish_hook_diagnosis(
-    context: &SessionSyncContext,
-    diagnosis: hide_agent_hooks::Diagnosis,
-) -> bool {
-    let Some(runtime) = context.runtime.upgrade() else {
-        return false;
-    };
-    let changed = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_hook_diagnosis(diagnosis),
-        Err(_) => return false,
-    };
-    drop(runtime);
-    if changed {
-        context.notifier.notify();
-    }
-    true
 }
 
 /// Reads what the worktree reader needs, holding the runtime mutex only for
@@ -2178,6 +2167,7 @@ mod worktree_observer_tests {
             );
             let precomputed = PrecomputedCatalog {
                 registrations: Vec::new(),
+                worktrees: runtime.worktree_catalog(),
                 workspaces: workspace::build_catalog(
                     &crate::node::test_node(),
                     &[],
@@ -2454,8 +2444,298 @@ mod focus_readback_order_tests {
         )
     }
 
+    struct HeldPaths {
+        started: std::sync::mpsc::Sender<()>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+        local: hide_node::Local,
+    }
+
+    impl crate::node_access::NodeLink for HeldPaths {
+        fn call(
+            &self,
+            call: hide_node_link::protocol::Call,
+            timeout: Duration,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            if matches!(call, hide_node_link::protocol::Call::PathFacts { .. }) {
+                self.started.send(()).unwrap();
+                self.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(30))
+                    .unwrap();
+            }
+            self.local.call(call, timeout)
+        }
+    }
+
+    #[test]
+    fn confirmed_layout_and_known_checkout_publish_while_path_facts_are_held() {
+        let first = SessionReplica::from_snapshot(&snapshot(&["p1", "p2"], "p1", false)).unwrap();
+        let runtime = runtime_with(&first);
+        let before = runtime
+            .lock()
+            .unwrap()
+            .snapshot()
+            .navigator
+            .workspaces
+            .clone();
+        let (started, asked) = channel();
+        let (release, held) = channel();
+        let herdr = FakeHerdr::start("held-path-topology", |method, _| {
+            panic!("unexpected {method}")
+        });
+        let mut context = context_for(&runtime, &herdr);
+        context.node = Some(Arc::new(HeldPaths {
+            started,
+            release: Mutex::new(held),
+            local: hide_node::Local::of_process(),
+        }));
+        let mut cache = CatalogState::default();
+        assert!(publish_replica(
+            &context,
+            &mut first.clone(),
+            &mut cache,
+            &mut None,
+            &mut None,
+            &mut Vec::new()
+        ));
+        asked.recv_timeout(Duration::from_secs(30)).unwrap();
+        let mut changed = SessionReplica::from_snapshot(&snapshot(&["p1"], "p1", true)).unwrap();
+        changed.state.panes[0].cwd = Some("/unverified/new-checkout".to_owned());
+        assert!(publish_replica(
+            &context,
+            &mut changed,
+            &mut cache,
+            &mut None,
+            &mut None,
+            &mut Vec::new()
+        ));
+        let (panes, focused, zoomed) = view(&runtime);
+        assert_eq!(panes, ["w1:p1"]);
+        assert_eq!(focused.as_deref(), Some("w1:p1"));
+        assert_eq!(zoomed.as_deref(), Some("w1:p1"));
+        let after = runtime
+            .lock()
+            .unwrap()
+            .snapshot()
+            .navigator
+            .workspaces
+            .clone();
+        assert_eq!(after[0].path, before[0].path);
+        assert_eq!(after[0].checkouts[0].path, before[0].checkouts[0].path);
+        assert!(
+            asked.try_recv().is_err(),
+            "only one read runs while inputs move"
+        );
+        release.send(()).unwrap();
+        // The owner cancels remaining chunks and joins this released read.
+        drop(cache);
+    }
+
     /// Herdr's answer to the focus readback: `pane.layout` waits for the test
     /// to say go, after telling it the question has arrived.
+    #[test]
+    fn path_reader_discards_old_connection_and_starts_only_latest_paths() {
+        let first = SessionReplica::from_snapshot(&snapshot(&["p1"], "p1", false)).unwrap();
+        let runtime = runtime_with(&first);
+        let herdr = FakeHerdr::start("path-reader-fence", |method, _| {
+            panic!("unexpected {method}")
+        });
+        let mut context = context_for(&runtime, &herdr);
+        let (started, asked) = channel();
+        let (release, held) = channel();
+        context.node = Some(Arc::new(HeldPaths {
+            started,
+            release: Mutex::new(held),
+            local: hide_node::Local::of_process(),
+        }));
+        let mut reader = path_facts::PathReader::new(&context, None);
+        let request = |connection, path: &str| path_facts::Request {
+            connection,
+            paths: BTreeSet::from([path.to_owned()]),
+        };
+        assert!(reader.poll(request(1, "/fixture/old")).is_none());
+        asked.recv_timeout(Duration::from_secs(30)).unwrap();
+        for path in ["/fixture/middle", "/fixture/latest"] {
+            assert!(reader.poll(request(2, path)).is_none());
+        }
+        assert!(asked.try_recv().is_err(), "only one active node call");
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            assert!(
+                reader.poll(request(2, "/fixture/latest")).is_none(),
+                "old facts are fenced"
+            );
+            if asked.try_recv().is_ok() {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
+        }
+        release.send(()).unwrap();
+        let facts = loop {
+            if let Some(facts) = reader.poll(request(2, "/fixture/latest")) {
+                break facts.unwrap();
+            }
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
+        };
+        assert!(facts.knows("/fixture/latest"));
+        assert!(!facts.knows("/fixture/old"));
+        assert!(!facts.knows("/fixture/middle"));
+        assert!(
+            asked.try_recv().is_err(),
+            "no unchanged read follows acceptance"
+        );
+    }
+
+    struct FailedPaths(&'static str);
+
+    impl crate::node_access::NodeLink for FailedPaths {
+        fn call(
+            &self,
+            call: hide_node_link::protocol::Call,
+            _timeout: Duration,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            assert!(matches!(
+                call,
+                hide_node_link::protocol::Call::PathFacts { .. }
+            ));
+            Err(crate::node_access::LinkError::Unknown(self.0.to_owned()))
+        }
+    }
+
+    #[test]
+    fn unchanged_or_failed_paths_keep_accepted_catalog_without_a_notification() {
+        for failure in [
+            Some("node disconnected during read"),
+            Some("node path facts deadline reached"),
+            None,
+        ] {
+            let mut replica =
+                SessionReplica::from_snapshot(&snapshot(&["p1"], "p1", false)).unwrap();
+            let runtime = runtime_with(&replica);
+            let before = runtime
+                .lock()
+                .unwrap()
+                .snapshot()
+                .navigator
+                .workspaces
+                .clone();
+            let herdr = FakeHerdr::start("failed-path-catalog", |method, _| {
+                panic!("unexpected {method}")
+            });
+            let mut context = context_for(&runtime, &herdr);
+            if let Some(failure) = failure {
+                context.node = Some(Arc::new(FailedPaths(failure)));
+            }
+            let (core, notifier) = crate::Core::for_runtime_fixture(Arc::clone(&runtime));
+            let callbacks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let witness = Arc::clone(&callbacks);
+            core.on_change(move || {
+                witness.fetch_add(1, Ordering::SeqCst);
+            });
+            context.notifier = notifier;
+            let (sender, ready) = channel();
+            let mut cache = CatalogState {
+                wake: Some(RepublishWaker {
+                    sender,
+                    pending: Arc::new(AtomicBool::new(false)),
+                }),
+                ..Default::default()
+            };
+            let publish = |replica: &mut SessionReplica, cache: &mut CatalogState| {
+                assert!(publish_replica(
+                    &context,
+                    replica,
+                    cache,
+                    &mut None,
+                    &mut None,
+                    &mut Vec::new()
+                ));
+            };
+            publish(&mut replica, &mut cache);
+            ready.recv_timeout(Duration::from_secs(30)).unwrap();
+            let revision = core.snapshot_delta_payload(0).unwrap().revision;
+            callbacks.store(0, Ordering::SeqCst);
+            // Consume the actual worker's refused/timed-out answer. The
+            // accepted catalog and small selection remain its caller's state.
+            publish(&mut replica, &mut cache);
+            let mut guard = runtime.lock().unwrap();
+            assert_eq!(guard.snapshot().navigator.workspaces, before);
+            assert_eq!(guard.snapshot().terminal.pane_id.as_deref(), Some("w1:p1"));
+            assert_eq!(guard.snapshot_delta_payload(revision).revision, revision);
+            assert_eq!(callbacks.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    struct HeldChunk {
+        started: std::sync::mpsc::Sender<usize>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl crate::node_access::NodeLink for HeldChunk {
+        fn call(
+            &self,
+            call: hide_node_link::protocol::Call,
+            _timeout: Duration,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            let hide_node_link::protocol::Call::PathFacts { paths } = call else {
+                panic!("unexpected node call");
+            };
+            self.started.send(paths.len()).unwrap();
+            if paths.len() == hide_node_link::catalog::PATH_FACTS_LIMIT {
+                self.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(30))
+                    .unwrap();
+            }
+            Ok(crate::node_access::LinkAnswer::Parsed(json!(
+                hide_node_link::catalog::PathFacts::default()
+            )))
+        }
+    }
+
+    #[test]
+    fn ending_catalog_owner_cancels_remaining_chunks_and_joins_the_read() {
+        let replica = SessionReplica::from_snapshot(&snapshot(&["p1"], "p1", false)).unwrap();
+        let runtime = runtime_with(&replica);
+        let herdr = FakeHerdr::start("chunked-path-owner", |method, _| {
+            panic!("unexpected {method}")
+        });
+        let mut context = context_for(&runtime, &herdr);
+        let (started, asked) = channel();
+        let (release, held) = channel();
+        context.node = Some(Arc::new(HeldChunk {
+            started,
+            release: Mutex::new(held),
+        }));
+        let mut reader = path_facts::PathReader::new(&context, None);
+        let limit = hide_node_link::catalog::PATH_FACTS_LIMIT;
+        assert!(
+            reader
+                .poll(path_facts::Request {
+                    connection: 1,
+                    paths: (0..limit + 1)
+                        .map(|n| format!("/fixture/chunk-{n:05}"))
+                        .collect(),
+                })
+                .is_none()
+        );
+        assert_eq!(asked.recv_timeout(Duration::from_secs(30)).unwrap(), limit);
+        // The first bounded node call may finish; there is no second call
+        // after the owner ends, and dropping the reader reclaims its worker.
+        drop(runtime);
+        release.send(()).unwrap();
+        drop(reader);
+        assert!(
+            asked.try_recv().is_err(),
+            "no remaining chunk escaped its owner"
+        );
+    }
+
     fn holding_herdr(
         focused: &'static str,
     ) -> (
@@ -2522,7 +2802,7 @@ mod focus_readback_order_tests {
             publish_replica(
                 &context,
                 &mut closed,
-                &mut None,
+                &mut CatalogState::default(),
                 &mut None,
                 &mut None,
                 &mut Vec::new(),
@@ -2570,7 +2850,7 @@ mod focus_readback_order_tests {
         assert!(publish_replica(
             &context,
             &mut moved,
-            &mut None,
+            &mut CatalogState::default(),
             &mut None,
             &mut None,
             &mut Vec::new()
@@ -3048,6 +3328,152 @@ mod pending_core_tests {
         assert!(matches!(read_github_request(&context), Some(None)));
         assert!(runtime.lock().unwrap().release_effects());
         assert!(matches!(read_github_request(&context), Some(Some(_))));
+    }
+}
+
+#[cfg(test)]
+mod window_reads_tests {
+    use super::*;
+    use crate::model::CoreOptions;
+    use hide_node_link::cleanup::RepositoryDirs;
+    use hide_node_link::protocol::Call;
+    use hide_node_link::worktrees::GitWatchReport;
+    use std::sync::mpsc::{Sender, channel};
+
+    /// A node whose every project is its own repository and whose Git watch
+    /// says it has started and is watching, then reports a heartbeat each
+    /// time the test ticks until the watch is stopped, and then says it ended.
+    struct WatchingNode {
+        started: Mutex<Sender<()>>,
+        tick: Mutex<std::sync::mpsc::Receiver<()>>,
+        ended: Mutex<Sender<()>>,
+    }
+
+    impl crate::node_access::NodeLink for WatchingNode {
+        fn call(
+            &self,
+            call: Call,
+            timeout: Duration,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            self.call_with_progress(call, timeout, &mut |_| true)
+        }
+
+        fn call_with_progress(
+            &self,
+            call: Call,
+            _timeout: Duration,
+            progress: &mut dyn FnMut(Value) -> bool,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            match call {
+                Call::Repository { path } => Ok(json!(RepositoryDirs {
+                    root: path.clone(),
+                    git_dir: format!("{path}/.git"),
+                    common_dir: format!("{path}/.git"),
+                })
+                .into()),
+                Call::GitWatch { .. } => {
+                    let _ = self.started.lock().unwrap().send(());
+                    let mut report = serde_json::to_value(GitWatchReport::Watching {
+                        unwatched: Vec::new(),
+                    })
+                    .unwrap();
+                    while progress(report) {
+                        if self.tick.lock().unwrap().recv().is_err() {
+                            break;
+                        }
+                        report = serde_json::to_value(GitWatchReport::Quiet).unwrap();
+                    }
+                    let _ = self.ended.lock().unwrap().send(());
+                    Ok(Value::Null.into())
+                }
+                _ => Err(crate::node_access::LinkError::Unknown(
+                    "not part of this fixture".to_owned(),
+                )),
+            }
+        }
+    }
+
+    /// The last renderer leaving, dispatched as the daemon sends it, ends the
+    /// node's Git watch on the coordinator's next wake; the first renderer
+    /// back starts it again on the next read.
+    #[test]
+    fn the_git_watch_ends_while_no_renderer_is_attached_and_starts_when_one_is() {
+        let options: CoreOptions = serde_json::from_value(json!({
+            "schema_version": crate::model::SCHEMA_VERSION,
+            "node_id": "test-node",
+            "app_state_path": ""
+        }))
+        .expect("workerless core options");
+        let runtime = Arc::new(Mutex::new(Runtime::new(
+            options,
+            crate::environment::EnvironmentReport {
+                statuses: Vec::new(),
+                home_path: None,
+                codex_home: None,
+            },
+            Arc::new(hide_node::Local::of_process()),
+            crate::node::test_devices(),
+        )));
+        let socket_path = std::env::temp_dir().join("hide-window-reads-unused.sock");
+        let context = SessionSyncContext::local(
+            &LiveContext {
+                socket_path: socket_path.clone(),
+                runtime: Arc::downgrade(&runtime),
+                notifier: ChangeNotifier::noop(),
+                api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
+                node: Arc::new(hide_node::Local::of_process()),
+            },
+            Arc::new(hide_node::Local::of_process()),
+        );
+        let (ended, watch_ended) = channel();
+        let (heartbeat, tick) = channel();
+        let (started, watch_started) = channel();
+        let node = Arc::new(WatchingNode {
+            started: Mutex::new(started),
+            tick: Mutex::new(tick),
+            ended: Mutex::new(ended),
+        });
+        let mut reader = crate::worktrees::WorktreeReader::new(node.clone());
+        // Dropped before the reader, so a watch still running at the end
+        // returns and the reader's end does not wait for it.
+        let heartbeat = heartbeat;
+        let request = crate::worktrees::WorktreeRequest {
+            projects: vec![crate::worktrees::WorktreeProjectRequest {
+                root_path: std::path::PathBuf::from("/a"),
+                bases: Default::default(),
+                base_override: None,
+                generation: 0,
+            }],
+            generation: 0,
+            removals: 0,
+        };
+        let attached = |attached: bool| {
+            let event = serde_json::to_vec(&json!({
+                "schema_version": 2, "kind": "ui_attached", "payload": {"attached": attached}
+            }))
+            .unwrap();
+            runtime.lock().unwrap().dispatch_json(&event);
+        };
+        assert!(window_reads(&context, Some(&mut reader)));
+        let _ = reader.read_if_due(request.clone());
+        // The watch call runs on a thread of its own.
+        watch_started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the first read starts the watch");
+
+        attached(false);
+        assert!(!window_reads(&context, Some(&mut reader)));
+        heartbeat.send(()).unwrap();
+        watch_ended
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the node's watch ended once no renderer was attached");
+
+        attached(true);
+        assert!(window_reads(&context, Some(&mut reader)));
+        let _ = reader.read_if_due(request);
+        watch_started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the watch starts again on the first read with a renderer back");
     }
 }
 

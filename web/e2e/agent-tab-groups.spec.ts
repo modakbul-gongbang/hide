@@ -198,6 +198,47 @@ test("the area layout and its divider ratio survive a hided restart", async ({ p
   } finally { group.stop(); }
 });
 
+test("a saved Workspace still reopens when its initial catalog arrives after the startup fallback", async ({ page }) => {
+  const group = await startGroups(page, "agent-groups-delayed-restore");
+  try {
+    await splitThirdRight(page, group);
+    const restored = await shape(page);
+    let deliver: ((message: string | Buffer) => void) | undefined;
+    const held: (string | Buffer)[] = [];
+    let holding = true;
+    await page.routeWebSocket(/\/ws$/, socket => {
+      const server = socket.connectToServer();
+      deliver = message => socket.send(message);
+      socket.onMessage(message => server.send(message));
+      server.onMessage(message => {
+        if (!holding) return socket.send(message);
+        if (held.length >= 256) throw new Error("restore fixture frame cap");
+        held.push(message);
+        if (typeof message !== "string") return;
+        const frame = JSON.parse(message);
+        if (frame.type !== "snapshot") return;
+        // The real first async-catalog frame: the saved choice still exists,
+        // Herdr is connected, but no confirmed catalog/View has arrived.
+        frame.payload.rest.navigator.workspaces = [];
+        frame.payload.rest.workspace_view = null;
+        frame.payload.rest.status.herdr.state = "connected";
+        socket.send(JSON.stringify(frame));
+      });
+    });
+    group.daemon = await group.daemon.restart();
+    await page.goto("about:blank");
+    await page.goto(`${group.daemon.origin}/?probe=1#token=${group.daemon.token}`);
+    const starting = page.locator('[data-center-screen="starting"]');
+    await expect(starting).toBeVisible();
+    await quietFor(page, 3500, "a pending saved restore outlives the existing 3-second bootstrap fallback");
+    await expect(starting).toBeVisible();
+    holding = false;
+    for (const message of held) deliver!(message);
+    await expect.poll(() => shape(page)).toEqual(restored);
+    await screenshot(page, "agent-groups-delayed-restored");
+  } finally { group.stop(); }
+});
+
 test("dropping onto another area's bar collapses the areas, and the other edges split again", async ({ page }) => {
   const group = await startGroups(page, "agent-groups-edges");
   try {
@@ -232,11 +273,11 @@ test("dropping onto another area's bar collapses the areas, and the other edges 
   } finally { group.stop(); }
 });
 
-test("a tab dragged onto the floating tools panel is refused and the areas stay as they were", async ({ page }) => {
+test("a tab dragged onto the lane over Agent Views is refused and the areas stay as they were", async ({ page }) => {
   const group = await startGroups(page, "agent-groups-panel");
   try {
-    await showTool(page, "explorer");
-    const panel = page.locator('[data-column="tools"]');
+    await showTool(page, "changes");
+    const panel = page.locator('[data-lane-frame="overlay"]');
     await expect(panel).toBeVisible();
     const floating = await box(panel);
     const beforePanelDrop = await shape(page);

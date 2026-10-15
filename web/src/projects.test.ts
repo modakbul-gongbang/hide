@@ -42,7 +42,7 @@ describe("projectRows", () => {
   it("draws pinned rows under their header, then the activity list with the device fold", () => {
     const rows = projectRows(
       [workspace("a", { pinned: true }), workspace("b"), workspace("c"), workspace("d")],
-      [{ device_id: "local", expanded: false, project_ids: ["c", "d"] }],
+      { inactive_projects: [{ device_id: "local", expanded: false, project_ids: ["c", "d"] }] },
       [],
     );
     expect(rows.map((row) => (row.kind === "workspace" ? `${row.kind}:${row.workspace.id}:${row.level}` : row.kind))).toEqual([
@@ -54,14 +54,31 @@ describe("projectRows", () => {
     ]);
     const expanded = projectRows(
       [workspace("b"), workspace("c")],
-      [{ device_id: "local", expanded: true, project_ids: ["c"] }],
+      { inactive_projects: [{ device_id: "local", expanded: true, project_ids: ["c"] }] },
       [],
     );
     expect(expanded.at(-1)).toMatchObject({ kind: "workspace", level: "child" });
   });
 
+  it("folds projects with no agents after the active ones and before Inactive projects (PRD sidebar-titlebar-refresh B1)", () => {
+    const folds = {
+      no_agent_projects: [{ device_id: "local", expanded: true, project_ids: ["c"] }],
+      inactive_projects: [{ device_id: "local", expanded: false, project_ids: ["d"] }],
+    };
+    const rows = projectRows([workspace("a", { pinned: true }), workspace("b"), workspace("c"), workspace("d")], folds, []);
+    expect(rows.map((row) => (row.kind === "workspace" ? `${row.workspace.id}:${row.level}` : row.kind === "header" ? row.section : row.kind === "raised" ? row.kind : `${row.kind}:${row.count}`))).toEqual([
+      "pinned",
+      "a:root",
+      "recent",
+      "b:root",
+      "no_agents:1",
+      "c:child",
+      "inactive_projects:1",
+    ]);
+  });
+
   it("omits the pinned header when nothing is pinned", () => {
-    const rows = projectRows([workspace("b")], [], []);
+    const rows = projectRows([workspace("b")], {}, []);
     expect(rows[0]).toEqual({ kind: "header", section: "recent", count: 1 });
   });
 
@@ -77,7 +94,7 @@ describe("projectRows", () => {
       // A pane no drawn project owns is not raised: it would have no tree to stay in.
       agent("elsewhere", "needs_you"),
     ];
-    const rows = projectRows([withPanes("a", ["done-1", "ask-1"], { pinned: true }), withPanes("b", ["ask-2", "run"])], [], listed);
+    const rows = projectRows([withPanes("a", ["done-1", "ask-1"], { pinned: true }), withPanes("b", ["ask-2", "run"])], {}, listed);
     const shape = rows.map((row) =>
       row.kind === "raised" ? `${row.group}:${row.agents.map(({ agent }) => agent.pane_id).join(",")}` : row.kind === "header" ? row.section : `${row.kind}:${row.kind === "workspace" ? row.workspace.id : ""}`,
     );
@@ -88,7 +105,7 @@ describe("projectRows", () => {
     expect(needsYou.agents.map(({ agent }) => agent.lineage_collapsed !== false)).toEqual([true, true]);
     expect(listed[1]!.agent.lineage_collapsed).toBe(false);
     // An empty group draws no section.
-    expect(projectRows([withPanes("b", ["run"])], [], listed).map((row) => row.kind)).toEqual(["header", "workspace"]);
+    expect(projectRows([withPanes("b", ["run"])], {}, listed).map((row) => row.kind)).toEqual(["header", "workspace"]);
   });
 
   it("draws the five latest Needs You and three latest Done, folding the rest until their group is opened", () => {
@@ -96,7 +113,7 @@ describe("projectRows", () => {
     const projects = [workspace("a", { checkouts: [{ id: "a-main", tabs: [{ id: "a-t", panes: panes.map((pane) => ({ id: pane })) }] } as unknown as Checkout] })];
     const listed = panes.map((pane) => ({ agent: legacyAgentRow({ pane_id: pane, id: pane, group: pane.startsWith("ask") ? "needs_you" : "done" }) as AgentRow, device: null }));
     const sections = (open: string[]) =>
-      projectRows(projects, [], listed, null, open).flatMap((row) =>
+      projectRows(projects, {}, listed, null, open).flatMap((row) =>
         row.kind === "raised" ? [{ group: row.group, drawn: row.agents.map(({ agent }) => agent.pane_id), more: row.more.map(({ agent }) => agent.pane_id), expanded: row.expanded }] : [],
       );
     expect(sections([])).toEqual([

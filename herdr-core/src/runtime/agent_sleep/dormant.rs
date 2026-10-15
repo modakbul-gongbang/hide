@@ -439,6 +439,8 @@ impl Runtime {
             return false;
         }
         self.snapshot.navigator.sleeping_sessions = rows;
+        // A project's sleeping fold and No agents membership read these rows.
+        self.refresh_inactive_groups();
         true
     }
 

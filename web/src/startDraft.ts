@@ -9,8 +9,13 @@ import { create } from "zustand";
 import type { ProviderKind } from "./agentPicker";
 import type { MessageKey } from "./i18n/catalogs";
 
-/** What an open names instead of what is in front: the first-run wizard's new project and its first agent (PRD first-run-onboarding D-15). */
-export type StartPreset = { projectId: string; kind: ProviderKind };
+/**
+ * What an open names instead of what is in front: the project to aim at, as
+ * the first-run wizard's new project (PRD first-run-onboarding D-15) or a
+ * project row's `+` (PRD sidebar-titlebar-refresh D-04), and the agent kind
+ * when the surface chose one, else the remembered one.
+ */
+export type StartPreset = { projectId: string; kind?: ProviderKind };
 
 /** Why a start did not go: the core's own sentence, shown as sent, or a catalog key the panel words in the operator's language. */
 export type StartFailure = { message: string } | { key: MessageKey };
@@ -31,6 +36,7 @@ type StartPanelState = {
   preset: StartPreset | null;
   /** The id of the request whose answer the panel waits for. */
   request: string | null;
+  requestKind: "agent_start" | "worktree_create";
   /** Why the last start did not go, shown inside the panel. */
   failure: StartFailure | null;
   /** The text the request in flight carries. */
@@ -41,7 +47,7 @@ type StartPanelState = {
   close: () => void;
   setText: (text: string) => void;
   setTarget: (key: string) => void;
-  begin: (requestId: string) => void;
+  begin: (requestId: string, kind?: "agent_start" | "worktree_create") => void;
   fail: (failure: StartFailure) => void;
   /** The start went: the text is spent and the panel is done; `taskId` names an agent still starting. */
   finish: (taskId: number | null) => void;
@@ -58,6 +64,7 @@ export const useStartPanel = create<StartPanelState>((set) => ({
   overSettings: false,
   preset: null,
   request: null,
+  requestKind: "agent_start",
   failure: null,
   sent: "",
   spent: null,
@@ -66,7 +73,7 @@ export const useStartPanel = create<StartPanelState>((set) => ({
   close: () => set({ isOpen: false }),
   setText: (text) => set({ text, failure: null }),
   setTarget: (target) => set({ target }),
-  begin: (request) => set((s) => ({ request, failure: null, sent: s.text })),
+  begin: (request, requestKind = "agent_start") => set((s) => ({ request, requestKind, failure: null, sent: s.text })),
   fail: (failure) => set({ request: null, failure }),
   finish: (taskId) => set((s) => ({ isOpen: false, text: "", request: null, failure: null, spent: taskId === null ? null : { taskId, text: s.sent } })),
   restore: (failure) => set((s) => (s.spent ? { text: s.text === "" ? s.spent.text : s.text, failure, spent: null } : {})),

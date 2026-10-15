@@ -35,7 +35,7 @@ use crate::program::Program;
 use crate::runner::{self, Environment, Run, Spec};
 use crate::{
     AiBackend, AiError, AiRequest, AiResponse, AiUsage, Availability, CancelToken, ModelCatalog,
-    ProviderId,
+    ModelTokens, ProviderId,
 };
 
 /// The default for background features. With thinking off (see
@@ -487,7 +487,7 @@ fn classify(frame: &Value, run: &Run) -> AiError {
             500.. => AiError::Transient(format!("claude_api_{status}")),
             // A refused request is settled by its input, like a schema the
             // API rejects; asking again with the same input repeats it.
-            _ => AiError::InvalidOutput(format!("claude_api_{status}")),
+            _ => AiError::Rejected(format!("claude_api_{status}")),
         };
     }
     let terminal_reason = frame.get("terminal_reason").and_then(Value::as_str);
@@ -495,7 +495,7 @@ fn classify(frame: &Value, run: &Run) -> AiError {
         terminal_reason
     {
         // The transcript did not fit. Deterministic in the input.
-        return AiError::InvalidOutput(format!("claude_context_limit:{reason}"));
+        return AiError::Rejected(format!("claude_context_limit:{reason}"));
     }
     match frame.get("subtype").and_then(Value::as_str) {
         Some("error_max_structured_output_retries") => {
@@ -523,7 +523,101 @@ fn usage(frame: &Value) -> AiUsage {
         output_tokens: usage
             .and_then(|usage| usage.get("output_tokens"))
             .and_then(Value::as_u64),
+        models: ledger_tokens(frame).unwrap_or_default(),
     }
+}
+
+/// The five disjoint counts of one result frame, or of one model in it.
+#[derive(Clone, Copy, Default)]
+struct Counts {
+    input: u64,
+    output: u64,
+    cache_read: u64,
+    cache_write: u64,
+    cache_write_1h: u64,
+}
+
+impl Counts {
+    fn plus(self, other: Self) -> Option<Self> {
+        Some(Self {
+            input: self.input.checked_add(other.input)?,
+            output: self.output.checked_add(other.output)?,
+            cache_read: self.cache_read.checked_add(other.cache_read)?,
+            cache_write: self.cache_write.checked_add(other.cache_write)?,
+            cache_write_1h: 0,
+        })
+    }
+
+    fn same_as(self, other: Self) -> bool {
+        (self.input, self.output, self.cache_read, self.cache_write)
+            == (
+                other.input,
+                other.output,
+                other.cache_read,
+                other.cache_write,
+            )
+    }
+
+    fn of(self, model: &str, lower_bound: bool) -> ModelTokens {
+        ModelTokens {
+            model: model.to_owned(),
+            input: self.input,
+            output: self.output,
+            cache_read: self.cache_read,
+            cache_write: self.cache_write,
+            cache_write_1h: self.cache_write_1h,
+            reasoning: None,
+            lower_bound,
+        }
+    }
+}
+
+/// What the usage ledger counts from a result frame, or `None` when the frame
+/// does not give it (D-11): `usage` is the whole call and carries the one-hour
+/// cache split, `modelUsage` names the models. One model takes `usage` under
+/// that model's name. Several take their own `modelUsage` values, which must
+/// add up to `usage` in every category; a call with one-hour writes cannot say
+/// which model made them, so those models are priced as a lower bound.
+/// Required counts are input and output; a missing cache count is zero.
+fn ledger_tokens(frame: &Value) -> Option<Vec<ModelTokens>> {
+    let usage = frame.get("usage")?;
+    let by_model = frame
+        .get("modelUsage")?
+        .as_object()
+        .filter(|models| !models.is_empty())?;
+    let count = |value: &Value, key: &str| value.get(key).and_then(Value::as_u64);
+    let whole = Counts {
+        input: count(usage, "input_tokens")?,
+        output: count(usage, "output_tokens")?,
+        cache_read: count(usage, "cache_read_input_tokens").unwrap_or(0),
+        cache_write: count(usage, "cache_creation_input_tokens").unwrap_or(0),
+        cache_write_1h: usage
+            .pointer("/cache_creation/ephemeral_1h_input_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+    };
+    if whole.cache_write_1h > whole.cache_write {
+        return None;
+    }
+    if by_model.len() == 1 {
+        let (model, _) = by_model.iter().next()?;
+        return Some(vec![whole.of(model, false)]);
+    }
+    let lower_bound = whole.cache_write_1h > 0;
+    let mut sum = Counts::default();
+    let mut models = Vec::with_capacity(by_model.len());
+    for (model, value) in by_model {
+        let part = Counts {
+            input: count(value, "inputTokens")?,
+            output: count(value, "outputTokens")?,
+            cache_read: count(value, "cacheReadInputTokens").unwrap_or(0),
+            cache_write: count(value, "cacheCreationInputTokens").unwrap_or(0),
+            cache_write_1h: 0,
+        };
+        sum = sum.plus(part)?;
+        models.push(part.of(model, lower_bound));
+    }
+    sum.same_as(whole).then_some(models)
 }
 
 #[cfg(test)]
@@ -633,6 +727,102 @@ mod tests {
         ));
     }
 
+    fn ledger(frame: &Value) -> Vec<ModelTokens> {
+        usage(frame).models
+    }
+
+    #[test]
+    fn one_model_takes_the_whole_calls_usage_under_its_name() {
+        let frame = frame(json!({
+            "usage": {"input_tokens": 2, "output_tokens": 7, "cache_creation_input_tokens": 900,
+                      "cache_read_input_tokens": 100,
+                      "cache_creation": {"ephemeral_1h_input_tokens": 300, "ephemeral_5m_input_tokens": 600}},
+            "modelUsage": {"claude-sonnet-4-5": {"inputTokens": 2, "outputTokens": 7}}
+        }));
+        let [tokens] = ledger(&frame).try_into().unwrap();
+        assert_eq!(tokens.model, "claude-sonnet-4-5");
+        assert_eq!(
+            (
+                tokens.input,
+                tokens.output,
+                tokens.cache_read,
+                tokens.cache_write,
+                tokens.cache_write_1h
+            ),
+            (2, 7, 100, 900, 300)
+        );
+        assert!(!tokens.lower_bound);
+    }
+
+    #[test]
+    fn several_models_take_their_own_values_when_they_add_up_to_the_call() {
+        let frame = frame(json!({
+            "usage": {"input_tokens": 30, "output_tokens": 9, "cache_creation_input_tokens": 50,
+                      "cache_read_input_tokens": 70,
+                      "cache_creation": {"ephemeral_1h_input_tokens": 10}},
+            "modelUsage": {
+                "claude-haiku-4-5": {"inputTokens": 10, "outputTokens": 4, "cacheReadInputTokens": 70, "cacheCreationInputTokens": 0},
+                "claude-sonnet-4-5": {"inputTokens": 20, "outputTokens": 5, "cacheCreationInputTokens": 50}
+            }
+        }));
+        let models = ledger(&frame);
+        assert_eq!(models.len(), 2);
+        let sonnet = models
+            .iter()
+            .find(|m| m.model == "claude-sonnet-4-5")
+            .unwrap();
+        assert_eq!(
+            (
+                sonnet.input,
+                sonnet.output,
+                sonnet.cache_read,
+                sonnet.cache_write
+            ),
+            (20, 5, 0, 50)
+        );
+        // Which model made the one-hour writes is not said.
+        assert!(
+            models
+                .iter()
+                .all(|m| m.cache_write_1h == 0 && m.lower_bound)
+        );
+    }
+
+    #[test]
+    fn several_models_without_one_hour_writes_are_exact() {
+        let frame = frame(json!({
+            "usage": {"input_tokens": 3, "output_tokens": 3},
+            "modelUsage": {"a": {"inputTokens": 1, "outputTokens": 1}, "b": {"inputTokens": 2, "outputTokens": 2}}
+        }));
+        assert!(ledger(&frame).iter().all(|m| !m.lower_bound));
+        assert_eq!(ledger(&frame).len(), 2);
+    }
+
+    #[test]
+    fn a_frame_whose_models_disagree_with_its_usage_is_an_unknown_call() {
+        let disagree = frame(json!({
+            "usage": {"input_tokens": 3, "output_tokens": 4},
+            "modelUsage": {"a": {"inputTokens": 1, "outputTokens": 1}, "b": {"inputTokens": 2, "outputTokens": 2}}
+        }));
+        assert!(ledger(&disagree).is_empty());
+    }
+
+    #[test]
+    fn a_frame_without_the_required_counts_or_models_is_an_unknown_call() {
+        for broken in [
+            json!({"usage": {"output_tokens": 1}, "modelUsage": {"a": {}}}),
+            json!({"usage": {"input_tokens": 1}, "modelUsage": {"a": {}}}),
+            json!({"usage": {"input_tokens": 1, "output_tokens": 1}, "modelUsage": {}}),
+            json!({"usage": {"input_tokens": 1, "output_tokens": 1}}),
+            json!({"modelUsage": {"a": {}}}),
+            json!({"usage": {"input_tokens": 1, "output_tokens": 1, "cache_creation_input_tokens": 5,
+                             "cache_creation": {"ephemeral_1h_input_tokens": 6}},
+                   "modelUsage": {"a": {}}}),
+        ] {
+            assert!(ledger(&frame(broken.clone())).is_empty(), "{broken}");
+        }
+    }
+
     #[test]
     fn output_without_a_result_frame_is_completion_unknown() {
         for stdout in ["", "not json", r#"{"type":"system","subtype":"init"}"#] {
@@ -660,7 +850,7 @@ mod tests {
             (429, AiError::UsageLimited { retry_after: None }),
             (500, AiError::Transient("claude_api_500".to_owned())),
             (529, AiError::Transient("claude_api_529".to_owned())),
-            (400, AiError::InvalidOutput("claude_api_400".to_owned())),
+            (400, AiError::Rejected("claude_api_400".to_owned())),
         ];
         for (status, expected) in cases {
             let failed = frame(json!({
@@ -690,7 +880,7 @@ mod tests {
         for reason in ["blocking_limit", "prompt_too_long", "rapid_refill_breaker"] {
             let limited = frame(json!({"is_error": true, "terminal_reason": reason}));
             match answer(&run_of(&limited, 1)) {
-                Err(AiError::InvalidOutput(detail)) => {
+                Err(AiError::Rejected(detail)) => {
                     assert!(detail.contains(reason), "{detail}");
                 }
                 other => panic!("{reason} gave {other:?}"),

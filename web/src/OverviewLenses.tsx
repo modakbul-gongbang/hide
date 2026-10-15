@@ -1,6 +1,7 @@
 import { ChevronDownIcon, ChevronRightIcon, TriangleAlertIcon } from "lucide-react";
 import { type MouseEvent, type ReactNode } from "react";
 import { AgentMark } from "./AgentMark";
+import { agentProductName } from "./agentAdapters";
 import { markTone } from "./agentRow";
 import { CheckoutCardHint } from "./components/pr-card";
 import { Elapsed } from "./components/elapsed";
@@ -38,8 +39,8 @@ export type LensHandlers = {
   openIssue: (project: Workspace, task: Task) => void;
   /** ⌘-click anywhere, a PR chip's included: the page on GitHub. */
   openGitHub: (url: string, deviceId: string) => void;
-  /** A PR chip: its row on the Project's PRs tab (PRD overview-lenses-prs B21). */
-  openPullRequestRow: (project: Workspace, number: number) => void;
+  /** A PR chip: its card in File Views (PRD work-tab-pr-lens D-28). */
+  openPrCard: (project: Workspace, number: number) => void;
   /** `Clean up`: the Delete worktree dialog for that worktree. */
   cleanup: (project: Workspace, checkout: Checkout) => void;
   /** A fold line, by `foldId`: the line of one project opens or closes in place. */
@@ -56,7 +57,7 @@ export function lensHandlers(actions: Actions, page: Pick<LensHandlers, "openIss
     openCheckout: (project, checkout) => actions.openWorkspace(project.device_id, checkout.workspace_id, checkout.id),
     openAgent: actions.openAgent,
     openGitHub: (url, deviceId) => actions.openPullRequest(url, deviceId, true),
-    openPullRequestRow: (project, number) => actions.openPullRequestRow(project.id, number),
+    openPrCard: (project, number) => actions.openPrCard(project.id, number),
     cleanup: (project, checkout) => useUiStore.getState().setWorkspaceDialog({ kind: "delete_worktree", workspaceId: project.id, checkoutId: checkout.id }),
   };
 }
@@ -204,7 +205,7 @@ export function IssueChip({ project, task, handlers, now }: { project: Workspace
 }
 
 /**
- * A checkout's pull request as its PR mark, on a lens or an issue card; it opens the pull request's row on the PRs tab, ⌘-click the pull
+ * A checkout's pull request as its PR mark, on a lens or an issue card; it opens the pull request's card, ⌘-click the pull
  * request on GitHub, and its half-second card is the checkout's PR card
  * (B17, B24; overview-lenses-issues B8, B9; overview-lenses-prs B21).
  */
@@ -254,7 +255,7 @@ export type PopoverContext = { checkout: string; tab: string | null; peers: read
 
 /**
  * Everything an agent last said, after a half-second rest on `children`
- * (D-50): on its line, or on its mark in a PRs tab row (overview-lenses-prs
+ * (D-50): on its line, or on its mark in a PRs lens row (overview-lenses-prs
  * B7). `fallback` is what is said when the agent has no message.
  */
 export function AgentMessagePopover({ agent, place, fallback, tone, onOpen, context, children }: { agent: AgentRow; place: string; fallback: string; tone: string; onOpen: () => void; context?: PopoverContext; children: ReactNode }) {
@@ -272,6 +273,7 @@ export function AgentMessagePopover({ agent, place, fallback, tone, onOpen, cont
             <StatusMark symbol={agent.symbol} className={markTone(agent)} />
             <AgentMark kind={agent.agent_kind} />
             <span className="min-w-0 flex-1 truncate">{agent.identity_label}</span>
+            <span className="shrink-0 text-caption font-normal text-muted-foreground">{agentProductName(agent.agent_kind)}</span>
             <Elapsed since={agent.changed_at_unix_ms} className="font-mono text-caption text-muted-foreground" />
           </span>
           <p className={cn("whitespace-pre-wrap break-words text-caption", tone)}>{message}</p>

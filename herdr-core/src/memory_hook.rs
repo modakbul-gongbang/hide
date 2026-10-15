@@ -7,8 +7,7 @@
 //! sends names it. The store path and the node's link are taken under the
 //! lock as owned values ([`Scope`]); the node call, the read-only open, the
 //! retrieval and the receipt tag run off it, inside the caller's deadline.
-//! Only the core's own node and a node that dials in have Memory: a device the
-//! core dials keeps none, as before (Q20).
+//! Every linked device uses this store; no Memory database is copied to it.
 
 use std::path::PathBuf;
 use std::sync::Arc;

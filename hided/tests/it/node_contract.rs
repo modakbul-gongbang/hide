@@ -102,12 +102,28 @@ impl Events {
 impl hide_node::ssh::PaneEvents for Events {
     fn event(&self, _node: &str, link: &hide_node::ssh::RemoteHost, event: NodeEvent) {
         if let NodeEvent::PaneProof {
-            request, one_shot, ..
+            request,
+            one_shot,
+            hook,
+            ..
         } = &event
         {
-            let answer = if *one_shot {
+            let answer = if let Some(hook) = hook
+                && !hook.command.one_shot()
+            {
+                ProofAnswer::WorkspaceInfo {
+                    token: TOKEN.to_owned(),
+                    issued_new: true,
+                    answer: json!({"ok":true,"request_id":hook.request_id,"result":{"context":{"device_id":"fixture"},"capabilities":["workspace.info"]}}),
+                }
+            } else if let Some(hook) = hook {
+                ProofAnswer::Hook {
+                    answer: json!({"ok":true,"request_id":hook.request_id,"result":{"context":null,"outcome":"empty"}}),
+                }
+            } else if *one_shot {
                 ProofAnswer::Refused {
                     reason: "pane_changed".to_owned(),
+                    next_action: "Reconnect the pane and retry".to_owned(),
                 }
             } else {
                 ProofAnswer::Issued {
@@ -751,18 +767,18 @@ fn a_saturated_core_answers_busy_over_ssh_and_keeps_its_reader_usable() {
     };
     assert_eq!(
         read(&mut overflow),
-        json!({"ok": false, "reason": "bridge_busy"})
+        json!({"ok": false, "reason": "bridge_busy", "next_action": "Reconnect the pane and retry"})
     );
     for reader in &mut waiting {
         assert_eq!(
             read(reader),
-            json!({"ok": false, "reason": "hide_unavailable"})
+            json!({"ok": false, "reason": "hide_unavailable", "next_action": "Reconnect the pane and retry"})
         );
     }
     assert!(links[2].call(Call::Hello, TIMEOUT).is_ok());
     assert_eq!(
         read(&mut request(&sockets[2], 33)),
-        json!({"ok": false, "reason": "hide_unavailable"})
+        json!({"ok": false, "reason": "hide_unavailable", "next_action": "Reconnect the pane and retry"})
     );
     assert_eq!(device.ssh.accepted(), 1);
     for link in &links {
@@ -837,6 +853,7 @@ fn contract(link: &dyn NodeLink, project: &Path) -> Vec<Value> {
             path,
             bases: BTreeMap::new(),
             base_override: None,
+            reuse_unchanged: false,
         },
         Call::HookDiagnosis,
     ];
@@ -1123,7 +1140,10 @@ fn a_device_s_pane_socket_lives_with_its_link() {
     let mut answer = String::new();
     BufReader::new(&stream).read_line(&mut answer).unwrap();
     let answer: Value = serde_json::from_str(&answer).unwrap();
-    assert_eq!(answer, json!({"ok": false, "reason": "pane_unavailable"}));
+    assert_eq!(
+        answer,
+        json!({"ok": false, "reason": "pane_unavailable", "next_action": "Reconnect the pane and retry"})
+    );
     device.link.close("contract");
     gone_within(socket, TIMEOUT);
     assert!(
@@ -1182,16 +1202,25 @@ fn a_device_pane_s_proof_crosses_the_link_and_its_refusals_are_reported() {
     // Refused by the core: the caller reads its reason, and the node
     // reports nothing, since the core records what it refused.
     let changed = ask(socket, PROVED_PANE, 'b', true);
-    assert_eq!(changed, json!({"ok": false, "reason": "pane_changed"}));
+    assert_eq!(
+        changed,
+        json!({"ok": false, "reason": "pane_changed", "next_action": "Reconnect the pane and retry"})
+    );
     // Refused by the node: a pane its Herdr does not know.
     let unknown = ask(socket, "w1:p1", 'c', false);
-    assert_eq!(unknown, json!({"ok": false, "reason": "pane_unavailable"}));
+    assert_eq!(
+        unknown,
+        json!({"ok": false, "reason": "pane_unavailable", "next_action": "Reconnect the pane and retry"})
+    );
     // At the cap: sixteen callers that never ask hold every place.
     let waiting = (0..16)
         .map(|_| UnixStream::connect(socket).unwrap())
         .collect::<Vec<_>>();
     let busy = ask(socket, PROVED_PANE, 'd', false);
-    assert_eq!(busy, json!({"ok": false, "reason": "bridge_busy"}));
+    assert_eq!(
+        busy,
+        json!({"ok": false, "reason": "bridge_busy", "next_action": "Reconnect the pane and retry"})
+    );
     drop(waiting);
     let refusals = |heard: &[NodeEvent]| {
         heard
@@ -1216,4 +1245,247 @@ fn a_device_pane_s_proof_crosses_the_link_and_its_refusals_are_reported() {
     device.link.close("contract");
     gone_within(&reference, TIMEOUT);
     assert!(!reference.exists(), "a reference outlived its link");
+}
+
+/// Pane events that issue a credential for a one-shot proof too, as the core
+/// does for a pane it resolves, and hear everything else as [`Events`].
+#[derive(Default)]
+struct IssuingEvents(Events);
+
+/// The one-shot credential [`IssuingEvents`] issues.
+const ONE_SHOT_TOKEN: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
+
+impl hide_node::ssh::PaneEvents for IssuingEvents {
+    fn event(&self, node: &str, link: &hide_node::ssh::RemoteHost, event: NodeEvent) {
+        let NodeEvent::PaneProof {
+            request,
+            one_shot: true,
+            ..
+        } = &event
+        else {
+            return self.0.event(node, link, event);
+        };
+        let (link, request) = (link.clone(), *request);
+        std::thread::spawn(move || {
+            let answer = ProofAnswer::Issued {
+                token: ONE_SHOT_TOKEN.to_owned(),
+                issued_new: true,
+            };
+            link.call(Call::PaneProofAnswer { request, answer }, TIMEOUT)
+                .unwrap();
+        });
+        self.0.heard.lock().unwrap().push(event);
+        self.0.arrived.notify_all();
+    }
+
+    fn closed(&self, node: &str, link: &hide_node::ssh::RemoteHost) {
+        self.0.closed(node, link);
+    }
+}
+
+/// A stream opens naming its caller when the caller holds a one-shot
+/// credential the device's node issued for a pane, with that pane's
+/// identity as the node reads it then, so the core need not ask the node
+/// again. A lasting credential names its token in the local prelude, but
+/// the node still proves the peer against the pane it issued that token for.
+#[test]
+fn a_stream_opened_by_a_one_shot_holder_names_its_pane() {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+    let events = Arc::new(IssuingEvents::default());
+    let device = Device::start_with_pane_events(Some(events.clone()));
+    let sockets = pane_sockets(&device.state);
+    assert_eq!(sockets.len(), 1, "{sockets:?}");
+    let socket = &sockets[0];
+    let open = |count: usize, token: Option<&str>| {
+        let mut stream = UnixStream::connect(socket).unwrap();
+        writeln!(stream, "{}", json!({"stream": true, "token": token})).unwrap();
+        let heard = events.0.heard_until(|heard| {
+            heard
+                .iter()
+                .filter(|event| matches!(event, NodeEvent::StreamOpen { .. }))
+                .count()
+                >= count
+        });
+        let opened = heard
+            .into_iter()
+            .filter_map(|event| match event {
+                NodeEvent::StreamOpen { caller, .. } => Some(caller),
+                _ => None,
+            })
+            .nth(count - 1)
+            .expect("the stream opened");
+        drop(stream);
+        opened
+    };
+
+    assert_eq!(ask(socket, PROVED_PANE, 'a', false)["ok"], true);
+    assert_eq!(open(1, None), None);
+    assert_eq!(open(2, Some("unknown")), None);
+    let persistent = open(3, Some(TOKEN)).expect("a persistent reference proves its peer too");
+    assert_eq!(persistent.pane_id, PROVED_PANE);
+    assert_eq!(persistent.identity.shell_pid, std::process::id() as i32);
+
+    let issued = ask(socket, PROVED_PANE, 'b', true);
+    assert_eq!(issued["ok"], true, "{issued}");
+    let proved = events
+        .0
+        .heard
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|event| match event {
+            NodeEvent::PaneProof {
+                identity,
+                one_shot: true,
+                ..
+            } => Some(identity.clone()),
+            _ => None,
+        })
+        .expect("the one-shot proof");
+    assert_eq!(
+        open(4, None),
+        Some(hide_node_link::panes::StreamCaller {
+            pane_id: PROVED_PANE.to_owned(),
+            identity: proved,
+        })
+    );
+}
+
+/// The socket proves a hook's caller before forwarding the typed command,
+/// answers that command once, and leaves no reusable reference behind.
+#[test]
+fn a_hook_proof_answers_once_and_never_hands_out_a_reference() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+    let device = Device::start();
+    let sockets = pane_sockets(&device.state);
+    let socket = &sockets[0];
+    let request = json!({"pane_id":PROVED_PANE,"nonce":"ab".repeat(16),"one_shot":true,"hook":{
+        "request_id":"hook-1","token":null,"command":{"kind":"memory","event":"SessionStart","runtime":"claude","session":"session"}
+    }});
+    let mut stream = UnixStream::connect(socket).unwrap();
+    stream.set_read_timeout(Some(TIMEOUT)).unwrap();
+    writeln!(stream, "{request}").unwrap();
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    let answer: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(answer["request_id"], "hook-1");
+    assert_eq!(answer["ok"], true);
+    assert!(answer.get("reference").is_none());
+    assert!(answer.get("token").is_none());
+    line.clear();
+    assert_eq!(
+        reader.read_line(&mut line).unwrap(),
+        0,
+        "one socket answers only one hook"
+    );
+    assert!(
+        !socket
+            .parent()
+            .unwrap()
+            .join(format!("{}.json", "ab".repeat(16)))
+            .exists()
+    );
+    let proofs = device.events.heard_until(|events| {
+        events
+            .iter()
+            .any(|event| matches!(event, NodeEvent::PaneProof { hook: Some(_), .. }))
+    });
+    assert!(proofs.iter().any(|event| matches!(event, NodeEvent::PaneProof { pane_id, identity, one_shot: true, hook: Some(_), .. } if pane_id == PROVED_PANE && identity.terminal_id == "t-proved")));
+    for invalid in [
+        json!({"kind":"workspace_action","command":{"type":"close_pane"}}),
+        json!({"kind":"letter_confirm","ids":["letter-1"]}),
+    ] {
+        let mut request = request.clone();
+        request["hook"]["command"] = invalid;
+        let mut stream = UnixStream::connect(socket).unwrap();
+        stream.set_read_timeout(Some(TIMEOUT)).unwrap();
+        writeln!(stream, "{request}").unwrap();
+        let mut answer = String::new();
+        BufReader::new(stream).read_line(&mut answer).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&answer).unwrap()["reason"],
+            "invalid_request"
+        );
+    }
+    let mut other_pane = request.clone();
+    other_pane["pane_id"] = json!("w1:p999");
+    let mut stream = UnixStream::connect(socket).unwrap();
+    stream.set_read_timeout(Some(TIMEOUT)).unwrap();
+    writeln!(stream, "{other_pane}").unwrap();
+    let mut answer = String::new();
+    BufReader::new(stream).read_line(&mut answer).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&answer).unwrap()["ok"], false);
+    assert!(!device.events.heard.lock().unwrap().iter().any(|event| matches!(event, NodeEvent::PaneProof { pane_id, hook: Some(_), .. } if pane_id == "w1:p999")));
+}
+
+#[test]
+fn workspace_guidance_gets_one_reusable_reference_and_rejects_writes() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+    let device = Device::start();
+    let sockets = pane_sockets(&device.state);
+    let ask = |request: &Value| {
+        let mut stream = UnixStream::connect(&sockets[0]).unwrap();
+        stream.set_read_timeout(Some(TIMEOUT)).unwrap();
+        writeln!(stream, "{request}").unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let answer: Value = serde_json::from_str(&line).unwrap();
+        line.clear();
+        assert_eq!(reader.read_line(&mut line).unwrap(), 0);
+        answer
+    };
+    let request = json!({"pane_id":PROVED_PANE,"nonce":"cd".repeat(16),"one_shot":false,"hook":{
+        "request_id":"guidance","token":null,"command":{"kind":"workspace_info"}
+    }});
+    let answer = ask(&request);
+    assert_eq!(answer["ok"], true);
+    assert_eq!(answer["result"]["capabilities"], json!(["workspace.info"]));
+    assert!(answer.get("token").is_none());
+    let reference = std::path::PathBuf::from(answer["reference"].as_str().unwrap());
+    assert!(reference.is_file());
+    assert!(reference.with_extension("claimed").is_file());
+    let mut repeated = request.clone();
+    repeated["nonce"] = json!("de".repeat(16));
+    assert_eq!(ask(&repeated)["reference"], answer["reference"]);
+    for invalid in [
+        json!({"kind":"workspace_info","command":{"type":"close_pane"}}),
+        json!({"kind":"workspace_action","command":{"type":"close_pane"}}),
+        json!({"kind":"letter_confirm","ids":["letter-1"]}),
+    ] {
+        let mut refused = request.clone();
+        refused["hook"]["command"] = invalid;
+        assert_eq!(ask(&refused)["reason"], "invalid_request");
+    }
+    let mut wrong_lifetime = request.clone();
+    wrong_lifetime["one_shot"] = json!(true);
+    assert_eq!(ask(&wrong_lifetime)["reason"], "invalid_request");
+    let mut other_pane = request;
+    other_pane["pane_id"] = json!("w1:p999");
+    assert_eq!(ask(&other_pane)["ok"], false);
+    assert!(
+        reference.is_file(),
+        "a refusal cannot revoke the previous reference"
+    );
+    let accepted: bool = call_as(
+        device.link.as_ref(),
+        Call::PaneProofAnswer {
+            request: u64::MAX,
+            answer: ProofAnswer::WorkspaceInfo {
+                token: TOKEN.to_owned(),
+                issued_new: false,
+                answer: json!({"ok":true}),
+            },
+        },
+        TIMEOUT,
+    )
+    .unwrap();
+    assert!(
+        !accepted,
+        "a late answer cannot claim an undelivered reference"
+    );
 }

@@ -6,7 +6,7 @@ import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace, screenshot, showExplorer } from "./wire";
 import { chord } from "./chords";
 
-test("close follows the keyboard and the panel never renders an empty surface", async ({ page }) => {
+test("close follows the keyboard and the lane never renders an empty surface", async ({ page }) => {
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 1920, height: 1000 });
   const herdr = await startHerdr();
@@ -18,8 +18,8 @@ test("close follows the keyboard and the panel never renders an empty surface", 
     await enterWorkspace(page);
     await showExplorer(page);
     const panes = page.locator("[data-pane-view]");
-    const panel = page.locator('[data-column="views"]');
-    const explorer = page.locator('[data-tool="explorer"]');
+    const screen = page.locator("[data-workspace-screen]");
+    const tree = page.locator("[data-lane-tree]");
     const file = page.locator('[data-explorer-row$="/notes.md"]');
     await file.click();
     const editor = page.locator("[data-editor-body] .cm-content");
@@ -27,63 +27,40 @@ test("close follows the keyboard and the panel never renders an empty surface", 
     await editor.click();
     await screenshot(page, "close-view-before");
     // Browser column: Alt W; Electron uses the same command with Command W.
-    // Closing the last view turns File Views off and leaves Tools.
+    // Closing the last view keeps the lane up, the tree filling it (PRD right-lane B12).
     await page.keyboard.press(chord("close_tab"));
     await expect(editor).toHaveCount(0);
     await expect(panes).toHaveCount(2);
-    await expect(panel).toHaveCount(0);
-    await expect(explorer).toBeVisible();
-    await screenshot(page, "close-view-tools");
+    await expect(tree).toHaveAttribute("data-lane-tree", "only");
+    await expect(screen).toHaveAttribute("data-lane-mode", "overlay");
+    await expect(page.locator("[data-lane-frame] [data-view-area]")).toHaveCount(0);
+    await screenshot(page, "close-view-tree-only");
 
-    // Tools own the keyboard: no View or terminal close is allowed.
-    await page.locator('[data-tool-tab="explorer"]').focus();
+    // The tree owns the keyboard: no View or terminal close is allowed.
+    await file.focus();
     await page.keyboard.press(chord("close_tab"));
     await expect(panes).toHaveCount(2);
-    await expect(explorer).toBeVisible();
+    await expect(tree).toBeVisible();
     await file.click();
     await expect(editor).toBeVisible();
-    await page.keyboard.press(chord("toggle_explorer"));
-    await expect(explorer).toHaveCount(0);
-    // Turning File Views off and on keeps its view.
-    await page.keyboard.press(chord("toggle_right_panel"));
-    await expect(panel).toHaveCount(0);
-    await page.locator(`[data-terminal-host="${herdr.panes[0]}"]`).click();
-    // A narrow body shows one column: File Views called by its chord covers
-    // the agents, and a covered terminal no longer owns the chord.
-    await page.setViewportSize({ width: 700, height: 1000 });
-    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-workspace-body", "narrow");
-    await page.keyboard.press(chord("toggle_right_panel"));
+    await page.keyboard.press(chord("toggle_file_tree"));
+    await expect(tree).toHaveCount(0);
+    // ⌘E closes the lane and brings it back with its view (B2, B20).
+    await page.keyboard.press(chord("toggle_lane"));
+    await expect(screen).toHaveAttribute("data-lane-mode", "closed");
+    await page.keyboard.press(chord("toggle_lane"));
     await expect(editor).toBeVisible();
-    await expect(page.locator("[data-agent-area]")).toHaveAttribute("inert", "");
-    await page.keyboard.press(chord("close_tab"));
-    await expect(panes).toHaveCount(2);
-    await expect(editor).toBeVisible();
-    // Tools turned on takes the one column; File Views' chord takes it back,
-    // and again gives it to Agent Views (PRD three-column-panel B27).
-    await page.keyboard.press(chord("toggle_explorer"));
-    await expect(explorer).toBeVisible();
-    await expect(editor).toHaveCount(0);
-    await page.keyboard.press(chord("toggle_right_panel"));
-    await expect(editor).toBeVisible();
-    await expect(explorer).toHaveCount(0);
-    await page.keyboard.press(chord("toggle_right_panel"));
-    await expect(panel).toHaveCount(0);
-    await expect(page.locator("[data-agent-area]")).not.toHaveAttribute("inert", "");
-    await page.setViewportSize({ width: 1920, height: 1000 });
-    await expect(explorer).toBeVisible();
-    await expect(editor).toBeVisible();
-    await page.keyboard.press(chord("toggle_explorer"));
-    await expect(explorer).toHaveCount(0);
-    await editor.click();
-    await page.keyboard.press(chord("close_tab"));
-    await expect(panel).toHaveCount(0);
-    await expect(panes).toHaveCount(2);
-    await expect(page.getByText("No file or diff is open in this Workspace.")).toHaveCount(0);
+    await expect(tree).toHaveCount(0);
 
-    // An unfocused toolbar control has no closable owner.
-    await page.locator('[data-column-toggle="views"]').focus();
+    // An unfocused rail control has no closable owner.
+    await page.locator('[data-lane-tool="files"]').focus();
     await page.keyboard.press(chord("close_tab"));
     await expect(panes).toHaveCount(2);
+    await expect(editor).toBeVisible();
+    // Escape puts the overlay away; a terminal then owns close.
+    await editor.click();
+    await page.keyboard.press("Escape");
+    await expect(screen).toHaveAttribute("data-lane-mode", "hidden");
     const [first, second] = herdr.panes;
     await page.locator(`[data-terminal-host="${second}"]`).click();
     await page.keyboard.press(chord("close_tab"));

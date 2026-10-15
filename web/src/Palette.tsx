@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
+import { FileMark } from "./components/file-mark";
 import { Command, CommandDialog, CommandInput, CommandItem, CommandList } from "./components/ui/command";
 import { Kbd } from "./components/ui/kbd";
 import { changedFiles } from "./newTab";
@@ -165,11 +166,7 @@ function FilePalette({ actions }: { actions: Actions }) {
           <CommandItem key={entry.path} asChild value={entry.path} onSelect={() => actions.openIndexEntry(entry.path)}>
             <button type="button" data-palette-row={entry.path} className="group/palette-row w-full text-left">
               <PaletteRow
-                icon={
-                  <span className={`shrink-0 ${fileIcon(entry.relative_path).color}`} style={{ fontFamily: "seti" }} aria-hidden="true">
-                    {fileIcon(entry.relative_path).glyph}
-                  </span>
-                }
+                icon={<FileMark icon={fileIcon(entry.relative_path)} />}
                 title={entry.relative_path}
               />
             </button>

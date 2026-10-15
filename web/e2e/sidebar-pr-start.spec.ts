@@ -23,7 +23,8 @@ import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
 import { toPage } from "../../desktop/src/main/wirePath";
-import { countSent, enterWorkspace } from "./wire";
+import { countSent, enterWorkspace, showProjectRow } from "./wire";
+import { initGithubRepository } from "./github-remote";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -80,6 +81,9 @@ const key = args.slice(0, 2).join(" ");
 const byRepository = ${JSON.stringify(byRepository)};
 if (fs.existsSync(${JSON.stringify(down)})) { console.error("dial tcp: network is unreachable"); process.exit(1); }
 if (key === "auth status") process.exit(0);
+if (key === "api user") { console.log("example-user"); process.exit(0); }
+if (process.argv.slice(2).join(" ").includes("review-requested:@me")) { console.log("[]"); process.exit(0); }
+if (process.argv.slice(2).join(" ").includes("HidePrFacts")) { console.log('{"data":{"repository":{"pullRequests":{"nodes":[]}}}}'); process.exit(0); }
 if (key === "pr list") {
   const repository = byRepository[process.cwd().replaceAll("\\\\", "/").split("/").pop()];
   console.log(!repository ? "[]" : args.join(" ").includes("--state open") ? repository.open : repository.all);
@@ -98,7 +102,7 @@ process.exit(1);
 function repositoryWithWorktree(herdr: HerdrFixture, name: string, branch: string): string {
   const repo = path.join(herdr.root, name);
   fs.mkdirSync(repo);
-  git(repo, ["init"]);
+  initGithubRepository(repo);
   fs.writeFileSync(path.join(repo, "README.md"), `# ${name}\n`);
   git(repo, ["add", "README.md"]);
   git(repo, ["commit", "-m", "initial"]);
@@ -166,6 +170,8 @@ test("the sidebar draws every project's pull request with no screen asking, and 
     // before opening them; an immediate .all() can miss a later project.
     for (const name of ["alpha", "bravo"]) {
       const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]", { hasText: new RegExp(`^${name}$`) }) });
+      // A project with no agent waits under No agents (PRD sidebar-titlebar-refresh B1).
+      await showProjectRow(page, project);
       const fold = project.locator("[data-empty-worktrees]");
       await expect(fold).toHaveAttribute("aria-expanded", "false");
       await fold.click();

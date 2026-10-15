@@ -138,6 +138,15 @@ impl Letter {
         self.awaiting_intake() || self.waiting_answer
     }
 
+    /// Whether the ledger still keeps the letter at `now`: it is open, or it
+    /// finished less than [`RETENTION_MS`] ago.
+    pub(crate) fn retained(&self, now: u64) -> bool {
+        self.open()
+            || self
+                .finished_at_unix_ms
+                .is_none_or(|finished| now.saturating_sub(finished) < RETENTION_MS)
+    }
+
     pub(crate) fn intake_confirmed(&self) -> bool {
         // Only legacy Delivered proves a hook confirmation. A legacy Ack
         // may have preceded intake, so its missing receipt remains unknown.
@@ -230,6 +239,9 @@ pub struct Ledger {
     pub agents: Vec<crate::coordination::AgentRecord>,
     #[serde(default)]
     pub spawns: Vec<crate::coordination::SpawnRecord>,
+    /// Changed only when durable spawn placement moves, never by letters or watches.
+    #[serde(default)]
+    pub spawn_placement_revision: u64,
     /// The clock of each machine other than this core's own that a letter
     /// waits on, by its registration id; a machine without one, this core's
     /// own among them, is waited on in wall time. One per machine with a
@@ -247,6 +259,7 @@ impl Default for Ledger {
             watches: Vec::new(),
             agents: Vec::new(),
             spawns: Vec::new(),
+            spawn_placement_revision: 0,
             node_clocks: BTreeMap::new(),
         }
     }
@@ -335,12 +348,7 @@ impl Ledger {
 
     pub fn cleanup(&mut self, now: u64) -> bool {
         let before = self.letters.len();
-        self.letters.retain(|letter| {
-            letter.open()
-                || letter
-                    .finished_at_unix_ms
-                    .is_none_or(|finished| now.saturating_sub(finished) < RETENTION_MS)
-        });
+        self.letters.retain(|letter| letter.retained(now));
         self.letters.len() != before
     }
 

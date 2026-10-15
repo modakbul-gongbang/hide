@@ -1,4 +1,6 @@
 /* Generated from design/tokens.json by scripts/gen-tokens.mjs. Do not edit. */
+@custom-variant agent-tab-count-room (@container tab-title (min-width: 48px));
+
 @theme static {
   --color-*: initial;
   --text-*: initial;
@@ -63,6 +65,9 @@
   --color-success: var(--success);
   --color-agent-working: var(--agent-working);
   --color-status-foreground: var(--status-foreground);
+  --color-status-seen: var(--status-seen);
+  --color-swatch-hide: var(--swatch-hide);
+  --color-swatch-neutral: var(--swatch-neutral);
   --color-file-neutral: var(--file-neutral);
   --color-file-document: var(--file-document);
   --color-file-blue: var(--file-blue);
@@ -178,10 +183,13 @@
   --size-sidebar-max: 440px;
   --size-panel-min: 260px;
   --size-panel-ideal: 355px;
-  --size-panel-max: 560px;
   --size-agent-views-min: 480px;
-  --size-file-views-min: 360px;
-  --size-file-views-ideal: 640px;
+  --size-lane-min: 360px;
+  --size-lane-ideal: 520px;
+  --size-tree-min: 180px;
+  --size-tree-ideal: 240px;
+  --size-tool-rail: 48px;
+  --size-tool-rail-button: 40px;
   --size-workspace-area-min: 224px;
   --size-view-area-min-height: 144px;
   --size-hairline: 1px;
@@ -201,11 +209,15 @@
   --size-project-row: 36px;
   --size-sidebar-line: 20px;
   --size-sidebar-line-detail: 16px;
+  --size-sidebar-section-header: 26px;
+  --size-sidebar-search: 28px;
   --size-overview-group-header: 52px;
   --size-checkout-icon: 14px;
   --size-checkout-metadata-inset: 22px;
   --size-lineage-indent: 18px;
   --size-lineage-chevron: 16px;
+  --size-tree-indent: 12px;
+  --size-tree-mark: 16px;
   --size-lineage-rail-x: 8px;
   --size-lineage-departure-y: 18px;
   --size-worktree-dialog: 440px;
@@ -232,6 +244,8 @@
   --size-pr-icon: 14px;
   --size-lineage-elbow-y: 13px;
   --size-compact-agent-row-vpad: 5px;
+  --size-hide-badge: 11px;
+  --size-hide-badge-mark: 9px;
   --size-agent-badge-compact: 16px;
   --size-icon-button-standard: 32px;
   --size-icon-button-toolbar: 24px;
@@ -245,7 +259,7 @@
   --size-terminal-min: 540px;
   --size-terminal-ideal: 760px;
   --size-agent-children-popover: 280px;
-  --size-usage-popover: 250px;
+  --size-usage-popover: 320px;
   --size-pr-popover: 360px;
   --size-pr-number: 38px;
   --size-pr-review: 70px;
@@ -258,8 +272,10 @@
   --size-search-sheet-w: 570px;
   --size-search-sheet-h: 430px;
   --size-gallery-scene-h: 880px;
-  --size-settings-sheet-w: 720px;
+  --size-settings-sheet-w: 880px;
+  --size-settings-nav-w: 200px;
   --size-settings-sheet-h: 560px;
+  --size-project-settings-sheet-h: 640px;
   --size-settings-sheet-h-max: 800px;
   --size-settings-sheet-window-inset: 40px;
   --size-overview-sheet-w: 1440px;
@@ -284,6 +300,14 @@
   --size-agent-logo: 40px;
   --size-pane-parent-breakpoint: 640px;
   --size-pane-state-example: 144px;
+  --size-usage-cell: 12px;
+  --size-usage-cell-gap: 3px;
+  --size-usage-bar-plot: 66px;
+  --opacity-usage-level-1: 0.3;
+  --opacity-usage-level-2: 0.48;
+  --opacity-usage-level-3: 0.66;
+  --opacity-usage-level-4: 0.88;
+  --size-usage-year: 800px;
 }
 
 .interface-scale-exempt {
@@ -336,6 +360,9 @@
   --success: #15803d;
   --agent-working: #2563eb;
   --status-foreground: #ffffff;
+  --status-seen: #52525b;
+  --swatch-hide: #b7c9cc;
+  --swatch-neutral: #7a7c80;
   --file-neutral: #6e6e73;
   --file-document: #52525b;
   --file-blue: #2d7598;
@@ -346,7 +373,7 @@
   --pr-failed: var(--destructive);
   --pr-mergeable: var(--success);
   --pr-merged: #8250df;
-  --pr-closed: var(--muted-foreground);
+  --pr-closed: #6d6d76;
   --pr-pending: #bf8700;
   --lineage-rail: #c9c9ce;
   --pr-draft: #6e7781;
@@ -355,21 +382,21 @@
   --qr-foreground: #000000;
   --qr-background: #ffffff;
   --terminal-black: #24292f;
-  --terminal-red: #cf222e;
-  --terminal-green: #116329;
-  --terminal-yellow: #7d4e00;
-  --terminal-blue: #0969da;
-  --terminal-magenta: #8250df;
-  --terminal-cyan: #1b7c83;
-  --terminal-white: #6e7781;
-  --terminal-bright-black: #57606a;
-  --terminal-bright-red: #a40e26;
-  --terminal-bright-green: #1a7f37;
-  --terminal-bright-yellow: #633c01;
-  --terminal-bright-blue: #218bff;
-  --terminal-bright-magenta: #a475f9;
-  --terminal-bright-cyan: #3192aa;
-  --terminal-bright-white: #8c959f;
+  --terminal-red: #c8323a;
+  --terminal-green: #2b7a3b;
+  --terminal-yellow: #8a5f00;
+  --terminal-blue: #2a62c4;
+  --terminal-magenta: #8a4cc2;
+  --terminal-cyan: #0e7576;
+  --terminal-white: #8c959f;
+  --terminal-bright-black: #62686f;
+  --terminal-bright-red: #a3212a;
+  --terminal-bright-green: #1d6630;
+  --terminal-bright-yellow: #6b4b00;
+  --terminal-bright-blue: #1d4fa8;
+  --terminal-bright-magenta: #7038a8;
+  --terminal-bright-cyan: #0a6162;
+  --terminal-bright-white: #b1bac4;
   --terminal-selection: #d0d7de;
   --logo-plate: #ffffff;
 }
@@ -412,6 +439,9 @@
   --success: #5ee69e;
   --agent-working: #61a6ff;
   --status-foreground: #101112;
+  --status-seen: #a4a5a8;
+  --swatch-hide: #b7c9cc;
+  --swatch-neutral: #7a7c80;
   --file-neutral: #9c9c9d;
   --file-document: #d3d3d4;
   --file-blue: #519aba;
@@ -422,7 +452,7 @@
   --pr-failed: var(--destructive);
   --pr-mergeable: var(--success);
   --pr-merged: #a371f7;
-  --pr-closed: var(--muted-foreground);
+  --pr-closed: #92959a;
   --pr-pending: #d29922;
   --lineage-rail: #55585e;
   --pr-draft: #9198a1;
@@ -430,22 +460,66 @@
   --diff-removed: #ff595c;
   --qr-foreground: #000000;
   --qr-background: #ffffff;
-  --terminal-black: #2e3436;
-  --terminal-red: #cc0000;
-  --terminal-green: #4e9a06;
-  --terminal-yellow: #c4a000;
-  --terminal-blue: #3465a4;
-  --terminal-magenta: #75507b;
-  --terminal-cyan: #06989a;
-  --terminal-white: #d3d7cf;
-  --terminal-bright-black: #555753;
-  --terminal-bright-red: #ef2929;
-  --terminal-bright-green: #8ae234;
-  --terminal-bright-yellow: #fce94f;
-  --terminal-bright-blue: #729fcf;
-  --terminal-bright-magenta: #ad7fa8;
-  --terminal-bright-cyan: #34e2e2;
-  --terminal-bright-white: #eeeeec;
+  --terminal-black: #2b2d30;
+  --terminal-red: #f2797d;
+  --terminal-green: #7fd88f;
+  --terminal-yellow: #e8c25f;
+  --terminal-blue: #6ea8ff;
+  --terminal-magenta: #c99cf0;
+  --terminal-cyan: #5fd0c8;
+  --terminal-white: #c9cbcf;
+  --terminal-bright-black: #7c7f85;
+  --terminal-bright-red: #ff9da0;
+  --terminal-bright-green: #a6e9ae;
+  --terminal-bright-yellow: #f7da8c;
+  --terminal-bright-blue: #9cc4ff;
+  --terminal-bright-magenta: #ddbef8;
+  --terminal-bright-cyan: #91e7e0;
+  --terminal-bright-white: #f4f4f6;
   --terminal-selection: #34373b;
   --logo-plate: #ffffff;
+}
+
+/* The Hide color theme: the document root carries .palette-hide beside its mode class. */
+.palette-hide,
+.palette-hide.light,
+.palette-hide .light {
+  --background: #f6f8f8;
+  --foreground: #0f1a1c;
+  --card: #e7eef0;
+  --popover: #ffffff;
+  --secondary: #dce6e8;
+  --muted: #e7eef0;
+  --muted-foreground: #56696d;
+  --subtle-foreground: #3f5357;
+  --accent: #dce6e8;
+  --border: #d3dfe1;
+  --sidebar: #edf2f3;
+  --lineage-rail: #a7b8bc;
+  --terminal-black: #16262a;
+  --terminal-white: #8a9ea2;
+  --terminal-bright-black: #5b6f73;
+  --terminal-bright-white: #b4c4c7;
+  --terminal-selection: #c9dade;
+}
+
+.palette-hide.dark,
+.palette-hide .dark {
+  --background: #0d191b;
+  --foreground: #f1f6f5;
+  --card: #15272a;
+  --popover: #24383c;
+  --secondary: #1b3034;
+  --muted: #15272a;
+  --muted-foreground: #9cb1b3;
+  --subtle-foreground: #b3c5c7;
+  --accent: #1b3034;
+  --border: #24383c;
+  --sidebar: #112023;
+  --lineage-rail: #4a6266;
+  --terminal-black: #1f3337;
+  --terminal-white: #c4d3d4;
+  --terminal-bright-black: #7b9497;
+  --terminal-bright-white: #f1f6f5;
+  --terminal-selection: #26444a;
 }

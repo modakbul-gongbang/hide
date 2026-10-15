@@ -2,8 +2,9 @@
 // shell printed into a pane is a link where it names a URL or a path that
 // exists, whatever program printed it. A click opens it in the Workspace (a
 // browser display, the file in View at its line, a folder in the Explorer),
-// ⌘-click hands it to macOS, a path outside every checkout goes to macOS on a
-// plain click too and a program there is only revealed, a path the terminal
+// ⌘-click hands it to macOS, a file of another checkout opens in the Workspace
+// in front without bringing that checkout forward, a path outside every
+// checkout goes to macOS on a plain click too and a program there is only revealed, a path the terminal
 // wrapped is one link, a program's own OSC 8 link opens without xterm's
 // confirm dialog, a drag across a link selects rather than opens, and no link
 // click reaches the program as a mouse click. Everything runs on a private Herdr server, hided and Electron
@@ -18,9 +19,11 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { linkCandidates } from "../../web/src/terminalLinks";
-import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
-import { countSent, enterWorkspace } from "../../web/e2e/wire";
+import { toPage } from "../src/main/wirePath";
+import { printFileCommand, startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
+import { countSent, enterWorkspace, showTool } from "../../web/e2e/wire";
 import { fitWindow, hostLog, isolate, launch, screenshot, shellPage, test, type Isolated } from "./fixture";
 import { measureFor, quietFor } from "../../web/e2e/wait";
 
@@ -79,7 +82,7 @@ async function withProbe(page: Page): Promise<void> {
     .toBe("object");
 }
 
-/** Prints `lines` in the fixture pane through `cat`, so the shell draws them as a program would. */
+/** Prints `lines` in the fixture pane through a program, using the pane's shell. */
 async function print(page: Page, paneId: string, lines: string[], last: string): Promise<void> {
   // Leave the old row before replacing its text so xterm requests fresh links
   // when the next real hover enters it, including after an empty/error answer.
@@ -90,9 +93,10 @@ async function print(page: Page, paneId: string, lines: string[], last: string):
   await page.mouse.move(away.x, away.y);
   const file = path.join(herdr.root, `print-${Date.now()}.txt`);
   fs.writeFileSync(file, `${lines.join("\n")}\n`);
-  const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0], `clear; cat '${file}'\n`], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
+  const command = printFileCommand(herdr.shell, file);
+  const sent = spawnSync(herdr.bin, ["pane", "run", herdr.panes[0], command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
   expect(sent.status, sent.stderr).toBe(0);
-  await expect.poll(() => page.evaluate(([id, text]) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneText(id).includes(text), [paneId, last] as const), { timeout: 20_000 }).toBe(true);
+  await expect.poll(() => page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneText(id), paneId), { timeout: 20_000 }).toContain(last);
 }
 
 /** Where `text` is on the screen of `paneId`: its row and the column of its `offset`th character. */
@@ -131,16 +135,17 @@ async function metaClick(page: Page, point: { x: number; y: number }): Promise<v
 }
 
 /**
- * Turns File Views on and waits for the pane's grid to settle. File Views is
- * docked beside Agent Views (PRD three-column-panel D-02) and a link that
- * opens a file or page turns it on (B4), so the first open would narrow the
- * pane and Herdr would rewrap what it printed; with the column already on,
- * the printed rows stay where the probe reads them.
+ * Pins the files tool so it docks, and waits for the pane's grid to settle.
+ * A docked lane narrows Agent Views once (PRD right-lane B5) and stays
+ * through the terminal clicks below; past the first open, which brings the
+ * tree beside it, a link that opens a file or page moves nothing and the
+ * printed rows stay where the probe reads them.
  */
-async function showFileViews(page: Page, paneId: string): Promise<void> {
+async function dockFiles(page: Page, paneId: string): Promise<void> {
   const before = await paneCols(page, paneId);
-  await page.locator('[data-column-toggle="views"][aria-pressed="false"]').click();
-  await expect(page.locator('[data-column="views"]')).toBeVisible();
+  await showTool(page, "files");
+  await page.locator('[data-lane-pin="off"]').click();
+  await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "docked");
   await narrowed(page, paneId, before);
 }
 
@@ -204,10 +209,10 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
 
   ({ app } = await launch(run.env));
   // The window is the size a CI screen allows (macOS keeps it within the
-  // screen), and the shell is zoomed out so its body is wide enough for File
-  // Views beside the pane, and for Tools too once a folder link shows the
-  // Explorer, with the pane still wide enough that no printed line wraps
-  // (UI_BEHAVIOR, Narrow windows; PRD three-column-panel D-02, D-07).
+  // screen), and the shell is zoomed out so its body is wide enough to dock
+  // the lane beside the pane, with its tree once the first link opens, and
+  // the pane still wide enough that no printed line wraps (PRD right-lane
+  // B5, B10, B19).
   await fitWindow(app, { width: 1024, height: 681 });
   const page = await shellPage(app);
   // Counted from the reload on, so the socket it opens is heard.
@@ -222,7 +227,7 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   });
   await recordMacOS();
   const paneId = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneId()!);
-  await showFileViews(page, paneId);
+  await dockFiles(page, paneId);
   const grid = await page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneGrid(id)!, paneId);
 
   // A path longer than the pane is wide, so the terminal wraps it.
@@ -249,12 +254,17 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
     "end-of-links",
   );
 
-  // A URL opens as a browser display in the Workspace, and the program hears no click.
+  // A URL opens as a browser display in the Workspace, and the program hears
+  // no click. It opens beside the tree that filled the empty lane, which stays
+  // on, so the docked lane widens by it and the pane rewraps once (PRD
+  // right-lane B10, B12).
   const clicksBefore = sent.get("terminal_click") ?? 0;
   let point = await pointOf(page, paneId, `${origin}/a.html`, { offset: 4 });
   await hoverLink(page, paneId, point);
   await page.mouse.click(point.x, point.y);
   await expect(viewTab(page, "Page A")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('[data-lane-tree="beside"]')).toBeVisible();
+  await narrowed(page, paneId, grid.cols);
   expect(sent.get("terminal_click") ?? 0).toBe(clicksBefore);
   expect(dialogs).toEqual([]);
 
@@ -265,8 +275,6 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   await page.mouse.click(point.x, point.y);
   await expect(viewTab(page, "linked.ts")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator(".cm-activeLine").first()).toHaveText("// line 42");
-  // The file opens in File Views and leaves Tools off (PRD three-column-panel B4).
-  await expect(page.locator('[data-column="tools"]')).toHaveCount(0);
   await screenshot(page, "terminal-link-file-at-line");
   expect(sent.get("reveal_path")).toBe(1);
   point = await pointOf(page, paneId, "missing/nothing.ts", { offset: 2 });
@@ -308,16 +316,11 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   await expect(page.locator(".cm-activeLine").first()).toHaveText("// line 7", { timeout: 20_000 });
   expect(sent.get("reveal_path")).toBe(2);
 
-  // A folder is revealed in the Explorer: Tools turns on beside the pane,
-  // which narrows and rewraps once before the next row is read (PRD
-  // three-column-panel D-02).
+  // A folder is revealed and selected in the file tree (PRD right-lane B16).
   point = await pointOf(page, paneId, "./src", { offset: 1 });
   await hoverLink(page, paneId, point);
-  const beforeFolder = await paneCols(page, paneId);
   await page.mouse.click(point.x, point.y);
   await expect(page.locator(`[data-explorer-row="${path.join(checkout, "src")}"][data-selected="true"]`)).toBeVisible({ timeout: 20_000 });
-  await expect(page.locator('[data-column="tools"]')).toBeVisible();
-  await narrowed(page, paneId, beforeFolder);
   expect(sent.get("reveal_path")).toBe(3);
 
   // A path the terminal wrapped is one link from its second row.
@@ -350,6 +353,134 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   expect(hostLog(run.env).filter((line) => line.event.startsWith("probe_paths.refused"))).toEqual([]);
 });
 
+// Its own spec because the links journey is at its size ceiling: a file of
+// another checkout is one contract, the routing that keeps the screen where it is.
+test("an image of another checkout opens in the Workspace in front and its checkout stays where it is", async () => {
+  // A second checkout, a Herdr workspace of its own beside the fixture's,
+  // holding a screenshot an agent there saved.
+  const elsewhere = path.join(fs.realpathSync(herdr.root), "elsewhere");
+  fs.mkdirSync(elsewhere, { recursive: true });
+  const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  fs.writeFileSync(path.join(elsewhere, "shot.png"), Buffer.from(pixel, "base64"));
+  const second = herdr.run(["workspace", "create", "--cwd", elsewhere, "--label", "elsewhere", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]) as {
+    result: { workspace: { workspace_id: string } };
+  };
+  try {
+    ({ app } = await launch(run.env));
+    await fitWindow(app, { width: 1024, height: 681 });
+    const page = await shellPage(app);
+    const sent = countSent(page);
+    await withProbe(page);
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.4));
+    await enterWorkspace(page, "fixture");
+    const paneId = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneId()!);
+    await dockFiles(page, paneId);
+    // A program's own link, so the long temporary path never wraps.
+    await print(page, paneId, [`osc8 \u001b]8;;file://${elsewhere}/shot.png\u001b\\Elsewhere shot\u001b]8;;\u001b\\`, "ELSEWHERE-END"], "ELSEWHERE-END");
+
+    const point = await pointOf(page, paneId, "Elsewhere shot", { offset: 1 });
+    await hoverLink(page, paneId, point);
+    await page.mouse.click(point.x, point.y);
+    await expect(viewTab(page, "shot.png")).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('[data-viewer="image"] img')).toBeVisible();
+    // The pane that printed the link is still the one on screen.
+    await expect(page.locator(`[data-pane-view="${paneId}"]`)).toBeVisible();
+    expect(sent.get("file_open")).toBe(1);
+    expect(sent.get("reveal_path") ?? 0).toBe(0);
+    await screenshot(page, "terminal-link-other-checkout");
+  } finally {
+    herdr.run(["workspace", "close", second.result.workspace.workspace_id]);
+  }
+});
+
+// @platform: File URLs, physical paths and the file-manager reveal label follow the host OS.
+test("terminal HTML opens a rendered page and right-click offers actions for the exact link or path", { tag: "@platform" }, async () => {
+  const checkout = path.join(fs.realpathSync(herdr.root), "fixture");
+  fs.mkdirSync(path.join(checkout, "src"), { recursive: true });
+  const html = path.join(checkout, "src", "report.HTML");
+  fs.writeFileSync(html, "<!doctype html><title>Terminal HTML</title>\n<h1>Rendered terminal report</h1>\n");
+  ({ app } = await launch(run.env));
+  await fitWindow(app, { width: 1024, height: 681 });
+  const page = await shellPage(app);
+  const sent = countSent(page);
+  await withProbe(page);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.5));
+  await enterWorkspace(page, "fixture");
+  await recordMacOS();
+  // Clipboard writes are recorded in this private renderer; QA leaves the
+  // operator's clipboard and OS applications alone.
+  await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+    writeText: async (text: string) => { (window as unknown as { copied: string }).copied = text; },
+  } }));
+  const copied = () => page.evaluate(() => (window as unknown as { copied?: string }).copied);
+  const paneId = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneId()!);
+  await dockFiles(page, paneId);
+  await print(page, paneId, [
+    "html src/report.HTML:2",
+    `url ${origin}/a.html`,
+    `osc8 \u001b]8;;${pathToFileURL(html).href}#L2\u001b\\HTML source label\u001b]8;;\u001b\\`,
+    "folder ./src",
+    "plain MENU-END",
+  ], "MENU-END");
+  const clicks = sent.get("terminal_click") ?? 0;
+  let point = await pointOf(page, paneId, "src/report.HTML:2", { offset: 2 });
+  await hoverLink(page, paneId, point);
+  await page.mouse.click(point.x, point.y);
+  await expect(viewTab(page, "Terminal HTML")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator(".cm-content")).toHaveCount(0);
+  expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.contentView.children
+    .filter((child) => "webContents" in child)
+    .some((child) => (child as Electron.WebContentsView).webContents.getTitle() === "Terminal HTML"))).toBe(true);
+  await screenshot(page, "terminal-html-rendered");
+  if (process.platform === "darwin") await nativeCapture("terminal-html-rendered-native");
+
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Open in browser", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Open source", exact: true })).toBeVisible();
+  await screenshot(page, "terminal-html-menu");
+  await page.getByRole("menuitem", { name: "Open source", exact: true }).click();
+  await expect(page.locator('[data-view-tab-bar] [role="tab"][data-tab-kind="file"][aria-label*="report.HTML"]')).toBeVisible();
+  await expect(page.locator(".cm-activeLine").first()).toHaveText("<h1>Rendered terminal report</h1>");
+  await screenshot(page, "terminal-html-source");
+  if (process.platform === "darwin") await nativeCapture("terminal-html-source-native");
+
+  point = await pointOf(page, paneId, "HTML source label", { offset: 2 });
+  await hoverLink(page, paneId, point);
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await page.getByRole("menuitem", { name: "Copy path", exact: true }).click();
+  await expect.poll(copied).toBe(toPage(fs.realpathSync(html)));
+  point = await pointOf(page, paneId, "src/report.HTML:2", { offset: 2 });
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  const reveal = process.platform === "darwin" ? "Reveal in Finder" : process.platform === "win32" ? "Reveal in File Explorer" : "Open Containing Folder";
+  await page.getByRole("menuitem", { name: reveal, exact: true }).click();
+  expect(await opened()).toEqual([{ how: "reveal", target: fs.realpathSync(html) }]);
+
+  point = await pointOf(page, paneId, `${origin}/a.html`, { offset: 3 });
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await screenshot(page, "terminal-url-menu");
+  await expect(page.getByRole("menuitem", { name: "Open in Hide", exact: true })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Copy link", exact: true }).click();
+  await expect.poll(copied).toBe(`${origin}/a.html`);
+  point = await pointOf(page, paneId, `${origin}/a.html`, { offset: 3 });
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await page.getByRole("menuitem", { name: "Open in default browser", exact: true }).click();
+  expect(await opened()).toContainEqual({ how: "external", target: `${origin}/a.html` });
+
+  point = await pointOf(page, paneId, "./src", { offset: 1 });
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Copy path", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Open source", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  point = await pointOf(page, paneId, "MENU-END", { offset: 2 });
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Copy link", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: "Copy path", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  expect(sent.get("terminal_click") ?? 0).toBe(clicks);
+  expect(sent.get("reveal_path")).toBe(1);
+});
+
 /** A current native frame of this exact candidate, without activating any app. */
 async function nativeCapture(name: string): Promise<void> {
   const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
@@ -377,7 +508,7 @@ test("Korean prose links only the real path and opens that file", async () => {
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.4));
   await enterWorkspace(page, "fixture");
   const paneId = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneId()!);
-  await showFileViews(page, paneId);
+  await dockFiles(page, paneId);
   await print(page, paneId, ["보드 보기 (docs/README.md)에 C안을 추가했습니다.", "KOREAN-END"], "KOREAN-END");
   const lines = await page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneText(id).split("\n"), paneId);
   const row = lines.findIndex((line) => line.startsWith("보드 보기"));

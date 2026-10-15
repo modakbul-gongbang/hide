@@ -291,6 +291,7 @@ mod tests {
             root: root.into(),
             repository: Some(repository.into()),
             repository_id: None,
+            connection_epoch: 0,
             worktrees: vec![WorktreeFact {
                 path: format!("{root}/feat"),
                 branch: Some("feat".into()),
@@ -298,6 +299,7 @@ mod tests {
             }],
             prs,
             prs_read: true,
+            outputs: Vec::new(),
         }
     }
 

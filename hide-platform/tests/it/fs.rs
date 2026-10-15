@@ -551,7 +551,7 @@ fn a_lock_on_a_file_is_taken_through_the_file_that_stays_open() {
             .open(&path)
             .unwrap()
     };
-    let held = locked(lock::lock_file(open(), Mode::Exclusive, Duration::ZERO, &never).unwrap());
+    let held = lock::lock_file_blocking(open(), Mode::Exclusive).unwrap();
     assert!(matches!(
         lock::lock_file(open(), Mode::Exclusive, Duration::ZERO, &never).unwrap(),
         Waited::TimedOut

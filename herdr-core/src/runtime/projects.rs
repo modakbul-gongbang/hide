@@ -1,4 +1,5 @@
 use super::*;
+use crate::model::GithubReadOutcome;
 
 const MINIMUM_PURPOSE_HERDR_VERSION: (u64, u64, u64) = (0, 9, 1);
 
@@ -14,24 +15,32 @@ const GITHUB_RETRY_FIRST: std::time::Duration = std::time::Duration::from_secs(3
 /// outlasts it would be overtaken by its own next ask and never land.
 ///
 /// `failures` is how many reads in a row ended without the project's pull
-/// requests (the answer's `pull_requests_read` was false), so a read that
-/// failed is asked again sooner than one that worked and a success starts the
-/// count over.
+/// requests or its issues (`GithubReadOutcome`), so a read that failed is
+/// asked again sooner than one that worked and a success starts the count
+/// over.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum GithubClock {
     /// A read is asked for and has not answered.
     Waiting { failures: u32 },
-    /// The read answered at this instant.
+    /// The read answered at this instant; `pull_requests_read` is whether
+    /// it held the pull requests, which a sighted address is read against.
     Answered {
         at: std::time::Instant,
         failures: u32,
+        pull_requests_read: bool,
     },
+    /// The read answered that the repository has no GitHub remote, and the
+    /// catalog knows its remotes. Nothing asks again on the clock: only a
+    /// change in the repository's remotes (`PathIndex::remotes`) or an
+    /// explicit refresh does.
+    NoRemote,
 }
 
 impl GithubClock {
     fn failures(self) -> u32 {
         match self {
             Self::Waiting { failures } | Self::Answered { failures, .. } => failures,
+            Self::NoRemote => 0,
         }
     }
 }
@@ -82,6 +91,10 @@ enum SightedRead {
 /// is read, and each costs `gh` calls every `GITHUB_REREAD`; a count past this
 /// is a reported shortfall, not a larger number.
 const GITHUB_PROJECT_LIMIT: usize = 64;
+
+/// How long a merge Hide saw succeed reads as merged without GitHub's list
+/// saying so.
+const MERGED_HERE_LIFETIME_MS: u64 = 10 * 60 * 1000;
 
 fn herdr_version_supports_purpose(version: Option<&str>) -> bool {
     parse_herdr_version(version.unwrap_or_default())
@@ -283,6 +296,12 @@ impl Runtime {
     }
 
     fn changes_target(&self) -> Option<(String, String, String)> {
+        // With no renderer attached nothing draws History, the Explorer's
+        // Git marks or a diff; the selection the operator left stays in the
+        // UI state, so the first renderer back reads the same checkout again.
+        if !self.ui_attached {
+            return None;
+        }
         let section_visible = |section| {
             self.snapshot.ui_state.right_panel_visible
                 && self.snapshot.ui_state.right_panel_section == section
@@ -375,12 +394,13 @@ impl Runtime {
                     .get(&workspace.path)
                     .copied()
                     .unwrap_or(0),
-                base_override: self
-                    .snapshot
-                    .ui_state
-                    .project_base_branches
-                    .get(&workspace.path)
-                    .cloned(),
+                base_override: crate::project_settings::base_choice(
+                    &self.snapshot.ui_state.project_settings,
+                    &self.snapshot.ui_state.project_base_branches,
+                    self.node.as_str(),
+                    &workspace.path,
+                )
+                .map(str::to_owned),
                 bases: self
                     .github
                     .project(&workspace.path)
@@ -934,6 +954,10 @@ impl Runtime {
                 workspace,
                 link_summaries.and_then(|summaries| summaries.get(&workspace.id)),
             );
+            super::links::associate_pr_sessions(
+                &mut workspace.pull_requests,
+                link_summaries.and_then(|summaries| summaries.get(&workspace.id)),
+            );
             // Git refreshes the persistent purpose sources. Restore the
             // agent/PR fallback in this same projection before publishing it.
             crate::sidebar::sync_checkout_purposes(
@@ -1033,17 +1057,39 @@ impl Runtime {
                         .iter()
                         .filter_map(|checkout| self.issue_candidates.get(&checkout.id))
                         .map(|candidate| candidate.reference.clone())
+                        .chain(
+                            self.snapshot
+                                .link_summaries
+                                .as_ref()
+                                .and_then(|summaries| summaries.projects.get(&workspace.id))
+                                .into_iter()
+                                .flat_map(|summary| summary.record_issues.iter().cloned()),
+                        )
                         .collect::<BTreeSet<_>>()
                         .into_iter()
                         .take(crate::issues::ISSUE_LIMIT)
                         .collect(),
                     root: PathBuf::from(&workspace.path),
-                    repository: None,
+                    repository: crate::project_settings::get(
+                        &self.snapshot.ui_state.project_settings,
+                        self.node.as_str(),
+                        &workspace.path,
+                    )
+                    .and_then(|record| match record.repository.as_ref() {
+                        Some(crate::project_settings::RepositoryConnection::Repository {
+                            repository,
+                        }) => Some(repository.clone()),
+                        _ => None,
+                    }),
                     generation: self
                         .github_generations
                         .get(&workspace.path)
                         .copied()
                         .unwrap_or(0),
+                    remotes: self
+                        .catalog_paths
+                        .remotes(&workspace.path)
+                        .map(<[String]>::to_vec),
                 })
                 .collect(),
         }
@@ -1087,8 +1133,10 @@ impl Runtime {
         let known = |path: &String| paths.contains(path);
         self.github_clock.retain(|path, _| known(path));
         self.github_answered.retain(|path, _| known(path));
+        self.github_remotes.retain(|path, _| known(path));
         self.github_read_generation.retain(|path, _| known(path));
         self.github_settled.retain(known);
+        self.merged_here.retain(|(path, _), _| known(path));
         // A sighting that grew old while its project's answer was owed (no
         // window attached, no read) sets off nothing when the answer lands.
         self.github_sighted
@@ -1098,15 +1146,39 @@ impl Runtime {
         }
         for path in paths {
             let before = self.github_clock.get(&path).copied();
-            if let Some(failed) = self.github_answered.remove(&path) {
-                let failures = if failed {
-                    before.map_or(0, GithubClock::failures).saturating_add(1)
-                } else {
-                    0
+            if self.github_remotes_moved(&path) {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "github",
+                    "kind": "read.remotes_changed",
+                    "project": path,
+                }));
+                self.github_answered.remove(&path);
+                self.ask_github_again(&path);
+                continue;
+            }
+            if let Some(outcome) = self.github_answered.remove(&path) {
+                let failures = match outcome {
+                    GithubReadOutcome::Read | GithubReadOutcome::NoRemote => 0,
+                    GithubReadOutcome::IssuesFailed | GithubReadOutcome::Failed => {
+                        before.map_or(0, GithubClock::failures).saturating_add(1)
+                    }
                 };
-                self.github_clock
-                    .insert(path.clone(), GithubClock::Answered { at: now, failures });
-                if self.sighted_owed_after_answer(&path, failed) {
+                // Remotes the catalog does not know (an included config, an
+                // older node) can gain a GitHub one unseen, so `gh`'s word
+                // that there is none is asked again on the full wait.
+                let clock = if outcome == GithubReadOutcome::NoRemote
+                    && self.catalog_paths.remotes(&path).is_some()
+                {
+                    GithubClock::NoRemote
+                } else {
+                    GithubClock::Answered {
+                        at: now,
+                        failures,
+                        pull_requests_read: outcome.pull_requests_read(),
+                    }
+                };
+                self.github_clock.insert(path.clone(), clock);
+                if self.sighted_owed_after_answer(&path, !outcome.pull_requests_read()) {
                     self.ask_github_again(&path);
                 }
                 continue;
@@ -1116,7 +1188,7 @@ impl Runtime {
                     self.github_clock
                         .insert(path, GithubClock::Waiting { failures: 0 });
                 }
-                Some(GithubClock::Answered { at, failures })
+                Some(GithubClock::Answered { at, failures, .. })
                     if now.duration_since(at) >= github_wait(failures) =>
                 {
                     if failures > 0 {
@@ -1296,12 +1368,17 @@ impl Runtime {
             || self.github_answered.contains_key(path);
         match self.github_clock.get(path) {
             _ if outstanding => SightedRead::AfterAnswer,
-            Some(GithubClock::Answered { failures: 0, .. })
-                if self.github_settled.contains(path) =>
-            {
-                SightedRead::Now
-            }
-            Some(GithubClock::Answered { failures, .. }) if *failures > 0 => SightedRead::Never,
+            Some(GithubClock::Answered {
+                pull_requests_read: true,
+                ..
+            }) if self.github_settled.contains(path) => SightedRead::Now,
+            // A read whose pull requests failed is left to its own retry, and
+            // a repository with no GitHub remote holds no pull request.
+            Some(GithubClock::Answered {
+                pull_requests_read: false,
+                ..
+            })
+            | Some(GithubClock::NoRemote) => SightedRead::Never,
             _ => SightedRead::AfterAnswer,
         }
     }
@@ -1317,6 +1394,26 @@ impl Runtime {
             }
         }
         owed
+    }
+
+    /// Whether the remotes of the repository at `path` moved since the
+    /// catalog last said, so its answer may have: a remote added to a
+    /// repository that had none is read at once rather than never. The first
+    /// value seen is remembered, not a move, and a catalog that does not say
+    /// (its path read failed, or an older node) moves nothing.
+    fn github_remotes_moved(&mut self, path: &str) -> bool {
+        let Some(remotes) = self.catalog_paths.remotes(path) else {
+            return false;
+        };
+        match self.github_remotes.get(path) {
+            Some(known) if known.as_slice() == remotes => false,
+            known => {
+                let moved = known.is_some();
+                self.github_remotes
+                    .insert(path.to_owned(), remotes.to_vec());
+                moved
+            }
+        }
     }
 
     /// Asks for `path` again and waits for that answer, as the stale re-read
@@ -1344,7 +1441,23 @@ impl Runtime {
         store: crate::github_store::GithubStore,
         restored: Option<crate::model::GithubSnapshot>,
     ) {
-        if let Some(restored) = restored {
+        if let Some(mut restored) = restored {
+            // A saved provider cache may predate the private connection choice.
+            // Reuse it only when its repository agrees with that choice.
+            restored.projects.retain(|project| {
+                crate::project_settings::get(
+                    &self.snapshot.ui_state.project_settings,
+                    self.node.as_str(),
+                    &project.root_path,
+                )
+                .and_then(|record| record.repository.as_ref())
+                .is_none_or(|connection| match connection {
+                    crate::project_settings::RepositoryConnection::Repository { repository } => {
+                        project.issues.repository.as_ref() == Some(repository)
+                    }
+                    crate::project_settings::RepositoryConnection::Auto => false,
+                })
+            });
             self.github = restored;
             self.apply_pull_requests();
             self.refresh_worktree_projection();
@@ -1379,9 +1492,10 @@ impl Runtime {
             let path = project.root.to_string_lossy().into_owned();
             // The read's own provenance, taken before a failed one is filled
             // in from the previous answer below.
-            let failed = github
-                .project(&path)
-                .is_some_and(|read| !read.pull_requests_read);
+            let outcome = github.project(&path).map_or(
+                GithubReadOutcome::Read,
+                crate::model::GithubProjectSnapshot::read_outcome,
+            );
             // The reader hands back its cached entry for every project in the
             // request, so only a project whose generation moved since the
             // last answer was actually read; counting the others would
@@ -1392,12 +1506,13 @@ impl Runtime {
                 .insert(path.clone(), project.generation)
                 != Some(project.generation)
             {
-                self.github_answered.insert(path.clone(), failed);
+                self.github_answered.insert(path.clone(), outcome);
             }
             newly_settled |= self.github_settled.insert(path);
         }
         let mut merged = github;
         keep_previous_reads(&mut merged, &self.github);
+        self.read_merges_made_here(&mut merged);
         if self.github == merged {
             // Nothing to show changed, but a project that returned nothing
             // stops loading.
@@ -1415,6 +1530,48 @@ impl Runtime {
         // A promoted card's pull request may have opened, merged or closed.
         self.track_memory_promotions();
         true
+    }
+
+    /// Marks the pull requests Hide merged as merged in `github` until a read
+    /// says so itself: Hide knows its own merge went through, so the pull
+    /// request leaves Needs You at once instead of waiting in an unknown merge
+    /// state for the next poll. The time shown is the one the merge was seen.
+    /// An entry is let go when a fresh read of its project shows the pull
+    /// request merged, closed or gone, and after `MERGED_HERE_LIFETIME_MS`
+    /// whatever the reads say, so a merge GitHub did not complete (a queue
+    /// that ejected it) does not read as merged for good. A read that failed
+    /// carries the previous list, overlay included, and releases nothing.
+    pub(super) fn read_merges_made_here(&mut self, github: &mut crate::model::GithubSnapshot) {
+        let now = unix_milliseconds();
+        self.merged_here.retain(|(root, number), merged_at| {
+            if now.saturating_sub(*merged_at) > MERGED_HERE_LIFETIME_MS {
+                return false;
+            }
+            let Some(project) = github.projects.iter_mut().find(|p| &p.root_path == root) else {
+                return true;
+            };
+            let fresh = !project.status.stale && project.status.unavailable_reason.is_none();
+            let Some(pull_request) = project
+                .pull_requests
+                .iter_mut()
+                .find(|p| p.number == *number)
+            else {
+                return !fresh;
+            };
+            if fresh
+                && matches!(
+                    pull_request.badge,
+                    crate::model::PullRequestBadge::Merged | crate::model::PullRequestBadge::Closed
+                )
+            {
+                return false;
+            }
+            pull_request.badge = crate::model::PullRequestBadge::Merged;
+            pull_request.review = None;
+            pull_request.merged_at_unix_ms = Some(*merged_at);
+            pull_request.closed_at_unix_ms = Some(*merged_at);
+            true
+        });
     }
 
     fn bump_github_generation(&mut self, project_path: &str) {
@@ -2408,10 +2565,11 @@ impl Runtime {
         if before == self.snapshot.ui_state.workspace_registrations.len() {
             return false;
         }
+        let asleep = crate::project_context::asleep_fold_key(workspace_id);
         self.snapshot
             .ui_state
             .session_open_folds
-            .retain(|key| key != workspace_id);
+            .retain(|key| key != workspace_id && key != &asleep);
         // The project's checkouts leave the recent list with it; their ids
         // are read before the catalog drops the rows that name them. A
         // device that is not connected has no rows to read, so the
@@ -2461,7 +2619,7 @@ impl Runtime {
             self.snapshot.ui_state.selected_pane_id = None;
             self.snapshot.terminal.pane_id = None;
             self.snapshot.focused.pane_id = None;
-            self.clear_terminal_projection();
+            self.clear_selected_terminal_state();
             if self
                 .snapshot
                 .status
@@ -2869,7 +3027,23 @@ impl Runtime {
         let mut repositories: Vec<(String, String)> = listed
             .projects
             .iter()
-            .filter_map(|(root, project)| Some((root.clone(), project.repository.clone()?)))
+            .filter_map(|(root, project)| {
+                let explicit = crate::project_settings::get(
+                    &self.snapshot.ui_state.project_settings,
+                    device_id,
+                    root,
+                )
+                .and_then(|record| match record.repository.as_ref() {
+                    Some(crate::project_settings::RepositoryConnection::Repository {
+                        repository,
+                    }) => Some(repository.clone()),
+                    _ => None,
+                });
+                Some((
+                    root.clone(),
+                    explicit.or_else(|| project.repository.clone())?,
+                ))
+            })
             .collect();
         let total = repositories.len();
         let in_front = self
@@ -2927,14 +3101,38 @@ impl Runtime {
             .and_then(|status| status.session.as_ref())
             .map(|session| session.issue_links.clone())
             .unwrap_or_default();
+        for workspace in self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == device_id)
+            .and_then(|status| status.session.as_ref())
+            .into_iter()
+            .flat_map(|session| session.workspaces.iter())
+        {
+            if let Some(summary) = self
+                .snapshot
+                .link_summaries
+                .as_ref()
+                .and_then(|summaries| summaries.projects.get(&workspace.id))
+            {
+                let held = links.entry(workspace.path.clone()).or_default();
+                held.extend(summary.record_issues.iter().cloned());
+                held.sort();
+                held.dedup();
+                held.truncate(crate::issues::ISSUE_LIMIT);
+            }
+        }
         let projects = repositories
             .into_iter()
             .map(|(root, repository)| {
-                // A read that failed is asked again sooner, as this machine's
-                // first retry is.
+                // A read whose pull requests failed is asked again sooner, as
+                // this machine's first retry is; failed issues alone keep the
+                // full wait, since this clock does not climb.
                 let failed = answered
                     .and_then(|github| github.project(&root))
-                    .is_some_and(|read| !read.pull_requests_read);
+                    .is_some_and(|read| read.read_outcome() == GithubReadOutcome::Failed);
                 let wait = if failed {
                     GITHUB_RETRY_FIRST
                 } else {
@@ -2959,6 +3157,7 @@ impl Runtime {
                     root: PathBuf::from(&root),
                     repository: Some(repository),
                     generation: read.generation,
+                    remotes: None,
                 }
             })
             .collect();
@@ -3002,6 +3201,21 @@ impl Runtime {
             .link_origin(device_id)
             .is_some_and(LinkOrigin::reports_own_facts)
         {
+            return false;
+        }
+        let (repositories, _) = self.node_github_repositories(device_id);
+        if request.projects.iter().any(|project| {
+            let root = project.root.to_string_lossy();
+            let generation = self
+                .device_github_reads
+                .get(&(device_id.to_owned(), root.to_string()))
+                .map(|read| read.generation)
+                .unwrap_or(0);
+            project.generation != generation
+                || !repositories.iter().any(|(path, repository)| {
+                    path == root.as_ref() && project.repository.as_ref() == Some(repository)
+                })
+        }) {
             return false;
         }
         for project in &request.projects {
@@ -3183,14 +3397,24 @@ impl Runtime {
                     loading: awaiting.contains(&workspace.path),
                     ..Default::default()
                 });
-            let home_issues = project
+            let mut home_issues = project
                 .map(|project| project.issues.clone())
                 .unwrap_or_default();
+            if let Some(crate::project_settings::RepositoryConnection::Repository { repository }) =
+                crate::project_settings::get(
+                    &self.snapshot.ui_state.project_settings,
+                    self.node.as_str(),
+                    &workspace.path,
+                )
+                .and_then(|record| record.repository.as_ref())
+            {
+                home_issues.repository = Some(repository.clone());
+            }
             if workspace.home_issues != home_issues {
                 workspace.home_issues = home_issues;
                 changed = true;
             }
-            let pull_requests = match project {
+            let mut pull_requests = match project {
                 Some(project) if workspace.is_git && workspace.remote_target_id.is_none() => {
                     super::pull_requests::shown_pull_requests(
                         &project.pull_requests,
@@ -3200,6 +3424,12 @@ impl Runtime {
                 }
                 _ => Vec::new(),
             };
+            // The sessions are attached before the comparison, so a pass that
+            // read nothing new compares equal and publishes nothing.
+            super::links::associate_pr_sessions(
+                &mut pull_requests,
+                link_summaries.and_then(|summaries| summaries.get(&workspace.id)),
+            );
             if workspace.pull_requests != pull_requests {
                 workspace.pull_requests = pull_requests;
                 changed = true;
@@ -3306,7 +3536,22 @@ impl Runtime {
     }
 
     pub(super) fn create_project_worktree(&mut self, payload: CreateWorktreePayload) -> bool {
-        self.start_worktree_task(payload, false)
+        let request_id = payload.request_id.clone();
+        let before_id = self.snapshot.task_operation.as_ref().map(|task| task.id);
+        let before_error = self.snapshot.status.last_error.clone();
+        let changed = self.start_worktree_task(payload, false);
+        if let Some(request_id) = request_id {
+            if let Some(operation) = self.snapshot.task_operation.as_mut()
+                && Some(operation.id) != before_id
+            {
+                operation.request_id = Some(request_id);
+            } else if self.snapshot.status.last_error != before_error
+                && let Some(error) = self.snapshot.status.last_error.as_mut()
+            {
+                error.request_id = Some(request_id);
+            }
+        }
+        changed
     }
 
     /// `create_worktree`, on a new branch or, `existing_branch`, on a branch

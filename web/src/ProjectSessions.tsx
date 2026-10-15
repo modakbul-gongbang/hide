@@ -100,7 +100,7 @@ export function ProjectSessions({ workspace, actions, target = null, onTarget }:
     actions.openProjectSession(project.id, target.id);
     onTarget?.();
   }, [target, live, named, actions, project, onTarget]);
-  const openPr = useCallback((number: number) => actions.openPullRequestRow(project.id, number), [actions, project]);
+  const openPr = useCallback((number: number) => actions.openPrCard(project.id, number), [actions, project]);
   const openCard = useCallback((number: number) => actions.openMemoryCard(project.deviceId, project.id, number), [actions, project]);
   const clearFilters = useCallback(() => { setProvider("all"); setQuery(""); }, []);
   const total = named === "ours" ? (sessions?.rows.length ?? 0) : 0;
@@ -396,7 +396,6 @@ function SessionRowItem({
         onKeyDown={onKeyDown}
       >
         <span className="flex items-center gap-xs text-micro">
-          <AgentMark kind={row.provider} />
           <span className={unavailable ? "text-muted-foreground" : "text-subtle-foreground"}>{row.provider_label}</span>
           {time ? <span className="text-muted-foreground">{time}</span> : null}
           {unavailable ? <span className="ml-auto shrink-0 text-warning">{t("sessions.rowUnavailable")}</span> : null}

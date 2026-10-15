@@ -234,6 +234,10 @@ pub struct SessionAgentPayload {
     pub lineage_session: Option<String>,
     #[serde(default)]
     pub state_change_seq: Option<u64>,
+    /// Herdr's record that the agent's current stop finished work, which its
+    /// tab-scoped seen does not clear (`agent_state::agent_completed`).
+    #[serde(default)]
+    pub completion_seq: Option<u64>,
     #[serde(default)]
     pub tokens: BTreeMap<String, Value>,
     /// The core's label for this agent's current session, if proven.
@@ -256,6 +260,11 @@ pub struct SessionAgentSessionPayload {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionPanePayload {
+    #[serde(default)]
+    pub terminal_id: Option<String>,
+    /// Authoritative failed terminal incarnation, independent of agent activity.
+    #[serde(default)]
+    pub failed_terminal_id: Option<String>,
     #[serde(default)]
     pub foreground_process: Option<String>,
     pub pane_id: String,
@@ -614,20 +623,20 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let message = label.and_then(agent_message);
 
     let agent_kind = non_empty(agent.agent.as_deref()).unwrap_or("unknown");
-    // Every surface uses the adapter's title priority, from proven facts
+    // Every surface uses one title order, from proven facts
     // alone. Herdr's workspace and control names never enter this ladder.
     let native_title = agent
         .facts
         .as_ref()
         .and_then(|facts| line_text(facts.native_title.as_deref(), MAX_LABEL_TEXT_CHARS));
-    use hide_agent_adapter::TitlePriority;
-    let title = match hide_agent_adapter::adapter(agent_kind).map(|row| row.key.title_priority()) {
-        Some(TitlePriority::NativeFirst) => native_title.or(task),
-        Some(TitlePriority::GoalOnly) => task,
-        Some(TitlePriority::GoalFirst) | None => task.or(native_title),
-    };
+    let manual_title = agent
+        .facts
+        .as_ref()
+        .and_then(|facts| line_text(facts.native_custom_title.as_deref(), MAX_LABEL_TEXT_CHARS));
+    let title = manual_title.or(task).or(native_title);
     let identity_label = title.unwrap_or_else(|| provider_name(agent.agent.as_deref()));
     let projected = SidebarAgentSnapshot {
+        close_session: agent.agent_session.clone(),
         state: Default::default(),
         resolved: None,
         resolved_recent: false,
@@ -639,12 +648,12 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         herdr_name: non_empty(agent.name.as_deref())
             .filter(|name| !crate::fork::hide_made_name(name, agent_kind, &pane_id))
             .map(str::to_owned),
-        started_as_fork: non_empty(agent.spawned_from_pane_id.as_deref()).is_some()
-            && agent
-                .tokens
-                .get(crate::wire::FORK_TOKEN)
-                .and_then(Value::as_str)
-                == Some("1"),
+        declared_fork: crate::wire::fork_declaration(
+            &agent.tokens,
+            non_empty(agent.lineage_session.as_deref()),
+        ),
+        // Laid on with the lineage, where the source's row is known.
+        forked_from: None,
         pane_id,
         workspace_label,
         checkout_label: None,
@@ -702,6 +711,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         declared_parent_session: non_empty(agent.declared_parent_session.as_deref())
             .map(str::to_owned),
         lineage_session: non_empty(agent.lineage_session.as_deref()).map(str::to_owned),
+        server_mark: crate::wire::server_mark(&agent.tokens),
         delegated: false,
         descendant_counts: crate::model::DescendantCountsSnapshot::default(),
         direct_child_counts: crate::model::DescendantCountsSnapshot::default(),
@@ -723,6 +733,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         sleep: None,
         row_facts: agent.facts,
         reply_wait: false,
+        hide_ai: None,
         request: None,
     };
     Ok(projected)
@@ -922,10 +933,12 @@ mod tests {
                 closed_at_unix_ms: None,
                 head_oid: None,
                 cross_repository: false,
+                work: Default::default(),
             }),
             ..Default::default()
         };
         let workspace = |checkout| WorkspaceSnapshot {
+            agent_presence: Default::default(),
             agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
@@ -1011,6 +1024,8 @@ mod tests {
                 panes: panes
                     .iter()
                     .map(|id| PaneSnapshot {
+                        terminal_id: None,
+                        failed_terminal_id: None,
                         id: (*id).to_owned(),
                         herdr_label: None,
                         terminal_title: None,
@@ -1039,6 +1054,7 @@ mod tests {
             ..Default::default()
         };
         let mut workspaces = vec![WorkspaceSnapshot {
+            agent_presence: Default::default(),
             agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
@@ -1165,10 +1181,10 @@ mod tests {
         };
         let mut before = project_agents(snapshot("기존 현재 작업")).agents;
         let mut records = BTreeMap::new();
-        apply_read_state(&mut before, &mut records, Some("root"));
+        apply_read_state(&mut before, &mut records, &mut connection(), Some("root"));
         let saved = records.clone();
         let mut after = project_agents(snapshot("갱신된 현재 작업")).agents;
-        assert!(apply_read_state(&mut after, &mut records, None).is_empty());
+        assert!(apply_read_state(&mut after, &mut records, &mut connection(), None).is_empty());
         assert_eq!(records, saved);
         for (before, after) in before.iter().zip(&after) {
             assert_eq!(before.id, after.id);
@@ -1553,9 +1569,11 @@ mod tests {
                 activity: "stopped".to_owned(),
                 completed: false,
                 descendant_signals: BTreeSet::new(),
+                server: Some(SERVER.to_owned()),
+                unread: false,
             },
         );
-        apply_read_state(&mut agents, &mut records, None);
+        apply_read_state(&mut agents, &mut records, &mut connection(), None);
 
         assert_eq!(
             agents
@@ -1583,7 +1601,7 @@ mod tests {
         };
         let mut agents = projected(json!([same("first"), same("second"), same("third")]));
         let mut records = BTreeMap::new();
-        apply_read_state(&mut agents, &mut records, None);
+        apply_read_state(&mut agents, &mut records, &mut connection(), None);
         assert_eq!(
             agents
                 .iter()
@@ -1616,33 +1634,38 @@ mod tests {
         );
     }
 
-    /// Product title rules are fixed independently of adapter capabilities.
-    /// Summaries may be absent; Cursor has no native title authority.
+    /// status-model.md: manual, goal, automatic, provider for every agent.
+    /// Reader capability determines which facts can reach this ladder.
     #[test]
-    fn all_shared_surfaces_receive_the_providers_title_priority() {
-        for (kind, both, without_goal, without_native) in [
-            (
-                "claude",
-                "generated goal",
-                "native rename",
-                "generated goal",
-            ),
-            ("codex", "generated goal", "native rename", "generated goal"),
-            ("grok", "native rename", "native rename", "generated goal"),
-            (
-                "opencode",
-                "native rename",
-                "native rename",
-                "generated goal",
-            ),
-            ("pi", "native rename", "native rename", "generated goal"),
-            ("omp", "native rename", "native rename", "generated goal"),
-            ("cursor", "generated goal", "cursor", "generated goal"),
+    fn all_shared_surfaces_receive_manual_then_goal_then_automatic_then_provider() {
+        for (kind, provider) in [
+            ("claude", "Claude"),
+            ("codex", "Codex"),
+            ("grok", "grok"),
+            ("opencode", "OpenCode"),
+            ("pi", "pi"),
+            ("omp", "omp"),
+            ("cursor", "cursor"),
         ] {
-            for (goal, native, expected) in [
-                (Some("generated goal"), Some("native rename"), both),
-                (None, Some("native rename"), without_goal),
-                (Some("generated goal"), None, without_native),
+            for (manual, goal, automatic, expected) in [
+                (
+                    Some("운영자 이름"),
+                    Some("Hide 작업명"),
+                    Some("자동 제목"),
+                    "운영자 이름",
+                ),
+                (None, Some("Hide 작업명"), Some("자동 제목"), "Hide 작업명"),
+                (None, None, Some("자동 제목"), "자동 제목"),
+                (None, None, None, provider),
+                (Some("운영자 이름"), None, Some("자동 제목"), "운영자 이름"),
+                (
+                    Some(" \n\t"),
+                    Some("Hide 작업명"),
+                    Some("자동 제목"),
+                    "Hide 작업명",
+                ),
+                (None, Some(" \n\t"), Some("自動 제목"), "自動 제목"),
+                (None, None, Some(" \n\t"), provider),
             ] {
                 let mut agent: SessionAgentPayload = serde_json::from_value(json!({
                     "pane_id":"p", "id":"control-name", "agent":kind,
@@ -1657,7 +1680,8 @@ mod tests {
                     blocked: false,
                 });
                 agent.facts = Some(crate::request_view::RowFacts {
-                    native_title: native.map(str::to_owned),
+                    native_title: automatic.map(str::to_owned),
+                    native_custom_title: manual.map(str::to_owned),
                     ..Default::default()
                 });
                 assert_eq!(
@@ -1751,40 +1775,107 @@ mod tests {
         use AgentDemand::{None as Quiet, Question};
         let reply = Some("A/B 선택 후 승인");
         let progress = Some("푸시 완료, 승인 대기 중");
+        let native = Some("어디에 배포할까요?");
         let asked = (false, Some("A/B 선택 후 승인".to_owned()));
         let said = (false, Some("푸시 완료, 승인 대기 중".to_owned()));
+        let quoted = (false, Some("어디에 배포할까요?".to_owned()));
         let cases = [
             (
                 AgentGroup::NeedsYou,
                 Question,
                 reply,
+                None,
                 progress,
                 asked.clone(),
             ),
-            (AgentGroup::NeedsYou, Question, None, progress, said.clone()),
-            (AgentGroup::NeedsYou, Question, None, None, (true, None)),
-            (AgentGroup::Done, Quiet, None, progress, said.clone()),
-            (AgentGroup::Working, Quiet, reply, progress, said.clone()),
-            (AgentGroup::Working, Quiet, None, None, (true, None)),
+            (
+                AgentGroup::NeedsYou,
+                Question,
+                None,
+                None,
+                progress,
+                said.clone(),
+            ),
+            (
+                AgentGroup::NeedsYou,
+                Question,
+                None,
+                None,
+                None,
+                (true, None),
+            ),
+            // A native question waiting now is what is asked; the label's
+            // reply, when it has one, is still the shorter thing to do.
+            (
+                AgentGroup::NeedsYou,
+                Question,
+                None,
+                native,
+                progress,
+                quoted.clone(),
+            ),
+            (
+                AgentGroup::NeedsYou,
+                Question,
+                None,
+                native,
+                None,
+                quoted.clone(),
+            ),
+            (
+                AgentGroup::NeedsYou,
+                Question,
+                reply,
+                native,
+                progress,
+                asked.clone(),
+            ),
+            (AgentGroup::Done, Quiet, None, None, progress, said.clone()),
+            (
+                AgentGroup::Working,
+                Quiet,
+                reply,
+                None,
+                progress,
+                said.clone(),
+            ),
+            (AgentGroup::Working, Quiet, None, None, None, (true, None)),
             // A delegated child still running while it asks.
             (
                 AgentGroup::Working,
                 Question,
                 reply,
+                None,
                 progress,
                 asked.clone(),
             ),
-            (AgentGroup::Seen, Quiet, reply, progress, (false, None)),
+            (
+                AgentGroup::Working,
+                Question,
+                None,
+                native,
+                progress,
+                quoted.clone(),
+            ),
+            (
+                AgentGroup::Seen,
+                Quiet,
+                reply,
+                None,
+                progress,
+                (false, None),
+            ),
             // A read question, and a delegated child's question, in Seen.
-            (AgentGroup::Seen, Question, reply, progress, asked),
-            (AgentGroup::Seen, Question, None, progress, said),
-            (AgentGroup::Seen, Question, None, None, (false, None)),
+            (AgentGroup::Seen, Question, reply, None, progress, asked),
+            (AgentGroup::Seen, Question, None, None, progress, said),
+            (AgentGroup::Seen, Question, None, native, progress, quoted),
+            (AgentGroup::Seen, Question, None, None, None, (false, None)),
         ];
-        for (group, demand, reply, progress, expected) in cases {
+        for (group, demand, reply, question, progress, expected) in cases {
             assert_eq!(
-                agent_second_line(group, demand, reply, progress),
+                agent_second_line(group, demand, reply, question, progress),
                 expected,
-                "{group:?} {demand:?} reply={reply:?} progress={progress:?}"
+                "{group:?} {demand:?} reply={reply:?} question={question:?} progress={progress:?}"
             );
         }
     }
@@ -1868,6 +1959,15 @@ mod tests {
         project_agents(payload(agents)).agents
     }
 
+    /// The mark of the one Herdr server most read tests run on.
+    const SERVER: &str = "server-1";
+
+    /// A connection to that server, whose panes carry no mark yet, so a state
+    /// read on it names `SERVER`.
+    fn connection() -> ReadConnection {
+        ReadConnection::new(SERVER.to_owned())
+    }
+
     fn finished(pane_id: &str, seq: u64) -> Value {
         json!({
             "pane_id": pane_id,
@@ -1891,7 +1991,7 @@ mod tests {
         ]));
         let mut records = BTreeMap::new();
 
-        apply_read_state(&mut agents, &mut records, None);
+        apply_read_state(&mut agents, &mut records, &mut connection(), None);
         assert!(
             agents
                 .iter()
@@ -1899,7 +1999,7 @@ mod tests {
             "nothing is read before the operator focuses anything"
         );
 
-        apply_read_state(&mut agents, &mut records, Some("b"));
+        apply_read_state(&mut agents, &mut records, &mut connection(), Some("b"));
         let groups = agents
             .iter()
             .map(|agent| (agent.pane_id.as_str(), (agent.unread, agent.group.as_str())))
@@ -1916,7 +2016,7 @@ mod tests {
     fn read_record_ignores_herdr_marking_the_tab_seen() {
         let mut agents = projected(json!([finished("a", 1), finished("b", 2)]));
         let mut records = BTreeMap::new();
-        apply_read_state(&mut agents, &mut records, Some("b"));
+        apply_read_state(&mut agents, &mut records, &mut connection(), Some("b"));
 
         let seen_by_herdr = json!([
             {"pane_id":"a","agent_status":"idle","state_change_seq":9,
@@ -1925,7 +2025,7 @@ mod tests {
              "tokens":{"status_done":"\u{25cf}","activity":"0000000000001"}}
         ]);
         let mut agents = projected(seen_by_herdr);
-        apply_read_state(&mut agents, &mut records, None);
+        apply_read_state(&mut agents, &mut records, &mut connection(), None);
         assert!(
             agents.iter().all(|agent| agent.unread),
             "Herdr's tab-scoped seen never decides Hide's read axis"
@@ -1947,11 +2047,16 @@ mod tests {
         };
         let mut records = BTreeMap::new();
         let mut finished = projected(asking("done"));
-        apply_read_state(&mut finished, &mut records, Some("a"));
+        apply_read_state(&mut finished, &mut records, &mut connection(), Some("a"));
         assert!(!finished[0].unread, "the operator read the question");
 
         let mut seen = projected(asking("idle"));
-        apply_read_state(&mut seen, &mut records, Some("elsewhere"));
+        apply_read_state(
+            &mut seen,
+            &mut records,
+            &mut connection(),
+            Some("elsewhere"),
+        );
         assert!(
             !seen[0].unread,
             "Herdr's seen at the same sequence returns nothing to unread"
@@ -1963,6 +2068,8 @@ mod tests {
     /// again, a turn between two looks (Herdr's sequence moved), a new session
     /// in the pane, and a completion that appears after the operator read the
     /// pane, including one that appears at the sequence the read was made at.
+    /// Herdr's seen keeps the completion (`completion_seq`), so it is not one
+    /// going away and coming back.
     #[test]
     fn a_read_demand_turns_unread_again_only_for_news() {
         let state = |status: &str, seq: u64, session: &str| {
@@ -1975,13 +2082,13 @@ mod tests {
         let read = |status: &str| {
             let mut records = BTreeMap::new();
             let mut agents = projected(state(status, 4, "s1"));
-            apply_read_state(&mut agents, &mut records, Some("a"));
+            apply_read_state(&mut agents, &mut records, &mut connection(), Some("a"));
             assert!(!agents[0].unread);
             records
         };
         let unread = |records: &mut BTreeMap<String, PaneReadRecord>, status, seq, session| {
             let mut agents = projected(state(status, seq, session));
-            apply_read_state(&mut agents, records, Some("elsewhere"));
+            apply_read_state(&mut agents, records, &mut connection(), Some("elsewhere"));
             agents[0].unread
         };
 
@@ -2011,10 +2118,6 @@ mod tests {
             !unread(&mut records, "idle", 4, "s1"),
             "Herdr's seen is not news"
         );
-        assert!(
-            unread(&mut records, "done", 4, "s1"),
-            "the completion Herdr's seen took away is news when it comes back"
-        );
     }
 
     /// AC3, SC2. A demand raised on the pane the operator is already looking at
@@ -2029,7 +2132,7 @@ mod tests {
         let mut records = BTreeMap::new();
 
         let mut watched = projected(asking.clone());
-        apply_read_state(&mut watched, &mut records, Some("a"));
+        apply_read_state(&mut watched, &mut records, &mut connection(), Some("a"));
         assert!(!watched[0].unread, "a question on the focused pane is read");
         assert_eq!(watched[0].group, "seen");
 
@@ -2038,7 +2141,12 @@ mod tests {
             "tokens":{"status_question_new":"?","activity":"0000000000003"}
         }]);
         let mut later = projected(moved_on);
-        apply_read_state(&mut later, &mut records, Some("elsewhere"));
+        apply_read_state(
+            &mut later,
+            &mut records,
+            &mut connection(),
+            Some("elsewhere"),
+        );
         assert!(later[0].unread, "a new question raised elsewhere is unread");
         assert_eq!(later[0].group, "needs_you");
     }
@@ -2052,14 +2160,14 @@ mod tests {
             "pane_id":"a","agent_status":"working","state_change_seq":7,
             "tokens":{"status_working":"\u{25cf}","activity":"0000000000001"}
         }]));
-        apply_read_state(&mut working, &mut records, Some("a"));
+        apply_read_state(&mut working, &mut records, &mut connection(), Some("a"));
         assert!(!working[0].unread);
 
         let mut asking = projected(json!([{
             "pane_id":"a","agent_status":"working","state_change_seq":7,
             "tokens":{"status_question_new":"?","status_working":"\u{25cf}","activity":"0000000000001"}
         }]));
-        apply_read_state(&mut asking, &mut records, None);
+        apply_read_state(&mut asking, &mut records, &mut connection(), None);
         assert!(
             asking[0].unread,
             "a new demand is unread even at the same sequence"
@@ -2073,13 +2181,15 @@ mod tests {
     fn read_records_are_evicted_only_against_authoritative_pane_topology() {
         let mut agents = projected(json!([finished("a", 1)]));
         let mut records = BTreeMap::new();
-        apply_read_state(&mut agents, &mut records, Some("a"));
+        apply_read_state(&mut agents, &mut records, &mut connection(), Some("a"));
         let after_first = records.clone();
-        assert!(apply_read_state(&mut agents, &mut records, Some("a")).is_empty());
+        assert!(
+            apply_read_state(&mut agents, &mut records, &mut connection(), Some("a")).is_empty()
+        );
         assert_eq!(records, after_first, "a repeated apply changes nothing");
 
         let mut none: Vec<SidebarAgentSnapshot> = Vec::new();
-        apply_read_state(&mut none, &mut records, None);
+        apply_read_state(&mut none, &mut records, &mut connection(), None);
         assert!(
             records.contains_key("a"),
             "an empty agent list must not wipe a pane record"
@@ -2121,112 +2231,337 @@ mod tests {
         assert!(wire("c").get("session_id").is_none());
     }
 
-    #[test]
-    fn reconnect_rebases_the_same_agent_but_not_a_replacement() {
-        let same_session = |seq: u64| {
-            json!([{
-                "pane_id":"a",
-                "agent_status":"done",
-                "state_change_seq":seq,
-                "agent_session":{"kind":"id","value":"session-a"},
-                "tokens":{"status_done_new":"\u{25cf}","activity":"0000000000001"}
-            }])
-        };
-        let mut records = BTreeMap::new();
-        let mut original = projected(same_session(40));
-        apply_read_state(&mut original, &mut records, Some("a"));
-
-        let mut restored = projected(same_session(3));
-        let mut pending = HashSet::from(["a".to_owned()]);
-        assert_eq!(
-            reconcile_read_records(&restored, &mut records, &mut pending).len(),
-            1
-        );
-        apply_read_state(&mut restored, &mut records, None);
-        assert!(!restored[0].unread, "the restored session stays read");
-
-        let mut progressed = projected(same_session(4));
-        let mut pending = HashSet::from(["a".to_owned()]);
-        assert!(reconcile_read_records(&progressed, &mut records, &mut pending).is_empty());
-        apply_read_state(&mut progressed, &mut records, None);
-        assert!(
-            progressed[0].unread,
-            "a forward sequence is new work, not a server restart"
-        );
-
-        let mut legacy_records = records.clone();
-        legacy_records.get_mut("a").unwrap().session_id = None;
-        let legacy_restored = projected(same_session(1));
-        let mut pending = HashSet::from(["a".to_owned()]);
-        assert_eq!(
-            reconcile_read_records(&legacy_restored, &mut legacy_records, &mut pending).len(),
-            1
-        );
-        assert_eq!(
-            legacy_records["a"].session_id.as_deref(),
-            Some("session-a"),
-            "the first reset migrates a record written before session identity"
-        );
-
-        let mut replacement = projected(json!([{
-            "pane_id":"a",
-            "agent_status":"done",
-            "state_change_seq":1,
-            "agent_session":{"kind":"id","value":"session-b"},
-            "tokens":{"status_done_new":"\u{25cf}","activity":"0000000000001"}
-        }]));
-        let mut pending = HashSet::from(["a".to_owned()]);
-        assert!(reconcile_read_records(&replacement, &mut records, &mut pending).is_empty());
-        apply_read_state(&mut replacement, &mut records, None);
-        assert!(replacement[0].unread, "a replacement agent is new work");
+    /// One pane as a Herdr server reports it, running session `session`.
+    fn pane(
+        pane_id: &str,
+        status: &str,
+        seq: u64,
+        completion: Option<u64>,
+        session: &str,
+    ) -> Value {
+        json!({
+            "pane_id": pane_id,
+            "agent": "claude",
+            "agent_status": status,
+            "state_change_seq": seq,
+            "completion_seq": completion,
+            "agent_session": {"kind":"id","value":session},
+            "lineage_session": crate::wire::session_digest(session).unwrap(),
+            "tokens": {"activity":"0000000000001"}
+        })
     }
 
-    /// PRD B5 across a reconnect: a child's question that arrived while Hide
-    /// was disconnected is still news for its parent after the parent's own
-    /// sequence is rebased, because the rebase keeps only what the operator
-    /// had actually seen.
+    /// What Hide keeps about the panes across passes and restarts.
+    #[derive(Default)]
+    struct Saved {
+        records: BTreeMap<String, PaneReadRecord>,
+        completions: BTreeMap<String, crate::model::PaneCompletion>,
+    }
+
+    /// One sync pass the way the runtime runs it: completions kept first,
+    /// then the lineage, then the read axis.
+    fn pass(
+        rows: Value,
+        connection: &mut ReadConnection,
+        saved: &mut Saved,
+        focused: Option<&str>,
+    ) -> Vec<SidebarAgentSnapshot> {
+        let mut agents = projected(rows);
+        apply_completions(&mut agents, &mut saved.completions, connection);
+        apply_lineage(&mut agents, &[], &[]);
+        apply_read_state(&mut agents, &mut saved.records, connection, focused);
+        agents
+    }
+
+    /// A restored Herdr server lists a pane at sequence 0, then `unknown`,
+    /// then settled at a sequence of its own (measured on the pinned 0.9.3).
+    /// A pane the operator read stays read through each step, keeps the
+    /// completion the restored server no longer reports, and is judged on
+    /// the new server's sequence from then on.
     #[test]
-    fn reconnect_keeps_a_descendants_new_question_unread_on_the_parent() {
-        let rows = |seq: u64, child_status: &str, child_tokens: Value| {
-            let mut agents = projected(json!([
-                {
-                    "pane_id":"root",
-                    "agent_status":"working",
-                    "state_change_seq":seq,
-                    "agent_session":{"kind":"id","value":"session-root"},
-                    "tokens":{"status_working":"\u{25cf}","activity":"0000000000001"}
-                },
-                {
-                    "pane_id":"child",
-                    "agent_status":child_status,
-                    "state_change_seq":1,
-                    "tokens":child_tokens
-                }
-            ]));
-            agents[1].spawned_from_pane_id = Some("root".to_owned());
-            apply_lineage(&mut agents, &[], &[]);
-            agents
-        };
-        let quiet = json!({"status_working":"\u{25cf}","activity":"0000000000001"});
-        let asking = json!({"status_question_new":"?","activity":"0000000000002"});
-
-        let mut records = BTreeMap::new();
-        let mut before = rows(40, "working", quiet);
-        apply_read_state(&mut before, &mut records, Some("root"));
-        assert!(!before[0].unread);
-
-        let mut restored = rows(3, "idle", asking);
-        let mut pending = HashSet::from(["root".to_owned()]);
-        assert_eq!(
-            reconcile_read_records(&restored, &mut records, &mut pending).len(),
-            1,
-            "the parent's own sequence is rebased"
+    fn a_read_pane_stays_read_through_a_restored_servers_steps() {
+        let mut saved = Saved::default();
+        let mut first = connection();
+        pass(
+            json!([pane("a", "done", 40, Some(40), "s1")]),
+            &mut first,
+            &mut saved,
+            Some("a"),
         );
-        apply_read_state(&mut restored, &mut records, None);
+
+        let mut restored = ReadConnection::new("server-2".to_owned());
+        for (status, seq) in [("idle", 0), ("unknown", 1), ("idle", 3)] {
+            let rows = pass(
+                json!([pane("a", status, seq, None, "s1")]),
+                &mut restored,
+                &mut saved,
+                None,
+            );
+            assert!(!rows[0].unread, "{status} at {seq} stays read");
+        }
+        let rows = pass(
+            json!([pane("a", "idle", 3, None, "s1")]),
+            &mut restored,
+            &mut saved,
+            None,
+        );
+        assert!(rows[0].completed, "the completion is carried over");
+        assert_eq!(rows[0].group, "seen");
+        assert_eq!(saved.records["a"].server.as_deref(), Some("server-2"));
+        let before = (saved.records.clone(), saved.completions.clone());
+        let mut again = projected(json!([pane("a", "idle", 3, None, "s1")]));
+        assert!(!apply_completions(
+            &mut again,
+            &mut saved.completions,
+            &restored
+        ));
+        assert!(apply_read_state(&mut again, &mut saved.records, &mut restored, None).is_empty());
+        assert_eq!((saved.records.clone(), saved.completions.clone()), before);
+
+        let rows = pass(
+            json!([pane("a", "working", 4, None, "s1")]),
+            &mut restored,
+            &mut saved,
+            None,
+        );
+        assert!(rows[0].unread, "work after the restore is news");
+    }
+
+    /// The restart of 2026-10-15: a restored Codex pane reports `done` again,
+    /// which is the completion the operator already read, not a new one.
+    #[test]
+    fn a_restored_pane_reporting_done_again_stays_read() {
+        let mut saved = Saved::default();
+        pass(
+            json!([pane("a", "done", 40, Some(40), "s1")]),
+            &mut connection(),
+            &mut saved,
+            Some("a"),
+        );
+
+        let mut restored = ReadConnection::new("server-2".to_owned());
+        pass(
+            json!([pane("a", "idle", 0, None, "s1")]),
+            &mut restored,
+            &mut saved,
+            None,
+        );
+        let rows = pass(
+            json!([pane("a", "done", 5, Some(5), "s1")]),
+            &mut restored,
+            &mut saved,
+            None,
+        );
+        assert!(!rows[0].unread);
+        assert_eq!(rows[0].group, "seen");
+    }
+
+    /// A pane that was unread when the server went away stays unread on the
+    /// restored server, however its sequence lands.
+    #[test]
+    fn a_pane_unread_before_a_restart_stays_unread() {
+        let mut saved = Saved::default();
+        let mut first = connection();
+        pass(
+            json!([pane("a", "done", 40, Some(40), "s1")]),
+            &mut first,
+            &mut saved,
+            Some("a"),
+        );
+        let rows = pass(
+            json!([pane("a", "working", 41, None, "s1")]),
+            &mut first,
+            &mut saved,
+            None,
+        );
+        assert!(rows[0].unread);
         assert!(
-            restored[0].unread,
-            "the question that arrived while disconnected is still news"
+            saved.records["a"].unread,
+            "the verdict is saved with the record"
         );
+
+        let mut restored = ReadConnection::new("server-2".to_owned());
+        for (status, seq) in [("idle", 0), ("unknown", 1), ("idle", 40), ("idle", 41)] {
+            let rows = pass(
+                json!([pane("a", status, seq, None, "s1")]),
+                &mut restored,
+                &mut saved,
+                None,
+            );
+            assert!(rows[0].unread, "{status} at {seq} stays unread");
+        }
+        let rows = pass(
+            json!([pane("a", "idle", 41, None, "s1")]),
+            &mut restored,
+            &mut saved,
+            Some("a"),
+        );
+        assert!(
+            !rows[0].unread,
+            "looking at it reads it on the restored server"
+        );
+    }
+
+    /// What a restored pane shows that the operator had not read: another
+    /// session, or a demand it did not have. Either stays unread until read.
+    #[test]
+    fn a_restored_pane_showing_something_new_is_unread() {
+        let asking = |seq: u64| {
+            let mut row = pane("a", "idle", seq, None, "s1");
+            row["tokens"]["status_question_new"] = json!("?");
+            row
+        };
+        for (restored_row, what) in [
+            (pane("a", "idle", 3, None, "s2"), "another session"),
+            (asking(3), "a new question"),
+        ] {
+            let mut saved = Saved::default();
+            pass(
+                json!([pane("a", "idle", 40, None, "s1")]),
+                &mut connection(),
+                &mut saved,
+                Some("a"),
+            );
+            let mut restored = ReadConnection::new("server-2".to_owned());
+            for _ in 0..2 {
+                let rows = pass(
+                    json!([restored_row.clone()]),
+                    &mut restored,
+                    &mut saved,
+                    None,
+                );
+                assert!(rows[0].unread, "{what}");
+            }
+        }
+    }
+
+    /// A record saved before servers were named is judged by sequence as it
+    /// always was, once, and then names this connection's server: one that
+    /// still matches is read, one that does not is unread rather than read on
+    /// a guess, and one the old reconciliation left at sequence 0 is carried.
+    #[test]
+    fn a_record_saved_before_servers_were_named_is_judged_by_sequence_once() {
+        let legacy = |seq: u64| PaneReadRecord {
+            state_change_seq: Some(seq),
+            session_id: Some("s1".to_owned()),
+            demand: "none".to_owned(),
+            activity: "stopped".to_owned(),
+            completed: true,
+            descendant_signals: BTreeSet::new(),
+            server: None,
+            unread: false,
+        };
+        for (saved, unread, what) in [
+            (40, false, "the same sequence is still read"),
+            (38, true, "a sequence that moved is unread"),
+            (0, false, "a placeholder sequence is carried"),
+        ] {
+            let mut saved_state = Saved::default();
+            saved_state.records.insert("a".to_owned(), legacy(saved));
+            let mut connection = connection();
+            for _ in 0..2 {
+                let rows = pass(
+                    json!([pane("a", "done", 40, Some(40), "s1")]),
+                    &mut connection,
+                    &mut saved_state,
+                    None,
+                );
+                assert_eq!(rows[0].unread, unread, "{what}");
+            }
+            let record = &saved_state.records["a"];
+            assert_eq!(record.server.as_deref(), Some(SERVER), "{what}: named");
+            assert_eq!(record.unread, unread, "{what}: the verdict is saved");
+        }
+    }
+
+    /// Hide restarting while its Herdr server keeps running finds its own
+    /// mark on the pane, so the server's sequence still compares: a turn
+    /// that ran while Hide was away is news. Without the mark the record
+    /// would be carried over and that turn absorbed.
+    #[test]
+    fn a_hide_restart_on_the_same_server_shows_work_done_while_away() {
+        let marked = |status: &str, seq: u64| {
+            let mut row = pane("a", status, seq, Some(seq), "s1");
+            row["tokens"][crate::wire::SERVER_MARK_TOKEN] = json!(SERVER);
+            row
+        };
+        let mut saved = Saved::default();
+        pass(
+            json!([marked("done", 40)]),
+            &mut connection(),
+            &mut saved,
+            Some("a"),
+        );
+
+        let mut reconnected = ReadConnection::new("server-9".to_owned());
+        let rows = pass(
+            json!([marked("done", 40)]),
+            &mut reconnected,
+            &mut saved,
+            None,
+        );
+        assert!(!rows[0].unread, "nothing ran while Hide was away");
+        let rows = pass(
+            json!([marked("done", 44)]),
+            &mut reconnected,
+            &mut saved,
+            None,
+        );
+        assert!(rows[0].unread, "a turn ran while Hide was away");
+    }
+
+    /// PRD B5 across a restore: a child's completion the operator read on
+    /// its parent does not light the parent while the restored server has
+    /// neither the child's completion nor its lineage tokens back yet, and a
+    /// question the child raised while Hide was away still does.
+    #[test]
+    fn a_childs_signal_through_a_restore_lights_its_parent_only_when_new() {
+        let root = |seq: u64| pane("root", "idle", seq, None, "s-root");
+        let child = |status: &str, seq: u64, completion: Option<u64>, linked: bool| {
+            let mut row = pane("child", status, seq, completion, "s-child");
+            if linked {
+                row["spawned_from_pane_id"] = json!("root");
+                row["declared_parent_session"] =
+                    json!(crate::wire::session_digest("s-root").unwrap());
+            }
+            row
+        };
+        let mut saved = Saved::default();
+        let rows = pass(
+            json!([root(40), child("done", 12, Some(12), true)]),
+            &mut connection(),
+            &mut saved,
+            Some("root"),
+        );
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.pane_id == "root")
+                .unwrap()
+                .descendant_signals
+                .len(),
+            1
+        );
+
+        let mut restored = ReadConnection::new("server-2".to_owned());
+        let steps = [
+            json!([root(0), child("idle", 0, None, false)]),
+            json!([root(3), child("unknown", 1, None, false)]),
+            json!([root(3), child("idle", 2, None, false)]),
+            json!([root(3), child("idle", 2, None, true)]),
+        ];
+        for (step, rows) in steps.into_iter().enumerate() {
+            let rows = pass(rows, &mut restored, &mut saved, None);
+            let root = rows.iter().find(|row| row.pane_id == "root").unwrap();
+            assert!(!root.unread, "step {step}: the parent stays read");
+        }
+        let asking = {
+            let mut row = child("idle", 3, None, true);
+            row["tokens"]["status_question_new"] = json!("?");
+            row
+        };
+        let rows = pass(json!([root(3), asking]), &mut restored, &mut saved, None);
+        let root = rows.iter().find(|row| row.pane_id == "root").unwrap();
+        assert!(root.unread, "a new question from the child is news");
     }
 
     /// The ordering key falls back to Herdr's own sequence, zero padded to the

@@ -10,6 +10,56 @@ use std::sync::mpsc;
 
 const NODE: &str = "inbound-node-1";
 
+/// Installs a consented device connection without dialing a real machine.
+fn dialed_link(runtime: &mut Runtime, device: &str, host: Arc<dyn crate::node_access::NodeLink>) {
+    if !runtime
+        .snapshot
+        .ui_state
+        .device_registrations
+        .iter()
+        .any(|row| row.id == device)
+    {
+        runtime
+            .snapshot
+            .ui_state
+            .device_registrations
+            .push(crate::model::DeviceRegistration {
+                id: device.to_owned(),
+                label: device.to_owned(),
+                origin: crate::model::LinkOrigin::Dialed {
+                    ssh_alias: "fixture-host".to_owned(),
+                },
+                herdr_socket_path: None,
+                host_consent: None,
+            });
+    }
+    runtime.device_hosts.insert(
+        device.to_owned(),
+        super::super::hosts::DeviceHost {
+            generation: 1,
+            phase: super::super::hosts::HostPhase::Ready {
+                host,
+                platform: "linux".to_owned(),
+                helper_path: Some("/fixture/hided".to_owned()),
+            },
+        },
+    );
+}
+
+struct OldMemoryReader(hide_node_link::sessions::ReaderFeatures);
+impl crate::node_access::NodeLink for OldMemoryReader {
+    fn call(
+        &self,
+        _: hide_node_link::protocol::Call,
+        _: Duration,
+    ) -> Result<hide_node_link::link::LinkAnswer, hide_node_link::link::LinkError> {
+        panic!("Memory admission must refuse before a node call");
+    }
+    fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+        Some(&self.0)
+    }
+}
+
 /// The transport of a node that dialed in, reaching no Herdr.
 struct HeldLink;
 
@@ -438,9 +488,8 @@ fn a_connection_test_of_a_node_that_dials_in_is_refused_with_where_to_test_it() 
     drop(release);
 }
 
-/// A hook's Memory is answered for this machine's panes and a linked node's,
-/// never for a device the core dials, which keeps none, and not while a
-/// node's link is down (PRD core-host-node-move B14, Q20).
+/// A hook's Memory is answered for this machine's panes and any linked device's,
+/// and refused while the device's link is down, regardless of direction.
 #[test]
 fn memory_is_answered_for_this_machine_and_a_linked_node_only() {
     let shared = shared_runtime();
@@ -469,9 +518,31 @@ fn memory_is_answered_for_this_machine_and_a_linked_node_only() {
         .lock()
         .unwrap()
         .dispatch_json(&serde_json::to_vec(&event).unwrap());
-    assert_eq!(scope("studio"), Err("dialed_device"));
+    assert_eq!(scope("studio"), Err("link_down"));
+    let home = tempfile::tempdir().unwrap();
+    dialed_link(
+        &mut shared.lock().unwrap(),
+        "studio",
+        Arc::new(hide_node::Local::new(Some(home.path().to_owned()))),
+    );
+    assert_eq!(
+        scope("studio"),
+        Ok(("studio".to_owned(), "/work/project".to_owned()))
+    );
+    assert_eq!(
+        shared
+            .lock()
+            .unwrap()
+            .factory_linked_node("studio")
+            .err()
+            .as_deref(),
+        Some("factory_device_unsupported"),
+        "Memory admission does not grant Factory authority"
+    );
 
-    let (link, release) = held_link();
+    let (link, release) = held_link_to(Arc::new(hide_node::Local::new(Some(
+        home.path().to_owned(),
+    ))));
     shared
         .lock()
         .unwrap()
@@ -484,8 +555,7 @@ fn memory_is_answered_for_this_machine_and_a_linked_node_only() {
         scope(NODE),
         Ok((NODE.to_owned(), "/work/project".to_owned()))
     );
-    // The background pass walks the same machines; a dialed device is not
-    // among them, linked or not.
+    // The background pass walks both connection directions through their nodes.
     let pass_nodes = || {
         let (nodes, unreached) = shared.lock().unwrap().memory_nodes();
         (
@@ -499,10 +569,16 @@ fn memory_is_answered_for_this_machine_and_a_linked_node_only() {
                 .collect::<Vec<_>>(),
         )
     };
-    assert_eq!(pass_nodes(), (vec![own.clone(), NODE.to_owned()], vec![]));
+    assert_eq!(
+        pass_nodes(),
+        (
+            vec![own.clone(), "studio".to_owned(), NODE.to_owned()],
+            vec![]
+        )
+    );
     // The receipts the label reads find are checked against the same store:
     // this machine's and the linked node's, each read through its own link;
-    // the dialed device's are dropped.
+    // both connection directions reach the same core store.
     let receipt = |session: &str| crate::labels::worker::SightedMemoryReceipt {
         provider: "opencode",
         session_id: session.to_owned(),
@@ -531,6 +607,7 @@ fn memory_is_answered_for_this_machine_and_a_linked_node_only() {
     batches.sort();
     let mut expected = vec![
         (own.clone(), vec!["here".to_owned()]),
+        ("studio".to_owned(), vec!["on-studio".to_owned()]),
         (
             NODE.to_owned(),
             vec!["on-node".to_owned(), "on-node-2".to_owned()],
@@ -539,9 +616,7 @@ fn memory_is_answered_for_this_machine_and_a_linked_node_only() {
     expected.sort();
     assert_eq!(batches, expected);
 
-    // A pane let go on a device the core dials closes no session for the
-    // pass; one let go on a node keeps its session for the pass, even while
-    // the node's link is down.
+    // Closed sessions on either connection direction wait while their link is down.
     let handoff = |live: &[&str]| crate::labels::worker::MemoryHandoff {
         receipts: Vec::new(),
         live_sessions: Some(live.iter().map(|id| ("claude", (*id).to_owned())).collect()),
@@ -559,6 +634,8 @@ fn memory_is_answered_for_this_machine_and_a_linked_node_only() {
     {
         let mut runtime = shared.lock().unwrap();
         runtime.take_memory_handoff("studio", handoff(&["on-studio"]));
+        runtime.device_hosts.get_mut("studio").unwrap().phase =
+            super::super::hosts::HostPhase::Unavailable("fixture disconnected".to_owned());
         runtime.take_memory_handoff("studio", handoff(&[]));
         runtime.take_memory_handoff(NODE, handoff(&["on-node"]));
     }
@@ -570,11 +647,125 @@ fn memory_is_answered_for_this_machine_and_a_linked_node_only() {
         .lock()
         .unwrap()
         .take_memory_handoff(NODE, handoff(&[]));
-    assert_eq!(closed(), ["on-node"]);
+    let mut queued = closed();
+    queued.sort();
+    assert_eq!(queued, ["on-node", "on-studio"]);
+    assert_eq!(scope("studio"), Err("link_down"));
 
     assert_eq!(scope(NODE), Err("link_down"));
     // A node whose link is down is walked once it is back.
-    assert_eq!(pass_nodes(), (vec![own], vec![NODE.to_owned()]));
+    assert_eq!(
+        pass_nodes(),
+        (vec![own], vec!["studio".to_owned(), NODE.to_owned()])
+    );
+}
+
+#[test]
+fn a_dialed_helper_without_a_memory_reader_refuses_and_keeps_closed_sessions() {
+    let mut runtime = runtime();
+    dialed_link(
+        &mut runtime,
+        "studio",
+        Arc::new(OldMemoryReader(
+            hide_node_link::sessions::ReaderFeatures::protocol24(),
+        )),
+    );
+    let context = crate::workspace_control::Context {
+        device_id: "studio".to_owned(),
+        workspace_id: "w".to_owned(),
+        checkout_id: "c".to_owned(),
+        checkout_path: "/work/project".to_owned(),
+    };
+    assert_eq!(
+        runtime.memory_scope(&context).err(),
+        Some("session_reader_memory_unsupported")
+    );
+    assert_eq!(
+        runtime
+            .prepare_memory(
+                "studio",
+                "w1:p1",
+                &context,
+                crate::memory_command::MemoryCommand::Show { number: 1 }
+            )
+            .err()
+            .as_deref(),
+        Some("session_reader_memory_unsupported")
+    );
+    let ((nodes, unreached), diagnostics) = crate::diagnostics::capture(|| runtime.memory_nodes());
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(
+        unreached.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+        ["studio"]
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|row| row["kind"] == "analysis.node_unavailable"
+                && row["reason"] == "session_reader_memory_unsupported")
+    );
+    let (_, repeated) = crate::diagnostics::capture(|| {
+        runtime.memory_nodes();
+        runtime.memory_nodes();
+    });
+    assert!(
+        repeated
+            .iter()
+            .all(|row| row["kind"] != "analysis.node_unavailable")
+    );
+
+    // Recovery forgets the old refusal: a later loss is a new transition.
+    let capable = runtime.own_node();
+    dialed_link(&mut runtime, "studio", capable);
+    let ((nodes, unreached), recovered) = crate::diagnostics::capture(|| runtime.memory_nodes());
+    assert_eq!(nodes.len(), 2);
+    assert!(unreached.is_empty());
+    assert!(
+        recovered
+            .iter()
+            .all(|row| row["kind"] != "analysis.node_unavailable")
+    );
+    dialed_link(
+        &mut runtime,
+        "studio",
+        Arc::new(OldMemoryReader(
+            hide_node_link::sessions::ReaderFeatures::protocol24(),
+        )),
+    );
+    let (_, returned) = crate::diagnostics::capture(|| runtime.memory_nodes());
+    assert_eq!(
+        returned
+            .iter()
+            .filter(|row| row["kind"] == "analysis.node_unavailable")
+            .count(),
+        1
+    );
+    runtime.take_memory_handoff(
+        "studio",
+        crate::labels::worker::MemoryHandoff {
+            receipts: Vec::new(),
+            live_sessions: Some(std::collections::BTreeSet::from([(
+                "claude",
+                "old-session".to_owned(),
+            )])),
+        },
+    );
+    runtime.take_memory_handoff(
+        "studio",
+        crate::labels::worker::MemoryHandoff {
+            receipts: Vec::new(),
+            live_sessions: Some(Default::default()),
+        },
+    );
+    assert!(
+        runtime
+            .memory_work
+            .closed_sessions
+            .contains(&("claude", "old-session".to_owned()))
+    );
+    assert!(
+        crate::memory_command::next_action("session_reader_memory_unsupported").contains("Update")
+    );
 }
 
 /// A linked node's sessions are its own session files, read through its
@@ -584,109 +775,151 @@ fn memory_is_answered_for_this_machine_and_a_linked_node_only() {
 /// core-host-node-move B14).
 #[test]
 fn a_linked_node_s_sessions_are_read_through_its_link() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
-    let (node_home, core_home, project) = (
-        root.join("node-home"),
-        root.join("core-home"),
-        root.join("project"),
-    );
-    fs::create_dir_all(&project).unwrap();
-    fs::create_dir_all(&core_home).unwrap();
-    let claude = node_home.join(".claude/projects/p");
-    fs::create_dir_all(&claude).unwrap();
-    let cwd = serde_json::to_string(&project).unwrap();
-    fs::write(
+    for dialed in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let (node_home, core_home, project) = (
+            root.join("node-home"),
+            root.join("core-home"),
+            root.join("project"),
+        );
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&core_home).unwrap();
+        let claude = node_home.join(".claude/projects/p");
+        fs::create_dir_all(&claude).unwrap();
+        let cwd = serde_json::to_string(&project).unwrap();
+        fs::write(
         claude.join("on-the-node.jsonl"),
         format!(
             r#"{{"type":"user","cwd":{cwd},"timestamp":"2026-10-11T01:00:00Z","userType":"external","promptId":"p-1","message":{{"role":"user","content":"node request"}}}}"#
         ) + "\n",
     )
     .unwrap();
-    let path = project.to_string_lossy().into_owned();
+        let path = project.to_string_lossy().into_owned();
 
-    let shared = shared_runtime();
-    shared.lock().unwrap().own_node = Arc::new(hide_node::Local::new(Some(core_home)));
-    let (link, release) = held_link_to(Arc::new(hide_node::Local::new(Some(node_home))));
-    shared
-        .lock()
-        .unwrap()
-        .accept_inbound_node(NODE, "MacBook", link)
-        .expect("the link is taken");
-    wait(&shared, "the link ready", |runtime| {
-        runtime.host_snapshot(NODE).state == "ready"
-    });
-    {
-        let mut runtime = shared.lock().unwrap();
-        let mut reported = session(vec![herdr_workspace(NODE, "w1", &path, &[("t1", &path)])]);
-        reported.focused_workspace_id = Some(format!("remote:{NODE}:workspace:w1"));
-        reported.focused_checkout_id = Some(format!("remote:{NODE}:checkout:w1"));
-        runtime.ingest_remote_session(NODE, Ok(reported));
-        runtime.snapshot.navigator.focused_device_id = Some(NODE.to_owned());
-    }
-    let refresh = |payload: serde_json::Value| {
-        let event = serde_json::json!({
-            "schema_version": SCHEMA_VERSION, "kind": "sessions_refresh", "payload": payload,
-        });
+        let shared = shared_runtime();
+        shared.lock().unwrap().own_node = Arc::new(hide_node::Local::new(Some(core_home)));
+        let (link, release) = held_link_to(Arc::new(hide_node::Local::new(Some(node_home))));
         shared
             .lock()
             .unwrap()
-            .dispatch_json(&serde_json::to_vec(&event).unwrap());
-    };
-    let ids = |rows: &[crate::model::SessionRowSnapshot]| {
-        rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>()
-    };
+            .accept_inbound_node(NODE, "MacBook", link)
+            .expect("the link is taken");
+        wait(&shared, "the link ready", |runtime| {
+            runtime.host_snapshot(NODE).state == "ready"
+        });
+        {
+            let mut runtime = shared.lock().unwrap();
+            if dialed {
+                runtime
+                    .snapshot
+                    .ui_state
+                    .device_registrations
+                    .iter_mut()
+                    .find(|row| row.id == NODE)
+                    .unwrap()
+                    .origin = crate::model::LinkOrigin::Dialed {
+                    ssh_alias: "fixture-host".to_owned(),
+                };
+            }
+            let mut reported = session(vec![herdr_workspace(NODE, "w1", &path, &[("t1", &path)])]);
+            reported.focused_workspace_id = Some(format!("remote:{NODE}:workspace:w1"));
+            reported.focused_checkout_id = Some(format!("remote:{NODE}:checkout:w1"));
+            runtime.ingest_remote_session(NODE, Ok(reported));
+            runtime.snapshot.navigator.focused_device_id = Some(NODE.to_owned());
+        }
+        let refresh = |payload: serde_json::Value| {
+            let event = serde_json::json!({
+                "schema_version": SCHEMA_VERSION, "kind": "sessions_refresh", "payload": payload,
+            });
+            shared
+                .lock()
+                .unwrap()
+                .dispatch_json(&serde_json::to_vec(&event).unwrap());
+        };
+        let ids = |rows: &[crate::model::SessionRowSnapshot]| {
+            rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>()
+        };
 
-    refresh(serde_json::json!({}));
-    wait(&shared, "the panel's sessions read", |runtime| {
-        !runtime.snapshot.sessions.loading
-    });
-    {
-        let runtime = shared.lock().unwrap();
-        let sessions = &runtime.snapshot.sessions;
-        assert_eq!(sessions.unavailable_reason, None);
-        assert_eq!(sessions.checkout_path.as_deref(), Some(path.as_str()));
-        assert_eq!(ids(&sessions.rows), ["on-the-node"]);
-    }
+        refresh(serde_json::json!({}));
+        wait(&shared, "the panel's sessions read", |runtime| {
+            !runtime.snapshot.sessions.loading
+        });
+        {
+            let runtime = shared.lock().unwrap();
+            let sessions = &runtime.snapshot.sessions;
+            assert_eq!(sessions.unavailable_reason, None);
+            assert_eq!(sessions.checkout_path.as_deref(), Some(path.as_str()));
+            assert_eq!(ids(&sessions.rows), ["on-the-node"]);
+        }
 
-    // The Project as the catalog groups the node's workspaces, which is the
-    // id the Projects screen names.
-    let project_id = shared
-        .lock()
-        .unwrap()
-        .catalog_workspaces()
-        .find(|workspace| workspace.device_id == NODE && workspace.path == path)
-        .map(|workspace| workspace.id.clone())
-        .expect("the node's Project in the catalog");
-    let named = serde_json::json!({"workspace_id": project_id, "device_id": NODE});
-    refresh(named.clone());
-    wait(&shared, "the named Project's sessions read", |runtime| {
-        runtime
-            .snapshot
-            .project_sessions
-            .as_ref()
-            .is_some_and(|sessions| !sessions.loading)
-    });
-    {
+        // The Project as the catalog groups the node's workspaces, which is the
+        // id the Projects screen names.
+        let project_id = shared
+            .lock()
+            .unwrap()
+            .catalog_workspaces()
+            .find(|workspace| workspace.device_id == NODE && workspace.path == path)
+            .map(|workspace| workspace.id.clone())
+            .expect("the node's Project in the catalog");
+        let named = serde_json::json!({"workspace_id": project_id, "device_id": NODE});
+        shared
+            .lock()
+            .unwrap()
+            .open_project_memory(Some(project_id.clone()));
+        wait(&shared, "the device Project's Memory read", |runtime| {
+            runtime
+                .snapshot
+                .memory
+                .as_ref()
+                .and_then(|memory| memory.project.as_ref())
+                .is_some_and(|project| !project.loading)
+        });
+        {
+            let runtime = shared.lock().unwrap();
+            let project = runtime
+                .snapshot
+                .memory
+                .as_ref()
+                .unwrap()
+                .project
+                .as_ref()
+                .unwrap();
+            assert_eq!(project.unavailable, None);
+            assert!(
+                !project.enabled,
+                "a new device Project starts with Memory off"
+            );
+        }
+        refresh(named.clone());
+        wait(&shared, "the named Project's sessions read", |runtime| {
+            runtime
+                .snapshot
+                .project_sessions
+                .as_ref()
+                .is_some_and(|sessions| !sessions.loading)
+        });
+        {
+            let runtime = shared.lock().unwrap();
+            let sessions = runtime.snapshot.project_sessions.as_ref().unwrap();
+            assert_eq!(sessions.unavailable_reason, None);
+            assert_eq!(sessions.failure, None);
+            assert_eq!(ids(&sessions.rows), ["on-the-node"]);
+        }
+
+        drop(release);
+        wait(&shared, "the link ended", |runtime| {
+            runtime.linked_node(NODE).err() == Some("link_down")
+        });
+        refresh(named);
         let runtime = shared.lock().unwrap();
         let sessions = runtime.snapshot.project_sessions.as_ref().unwrap();
-        assert_eq!(sessions.unavailable_reason, None);
-        assert_eq!(sessions.failure, None);
-        assert_eq!(ids(&sessions.rows), ["on-the-node"]);
+        assert_eq!(
+            sessions.unavailable_reason.as_deref(),
+            Some("MacBook is not connected.")
+        );
+        assert!(sessions.rows.is_empty());
     }
-
-    drop(release);
-    wait(&shared, "the link ended", |runtime| {
-        runtime.host_snapshot(NODE).state != "ready"
-    });
-    refresh(named);
-    let runtime = shared.lock().unwrap();
-    let sessions = runtime.snapshot.project_sessions.as_ref().unwrap();
-    assert_eq!(
-        sessions.unavailable_reason.as_deref(),
-        Some("MacBook is not connected.")
-    );
-    assert!(sessions.rows.is_empty());
 }
 
 /// A Factory runs on this machine or a node that dials it, never a device
@@ -838,7 +1071,10 @@ fn a_factory_runs_on_this_machine_or_a_node_that_dials_in_never_a_dialed_device(
 #[test]
 fn a_node_pane_s_hide_memory_reads_for_the_node_s_session() {
     let shared = shared_runtime();
-    let (link, release) = held_link();
+    let home = tempfile::tempdir().unwrap();
+    let (link, release) = held_link_to(Arc::new(hide_node::Local::new(Some(
+        home.path().to_owned(),
+    ))));
     shared
         .lock()
         .unwrap()
@@ -870,24 +1106,40 @@ fn a_node_pane_s_hide_memory_reads_for_the_node_s_session() {
             Some(WorkspaceViewStore::open(views.path().join("views.json"), Default::default()).0);
     }
 
-    let runtime = shared.lock().unwrap();
+    let mut runtime = shared.lock().unwrap();
     let context = runtime
         .workspace_control_query(NODE, &pane, crate::workspace_control::Query::Info)
         .expect("the node's pane is in the catalog")
         .context;
-    let prepared = runtime
-        .prepare_memory(
-            NODE,
-            &pane,
-            &context,
-            crate::memory_command::MemoryCommand::Show { number: 1 },
-        )
-        .expect("a caller on a node that dials in");
-    assert_eq!(
-        prepared.reader,
-        Some(("claude".to_owned(), "node-session".to_owned()))
-    );
-    assert_eq!(prepared.checkout_path, path);
+    for origin in [
+        crate::model::LinkOrigin::Inbound,
+        crate::model::LinkOrigin::Dialed {
+            ssh_alias: "fixture-host".to_owned(),
+        },
+    ] {
+        runtime
+            .snapshot
+            .ui_state
+            .device_registrations
+            .iter_mut()
+            .find(|registration| registration.id == NODE)
+            .unwrap()
+            .origin = origin;
+        let prepared = runtime
+            .prepare_memory(
+                NODE,
+                &pane,
+                &context,
+                crate::memory_command::MemoryCommand::Show { number: 1 },
+            )
+            .expect("a caller on any linked device");
+        assert_eq!(
+            prepared.reader,
+            Some(("claude".to_owned(), "node-session".to_owned()))
+        );
+        assert_eq!(prepared.checkout_path, path);
+        assert_eq!(prepared.database, runtime.memory_database_path());
+    }
     drop(runtime);
     drop(release);
 }

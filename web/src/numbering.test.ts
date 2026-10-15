@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentLayout } from "./agentLayout";
 import type { TreeRow } from "./agentRow";
 import { numberedTarget } from "./keyboard";
-import { agentListOrder, numberedAgents, numberedTabs, numberOf } from "./numbering";
+import { agentListOrder, numberedAgents, numberedTabs, numberOf, sidebarAgentNumbers } from "./numbering";
 
 import type { AgentRow, Checkout, SnapshotRest, Workspace } from "./snapshot";
 
@@ -25,6 +25,28 @@ function checkoutWith(tabs: string[], extra: { id: string; kind: "file" | "diff"
 function agent(paneId: string, extra: Partial<AgentRow> = {}): AgentRow {
   return legacyAgentRow({ id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false, ...extra });
 }
+
+it("numbers grouped roots in physical tab order, skipping children and duplicate raised occurrences", () => {
+  const agents = [agent("a", { group: "needs_you", lineage_child_pane_ids: ["child"], lineage_collapsed: false }), agent("b"), agent("c"), agent("single"), agent("child", { delegated: true, lineage_parent_pane_id: "a" })];
+  const checkout = checkoutWith(["t1", "t2", "t3"]);
+  for (const [index, panes] of [[0, ["a", "b", "child"]], [1, ["c"]], [2, ["single"]]] as const) {
+    checkout.tabs[index]!.panes = panes.map((id) => ({ id })) as Checkout["tabs"][number]["panes"];
+    checkout.tabs[index]!.sidebar = { manual_name: null, number: index + 1 };
+  }
+  const rest = legacyRest({ navigator: { focused_device_id: "local", devices: [{ id: "local", kind: "local" }], workspaces: [{ id: "w1", device_id: "local", expanded: true, checkouts: [checkout] }] }, status: { remote: [] } } as unknown as SnapshotRest, agents);
+  const placed = rest.navigator!.workspaces![0]!.checkouts[0]!;
+  // The core can order roots differently from physical tabs; lineage must stay with its root.
+  const refs = ["c", "a", "child", "b", "single"].map((pane_id) => ({ pane_id, occurrence: 0, depth: pane_id === "child" ? 1 : 0, descendants: pane_id === "a" ? 1 : 0 }));
+  placed.agent_scope.sidebar_tree.rows = refs;
+  placed.agent_scope.sidebar_tree.visible_rows = refs;
+  const state = { rest, agents };
+  expect([...numberedAgents(agentListOrder(state)).values()]).toEqual(["a", "b", "c", "single"]);
+  const keycaps = sidebarAgentNumbers(state, []);
+  expect(keycaps("a", null)).toBe(1);
+  expect(keycaps("a", "c1")).toBeNull();
+  expect(keycaps("b", "c1")).toBe(2);
+  expect(keycaps("child", "c1")).toBeNull();
+});
 
 describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
   it("numbers the strip's Herdr tabs left to right, nine at most, and only those", () => {
@@ -111,7 +133,7 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
     const checkout = (id: string, panes: string[]) => ({ id, tabs: [{ id: `${id}-t`, panes: panes.map((pane) => ({ id: pane })) }] });
     const workspaces = [{ agent_scope: emptyScope(), id: "w", device_id: "local", pinned: false, checkouts: [checkout("main", ["ask", "parent"]), checkout("wt", ["child"])] } as unknown as Workspace];
     const listed = [agent("ask", { group: "needs_you" }), agent("parent"), agent("child")].map((row) => ({ agent: row, device: null }));
-    const rows = projectRows(workspaces, [], listed);
+    const rows = projectRows(workspaces, {}, listed);
     const numbered = new Map([[1, "ask"], [2, "parent"], [3, "child"]] as const);
     const numberOfPane = projectListNumbers(numbered, rows, workspaces);
     // Raised: the number sits there, and not again on its tree row.
@@ -130,10 +152,10 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
     const workspaces = [{ agent_scope: emptyScope(), id: "w", device_id: "local", pinned: false, checkouts: [{ id: "main", tabs: [{ id: "t", panes: panes.map((id) => ({ id })) }] }] } as unknown as Workspace];
     const listed = panes.map((pane) => ({ agent: agent(pane, { group: "done" }), device: null }));
     const numbered = new Map([[4, "d4"]] as const);
-    const folded = projectListNumbers(numbered, projectRows(workspaces, [], listed), workspaces);
+    const folded = projectListNumbers(numbered, projectRows(workspaces, {}, listed), workspaces);
     expect(folded("d4", null)).toBeNull();
     expect(folded("d4", "main")).toBe(4);
-    const opened = projectListNumbers(numbered, projectRows(workspaces, [], listed, null, ["done"]), workspaces);
+    const opened = projectListNumbers(numbered, projectRows(workspaces, {}, listed, null, ["done"]), workspaces);
     expect(opened("d4", null)).toBe(4);
     expect(opened("d4", "main")).toBeNull();
   });
@@ -151,4 +173,17 @@ it("numbers a plain-folder row even when its project expansion is false", () => 
   const rest = { navigator: {focused_device_id: "local", workspaces: [project], devices: [{id: "local", kind: "local", agent_scope: scope}]}, status: {remote: []} } as unknown as SnapshotRest;
   expect([...numberedAgents(agentListOrder({rest, agents: [parent]}))]).toEqual([[1, "folder-pane"]]);
   expect(numberedTarget("agents", 1, {rest, agents: [parent]})).toBe("folder-pane");
+});
+
+it("numbers a project's checkouts in the order the sidebar draws them, with no group of its own for what Hide AI made", () => {
+  const rows = ["main", "hide", "feature"].map((id) => agent(`${id}-pane`));
+  const checkout = (id: string, row: AgentRow) => {
+    const root = { pane_id: row.pane_id, occurrence: 0, depth: 0, descendants: 0 };
+    const scope = { ...emptyScope(), sidebar_tree: { ...emptyScope().sidebar_tree, rows: [root], visible_rows: [root] } };
+    return { ...checkoutWith([`${id}-tab`]), id, path: `/repo/${id}`, exists: true, is_primary: id === "main", agent_scope: scope };
+  };
+  const checkouts = ["main", "hide", "feature"].map((id, index) => checkout(id, rows[index]!));
+  const project = { id: "p", device_id: "local", is_git: true, expanded: true, pinned: false, checkouts, agent_scope: emptyScope(), inactive_checkouts: { expanded: false, checkout_ids: [] } } as unknown as Workspace;
+  const rest = { navigator: { focused_device_id: "local", workspaces: [project], devices: [{ id: "local", kind: "local", agent_scope: emptyScope() }], hide_ai_checkouts: [{ device_id: "local", path: "/repo/hide", task: null }] }, status: { remote: [] } } as unknown as SnapshotRest;
+  expect([...numberedAgents(agentListOrder({ rest, agents: rows }))]).toEqual([[1, "main-pane"], [2, "hide-pane"], [3, "feature-pane"]]);
 });

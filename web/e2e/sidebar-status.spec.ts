@@ -30,9 +30,9 @@ test("roots stay in one sidebar, open their children in place, and the header's 
     const childRow = page.locator(`nav[data-sidebar] [data-pane="${child}"]`);
     await expect(parentRow).toHaveAttribute("data-waiting", "children", { timeout: 20_000 });
     await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
-    // Folded, the root wears one mark for its working descendants (B10, B17).
+    // Folded, a root whose descendants only work wears no mark: its waiting ring says it (B10, B17).
     await expect(childRow).toHaveCount(0);
-    await expect(parentRow.locator('[data-descendant-mark="working"]')).toContainText("1");
+    await expect(parentRow.locator('[data-descendant-mark]')).toHaveCount(0);
     continueFixtureTranscript(herdr, childSession, { task: LONG_TITLE, reply: QUESTION, question: true });
     await setFixtureLifecycle(herdr, child, "idle");
     // An ordinary question keeps the root waiting, never raised, and a quiet child adds no mark.
@@ -67,6 +67,10 @@ test("roots stay in one sidebar, open their children in place, and the header's 
     // The parent's tree button opens the tree popover; Escape returns to it (B18, B19, B21).
     const treeButton = page.locator(`[data-pane-view="${parent}"] [data-pane-tree="${parent}"]`);
     const tree = page.locator(`[data-agent-tree="${parent}"]`);
+    await expect(page.locator(`[data-pane-view="${parent}"] > header [data-pane-tree]`)).toHaveCount(0);
+    await expect(page.locator(`[data-pane-view="${parent}"] [data-pane-header-band="children"] [data-pane-tree]`)).toBeVisible();
+    await expect(treeButton).toHaveAccessibleName(/Child agents 1.*Child requests: 1/);
+    await expect(treeButton).not.toHaveAccessibleName(/needing you/);
     await treeButton.focus();
     await page.keyboard.press("Space");
     await expect(tree.locator(`[data-agent-child="${child}"]`)).toContainText(LONG_TITLE);

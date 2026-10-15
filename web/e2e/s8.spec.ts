@@ -15,7 +15,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, registerFolder, screenshot } from "./wire";
-import { openCurrentProjectOverview } from "./overview-entry";
+import { openAllProjects, openCurrentProjectOverview } from "./overview-entry";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -292,7 +292,7 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     // #350's first project activation focused a checkout, so a new window
     // resumes that exact Workspace under the existing startup contract.
     await expect(other.locator("[data-workspace-screen]")).toHaveAttribute("data-workspace-screen", fixtureCheckout!, { timeout: 20_000 });
-    await other.locator("[data-go-main]").click();
+    await openAllProjects(other);
     await other.locator('[data-main-tab="projects"]').click();
     await other.locator("[data-main-project]", { hasText: "fixture" }).click();
     await openCurrentProjectOverview(other, "fixture");
@@ -312,7 +312,7 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
 
     // The second window registers a folder; the Project shows on All projects.
     await registerFolder(other, daemon, alpha);
-    await other.locator("[data-go-main]").first().click();
+    await openAllProjects(other);
     await other.locator('[data-main-tab="projects"]').click();
     await expect(other.locator("[data-main-project]", { hasText: "alpha" })).toBeVisible({ timeout: 20_000 });
     await other.locator("[data-main-project]", { hasText: "alpha" }).click();

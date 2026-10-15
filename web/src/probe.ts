@@ -18,6 +18,8 @@ export type Probe = {
   diagnostics: () => string[];
   paneId: () => string | null;
   screenText: () => string;
+  /** The colors the focused terminal draws with (background, foreground and the ANSI 16), null without one. */
+  screenColors: () => Record<string, string> | null;
   /** Arms one marker; `waitArmed` resolves at the first write completion whose screen contains it. */
   arm: (marker: string, timeoutMs?: number) => void;
   waitArmed: () => Promise<EchoSample>;
@@ -110,6 +112,10 @@ export function installProbe(
     screenText: () => {
       const current = term();
       return current ? screenText(current) : "";
+    },
+    screenColors: () => {
+      const theme = term()?.options.theme;
+      return theme ? Object.fromEntries(Object.entries(theme).filter((entry): entry is [string, string] => typeof entry[1] === "string")) : null;
     },
     arm: (marker, timeoutMs = 3000) => {
       if (armed) throw new Error("echo sample already armed");

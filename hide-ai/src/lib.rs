@@ -21,6 +21,7 @@ mod schema;
 pub mod settings;
 mod text_cli;
 mod unproven;
+mod usage_limit;
 
 pub use claude::{ClaudeCliBackend, ClaudeConfig, USAGE_ENVIRONMENT, UsageError};
 pub use codex::{CodexAppServerBackend, CodexConfig};
@@ -35,6 +36,7 @@ pub use router::{AiRouter, Degraded, ProviderState, ProviderStatus, RouterConfig
 pub use settings::{AiSettings, FallbackEntry, FallbackRefusal};
 pub use text_cli::TextCliConfig;
 pub use unproven::UnprovenReadOnlyBackend;
+pub use usage_limit::{DEFAULT_LIMIT_PERCENT, PastLimit, UsageLimit, UsageLimits, UsageReading};
 
 use std::borrow::Cow;
 use std::fmt;
@@ -187,13 +189,14 @@ impl Availability {
 /// Failure classes a caller can branch on. Payloads carry diagnostics, never
 /// prompt or output content.
 ///
-/// Two families matter to the router. A refusal (`NotAuthenticated`,
-/// `UsageLimited`, `ProviderUnavailable`, `Transient`, `InvalidOutput`,
-/// `Unsupported`) means the provider never took the request, so asking
-/// again or asking another provider repeats nothing. A completion-unknown
-/// outcome (`Timeout`, `Cancelled`, `CompletionUnknown`) means the request
-/// was submitted and its fate is not known; it is final on that provider
-/// and is never re-run anywhere.
+/// A refusal (`NotAuthenticated`, `UsageLimited`, `ProviderUnavailable`,
+/// `Transient`, `Rejected`, `Unsupported`) means no model turn ran, so
+/// asking again or asking another provider repeats no model work.
+/// `InvalidOutput` may follow a model turn and is retried at most twice;
+/// each dispatch is counted even though its answer was unusable.
+/// A completion-unknown outcome (`Timeout`, `Cancelled`, `CompletionUnknown`)
+/// means the request was submitted and its fate is not known; it is final
+/// on that provider and is never re-run anywhere.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum AiError {
     /// Not retried until availability changes.
@@ -207,12 +210,18 @@ pub enum AiError {
     /// The deadline passed after the request was submitted.
     Timeout,
     Cancelled,
-    /// The connection or the child was lost after the request was
-    /// submitted, so whether it completed is unknown.
+    /// A submitted request ended without a reliable completion, such as a
+    /// lost connection or child, or an unclassified failure after turn start.
     CompletionUnknown(String),
-    /// Schema mismatch or a message that is not the answer.
+    /// Schema mismatch or a message that is not the answer. The backend had
+    /// the prompt, so a model turn may have run.
     InvalidOutput(String),
-    /// A refusal that may clear on its own; nothing was submitted.
+    /// The provider refused the request itself, before any model turn (an
+    /// HTTP 4xx, a prompt that does not fit, an input error): nothing was
+    /// spent. It is retried and reported as `InvalidOutput` is, and is the
+    /// one input failure the usage ledger does not count.
+    Rejected(String),
+    /// A refusal before model work that may clear on its own.
     Transient(String),
     /// The provider layer itself failed (a panicked request leader).
     Internal(String),
@@ -247,7 +256,7 @@ impl AiError {
             Self::Timeout => "timeout",
             Self::Cancelled => "cancelled",
             Self::CompletionUnknown(_) => "completion_unknown",
-            Self::InvalidOutput(_) => "invalid_output",
+            Self::InvalidOutput(_) | Self::Rejected(_) => "invalid_output",
             Self::Transient(_) => "transient",
             Self::Internal(_) => "internal",
             Self::Unsupported(_) => "unsupported",
@@ -268,6 +277,7 @@ impl fmt::Display for AiError {
             Self::ProviderUnavailable(reason)
             | Self::CompletionUnknown(reason)
             | Self::InvalidOutput(reason)
+            | Self::Rejected(reason)
             | Self::Transient(reason)
             | Self::Internal(reason)
             | Self::Unsupported(reason) => write!(f, "{}:{reason}", self.class()),
@@ -288,11 +298,50 @@ impl fmt::Display for AiError {
 
 impl std::error::Error for AiError {}
 
-/// Token accounting a provider reports for one answer, for the log only.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+/// Token accounting a provider reports for one answer.
+///
+/// `input_tokens` and `output_tokens` are what the provider printed first and
+/// are for the log only. `models` is what the usage ledger counts.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct AiUsage {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+    /// One entry per model that answered. Empty means the provider took the
+    /// request and reported no usage the ledger accepts, which the router
+    /// hands on as an unknown call rather than as zero tokens. A node on an
+    /// older build sends none.
+    #[serde(default)]
+    pub models: Vec<ModelTokens>,
+}
+
+/// One model's tokens in one answer, in the disjoint components the usage
+/// ledger counts: input excludes both cache categories, reasoning is a subset
+/// of output and one-hour cache writes a subset of cache writes.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct ModelTokens {
+    pub model: String,
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    pub cache_write_1h: u64,
+    pub reasoning: Option<u64>,
+    /// The provider did not split this model's cache writes by lifetime and
+    /// some may have been one-hour writes, so its price is a lower bound.
+    #[serde(default)]
+    pub lower_bound: bool,
+}
+
+/// Told about every backend attempt that reached a provider, before the
+/// answer is validated, so a rejected answer is still counted. A request that
+/// joined another's flight is one execution and is told once. Implementations
+/// queue and return: the router calls this on the request's own thread.
+pub trait AiUsageSink: Send + Sync + fmt::Debug {
+    /// `models` is empty for an attempt that was submitted and reported no
+    /// usage (a timeout, a lost connection, a cancel or an unusable answer
+    /// after the prompt went out, a provider whose usage is not read): an
+    /// unknown call.
+    fn attempt(&self, feature_id: &str, provider: ProviderId, models: &[ModelTokens]);
 }
 
 /// One provider answer before the router validates it.

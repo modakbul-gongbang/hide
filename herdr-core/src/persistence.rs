@@ -5,9 +5,10 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    DeviceRegistration, PaneReadRecord, PetOriginSnapshot, RightPanelSection, ThemePreference,
-    UiStateSnapshot, WorkspaceRegistration, default_accent_hex, default_font_size,
-    default_pane_text_scale, default_panel_visible, default_sidebar_width,
+    AgentLogoMode, ColorTheme, DeviceRegistration, PaneCompletion, PaneReadRecord,
+    PetOriginSnapshot, RightPanelSection, ThemePreference, UiStateSnapshot, WorkspaceRegistration,
+    default_accent_hex, default_font_size, default_pane_text_scale, default_panel_visible,
+    default_sidebar_width,
 };
 
 const UI_STATE_SCHEMA_VERSION: u32 = 1;
@@ -52,6 +53,8 @@ struct StoredUiState {
     expanded_inactive_project_device_ids: Vec<String>,
     #[serde(default)]
     project_base_branches: BTreeMap<String, String>,
+    #[serde(default)]
+    project_settings: BTreeMap<String, crate::project_settings::ProjectSettings>,
     /// The folded-by-default agent tree's open rows. The former
     /// `collapsed_agent_pane_ids` key is ignored on load and dropped on the
     /// next write: the ids it held name panes of some earlier Herdr server,
@@ -100,8 +103,18 @@ struct StoredUiState {
     /// store written before the web theme existed, which loads as Dark.
     #[serde(default)]
     theme: Option<String>,
+    /// `shown` or `hidden`; a store written before the logo mode existed
+    /// loads as hidden.
+    #[serde(default)]
+    agent_logo_mode: Option<String>,
+    /// Kept as text for the same reason as `theme`; absent in a store written
+    /// before the color theme existed, which loads as Hide (D-04).
+    #[serde(default)]
+    color_theme: Option<String>,
     #[serde(default)]
     interface_language: Option<serde_json::Value>,
+    #[serde(default)]
+    usage: crate::usage::prefs::UsagePreferences,
     #[serde(default)]
     agent_onboarding: Option<crate::model::AgentOnboarding>,
     #[serde(default)]
@@ -110,6 +123,9 @@ struct StoredUiState {
     first_run: Option<crate::model::FirstRun>,
     #[serde(default)]
     desktop_notifications: bool,
+    /// Absent in a store from before the split: keep the old shared choice.
+    #[serde(default)]
+    desktop_notifications_done: Option<bool>,
     #[serde(default)]
     screen_intros_seen: BTreeSet<crate::model::ScreenIntro>,
     #[serde(default = "default_sidebar_width")]
@@ -128,6 +144,10 @@ struct StoredUiState {
     /// schema version and discarding the rest of the operator's state.
     #[serde(default)]
     pane_read_records: BTreeMap<String, PaneReadRecord>,
+    /// Absent in a store written before completions were kept; loads empty,
+    /// so a completion a restored server no longer reports is lost once.
+    #[serde(default)]
+    pane_completions: BTreeMap<String, PaneCompletion>,
     /// Absent in a store written before the request view; loads empty, and
     /// each row's wait starts over once.
     #[serde(default)]
@@ -191,10 +211,22 @@ fn default_pet_visible() -> bool {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LoadDisposition {
     Loaded,
-    /// Loaded, but the stored theme was not one this build knows; Dark was used.
-    UnknownTheme,
+    /// Loaded, but a stored appearance value was not one this build knows;
+    /// each named field took its default.
+    Unrecognized(Vec<UnrecognizedField>),
     Missing,
     Corrupt,
+}
+
+/// A stored appearance field whose value this build does not know.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UnrecognizedField {
+    /// The mode; Dark was used.
+    Theme,
+    /// The color theme; Hide was used.
+    ColorTheme,
+    /// The agent logo mode; hidden was used.
+    AgentLogoMode,
 }
 
 /// What the removed native app's state file holds for `shortcut_bindings`.
@@ -318,12 +350,32 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             LoadDisposition::Corrupt,
         );
     }
-    let (theme, disposition) = match stored.theme.as_deref() {
-        None => (ThemePreference::Dark, LoadDisposition::Loaded),
-        Some(value) => match ThemePreference::parse(value) {
-            Some(theme) => (theme, LoadDisposition::Loaded),
-            None => (ThemePreference::Dark, LoadDisposition::UnknownTheme),
-        },
+    let mut unrecognized = Vec::new();
+    let theme = match stored.theme.as_deref() {
+        None => ThemePreference::Dark,
+        Some(value) => ThemePreference::parse(value).unwrap_or_else(|| {
+            unrecognized.push(UnrecognizedField::Theme);
+            ThemePreference::Dark
+        }),
+    };
+    let color_theme = match stored.color_theme.as_deref() {
+        None => ColorTheme::Hide,
+        Some(value) => ColorTheme::parse(value).unwrap_or_else(|| {
+            unrecognized.push(UnrecognizedField::ColorTheme);
+            ColorTheme::Hide
+        }),
+    };
+    let agent_logo_mode = match stored.agent_logo_mode.as_deref() {
+        None => AgentLogoMode::Hidden,
+        Some(value) => AgentLogoMode::parse(value).unwrap_or_else(|| {
+            unrecognized.push(UnrecognizedField::AgentLogoMode);
+            AgentLogoMode::Hidden
+        }),
+    };
+    let disposition = if unrecognized.is_empty() {
+        LoadDisposition::Loaded
+    } else {
+        LoadDisposition::Unrecognized(unrecognized)
     };
     (
         UiStateSnapshot {
@@ -344,6 +396,8 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
                 .expanded_inactive_checkout_project_paths,
             expanded_inactive_project_device_ids: stored.expanded_inactive_project_device_ids,
             project_base_branches: stored.project_base_branches,
+            project_settings: stored.project_settings,
+            project_settings_writes: BTreeMap::new(),
             expanded_agent_pane_ids: stored.expanded_agent_pane_ids,
             sessions_expanded_agent_pane_ids: stored.sessions_expanded_agent_pane_ids,
             selected_path: stored.selected_path,
@@ -361,11 +415,17 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             device_registrations: stored.device_registrations,
             accent_hex: stored.accent_hex,
             theme,
+            agent_logo_mode,
+            color_theme,
             interface_language: stored.interface_language,
+            usage: stored.usage.restored(),
             agent_onboarding: stored.agent_onboarding,
             agent_onboarding_agents: stored.agent_onboarding_agents,
             first_run: stored.first_run,
             desktop_notifications: stored.desktop_notifications,
+            desktop_notifications_done: stored
+                .desktop_notifications_done
+                .unwrap_or(stored.desktop_notifications),
             screen_intros_seen: stored.screen_intros_seen,
             sidebar_width: stored.sidebar_width,
             font_size: stored.font_size,
@@ -373,6 +433,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             editor_text_scale: stored.editor_text_scale,
             conversation_pane_ids: Default::default(),
             pane_read_records: stored.pane_read_records,
+            pane_completions: stored.pane_completions,
             request_verbs: stored.request_verbs,
             agent_sleep_after_hours: stored
                 .agent_sleep_after_hours
@@ -452,6 +513,7 @@ pub fn save(
             .clone(),
         expanded_inactive_project_device_ids: state.expanded_inactive_project_device_ids.clone(),
         project_base_branches: state.project_base_branches.clone(),
+        project_settings: state.project_settings.clone(),
         expanded_agent_pane_ids: state.expanded_agent_pane_ids.clone(),
         sessions_expanded_agent_pane_ids: state.sessions_expanded_agent_pane_ids.clone(),
         selected_path: state.selected_path.clone(),
@@ -469,17 +531,22 @@ pub fn save(
         device_registrations: state.device_registrations.clone(),
         accent_hex: state.accent_hex.clone(),
         theme: Some(state.theme.as_str().to_owned()),
+        agent_logo_mode: Some(state.agent_logo_mode.as_str().to_owned()),
+        color_theme: Some(state.color_theme.as_str().to_owned()),
         interface_language: state.interface_language.clone(),
+        usage: state.usage.clone(),
         agent_onboarding: state.agent_onboarding,
         agent_onboarding_agents: state.agent_onboarding_agents.clone(),
         first_run: state.first_run,
         desktop_notifications: state.desktop_notifications,
+        desktop_notifications_done: Some(state.desktop_notifications_done),
         screen_intros_seen: state.screen_intros_seen.clone(),
         sidebar_width: state.sidebar_width,
         font_size: state.font_size,
         pane_text_scales: state.pane_text_scales.clone(),
         editor_text_scale: state.editor_text_scale,
         pane_read_records: state.pane_read_records.clone(),
+        pane_completions: state.pane_completions.clone(),
         request_verbs: state.request_verbs.clone(),
         pane_terminal_sizes: pane_terminal_sizes.clone(),
         agent_sleep_after_hours: state.agent_sleep_after_hours,
@@ -621,6 +688,32 @@ mod tests {
         assert_eq!(rewritten["expanded_agent_pane_ids"], serde_json::json!([]));
     }
 
+    /// Tabs are segments of a checkout's agent list, not rows that fold, so
+    /// the stored fold choice is ignored on load and dropped on the next write.
+    #[test]
+    fn a_stored_tab_fold_choice_loads_and_is_dropped_on_the_next_write() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("state.json");
+        save(
+            &path,
+            &UiStateSnapshot::default(),
+            &PaneTerminalSizes::new(),
+        )
+        .unwrap();
+        let mut persisted: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        persisted["sidebar_collapsed_tabs"] = serde_json::json!([
+            {"device_id": "local", "checkout_id": "checkout:a", "tab_id": "t1"}
+        ]);
+        fs::write(&path, serde_json::to_vec(&persisted).unwrap()).unwrap();
+        let (state, _, disposition) = load(&path);
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        save(&path, &state, &PaneTerminalSizes::new()).unwrap();
+        let rewritten: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert!(rewritten.get("sidebar_collapsed_tabs").is_none());
+    }
+
     // PRD home-device-rail D-18: the Settings default agent is gone. A store
     // written before the remembered choice seeds it once from that field,
     // and the next save drops the field.
@@ -679,6 +772,16 @@ mod tests {
                 }]
                 .into_iter()
                 .collect(),
+                server: Some("server-7".to_owned()),
+                unread: true,
+            },
+        );
+        state.pane_completions.insert(
+            "w1:p1".to_owned(),
+            crate::model::PaneCompletion {
+                session: Some("session-7".to_owned()),
+                server: Some("server-7".to_owned()),
+                state_change_seq: Some(7),
             },
         );
         // How long each row has waited survives too (PRD overview-request-view D-40).
@@ -695,6 +798,7 @@ mod tests {
         let (reloaded, _sizes, disposition) = load(&path);
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert_eq!(reloaded.pane_read_records, state.pane_read_records);
+        assert_eq!(reloaded.pane_completions, state.pane_completions);
         assert_eq!(reloaded.request_verbs, state.request_verbs);
     }
 

@@ -131,6 +131,7 @@ it("selects and brings into view the row that stands for the focused pane, openi
     await show("checkout:alpha-main", "pane:parent");
     expect(container.querySelector('[data-agent-open="pane:parent"]')?.getAttribute("aria-current")).toBe("true");
     expect(scrolled).toHaveLength(before);
+
   } finally {
     await act(async () => root.unmount());
     container.remove();

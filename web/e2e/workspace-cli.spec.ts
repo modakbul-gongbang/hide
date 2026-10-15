@@ -5,7 +5,7 @@ import path from "node:path";
 import { fixtureExecutable } from "./platform-fixture";
 import { runInPane, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { enterWorkspace } from "./wire";
+import { enterWorkspace, showProjectRow, showTool } from "./wire";
 import { toPage } from "../../desktop/src/main/wirePath";
 
 test.describe.configure({ timeout: 90_000 });
@@ -105,13 +105,17 @@ test("pane CLI opens its own file and diff while another Workspace remains in fr
     if (process.env.HIDE_E2E_SCREENSHOT_DIR) {
       await page.screenshot({ path: path.join(process.env.HIDE_E2E_SCREENSHOT_DIR, "workspace-cli-background.png") });
     }
-    const firstRow = page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first();
+    const firstRow = await showProjectRow(page, page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first());
     await firstRow.click();
-    // Opens without --reveal leave the Workspace's File Views as it was: off.
-    const workspace = page.locator("[data-workspace-screen]");
-    await expect(workspace).toHaveAttribute("data-file-views", "off");
-    await page.locator('[data-column-toggle="views"]').click();
-    await expect(workspace).toHaveAttribute("data-file-views", "shown");
+    await expect(firstRow).toHaveAttribute("aria-current", "true");
+    // Background opens kept beta intact and left the caller's lane alone
+    // (PRD right-lane B17): its Files icon counts the prepared views, and
+    // pressing it shows them.
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
+    await expect(page.locator('[data-lane-tool="files"] [data-lane-badge="2"]')).toBeVisible();
+    await showTool(page, "files");
+    await expect(page.locator(`[data-view-tab-bar] [data-display="${opened.result.view_id}"]`)).toHaveAttribute("data-tab-kind", "file");
+    await expect(page.locator(`[data-view-tab-bar] [data-display="${diff.result.view_id}"]`)).toHaveAttribute("data-tab-kind", "diff");
     await expect(page.locator('[data-view-tab-bar] [role="tab"][aria-label*="/보고서.md"]')).toHaveCount(1);
     await expect(page.locator('[data-view-tab-bar] [role="tab"][aria-label*="/changed.txt"]')).toHaveCount(1);
     await expect(page.locator("[data-view-area-id]")).toHaveCount(2);

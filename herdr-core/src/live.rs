@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use crate::agent_find::AgentFind;
 use crate::checkout_owner::OwnerOpen;
 use crate::find::PaneFindOptions;
-use crate::fork::ForkRequest;
+use crate::fork::{ForkPlacement, ForkRequest};
 use crate::handle::ChangeNotifier;
 use crate::model::{
     EditorDocumentSnapshot, PaneFindRoute, PaneLayoutDirection, PaneLayoutNodeSnapshot,
@@ -210,7 +210,7 @@ pub fn spawn_workspace_creation(
                         paths: Arc::new(paths),
                         session,
                         created_pane_id: created
-                            .and_then(|(_, first_tab)| first_tab.map(|(_, pane_id)| pane_id)),
+                            .and_then(|(_, first_tab)| first_tab.map(|(_, pane_id, _)| pane_id)),
                         git_init_error,
                     })
                 });
@@ -585,6 +585,7 @@ fn execute_remote_control(
                 label,
                 true,
                 local_create_env(*admission_id),
+                None,
             )?;
             (Some(tab.tab_id), Some(tab.pane_id))
         }
@@ -626,9 +627,15 @@ fn execute_remote_control(
 /// A tab Hide created in a checkout's owner Herdr workspace.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct OwnedTab {
+    /// Label returned by creation, only while retaining that exact first tab.
+    pub(crate) initial_label: Option<String>,
     pub(crate) workspace_id: String,
     pub(crate) tab_id: String,
     pub(crate) pane_id: String,
+    /// Whether the pane was started the way it was asked for, its `env` and
+    /// its command: a workspace's first tab that `worktree.open` made has
+    /// neither, and one `workspace.create` made has no command.
+    pub(crate) launched: bool,
 }
 
 /// Plain-folder owners are found and made one at a time, so two requests
@@ -644,6 +651,9 @@ static FOLDER_OWNER_OPEN: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// checkout-workspace-binding B2, B12, B13): a newly opened owner's first tab
 /// is the new tab, and an owner that was already open gets a new tab. A
 /// refusal fails the request; nothing is created in any other workspace (B3).
+/// With a `command`, the tab's pane runs it (`layout.apply`); a newly opened
+/// owner's first tab, which Herdr starts with its own shell, is replaced by
+/// one that does (PRD agent-start-shell-ready D-10).
 pub(crate) fn open_owner_tab(
     connector: &dyn ApiConnector,
     owner: &OwnerOpen,
@@ -651,10 +661,26 @@ pub(crate) fn open_owner_tab(
     label: &str,
     focus: bool,
     env: std::collections::BTreeMap<String, String>,
+    command: Option<&[String]>,
 ) -> Result<OwnedTab, ControlFailure> {
     let (workspace_id, first_tab) = ensure_owner(connector, owner, focus, env.clone())?;
     let owned = match first_tab {
-        Some((tab_id, pane_id)) => {
+        Some((tab_id, pane_id, initial_label)) if command.is_some() => replace_tab(
+            connector,
+            OwnedTab {
+                initial_label,
+                workspace_id,
+                tab_id,
+                pane_id,
+                launched: false,
+            },
+            cwd,
+            label,
+            focus,
+            env,
+            command,
+        ),
+        Some((tab_id, pane_id, initial_label)) => {
             // The owner's first tab is the new tab, so it takes the label the
             // request carries, as `tab.create` would give it; the tab is real
             // either way.
@@ -674,12 +700,14 @@ pub(crate) fn open_owner_tab(
                 }));
             }
             OwnedTab {
+                initial_label,
                 workspace_id,
                 tab_id,
                 pane_id,
+                launched: matches!(owner, OwnerOpen::Folder { .. }),
             }
         }
-        None => create_tab_in(connector, &workspace_id, cwd, label, focus, env)?,
+        None => create_tab_in(connector, &workspace_id, cwd, label, focus, env, command)?,
     };
     crate::diagnostic!(json!({
         "component": "checkout_owner",
@@ -696,12 +724,14 @@ pub(crate) fn open_owner_tab(
 /// pane Herdr made with it when this call opened it (`None` when it was
 /// already open). `env` reaches the first pane only where Herdr takes it
 /// (`workspace.create`); `worktree.open` takes none.
+type FirstTab = (String, String, Option<String>);
+
 fn ensure_owner(
     connector: &dyn ApiConnector,
     owner: &OwnerOpen,
     focus: bool,
     env: std::collections::BTreeMap<String, String>,
-) -> Result<(String, Option<(String, String)>), ControlFailure> {
+) -> Result<(String, Option<FirstTab>), ControlFailure> {
     match owner {
         OwnerOpen::Worktree {
             path,
@@ -735,7 +765,10 @@ fn ensure_owner(
                     "message": error.message(),
                 }));
             }
-            Ok((opened.workspace_id, Some((opened.tab_id, opened.pane_id))))
+            Ok((
+                opened.workspace_id,
+                Some((opened.tab_id, opened.pane_id, Some(opened.tab_label))),
+            ))
         }
         OwnerOpen::Folder {
             path, label, mark, ..
@@ -782,30 +815,94 @@ fn ensure_owner(
                     "message": error.message(),
                 }));
             }
-            Ok((workspace_id, Some((tab_id, pane_id))))
+            Ok((workspace_id, Some((tab_id, pane_id, None))))
         }
     }
 }
 
-fn create_tab_in(
+/// A new tab in `workspace_id` whose pane is started with `env`, running
+/// `command` when there is one (`layout.apply`) and Herdr's own shell
+/// otherwise (`tab.create`).
+pub(crate) fn create_tab_in(
     connector: &dyn ApiConnector,
     workspace_id: &str,
     cwd: &str,
     label: &str,
     focus: bool,
     env: std::collections::BTreeMap<String, String>,
+    command: Option<&[String]>,
 ) -> Result<OwnedTab, ControlFailure> {
-    let result = mutation_request(
-        connector,
-        "tab.create",
-        wire::tab_create_with_env_params(workspace_id, cwd, label, focus, env)?,
-    )?;
-    let (tab_id, pane_id) = wire::created_tab(result).map_err(ControlFailure::Ambiguous)?;
+    let (tab_id, pane_id) = match command {
+        Some(command) => wire::launched_tab(mutation_request(
+            connector,
+            "layout.apply",
+            wire::launched_tab_params(workspace_id, None, label, focus, cwd, env, command)?,
+        )?),
+        None => wire::created_tab(mutation_request(
+            connector,
+            "tab.create",
+            wire::tab_create_with_env_params(workspace_id, cwd, label, focus, env)?,
+        )?),
+    }
+    .map_err(ControlFailure::Ambiguous)?;
     Ok(OwnedTab {
+        initial_label: None,
         workspace_id: workspace_id.to_owned(),
         tab_id,
         pane_id,
+        launched: true,
     })
+}
+
+/// `tab`, a workspace's first tab Herdr started with its own shell, replaced
+/// by one whose pane runs `command` with `env` (`layout.apply` with the
+/// tab's id): `worktree.create`, `worktree.open` and `workspace.create` take
+/// no command. Nothing is shown of it, since the workspace was made for this
+/// start. When the replacement fails, `tab` itself is answered, not
+/// launched, and the failure is logged.
+#[allow(clippy::too_many_arguments)] // the tab to replace and what its pane runs
+pub(crate) fn replace_tab(
+    connector: &dyn ApiConnector,
+    tab: OwnedTab,
+    cwd: &str,
+    label: &str,
+    focus: bool,
+    env: std::collections::BTreeMap<String, String>,
+    command: Option<&[String]>,
+) -> OwnedTab {
+    let Some(command) = command else {
+        return tab;
+    };
+    let replaced = wire::launched_tab_params(
+        &tab.workspace_id,
+        Some(&tab.tab_id),
+        label,
+        focus,
+        cwd,
+        env,
+        command,
+    )
+    .map_err(ControlFailure::Definite)
+    .and_then(|params| mutation_request(connector, "layout.apply", params))
+    .and_then(|answer| wire::launched_tab(answer).map_err(ControlFailure::Ambiguous));
+    crate::diagnostic!(json!({
+        "component": "agent_start",
+        "kind": "launched_tab.replaced",
+        "workspace_id": tab.workspace_id,
+        "replaced": tab.tab_id,
+        "tab_id": replaced.as_ref().ok().map(|(tab_id, _)| tab_id),
+        "reason": replaced.as_ref().err().map(ControlFailure::message),
+    }));
+    match replaced {
+        Ok((tab_id, pane_id)) => OwnedTab {
+            initial_label: None,
+            workspace_id: tab.workspace_id,
+            tab_id,
+            pane_id,
+            launched: true,
+        },
+        Err(_) => tab,
+    }
 }
 
 fn execute_pane_control(
@@ -944,6 +1041,7 @@ pub enum CloseCaptureTarget {
 
 #[derive(Clone, Debug)]
 pub struct CloseCaptureRequest {
+    pub failed_terminals: Vec<(String, String)>,
     /// A sleep close must never acquire the independent ordinary undo route.
     pub retain_for_reopen: bool,
     pub key: String,
@@ -960,8 +1058,27 @@ pub struct CloseCaptureOutcome {
     pub item: Option<ClosedItem>,
 }
 
+/// The work included in the operator's existing close confirmation.
+#[derive(Clone, Debug)]
+pub struct ClosePeer {
+    pub pane_id: String,
+    pub terminal_id: String,
+    pub session: Option<crate::sidebar::SessionAgentSessionPayload>,
+}
+
+/// Fresh terminal-close authorization and the admission's shared deadline.
+#[derive(Clone, Debug)]
+pub struct CloseSafety {
+    /// Only the working terminals included in the admitted confirmation.
+    pub approved_peers: Vec<ClosePeer>,
+    pub pane_ids: Vec<String>,
+    pub deadline: Instant,
+}
+
 #[derive(Clone, Debug)]
 pub struct CloseEffectRequest {
+    pub safety: Option<CloseSafety>,
+    pub failed_terminals: Vec<(String, String)>,
     pub retain_for_reopen: bool,
     pub allow_replacement_create: bool,
     pub replacement: Option<ClosedContext>,
@@ -1054,6 +1171,22 @@ fn capture_close_item(
     connector: &dyn ApiConnector,
     request: &CloseCaptureRequest,
 ) -> Result<CloseCaptureOutcome, String> {
+    // A terminal Herdr could not recreate has no live layout to export.
+    // Keep the close intent, but do not promise an undo that cannot restore it.
+    let targets = match &request.target {
+        CloseCaptureTarget::Pane { pane_id } => vec![pane_id.as_str()],
+        CloseCaptureTarget::Tab { .. } => request
+            .panes
+            .iter()
+            .map(|pane| pane.pane_id.as_str())
+            .collect(),
+    };
+    if targets
+        .iter()
+        .any(|id| request.failed_terminals.iter().any(|(pane, _)| pane == id))
+    {
+        return Ok(CloseCaptureOutcome { item: None });
+    }
     let layout_value = reopen_request(
         connector,
         &format!("herdr-core:{}:export", request.key),
@@ -1198,6 +1331,21 @@ fn run_close_effect(
     connector: &dyn ApiConnector,
     request: &CloseEffectRequest,
 ) -> Result<(), ApiError> {
+    run_close_effect_with_clock(connector, request, &Instant::now)
+}
+
+fn run_close_effect_with_clock(
+    connector: &dyn ApiConnector,
+    request: &CloseEffectRequest,
+    now: &dyn Fn() -> Instant,
+) -> Result<(), ApiError> {
+    check_failed_terminals(
+        connector,
+        &request.failed_terminals,
+        &request.target,
+        request.safety.as_ref(),
+        now,
+    )?;
     let (method, params) = match &request.target {
         CloseCaptureTarget::Pane { pane_id } => (
             "pane.close",
@@ -1213,9 +1361,102 @@ fn run_close_effect(
         &format!("herdr-core:{}:close", request.key),
         method,
         params,
-        Duration::from_secs(5),
+        close_remaining(request.safety.as_ref(), now())?,
     )
     .map(|_| ())
+}
+
+/// One fresh read per close, on its existing worker, with no runtime lock held.
+/// Refuse the old authorization if any failed terminal was replaced or recovered.
+fn check_failed_terminals(
+    connector: &dyn ApiConnector,
+    expected: &[(String, String)],
+    target: &CloseCaptureTarget,
+    safety: Option<&CloseSafety>,
+    now: &dyn Fn() -> Instant,
+) -> Result<(), ApiError> {
+    if expected.is_empty() {
+        return Ok(());
+    }
+    let value = request_with_connector(
+        connector,
+        "session.snapshot",
+        wire::empty_params(),
+        close_remaining(safety, now())?,
+    )?;
+    let snapshot = wire::snapshot_response(value)
+        .map_err(|error| ApiError::Malformed(error.message().to_owned()))?;
+    let scope_valid = match target {
+        CloseCaptureTarget::Pane { pane_id } => expected.len() == 1 && expected[0].0 == *pane_id,
+        CloseCaptureTarget::Tab { tab_id } => safety.is_some_and(|safety| {
+            let mut current = snapshot
+                .panes
+                .iter()
+                .filter(|pane| &pane.tab_id == tab_id)
+                .map(|pane| pane.pane_id.clone())
+                .collect::<Vec<_>>();
+            current.sort();
+            let mut approved = safety.pane_ids.clone();
+            approved.sort();
+            current == approved
+                && expected.iter().all(|(id, _)| current.contains(id))
+                && snapshot
+                    .panes
+                    .iter()
+                    .filter(|pane| &pane.tab_id == tab_id)
+                    .filter(|pane| !expected.iter().any(|(id, _)| id == &pane.pane_id))
+                    .all(|pane| {
+                        let approved = safety.approved_peers.iter().any(|peer| {
+                            peer.pane_id == pane.pane_id
+                                && peer.terminal_id == pane.terminal_id
+                                && peer.session.as_ref()
+                                    == snapshot
+                                        .agents
+                                        .iter()
+                                        .find(|agent| agent.pane_id == pane.pane_id)
+                                        .and_then(|agent| agent.agent_session.as_ref())
+                        });
+                        let allowed = |status: &str| {
+                            matches!(status, "idle" | "done")
+                                || (approved && matches!(status, "working" | "blocked"))
+                        };
+                        allowed(&pane.agent_status)
+                            && snapshot
+                                .agents
+                                .iter()
+                                .filter(|agent| agent.pane_id == pane.pane_id)
+                                .all(|agent| agent.agent_status.as_deref().is_some_and(allowed))
+                    })
+        }),
+    };
+    if scope_valid
+        && expected.iter().all(|(id, terminal)| {
+            snapshot.panes.iter().any(|pane| {
+                &pane.pane_id == id && &pane.terminal_id == terminal && pane.restore_error.is_some()
+            })
+        })
+    {
+        Ok(())
+    } else {
+        Err(ApiError::Remote {
+            code: "close_target_changed".into(),
+            message:
+                "The terminal changed before closing. Check its current state and close it again."
+                    .into(),
+        })
+    }
+}
+
+fn close_remaining(safety: Option<&CloseSafety>, now: Instant) -> Result<Duration, ApiError> {
+    match safety {
+        None => Ok(Duration::from_secs(5)),
+        Some(safety) => safety.deadline.checked_duration_since(now)
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| ApiError::Remote {
+                code: "close_deadline_expired".into(),
+                message: "The close expired before it was sent. Check its current state and close it again.".into(),
+            }),
+    }
 }
 
 /// A read-only fresh session check for a close whose transport result was
@@ -1729,7 +1970,7 @@ fn ensure_workspace_and_tab(
             reopen_intent_env(key, ReopenIntentStage::Workspace),
         )
         .map_err(|failure| failure.message().to_owned())?;
-        (workspace_id, first_tab.map(|(tab_id, _)| tab_id))
+        (workspace_id, first_tab.map(|(tab_id, _, _)| tab_id))
     };
     let tagged_root = tag_reopen_layout(root, key, ReopenIntentStage::Layout);
     let applied = reopen_request(
@@ -2137,6 +2378,7 @@ fn start_or_degrade_agent(
             None,
             &format!("herdr-core:{key}:agent:{index}:resume"),
             pane_id,
+            crate::agent_start::ShellStart::Plain,
             &name,
             &agent.kind,
             args,
@@ -2163,6 +2405,7 @@ fn start_or_degrade_agent(
         None,
         &format!("herdr-core:{key}:agent:{index}:fresh"),
         pane_id,
+        crate::agent_start::ShellStart::Plain,
         &name,
         &agent.kind,
         Vec::new(),
@@ -2222,13 +2465,16 @@ fn agent_is_running(connector: &dyn ApiConnector, pane_id: &str, kind: &str) -> 
 }
 
 /// `node` runs the pane (`agent_start::start_at_shell_checked`); none
-/// when it cannot be reached.
+/// when it cannot be reached. A start whose shell had not finished starting
+/// is refused as `agent_start::SHELL_STARTING` with the screen's last line,
+/// so the spawn that asked can say what the shell waits for.
 #[allow(clippy::too_many_arguments)] // the start identity and the pane's node
 pub(crate) fn start_agent(
     connector: &dyn ApiConnector,
     node: Option<&dyn crate::node_access::NodeLink>,
     request_id: &str,
     pane_id: &str,
+    shell: crate::agent_start::ShellStart,
     name: &str,
     kind: &str,
     args: Vec<String>,
@@ -2239,12 +2485,20 @@ pub(crate) fn start_agent(
         node,
         request_id,
         pane_id,
+        shell,
         name,
         kind,
         args,
         codex_daemon,
         &|| Ok(()),
     )
+    .map_err(|error| match error {
+        crate::agent_start::StartError::ShellStarting(screen) => crate::coordination::refusal(
+            crate::agent_start::SHELL_STARTING,
+            screen.as_deref().unwrap_or_default(),
+        ),
+        other => start_error_message(other),
+    })
 }
 
 #[allow(clippy::too_many_arguments)] // the existing start identity plus its effect admission
@@ -2253,26 +2507,36 @@ fn start_agent_checked(
     node: Option<&dyn crate::node_access::NodeLink>,
     request_id: &str,
     pane_id: &str,
+    shell: crate::agent_start::ShellStart,
     name: &str,
     kind: &str,
     args: Vec<String>,
     codex_daemon: crate::codex_launch::CodexDaemon,
     check: &dyn Fn() -> Result<(), String>,
-) -> Result<String, String> {
-    crate::agent_start::start_at_shell_checked(
+) -> Result<String, crate::agent_start::StartError> {
+    let answer = crate::agent_start::start_at_shell_checked(
         connector,
         node,
         request_id,
         pane_id,
-        wire::agent_start_params(pane_id, name, kind, args, codex_daemon)?,
+        shell,
+        wire::agent_start_params(pane_id, name, kind, args, codex_daemon)
+            .map_err(crate::agent_start::StartError::NotStarted)?,
         Duration::from_secs(5),
         check,
-    )
-    .map_err(|error| match error {
+    )?;
+    wire::started_agent(answer).map_err(crate::agent_start::StartError::NotStarted)
+}
+
+/// A start's failure as an operator reads it.
+fn start_error_message(error: crate::agent_start::StartError) -> String {
+    match error {
         crate::agent_start::StartError::NotStarted(message) => message,
+        crate::agent_start::StartError::ShellStarting(screen) => {
+            crate::agent_start::shell_starting_message(screen.as_deref())
+        }
         crate::agent_start::StartError::Herdr(error) => format!("agent.start failed: {error}"),
-    })
-    .and_then(wire::started_agent)
+    }
 }
 
 /// One action-only node proof, never called under Runtime. Authenticated
@@ -2387,14 +2651,31 @@ fn execute_pane_focus_with_timeout(
     confirm_pane_focus_with_timeout(connector, pane_id, response_timeout)
 }
 
+/// Herdr's answer to whether a pane holds its focus.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FocusReadback {
+    /// The pane is focused in the tab its workspace shows.
+    Confirmed,
+    /// Herdr's focus is on another pane or tab, so the move the stream showed
+    /// is not Herdr's focus now.
+    Elsewhere,
+    /// Herdr could not be read; its reason.
+    Unread(String),
+}
+
 /// Read current focus without producing another focus effect. Herdr's pinned
 /// event stream has no ordering cursor, so an external move needs this same
 /// confirmation before an older queued layout can replace Hide's selection.
-pub(crate) fn confirm_pane_focus(
-    connector: &dyn ApiConnector,
-    pane_id: &str,
-) -> Result<PaneLayoutSnapshot, ControlFailure> {
-    confirm_pane_focus_with_timeout(connector, pane_id, Duration::from_secs(5))
+pub(crate) fn confirm_pane_focus(connector: &dyn ApiConnector, pane_id: &str) -> FocusReadback {
+    match read_pane_focus(connector, pane_id, Duration::from_secs(5)) {
+        Ok((layout, active_tab_id))
+            if layout.focused_pane_id == pane_id && active_tab_id == layout.tab_id =>
+        {
+            FocusReadback::Confirmed
+        }
+        Ok(_) => FocusReadback::Elsewhere,
+        Err(error) => FocusReadback::Unread(error.message().to_owned()),
+    }
 }
 
 fn confirm_pane_focus_with_timeout(
@@ -2402,6 +2683,23 @@ fn confirm_pane_focus_with_timeout(
     pane_id: &str,
     response_timeout: Duration,
 ) -> Result<PaneLayoutSnapshot, ControlFailure> {
+    let (layout, active_tab_id) = read_pane_focus(connector, pane_id, response_timeout)?;
+    if layout.focused_pane_id != pane_id || active_tab_id != layout.tab_id {
+        return Err(ControlFailure::Definite(format!(
+            "Herdr did not confirm pane {pane_id}: pane {} is focused in tab {}, and workspace {} shows tab {active_tab_id}",
+            layout.focused_pane_id, layout.tab_id, layout.workspace_id
+        )));
+    }
+    Ok(layout)
+}
+
+/// Herdr's layout of the tab holding `pane_id` and the tab its workspace
+/// shows.
+fn read_pane_focus(
+    connector: &dyn ApiConnector,
+    pane_id: &str,
+    response_timeout: Duration,
+) -> Result<(PaneLayoutSnapshot, String), ControlFailure> {
     let layout = request_small_response(
         connector,
         "pane.layout",
@@ -2418,13 +2716,7 @@ fn confirm_pane_focus_with_timeout(
     )
     .map_err(|error| format!("workspace.get failed: {error}"))?;
     let active_tab_id = wire::workspace_active_tab(workspace)?;
-    if layout.focused_pane_id != pane_id || active_tab_id != layout.tab_id {
-        return Err(ControlFailure::Definite(format!(
-            "Herdr did not confirm pane {pane_id}: pane {} is focused in tab {}, and workspace {} shows tab {active_tab_id}",
-            layout.focused_pane_id, layout.tab_id, layout.workspace_id
-        )));
-    }
-    Ok(layout)
+    Ok((layout, active_tab_id))
 }
 
 /// One worker runs the control lane: it sends a job, settles its result under
@@ -2902,6 +3194,21 @@ pub fn spawn_agent_fork(context: LiveContext, request: ForkRequest) -> Result<()
                 context.node.as_ref(),
                 &request,
                 &|| fork_execution_current(&context, &request),
+                |tab_id, pane_id| {
+                    let Some(runtime) = context.runtime.upgrade() else {
+                        return;
+                    };
+                    let changed = match runtime.lock() {
+                        Ok(mut guard) => {
+                            guard.ingest_fork_pane(&request.parent_pane_id, tab_id, pane_id)
+                        }
+                        Err(_) => return,
+                    };
+                    drop(runtime);
+                    if changed {
+                        context.notifier.notify();
+                    }
+                },
                 |parent, child| {
                     fork_execution_current(&context, &request)?;
                     crate::coordination::link_fork(&context, parent, child)
@@ -2940,14 +3247,17 @@ fn fork_execution_current(context: &LiveContext, request: &ForkRequest) -> Resul
     Ok(())
 }
 
-/// Starts a natively proven fork without changing the parent's tab. Legacy
-/// providers retain their sibling split. A pane whose agent never started is closed;
-/// registration never turns a working fork into a failure.
+/// Starts a fork where the operator asked for it, in its own tab or beside
+/// the source. Herdr makes the pane without moving the keyboard; `created`
+/// hands it to the core, which moves the keyboard to it and places its tab.
+/// A pane whose agent never started is closed; registration never turns a
+/// working fork into a failure.
 fn run_agent_fork_with_registration(
     connector: &dyn ApiConnector,
     node: &dyn crate::node_access::NodeLink,
     request: &ForkRequest,
     current: &(dyn Fn() -> Result<(), String> + Sync),
+    created: impl FnOnce(Option<&str>, &str),
     register: impl FnOnce(&str, &str) -> Result<(), String>,
 ) -> Result<String, String> {
     let checked = CurrentSessionConnector { connector, current };
@@ -2966,55 +3276,90 @@ fn run_agent_fork_with_registration(
         current()
     };
     check()?;
-    let child_pane_id = if proven {
-        let cwd = request
-            .cwd
-            .as_deref()
-            .ok_or("Session fork has no confirmed checkout")?;
-        let snapshot = fetch_session_with_connector(mutation_connector)
+    // A split takes no command, so only a fork in its own tab runs the
+    // integration's launch.
+    let launch = matches!(request.placement, ForkPlacement::Tab)
+        .then(|| {
+            crate::agent_start::shell_launch(
+                Some(node),
+                &format!("herdr-core:fork:{}:start", request.name),
+            )
+        })
+        .flatten();
+    let shell = crate::agent_start::ShellStart::of_tab(true, launch.as_ref());
+    let child_pane_id = match request.placement {
+        // `Fork agent`: the fork's own tab, which the core puts right of the
+        // source's tab once Herdr has named it (`created`).
+        ForkPlacement::Tab => {
+            let cwd = request
+                .cwd
+                .as_deref()
+                .filter(|cwd| !cwd.trim().is_empty())
+                .ok_or("Session fork has no confirmed checkout")?;
+            let snapshot = fetch_session_with_connector(mutation_connector)
+                .map_err(|error| error.message().to_owned())?;
+            let mut parents = snapshot.layouts.iter().filter(|layout| {
+                layout
+                    .panes
+                    .iter()
+                    .any(|pane| pane.pane_id == request.parent_pane_id)
+            });
+            let parent = parents
+                .next()
+                .ok_or("Session fork parent is no longer in its workspace")?;
+            if parents.next().is_some() {
+                return Err("Session fork parent has ambiguous workspace ownership".into());
+            }
+            let label = request
+                .tab_label
+                .as_deref()
+                .ok_or("Session fork has no checkout to name its tab in")?;
+            check()?;
+            let tab = create_tab_in(
+                mutation_connector,
+                &parent.workspace_id,
+                cwd,
+                label,
+                false,
+                launch
+                    .as_ref()
+                    .map(|launch| launch.env.clone())
+                    .unwrap_or_default(),
+                launch.as_ref().map(|launch| launch.command.as_slice()),
+            )
             .map_err(|error| error.message().to_owned())?;
-        let mut parents = snapshot.layouts.iter().filter(|layout| {
-            layout
-                .panes
-                .iter()
-                .any(|pane| pane.pane_id == request.parent_pane_id)
-        });
-        let parent = parents
-            .next()
-            .ok_or("Session fork parent is no longer in its workspace")?;
-        if parents.next().is_some() {
-            return Err("Session fork parent has ambiguous workspace ownership".into());
+            created(Some(&tab.tab_id), &tab.pane_id);
+            tab.pane_id
         }
-        check()?;
-        create_tab_in(
-            mutation_connector,
-            &parent.workspace_id,
-            cwd,
-            &request.name,
-            false,
-            Default::default(),
-        )
-        .map_err(|error| error.message().to_owned())?
-        .pane_id
-    } else {
-        control_request(
-            connector,
-            "pane.split",
-            wire::fork_split_params(&request.parent_pane_id, request.cwd.as_deref())?,
-        )
-        .and_then(wire::split_pane)?
+        // `Fork agent to the side`: a split right of the source, in its tab.
+        ForkPlacement::Side => {
+            let pane_id = control_request(
+                mutation_connector,
+                "pane.split",
+                wire::fork_split_params(
+                    &request.parent_pane_id,
+                    request.cwd.as_deref(),
+                    Default::default(),
+                )?,
+            )
+            .and_then(wire::split_pane)?;
+            created(None, &pane_id);
+            pane_id
+        }
     };
     let started = start_agent_checked(
         mutation_connector,
         Some(node),
         &format!("herdr-core:fork:{}:start", request.name),
         &child_pane_id,
+        shell,
         &request.name,
         request.agent.kind(),
         request.agent.resume_arguments(&request.session_id),
         request.codex_daemon,
         &check,
-    );
+    )
+    .map_err(start_error_message);
     match started {
         Ok(pane_id) => {
             if let Err(message) = register(&request.parent_pane_id, &pane_id) {
@@ -3051,6 +3396,28 @@ pub fn spawn_remote_control(
     request_id: String,
     action: RemoteControlAction,
     connection_generation: u64,
+) -> Result<(), String> {
+    spawn_remote_control_checked(
+        context,
+        request_id,
+        action,
+        connection_generation,
+        Vec::new(),
+        CloseSafety {
+            approved_peers: Vec::new(),
+            pane_ids: Vec::new(),
+            deadline: Instant::now() + Duration::from_secs(5),
+        },
+    )
+}
+
+pub(crate) fn spawn_remote_control_checked(
+    context: RemoteControlContext,
+    request_id: String,
+    action: RemoteControlAction,
+    connection_generation: u64,
+    failed_terminals: Vec<(String, String)>,
+    safety: CloseSafety,
 ) -> Result<(), String> {
     let target_id = context.target_id.clone();
     let worker_name = match &action {
@@ -3099,7 +3466,44 @@ pub fn spawn_remote_control(
         .name(worker_name)
         .spawn(move || {
             let started = Instant::now();
-            let result = execute_remote_control(context.api_connector.as_ref(), &action);
+            let target = match &action {
+                RemoteControlAction::Pane(PaneControlAction::Close { pane_id }) => {
+                    Some(CloseCaptureTarget::Pane {
+                        pane_id: pane_id.clone(),
+                    })
+                }
+                RemoteControlAction::CloseTab { tab_id } => Some(CloseCaptureTarget::Tab {
+                    tab_id: tab_id.clone(),
+                }),
+                _ => None,
+            };
+            let result = if !failed_terminals.is_empty()
+                && let Some(target) = target
+            {
+                run_close_effect(
+                    context.api_connector.as_ref(),
+                    &CloseEffectRequest {
+                        safety: Some(safety),
+                        failed_terminals,
+                        target,
+                        retain_for_reopen: false,
+                        allow_replacement_create: false,
+                        replacement: None,
+                        key: request_id.clone(),
+                        connection_generation,
+                    },
+                )
+                .map(|()| RemoteControlOutcome::Acknowledged {
+                    created_tab_id: None,
+                    created_pane_id: None,
+                })
+                .map_err(|error| match error {
+                    ApiError::Remote { .. } => ControlFailure::Definite(error.to_string()),
+                    _ => ControlFailure::Ambiguous(error.to_string()),
+                })
+            } else {
+                execute_remote_control(context.api_connector.as_ref(), &action)
+            };
             let elapsed_ms = started.elapsed().as_millis();
             let Some(runtime) = context.runtime.upgrade() else {
                 return;
@@ -3611,7 +4015,14 @@ mod tests {
             }
             let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let observed_changed = Arc::clone(&changed);
-            let node = hide_node::Local::new(Some(home.path().to_path_buf()));
+            // An account whose panes start zsh: the fork's tab gets the
+            // shell integration and its start waits for the prompt's mark.
+            let node = hide_node::Local::new(Some(home.path().to_path_buf())).with_shell(
+                hide_host::shell_integration::UserShell {
+                    shell: Some("/bin/zsh".into()),
+                    ..Default::default()
+                },
+            );
             let expected_cwd = cwd.display().to_string();
             let tab_source = source.clone();
             let tab_other = other_before.clone();
@@ -3626,7 +4037,7 @@ mod tests {
                             "panes": [{"pane_id":"parent-pane", "focused":true,
                                 "rect":{"x":0,"y":0,"width":80,"height":24}}], "splits": []}]
                     }}),
-                    "tab.create" => {
+                    "layout.apply" => {
                         if case == "source-missing-after" {
                             std::fs::write(tab_source.with_file_name("other.jsonl"), &tab_other)
                                 .unwrap();
@@ -3643,15 +4054,26 @@ mod tests {
                             observed_changed.store(true, std::sync::atomic::Ordering::SeqCst);
                         }
                         assert_eq!(params["workspace_id"], "w1");
-                        assert_eq!(params["cwd"], expected_cwd);
+                        assert_eq!(params["root"]["cwd"], expected_cwd);
                         assert_eq!(params["focus"], false);
-                        json!({"type":"tab_created",
-                            "tab":{"tab_id":"w1:t2","workspace_id":"w1","number":2,"label":"fork", "focused":false,"pane_count":1,"agent_status":"idle"},
-                            "root_pane":{"pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"idle","revision":1}})
+                        // Named as a new tab, so the strip shows the agent;
+                        // it runs the node's shell with the integration's
+                        // launch.
+                        assert_eq!(params["tab_label"], "Tab 2");
+                        assert_eq!(params["root"]["command"][0], "/bin/zsh");
+                        json!({"type":"layout_apply","layout":{"workspace_id":"w1","tab_id":"w1:t2",
+                            "zoomed":false,"focused_pane_id":"child-pane",
+                            "root":{"type":"pane","pane_id":"child-pane"}}})
                     }
                     "pane.process_info" => json!({"type":"pane_process_info","process_info":{
                         "pane_id":"child-pane","shell_pid":42,"foreground_process_group_id":42,
                         "foreground_processes":[{"pid":42,"name":"zsh"}]}}),
+                    "pane.get" => {
+                        assert_eq!(params["pane_id"], "child-pane");
+                        json!({"type":"pane_info","pane":{
+                            "pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"unknown","revision":1,
+                            "tokens":{"hide_prompt":"1"}}})
+                    }
                     "agent.start" => {
                         assert_eq!(params["pane_id"], "child-pane");
                         assert_eq!(params["kind"], kind);
@@ -3682,7 +4104,10 @@ mod tests {
                 session_id: "native-pi".into(),
                 cwd: Some(cwd.display().to_string()),
                 name: "fork-pi-1".into(),
+                tab_label: Some("Tab 2".into()),
+                placement: ForkPlacement::Tab,
             };
+            let created = std::cell::RefCell::new(Vec::new());
             let result = run_agent_fork_with_registration(
                 &herdr.connector(),
                 &node,
@@ -3694,9 +4119,29 @@ mod tests {
                         Ok(())
                     }
                 },
+                |tab, pane| {
+                    created
+                        .borrow_mut()
+                        .push((tab.map(str::to_owned), pane.to_owned()))
+                },
                 |_, _| Ok(()),
             );
             assert_eq!(result.is_err(), case != "success", "{case}");
+            // The core hears of the fork's tab once, as soon as Herdr made it,
+            // whatever happens to its start afterwards.
+            let made_tab = herdr
+                .methods()
+                .iter()
+                .any(|method| method == "layout.apply");
+            assert_eq!(
+                created.into_inner(),
+                if made_tab {
+                    vec![(Some("w1:t2".to_owned()), "child-pane".to_owned())]
+                } else {
+                    Vec::new()
+                },
+                "{case}"
+            );
             assert_eq!(
                 std::fs::read(if source.exists() {
                     source.clone()
@@ -3716,8 +4161,9 @@ mod tests {
             }
             let mut expected = vec![
                 "session.snapshot",
-                "tab.create",
+                "layout.apply",
                 "pane.process_info",
+                "pane.get",
                 "agent.start",
             ];
             if case == "duplicate-before" || case == "source-missing-before" {
@@ -3730,6 +4176,7 @@ mod tests {
                 if case == "execution-after" {
                     // Retired execution is now refused before even the
                     // shell-read connection; the owned child still closes.
+                    expected.pop();
                     expected.pop();
                 }
                 expected.push("pane.close");
@@ -3773,7 +4220,14 @@ mod tests {
             let database = home.path().join(".local/share/opencode/opencode.db");
             let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let observed_changed = Arc::clone(&changed);
-            let node = hide_node::Local::new(Some(home.path().to_path_buf()));
+            // An account whose panes start zsh: the fork's tab gets the
+            // shell integration and its start waits for the prompt's mark.
+            let node = hide_node::Local::new(Some(home.path().to_path_buf())).with_shell(
+                hide_host::shell_integration::UserShell {
+                    shell: Some("/bin/zsh".into()),
+                    ..Default::default()
+                },
+            );
             let expected_cwd = checkout.clone();
             let herdr = FakeHerdr::start_with_errors("opencode-fork-tab", move |method, params| {
                 Ok(match method {
@@ -3786,7 +4240,7 @@ mod tests {
                             "panes": [{"pane_id":"parent-pane", "focused":true,
                                 "rect":{"x":0,"y":0,"width":80,"height":24}}], "splits": []}]
                     }}),
-                    "tab.create" => {
+                    "layout.apply" => {
                         if case == "removed-after" {
                             rusqlite::Connection::open(&database)
                                 .unwrap()
@@ -3796,15 +4250,24 @@ mod tests {
                         if case == "execution-after" {
                             observed_changed.store(true, std::sync::atomic::Ordering::SeqCst);
                         }
-                        assert_eq!(params["cwd"], expected_cwd);
+                        assert_eq!(params["root"]["cwd"], expected_cwd);
                         assert_eq!(params["focus"], false);
-                        json!({"type":"tab_created",
-                            "tab":{"tab_id":"w1:t2","workspace_id":"w1","number":2,"label":"fork", "focused":false,"pane_count":1,"agent_status":"idle"},
-                            "root_pane":{"pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"idle","revision":1}})
+                        // The fork's tab runs the node's shell with the
+                        // integration's launch.
+                        assert_eq!(params["root"]["command"][0], "/bin/zsh");
+                        json!({"type":"layout_apply","layout":{"workspace_id":"w1","tab_id":"w1:t2",
+                            "zoomed":false,"focused_pane_id":"child-pane",
+                            "root":{"type":"pane","pane_id":"child-pane"}}})
                     }
                     "pane.process_info" => json!({"type":"pane_process_info","process_info":{
                         "pane_id":"child-pane","shell_pid":42,"foreground_process_group_id":42,
                         "foreground_processes":[{"pid":42,"name":"zsh"}]}}),
+                    "pane.get" => {
+                        assert_eq!(params["pane_id"], "child-pane");
+                        json!({"type":"pane_info","pane":{
+                            "pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"unknown","revision":1,
+                            "tokens":{"hide_prompt":"1"}}})
+                    }
                     "agent.start" => {
                         assert_eq!(params["kind"], "opencode");
                         assert_eq!(params["args"], json!(["-s", "ses_root", "--fork"]));
@@ -3834,6 +4297,8 @@ mod tests {
                 session_id: session.into(),
                 cwd: Some(checkout.clone()),
                 name: "fork-opencode-1".into(),
+                tab_label: Some("Tab 2".into()),
+                placement: ForkPlacement::Tab,
             };
             let result = run_agent_fork_with_registration(
                 &herdr.connector(),
@@ -3846,31 +4311,35 @@ mod tests {
                         Ok(())
                     }
                 },
+                |_, _| {},
                 |_, _| Ok(()),
             );
             assert_eq!(result.is_err(), case != "success", "{case}");
             let expected: &[&str] = match case {
                 "success" => &[
                     "session.snapshot",
-                    "tab.create",
+                    "layout.apply",
                     "pane.process_info",
+                    "pane.get",
                     "agent.start",
                 ],
                 "refused" => &[
                     "session.snapshot",
-                    "tab.create",
+                    "layout.apply",
                     "pane.process_info",
+                    "pane.get",
                     "agent.start",
                     "pane.close",
                 ],
                 "other-checkout" | "child-session" => &[],
                 "removed-after" => &[
                     "session.snapshot",
-                    "tab.create",
+                    "layout.apply",
                     "pane.process_info",
+                    "pane.get",
                     "pane.close",
                 ],
-                _ => &["session.snapshot", "tab.create", "pane.close"],
+                _ => &["session.snapshot", "layout.apply", "pane.close"],
             };
             assert_eq!(herdr.methods(), expected, "{case}");
         }
@@ -3898,7 +4367,14 @@ mod tests {
             let before = std::fs::read(&summary).unwrap();
             let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let observed_changed = Arc::clone(&changed);
-            let node = hide_node::Local::new(Some(home.path().to_path_buf()));
+            // An account whose panes start zsh: the fork's tab gets the
+            // shell integration and its start waits for the prompt's mark.
+            let node = hide_node::Local::new(Some(home.path().to_path_buf())).with_shell(
+                hide_host::shell_integration::UserShell {
+                    shell: Some("/bin/zsh".into()),
+                    ..Default::default()
+                },
+            );
             let herdr = FakeHerdr::start_with_errors("grok-fork-tab", move |method, params| {
                 Ok(match method {
                     "session.snapshot" => json!({"type": "session_snapshot", "snapshot": {
@@ -3910,18 +4386,27 @@ mod tests {
                             "panes": [{"pane_id":"parent-pane", "focused":true,
                                 "rect":{"x":0,"y":0,"width":80,"height":24}}], "splits": []}]
                     }}),
-                    "tab.create" => {
+                    "layout.apply" => {
                         if case == "execution-after" {
                             observed_changed.store(true, std::sync::atomic::Ordering::SeqCst);
                         }
                         assert_eq!(params["focus"], false);
-                        json!({"type":"tab_created",
-                            "tab":{"tab_id":"w1:t2","workspace_id":"w1","number":2,"label":"fork", "focused":false,"pane_count":1,"agent_status":"idle"},
-                            "root_pane":{"pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"idle","revision":1}})
+                        // The fork's tab runs the node's shell with the
+                        // integration's launch.
+                        assert_eq!(params["root"]["command"][0], "/bin/zsh");
+                        json!({"type":"layout_apply","layout":{"workspace_id":"w1","tab_id":"w1:t2",
+                            "zoomed":false,"focused_pane_id":"child-pane",
+                            "root":{"type":"pane","pane_id":"child-pane"}}})
                     }
                     "pane.process_info" => json!({"type":"pane_process_info","process_info":{
                         "pane_id":"child-pane","shell_pid":42,"foreground_process_group_id":42,
                         "foreground_processes":[{"pid":42,"name":"zsh"}]}}),
+                    "pane.get" => {
+                        assert_eq!(params["pane_id"], "child-pane");
+                        json!({"type":"pane_info","pane":{
+                            "pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"unknown","revision":1,
+                            "tokens":{"hide_prompt":"1"}}})
+                    }
                     "agent.start" => {
                         assert_eq!(params["kind"], "grok");
                         assert_eq!(params["args"], json!(["--resume", id, "--fork-session"]));
@@ -3949,6 +4434,8 @@ mod tests {
                 session_id: id.into(),
                 cwd: Some(cwd.display().to_string()),
                 name: "fork-grok-1".into(),
+                tab_label: Some("Tab 2".into()),
+                placement: ForkPlacement::Tab,
             };
             let result = run_agent_fork_with_registration(
                 &herdr.connector(),
@@ -3961,6 +4448,7 @@ mod tests {
                         Ok(())
                     }
                 },
+                |_, _| {},
                 |_, _| Ok(()),
             );
             assert_eq!(result.is_err(), case != "success", "{case}: {result:?}");
@@ -3968,19 +4456,21 @@ mod tests {
             let expected: &[&str] = match case {
                 "success" => &[
                     "session.snapshot",
-                    "tab.create",
+                    "layout.apply",
                     "pane.process_info",
+                    "pane.get",
                     "agent.start",
                 ],
                 "refused" => &[
                     "session.snapshot",
-                    "tab.create",
+                    "layout.apply",
                     "pane.process_info",
+                    "pane.get",
                     "agent.start",
                     "pane.close",
                 ],
                 "summary-changed-before" => &[],
-                _ => &["session.snapshot", "tab.create", "pane.close"],
+                _ => &["session.snapshot", "layout.apply", "pane.close"],
             };
             assert_eq!(herdr.methods(), expected, "{case}");
         }
@@ -4015,6 +4505,8 @@ mod tests {
             session_id: "3f2b1c00-0000-4000-8000-000000000001".to_owned(),
             cwd: Some("/checkout".to_owned()),
             name: "fork-parent-pane-1".to_owned(),
+            tab_label: None,
+            placement: ForkPlacement::Side,
         };
 
         let pane_id = run_agent_fork_with_registration(
@@ -4022,6 +4514,7 @@ mod tests {
             &hide_node::Local::new(None),
             &request,
             &|| Ok(()),
+            |_, _| {},
             |_, _| Err("ledger_unavailable".into()),
         )
         .expect("registration cannot close a started fork");
@@ -4782,15 +5275,18 @@ mod tests {
                 "Tab 2",
                 focus,
                 Default::default(),
+                None,
             )
             .expect("owner tab");
 
             assert_eq!(
                 tab,
                 OwnedTab {
+                    initial_label: None,
                     workspace_id: "w9".to_owned(),
                     tab_id: "w9:t2".to_owned(),
                     pane_id: "w9:p2".to_owned(),
+                    launched: true,
                 }
             );
             assert_eq!(herdr.methods(), ["worktree.open", "tab.create"]);
@@ -4817,6 +5313,7 @@ mod tests {
             "Tab 1",
             true,
             Default::default(),
+            None,
         )
         .expect_err("a refused open fails");
 
@@ -4880,6 +5377,7 @@ mod tests {
                 "Tab 1",
                 focus,
                 Default::default(),
+                None,
             )
             .expect("first tab");
             let second = open_owner_tab(
@@ -4889,6 +5387,7 @@ mod tests {
                 "Tab 2",
                 focus,
                 Default::default(),
+                None,
             )
             .expect("second tab");
 
@@ -5414,7 +5913,14 @@ mod tests {
             // Checking a proposed stream move shares the confirmation
             // contract and must not produce another focus mutation.
             let readback = confirm_pane_focus(&herdr.connector(), "fixture:p2");
-            assert_eq!(readback.is_ok(), confirmed);
+            assert_eq!(
+                readback,
+                if confirmed {
+                    FocusReadback::Confirmed
+                } else {
+                    FocusReadback::Elsewhere
+                }
+            );
             assert_eq!(
                 herdr.methods(),
                 [

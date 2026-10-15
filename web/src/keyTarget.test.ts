@@ -17,7 +17,7 @@ describe("keys after a new tab or split", () => {
   afterEach(() => {
     disarmKeyTarget();
     document.body.replaceChildren();
-    useShellStore.setState({ focusedPaneId: null });
+    useShellStore.setState({ focusedPaneId: null, rest: null });
   });
 
   it("go to the request, not the pane that had the keyboard", () => {
@@ -72,5 +72,43 @@ describe("keys after a new tab or split", () => {
     observeInputRequests([]);
     expect(keyPayload("w1:p1", "YQ==", 1_000 + UNSEEN_REQUEST_LIMIT_MS)).toEqual({ pending_request: "r1", bytes_base64: "YQ==" });
     expect(keyPayload("w1:p1", "YQ==", 1_001 + UNSEEN_REQUEST_LIMIT_MS)).toEqual({ pane_id: "w1:p1", bytes_base64: "YQ==" });
+  });
+
+  // PRD fork-operator-root B4: a fork's pane has the keyboard before its agent
+  // has started, and what is typed there waits for the agent.
+  it("keep following a fork's request while its pane has the keyboard, until its agent starts", () => {
+    focusTerminalOf("w1:p1");
+    armKeyTarget("r1");
+    const held = [{ request_id: "r1", state: "pending" as const, held_for: "w1:p9" }];
+    useShellStore.setState({ rest: { terminal: { input_requests: held } } });
+    observeInputRequests(held);
+    noteTerminalFocus("w1:p9");
+    expect(keyPayload("w1:p9", "YQ==")).toEqual({ pending_request: "r1", bytes_base64: "YQ==" });
+    observeInputRequests([{ request_id: "r1", state: "ready" }]);
+    expect(keyPayload("w1:p9", "YQ==")).toEqual({ pane_id: "w1:p9", bytes_base64: "YQ==" });
+  });
+
+  it("stop following a fork's request when the keyboard goes to a third pane", () => {
+    focusTerminalOf("w1:p1");
+    armKeyTarget("r1");
+    const held = [{ request_id: "r1", state: "pending" as const, held_for: "w1:p9" }];
+    useShellStore.setState({ rest: { terminal: { input_requests: held } } });
+    noteTerminalFocus("w1:p3");
+    expect(keyPayload("w1:p3", "YQ==")).toEqual({ pane_id: "w1:p3", bytes_base64: "YQ==" });
+  });
+
+  it("keep following a fork's request when the operator clicks into the fork's own pane", () => {
+    focusTerminalOf("w1:p1");
+    armKeyTarget("r1");
+    useShellStore.setState({ rest: { terminal: { input_requests: [{ request_id: "r1", state: "pending", held_for: "w1:p9" }] } } });
+    const view = document.createElement("div");
+    view.dataset.paneView = "w1:p9";
+    const inside = document.createElement("span");
+    view.append(inside);
+    document.body.append(view);
+    noteOperatorPointer({ target: inside } as unknown as Event);
+    expect(keyPayload("w1:p9", "YQ==")).toEqual({ pending_request: "r1", bytes_base64: "YQ==" });
+    noteOperatorPointer({ target: document.body } as unknown as Event);
+    expect(keyPayload("w1:p9", "YQ==")).toEqual({ pane_id: "w1:p9", bytes_base64: "YQ==" });
   });
 });

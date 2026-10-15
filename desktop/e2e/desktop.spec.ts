@@ -70,7 +70,20 @@ test("attach: the app starts hided, shows the shell, and runs the native chords 
       bridge: Object.keys(window.hideHost ?? {}).sort(),
       kind: window.hideHost?.kind,
     })),
-  ).toEqual({ require: "undefined", process: "undefined", bridge: ["browser", "kind", "notificationPermission", "notify", "onCommand", "onNotificationOpen", "openNotificationSettings", "openPath", "pickFolder", "platform", "probePaths", "reportBindings", "reportLanguage", "revealPath", "withdrawNotifications"], kind: "electron" });
+  ).toEqual({ require: "undefined", process: "undefined", bridge: ["browser", "editorAvailable", "kind", "notificationPermission", "notify", "onCommand", "onNotificationOpen", "onWindowChrome", "openInEditor", "openNotificationSettings", "openPath", "pickFolder", "platform", "probePaths", "reportBadge", "reportBindings", "reportLanguage", "revealPath", "withdrawNotifications"], kind: "electron" });
+  // sidebar-titlebar-refresh B17, B23: the host says what its frame takes of the shell's top row, traffic lights on macOS only, and the row keeps their room.
+  const chrome = await page.evaluate(() => new Promise((resolve) => window.hideHost!.onWindowChrome(resolve)));
+  expect(chrome).toEqual({ trafficLights: process.platform === "darwin", fullscreen: false });
+  await expect(page.locator("[data-title-row]")).toHaveAttribute("data-traffic-lights", String(process.platform === "darwin"));
+  // The sidebar's switch in that row hides the sidebar and, from the same place, brings it back without the chord.
+  const sidebarSwitch = page.locator("[data-title-row] [data-sidebar-switch]");
+  const switchX = Math.round((await sidebarSwitch.boundingBox())!.x);
+  await sidebarSwitch.click();
+  await expect(page.locator("nav[data-sidebar]")).toHaveCount(0);
+  expect(Math.round((await sidebarSwitch.boundingBox())!.x)).toBe(switchX);
+  await screenshot(page, "desktop-sidebar-hidden");
+  await sidebarSwitch.click();
+  await expect(page.locator("nav[data-sidebar]")).toBeVisible();
 
   // B9: the app's New tab chord is one create_tab here; the browser's is not a chord in the app.
   const tabs = await page.locator("[role=tab]").count();

@@ -81,6 +81,7 @@ pub struct Core {
     _session_sync: Option<crate::session_sync::SessionSyncHandle>,
     _session_search: Option<crate::runtime::session_search::SearchWorker>,
     _links: Option<crate::links::worker::LinkWorker>,
+    _usage_ledger: Option<crate::usage_ledger::worker::Worker>,
     labels: Option<Arc<crate::labels::LabelServices>>,
     factory: Option<crate::factory::FactoryHost>,
     own_node: Arc<dyn crate::node_access::NodeLink>,
@@ -91,6 +92,7 @@ pub struct Core {
 
 impl Drop for Core {
     fn drop(&mut self) {
+        lock_recover(&self.runtime).cancel_session_issue_draft();
         // First: the Factory engine sends through delivery and ends the
         // verify runs and judgments it started (rule 14).
         if let Some(mut factory) = self.factory.take() {
@@ -109,7 +111,12 @@ impl Drop for Core {
         }
         // A kit step running on this machine's node ends the child it waits
         // on, so the kit worker below is joined without waiting it out.
+        if let Some(kit) = self._kit.as_ref() {
+            kit.stop();
+        }
         self.own_node.close("core stopping");
+        self._kit.take();
+        self._usage_ledger.take();
         self._session_search.take();
         self._links.take();
         self._terminal_reports.take();
@@ -182,6 +189,7 @@ impl Core {
             _session_sync: None,
             _session_search: None,
             _links: None,
+            _usage_ledger: None,
             _delivery: None,
             labels: None,
             factory: None,
@@ -294,10 +302,21 @@ impl Core {
                 crate::github_store::GithubStore::new(hide_kit::layout::github_snapshot(directory));
             let restored = store.restore();
             lock_recover(&runtime).install_github_store(store, restored);
+            let composers = crate::composer_store::ComposerStore::new(
+                hide_kit::layout::composer_marks(directory),
+            );
+            let marks = composers.restore(crate::links::now_ms());
+            lock_recover(&runtime).install_composer_store(composers, marks);
         }
         // Before any coordinator starts, because each builds its label worker
         // on these, and before the kit runs, because the plugin state the
         // store imports once is what the kit's retirement deletes.
+        // Taken before the match: a guard in its scrutinee would be held
+        // through the arms, which lock the runtime again.
+        let (usage_gate, ai_usage) = {
+            let runtime = lock_recover(&runtime);
+            (runtime.usage_gate(), runtime.ai_usage())
+        };
         let labels = match crate::labels::LabelServices::start(
             std::path::Path::new(&options.app_state_path)
                 .parent()
@@ -306,6 +325,8 @@ impl Core {
             Arc::downgrade(&runtime),
             &options.node_id,
             Arc::clone(&own_node),
+            usage_gate,
+            ai_usage,
         ) {
             Ok(services) => {
                 let services = Arc::new(services);
@@ -338,7 +359,14 @@ impl Core {
         // history, and before any coordinator, so the first catalog and
         // GitHub answers reach it.
         let links = match crate::runtime::links::spawn_worker(&runtime, notifier.clone()) {
-            Ok(worker) => Some(worker),
+            Ok(worker) => {
+                if let Some(labels) = labels.as_ref()
+                    && let Ok(mut client) = labels.ledger.lock()
+                {
+                    *client = Some(worker.client());
+                }
+                Some(worker)
+            }
             Err(message) => {
                 crate::diagnostic!(
                     serde_json::json!({"component":"links","kind":"worker.start_failed","message":message})
@@ -421,6 +449,26 @@ impl Core {
                 None
             }
         };
+        let usage_ledger =
+            match crate::runtime::usage_ledger::spawn_worker(&runtime, notifier.clone()) {
+                Ok(worker) => Some(worker),
+                Err(code) => {
+                    crate::diagnostic!(
+                        serde_json::json!({"component":"usage_ledger", "kind":code})
+                    );
+                    let value = crate::usage::consumption::Publication::prepare(
+                        crate::usage_ledger::worker::Report {
+                            projection: None,
+                            progress: Vec::new(),
+                            failure: Some(code),
+                            price_failure: None,
+                        },
+                        crate::links::now_ms(),
+                    );
+                    lock_recover(&runtime).ingest_ledger(value);
+                    None
+                }
+            };
         Some(Box::new(Core {
             _delivery: delivery,
             _terminal_reports: terminal_reports,
@@ -430,6 +478,7 @@ impl Core {
             _session_sync: session_sync,
             _session_search: session_search,
             _links: links,
+            _usage_ledger: usage_ledger,
             labels,
             factory,
             runtime,
@@ -802,16 +851,29 @@ impl Core {
     }
 
     pub fn snapshot_delta(&self, have_revision: u64) -> Vec<u8> {
+        self.snapshot_delta_payload(have_revision)
+            .and_then(|payload| {
+                crate::runtime::serialize_snapshot_delta(&payload)
+                    .map_err(|error| error.to_string())
+            })
+            .unwrap_or_default()
+    }
+
+    /// Typed ownership crosses the core owner boundary; transports serialize
+    /// it after this call, without occupying dispatch or holding Runtime.
+    pub fn snapshot_delta_payload(
+        &self,
+        have_revision: u64,
+    ) -> Result<crate::model::SnapshotDeltaPayload, String> {
         if !check_owner_thread(self, "snapshot") {
             notify_change(self);
-            return Vec::new();
+            return Err("snapshot requested off the core owner thread".to_owned());
         }
         self.notifier.clear_announcement();
-        let payload = {
+        Ok({
             let mut runtime = lock_recover(&self.runtime);
             runtime.snapshot_delta_payload(have_revision)
-        };
-        crate::runtime::serialize_snapshot_delta(&payload).unwrap_or_default()
+        })
     }
 
     pub fn on_change<F>(&self, callback: F)

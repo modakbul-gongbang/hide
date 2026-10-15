@@ -1,5 +1,5 @@
 // The desktop notification controls the wizard's second step and Settings >
-// General share (PRD first-run-onboarding B14-B20, B30): the operator's
+// Notifications share (PRD first-run-onboarding B14-B20, B30): the operator's
 // switch, which the core keeps (`ui_state.desktop_notifications`), and what
 // the system says about Hide's permission, which the desktop host reads.
 // A browser tab has neither (D-14).
@@ -36,8 +36,8 @@ export function usePermission(): NotificationPermission | null {
       const answer = await bridge.notificationPermission().catch((): NotificationPermission => "unknown");
       if (stopped) return;
       setPermission(answer);
-      // A system with nothing to read is not asked again.
-      if (answer !== "unsupported" && answer !== "no_service") timer = window.setTimeout(() => void read(), PERMISSION_POLL_MS);
+      // macOS's answer can change in System Settings, and Linux's when a notification fails or shows (D-24); Windows' cannot.
+      if (bridge.platform === "linux" || (answer !== "unsupported" && answer !== "no_service")) timer = window.setTimeout(() => void read(), PERMISSION_POLL_MS);
     };
     void read();
     return () => {
@@ -52,9 +52,12 @@ export function usePermission(): NotificationPermission | null {
 export type NotificationControl = {
   state: NotificationState;
   enabled: boolean;
+  needsYouEnabled: boolean;
+  doneEnabled: boolean;
+  setNeedsYou: (enabled: boolean) => void;
+  setDone: (enabled: boolean) => void;
   /** Turn the switch on; the first notification is what makes macOS ask (B14), elsewhere it is the one test (B19, B20). */
   turnOn: () => void;
-  turnOff: () => void;
   sendTest: () => void;
 };
 
@@ -65,7 +68,10 @@ export type NotificationControl = {
 export function useNotificationControl(actions: Actions, place: "wizard" | "settings", permission: NotificationPermission | null): NotificationControl | null {
   const { t } = useInterfaceTranslation();
   const bridge = hostBridge();
-  const enabled = useShellStore((s) => s.rest?.ui_state?.desktop_notifications === true);
+  const needsYouEnabled = useShellStore((s) => s.rest?.ui_state?.desktop_notifications === true);
+  // A snapshot from before the split still carries the former shared choice.
+  const doneEnabled = useShellStore((s) => (s.rest?.ui_state?.desktop_notifications_done ?? s.rest?.ui_state?.desktop_notifications) === true);
+  const enabled = needsYouEnabled || doneEnabled;
   const state = notificationState(enabled, permission, place);
   const sendTest = () => bridge?.notify(TEST_ID, t("firstRun.notifications.testTitle"), t("firstRun.notifications.testBody"));
   // Allowing in macOS's dialog shows the test the press asked for (B15); it replaces the one the dialog held.
@@ -76,11 +82,15 @@ export function useNotificationControl(actions: Actions, place: "wizard" | "sett
     // `sendTest` words the test in the language now; the state change is the one trigger.
   }, [state]);
   if (!bridge) return null;
-  const turnOn = () => {
-    actions.setDesktopNotifications(true);
-    sendTest();
+  const setNeedsYou = (next: boolean) => {
+    actions.setDesktopNotifications(next);
+    if (next) sendTest();
   };
-  return { state, enabled, turnOn, turnOff: () => actions.setDesktopNotifications(false), sendTest };
+  const setDone = (next: boolean) => {
+    actions.setDesktopNotificationsDone(next);
+    if (next) sendTest();
+  };
+  return { state, enabled, needsYouEnabled, doneEnabled, setNeedsYou, setDone, turnOn: () => setNeedsYou(true), sendTest };
 }
 
 /** The wizard's line under its description: what the system says, and the one press that answers it (B14-B20, B47). */
@@ -141,7 +151,7 @@ function NotificationAction({ control }: { control: NotificationControl }) {
 }
 
 /**
- * Settings > General's rows (B30): the switch, and while it is on, what macOS
+ * Settings > Notifications' desktop rows: the two choices, and while either is on, what macOS
  * allows with the press that answers it, or a test row where the system has
  * nothing to read. Where no notification service answers, the switch is
  * locked off and says why (B48).
@@ -168,10 +178,19 @@ export function NotificationRows({ control }: { control: NotificationControl }) 
       >
         <Switch
           id="notification-switch"
-          checked={enabled && !noService}
+          checked={control.needsYouEnabled && !noService}
           disabled={noService}
-          onCheckedChange={(next) => (next ? control.turnOn() : control.turnOff())}
+          onCheckedChange={control.setNeedsYou}
           data-notification-switch="true"
+        />
+      </Row>
+      <Row label={<label htmlFor="notification-done-switch">{t("firstRun.settings.doneSwitch")}</label>}>
+        <Switch
+          id="notification-done-switch"
+          checked={control.doneEnabled && !noService}
+          disabled={noService}
+          onCheckedChange={control.setDone}
+          data-notification-done-switch="true"
         />
       </Row>
       {enabled && state === "on_unchecked" ? (

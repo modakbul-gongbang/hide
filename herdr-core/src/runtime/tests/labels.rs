@@ -76,6 +76,8 @@ fn an_operator_submit_is_recorded_for_the_agent_pane_and_an_approval_enter_is_no
             std::sync::Weak::new(),
             &crate::node::test_node(),
             std::sync::Arc::new(hide_node::Local::of_process()),
+            runtime.usage_gate(),
+            runtime.ai_usage(),
         )
         .unwrap(),
     );
@@ -178,6 +180,33 @@ fn a_row_without_a_label_shows_the_sessions_own_title_and_the_request() {
     assert_eq!(row["identity_label"], "요청 보기 만들기");
     assert_eq!(row["request"]["request"]["text"], "요청 보기를 만들어줘");
     assert_eq!(row["request"]["request"]["sender"]["kind"], "operator");
+}
+
+#[test]
+fn a_cached_pi_name_is_automatic_with_summaries_on_and_off() {
+    for (summaries, expected) in [(true, "검증 작업"), (false, "기존 Pi 이름")] {
+        let mut runtime = runtime();
+        let mut facts = crate::labels::facts::SessionFacts::default();
+        facts.custom_title = Some("기존 Pi 이름".into());
+        let record = PaneRecord {
+            owner: hide_session::label_reference_token("pi", "id", SESSION),
+            goal: Some("검증 작업".into()),
+            facts,
+            ..Default::default()
+        };
+        let records = [(PANE.to_owned(), record)];
+        runtime.set_label_overlay(LabelOverlay::of_records(
+            records.iter().map(|(pane, record)| (pane, record)),
+            true,
+            summaries,
+        ));
+        let mut payload = projection(SESSION);
+        for agent in &mut payload.agents {
+            agent.agent = Some("pi".into());
+        }
+        runtime.ingest_session(Ok(payload));
+        assert_eq!(row(&runtime)["identity_label"], expected);
+    }
 }
 
 /// B9, B15, B21: an unfinished turn stops the row, and so does a turn that
@@ -334,6 +363,7 @@ fn running_checks_are_read_again_once_a_minute_only_while_the_view_is_shown() {
         closed_at_unix_ms: None,
         head_oid: None,
         cross_repository: false,
+        work: Default::default(),
     };
     let github = |pull_request: &crate::model::PullRequestSnapshot| crate::model::GithubSnapshot {
         projects: vec![crate::model::GithubProjectSnapshot {
@@ -547,6 +577,8 @@ fn the_enter_that_approves_a_waiting_plan_is_the_operators_submit() {
             std::sync::Weak::new(),
             &crate::node::test_node(),
             std::sync::Arc::new(hide_node::Local::of_process()),
+            runtime.usage_gate(),
+            runtime.ai_usage(),
         )
         .unwrap(),
     );

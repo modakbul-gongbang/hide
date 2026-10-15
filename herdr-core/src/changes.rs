@@ -162,6 +162,12 @@ impl ChangesReader {
     pub fn read_if_due(&mut self, request: Option<ChangesRequest>) -> Option<ChangesAnswer> {
         self.inner.poll(request)
     }
+
+    /// Waits for the read in flight, so a test's next poll takes its answer.
+    #[cfg(test)]
+    pub(crate) fn join_pending(&mut self) {
+        self.inner.join_pending();
+    }
 }
 
 impl Default for ChangesReader {
@@ -185,6 +191,9 @@ impl ChangesPump {
             .name("changes-pump".into())
             .spawn(move || {
                 let mut reader = ChangesReader::new();
+                // The closed view's empty projection has landed: until
+                // something shows the view again there is nothing to read.
+                let mut resting = false;
                 while matches!(
                     receiver.recv_timeout(PUMP_TICK),
                     Err(mpsc::RecvTimeoutError::Timeout)
@@ -196,9 +205,13 @@ impl ChangesPump {
                     else {
                         break;
                     };
+                    if request.is_none() && resting {
+                        continue;
+                    }
                     let Some(answer) = reader.read_if_due(request) else {
                         continue;
                     };
+                    resting = answer.key.is_none();
                     let Ok(changed) = runtime
                         .lock()
                         .map(|mut runtime| runtime.ingest_changes(answer))

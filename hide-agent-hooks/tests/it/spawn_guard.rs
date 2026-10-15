@@ -64,10 +64,12 @@ fn send_payload(mut stdin: impl Write, payload: &str) {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct Run {
     pub(crate) stdout: String,
     pub(crate) stderr: String,
     pub(crate) status_ok: bool,
+    pub(crate) status: std::process::ExitStatus,
     pub(crate) elapsed: Duration,
 }
 
@@ -161,6 +163,7 @@ impl Machine {
             stdout: String::from_utf8(output.stdout).unwrap(),
             stderr: String::from_utf8(output.stderr).unwrap(),
             status_ok: output.status.success(),
+            status: output.status,
             elapsed: started.elapsed(),
         }
     }
@@ -198,6 +201,7 @@ fn current_factory_worker_questions_are_redirected_through_one_authenticated_que
         ("claude-code", "AskUserQuestion"),
         ("claude-code", "ExitPlanMode"),
         ("codex", "request_user_input"),
+        ("codex", "request_user_input_async"),
     ] {
         let machine = Machine::new("worker");
         let run = machine.run(runtime, &machine.question(tool), Some(PANE), &[]);
@@ -269,6 +273,7 @@ fn questions_without_native_identity_or_from_another_runtime_never_query() {
     for (runtime, payload) in [
         ("codex", machine.question("AskUserQuestion")),
         ("claude-code", machine.question("request_user_input")),
+        ("claude-code", machine.question("request_user_input_async")),
         ("claude-code", r#"{"tool_name":"AskUserQuestion"}"#.into()),
         (
             "claude-code",

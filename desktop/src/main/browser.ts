@@ -23,7 +23,7 @@ import { pathToFileURL } from "node:url";
 import type { BrowserHostEvent, BrowserPageState, BrowserPlacement } from "../../../web/src/host";
 import { hostChord, isCycleCommand, keySystemOf, matchHost, releaseModifier, systemRegistry, type Command, type CommandId } from "../../../web/src/shortcuts";
 import { BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_CYCLE_END_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL } from "../channel";
-import { appScheme, browserPartition, isPopup, loadable, MAX_LIVE_VIEWS, MAX_POPUPS, overCap, parseCommand, parseSync, parseTarget, popupBounds, remoteRequest, toBounds, viewKey } from "./browserSync";
+import { appScheme, browserPartition, isPopup, loadable, MAX_AUTHORIZED_SCOPES, MAX_LIVE_VIEWS, MAX_POPUPS, overCap, parseCommand, parseSync, parseTarget, popupBounds, remoteRequest, toBounds, viewKey } from "./browserSync";
 import { nextZoomFactor, type PageZoom } from "../../../web/src/zoomSteps";
 import type { HostLog } from "./log";
 import type { CdpPage, CdpRetirement, CdpScope } from "./browserCdp";
@@ -343,7 +343,7 @@ export class BrowserViews {
     if (!window) return;
     // The shared parser bounds this list. Missing authority grants nothing;
     // retained display rows can never restore a revoked checkout/area.
-    const rows = authorizedScopes && authorizedScopes.length <= 1536 ? authorizedScopes : [];
+    const rows = authorizedScopes && authorizedScopes.length <= MAX_AUTHORIZED_SCOPES ? authorizedScopes : [];
     const scopes = new Map(rows.flatMap((scope) => Number.isSafeInteger(scope.incarnation) && scope.incarnation! >= 0
       ? [[JSON.stringify([scope.workspace, scope.area_id]), scope.incarnation!] as const] : []));
     if (scopes.size !== this.cdpScopes.size || [...scopes].some(([scope, incarnation]) => this.cdpScopes.get(scope) !== incarnation)) {
@@ -354,10 +354,11 @@ export class BrowserViews {
     // current contract requires it and matches placement to retained rows.
     this.cdpAreas = new Map(retained.flatMap((row) => row.area_id ? [[viewKey(row.workspace, row.id), row.area_id] as const] : []));
     const listed = new Set(retained.map((row) => viewKey(row.workspace, row.id)));
+    const placed = new Set(displays.map((display) => viewKey(workspace ?? "", display.id)));
     for (const page of [...this.pages.values()]) {
       if (!listed.has(page.key)) this.destroy(page, "closed");
-      else if (page.workspace !== workspace) {
-        // The operator left this page's Workspace: nothing is owed to it.
+      else if (page.workspace !== workspace || !placed.has(page.key)) {
+        // A retained page outside the front presentation stays alive and hidden.
         if (this.returnTo === page) this.returnTo = null;
         this.show(page, false);
       }

@@ -44,6 +44,8 @@ A journey across a change of role or owner types into a pane whose owner changed
 Its update journeys start the window from a copy of the CLI whose `hided` differs by one byte past the program's end (another build) and present an older or newer release through `HIDE_BUILD_VERSION_OVERRIDE`, read only under a fixture HOME; a build that fails at its start for the way back is named in the target's fixture HOME (`FIXTURE_FAIL_BUILD_FILE`), a file because the fixture's SSH sessions keep the environment they started with.
 One test there needs none of that and runs in the ordinary `hided` lane: a daemon in the test's process on a copy whose handover is pending dials no device and runs no `tailscale` until the move's link commits it.
 The target machine's core is started as a detached process, never through launchd: the fixture's HOME carries the fixture marker and sets `HIDE_CORE_STARTER=fixture`, which no other HOME can select; the login item's launchd behaviour is the `os contract (macOS)` leg's to prove on its own runner.
+When the target helper does not become ready, the fixture reports its last host state, and the remote mailbox workflow retains `.log` and `Logs/*.jsonl` files from its short `/tmp/hcm-*` directories on failure.
+That artifact excludes the fixture's SSH keys, saved state and staged binaries; the older `rd-*` artifact does not cover core-move fixtures.
 A pull request runs it on Linux only: SSH, the helper's attestation and the mailbox are the same code on every system, and what differs by system beneath them is the `os-contract` lane's and `windows check`'s to prove.
 The fixture's macOS branches (codesign of the staged binaries, BSD `ps` and `strip`, the SFTP server path) and the usual remote device being a Mac are why the nightly runs the lane on macOS too (`remote mailbox (macOS)`).
 The fixture owns every process tree and SSH channel job, bounds retained jobs and reads, and keeps account configuration and run evidence in a private ignored run directory, which it removes once the journey passed and every process confirmed its exit and keeps after a failure for the lane to upload.
@@ -100,6 +102,7 @@ When the behavior depends on the order of two events, the test fixes that order;
 ## Writing a fixture
 
 - Set every fixture's `HOME` and Hide state folder to private paths before starting a candidate.
+- A restart fixture that requires completed native labels waits for the matching session, goal and end in the private `labels.json` before stopping the daemon; a rendered label alone does not prove its asynchronous save completed, and Windows fixture shutdown is forced.
 - A retirement test injects its service-control boundary and uses private legacy folders and ledger fixtures.
   A real launchd call to the account's default retired-service label reaches the operator's service regardless of a private `HOME`, so it is never part of fixture teardown.
 - The private SSH mailbox fixture stages candidate executable copies without debug symbols, as shipped binaries are, and ad-hoc signs those copies on macOS.
@@ -150,18 +153,24 @@ When the behavior depends on the order of two events, the test fixes that order;
   `fixtureExecutable` supplies native `.exe` names and `fixtureToolPath` uses the native path delimiter while refusing missing or non-absolute Windows system-root or program-files values.
   Catalog discovery probes every provider, so appending the host's `PATH` also reaches its installed CLIs even when the test selects Claude.
   A spec adding a GitHub or Git shim prepends it to `fixturePath`; explicit `extraEnv.PATH` remains authoritative.
+  A repository fixture declares its initial branch when the GitHub answers name one: `session-work-fixture.ts` creates `main` for its `main` pull requests, so the account's `init.defaultBranch` cannot change PR assignment or automatic session resolution.
+  A repository fixture a fake `gh` answers for carries a remote naming that GitHub repository, as a real checkout does, because `hided` answers a checkout whose remotes name none "no GitHub remote" without asking `gh`: `session-work-fixture.ts` sets `origin` to it, and the specs start their repository with `initGithubRepository` in `web/e2e/github-remote.ts`, which adds it as `github` so a local bare `origin` keeps measuring branches.
   A claim about a real agent session needs the real CLI inside an otherwise isolated fixture: a shim on the pane's `PATH` that runs the CLI under the operator's `HOME`, while the server keeps its private one.
 - A fixture makes agent labels the way the product does, through the core and not through tokens: `labelAgent` in `web/e2e/herdr-fixture.ts` gives a pane a new Claude session and writes a synthetic transcript (`writeFixtureTranscript`) the core's label worker reads, and the fixture `claude` shim acts as the provider that answers the analysis with the label the spec asked for.
   The same session is read again only when the agent's state changes: a spec that needs a different label either gives the pane a new session, or, for a pane declared as another's child, appends a turn to its own session (`continueFixtureTranscript`) and changes its state, because a relationship holds only for the sessions it was written for.
   A spec drives status through Herdr's own `agent_status` with `setFixtureLifecycle` and `finishFixtureTurn` (which needs `elsewhereTab`, so the turn ends unseen), because nothing else produces working, blocked or done.
   No spec writes a label or status pane token; the lineage tokens `declareParent` writes (`parent_pane`, `child_session`, `parent_session`) are the only ones a fixture reports, so a spawned child is labelled before its parent is declared (`spawnAgent` with a label).
   `desktop/e2e/session-labels.spec.ts` is the reference for the session boundary.
+  Recorded native-format blobs keep their historical label marker; `claude-shim.c` fits the controlled provider response to the requested START or END schema, supplying `work.task.none` for an older marker in a reader journey that judges no work.
+  Work-ledger journeys name their work explicitly through `labelMarker`; the adapter does not replace an existing work judgment.
 
 ### Operating-system differences belong to one fixture helper
 
 `hide-platform` owns what differs between systems in the product; the e2e fixtures need the same for their own resources: the endpoint they listen on, how they spell a path the core compares, the programs they copy and run, and how they clean up.
 That belongs in one shared fixture helper under `web/e2e/`, which the specs and both fixtures call, not in a `process.platform` branch per spec.
 `web/e2e/platform-fixture.ts` owns native home variables, executable names, the controlled tool path and the copy of the built no-op opener used by both fixtures.
+Its Windows `launcher.c` reads paths and arguments through the wide-character APIs and decodes the script's UTF-8 interpreter line explicitly, so a fixture never substitutes the account's ANSI code page for the caller's title or body.
+`web/e2e/platform-program.unit.ts` runs the real fixture program from a Unicode path and checks arguments, quoting and the child's exit status on every system; the lost-create-response journey also checks the title the fixture created before reconciling it.
 Put new operating-system differences in that shared boundary rather than repeating them in a spec.
 The Windows fixture boundaries also preserve these requirements:
 
@@ -204,7 +213,7 @@ A piece that another open change is still building is marked as pending with the
    `web/e2e/herdr-fixture.ts` starts a private Herdr and `web/e2e/hided-fixture.ts` a private `hided`; `desktop/e2e/fixture.ts` takes a started Herdr fixture and gives the packaged window its own `HOME` and `hided` state.
    Why: a test that shares a server with another inherits its panes, focus and timers, and its failure cannot be read alone.
    The config runs one worker (`web/playwright.config.ts`) so a timing assertion does not compete with a neighbour for cores; CI deals tests out across runners by their recorded durations (`scripts/web-e2e-shard.py`, [Balancing the web e2e shards](#balancing-the-web-e2e-shards)).
-   A desktop spec sizes its window with `fitWindow` in `desktop/e2e/fixture.ts`, inside the work area of a CI runner's 1024-point screen; `hide-e2e/window-size-through-fixture` refuses `setSize` and `setBounds` anywhere else, and a spec whose subject needs a larger window (`workspace-columns.spec.ts` asserts column widths in whole CSS pixels of bodies wider than the screen) says why in a line allow and never orders that window out and in.
+   A desktop spec sizes its window with `fitWindow` in `desktop/e2e/fixture.ts`, inside the work area of a CI runner's 1024-point screen; `hide-e2e/window-size-through-fixture` refuses `setSize` and `setBounds` anywhere else, and a spec whose subject needs a larger window (`right-lane.spec.ts` asserts lane widths in whole CSS pixels of bodies wider than the screen) says why in a line allow and never orders that window out and in.
    Why: macOS can keep a window larger than the work area until the window is next ordered in, by the test's own `blur()` or `focus()`, and clamp it then, so the layout changes in the middle of the test; `area cycle native` lost both View areas that way in about one run in ten (issue 511).
 2. **Wait for a product signal, never for time.**
    The signals a spec waits on, in order of preference:
@@ -273,6 +282,8 @@ Its tests share a process with the other modules' under `cargo test`, so a test 
    A function that takes values and returns a result is tested beside its module (`usage.rs`'s `can_attempt` and `record_failure`).
    A rule that depends on what Herdr said and in what order is tested through the runtime: dispatch an event, feed a session payload, read the snapshot (`herdr-core/src/runtime/tests/session_navigation.rs`, for example `view_authority_an_external_tab_focus_is_followed_and_reported` and `view_authority_a_refused_tab_focus_keeps_the_tab_and_reports_it`).
    Why: the unit test cannot see a pending request being superseded, and an e2e spec sees it only when the scheduler happens to produce it.
+   Native usage reads return one bounded page: an accounting fixture follows `has_more` and the checkpoint to completion (`usage_drain` in `hide-session/tests/it/usage.rs`), while a test of the page budget inspects each step itself.
+   A two-line session may yield after its metadata under load, so its first page is not a promise of the whole event set; token and identity expectations apply to the completed read without extending a read's time budget.
 2. **Decide Herdr's answers with `FakeHerdr`.**
    `herdr-core/src/fake_herdr.rs` is the one fake Herdr socket: the test supplies a responder by method, the fake checks each answer against the pinned schema, and `methods()`, `calls()` and `wait_for_requests` read what the core asked.
    Why: fifteen hand-written listeners used to differ in a socket detail, and the one that differed failed under load for weeks.
@@ -311,8 +322,12 @@ Its tests share a process with the other modules' under `cargo test`, so a test 
    macOS checks a file the first time it is started, once per file, and the checks of every process on the machine wait in one line: on 2026-10-09 at load 7 a new script's first start took about 90 ms, its second 6 ms, and the last of twenty new scripts started together waited 1.8 s; Linux refuses to start a file another thread's fork still holds open for writing (`ETXTBSY`).
    A program a test copies or writes and then runs inside a product deadline therefore pays that line inside the deadline, and under load it outgrew the hook's budget and the kit's 5 s deadlines (issue 813).
    In `hide-platform`, `hide-agent-hooks` and `hide-kit` a stand-in comes from `hide-platform/tests/it/stand_ins.rs`: `program(at, body)` puts at `at` a hard link to one read-only file per body beside the build's test binaries, started once per process before the test gets it, and `place` does the same for the helper cargo built.
+   On macOS, `place` instead byte-copies a native executable into the fixture, ad-hoc signs that private file, and starts it before the measured deadline; it never signs a hard link or changes the build output.
+   A first start killed by a signal fails setup with its exit status instead of being cached as ready; a normal nonzero exit remains valid because some CLIs and interpreters reject `--help`.
    A body is fixed text and finds its test's files from `HOME` (`${HOME%/*}` for the folder around it), never from a path written into it, because each distinct body is one more file kept for the build.
    A program checked into the repository, such as `hide-agent-hooks/tests/fixtures/fake-codex.py`, is a new file in every checkout too, so a test that runs it under a deadline makes it ready first with `stand_ins::ready` (issue 824).
+   A helper-install protocol fixture instead materializes a private executable with `std::io::copy` and preserves its permissions, matching the bytes written by the device installer (`hided/tests/it/node_session_activity.rs`).
+   `fs::copy` may make an APFS clone whose first execution stalls before `main`; copying its bytes keeps that clone-specific cost outside the protocol being tested without warming the helper or changing its deadline.
 9. **Retries are a classification.**
    CI runs every Rust lane (Linux, macOS, Windows, the OS contract and nightly) with `scripts/verify-cargo.sh nextest --profile ci` (`retries = 1` in `.config/nextest.toml`), so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.
    `nextest` does not run doc tests; the workspace has none that runs today, and a runnable one needs its own `cargo test --doc` step.
@@ -334,7 +349,7 @@ A planned lane that was skipped, failed or cancelled fails `verify`, so a wrong 
 | --- | --- |
 | Only `docs/`, root Markdown, or an `AGENTS.md`/`CLAUDE.md` below the root | `policy` (the script suite and the repository invariants) |
 | `design/` | `policy`; `design-contract.yml` checks the library |
-| A file a lane outside its folder reads (`READERS` in the script): the root `AGENTS.md`, `web/src` and `hided/src`, which herdr-core's tests read; `desktop/src/main/wirePath.ts`, which web e2e specs import; `design/tokens.json`, which web tests read | also that lane, and `rust` over `herdr-core` for the first three |
+| A file a lane outside its folder reads (`READERS` in the script): the root `AGENTS.md`, `web/src` and `hided/src`, which herdr-core's tests read; `desktop/src/main/wirePath.ts`, which web e2e specs import; `design/tokens.json` and `docs/UI_BEHAVIOR.md`, which web tests read; `docs/AI_PROVIDERS.md` and the agent logo manifest, which hide-agent-adapter's tests read; the contracts a test holds the code to (`hided-ws.schema.json`, `snapshot-wire-enums.json`, `agent-adapters.json`, `hide-cli.json`, `usage-coverage.json`), which the tests of `herdr-core`, `hided` or `hide-agent-adapter` read, and web unit tests for `snapshot-wire-enums.json` and the shell itself for `agent-adapters.json` | also that lane, and `rust` over `herdr-core` for the first three and over the crates whose tests read a guide, the manifest or a contract; a contract, which no other row claims, plans only these and `policy` |
 | `web/src`, `web/public`, `web/index.html`, `web/mobile.html` | `checks` (the web shell's and the desktop app's typecheck, lint and unit suites in one job) and the Linux `web-e2e` |
 | Web code the desktop host imports or drives through native input (the host bridge, the shortcut registry, keys and keyboard, store, snapshot and socket, terminals, focus and area cycling, `App.tsx`, `main.tsx`; `SHARED_WEB` in the script) | also `desktop-e2e`, `windows-e2e` and `windows-desktop` |
 | A `web/e2e` spec | `checks` and `web-e2e`; a spec tagged `@platform` also runs `windows-e2e` (the whole suite runs on Linux, so the Linux leg of `@platform` is `web-e2e`) |
@@ -343,9 +358,9 @@ A planned lane that was skipped, failed or cancelled fails `verify`, so a wrong 
 | `herdr-core`, `hided`, `hide-platform`, `hide-herdr-client`, `hide-host`, `hide-kit`, `hide-agent-hooks` | also `os-contract` (its Linux and Windows legs), `windows-e2e` and `windows-desktop`; no macOS job but `package` for the package inputs among them |
 | `hide-platform`, `hide-herdr-client` | also `os-contract-macos`, the OS contract's macOS leg, which tests exactly these two crates |
 | What goes into a package (`PACKAGE_PATHS` in the script): `desktop/scripts`, `desktop/package.json`, `desktop/resources`, the Herdr pin and its fetch scripts, `verify-cargo.sh`, `verify-web.sh`, `toolchain-env.sh`, `hided/build.rs`, which embeds the web shell, `hided/src/cli.rs`, `hide-kit`, `hide-agent-hooks`, `package.yml` and `release.yml` | also `package`: `package.yml`'s Windows and Linux packages, and the macOS archive with the packaged app's own specs |
-| The paths `POLICY_ONLY` names, which no lane reads: `agents/`, `site/`, `tools/`, `spikes/`, `.gitignore` files, the PR template and `dependabot.yml`, the workflows no `pr.yml` job calls (`nightly`, `herdr-update`, `design-contract`), `scripts/tests/`, the policy `check-*` scripts, the design, release and measurement scripts and the pre-merge check, and Markdown below a folder no rule claims | `policy` alone |
-| The paths `NAMED_LANES` names, whose readers are a known set: a `web/e2e` file that is not a spec (the `desktop` suites on macOS and Windows import it, and `desktop/e2e` unit tests run in `windows-check`), a `desktop/e2e` file that is not a spec, the Playwright, eslint and vitest configurations, `web/scripts`, `desktop/scripts`, `package.yml` and `release.yml` | the lanes that read it, listed in the script and its test; never `rust`, `os-contract` or `os-contract-macos` |
-| `.github/` (`pr.yml`, `web-e2e.yml`, `os-contract.yml`), `scripts/` the lanes call (`verify-*.sh`, `ci-flaky-report.py`, `ci-plan.py`, ...), `contracts/` (the Herdr pin and schemas), any `package.json`, lockfile, the workspace `Cargo.toml`, a type change, and any path no row above names | every lane but `package`, which only the package inputs add |
+| The paths `POLICY_ONLY` names, which no lane reads: `agents/`, `site/`, `tools/`, `spikes/`, `.gitignore` files, the root `LICENSE` and `NOTICE`, the PR template and `dependabot.yml`, the workflows no `pr.yml` job calls (`nightly`, `perf`, `herdr-update`, `design-contract`), `scripts/tests/`, the policy `check-*` scripts, the design, release and measurement scripts and the pre-merge check, the design contract's generators, token map and checks (`gen-tokens.mjs`, `gen-pen.mjs`, `gen-screens.mjs`, `pen-token-map.json`, `check-design-contract.mjs` and the checks it runs, which `design-contract.yml` runs on every pull request), and Markdown below a folder no rule claims | `policy` alone |
+| The paths `NAMED_LANES` names, whose readers are a known set: a `web/e2e` file that is not a spec (the `desktop` suites on macOS and Windows import it, and `desktop/e2e` unit tests run in `windows-check`), a `desktop/e2e` file that is not a spec, the Playwright, eslint and vitest configurations, `web/vite.config.ts` (every lane that builds the shell or runs its unit suite), `web/scripts`, `desktop/scripts`, the workflows `pr.yml` lanes call (`web-e2e.yml`, `desktop-e2e.yml`, `os-contract.yml`, `remote-mailbox.yml`, each planning the lanes that call it), `package.yml` and `release.yml` | the lanes that read it, listed in the script and its test; never `rust`, and `os-contract` and `os-contract-macos` only for `os-contract.yml` |
+| `pr.yml`, `scripts/` the lanes call (`verify-*.sh`, `ci-flaky-report.py`, `ci-plan.py`, ...), the Herdr pin and schema and any contract `READERS` does not name, any `package.json`, lockfile, the workspace `Cargo.toml`, a type change, and any path no row above names | every lane but `package`, which only the package inputs add |
 
 Every plan includes `policy`, whatever else it names, except a draft pull request's: it plans no lane, and `verify` fails with "draft: lanes not run, mark ready for review".
 Marking the pull request ready (`ready_for_review`) starts the run that plans and runs the lanes, and that run's `verify` replaces the failed one.
@@ -353,6 +368,7 @@ Marking the pull request ready (`ready_for_review`) starts the run that plans an
 Keep `ready_for_review` in `pr.yml`'s `types`, and keep `verify` running on a draft; `scripts/tests/test_ci_plan.py` reads the workflow for both.
 A hand run of `nightly.yml` takes a `lane` (`all`, `linux`, `macos`, `windows`): one system's web and desktop suites and the remote mailbox lane, with `verify` and `package` for `all` only; the schedule runs everything.
 The nightly runs the `@platform` web tests on macOS and Windows (`web e2e (<system> @platform)`) and the desktop suite whole on macOS and only its `@platform` tests on Linux and Windows (`desktop e2e (<system> @platform)`); the whole web suite runs in the pull request and in the `verify` job a scheduled nightly calls, so Linux has no web job there and these two do not repeat it.
+It also runs the performance lane on macOS (`performance (macOS)`, `perf.yml`), for the schedule and a hand run of `all` or `macos`; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#the-nightly-performance-lane) owns its fixture and what fails it.
 Tag a `desktop/e2e` test `{ tag: "@platform" }`, with a comment saying what differs, when it checks what the desktop host does differently on another system: its processes and local stream (including whether closing the last window ends the app), the CLI's name and places, the path it hands the wire, the file manager's reveal, the accelerators it registers for the system (one test reads them through `web/e2e/chords.ts`).
 Choose by that difference, not by whether the test passes on Linux or Windows; a tagged test that fails there is fixed (its fixture or the product), never skipped, retried on a deadline or marked `@flaky`.
 A test for a macOS-only behavior, or one that checks no OS difference, carries no tag and runs on macOS only; `CONTRIBUTING.md` lists what the tag covers.
@@ -360,7 +376,8 @@ A push to main plans every lane but `package`, and so does a plan that cannot be
 Main's full run is the net under a pull request that left out a lane it needed; main's runs queue rather than cancel each other.
 Nightly calls `verify` on main with the same lanes, and `package.yml` on its own: a lane it fails opens a `nightly-failure` issue, which a failed push run does not, and a lane that breaks with no merge is found within a day.
 When one does, fix the rule in `scripts/ci-plan.py` with a case in its test; a test that reads a file outside its own folder adds that file to `READERS`.
-A path is narrower than every lane only by being named in `POLICY_ONLY` or `NAMED_LANES`, with its reader in a comment and a case in `NamedPaths`; a new or unknown path plans every lane until someone names it.
+A path is narrower than every lane only by being named in `POLICY_ONLY`, `NAMED_LANES` or `READERS`, with its reader in a comment and a case in `NamedPaths`; a new or unknown path plans every lane until someone names it.
+`Cargo.lock` stays among them: every member but `hide-platform` and `hide-herdr-client` depends on `workspace-hack`, which holds nearly every third-party crate, so a lock change reaches every crate and no narrower plan can be read from it.
 ### Where the macOS runners went
 
 The organization runs 20 jobs at once and five of them on macOS, so a pull request asks for a macOS runner only for what one proves:
@@ -372,6 +389,7 @@ The organization runs 20 jobs at once and five of them on macOS, so a pull reque
 | `package (macos)` (the packaged app) | a change to what goes into a package (`PACKAGE_PATHS`), not a full plan without one; a cold release build and the packaged app's two specs, 10 to 16 minutes, nearly all of it the build | The nightly's `package.yml` call on main, which found issue #412 a day after its cause merged; no other job starts the packaged app (its signed bundle, host, daemon and Herdr) |
 | the web `@platform` tests on macOS | never (no lane) | The same tests run in every pull request on Linux (`web-e2e` runs the whole suite) and on Windows (`windows-e2e`); the nightly runs them on macOS in `web e2e (macOS full)` |
 | the remote mailbox lane on macOS | never | The nightly's `remote mailbox (macOS)` job; a pull request runs the lane on Linux, and the Mac-only parts of the fixture (codesign of the staged binaries, the system's SFTP server, the macOS Herdr asset) are checked there |
+| the performance lane | never | The nightly's `performance (macOS)` job; a pull request's performance claim is still a matched local comparison ([PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#the-nightly-performance-lane)) |
 
 A change to `herdr-core` or `hided` alone, outside `hided/build.rs` and `hided/src/cli.rs`, therefore starts no macOS job.
 What only macOS shows for such a change (Trash, file watching, process ownership, the ⌘ chords) is found by the next nightly, which opens a `nightly-failure` issue when it fails; the cost is that delay.
@@ -423,6 +441,7 @@ A table from a Windows or macOS runner's logs would need its own file and a lane
 A test is flaky when it both fails and passes on the same SHA.
 A failure on a different SHA is not evidence of flakiness by itself, and the same title can carry two different failures.
 
+A flaky test never blocks a pull request's required gate or a merge, and it does not stay: it is isolated as an issue rather than moved out of its lane, and its cause is removed by that issue's deadline.
 CI retries a failed test once, for classification and for the report, and for nothing else.
 
 - Playwright runs with `retries: 1` when `CI` is set (`web/playwright.config.ts`, `desktop/playwright.config.ts`), and the Rust workspace runs under `cargo nextest` with the `ci` profile's `retries = 1` (`.config/nextest.toml`, `scripts/verify-cargo.sh nextest`).
@@ -456,7 +475,7 @@ What the retry does not do:
 - Do not make a flaky test pass by raising a timeout or deadline, adding retries beyond the CI one, changing the number of clicks or keys, lowering an expected count, resending an action, accepting a partial string, or skipping it.
   Each of these hides the order or readiness problem the failure was reporting; fix the wait or the gate, or fix the product.
 
-No test leaves a required lane:
+A flaky test is isolated by its issue, never by leaving a required lane:
 
 - There is no quarantine tag and no quarantine step: every web and desktop e2e test runs in the lanes its plan picks, and a flaky one is retried, filed and fixed or deleted like any other.
 - Rust has no quarantine either: a flaky Rust test is retried, filed and fixed or deleted, and the policy is zero `ignore`.
@@ -466,10 +485,10 @@ No test leaves a required lane:
 
 The nightly's `report` job (`scripts/ci-flaky-report.py --nightly`) is the one writer of `nightly-failure` issues, so the run's cap, the comments and the closing never race between lanes; a lane only writes its annotations.
 
-- A failure is one issue: a test a lane annotated as `Failed test`, or, for a failed job that annotated none (its report step died, wrote nothing or never ran), the lane and its failed step.
+- A failure is one issue: a test a lane annotated as `Failed test`, a check the performance lane annotated as `Failed measurement`, or, for a failed job that annotated none (its report step died, wrote nothing or never ran), the lane and its failed step.
   The lane is the job's name without its shard, so a test is the same failure in whichever shard ran it; `verify`'s gate, which fails whenever a lane it waits for did, is not a lane.
   A step that only prepares the runner (checking out, installing, fetching Herdr, a lost runner) adds the label `infra`; any other step, a build included, does not.
-- The issue names the test or step, the lane and its runner, an excerpt of the error (run through the same cleaning as a flaky issue's, since the page is public), the run and its commit, the lane's last green nightly within 14 runs, the pull requests merged since then that touched the failing test's file (or, for a step, the lane's workflows and the scripts they call) as candidates, and an expiry two days out.
+- The issue names the test, measurement or step, the lane and its runner, an excerpt of the error (run through the same cleaning as a flaky issue's, since the page is public), the run and its commit, the lane's last green nightly within 14 runs, the pull requests merged since then that touched the failing test's file (for a step, the lane's workflows and the scripts they call; for a measurement, every one of them, since a measurement moves with any change) as candidates, and an expiry two days out.
   It is ended by fixing the cause or reverting the candidate; a longer timeout, more retries or a skip does not end it.
 - The same failure again (a hidden `nightly-failure:<lane>:<test or step>` marker) is one comment per run attempt on the open issue, never a second issue.
 - A scheduled run on main, or a hand run of `all`, that passes a lane closes that lane's issues with a comment naming the commit and the run; a skipped or cancelled lane closes nothing.

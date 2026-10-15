@@ -27,6 +27,8 @@ def scanned() -> list:
 
 # What reaching a machine looks like, with what to do instead.
 BANNED = [
+    (r"\b(ureq|reqwest|hyper|attohttpc|isahc|curl)\b",
+     "uses an HTTP client; ask the core own node instead"),
     (r"\bstd::process\b(?!::id\(\))|\bCommand::new\b|\bprocess::Command\b",
      "starts a process; ask a node (`Call::*`) instead"),
     (r"\bstd::fs\b|(?<![\w:])fs::|\bFile::(open|create)\b|\bOpenOptions\b",
@@ -72,8 +74,13 @@ STORES = {
     "herdr-core/src/labels/store.rs": (3, "the core's agent label store"),
     "herdr-core/src/labels/import.rs": (1, "reads the core's own earlier label store once"),
     "herdr-core/src/links/store.rs": (6, "the core's link graph store"),
+    "herdr-core/src/usage_ledger/store.rs": (1, "the core's usage ledger and retained daily totals"),
     "herdr-core/src/local_issues.rs": (5, "the core's local issue store"),
-    "herdr-core/src/github_store.rs": (4, "the core's saved GitHub answers"),
+    "herdr-core/src/latest_file.rs": (
+        4,
+        "the write and read of a core store that keeps only its latest value "
+        "(the saved GitHub answers, the panes held as a draft)",
+    ),
     "herdr-core/src/diagnostics.rs": (7, "the core's own log file"),
     "herdr-core/src/labels/mod.rs": (
         1,

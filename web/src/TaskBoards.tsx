@@ -23,8 +23,8 @@ import {
 } from "lucide-react";
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
 import type { Actions } from "./actions";
-import { AgentMark } from "./AgentMark";
 import { lineTone, markTone, rowAccessibleName, rowLine } from "./agentRow";
+import { agentProductName } from "./agentAdapters";
 import { CheckoutCardHint } from "./components/pr-card";
 import { Elapsed, formatElapsed } from "./components/elapsed";
 import { StatusMark } from "./components/status-mark";
@@ -84,7 +84,7 @@ import { holdsCommandKey } from "./host";
 // hover shows its buttons in the id line's reserved slot, a half-second rest
 // on a part opens that part's card, and each part has one destination: the
 // card and its title the issue's panel, an agent row that agent's pane, the
-// checkout chip its Workspace, the PR chip its row on the PRs tab, and ⌘-click
+// checkout chip its Workspace, the PR chip its PR card, and ⌘-click
 // GitHub (D-09, D-10). Hover, focus and rest publish nothing (B22).
 
 /** A column shows this many cards, then the rest on request. */
@@ -121,8 +121,10 @@ export type BoardHandlers = {
   openGitHub: (url: string, deviceId: string) => void;
   /** `N worktrees without an issue`: the Agents graph with its `Worktrees without agents` line open (B4). */
   showCheckouts: () => void;
-  /** A PR chip, or `N PRs without an issue` with no row: the pull request's row on its Project's PRs tab (PRD overview-lenses-prs B21). */
-  openPullRequestRow: (owner: Workspace, number: number | null) => void;
+  /** A PR chip: the pull request's card (PRD work-tab-pr-lens D-28). */
+  openPrCard: (owner: Workspace, number: number) => void;
+  /** `N PRs without an issue`: the Work tool's PRs basis (B45). */
+  openWorkPrs: () => void;
 };
 
 /** What Start and Edit say on a card and in the panel (B7). */
@@ -335,7 +337,7 @@ function LooseWorktreesLine({ worktrees, onOpen }: { worktrees: readonly LooseWo
 
 /**
  * `N PRs without an issue`: its popover names them and says where it goes; its
- * click opens the PRs tab, where each has an issue cell to link (PRD
+ * click opens the Work tool's PRs lens, where each row links to an issue (PRD
  * overview-lenses-prs B21; on the Overview of every project, the first one's
  * Project).
  */
@@ -345,7 +347,7 @@ function LoosePullRequestsLine({ pullRequests, handlers }: { pullRequests: reado
   if (!first) return null;
   return (
     <Hint label={t("board.showPrs", { names: foldNames(pullRequests.map((value) => `#${value.number}`)) })}>
-      <FoldLine onClick={() => handlers.openPullRequestRow(first.owner, null)} data={{ "data-loose-prs": String(pullRequests.length) }}>
+      <FoldLine onClick={() => handlers.openWorkPrs()} data={{ "data-loose-prs": String(pullRequests.length) }}>
         {t("board.loosePrs", { count: pullRequests.length })}
       </FoldLine>
     </Hint>
@@ -476,7 +478,7 @@ function DoneColumn({
                 <Hint label={[t("board.mergedPr", { number: String(value.pr.number) }), value.mergedAt === null ? null : issueDate(value.mergedAt, i18n.language)].filter(Boolean).join(" · ")}>
                   <span className="inline-flex shrink-0 items-center gap-xxs px-xs font-mono text-caption text-muted-foreground" tabIndex={0} data-done-pr={value.pr.number}>
                     <GitMergeIcon aria-hidden="true" className="size-(--size-icon-sm)" />
-                    {value.pr.number}
+                    #{value.pr.number}
                   </span>
                 </Hint>
               ) : null}
@@ -702,7 +704,7 @@ export function IssueCardView({ card, page, actions, handlers, graph }: { card: 
           {card.chip && checkout ? <CheckoutChipView card={card} handlers={handlers} /> : null}
           {card.pr && checkout ? (
             <span className="inline-flex items-center gap-xxs" onClick={(event) => event.stopPropagation()}>
-              <PullRequestChip project={owner} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, owner.device_id)} onRow={(number) => handlers.openPullRequestRow(owner, number)} now={Date.now()} />
+              <PullRequestChip project={owner} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, owner.device_id)} onRow={(number) => handlers.openPrCard(owner, number)} now={Date.now()} />
             </span>
           ) : null}
         </div>
@@ -798,8 +800,8 @@ function CheckoutChipView({ card, handlers }: { card: TaskCard; handlers: BoardH
 }
 
 /**
- * An agent on an issue card or in its panel: its mark, provider, title and
- * age, then the core's line, the question in warning. The row opens that
+ * An agent on an issue card or in its panel: its status mark, title and age
+ * (the product's name is in the hover hint, not drawn), then the core's line, the question in warning. The row opens that
  * agent's pane; resting half a second on its line opens everything it last
  * said (B8, B9). A delegated child is indented one step per level (B13).
  */
@@ -816,15 +818,16 @@ export function CardAgentRow({ agent, depth, place, selected, onOpen }: { agent:
       data-depth={depth}
       onClick={(event) => event.stopPropagation()}
     >
-      <button type="button" aria-label={rowAccessibleName(t, agent, null)} className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={open} data-agent-open={agent.pane_id} />
+      <Hint label={[agent.identity_label, agentProductName(agent.agent_kind)].filter(Boolean).join("\n")} reveals>
+        <button type="button" aria-label={rowAccessibleName(t, agent, null)} className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={open} data-agent-open={agent.pane_id} />
+      </Hint>
       <span className="pointer-events-none relative flex min-w-0 items-center gap-xs">
         <StatusMark symbol={agent.symbol} className={markTone(agent)} />
-        <AgentMark kind={agent.agent_kind} />
         <span className={cn("min-w-0 flex-1 truncate text-body", turn ? "text-foreground" : "text-subtle-foreground")}>{agent.identity_label}</span>
         <Elapsed since={agent.changed_at_unix_ms} className="shrink-0 font-mono text-caption text-muted-foreground" />
       </span>
       {said ? (
-        <span className="relative pl-(--size-icon)">
+        <span className="relative pl-[calc(var(--size-agent-mark)+var(--spacing-xs))]">
           <AgentMessageHint agent={agent} place={place} line={said.text} tone={lineTone(said, agent)} onOpen={open} />
         </span>
       ) : null}

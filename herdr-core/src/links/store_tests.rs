@@ -113,6 +113,7 @@ fn project(prs: Vec<PrFact>) -> ProjectFacts {
         root: ROOT.into(),
         repository: Some("acme/app".into()),
         repository_id: Some("R_1".into()),
+        connection_epoch: 0,
         worktrees: vec![WorktreeFact {
             path: ROOT.into(),
             branch: Some("main".into()),
@@ -120,6 +121,7 @@ fn project(prs: Vec<PrFact>) -> ProjectFacts {
         }],
         prs,
         prs_read: true,
+        outputs: Vec::new(),
     }
 }
 
@@ -416,6 +418,7 @@ fn a_printer_in_a_folder_holding_another_project_does_not_widen_this_one() {
                 root: "/work/other".into(),
                 repository: Some("acme/other".into()),
                 repository_id: Some("R_2".into()),
+                connection_epoch: 0,
                 worktrees: Vec::new(),
                 ..project(Vec::new())
             },
@@ -790,6 +793,11 @@ fn a_checkout_landed_when_its_sessions_pull_requests_merged_and_none_is_open() {
             ["/work/app-detached", "/work/app-done", "/work/app/nested"].map(String::from)
         )
     );
+    // The session that only printed #10's address is not its agent and its
+    // folder is not one of the pull request's checkouts (PRD work-tab-pr-lens D-09).
+    assert!(summary.pr_workers[&10].contains("s-done"));
+    assert!(!summary.pr_workers[&10].contains("s-looked"));
+    assert!(!summary.pr_checkouts[&10].contains("/work/app-looked"));
 }
 
 fn retention_case(days: Option<u16>, ended_days_ago: u64, still_open: bool) -> bool {

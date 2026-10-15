@@ -3,7 +3,9 @@
 
 use serde_json::Value;
 
-use super::{NATIVE_ID_LIMIT_BYTES, ToolTurnMark, TurnMark, TurnMode, UserTurnContent};
+use super::{
+    NATIVE_ID_LIMIT_BYTES, QUESTION_CALL_LIMIT, ToolTurnMark, TurnMark, TurnMode, UserTurnContent,
+};
 use crate::SkipReason;
 
 /// A single native record is already bounded by the session line limit.
@@ -62,6 +64,110 @@ pub(crate) fn question_content(input: &Value) -> Option<UserTurnContent> {
             )
         },
     )))
+}
+
+/// Codex 0.162.1 asks with this tool instead of `request_user_input`: it
+/// returns `{"accepted":true}` at once and the turn goes on, so the
+/// operator's answer is the later reply message below, not the tool result.
+const ASYNC_QUESTION_TOOL: &str = "request_user_input_async";
+/// What opens the user message Codex writes for the operator's answer; Hide
+/// reads it as scaffolding, never as the person's turn.
+pub(crate) const ASYNC_REPLY_OPEN: &str = "<send_user_message_question_reply>";
+const ASYNC_REPLY_CLOSE: &str = "</send_user_message_question_reply>";
+
+/// An async call's questions carry a `title` and optional plain-string
+/// `options`, not the `question` and `{label}` options of the older tool.
+fn async_question_content(questions: &[Value]) -> Option<UserTurnContent> {
+    let mut asked = Vec::with_capacity(questions.len());
+    for question in questions {
+        let options = match question.get("options") {
+            None => &[][..],
+            Some(options) => options.as_array()?,
+        };
+        if options.iter().any(|option| option.as_str().is_none()) {
+            return None;
+        }
+        asked.push((
+            question.get("title")?.as_str()?,
+            options.iter().filter_map(Value::as_str),
+        ));
+    }
+    Some(UserTurnContent::questions(asked))
+}
+
+fn async_question(payload: &Value) -> Mark {
+    let call = id(payload.get("call_id"))?.ok_or(SkipReason::UserTurnInvalid)?;
+    let arguments = payload
+        .get("arguments")
+        .and_then(Value::as_str)
+        .and_then(|arguments| serde_json::from_str::<Value>(arguments).ok());
+    let Some(questions) = arguments
+        .as_ref()
+        .and_then(|arguments| arguments.get("questions"))
+        .and_then(Value::as_array)
+        .filter(|questions| !questions.is_empty())
+    else {
+        // A shape this reader does not know: what the turn waits for is not.
+        return Ok(Some(TurnMark::Unreadable));
+    };
+    if questions.len() > QUESTION_CALL_LIMIT {
+        return Err(SkipReason::UserTurnCapacity);
+    }
+    Ok(Some(TurnMark::Tools(vec![ToolTurnMark::AskedAsync {
+        call,
+        questions: questions.len() as u32,
+        content: async_question_content(questions),
+    }])))
+}
+
+/// The operator's replies in one `<send_user_message_question_reply>`
+/// message, each matched to its question by `questionItemId` (a JSON array
+/// `[tool, call, question number]`, written as a string), never by its text.
+/// `None` when the message is not a reply.
+fn async_replies(payload: &Value) -> Option<Mark> {
+    let text = payload
+        .get("content")?
+        .as_array()?
+        .iter()
+        .find_map(|block| block.get("text").and_then(Value::as_str))?
+        .trim_start()
+        .strip_prefix(ASYNC_REPLY_OPEN)?;
+    Some(replied_marks(
+        text.rsplit_once(ASYNC_REPLY_CLOSE)
+            .map_or(text, |(body, _)| body),
+    ))
+}
+
+fn replied_marks(body: &str) -> Mark {
+    let Ok(Value::Array(replies)) = serde_json::from_str::<Value>(body.trim()) else {
+        return Ok(Some(TurnMark::Unreadable));
+    };
+    let mut marks = Vec::new();
+    for reply in &replies {
+        let item = match reply.get("questionItemId") {
+            Some(Value::String(item)) => serde_json::from_str::<Value>(item).ok(),
+            Some(item) => Some(item.clone()),
+            None => None,
+        };
+        let Some(Value::Array(item)) = item else {
+            return Ok(Some(TurnMark::Unreadable));
+        };
+        if item.first().and_then(Value::as_str) != Some(ASYNC_QUESTION_TOOL) {
+            continue;
+        }
+        let question = item
+            .get(2)
+            .and_then(Value::as_u64)
+            .and_then(|question| u32::try_from(question).ok());
+        let (Some(call), Some(question)) = (id(item.get(1))?, question) else {
+            return Ok(Some(TurnMark::Unreadable));
+        };
+        if marks.len() == TOOL_MARK_LIMIT {
+            return Err(SkipReason::UserTurnCapacity);
+        }
+        marks.push(ToolTurnMark::Replied { call, question });
+    }
+    Ok((!marks.is_empty()).then_some(TurnMark::Tools(marks)))
 }
 
 pub(crate) fn claude(item: &Value) -> Mark {
@@ -138,7 +244,8 @@ pub(crate) fn omp(item: &Value) -> Mark {
 
 /// Codex 0.160.1 emits task lifecycle records and native function-call
 /// records. A completed plan-mode turn holds approval; an unanswered native
-/// request_user_input holds a question while the turn is still running.
+/// request_user_input holds a question while the turn is still running, and
+/// so does a `request_user_input_async` (0.162.1) until its reply arrives.
 pub(crate) fn codex(item: &Value) -> Mark {
     let Some(payload) = item.get("payload") else {
         return Ok(None);
@@ -189,8 +296,16 @@ pub(crate) fn codex(item: &Value) -> Mark {
                     content: arguments.as_ref().and_then(question_content),
                 }]))
             }
+            Some("function_call")
+                if payload.get("name").and_then(Value::as_str) == Some(ASYNC_QUESTION_TOOL) =>
+            {
+                async_question(payload)?
+            }
             Some("function_call_output") => id(payload.get("call_id"))?
                 .map(|call| TurnMark::Tools(vec![ToolTurnMark::Answered { call }])),
+            Some("message") if payload.get("role").and_then(Value::as_str) == Some("user") => {
+                async_replies(payload).transpose()?.flatten()
+            }
             Some("message") if payload.get("role").and_then(Value::as_str) == Some("assistant") => {
                 // This explicit native wrapper is also written when the
                 // structured Plan item is absent from the read's prefix.

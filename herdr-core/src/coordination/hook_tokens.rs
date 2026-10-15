@@ -484,6 +484,7 @@ mod tests {
             declared_parent_session: None,
             lineage_session: None,
             state_change_seq: 1,
+            completion_seq: None,
             tokens: tokens
                 .iter()
                 .map(|(key, value)| ((*key).to_owned(), json!(value)))
@@ -505,7 +506,11 @@ mod tests {
     /// Two subagents started and one stopped in `pane` by `who`: one working,
     /// one done.
     fn count(home: &tempfile::TempDir, pane: &str, who: Reporter<'_>) {
-        for step in [Change::Started, Change::Started, Change::Stopped] {
+        for step in [
+            Change::Started(None),
+            Change::Started(None),
+            Change::Stopped(None),
+        ] {
             change(home.path(), pane, step, who).unwrap();
         }
     }
@@ -714,7 +719,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let herdr = herdr();
         // `w1:p2`'s file is one an older helper wrote: counts, no version.
-        change(home.path(), "w1:p2", Change::Started, WHO).unwrap();
+        change(home.path(), "w1:p2", Change::Started(None), WHO).unwrap();
         let file = hide_agent_hooks::counters::state_directory(home.path()).join("w1_p2.json");
         std::fs::write(&file, br#"{"working":1,"done":0}"#).unwrap();
         count(&home, "w1:p3", WHO);
@@ -763,7 +768,7 @@ mod tests {
             answered += 1;
             if answered == 1 {
                 // The hook's next event lands before Herdr answers.
-                change(&events, "w1:p1", Change::Started, WHO).unwrap();
+                change(&events, "w1:p1", Change::Started(None), WHO).unwrap();
             }
             json!({"type": "ok"})
         });
@@ -792,7 +797,7 @@ mod tests {
                     session: Some("session-b"),
                     ..WHO
                 };
-                change(&events, "w1:p1", Change::Reset, next).unwrap();
+                change(&events, "w1:p1", Change::SessionStarted, next).unwrap();
             }
             json!({"type": "ok"})
         });
@@ -826,7 +831,7 @@ mod tests {
                     agent: Some("codex"),
                     session: Some("session-c"),
                 };
-                change(&events, "w1:p1", Change::Reset, codex).unwrap();
+                change(&events, "w1:p1", Change::SessionStarted, codex).unwrap();
             }
             json!({"type": "ok"})
         });
@@ -875,7 +880,7 @@ mod tests {
         let agents: Vec<_> = (0..panes)
             .map(|index| {
                 let pane = format!("w1:p{index}");
-                change(home.path(), &pane, Change::Started, WHO).unwrap();
+                change(home.path(), &pane, Change::Started(None), WHO).unwrap();
                 agent(&pane, Some("session-a"), &[])
             })
             .collect();

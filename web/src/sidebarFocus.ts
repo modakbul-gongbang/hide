@@ -4,13 +4,14 @@ import type { AgentRow, Workspace } from "./snapshot";
 /**
  * Every pane the sidebar draws a row for when no checkout is folded: each
  * checkout's roots and the children and grandchildren of the roots opened,
- * the Home's roots, and the raised Needs You and Done rows.
+ * and the raised Needs You and Done rows. The Home has no row of its own
+ * (PRD sidebar-titlebar-refresh D-06), so its agents are drawn only raised.
  */
 export function sidebarPanes(workspaces: readonly Workspace[], scope: AgentScope | null): Set<string> {
   const panes = new Set<string>();
   for (const workspace of workspaces) {
-    const trees = workspace.is_home ? [workspace.agent_scope.sidebar_tree] : workspace.checkouts.map((checkout) => checkout.agent_scope.sidebar_tree);
-    for (const tree of trees) for (const row of tree.visible_rows) panes.add(row.pane_id);
+    if (workspace.is_home) continue;
+    for (const checkout of workspace.checkouts) for (const row of checkout.agent_scope.sidebar_tree.visible_rows) panes.add(row.pane_id);
   }
   for (const raised of scope?.raised ?? []) for (const ref of [...raised.shown, ...raised.more]) panes.add(ref.pane_id);
   return panes;
@@ -33,22 +34,41 @@ export function sidebarFocusPane(focused: string | null, agents: readonly AgentR
 }
 
 /**
- * Scrolls the list by as little as brings the focus's row into view, and not
- * at all while one of its rows is already in view. The row is the deepest one
- * marked current: an agent row, else the focused checkout's row, else the
- * project or fold row that hides it; an agent drawn both raised and in its
- * tree is brought in at its tree row.
+ * Scrolls the project list by as little as brings the focus's row into view,
+ * and not at all while one of its rows is already in view, in the project
+ * list or in the raised list held above it. The row is the deepest one marked
+ * current: an agent row, else the focused checkout's row, else the project or
+ * fold row that hides it; an agent drawn both raised and in its tree is
+ * brought in at its tree row, and one drawn only raised within the raised list.
  */
-export function revealSidebarFocus(list: HTMLElement): void {
-  const marked = [...list.querySelectorAll<HTMLElement>('[aria-current="true"]')];
+export function revealSidebarFocus(lists: HTMLElement): void {
+  const marked = [...lists.querySelectorAll<HTMLElement>('[aria-current="true"]')];
   if (marked.length === 0) return;
-  const view = list.getBoundingClientRect();
   const deepest = ["[data-agent-open]", "[data-checkout]"].map((kind) => marked.filter((row) => row.matches(kind))).find((rows) => rows.length > 0) ?? marked;
-  if (deepest.some((row) => inside(row.getBoundingClientRect(), view))) return;
-  const target = deepest.find((row) => row.closest("[data-raised-group]") === null) ?? deepest[0]!;
+  const raised = deepest.filter((row) => row.closest("[data-raised-list]") !== null);
+  const tree = deepest.filter((row) => !raised.includes(row));
+  const held = lists.querySelector<HTMLElement>("[data-raised-list]")?.getBoundingClientRect();
+  if (held && raised.some((row) => inside(row.getBoundingClientRect(), held.top, held.bottom))) return;
+  if (tree.length > 0) revealRow(lists.querySelector<HTMLElement>("[data-project-list]")!, tree, tree[0]!);
+  else raised[0]!.scrollIntoView({ block: "nearest" });
+}
+
+/**
+ * Scrolls the list by as little as brings `target` into view, and not at all
+ * while one of `rows`, the places the same selection is drawn, is already in
+ * view; Sessions brings its selected row in by this rule too. A section
+ * header stuck to the list's top covers what passes under it, so a row there
+ * is not in view, and the list's scroll padding brings a row in below the
+ * header (PRD sidebar-titlebar-refresh B10).
+ */
+export function revealRow(list: HTMLElement, rows: readonly HTMLElement[], target: HTMLElement): void {
+  const view = list.getBoundingClientRect();
+  const covered = list.querySelector<HTMLElement>('[data-section-sticky][data-stuck="true"]')?.getBoundingClientRect().height ?? 0;
+  const top = view.top + covered;
+  if (rows.some((row) => inside(row.getBoundingClientRect(), top, view.bottom))) return;
   target.scrollIntoView({ block: "nearest" });
 }
 
-function inside(row: DOMRect, view: DOMRect): boolean {
-  return row.top >= view.top && row.bottom <= view.bottom;
+function inside(row: DOMRect, top: number, bottom: number): boolean {
+  return row.top >= top && row.bottom <= bottom;
 }

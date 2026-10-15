@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronRightIcon, ListTreeIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useInterfaceTranslation } from "../i18n/client";
 import { cn } from "../lib/utils";
@@ -39,20 +39,24 @@ export function AskLine({ ask, className }: { ask: NonNullable<AgentRow["state"]
   );
 }
 
-/** The one mark a folded parent wears for its descendants (B17): `! N` raised, else `● N` working. */
+/**
+ * The one mark a folded parent wears for its descendants (B17): `! N` while
+ * they raise something. A descendant that is only working draws nothing: the
+ * operator did not read `● N`, and a waiting parent already shows its blue ring
+ * and the working child's line. The core still computes the working mark.
+ */
 export function DescendantMark({ agent }: { agent: AgentRow }) {
   const { t } = useInterfaceTranslation();
   const mark = agent.descendant_mark;
-  if (!mark) return null;
-  const raised = mark.kind === "raised";
+  if (mark?.kind !== "raised") return null;
   return (
     <span
       role="img"
-      aria-label={t(raised ? "agentSessions.tree.raised" : "agentSessions.tree.working", { count: mark.count })}
+      aria-label={t("agentSessions.tree.raised", { count: mark.count })}
       data-descendant-mark={mark.kind}
-      className={cn("inline-flex shrink-0 items-center gap-xxs font-mono text-caption font-semibold", raised ? "text-warning" : "text-agent-working")}
+      className="inline-flex shrink-0 items-center gap-xxs font-mono text-caption font-semibold text-warning"
     >
-      {raised ? <span aria-hidden="true">!</span> : <span aria-hidden="true" className="size-(--size-status-mark) rounded-full bg-current" />}
+      <span aria-hidden="true">!</span>
       <span aria-hidden="true">{mark.count}</span>
     </span>
   );
@@ -175,16 +179,6 @@ export function TreeChevron({ name, open, onToggle, hangs, chain, disabled = fal
       >
         {open ? <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />}
       </button>
-    </span>
-  );
-}
-
-/** The pane header's child button (B21): a tree icon and the direct child count, no word. */
-export function TreeButtonFace({ count }: { count: number }) {
-  return (
-    <span className="flex items-center gap-xxs">
-      <ListTreeIcon aria-hidden="true" className="size-(--size-icon-sm) text-muted-foreground" />
-      <span className="font-mono text-caption text-subtle-foreground">{count}</span>
     </span>
   );
 }

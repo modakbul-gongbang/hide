@@ -1,8 +1,8 @@
 # Install hide
 
-hide supports Apple Silicon Macs running macOS 14 or later.
-You can install a published release when one is available or build the same app bundle from source today.
-Each release also carries unsigned packages for Windows x64 and Linux x64, built from the same source; [Windows and Linux](#windows-and-linux) says how to install one and what it does not do yet.
+hide runs on Apple Silicon Macs with macOS 14 or later, on Windows x64 and on Linux x64.
+You can install a published release when one is available or build the same app from source today.
+Each release carries a signed macOS app and unsigned Windows and Linux packages, built from the same source; [Windows and Linux](#windows-and-linux) says how to install those, and [What each system supports](#what-each-system-supports) records where each system stands.
 
 ## Requirements
 
@@ -12,7 +12,7 @@ Each release also carries unsigned packages for Windows x64 and Linux x64, built
 - For source builds on Windows only: the Rust MSVC toolchain with the Visual Studio C++ build tools, Git for Windows, and PowerShell 7 (`pwsh` fetches the pinned Herdr); run the build from Git Bash, so `bash` is Git's and not the WSL launcher in `System32`.
 - For source builds on Linux only: `zsh`, `jq`, and `curl`, `shasum` and `awk` under `/usr/bin`, which the Herdr fetch uses.
 - For source builds only: network access for the pinned Rust crates, the npm packages, the Electron runtime download, and the pinned Herdr asset.
-- An agent CLI (Claude Code or Codex), installed and signed in, only if you want hide to launch that agent.
+- An agent CLI Hide supports (Claude Code, Codex, Grok, OpenCode, Pi, omp or Cursor), installed and signed in, only if you want hide to launch that agent.
 
 Check the build tools before a source install:
 
@@ -103,28 +103,42 @@ sudo chmod 4755 hide-linux-x64/chrome-sandbox
 - Closing the last window quits the app on Windows and Linux, as other apps there do; on macOS the app keeps running with no window until you quit it.
   Either way `hided` keeps running after the app is gone, as [First launch](#first-launch) describes.
 - The app's profile is `%APPDATA%\hide-desktop` on Windows and `~/.config/hide-desktop` on Linux, instead of `~/Library/Application Support/hide-desktop`.
-- First launch installs the `hide` command and the Claude Code and Codex hooks for runtimes configured on this machine.
-  Settings > Devices shows their installation results under This machine.
+- First launch installs the `hide` command and, once the first-run wizard's agent choice is answered, each chosen agent's hook, plugin or extension and skill, as on macOS ([What the first launch installs](#what-the-first-launch-installs)).
+  Settings > Devices shows their installation results on this computer's row.
 - Linux installs `~/.local/bin/hide` as a link to the package's `resources/hide`.
   Windows installs `%USERPROFILE%\.local\bin\hide.cmd`, which runs `resources\hide.exe` through a `.hide-kit` directory junction beside the command; neither Administrator access nor Developer Mode is needed.
   Keep the unpacked package folder in place while using it.
 - Opening a newer package replaces a running daemon of another build and refreshes the command and hook paths, as on macOS.
   A development or standalone `hide` still refuses to replace a packaged daemon.
 - A package's `hided` is also the node it installs on a device, for its own system only, as the macOS app does: a Linux package installs it on a Linux x64 device, while no device runs the Windows one yet (Windows devices are not supported), so from Windows a device's files and Git stay unavailable.
-- Nothing updates itself, and uninstalling is deleting the folder; `~/.hide` (`%USERPROFILE%\.hide` on Windows) and the profile stay until you delete them.
+- On Windows the first launch registers the app for notifications: Electron adds a `hide` entry to the Start menu (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\hide.lnk`, pointing at this folder's `hide.exe`) and a per-user COM class key under `HKCU\Software\Classes\CLSID`, so a notification clicked after Hide quit can start it; Electron rewrites the entry when the folder moves, and it stays behind when the folder is deleted.
+  Linux registers nothing outside `~/.local/bin/hide` and the profile, and creates no menu entry.
+- Nothing updates itself, and uninstalling is deleting the folder and the pieces [Uninstall](#uninstall) lists; `~/.hide` (`%USERPROFILE%\.hide` on Windows) and the profile stay until you delete them.
 
 ### What each system supports
 
+Every agent Hide supports and every feature works on macOS, Windows and Linux: that is the bar, and a feature is not finished until it meets it on all three.
+This table is the one record of where each system stands.
+A cell that is not supported says why and what would change it, and a pull request that changes what a system does updates its row in the same change.
+The behavior itself is owned by the guide each row links to.
+
 Supported means the package is built from the release, the feature is written for that system, and CI exercises it there.
 Unverified means the feature is written to work there, but no check on that system has proved it.
+Not supported is a gap, never a design choice.
 
 | | macOS (Apple Silicon, 14 or later) | Windows x64 | Linux x64 |
 | --- | --- | --- | --- |
-| Package | signed app bundle | unsigned folder | unsigned folder |
-| Daemon, Herdr, install kit, agent hooks | supported | supported (CI runs them against the pinned Herdr) | supported (the web shell's whole e2e suite runs against the pinned Herdr) |
+| Package | supported: app bundle signed with hide's Developer ID and notarized ([BUILD.md](BUILD.md#developer-id-signing)) | unsigned folder, so SmartScreen warns on the first launch; signing is issue #193 | unsigned folder |
+| Daemon, Herdr, install kit | supported | supported (CI runs them against the pinned Herdr) | supported (the web shell's whole e2e suite runs against the pinned Herdr) |
+| The seven agents: Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, each with its hook, plugin or extension and skill ([agent-hooks.md](agent-hooks.md#support-table)) | supported | supported: each agent's Windows form is read from its own source or package and run on the Windows runner (`hide-agent-hooks/tests/it/windows_hook_command.rs`, `windows_scripts.rs`); a real Grok or Cursor session is unverified | supported: the same entries as macOS, checked by the workspace tests on Linux; a real Grok or Cursor session is unverified |
+| GitHub through `gh` for the Work tool's PRs lens and PR card (reads, Merge, branch update; [UI_BEHAVIOR.md](UI_BEHAVIOR.md#work-the-prs-lens-and-the-pr-card)) | supported | unverified: the allowlist, the head-conditioned command lines, the card parse and the grouping are platform-neutral Rust and run in every system's tests, but the `gh` process boundary test (`hide-host/src/gh.rs`) runs on Unix only and the web e2e runs on Linux; closing it means running that boundary test against a Windows `gh` shim and tagging the Work PRs journey `@platform` | supported (the boundary test and the web e2e run on Linux) |
 | Desktop app window and menu | supported (desktop e2e) | supported (the desktop `@platform` tests in every pull request that can change them, and the packaged `hide.exe`'s window in the package checks) | supported (the desktop `@platform` tests in the nightly, under a virtual display) |
 | Keyboard shortcuts | supported | supported by registry tests; the table is in [UI_BEHAVIOR.md](UI_BEHAVIOR.md#keyboard-shortcuts-per-system) | same as Windows |
-| Device node (a remote machine's files and Git) | supported | not supported | supported |
+| Agent notifications ([UI_BEHAVIOR.md](UI_BEHAVIOR.md#first-run)) | supported: the wizard's notifications step asks macOS and reads its answer back; delivery on a signed build is unverified | supported: the app registers itself for toasts at launch, and the package checks require its Start menu entry; delivery and a click from the Action Center after Hide quit are unverified | supported where a notification service runs; without one the wizard and Settings say so and keep the switch off; delivery is unverified |
+| Needs You count on the app icon | supported: a count on the Dock once macOS lets Hide notify | supported: a dot on the taskbar button, with the count in its description | unverified: drawn only by a desktop that shows launcher counts for the app's `.desktop` entry, which the folder package does not install |
+| Device node (a remote machine's files and Git) | supported | not supported: no device runs the Windows `hided` yet, so from Windows a device's files and Git stay unavailable | supported |
+| The Herdr server follows an app update ([Update](#update)) | supported | not supported: Herdr hands a running server to another Herdr on Unix only, so the server keeps the previous package's Herdr until it is stopped; changes when Herdr supports live handoff on Windows | supported (the remote mailbox lane hands a pinned server over) |
+| Move the core to another machine ([Move the core](#move-the-core-to-another-mac)) | supported | not supported: the core's login item is written for launchd only (`hide_platform::user_agents`), with no Windows or systemd form yet | not supported: same as Windows |
 
 Unverified on Windows and Linux (the macOS assumptions below are left as they are, and no check on those systems has proved them):
 
@@ -133,10 +147,12 @@ Unverified on Windows and Linux (the macOS assumptions below are left as they ar
 - Move to Trash through the system's trash.
 - Terminal programs that expect macOS text-editing keys; Windows and Linux send `Ctrl+U`, `Home` and `End` as typed.
 - Whether Alt+Shift also switches the input language on a Windows or Linux layout; hide's chord still runs.
+- A real Grok or Cursor session: each needs an account, so their Windows and Linux hook forms rest on each CLI's source and package, not on a run.
+- A notification reaching the screen, on any system: the desktop e2e replaces the system's notification, and a moved Windows folder has not been tried.
 
 ### Make the command available in a new shell
 
-Hide never changes PATH or the Windows registry.
+Hide never changes PATH; on Windows the only registry key is the notification registration the first launch makes ([What differs from the macOS app](#what-differs-from-the-macos-app)).
 On Linux, if your shell does not already include `~/.local/bin`, add `export PATH="$HOME/.local/bin:$PATH"` to your shell's startup file and open a new shell.
 On Windows, add `%USERPROFILE%\.local\bin` to your user Path using **Edit environment variables for your account**, then open a new terminal.
 Run `hide status --json` to check that the installed command resolves.
@@ -200,20 +216,21 @@ The app passes its bundled Herdr binary to that CLI as `HERDR_BIN_PATH` unless t
 The CLI search order, and `HIDE_CLI_PATH`, are documented in [ARCHITECTURE.md](ARCHITECTURE.md), "The desktop host".
 
 Panes attach to a Herdr server.
-When none answers on the socket hide uses, the app starts the Herdr it bundles (`hide.app/Contents/Resources/herdr`) there before it connects, and that server restores the saved workspaces and resumes the agents Herdr can resume, as a server `herdr` starts from a terminal does.
-The default socket is the one Herdr itself uses: `$XDG_CONFIG_HOME/herdr/herdr.sock` when that is set, otherwise `~/.config/herdr/herdr.sock`; set `HERDR_SOCKET_PATH` to an absolute path before launching to use another socket.
+When none answers on the socket hide uses, the app starts the Herdr it bundles (`hide.app/Contents/Resources/herdr` on macOS, `resources/herdr` on Linux, `resources\herdr.exe` on Windows) there before it connects, and that server restores the saved workspaces and resumes the agents Herdr can resume, as a server `herdr` starts from a terminal does.
+The default socket is the one Herdr itself uses: `$XDG_CONFIG_HOME/herdr/herdr.sock` when that is set, otherwise `%APPDATA%\herdr\herdr.sock` on Windows and `~/.config/herdr/herdr.sock` elsewhere; set `HERDR_SOCKET_PATH` to an absolute path before launching to use another socket.
 A server already running on that socket is used as it is; hide never stops or replaces it, and a server the app started keeps running after the app quits.
 
-Authentication is not bundled: SSH, Herdr, Claude Code, and Codex continue to own their own sign-in state and credentials.
+Authentication is not bundled: SSH, Herdr and every agent CLI keep their own sign-in state and credentials.
 If you want to start agents from hide, install and sign in to the relevant CLI before launching the app.
 
 ### What the first launch installs
 
-Every launch of the installed app installs Hide's kit on this Mac without asking, and puts back only what a newer app needs.
-The one exception is a Mac the kit has never run on: it holds Claude Code's and Codex's hook entries and skills until the operator answers the first-run agent choice, the first step of the first-run wizard (UI_BEHAVIOR.md, First run); both agents are recorded off in the hold, installed or not, so an agent installed later also starts off, and the rest below is installed as usual:
+Every launch of the installed app installs Hide's kit on this computer without asking, and puts back only what a newer app needs.
+The one exception is a computer the kit has never run on: it holds Claude Code's and Codex's hook entries, skills, Herdr integrations and Codex trust (the two agents on by default; the other five start off until switched on) until the operator answers the first-run agent choice, the first step of the first-run wizard (UI_BEHAVIOR.md, First run); both agents are recorded off in the hold, installed or not, so an agent installed later also starts off, and the rest below is installed as usual:
 
 - `~/.local/bin/hide`, a link to the app's `hide` command, unless a `hide` that is not Hide's is already there;
 - Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, for each of Claude Code and Codex whose folder (`~/.claude`, `~/.codex`) is on this Mac, next to whatever other tools put there, among them a `PreToolUse` entry on the shell tool that refuses a direct `herdr agent start` and points to `hide agent spawn` ([agent-hooks.md](agent-hooks.md#the-spawn-guard));
+- for each of the other agents that is on and installed, its own piece, in the file [agent-hooks.md](agent-hooks.md#what-is-written-and-where) lists: Grok's `~/.grok/hooks/hide.json`, Hide's entries in Cursor's `~/.cursor/hooks.json`, OpenCode's plugin `~/.config/opencode/plugins/hide.js`, and Pi's and omp's extension `hide.ts` under `~/.pi/agent/extensions` and `~/.omp/agent/extensions`, with each agent's `hide-browser` skill stub; an agent counts as installed when its program is found ([agent-hooks.md](agent-hooks.md#installed-means-the-program-is-found)), while Claude Code's and Codex's entries follow their folders;
 - Codex's trust for those Codex entries: Codex asks for a review of every new or changed hook, so Hide takes installing it as your agreement to its own hooks and has Codex record them as trusted (through `codex app-server`, never by editing `~/.codex/config.toml`), only for an entry whose command is exactly the one Hide wrote, and for the entry Herdr's Codex integration wrote when the kit installed it in the same pass (the kit records what Herdr wrote and trusts exactly that), so a Mac the kit set up starts Codex with no review screen; another tool's hook, and a Herdr integration you installed before Hide, still open Codex's review screen (only Codex asks; a survey on 2026-10-07 found no hook approval screen for the other agents, [agent-hooks.md](agent-hooks.md#which-agents-ask-for-a-review)), and switching Hide's hook off in Codex's hook list keeps it off ([agent-hooks.md](agent-hooks.md#codex-trusts-hides-own-hooks));
 - A one-release retirement stage removes the former coordination installation after its read-only preflight succeeds; see Coordination retirement below;
 - for each of the seven supported agents that is on and installed (Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor), Herdr's own integration, installed with the bundled Herdr (`herdr integration install <agent>`) so Herdr learns the agent's session; one the operator installed before is left as it is, and Hide removes only what it installed;
@@ -259,12 +276,13 @@ Everything Hide owns on a machine is under `~/.hide`:
 
 | Folder | What it holds |
 | --- | --- |
-| `~/.hide/state` | The daemon's state: registered projects, screen layout, labels, phone pairing, the session search index (`session-search.sqlite3`), the link record (`links.sqlite3`) and Project Memory (`project-memory.sqlite3`, which only the core opens; the agent hooks ask the core for it), logs (`HIDE_STATE_DIR` or a set `XDG_STATE_HOME` choose another folder) |
+| `~/.hide/state` | The daemon's state: registered projects, screen layout, labels, phone pairing, the session search index (`session-search.sqlite3`), the link record (`links.sqlite3`), Project Memory (`project-memory.sqlite3`, which only the core opens; the agent hooks ask the core for it), what the node last measured of each repository's worktrees (`worktree-facts/`), logs (`HIDE_STATE_DIR` or a set `XDG_STATE_HOME` choose another folder) |
 | `~/.hide/kit` | The kit record and one-release retirement receipt |
 | `~/.hide/agent-hooks` | The hook helper's per-pane counters, each with the hook version, agent and session that wrote it (hided reads them to put a pane's tokens back after a Herdr handoff or restart), the last report, the spawn guard's refusal log (`spawn-guard.log`, capped, one older copy) and the lock beside it |
 | `~/.hide/host-helper` | On a device: the `hided` builds that serve it as a node |
+| `~/.hide/shell-integration` | The zsh and bash startup files a tab Hide makes for an agent starts its shell with, which read your own startup files and then mark the first prompt; one folder per build, another build's removed once unused for an hour |
 
-Outside it stay only what another program reads at a place it chose: Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, and the `hide` link in `~/.local/bin`.
+Outside it stay only what another program reads at a place it chose: each agent's hook entry, plugin, extension and skill stub ([agent-hooks.md](agent-hooks.md#what-is-written-and-where)), the `hide` link in `~/.local/bin` (`hide.cmd` and its junction on Windows), and on Windows the Start menu entry and notification registration.
 macOS's own places (`~/Library/Application Support/hide-desktop`, `~/Library/Application Support/hide` with the AI settings), the Home folder `~/hide`, and the label generator lock beside the Herdr socket are not moved.
 
 A build from before this layout kept the same files in `~/.local/state/hide`, `~/.local/share/hide`; the retired coordination folders are handled by the stage above.
@@ -360,8 +378,10 @@ Hide AI's settings move with the core and come back with it.
 ## Update
 
 Quit hide, replace `/Applications/hide.app` on macOS or unpack the new Windows/Linux package into its permanent folder, and reopen it.
-Opening the updated app replaces a `hided` still running from the previous build with one of its own build, and leaves the Herdr server, its panes and the agents running; a `hided` that will not stop makes the app show its start failure instead of attaching to the old one.
-State under `~/.hide/state` and the desktop profile at `~/Library/Application Support/hide-desktop` both persist across an update.
+Opening the updated app replaces a `hided` still running from the previous build with one of its own build; a `hided` that will not stop makes the app show its start failure instead of attaching to the old one.
+On macOS and Linux it also moves the Herdr server the previous app started onto its own Herdr, with the panes and the agents in them still running, so nothing keeps running from the previous app's folder; a Herdr terminal you attached yourself is asked to reconnect, and a Herdr server you started from your own Herdr install is left as it is.
+On Windows the server keeps the previous package's Herdr until you stop it ([What each system supports](#what-each-system-supports)).
+State under `~/.hide/state` and the desktop profile (`~/Library/Application Support/hide-desktop` on macOS, `%APPDATA%\hide-desktop` on Windows, `~/.config/hide-desktop` on Linux) both persist across an update.
 Files the previous Swift app left under `~/Library/Application Support/hide/` are not read by the current app, apart from `state.json`'s shortcut bindings, which are imported once, and can be deleted by hand.
 Each packaged launch replaces an outdated part of the kit on this machine, and each device connection does the same there, hook entries included; a part you removed stays removed.
 When the core runs on another machine, a newer app updates it to its own build before it connects, once per connection, while agents keep running; if that fails, the window shows both builds with Retry, and the core goes on with its previous build.
@@ -370,13 +390,14 @@ An updated app on the core's own machine updates the core the login item runs in
 ## Uninstall
 
 Quit hide and move `/Applications/hide.app` to the Trash.
-This removes the application but keeps `~/.hide` and `~/Library/Application Support/hide-desktop`.
+This removes the application but keeps `~/.hide` and the desktop profile, `~/Library/Application Support/hide-desktop`.
 If the core runs on another machine, move it back first; its login item otherwise keeps running there until you remove it with `launchctl bootout gui/$(id -u)/dev.withhide.core` and delete `~/Library/LaunchAgents/dev.withhide.core.plist` on that machine.
 Delete both directories only when you deliberately want to reset hide's saved state.
-Hide's hook entries stay in `~/.claude/settings.json` and `~/.codex/hooks.json` and do nothing once the app is gone; delete the entries whose command carries `hide-subagents@` to take them out; Codex's trust records for them stay in `~/.codex/config.toml` and match only that same command.
+Each agent's piece stays and does nothing once the app is gone ([agent-hooks.md](agent-hooks.md#what-is-written-and-where) lists them): delete the Claude Code, Codex and Cursor entries whose command carries `hide-subagents@`, Grok's `~/.grok/hooks/hide.json`, the OpenCode plugin and the Pi and omp extensions named `hide`, and the `hide-browser` skill stubs; Codex's trust records stay in `~/.codex/config.toml` and match only Hide's own command, and a Herdr integration Hide installed stays until `herdr integration uninstall <agent>`.
 `~/.local/bin/hide` stays as well until you remove it.
 On Windows or Linux, delete the unpacked package folder after quitting and running its `resources/hide[.exe] stop`.
-The hook entries and home state likewise remain; remove `~/.local/bin/hide` on Linux, or `%USERPROFILE%\.local\bin\hide.cmd` and the `.hide-kit` junction beside it on Windows.
+The agents' pieces and home state likewise remain; remove `~/.local/bin/hide` on Linux, or `%USERPROFILE%\.local\bin\hide.cmd` and the `.hide-kit` junction beside it on Windows.
+On Windows also delete the `hide` entry from the Start menu folder (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\hide.lnk`) and the `HKCU\Software\Classes\CLSID` key whose default value is `Electron Notification Activator` and whose `LocalServer32` names this folder's `hide.exe`.
 Remove the junction itself, not the directory it leads to.
 
 ### Earlier builds and the transition

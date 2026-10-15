@@ -170,10 +170,22 @@ async function showPairing(page: Page): Promise<void> {
   await page.locator('[data-mobile-show-code="true"]').click({ timeout: 20_000 });
 }
 
-/** Picks a push mode in the one dropdown. */
+/** Picks a push mode in the one dropdown on Settings > Notifications (PRD settings-left-nav B6), and returns to Mobile. */
 async function choosePush(page: Page, mode: "off" | "app_closed" | "always"): Promise<void> {
+  await page.locator('[data-settings-tab="notifications"]').click();
   await page.locator("[data-push-select]").click();
   await page.locator(`[data-push-choice="${mode}"]`).click();
+  await expect(page.locator(`[data-push-detail="${mode}"]`)).toBeVisible();
+  await page.locator('[data-settings-tab="mobile"]').click();
+  await expect(page.locator('[data-mobile-tab="true"]')).toBeVisible();
+}
+
+/** The push mode Settings > Notifications shows, read there before returning to Mobile. */
+async function expectPush(page: Page, label: string): Promise<void> {
+  await page.locator('[data-settings-tab="notifications"]').click();
+  await expect(page.locator("[data-push-select]")).toHaveText(label);
+  await page.locator('[data-settings-tab="mobile"]').click();
+  await expect(page.locator('[data-mobile-tab="true"]')).toBeVisible();
 }
 
 /** The QR's `#pair=...` fragment, opened on this loopback daemon instead of the ts.net address. */
@@ -235,7 +247,8 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     const toggle = page.locator('[data-mobile-switch="true"]');
     await expect(toggle).toHaveAttribute("aria-checked", "false");
     await expect(page.locator('[data-mobile-tab="true"]')).toContainText("Over Tailscale, only inside your tailnet.");
-    await expect(page.locator("[data-push-select]")).toHaveText("Off");
+    await expect(page.locator("[data-push-select]")).toHaveCount(0);
+    await expectPush(page, "Off");
     expect(tailscale.calls()).toBe("");
 
     // B2: the CLI is missing, so the first step carries the download link and the rest wait.
@@ -539,6 +552,66 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
   }
 });
 
+test("the phone caches group and row status words in the desktop language", async ({ browser, page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const herdr = await startHerdr({ agents: false });
+  const tailscale = new FakeTailscale();
+  tailscale.install();
+  tailscale.ready();
+  let daemon: Daemon | null = null;
+  let context: BrowserContext | null = null;
+  try {
+    daemon = await startHided(herdr, "mobile-language", undefined, { HIDE_TAILSCALE_BIN: tailscale.bin });
+    await openMobileSettings(page, daemon);
+    await page.locator('[data-mobile-switch="true"]').click();
+    await choosePush(page, "app_closed");
+    context = await phoneContext(browser);
+    const phone = await context.newPage();
+    await phone.goto(await shownPairingUrl(page, daemon));
+    await phone.locator('[data-phone-pair="true"]').tap();
+    await expect(phone.locator("[data-phone-empty]")).toHaveText("No agents are running", { timeout: 20_000 });
+
+    // The core's explicit language reaches the phone and gives way to the phone's own once unset.
+    await page.locator('[data-settings-tab="general"]').click();
+    await page.locator("[data-interface-language]").click();
+    await page.locator('[data-language-option="ko"]').click();
+    await expect(phone.locator("[data-phone-empty]")).toHaveText("실행 중인 에이전트가 없어요", { timeout: 20_000 });
+    await expect(phone.locator("html")).toHaveAttribute("lang", "ko");
+    // Group and row status words stay cached for notifications while the app is closed.
+    await expect
+      .poll(() =>
+        phone.evaluate(async () => {
+          const hit = await (await caches.open("hide-phone-words")).match("/m/words.json");
+          return hit ? ((await hit.json()) as unknown) : null;
+        }),
+      )
+      .toEqual({
+        needs_you: "내 확인 대기",
+        done: "끝",
+        observer_unconfirmed: "관찰자가 경고를 확인하지 않았어요",
+        letter_undelivered: "편지가 전달되지 않았어요",
+        status_question: "질문",
+        status_approval: "승인 대기",
+        status_error: "막힘",
+        status_working: "작업 중",
+        status_done: "완료",
+        status_idle: "쉬는 중",
+        status_unknown: "알 수 없음",
+        status_waiting: "대기",
+        status_stopped: "멈춤",
+      });
+    await page.locator("[data-interface-language]").click();
+    await page.locator('[data-language-option="system"]').click();
+    await expect(phone.locator("[data-phone-empty]")).toHaveText("No agents are running", { timeout: 20_000 });
+    await expect(phone.locator("html")).toHaveAttribute("lang", "en");
+  } finally {
+    await context?.close();
+    daemon?.stop();
+    herdr.stop();
+    tailscale.remove();
+  }
+});
+
 test("an empty list, the unreachable line, the phone limit and the seven-day revoke", async ({ browser, page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const herdr = await startHerdr({ agents: false });
@@ -561,26 +634,6 @@ test("an empty list, the unreachable line, the phone limit and the seven-day rev
     // B22: no agents, one line.
     await expect(phone.locator('[data-phone-empty="true"]')).toHaveText("No agents are running", { timeout: 20_000 });
     await screenshot(phone, "mobile-phone-empty");
-    // The core's explicit language reaches the phone and gives way to the phone's own once unset.
-    await page.locator('[data-settings-tab="general"]').click();
-    await page.locator("[data-interface-language]").click();
-    await page.locator('[data-language-option="ko"]').click();
-    await expect(phone.locator("[data-phone-empty]")).toHaveText("실행 중인 에이전트가 없어요", { timeout: 20_000 });
-    await expect(phone.locator("html")).toHaveAttribute("lang", "ko");
-    // The page gave the service worker the words a notification starts with, in that language, kept for a closed app.
-    await expect
-      .poll(() =>
-        phone.evaluate(async () => {
-          const hit = await (await caches.open("hide-phone-words")).match("/m/words.json");
-          return hit ? ((await hit.json()) as unknown) : null;
-        }),
-      )
-      .toEqual({ needs_you: "내 확인 대기", done: "끝", observer_unconfirmed: "관찰자가 경고를 확인하지 않았어요", letter_undelivered: "편지가 전달되지 않았어요" });
-    await page.locator("[data-interface-language]").click();
-    await page.locator('[data-language-option="system"]').click();
-    await expect(phone.locator("[data-phone-empty]")).toHaveText("No agents are running", { timeout: 20_000 });
-    await expect(phone.locator("html")).toHaveAttribute("lang", "en");
-    await page.locator('[data-settings-tab="mobile"]').click();
     // B38: the phone's own light or dark setting decides the theme.
     await expect(phone.locator("html")).toHaveClass(/dark/);
     await phone.emulateMedia({ colorScheme: "light" });
@@ -610,7 +663,7 @@ test("an empty list, the unreachable line, the phone limit and the seven-day rev
 
     // B29: the push mode survived the restart.
     await openMobileSettings(page, daemon);
-    await expect(page.locator("[data-push-select]")).toHaveText("Only when the app is closed");
+    await expectPush(page, "Only when the app is closed");
 
     // B14: three more phones on record make four; a fifth is refused with the reason.
     const record = (id: string, lastSeen: number) => ({

@@ -303,6 +303,8 @@ macro_rules! record_conversions {
         impl From<$wire::PaneInfo> for ProjectedPane {
             fn from(v: $wire::PaneInfo) -> Self {
                 Self {
+                    terminal_id: v.terminal_id,
+                    restore_error: v.restore_error,
                     pane_id: v.pane_id,
                     foreground_process: None,
                     agent_status: v.agent_status.to_string(),
@@ -391,12 +393,71 @@ pub(crate) const CHILD_SESSION_TOKEN: &str = "child_session";
 /// because only there are both rows at hand, on this machine or another.
 pub(crate) const PARENT_SESSION_TOKEN: &str = "parent_session";
 
-/// `"1"` on a pane that hosts a registration Hide's Fork made, written by
-/// `crate::coordination` with the lineage tokens (`AgentRecord::forked`), so a
-/// wake that continues the registration in another pane writes it there too.
-/// It is only read while the lineage tokens hold (the row declares a parent),
-/// so a pane that hosts another agent later is not a fork.
-pub(crate) const FORK_TOKEN: &str = "fork";
+/// The pane a fork was forked from, written by `crate::coordination` on the
+/// pane that hosts a fork's registration (`AgentRecord::forked` with its
+/// `origin`), so a wake that continues the registration in another pane writes
+/// it there too. It is provenance, never responsibility: a fork is the
+/// operator's root, which is why it is not `PARENT_PANE_TOKEN`. Like that
+/// token it is a claim that holds only while `FORK_SESSION_TOKEN` and
+/// `FORK_SOURCE_SESSION_TOKEN` still name the sessions the two panes host.
+pub(crate) const FORK_PANE_TOKEN: &str = "fork_pane";
+
+/// The digest of the fork's own session when the provenance was written. A
+/// pane that hosts another session later is not a fork.
+pub(crate) const FORK_SESSION_TOKEN: &str = "fork_session";
+
+/// The digest of the source's session when the provenance was written. The
+/// source is named only while its pane still hosts it
+/// (`crate::agent_state::apply_fork_sources`).
+pub(crate) const FORK_SOURCE_SESSION_TOKEN: &str = "fork_source_session";
+
+/// Hide's mark on a pane whose saved read state it vouches for, written by
+/// the lineage writer (`crate::coordination::lineage`). Herdr keeps a pane
+/// token only for as long as the server that took it, so a pane that still
+/// carries the mark a saved state names is on the server that state was read
+/// from, and its `state_change_seq` can be compared with the saved one
+/// (`crate::agent_state::apply_read_state`).
+pub(crate) const SERVER_MARK_TOKEN: &str = "hide_server";
+
+/// The server mark a pane carries, when it carries one.
+pub(crate) fn server_mark(tokens: &std::collections::BTreeMap<String, Value>) -> Option<String> {
+    tokens
+        .get(SERVER_MARK_TOKEN)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|mark| !mark.is_empty())
+        .map(str::to_owned)
+}
+
+/// The tokens a sleeping fork's row stands in for, as its pane carried them.
+pub(crate) fn fork_tokens(
+    source_pane: &str,
+    own_session: Option<&str>,
+    source_session: Option<&str>,
+) -> std::collections::BTreeMap<String, Value> {
+    [
+        (FORK_PANE_TOKEN, Some(source_pane)),
+        (FORK_SESSION_TOKEN, own_session),
+        (FORK_SOURCE_SESSION_TOKEN, source_session),
+    ]
+    .into_iter()
+    .filter_map(|(key, value)| Some((key.to_owned(), Value::String(value?.to_owned()))))
+    .collect()
+}
+
+/// What a fork's pane declares about its source: the source's pane and the
+/// session it hosted, read only while the pane still hosts the fork's own
+/// session (`own_session`, its digest).
+pub(crate) fn fork_declaration(
+    tokens: &std::collections::BTreeMap<String, Value>,
+    own_session: Option<&str>,
+) -> Option<(String, Option<String>)> {
+    let token = |name: &str| lineage_parent(tokens.get(name).and_then(Value::as_str));
+    if !session_holds(token(FORK_SESSION_TOKEN).as_deref(), own_session) {
+        return None;
+    }
+    Some((token(FORK_PANE_TOKEN)?, token(FORK_SOURCE_SESSION_TOKEN)))
+}
 
 /// How a session is written into a token: the lowercase hex SHA-256 of the
 /// value Herdr reports in `agent_session.value`. Herdr cuts a token value at
@@ -482,6 +543,7 @@ impl From<res::AgentInfo> for ProjectedAgent {
             declared_parent_session,
             lineage_session: own_session,
             state_change_seq: v.state_change_seq,
+            completion_seq: v.completion_seq,
             tokens: v
                 .tokens
                 .into_iter()
@@ -828,6 +890,7 @@ pub(crate) fn worktree_open_params(
 /// pane, and whether Herdr had it open before this request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct OpenedWorktree {
+    pub(crate) tab_label: String,
     pub(crate) workspace_id: String,
     pub(crate) label: String,
     pub(crate) tab_id: String,
@@ -845,6 +908,7 @@ pub(crate) fn opened_worktree(value: Value) -> Result<OpenedWorktree, String> {
             already_open,
             ..
         } => Ok(OpenedWorktree {
+            tab_label: tab.label,
             label: workspace.label,
             workspace_id: nonempty_id(workspace.workspace_id, missing)?,
             tab_id: nonempty_id(tab.tab_id, missing)?,
@@ -1151,6 +1215,48 @@ pub(crate) fn layout_apply_params(
     })
 }
 
+/// A tab whose one pane runs `command` with `env` in `cwd` (a shell started
+/// with Hide's integration), new in `workspace_id`, or in place of the tab
+/// `replace` names, which Herdr then closes.
+#[allow(clippy::too_many_arguments)] // one layout.apply request: its target, tab and pane
+pub(crate) fn launched_tab_params(
+    workspace_id: &str,
+    replace: Option<&str>,
+    label: &str,
+    focus: bool,
+    cwd: &str,
+    env: std::collections::BTreeMap<String, String>,
+    command: &[String],
+) -> Result<Value, String> {
+    params(req::LayoutApplyParams {
+        focus,
+        root: req::LayoutNode::Pane {
+            pane_id: None,
+            label: None,
+            cwd: Some(herdr_param(cwd)),
+            command: Some(command.to_vec()),
+            env: env.into_iter().collect(),
+        },
+        tab_id: replace.map(str::to_owned),
+        tab_label: Some(label.into()),
+        // Herdr takes either a tab to replace or a workspace to add to.
+        workspace_id: replace.is_none().then(|| workspace_id.into()),
+    })
+}
+
+/// The tab and the one pane `layout.apply` made for
+/// [`launched_tab_params`].
+pub(crate) fn launched_tab(value: Value) -> Result<(String, String), String> {
+    let layout = applied_layout(value)?;
+    match layout.root {
+        ClosedLayoutNode::Pane {
+            pane_id: Some(pane_id),
+            ..
+        } => Ok((layout.tab_id, pane_id)),
+        _ => Err("layout.apply answered no single pane for a launched tab".into()),
+    }
+}
+
 /// Every agent start Hide makes; a Codex with the shared daemon gets
 /// `--no-daemon` here, so no start path can leave it out (PRD
 /// overview-request-view D-20).
@@ -1167,7 +1273,7 @@ pub(crate) fn agent_start_params(
         kind: kind.into(),
         name: name.into(),
         pane_id: pane_id.into(),
-        timeout_ms: Some(120_000),
+        timeout_ms: Some(crate::agent_start::AGENT_START_DEADLINE.as_millis() as u64),
     })
 }
 
@@ -1214,16 +1320,20 @@ pub(crate) fn agent_start_line_bytes(params: &Value) -> usize {
             .sum::<usize>()
 }
 
-/// A split that creates the pane a fork will run in. Unlike the operator's
-/// own split it does not take focus: the operator forked the pane they are
-/// reading, and taking focus away from it would undo that.
-pub(crate) fn fork_split_params(parent_pane_id: &str, cwd: Option<&str>) -> Result<Value, String> {
+/// A split that creates the pane `Fork agent to the side` runs in. It does not
+/// take focus itself: the core moves the keyboard to it, unless the operator
+/// chose another view after the press (`Runtime::ingest_fork_pane`).
+pub(crate) fn fork_split_params(
+    parent_pane_id: &str,
+    cwd: Option<&str>,
+    env: std::collections::BTreeMap<String, String>,
+) -> Result<Value, String> {
     params(req::PaneSplitParams {
         target_pane_id: Some(parent_pane_id.into()),
         direction: req::SplitDirection::Right,
         cwd: cwd.filter(|v| !v.trim().is_empty()).map(herdr_param),
         focus: false,
-        env: Default::default(),
+        env: env.into_iter().collect(),
         ratio: None,
         right_click: req::PaneRightClickTarget::Herdr,
         workspace_id: None,
@@ -1457,6 +1567,16 @@ impl PaneProcessGroup {
         }
     }
 
+    /// The shell's own program name, read while it is in the foreground.
+    pub(crate) fn shell_name(&self) -> Option<&str> {
+        let shell = self.shell_pid?;
+        self.foreground_pids
+            .iter()
+            .zip(&self.foreground_names)
+            .find(|(pid, _)| **pid == shell)
+            .map(|(_, name)| name.trim_start_matches('-'))
+    }
+
     /// The first foreground process that is not the pane's shell.
     pub(crate) fn foreground_program(&self) -> Option<&str> {
         self.foreground_pids
@@ -1626,6 +1746,7 @@ pub(crate) fn created_tab(value: Value) -> Result<(String, String), String> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CreatedWorktree {
+    pub tab_label: String,
     pub workspace_id: String,
     pub tab_id: String,
     pub pane_id: String,
@@ -1643,6 +1764,7 @@ pub(crate) fn created_worktree(value: Value) -> Result<CreatedWorktree, String> 
             worktree,
             ..
         } => Ok(CreatedWorktree {
+            tab_label: tab.label,
             workspace_id: nonempty_id(workspace.workspace_id, missing)?,
             tab_id: nonempty_id(tab.tab_id, missing)?,
             pane_id: nonempty_id(root_pane.pane_id, missing)?,
@@ -1700,6 +1822,20 @@ pub(crate) fn pane_resize_changed(value: Value) -> Result<bool, String> {
         _ => Err(missing.into()),
     }
 }
+/// The value of the pane token `token` in a `pane.get` answer, `None` when
+/// the pane carries none.
+pub(crate) fn pane_token(value: Value, token: &str) -> Result<Option<String>, String> {
+    let missing = "pane.get response is missing pane";
+    match response(value, missing)? {
+        res::ResponseResult::PaneInfo { pane } => Ok(pane
+            .tokens
+            .into_iter()
+            .find(|(key, _)| String::from(key.clone()) == token)
+            .map(|(_, value)| value)),
+        _ => Err(missing.into()),
+    }
+}
+
 /// The terminal a `pane.get` answer runs in its pane. Herdr gives every
 /// terminal it starts a new id, a restored one included, while a pane id can
 /// be handed out again, so this is what tells a pane from a later one.
@@ -1756,9 +1892,10 @@ pub(crate) fn subscription_params(kinds: &[&str]) -> Result<Value, String> {
     params(req::EventsSubscribeParams { subscriptions })
 }
 
-// What `hided`'s phone routes need from Herdr: the only items of this module
-// that are public, and the way a crate other than this one reaches the
-// generated types. Each takes and returns plain values.
+// What `hided`'s phone routes and `hide connect`'s server handoff need from
+// Herdr: the only items of this module that are public, and the way a crate
+// other than this one reaches the generated types. Each takes and returns
+// plain values.
 
 /// The recent rows of one pane, with escape sequences kept.
 pub fn pane_rows_params(pane_id: &str, lines: u32) -> Result<Value, String> {
@@ -1822,6 +1959,60 @@ pub fn pane_session(value: Value) -> Result<(Option<String>, Option<PaneSession>
             }),
         )),
         _ => Err("pane.get returned no pane".into()),
+    }
+}
+
+/// What a Herdr server says of itself when pinged.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServerPong {
+    pub version: String,
+    pub protocol: u32,
+    /// Whether it can hand its panes to another Herdr program
+    /// (`server.live_handoff`); Herdr does so on Unix only.
+    pub live_handoff: bool,
+}
+
+/// A `ping`, which takes no parameters.
+pub fn ping_params() -> Result<Value, String> {
+    params(req::PingParams(Default::default()))
+}
+
+/// A `ping` answer.
+pub fn server_pong(value: Value) -> Result<ServerPong, String> {
+    let result: res::ResponseResult = serde_json::from_value(value)
+        .map_err(|error| format!("ping response is malformed: {error}"))?;
+    match result {
+        res::ResponseResult::Pong {
+            version,
+            protocol,
+            capabilities,
+        } => Ok(ServerPong {
+            version,
+            protocol,
+            live_handoff: capabilities.is_some_and(|capabilities| capabilities.live_handoff),
+        }),
+        _ => Err("ping returned no pong".into()),
+    }
+}
+
+/// A `server.live_handoff` that hands the server's panes to the Herdr at
+/// `import_exe`, which refuses them unless it is `version` and speaks the
+/// protocol this build pins.
+pub fn live_handoff_params(import_exe: &str, version: &str) -> Result<Value, String> {
+    params(req::ServerLiveHandoffParams {
+        import_exe: Some(import_exe.into()),
+        expected_version: Some(version.into()),
+        expected_protocol: Some(HERDR_PROTOCOL_REVISION as u32),
+    })
+}
+
+/// A `server.live_handoff` answer: the replacement holds the panes.
+pub fn live_handoff_done(value: Value) -> Result<(), String> {
+    let result: res::ResponseResult = serde_json::from_value(value)
+        .map_err(|error| format!("server.live_handoff response is malformed: {error}"))?;
+    match result {
+        res::ResponseResult::Ok => Ok(()),
+        _ => Err("server.live_handoff returned something other than ok".into()),
     }
 }
 
@@ -2078,12 +2269,12 @@ mod tests {
     #[test]
     fn a_fork_splits_without_focus() {
         assert_eq!(
-            fork_split_params("w1:p1", Some("/fixture")).unwrap(),
+            fork_split_params("w1:p1", Some("/fixture"), Default::default()).unwrap(),
             json!({"target_pane_id": "w1:p1", "direction": "right", "cwd": "/fixture",
                 "focus": false, "right_click": "herdr"})
         );
         assert_eq!(
-            fork_split_params("w1:p1", Some("  ")).unwrap()["cwd"],
+            fork_split_params("w1:p1", Some("  "), Default::default()).unwrap()["cwd"],
             Value::Null
         );
     }

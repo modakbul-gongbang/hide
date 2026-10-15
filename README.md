@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="desktop/resources/hide-icon-1024.png" width="132" alt="hide owl app icon">
+  <img src="design/brand/hide-icon-blinking.svg" width="132" alt="hide owl app icon">
 </p>
 
 <h1 align="center">hide</h1>
 
-<p align="center"><strong>Many agents. One clear view.</strong></p>
+<p align="center"><strong>Run more agents. Hold less.</strong></p>
 
 <p align="center">
   A calm IDE for coding with multiple agents, with each task in context and attention on what matters.
@@ -16,7 +16,7 @@
   <img alt="Electron" src="https://img.shields.io/badge/Electron-desktop-9FEAF9?logo=electron&logoColor=black">
   <img alt="Rust 2024" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white">
   <img alt="Bundled Herdr runtime" src="https://img.shields.io/badge/Herdr-bundled-B9FF66">
-  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <a href="LICENSE"><img alt="Apache License 2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
 </p>
 
 hide is a multi-agent IDE built on [Herdr](https://github.com/herdrdev/herdr), with an Electron desktop host and a Rust daemon.
@@ -142,4 +142,4 @@ Identify the candidate by its executable, build, PID and window; an isolated can
 ## Design and license
 
 The interface follows the behavior contract in [docs/UI_BEHAVIOR.md](docs/UI_BEHAVIOR.md), styled from the Pen design-system library and `design/tokens.json`, and uses original React and TypeScript code.
-hide is available under the [MIT License](LICENSE).
+hide is available under the [Apache License 2.0](LICENSE); [NOTICE](NOTICE) carries its copyright notice.

@@ -25,7 +25,8 @@ You keep long-term memory cards for one software project. Agents of several runt
 ## What becomes a card
 Many sessions yield no card. Return at most 2 cards with relation "new" for a session, and none when nothing below applies. A card exists only for something an agent working in this project later needs and cannot find in the code, the docs, git history, a pull request or the files that instruct agents (AGENTS.md, CLAUDE.md and the documents they point to). Ask of every candidate: could an agent learn this by reading the repository or its pull requests? If yes, discard it.
 Keep:
-- rule: the operator's own preference or standing instruction, stated in "human" events, about how the work is done, reviewed, merged, verified or communicated, which holds for every later task. An instruction that only applies to the current task is not a rule.
+- preference: the operator's personal taste in language, communication or tools, independent of this repository. It stays personal and must never be offered for repository documents.
+- rule: the operator's standing project instruction, stated in "human" events, about how the work is done, reviewed, merged, verified or communicated, which holds for every later task. An instruction that only applies to the current task is not a rule.
 - lesson: why a failure or an incident happened and how to avoid it, when no repository document records it: a trap in the environment, a tool or a machine, a step that silently proves nothing.
 - decision: the operator's product principle or boundary that later work must respect, or a choice between real alternatives whose reason no repository file records. How one piece of work was designed or built is not a decision: its pull request records it.
 - fact: a durable fact about the environment or the operator's setup that cannot be read from the repository.
@@ -36,7 +37,7 @@ Each card stands alone: one subject, written so an agent who never saw this conv
 - text: the card.
 - title: one line under 60 characters naming the subject.
 - aliases: 3 to 8 other words a later prompt might use for the subject, in both Korean and English: synonyms, the tool, command or file involved, the Korean term for an English one and the reverse. Single words or two-word phrases.
-- kind: rule, decision, lesson or fact.
+- kind: rule, decision, lesson, fact or preference.
 - confidence: how certain the source makes the card, 0 to 1. salience: how much it should shape later work, 0 to 1.
 - source_offsets: the offsets of the new_events the card comes from. A rule needs at least one "human" offset.
 - cited_paths: the project files the card rests on, as paths relative to the repository root, when the events name them; an empty list otherwise. Never a path outside the repository.
@@ -234,6 +235,7 @@ impl HideNativeAnalyzer {
                     "decision" => CandidateKind::Decision,
                     "rule" => CandidateKind::Rule,
                     "lesson" => CandidateKind::Lesson,
+                    "preference" => CandidateKind::Preference,
                     _ => {
                         return Err(HideNativeOutputError::InvalidShape(
                             "unknown kind".to_owned(),
@@ -348,7 +350,7 @@ fn output_schema() -> Value {
                         "text": {"type": "string", "minLength": 1, "maxLength": 4000},
                         "title": {"type": "string", "maxLength": 120},
                         "aliases": aliases,
-                        "kind": {"enum": ["fact", "decision", "rule", "lesson"]},
+                        "kind": {"enum": ["fact", "decision", "rule", "lesson", "preference"]},
                         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                         "salience": {"type": "number", "minimum": 0, "maximum": 1},
                         "source_offsets": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"type": "integer", "minimum": 0}},

@@ -66,6 +66,8 @@ mod operator_focus;
 mod pane_geometry;
 #[path = "tests/project_sessions.rs"]
 mod project_sessions;
+#[path = "tests/project_settings.rs"]
+mod project_settings;
 #[path = "tests/projects.rs"]
 mod projects;
 #[path = "tests/pull_requests.rs"]
@@ -94,6 +96,8 @@ mod terminal;
 #[path = "tests/tree_close.rs"]
 mod tree_close;
 mod ui_state_focus;
+#[path = "tests/usage_limit.rs"]
+mod usage_limit;
 #[path = "tests/view_areas.rs"]
 mod view_areas;
 mod view_bookmarks;
@@ -144,6 +148,7 @@ fn settled_worktree(badge: crate::model::PullRequestBadge) -> CheckoutSnapshot {
         closed_at_unix_ms: None,
         head_oid: None,
         cross_repository: false,
+        work: Default::default(),
     };
     CheckoutSnapshot {
         agent_scope: Default::default(),
@@ -611,6 +616,8 @@ fn working_payload() -> SessionSnapshotPayload {
 
 fn pane(id: &str, cwd: &str) -> PaneSnapshot {
     PaneSnapshot {
+        terminal_id: None,
+        failed_terminal_id: None,
         id: id.to_owned(),
         herdr_label: None,
         terminal_title: None,
@@ -688,6 +695,7 @@ fn workspace(
     checkouts: Vec<CheckoutSnapshot>,
 ) -> WorkspaceSnapshot {
     WorkspaceSnapshot {
+        agent_presence: Default::default(),
         agent_scope: Default::default(),
         home_issues: Default::default(),
         pull_requests: Vec::new(),
@@ -1492,6 +1500,7 @@ fn closed_file(key: &str, path: &str) -> ClosedItem {
 
 fn close_capture_request(key: &str) -> live::CloseCaptureRequest {
     live::CloseCaptureRequest {
+        failed_terminals: Vec::new(),
         retain_for_reopen: true,
         key: key.to_owned(),
         connection_generation: 0,

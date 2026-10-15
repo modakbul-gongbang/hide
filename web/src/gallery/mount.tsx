@@ -4,6 +4,7 @@ import { Gallery, GalleryFrame } from "./Gallery";
 import { CmdkScene, cmdkSceneParams } from "./CmdkScene";
 import { GALLERY, type Section } from "./manifest";
 import { ServerSessionScene } from "./ServerSessionScene";
+import { RightLaneScene, rightLaneSceneParams } from "./RightLaneScene";
 import { sceneParams, SidebarScene } from "./SidebarScene";
 import { AreaFocusScene } from "./AreaFocusScene";
 import { OnboardingScene, onboardingSceneParams } from "./OnboardingScene";
@@ -11,12 +12,36 @@ import { FactoryScene, factorySceneParams } from "./FactoryScene";
 import { SessionWorkflowScene } from "./SessionWorkflowScene";
 import { CoreMoveScene, coreMoveSceneParams } from "./CoreMoveScene";
 import { NodeProjectScene, nodeProjectSceneParams } from "./NodeProjectScene";
+import { LandingScene, landingSceneParams } from "./LandingScene";
 import { MemoryScene, memorySceneParams } from "./MemoryScene";
+import { UsageScene } from "./UsageScene";
+import { ProjectSettingsScene } from "./ProjectSettingsScene";
+import { SessionWorkScene } from "./SessionWorkScene";
+import { PALETTE_HIDE_CLASS } from "../theme";
 
 export function mountGallery(root: Root) {
+  // The gallery draws Neutral, the palette every Pen frame it is compared with
+  // draws (hide-color-theme D-10), though it shares the page whose first paint is Hide.
+  document.documentElement.classList.remove(PALETTE_HIDE_CLASS);
   const params = new URLSearchParams(window.location.search);
   const scene = params.get("scene");
   if (scene !== null) {
+    if (scene === "project-settings") {
+      root.render(<StrictMode><ProjectSettingsScene params={params} /></StrictMode>);
+      return;
+    }
+    if (scene === "session-record") {
+      root.render(<StrictMode><SessionWorkScene params={params} /></StrictMode>);
+      return;
+    }
+    if (scene === "usage" || scene === "usage-history") {
+      if (scene === "usage-history") {
+        params.set("surface", "history-year");
+        params.set("history", params.get("history") ?? (params.get("content") === "long" ? "unpriced" : "reference"));
+      }
+      root.render(<StrictMode><UsageScene params={params} /></StrictMode>);
+      return;
+    }
     if (scene === "session-panel" || scene === "pane-header") {
       root.render(<StrictMode><SessionWorkflowScene scene={scene} {...sceneParams(params)} /></StrictMode>);
       return;
@@ -30,6 +55,11 @@ export function mountGallery(root: Root) {
       root.render(<StrictMode><ServerSessionScene scene={scene} {...sceneParams(params)}/></StrictMode>);
       return;
     }
+    if (scene === "right-lane") {
+      document.title = "hide · Right lane scene";
+      root.render(<StrictMode><RightLaneScene {...rightLaneSceneParams(params)} /></StrictMode>);
+      return;
+    }
     if (scene === "onboarding") {
       document.title = "hide · First run scene";
       root.render(<StrictMode><OnboardingScene {...onboardingSceneParams(params)} /></StrictMode>);
@@ -38,6 +68,11 @@ export function mountGallery(root: Root) {
     if (scene === "search-palette") {
       document.title = "hide · ⌘K scene";
       root.render(<StrictMode><CmdkScene {...cmdkSceneParams(params)} /></StrictMode>);
+      return;
+    }
+    if (scene === "landing") {
+      document.title = "hide · Landing shots scene";
+      root.render(<StrictMode><LandingScene {...landingSceneParams(params)} /></StrictMode>);
       return;
     }
     if (scene === "memory") {
@@ -60,11 +95,11 @@ export function mountGallery(root: Root) {
       root.render(<StrictMode><NodeProjectScene {...nodeProjectSceneParams(params)} /></StrictMode>);
       return;
     }
-    if (scene !== "projects-sidebar") throw new Error(`Unknown gallery scene ${scene}`);
+    if (scene !== "projects-sidebar" && scene !== "sidebar-status-axis") throw new Error(`Unknown gallery scene ${scene}`);
     document.title = "hide · Projects sidebar scene";
     root.render(
       <StrictMode>
-        <SidebarScene {...sceneParams(params)} />
+        <SidebarScene {...sceneParams(params)} axis={scene === "sidebar-status-axis"} />
       </StrictMode>,
     );
     return;

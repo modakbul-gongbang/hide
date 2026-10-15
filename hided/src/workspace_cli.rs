@@ -85,6 +85,17 @@ impl<'a> Credential<'a> {
         })
     }
 
+    /// What a request on this credential does once its answer is in: a
+    /// named reference is persistent and is claimed, a one-shot one ends
+    /// with its connection.
+    fn after_answer(&self) -> AfterAnswer {
+        if self.named {
+            AfterAnswer::Claim
+        } else {
+            AfterAnswer::Close
+        }
+    }
+
     /// Replaces a named reference the daemon no longer holds with a bare
     /// one-shot bootstrap. False when `reason` does not say the reference is
     /// gone or the credential was already bootstrapped, so a request retries
@@ -103,13 +114,28 @@ impl<'a> Credential<'a> {
     /// credential check) or, as a lost claim acknowledgement, after a read;
     /// a lost claim after an action keeps its result, so the second run
     /// never repeats an applied action.
-    fn run<T>(&mut self, mut request: impl FnMut(&Path) -> Result<T, String>) -> Result<T, String> {
-        match request(&self.path) {
-            Err(reason) if self.renew(&reason)? => request(&self.path),
+    fn run<T>(
+        &mut self,
+        mut request: impl FnMut(&Path, AfterAnswer) -> Result<T, String>,
+    ) -> Result<T, String> {
+        match request(&self.path, self.after_answer()) {
+            Err(reason) if self.renew(&reason)? => request(&self.path, self.after_answer()),
             outcome => outcome,
         }
         .map_err(reported)
     }
+}
+
+/// What a request does with its credential once the daemon answered.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AfterAnswer {
+    /// Claims it: a persistent reference (`HIDE_CAP_REF`) outlives its
+    /// unclaimed period only once a command acknowledged an answer with it.
+    Claim,
+    /// Closes the connection: the daemon revokes a one-shot reference's
+    /// token when that connection ends and the command removes its file, so
+    /// a claim would be one more round trip for a token about to go.
+    Close,
 }
 
 /// No daemon listens where the reference points, before anything was sent:
@@ -187,11 +213,11 @@ fn bootstrap_remote(env: &Env, request: &Value) -> Result<Option<PathBuf>, Strin
     )
 }
 
-fn bootstrap_bridges(bridge_dir: &Path, request: &Value) -> Result<Option<PathBuf>, String> {
+fn live_bridges(bridge_dir: &Path) -> Result<Vec<LocalStream>, String> {
     let bridge_dir = bridge_dir.to_path_buf();
     let metadata = match fs::symlink_metadata(&bridge_dir) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(_) => return Err("bridge_unavailable".to_owned()),
     };
     if !metadata.is_dir()
@@ -203,12 +229,10 @@ fn bootstrap_bridges(bridge_dir: &Path, request: &Value) -> Result<Option<PathBu
     }
     let entries = match fs::read_dir(&bridge_dir) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(_) => return Err("bridge_unavailable".to_owned()),
     };
-    let mut success = None;
-    let mut reason = None;
-    let mut seen = 0;
+    let mut streams = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|_| "bridge_unavailable".to_owned())?;
         if !entry.file_name().to_string_lossy().starts_with("bridge-") {
@@ -226,13 +250,22 @@ fn bootstrap_bridges(bridge_dir: &Path, request: &Value) -> Result<Option<PathBu
         {
             continue;
         }
-        let Ok(mut stream) = LocalStream::connect(&socket) else {
+        let Ok(stream) = LocalStream::connect(&socket) else {
             continue;
         };
-        seen += 1;
+        streams.push(stream);
+        let seen = streams.len();
         if seen > 16 {
             return Err("bridge_limit".to_owned());
         }
+    }
+    Ok(streams)
+}
+
+fn bootstrap_bridges(bridge_dir: &Path, request: &Value) -> Result<Option<PathBuf>, String> {
+    let mut success = None;
+    let mut reason = None;
+    for mut stream in live_bridges(bridge_dir)? {
         let _ = stream.set_read_timeout(Some(REMOTE_BOOTSTRAP_TIMEOUT));
         // A Windows pipe has no write timeout; the request is one short line.
         let _ = stream.set_write_timeout(Some(REMOTE_BOOTSTRAP_TIMEOUT));
@@ -241,7 +274,7 @@ fn bootstrap_bridges(bridge_dir: &Path, request: &Value) -> Result<Option<PathBu
             continue;
         }
         match read_bootstrap_answer(&mut stream) {
-            Ok(path) if path.starts_with(&bridge_dir) => {
+            Ok(path) if path.starts_with(bridge_dir) => {
                 if success.is_some() {
                     // A bridge may return a persistent reference already held
                     // by a live pane. Ambiguity cannot revoke either holder.
@@ -283,6 +316,12 @@ fn read_reference(path: &Path) -> Result<Reference, String> {
     if bytes.len() > 4096 {
         return Err("invalid_reference".to_owned());
     }
+    // References are written without a flush, so a power loss can leave one
+    // empty: it holds no credential, and reads as gone so a named reference
+    // renews rather than failing every command.
+    if bytes.is_empty() {
+        return Err("credential_expired".to_owned());
+    }
     let reference: Reference =
         serde_json::from_slice(&bytes).map_err(|_| "invalid_reference".to_owned())?;
     if reference.token.len() != 64 || !reference.token.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -299,17 +338,22 @@ fn read_reference(path: &Path) -> Result<Reference, String> {
 }
 
 pub fn request(credential: &mut Credential, query: &str) -> Result<Value, String> {
-    credential.run(|path| request_query(path, query, None))
+    credential.run(|path, after| request_query(path, query, None, after))
 }
 
 pub fn browser_connect(
     credential: &mut Credential,
     display_id: Option<&str>,
 ) -> Result<Value, String> {
-    credential.run(|path| request_query(path, "browser_connect", display_id))
+    credential.run(|path, after| request_query(path, "browser_connect", display_id, after))
 }
 
-fn request_query(path: &Path, query: &str, display_id: Option<&str>) -> Result<Value, String> {
+fn request_query(
+    path: &Path,
+    query: &str,
+    display_id: Option<&str>,
+    after: AfterAnswer,
+) -> Result<Value, String> {
     let reference = read_reference(path)?;
     let request_id = fresh_request_id()?;
     run_exchange(
@@ -318,6 +362,7 @@ fn request_query(path: &Path, query: &str, display_id: Option<&str>) -> Result<V
         json!({"type":"workspace_query","request_id":request_id,"query":query,"display_id":display_id}),
         &request_id,
         false,
+        after,
     )
 }
 
@@ -326,7 +371,7 @@ pub fn request_links(
     credential: &mut Credential,
     query: &herdr_core::links::query::LinksQuery,
 ) -> Result<Value, String> {
-    credential.run(|path| {
+    credential.run(|path, after| {
         let reference = read_reference(path)?;
         let request_id = fresh_request_id()?;
         run_exchange(
@@ -335,6 +380,7 @@ pub fn request_links(
             json!({"type":"links","request_id":request_id,"query":query}),
             &request_id,
             false,
+            after,
         )
     })
 }
@@ -354,10 +400,13 @@ pub fn request_memory(
         | herdr_core::memory_command::MemoryCommand::Forget { .. }
         | herdr_core::memory_command::MemoryCommand::Undo { .. }
         | herdr_core::memory_command::MemoryCommand::Placed { .. }
-        | herdr_core::memory_command::MemoryCommand::Outdated { .. } => (true, TIMEOUT),
+        | herdr_core::memory_command::MemoryCommand::Building { .. }
+        | herdr_core::memory_command::MemoryCommand::Unbuilt { .. }
+        | herdr_core::memory_command::MemoryCommand::Outdated { .. }
+        | herdr_core::memory_command::MemoryCommand::Skipped { .. } => (true, TIMEOUT),
         herdr_core::memory_command::MemoryCommand::Search { .. } => (false, TIMEOUT),
     };
-    credential.run(|path| {
+    credential.run(|path, after| {
         let reference = read_reference(path)?;
         let request_id = fresh_request_id()?;
         run_exchange_within(
@@ -367,6 +416,7 @@ pub fn request_memory(
             &request_id,
             action,
             timeout,
+            after,
         )
     })
 }
@@ -389,7 +439,7 @@ pub fn request_delivery(
         } => REMOTE_SPAWN_TIMEOUT,
         _ => TIMEOUT,
     };
-    credential.run(|path| {
+    credential.run(|path, after| {
         let reference = read_reference(path)?;
         let request_id = fresh_request_id()?;
         run_exchange_within(
@@ -401,6 +451,7 @@ pub fn request_delivery(
             &request_id,
             true,
             timeout,
+            after,
         )
     })
 }
@@ -412,7 +463,7 @@ pub fn request_factory(
     command: &hide_factory::Command,
     hint: Option<&str>,
 ) -> Result<Value, String> {
-    credential.run(|path| {
+    credential.run(|path, after| {
         let reference = read_reference(path)?;
         let request_id = fresh_request_id()?;
         run_exchange_within(
@@ -424,6 +475,7 @@ pub fn request_factory(
             &request_id,
             true,
             FACTORY_TIMEOUT,
+            after,
         )
     })
 }
@@ -455,9 +507,11 @@ pub fn request_factory_question_guard(
         )
         .await
         .map_err(|_| "factory_guard_expired".to_owned())??;
-        tokio::time::timeout_at(deadline, claim(&mut socket, path))
-            .await
-            .map_err(|_| "factory_guard_expired".to_owned())??;
+        if credential.after_answer() == AfterAnswer::Claim {
+            tokio::time::timeout_at(deadline, claim(&mut socket, path))
+                .await
+                .map_err(|_| "factory_guard_expired".to_owned())??;
+        }
         Ok(value)
     })
 }
@@ -465,9 +519,6 @@ pub fn request_factory_question_guard(
 /// How long `hide workspace memory` waits for the core's answer: the hook
 /// that runs it waits 1,250 ms in all, process start included.
 const MEMORY_WITHIN: Duration = Duration::from_millis(1_200);
-/// The largest request the daemon reads from a pane credential.
-const SCOPED_REQUEST_LIMIT: usize = 16 * 1024;
-
 /// The prompt a hook piped in: at most
 /// `herdr_core::memory_hook::PROMPT_LIMIT_BYTES`, its valid UTF-8 start.
 pub fn read_memory_prompt(input: impl std::io::Read) -> Result<String, String> {
@@ -491,41 +542,165 @@ pub fn read_memory_prompt(input: impl std::io::Read) -> Result<String, String> {
 /// A hook's Project Memory from the core (`hide workspace memory`). A prompt
 /// whose escaping would carry the request past what the daemon reads is cut
 /// until it fits.
-pub fn request_memory_hook(credential: &Credential, mut ask: Value) -> Result<Value, String> {
-    let path = &credential.path;
-    let reference = read_reference(path)?;
+pub fn request_memory_hook(env: &Env, mut ask: Value) -> Result<Value, String> {
+    ask["kind"] = json!("memory");
+    let command = serde_json::from_value(ask).map_err(|_| "invalid_request".to_owned())?;
+    request_hook(env, command)
+}
+
+/// Hook reads always use the bootstrap service. Choosing a route happens
+/// before sending; neither a refusal nor a lost answer retries the command.
+pub fn request_hook(
+    env: &Env,
+    mut command: hide_node_link::panes::HookCommand,
+) -> Result<Value, String> {
+    use hide_node_link::panes::{HOOK_REQUEST_LIMIT, HookCommand, HookRequest};
+    let started = std::time::Instant::now();
+    let timeout = if matches!(command, HookCommand::Memory { .. }) {
+        MEMORY_WITHIN
+    } else {
+        TIMEOUT
+    };
     let request_id = fresh_request_id()?;
-    ask["type"] = json!("memory_hook");
-    ask["request_id"] = json!(request_id);
-    while ask.to_string().len() > SCOPED_REQUEST_LIMIT {
-        let Some(prompt) = ask["prompt"].as_str().filter(|prompt| !prompt.is_empty()) else {
-            return Err("memory_request_too_large".to_owned());
+    let named = match std::env::var(crate::env::HIDE_CAP_REF) {
+        Ok(path) if path.is_empty() => return Err("invalid_reference".to_owned()),
+        Ok(path) => match read_reference(Path::new(&path)) {
+            Ok(reference) => Some((PathBuf::from(path), reference)),
+            Err(reason) if reason == "credential_expired" => {
+                herdr_core::diagnostic!(json!({
+                    "component": "workspace_cli",
+                    "kind": "hook.reference_missing",
+                    "request_id": request_id,
+                    "pane_id": env.pane_id,
+                }));
+                None
+            }
+            Err(reason) => return Err(reason),
+        },
+        Err(_) => None,
+    };
+    let selected = match &named {
+        Some((
+            _,
+            Reference {
+                route: Route::Node { socket },
+                ..
+            },
+        )) => LocalStream::connect(&node_socket(socket).ok_or("invalid_reference")?)
+            .map_err(|_| "hide_unavailable".to_owned()),
+        _ => {
+            let state = named
+                .as_ref()
+                .and_then(|(path, _)| path.parent().and_then(Path::parent))
+                .unwrap_or(&env.state_dir);
+            crate::pane_auth::bootstrap_socket_path(state).and_then(|socket| {
+                LocalStream::connect(&socket).map_err(|_| "hide_unavailable".to_owned())
+            })
+        }
+    };
+    let mut stream = match selected {
+        Ok(stream) => stream,
+        Err(_) => {
+            let mut bridges = live_bridges(&hide_kit::layout::workspace_bridges(&env.state_dir))?;
+            if bridges.len() > 1 {
+                return Err("ambiguous_pane".to_owned());
+            }
+            bridges.pop().ok_or("hide_unavailable")?
+        }
+    };
+    let mut nonce = [0u8; 16];
+    getrandom::getrandom(&mut nonce).map_err(|_| "reference_unavailable".to_owned())?;
+    let token = named.map(|(_, reference)| reference.token);
+    let line = loop {
+        let hook = HookRequest {
+            request_id: request_id.clone(),
+            command: command.clone(),
+            token: token.clone(),
         };
-        let cut = herdr_core::memory_hook::prefix(prompt, prompt.len() / 2).to_owned();
-        ask["prompt"] = json!(cut);
+        let request = json!({"pane_id":env.pane_id.as_deref().unwrap_or(""),"nonce":hex::encode(nonce),"one_shot":command.one_shot(),"hook":hook});
+        let line = request.to_string();
+        if line.len() < HOOK_REQUEST_LIMIT {
+            break line;
+        }
+        let HookCommand::Memory { prompt, .. } = &mut command else {
+            return Err("invalid_request".to_owned());
+        };
+        if prompt.is_empty() {
+            return Err("memory_request_too_large".to_owned());
+        }
+        *prompt = herdr_core::memory_hook::prefix(prompt, prompt.len() / 2).to_owned();
+    };
+    let remaining = || {
+        timeout
+            .checked_sub(started.elapsed())
+            .filter(|left| !left.is_zero())
+    };
+    let line = format!("{line}\n");
+    let mut pending = line.as_bytes();
+    while !pending.is_empty() {
+        let within = remaining().ok_or("request_timeout")?;
+        stream
+            .set_write_timeout(Some(within))
+            .map_err(|_| "hide_unavailable")?;
+        let written = stream.write(pending).map_err(|_| "hide_unavailable")?;
+        if written == 0 {
+            return Err("hide_unavailable".to_owned());
+        }
+        pending = &pending[written..];
     }
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|_| "request_unavailable".to_owned())?;
-    runtime.block_on(async {
-        let deadline = tokio::time::Instant::now() + MEMORY_WITHIN;
-        let (value, mut socket) = tokio::time::timeout_at(
-            deadline,
-            exchange_response_with_limit(&reference, ask, &request_id, Some(64 * 1024)),
-        )
-        .await
-        .map_err(|_| "memory_deadline".to_owned())??;
-        tokio::time::timeout_at(deadline, claim(&mut socket, path))
-            .await
-            .map_err(|_| "memory_deadline".to_owned())??;
-        Ok(value)
-    })
+    let line = read_hook_line(
+        |within, bytes| {
+            stream.set_read_timeout(Some(within))?;
+            stream.read(bytes)
+        },
+        remaining,
+    )?;
+    let answer: Value = serde_json::from_str(&line).map_err(|_| "invalid_response")?;
+    if answer["ok"] == true && answer["request_id"] != request_id {
+        return Err("invalid_response".to_owned());
+    }
+    Ok(answer)
+}
+
+/// Each blocking read gets only the time left in the original request.
+/// The clock is supplied so a trickling peer's deadline is tested without
+/// sleeping or making a scheduler speed assertion.
+fn read_hook_line(
+    mut read: impl FnMut(Duration, &mut [u8]) -> std::io::Result<usize>,
+    mut remaining: impl FnMut() -> Option<Duration>,
+) -> Result<String, String> {
+    use hide_node_link::panes::HOOK_RESPONSE_LIMIT;
+    let mut answer = Vec::new();
+    let mut chunk = [0; 4096];
+    loop {
+        let within = remaining()
+            .filter(|left| !left.is_zero())
+            .ok_or("request_timeout")?;
+        let read = read(within, &mut chunk).map_err(|_| "request_timeout")?;
+        remaining()
+            .filter(|left| !left.is_zero())
+            .ok_or("request_timeout")?;
+        if read == 0 {
+            return Err("invalid_response".to_owned());
+        }
+        let end = chunk[..read]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map(|at| at + 1);
+        answer.extend_from_slice(&chunk[..end.unwrap_or(read)]);
+        if answer.len() > HOOK_RESPONSE_LIMIT {
+            return Err("invalid_response".to_owned());
+        }
+        if end.is_some() {
+            return String::from_utf8(answer).map_err(|_| "invalid_response".to_owned());
+        }
+    }
 }
 
 /// The relay socket for one `hide browser` page command: the same scoped
-/// handshake and claim as every Workspace request, after which the socket
-/// carries CDP frames to the caller's display. A refusal keeps the daemon's
+/// handshake as every Workspace request and a claim whatever the credential,
+/// since the daemon starts the relay only for a claimed one, after which the
+/// socket carries CDP frames to the caller's display. A refusal keeps the daemon's
 /// reason and next action.
 /// The relay socket, and whether the display is its area's selected View.
 pub(crate) async fn browser_relay(
@@ -623,7 +798,7 @@ pub fn request_action(
     if !valid_request_id(request_id) {
         return Err("invalid_request_id".to_owned());
     }
-    credential.run(|path| {
+    credential.run(|path, after| {
         let reference = read_reference(path)?;
         run_exchange(
             path,
@@ -631,6 +806,7 @@ pub fn request_action(
             json!({"type":"workspace_action","request_id":request_id,"command":&action}),
             request_id,
             true,
+            after,
         )
     })
 }
@@ -663,8 +839,9 @@ fn run_exchange(
     payload: Value,
     request_id: &str,
     action: bool,
+    after: AfterAnswer,
 ) -> Result<Value, String> {
-    run_exchange_within(path, reference, payload, request_id, action, TIMEOUT)
+    run_exchange_within(path, reference, payload, request_id, action, TIMEOUT, after)
 }
 
 fn run_exchange_within(
@@ -674,6 +851,7 @@ fn run_exchange_within(
     request_id: &str,
     action: bool,
     timeout: Duration,
+    after: AfterAnswer,
 ) -> Result<Value, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -684,6 +862,10 @@ fn run_exchange_within(
             .await
             .map_err(|_| "request_timeout".to_owned())?
     })?;
+    // The answer is in; a one-shot credential's connection ends here.
+    if after == AfterAnswer::Close {
+        return Ok(value);
+    }
     let claimed = runtime.block_on(async {
         tokio::time::timeout(Duration::from_secs(2), claim(&mut socket, path))
             .await
@@ -739,7 +921,10 @@ async fn connect_with_limit(
             let request = "ws://node/ws"
                 .into_client_request()
                 .map_err(|_| "hide_unavailable".to_owned())?;
-            (request, Box::pin(node_stream(&socket)?))
+            (
+                request,
+                Box::pin(node_stream(&socket, Some(&reference.token))?),
+            )
         }
     };
     let config = response_limit.map(|limit| {
@@ -765,14 +950,15 @@ fn node_socket(wire: &str) -> Option<PathBuf> {
 /// async stream. The node's local stream blocks, so two threads move its
 /// bytes through an in-memory pipe; each ends when its side does, and the
 /// first to end closes the node's stream, which ends the other.
-fn node_stream(socket: &Path) -> Result<tokio::io::DuplexStream, String> {
+fn node_stream(socket: &Path, token: Option<&str>) -> Result<tokio::io::DuplexStream, String> {
     let stream = LocalStream::connect(socket).map_err(|_| UNREACHABLE.to_owned())?;
     let _ = stream.set_write_timeout(Some(TIMEOUT));
     stream
         .set_read_timeout(None)
         .map_err(|_| "hide_unavailable".to_owned())?;
     let mut writer = stream.duplicate();
-    writeln!(writer, "{}", json!({"stream": true})).map_err(|_| UNREACHABLE.to_owned())?;
+    writeln!(writer, "{}", json!({"stream": true, "token": token}))
+        .map_err(|_| UNREACHABLE.to_owned())?;
     let (ours, theirs) = tokio::io::duplex(hide_node_link::panes::MAX_CHUNK);
     let (mut outgoing, mut incoming) = tokio::io::split(theirs);
     let runtime = tokio::runtime::Handle::current();
@@ -907,7 +1093,44 @@ async fn claim(socket: &mut WorkspaceSocket, path: &Path) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc;
+    use std::sync::{Arc, mpsc};
+
+    #[test]
+    fn a_trickling_hook_response_cannot_renew_the_request_deadline() {
+        use std::cell::Cell;
+        let elapsed = Cell::new(Duration::ZERO);
+        let mut allowed = Vec::new();
+        let answer = read_hook_line(
+            |within, bytes| {
+                allowed.push(within);
+                elapsed.set(elapsed.get() + Duration::from_secs(4));
+                bytes[0] = b' ';
+                Ok(1)
+            },
+            || Duration::from_secs(10).checked_sub(elapsed.get()),
+        );
+        assert_eq!(answer, Err("request_timeout".to_owned()));
+        assert_eq!(allowed, [10, 6, 2].map(Duration::from_secs));
+    }
+
+    #[test]
+    fn a_hook_response_requires_a_bounded_complete_line() {
+        for (bytes, expected) in [
+            (b"{}\n".to_vec(), Ok("{}\n".to_owned())),
+            (b"{}".to_vec(), Err("invalid_response".to_owned())),
+            (
+                vec![b' '; hide_node_link::panes::HOOK_RESPONSE_LIMIT + 1],
+                Err("invalid_response".to_owned()),
+            ),
+        ] {
+            let mut peer = std::io::Cursor::new(bytes);
+            let answer = read_hook_line(
+                |_, chunk| std::io::Read::read(&mut peer, chunk),
+                || Some(Duration::from_secs(10)),
+            );
+            assert_eq!(answer, expected);
+        }
+    }
 
     // Mode bits widen the file for the refusal.
     #[cfg(unix)]
@@ -933,6 +1156,17 @@ mod tests {
         permissions.set_mode(0o644);
         fs::set_permissions(&path, permissions).unwrap();
         assert!(matches!(read_reference(&path), Err(reason) if reason == "invalid_reference"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_empty_reference_reads_as_gone() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("reference.json");
+        fs::write(&path, b"").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(matches!(read_reference(&path), Err(reason) if reason == "credential_expired"));
     }
 
     /// What a node writes up its link, one line at a time.
@@ -1028,7 +1262,7 @@ mod tests {
                 .unwrap();
             let socket = node_socket(&started.socket).unwrap();
             runtime.block_on(async {
-                let mut stream = node_stream(&socket).unwrap();
+                let mut stream = node_stream(&socket, None).unwrap();
                 stream.write_all(b"ping").await.unwrap();
                 let opened = next_event(&lines);
                 assert_eq!(opened["event"], "stream_open");
@@ -1054,6 +1288,125 @@ mod tests {
             panes.stop();
         });
         panes.remove_folder();
+    }
+
+    /// Waits, at most a hang guard's while, until `done` holds.
+    #[allow(clippy::disallowed_methods)] // polls a state the daemon changes on its own task, bounded by a deadline
+    fn until(mut done: impl FnMut() -> bool) -> bool {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !done() {
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        true
+    }
+
+    /// A one-shot command against a running daemon sends no claim and
+    /// writes no claimed marker, and the daemon revokes its token once the
+    /// connection ends; a named reference's command still claims. This
+    /// process stands in for the pane's shell, so every credential stays
+    /// alive until the daemon or the command ends it.
+    #[test]
+    fn a_one_shot_command_is_not_claimed_and_its_token_ends_with_its_connection() {
+        let directory = tempfile::tempdir().unwrap();
+        let env = Env {
+            home: directory.path().to_path_buf(),
+            herdr_socket_path: None,
+            herdr_bin_path: None,
+            state_dir: directory.path().to_path_buf(),
+            legacy_state_dir: None,
+            keep_alive: true,
+            vite_origin: None,
+            bind: "127.0.0.1:0".parse().unwrap(),
+            idle_secs: 600,
+            build: None,
+            starter_program: None,
+            open_command: None,
+            host_helper_root: None,
+            host_cli_dir: None,
+            pane_id: None,
+            tailscale_bin: Some(directory.path().join("no-tailscale")),
+            search_path: None,
+        };
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let running = runtime
+            .block_on(crate::start_daemon(env.clone()))
+            .expect("start daemon");
+        let registry = Arc::clone(&running.pane_capabilities);
+        let shell = i32::try_from(std::process::id()).unwrap();
+        let attestation = crate::pane_auth::Attestation::pane(
+            "w1:p1",
+            herdr_core::workspace_control::Context {
+                device_id: "local".to_owned(),
+                workspace_id: "workspace".to_owned(),
+                checkout_id: "checkout".to_owned(),
+                checkout_path: "/checkout".to_owned(),
+            },
+            shell,
+        );
+        let holder = (shell, hide_node::pane_proof::process_start(shell).unwrap());
+        let issue = |nonce: char, holder: Option<(i32, u64)>| {
+            let (path, _) = registry
+                .issue(
+                    &attestation,
+                    &nonce.to_string().repeat(32),
+                    running.port,
+                    holder,
+                )
+                .unwrap();
+            let token = read_reference(&path).unwrap().token;
+            (path, token)
+        };
+        let one_shot = |path: &Path| Credential {
+            env: &env,
+            path: path.to_path_buf(),
+            named: false,
+            _one_shot: Some(OneShotReference(path.to_path_buf())),
+        };
+        // This daemon has no Herdr to read the pane from, so each command is
+        // answered with that refusal; what follows an answer is the same.
+        let answered = |credential: &mut Credential| {
+            let answer = request(credential, "info").unwrap();
+            assert_eq!(answer["reason"], "pane_unavailable", "{answer}");
+        };
+
+        // A one-shot credential as a bare command bootstraps it: the daemon
+        // ends the token with the connection.
+        let (path, token) = issue('1', Some(holder));
+        let mut credential = one_shot(&path);
+        answered(&mut credential);
+        assert!(
+            until(|| registry.get(&token).is_none()),
+            "the daemon kept a one-shot token past its connection"
+        );
+        drop(credential);
+        assert!(!path.exists());
+
+        // The same command on a token the daemon would keep: it sends no
+        // claim, so neither side records one.
+        let (path, token) = issue('2', None);
+        let mut credential = one_shot(&path);
+        answered(&mut credential);
+        assert!(!path.with_extension("claimed").exists());
+        assert_eq!(registry.claimed(&token), Some(false));
+        drop(credential);
+
+        // A named reference is persistent, and its command claims it.
+        let (path, token) = issue('3', None);
+        let mut credential = Credential::named(&env, path.clone());
+        answered(&mut credential);
+        assert!(path.with_extension("claimed").is_file());
+        assert_eq!(registry.claimed(&token), Some(true));
+
+        running.stop();
+        drop(running);
+        drop(runtime);
     }
 
     #[test]
@@ -1100,6 +1453,7 @@ mod tests {
             json!({"type":"workspace_action","request_id":"1-retry"}),
             "1-retry",
             true,
+            AfterAnswer::Claim,
         )
         .unwrap();
         assert_eq!(answer["result"]["view_id"], "view-1");

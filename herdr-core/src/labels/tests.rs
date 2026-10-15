@@ -27,6 +27,7 @@ use crate::sidebar::{AgentLabel, SessionSnapshotPayload};
 /// A provider that answers from a queue and can hold an answer back.
 struct Scripted {
     answers: Mutex<VecDeque<Value>>,
+    inputs: Mutex<Vec<String>>,
     calls: AtomicUsize,
     /// How many of the next requests run out of time.
     timeouts: AtomicUsize,
@@ -39,6 +40,7 @@ impl Scripted {
     fn new() -> Arc<Self> {
         Arc::new(Self {
             answers: Mutex::new(VecDeque::new()),
+            inputs: Mutex::new(Vec::new()),
             calls: AtomicUsize::new(0),
             timeouts: AtomicUsize::new(0),
             held: Mutex::new(false),
@@ -57,6 +59,7 @@ impl Scripted {
         };
         self.answers.lock().unwrap().push_back(json!({
             "goal": goal, "goal_changed": true, "line": line, "end": end,
+            "work":{"task":{"kind":"none"},"missed":[],"resolved":[],"output_task_id":null},
         }));
     }
 
@@ -95,7 +98,8 @@ impl AiBackend for Scripted {
     fn models(&self) -> ModelCatalog {
         ModelCatalog::Offered(vec!["fixture".to_owned()])
     }
-    fn execute(&self, _: &AiRequest, cancel: &CancelToken) -> Result<AiResponse, AiError> {
+    fn execute(&self, request: &AiRequest, cancel: &CancelToken) -> Result<AiResponse, AiError> {
+        self.inputs.lock().unwrap().push(request.input.clone());
         self.calls.fetch_add(1, Ordering::SeqCst);
         if self
             .timeouts
@@ -225,6 +229,17 @@ impl Harness {
         socket_name: &str,
         source: Arc<dyn TranscriptSource>,
     ) -> (LabelWorker, Receiver<()>) {
+        self.spawn_with_ledger(store, target, socket_name, source, Arc::default())
+    }
+
+    fn spawn_with_ledger(
+        &self,
+        store: Arc<LabelStore>,
+        target: &str,
+        socket_name: &str,
+        source: Arc<dyn TranscriptSource>,
+        ledger: Arc<Mutex<Option<crate::links::worker::LinkClient>>>,
+    ) -> (LabelWorker, Receiver<()>) {
         let (wake, woken) = channel();
         let wake = Mutex::new(wake);
         let worker = LabelWorker::spawn(
@@ -241,6 +256,7 @@ impl Harness {
                     herdr_socket: Some(self.locks.path().join(socket_name).display().to_string()),
                 },
                 input: Arc::clone(&self.input),
+                ledger,
             },
             store,
             Arc::clone(&self.analyzer),
@@ -349,6 +365,129 @@ fn task(label: Option<AgentLabel>) -> Option<String> {
 }
 
 #[test]
+fn an_opencode_refusal_recovers_native_proof_without_another_state_report() {
+    let harness = Harness::new();
+    let directory = harness.home.path().join(".local/share/opencode");
+    std::fs::create_dir_all(&directory).unwrap();
+    let connection = rusqlite::Connection::open(directory.join("opencode.db")).unwrap();
+    connection
+        .execute_batch(include_str!(
+            "../../../hide-session/tests/fixtures/adapters/opencode-1.18.30/opencode.sql"
+        ))
+        .unwrap();
+    drop(connection);
+    let journal = directory.join("opencode.db-journal");
+    std::fs::write(&journal, b"unfinished native transaction").unwrap();
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let observed = ObservedAgent {
+        pane_id: "w1:p1".into(),
+        agent: Some("opencode".into()),
+        status: Some("idle".into()),
+        reference: Some(("id".into(), "ses_0a1b2c3d4e5f60718293a4b5c6".into())),
+        cwd: Some("/work/app".into()),
+        state_change_seq: 1,
+    };
+    observe(&mut worker, &observed);
+    settle(&mut worker, &woken);
+    assert!(
+        shown_facts(&worker, &observed)
+            .and_then(|facts| facts.native_session_id)
+            .is_none()
+    );
+    assert_eq!(source.reads.load(Ordering::SeqCst), 1);
+    std::fs::remove_file(journal).unwrap();
+    worker.tick(Instant::now() + Duration::from_secs(5));
+    assert_eq!(
+        source.reads.load(Ordering::SeqCst),
+        1,
+        "no immediate retry loop"
+    );
+    worker.tick(Instant::now() + Duration::from_secs(16));
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        shown_facts(&worker, &observed)
+            .and_then(|facts| facts.native_session_id)
+            .as_deref(),
+        Some("ses_0a1b2c3d4e5f60718293a4b5c6")
+    );
+    assert_eq!(harness.backend.calls(), 0);
+}
+
+#[test]
+fn an_opencode_transaction_keeps_proof_and_caps_its_pending_reread() {
+    let harness = Harness::new();
+    let directory = harness.home.path().join(".local/share/opencode");
+    std::fs::create_dir_all(&directory).unwrap();
+    let connection = rusqlite::Connection::open(directory.join("opencode.db")).unwrap();
+    connection
+        .execute_batch(include_str!(
+            "../../../hide-session/tests/fixtures/adapters/opencode-1.18.30/opencode.sql"
+        ))
+        .unwrap();
+    drop(connection);
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let mut observed = ObservedAgent {
+        pane_id: "w1:p1".into(),
+        agent: Some("opencode".into()),
+        status: Some("idle".into()),
+        reference: Some(("id".into(), "ses_0a1b2c3d4e5f60718293a4b5c6".into())),
+        cwd: Some("/work/app".into()),
+        state_change_seq: 1,
+    };
+    observe(&mut worker, &observed);
+    settle(&mut worker, &woken);
+    let proven = shown_facts(&worker, &observed).unwrap().native_session_id;
+    assert!(proven.is_some());
+    let journal = directory.join("opencode.db-journal");
+    std::fs::write(&journal, b"unfinished native transaction").unwrap();
+    observed.state_change_seq += 1;
+    observe(&mut worker, &observed);
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        shown_facts(&worker, &observed).unwrap().native_session_id,
+        proven
+    );
+    worker.tick(Instant::now() + Duration::from_secs(16));
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 3);
+    assert_eq!(
+        shown_facts(&worker, &observed).unwrap().native_session_id,
+        proven
+    );
+    worker.tick(Instant::now() + Duration::from_secs(60));
+    settle(&mut worker, &woken);
+    assert_eq!(
+        source.reads.load(Ordering::SeqCst),
+        3,
+        "one pending reread, then a real state change must wake it"
+    );
+    std::fs::remove_file(journal).unwrap();
+    observed.state_change_seq += 1;
+    observe(&mut worker, &observed);
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 4);
+    assert_eq!(
+        shown_facts(&worker, &observed).unwrap().native_session_id,
+        proven
+    );
+    observed.reference = Some(("id".into(), "ses_other".into()));
+    observed.state_change_seq += 1;
+    observe(&mut worker, &observed);
+    settle(&mut worker, &woken);
+    assert!(
+        shown_facts(&worker, &observed)
+            .and_then(|facts| facts.native_session_id)
+            .is_none(),
+        "proof never transfers to another requested owner"
+    );
+    assert_eq!(harness.backend.calls(), 0);
+}
+
+#[test]
 fn a_titles_only_opencode_session_keeps_its_native_title_and_generated_goal() {
     let harness = Harness::new();
     let directory = harness.home.path().join(".local/share/opencode");
@@ -447,6 +586,73 @@ fn a_finished_turn_is_named_once_and_unchanged_panes_spend_nothing() {
         source.reads.load(Ordering::SeqCst),
         reads,
         "nor reads anything"
+    );
+}
+
+#[test]
+fn an_end_waits_for_parent_authority_after_a_cold_context() {
+    use crate::links::ledger::{LedgerContext, SessionIdentity};
+    let harness = Harness::new();
+    let store = harness.store();
+    let client = crate::links::worker::LinkClient::full_mailbox_for_test();
+    let node: Arc<dyn crate::node_access::NodeLink> = Arc::new(hide_node::Local::new(Some(
+        harness.home.path().to_path_buf(),
+    )));
+    let (mut worker, woken) = harness.spawn_with_ledger(
+        Arc::clone(&store),
+        LOCAL_TARGET,
+        "local.sock",
+        Arc::new(NodeTranscripts::new(Box::new(move || {
+            Ok(Arc::clone(&node))
+        }))),
+        Arc::new(Mutex::new(Some(client.clone()))),
+    );
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[
+            ("user", "CI 확인해줘"),
+            ("assistant", "확인하겠습니다"),
+            (
+                "user",
+                "Hide letter r1 from ci-lead (claude) [request]\nCI 다시 봐줘",
+            ),
+            ("assistant", "확인했습니다"),
+        ],
+    );
+    harness.backend.answer("지속적 통합 확인 작업", "done", "");
+    let idle = agent(&path, "idle", 3);
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        harness.backend.calls(),
+        0,
+        "unknown authority spends no END call"
+    );
+    assert!(
+        store.target(LOCAL_TARGET)["w1:p1"]
+            .analysis_turn_end
+            .is_none()
+    );
+    client.prime_context_for_test(
+        SessionIdentity {
+            device_id: LOCAL_TARGET.into(),
+            agent: "claude".into(),
+            session_id: "native-a".into(),
+        },
+        LedgerContext {
+            parent_name: Some("ci-lead".into()),
+            ..Default::default()
+        },
+    );
+    worker.tick(Instant::now() + Duration::from_secs(1));
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 1);
+    assert!(harness.backend.inputs.lock().unwrap()[0].contains("<work-author>true</work-author>"));
+    assert!(
+        store.target(LOCAL_TARGET)["w1:p1"]
+            .analysis_turn_end
+            .is_some()
     );
 }
 
@@ -822,6 +1028,143 @@ fn a_shutdown_answers_the_running_request_without_recording_it() {
 }
 
 #[test]
+fn a_null_goal_is_valid_but_an_absent_or_invalid_goal_is_not() {
+    use super::analysis::{AnalysisPhase, LabelEnd};
+    use super::context_label::{parse, request};
+    for phase in [AnalysisPhase::TurnStart, AnalysisPhase::TurnEnd] {
+        let mut answer = json!({"goal": null, "goal_changed": false, "line": ""});
+        if phase == AnalysisPhase::TurnEnd {
+            answer["end"] = json!("done");
+            answer["work"] =
+                json!({"task":{"kind":"none"},"missed":[],"resolved":[],"output_task_id":null});
+        }
+        let parsed = parse(phase, answer.clone()).unwrap();
+        assert_eq!(parsed.goal, None);
+        assert_eq!(parsed.line, "");
+        assert_eq!(
+            parsed.end,
+            if phase == AnalysisPhase::TurnStart {
+                LabelEnd::Working
+            } else {
+                LabelEnd::Done
+            }
+        );
+        let schema = request(phase, "pane", "null-goal".into(), "context").output_schema;
+        assert_eq!(
+            schema["properties"]["goal"]["type"],
+            json!(["string", "null"])
+        );
+        answer["goal_changed"] = json!(true);
+        assert!(parse(phase, answer.clone()).is_err());
+        answer["goal_changed"] = json!(false);
+        for invalid in [json!(""), json!("짧음"), json!(42)] {
+            answer["goal"] = invalid;
+            assert!(parse(phase, answer.clone()).is_err());
+        }
+        answer.as_object_mut().unwrap().remove("goal");
+        assert!(
+            parse(phase, answer).is_err(),
+            "null is explicit, not a missing field"
+        );
+    }
+}
+
+#[test]
+fn greetings_keep_the_native_title_until_real_work_sets_a_goal() {
+    let harness = Harness::new();
+    let store = harness.store();
+    let (mut worker, woken, _) = harness.worker(Arc::clone(&store));
+    let greeting = [("user", "안녕하세요"), ("assistant", "안녕하세요!")];
+    let path = harness.session("greeting", "native-greeting", &greeting);
+    {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(file, "{}", json!({"type":"custom-title", "customTitle":"Claude 이름 질문", "sessionId":"native-greeting"})).unwrap();
+    }
+    harness.backend.answers.lock().unwrap().push_back(json!({
+        "goal": null, "goal_changed": false, "line": "", "end": "done",
+        "work":{"task":{"kind":"none"},"missed":[],"resolved":[],"output_task_id":null},
+    }));
+    let idle = agent(&path, "idle", 1);
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    assert_eq!(task(shown(&worker, &idle)), None);
+    assert_eq!(store.target(LOCAL_TARGET)["w1:p1"].goal, None);
+    let mut payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents": [{
+        "pane_id":"w1:p1", "agent":"claude", "agent_status":"idle",
+        "agent_session":{"kind":"path", "value":path},
+    }]}))
+    .unwrap();
+    worker.overlay().apply(&mut payload);
+    let projection = crate::sidebar::project_agents(payload);
+    assert!(projection.excluded.is_empty());
+    assert_eq!(projection.agents[0].identity_label, "Claude 이름 질문");
+
+    let named = [
+        greeting[0],
+        greeting[1],
+        ("user", "너의 이름은 뭐니?"),
+        ("assistant", "저는 Claude입니다."),
+    ];
+    harness.session("greeting", "native-greeting", &named);
+    harness.input.record("w1:p1", turn_at(2) - 300, false);
+    harness.backend.answers.lock().unwrap().push_back(json!({
+        "goal": null, "goal_changed": false, "line": "", "end": "done",
+        "work":{"task":{"kind":"none"},"missed":[],"resolved":[],"output_task_id":null},
+    }));
+    observe(&mut worker, &agent(&path, "idle", 2));
+    settle(&mut worker, &woken);
+    assert_eq!(store.target(LOCAL_TARGET)["w1:p1"].goal, None);
+
+    let working_turn = [
+        named[0],
+        named[1],
+        named[2],
+        named[3],
+        ("user", "로그인 화면 만들어줘"),
+    ];
+    harness.session("greeting", "native-greeting", &working_turn);
+    harness.input.record("w1:p1", turn_at(4) - 300, false);
+    harness.backend.begin("사용자 로그인 화면");
+    let working = agent(&path, "working", 3);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        task(shown(&worker, &working)).as_deref(),
+        Some("사용자 로그인 화면")
+    );
+
+    // A false change flag keeps the goal, while the turn's own answer
+    // still reaches the row even if the provider returned null.
+    let mut completed_turn = working_turn.to_vec();
+    completed_turn.push(("assistant", "배포 환경을 선택해 주세요."));
+    harness.session("greeting", "native-greeting", &completed_turn);
+    harness.backend.answers.lock().unwrap().push_back(json!({
+        "goal": null, "goal_changed": false, "line": "배포 환경을 선택하세요", "end": "question",
+        "work":{"task":{"kind":"none"},"missed":[],"resolved":[],"output_task_id":null},
+    }));
+    let question = agent(&path, "idle", 4);
+    observe(&mut worker, &question);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        store.target(LOCAL_TARGET)["w1:p1"].goal.as_deref(),
+        Some("사용자 로그인 화면")
+    );
+    let record = &store.target(LOCAL_TARGET)["w1:p1"];
+    assert_eq!(record.line, "배포 환경을 선택하세요");
+    assert_eq!(record.end, Some(super::analysis::LabelEnd::Question));
+    let label = shown(&worker, &question).unwrap();
+    assert_eq!(
+        label.expected_reply.as_deref(),
+        Some("배포 환경을 선택하세요")
+    );
+    assert!(label.question);
+}
+
+#[test]
 fn the_providers_answer_is_judged_before_it_is_shown() {
     use super::analysis::{AnalysisPhase, LabelEnd};
     use super::context_label::parse_text;
@@ -920,6 +1263,21 @@ fn each_turn_boundary_is_asked_only_what_it_can_know() {
     assert!(
         !prompt.contains("확실하지 않으면 done"),
         "an unsure stop is unfinished, never done"
+    );
+}
+
+/// Missed work is only what nobody holds once the session closes: a problem
+/// found outside the assigned task or a proposed follow-up. The task's own
+/// remainder is the verdict's, the pull request's and CI's to show.
+#[test]
+fn turn_end_asks_only_for_work_outside_the_assigned_task() {
+    use super::analysis::AnalysisPhase;
+    use super::context_label::request;
+    let end = request(AnalysisPhase::TurnEnd, "pane", "r1".to_owned(), "context");
+    assert_eq!(
+        end.output_schema["properties"]["work"]["properties"]["missed"]["items"]["properties"]["kind"]
+            ["enum"],
+        json!(["problem", "follow_up"])
     );
 }
 
@@ -1883,7 +2241,7 @@ fn an_omp_title_and_question_refresh_without_state_changes_or_repeated_analysis(
         assert_eq!(
             shown_facts(&worker, &current)
                 .unwrap()
-                .native_title
+                .native_custom_title
                 .as_deref(),
             expected
         );
@@ -1947,7 +2305,7 @@ fn an_omp_title_and_question_refresh_without_state_changes_or_repeated_analysis(
     assert_eq!(
         shown_facts(&worker, &current)
             .unwrap()
-            .native_title
+            .native_custom_title
             .as_deref(),
         Some("Fresh title")
     );
@@ -1965,6 +2323,62 @@ fn a_failed_native_reread_revokes_same_reference_authority_until_a_fresh_native_
     for kind in ["pi", "omp"] {
         failed_native_reread(kind);
     }
+}
+
+#[test]
+fn a_legacy_pi_name_is_replaced_and_cleared_by_the_next_native_read() {
+    use std::io::Write;
+    let harness = Harness::new();
+    let cwd = hide_platform::fs::identity::canonical(harness.home.path()).unwrap();
+    let folder = crate::fixture::native_session_folder(harness.home.path(), "pi", &cwd);
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("native.jsonl");
+    std::fs::write(
+        &path,
+        format!(
+            "{}\n{}\n",
+            json!({"type":"session", "version":3, "id":"native-pi", "cwd":cwd}),
+            json!({"type":"session_info", "name":"이전 이름"}),
+        ),
+    )
+    .unwrap();
+    let current = ObservedAgent {
+        agent: Some("pi".into()),
+        cwd: Some(cwd.display().to_string()),
+        ..agent(&path, "idle", 1)
+    };
+    let store = harness.store();
+    let mut facts = super::facts::SessionFacts::default();
+    facts.custom_title = Some("이전 이름".into());
+    store.save_target(
+        LOCAL_TARGET,
+        &std::collections::BTreeMap::from([(
+            current.pane_id.clone(),
+            super::store::PaneRecord {
+                owner: hide_session::label_reference_token("pi", "id", "native-pi"),
+                facts,
+                ..Default::default()
+            },
+        )]),
+    );
+    store.flush();
+    let (mut worker, woken, _) = harness.worker(store);
+    worker.set_summaries(false, Instant::now());
+    for (name, expected) in [("새 이름", Some("새 이름")), ("", None)] {
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(file, "{}", json!({"type":"session_info", "name":name})).unwrap();
+        drop(file);
+        observe(&mut worker, &current);
+        worker.tick(Instant::now() + Duration::from_secs(4));
+        settle(&mut worker, &woken);
+        let facts = shown_facts(&worker, &current).unwrap();
+        assert_eq!(facts.native_title.as_deref(), expected);
+        assert!(facts.native_custom_title.is_none());
+    }
+    assert_eq!(harness.backend.calls(), 0);
 }
 
 fn failed_native_reread(kind: &str) {
@@ -2186,6 +2600,19 @@ fn native_question_snapshot_is_current_without_ai_and_clears_after_answer() {
         (shown["group"].as_str(), shown["demand"].as_str()),
         (Some("needs_you"), Some("question"))
     );
+    // With no Hide AI the row still says what is asked, not just its title.
+    assert_eq!(
+        (
+            shown["detail"].as_str(),
+            shown["status_word_visible"].as_bool(),
+            shown["state"]["ask"]["what"].as_str(),
+        ),
+        (
+            Some("어디에 배포할까요?"),
+            Some(false),
+            Some("어디에 배포할까요?")
+        )
+    );
     assert_eq!(harness.backend.calls(), 0);
     let next = ObservedAgent {
         state_change_seq: 6,
@@ -2219,6 +2646,116 @@ fn native_question_snapshot_is_current_without_ai_and_clears_after_answer() {
     let answered = row(&worker, &next);
     assert!(answered.get("user_turn").is_none());
     assert_eq!(answered["demand"], "none");
+}
+
+/// A native question asked in the middle of a turn: Herdr reads the open
+/// form as blocked while the label still carries the turn start's progress,
+/// and the turn end's verdict takes seconds. The row says what is asked from
+/// the moment the read lands, and the label's reply replaces it once made.
+#[test]
+fn a_native_question_is_the_second_line_until_the_label_says_what_to_reply() {
+    use std::io::Write;
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let path = harness.session(
+        "mid-turn-question",
+        "mid-turn-question",
+        &[("user", "Hide 첫 실행 온보딩 플로우를 도입해줘")],
+    );
+    harness.backend.begin("온보딩 플로우 도입");
+    let working = agent(&path, "working", 4);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+    let row = |worker: &LabelWorker, current: &ObservedAgent| {
+        let (kind, value) = current.reference.as_ref().unwrap();
+        let mut payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[{
+            "pane_id":current.pane_id,"agent":current.agent,"agent_status":current.status,
+            "state_change_seq":current.state_change_seq,"agent_session":{"kind":kind,"value":value}
+        }]}))
+        .unwrap();
+        worker.overlay().apply(&mut payload);
+        serde_json::to_value(crate::sidebar::project_agents(payload).agents.remove(0)).unwrap()
+    };
+    assert_eq!(row(&worker, &working)["detail"], "온보딩 플로우 도입 진행");
+
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    writeln!(
+        file,
+        "{}",
+        json!({"type":"assistant","sessionId":"mid-turn-question",
+        "timestamp":"2026-10-01T00:00:05Z","message":{"role":"assistant","content":[
+        {"type":"text","text":"마법사 구성을 정해야 합니다."},{
+        "type":"tool_use","id":"wizard-call","name":"AskUserQuestion",
+        "input":{"questions":[
+            {"question":"첫 실행 마법사를 몇 단계로 나눌까요? 지금은 세 단계 안과 다섯 단계 안이 있습니다",
+             "options":[{"label":"세 단계"},{"label":"다섯 단계"}]},
+            {"question":"건너뛰기를 둘까요?","options":[{"label":"둔다"},{"label":"두지 않는다"}]}]}}]}})
+    )
+    .unwrap();
+    // The turn end's verdict is still being made while the read lands.
+    harness.backend.hold();
+    let asked = agent(&path, "blocked", 5);
+    observe(&mut worker, &asked);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while row(&worker, &asked).get("user_turn").is_none() {
+        assert!(Instant::now() < deadline, "the question was never read");
+        let _ = woken.recv_timeout(Duration::from_millis(50));
+        worker.drain(Instant::now(), unix_now_ms());
+    }
+    let shown = row(&worker, &asked);
+    assert_eq!(
+        (shown["group"].as_str(), shown["demand"].as_str()),
+        (Some("needs_you"), Some("question"))
+    );
+    // The first question, cut to a reply's forty characters.
+    let question = "첫 실행 마법사를 몇 단계로 나눌까요? 지금은 세 단계 안과 다섯 단계…";
+    assert_eq!(question.chars().count(), 40);
+    assert_eq!(
+        (
+            shown["detail"].as_str(),
+            shown["state"]["ask"]["verb"].as_str(),
+            shown["state"]["ask"]["what"].as_str(),
+            shown["state"]["line"]["text"].as_str(),
+        ),
+        (
+            Some(question),
+            Some("answer"),
+            Some(question),
+            Some(question)
+        )
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while harness.backend.calls() < 2 {
+        assert!(Instant::now() < deadline, "the turn end was never asked");
+        let _ = woken.recv_timeout(Duration::from_millis(50));
+        worker.drain(Instant::now(), unix_now_ms());
+    }
+    harness
+        .backend
+        .answer("온보딩 플로우 도입", "question", "마법사 단계 수 고르기");
+    harness.backend.release();
+    settle(&mut worker, &woken);
+    assert_eq!(row(&worker, &asked)["detail"], "마법사 단계 수 고르기");
+
+    writeln!(
+        file,
+        "{}",
+        json!({"type":"user","sessionId":"mid-turn-question",
+        "timestamp":"2026-10-01T00:00:06Z","message":{"role":"user","content":[{
+        "type":"tool_result","tool_use_id":"wizard-call","content":"세 단계"}]}})
+    )
+    .unwrap();
+    let answered = agent(&path, "working", 6);
+    observe(&mut worker, &answered);
+    settle(&mut worker, &woken);
+    let shown = row(&worker, &answered);
+    assert!(shown.get("user_turn").is_none());
+    assert_eq!(shown["group"], "working");
+    assert_ne!(shown["detail"], question);
 }
 
 #[test]

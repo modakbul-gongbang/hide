@@ -1,8 +1,9 @@
-// Settings, the six tabs and General on an isolated pinned Herdr and hided
-// (PRD settings-cleanup B1-B6, B23, B24): the tab list, General's Appearance,
-// Connections and About with its closed Details, the real Herdr version and
-// protocol of a healthy connection, and the settings that moved into Agents
-// and Hide AI.
+// Settings' list and its General, GitHub and About pages on an isolated
+// pinned Herdr and hided (PRD settings-cleanup B1-B6, B23, B24;
+// settings-left-nav B2-B5, B8, B9, B12, B13): the list in its groups, General's
+// Appearance alone, the GitHub row, About with its closed Details, the real
+// Herdr version and protocol of a healthy connection, and the settings that
+// moved into Agents and Hide AI.
 
 import { expect, test } from "@playwright/test";
 import { startHerdr } from "./herdr-fixture";
@@ -11,7 +12,7 @@ import { enterWorkspace, screenshot } from "./wire";
 
 test.describe.configure({ timeout: 120_000 });
 
-test("Settings has six tabs, and General shows the real Herdr values behind a closed Details", async ({ page }) => {
+test("Settings lists its pages in two groups with About apart, and About shows the real Herdr values behind a closed Details", async ({ page }) => {
   await page.setViewportSize({ width: 1200, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -23,28 +24,70 @@ test("Settings has six tabs, and General shows the real Herdr values behind a cl
     const sheet = page.locator('[data-settings="true"]');
     await expect(sheet).toBeVisible();
 
-    // B1: six tabs in order, none of the old Appearance, Issues or Performance.
-    await expect(sheet.locator("[data-settings-tab]")).toHaveText(["General", "Agents", "Hide AI", "Devices", "Mobile", "Shortcuts"]);
+    // B2: App, then This Mac, each with its pages in order, and About apart at the foot of the list.
+    await expect(sheet.locator('[data-settings-nav-group="app"]')).toHaveText(/^App/);
+    await expect(sheet.locator('[data-settings-nav-group="app"] [data-settings-tab]')).toHaveText(["General", "Notifications", "Usage", "Devices", "Shortcuts"]);
+    await expect(sheet.locator('[data-settings-nav-group="machine"]')).toHaveText(/^This (Mac|PC|computer)/);
+    await expect(sheet.locator('[data-settings-nav-group="machine"] [data-settings-tab]')).toHaveText(["Agents", "Hide AI", "Mobile", "GitHub"]);
+    await expect(sheet.locator("[data-settings-tab]")).toHaveText(["General", "Notifications", "Usage", "Devices", "Shortcuts", "Agents", "Hide AI", "Mobile", "GitHub", "About"]);
+    const tabs = sheet.locator("[data-settings-tab]");
+    const githubBox = (await sheet.locator('[data-settings-tab="github"]').boundingBox())!;
+    const aboutBox = (await sheet.locator('[data-settings-tab="about"]').boundingBox())!;
+    const listBox = (await sheet.locator('[role="tablist"]').boundingBox())!;
+    expect(aboutBox.y - (githubBox.y + githubBox.height)).toBeGreaterThan(githubBox.height);
+    expect(listBox.y + listBox.height - (aboutBox.y + aboutBox.height)).toBeLessThan(aboutBox.height);
+    await expect(tabs.first()).toHaveAttribute("data-state", "active");
 
-    // B2: language, theme, accent and interface text in one group, with no hex value beside the accent.
+    // B3, B4: Down moves through the list and shows each page under its title alone; a group name is never a stop.
+    await tabs.first().focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(sheet.locator('[data-settings-tab="notifications"]')).toBeFocused();
+    await expect(sheet.locator('[data-settings-tab="notifications"]')).toHaveAttribute("data-state", "active");
+    await expect(sheet.locator("[data-settings-page-title]")).toHaveText("Notifications");
+    for (const next of ["usage", "devices", "shortcuts", "agents"]) {
+      await page.keyboard.press("ArrowDown");
+      await expect(sheet.locator(`[data-settings-tab="${next}"]`)).toHaveAttribute("data-state", "active");
+    }
+    await page.keyboard.press("ArrowUp");
+    await expect(sheet.locator('[data-settings-tab="shortcuts"]')).toBeFocused();
+    await expect(sheet.locator("[data-settings-page-title]")).toHaveText("Shortcuts");
+    await sheet.locator('[data-settings-tab="general"]').click();
+
+    // B5: General is Appearance alone: language, theme, accent and interface text, with no hex value beside the accent.
     const appearance = sheet.locator('[data-settings-group="appearance"]');
+    await expect(sheet.locator("[data-settings-page] [data-settings-group]")).toHaveCount(1);
     await expect(appearance.locator("[data-interface-language]")).toBeVisible();
     await expect(appearance.locator("[data-theme-choice]")).toBeVisible();
     await expect(appearance.locator("[data-accent]")).toHaveCount(4);
     await expect(appearance.locator("[data-font-size]")).toBeVisible();
     await expect(appearance).not.toContainText(/#[0-9a-f]{6}/i);
+    // hide-color-theme B1, B2, B6: Color theme sits between Language and Mode,
+    // offers Hide and Neutral, and a store that never chose opens on Hide.
+    expect(await appearance.locator("[data-appearance-row]").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-appearance-row")))).toEqual([
+      "language",
+      "color-theme",
+      "mode",
+      "accent",
+      "interface-text",
+    ]);
+    await expect(appearance.locator("[data-color-theme-option]")).toHaveText(["Hide", "Neutral"]);
+    await expect(appearance.locator("[data-color-theme-choice]")).toHaveAttribute("data-color-theme-choice", "hide");
+    await expect(appearance.locator('[data-appearance-row="mode"]')).toContainText("Mode");
 
-    // B3: the GitHub connection is here, and there is no Local row.
-    const connections = sheet.locator('[data-settings-group="connections"]');
-    await expect(connections).toContainText("GitHub");
-    await expect(connections).not.toContainText("Always available");
-
-    // B6: no ownership sentence and no Authentication paragraph, and no device chip on this Mac.
+    // B6 (settings-cleanup): no ownership sentence and no Authentication paragraph, and no device chip on this Mac.
     await expect(sheet).not.toContainText("kept by hided");
     await expect(sheet).not.toContainText("Authentication");
     await expect(sheet.locator("[data-settings-device]")).toHaveCount(0);
 
-    // B4: Details is closed until opened, and then holds the runtime facts.
+    // B8: the GitHub row has a page of its own, with no Local row.
+    await sheet.locator('[data-settings-tab="github"]').click();
+    const github = sheet.locator('[data-settings-group="github"]');
+    await expect(github).toContainText("GitHub");
+    await expect(github).not.toContainText("Always available");
+
+    // B9: About's Details is closed until opened, and then holds the runtime facts.
+    await sheet.locator('[data-settings-tab="about"]').click();
+    await expect(sheet.locator("[data-settings-page-title]")).toHaveText("About");
     const details = sheet.locator("[data-settings-details]");
     await expect(details).not.toHaveAttribute("open", "");
     await expect(details.getByText("Protocol")).toBeHidden();
@@ -52,12 +95,12 @@ test("Settings has six tabs, and General shows the real Herdr values behind a cl
     await expect(details).toHaveAttribute("open", "");
     for (const label of ["Process", "State file", "Socket", "Binary", "Recent"]) await expect(details.getByText(label, { exact: true })).toBeVisible();
 
-    // B5: a healthy Herdr shows its real version and protocol, never "unavailable".
+    // A healthy Herdr shows its real version and protocol, never "unavailable".
     await expect(details.locator("[data-herdr-version]")).toHaveText(/^\d+\.\d+\.\d+/);
     await expect(details.locator("[data-herdr-protocol]")).toHaveAttribute("data-herdr-protocol", "matches");
     await expect(details.locator("[data-herdr-protocol]")).toHaveText(/^\d+$/);
     await expect(sheet.locator('[data-settings-group="about"] [data-herdr-state="connected"]')).toContainText(/Connected · \d+\.\d+\.\d+/);
-    await screenshot(page, "settings-general-dark");
+    await screenshot(page, "settings-about-dark");
   } finally {
     daemon?.stop();
     herdr.stop();
@@ -105,9 +148,9 @@ test("Sleep after, the issue link and the worktree names live in Agents and Hide
   }
 });
 
-test("General reads without sideways scrolling in Korean and English, light and dark, on a narrow window", async ({ page }) => {
-  // B65: the sheet shrinks with its window; every row has to wrap, not clip.
-  await page.setViewportSize({ width: 560, height: 900 });
+test("General and About read without sideways scrolling in Korean and English, light and dark, on the smallest window", async ({ page }) => {
+  // B65, settings-left-nav B13: the sheet shrinks with its window to the smallest one, the list beside the page; every row has to wrap, not clip.
+  await page.setViewportSize({ width: 720, height: 480 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
   try {
@@ -117,15 +160,40 @@ test("General reads without sideways scrolling in Korean and English, light and 
     await page.locator("[data-open-settings]").click();
     const sheet = page.locator('[data-settings="true"]');
     await expect(sheet).toBeVisible();
-    const panel = sheet.locator('[role="tabpanel"]');
+    const panel = sheet.locator("[data-settings-page]");
     const overflow = () => panel.evaluate((node) => node.scrollWidth - node.clientWidth);
     const details = sheet.locator("[data-settings-details]");
+
+    // hide-color-theme B5, D-14: both rows and both choices are named in each
+    // language and fit the narrow sheet, none cut off.
+    const appearanceWords = {
+      en: ["Color theme", "Mode", "Hide", "Neutral"],
+      ko: ["색 테마", "모드", "Hide", "뉴트럴"],
+      ja: ["カラーテーマ", "モード", "Hide", "ニュートラル"],
+      "zh-CN": ["配色主题", "模式", "Hide", "中性"],
+    } as const;
+    await sheet.locator('[data-settings-tab="general"]').click();
+    for (const [language, [colorTheme, mode, hide, neutral]] of Object.entries(appearanceWords)) {
+      await sheet.locator("[data-interface-language]").click();
+      await page.locator(`[data-language-option="${language}"]`).click();
+      await expect(page.locator("html")).toHaveAttribute("lang", language);
+      await expect(sheet.locator('[data-appearance-row="color-theme"]')).toContainText(colorTheme);
+      await expect(sheet.locator('[data-appearance-row="mode"]')).toContainText(mode);
+      await expect(sheet.locator("[data-color-theme-option]")).toHaveText([hide, neutral]);
+      await expect.poll(overflow).toBeLessThanOrEqual(0);
+      const cut = await sheet.locator('[data-appearance-row="color-theme"], [data-appearance-row="mode"]').evaluateAll((rows) =>
+        rows.flatMap((row) => [...row.querySelectorAll<HTMLElement>("div, button")].filter((node) => node.scrollWidth > node.clientWidth + 1).map((node) => node.textContent)),
+      );
+      expect(cut, language).toEqual([]);
+      await screenshot(page, `settings-appearance-${language}-narrow`);
+    }
 
     for (const [language, theme] of [
       ["en", "light"],
       ["ko", "light"],
       ["ko", "dark"],
     ] as const) {
+      await sheet.locator('[data-settings-tab="general"]').click();
       await sheet.locator("[data-interface-language]").click();
       await page.locator(`[data-language-option="${language}"]`).click();
       await expect(page.locator("html")).toHaveAttribute("lang", language);
@@ -133,9 +201,57 @@ test("General reads without sideways scrolling in Korean and English, light and 
       await expect(sheet.locator("[data-theme-choice]")).toHaveAttribute("data-theme-choice", theme);
       await expect.poll(overflow).toBeLessThanOrEqual(0);
       await screenshot(page, `settings-general-${language}-${theme}-narrow`);
+      await sheet.locator('[data-settings-tab="about"]').click();
       if (!(await details.evaluate((node) => (node as HTMLDetailsElement).open))) await details.locator("summary").click();
       await expect.poll(overflow).toBeLessThanOrEqual(0);
-      await screenshot(page, `settings-general-details-${language}-${theme}-narrow`);
+      // B13: the page scrolls to its end while the list stays where it is.
+      const list = (await sheet.locator('[role="tablist"]').boundingBox())!;
+      await panel.evaluate((node) => node.scrollTo({ top: node.scrollHeight }));
+      await expect.poll(() => panel.evaluate((node) => node.scrollTop + node.clientHeight - node.scrollHeight)).toBeGreaterThanOrEqual(-1);
+      expect((await sheet.locator('[role="tablist"]').boundingBox())!.y).toBe(list.y);
+      await expect(sheet.locator("[data-copy-diagnostics]")).toBeInViewport();
+      // The whole list fits beside the page, About included, without a scroll of its own.
+      await expect(sheet.locator('[data-settings-tab="about"]')).toBeInViewport({ ratio: 1 });
+      expect(await sheet.locator("nav").evaluate((node) => node.scrollHeight - node.clientHeight)).toBeLessThanOrEqual(0);
+      expect(await sheet.locator("[data-settings-page-list]").evaluate(node => node.scrollHeight - node.clientHeight)).toBeLessThanOrEqual(0);
+      await screenshot(page, `settings-about-details-${language}-${theme}-narrow`);
+    }
+
+    // Larger text gives only the page list a scroll region; About stays at
+    // the foot, and keyboard navigation can still reach every page.
+    for (const [language, theme] of [["en", "light"], ["ko", "dark"]] as const) {
+      await sheet.locator('[data-settings-tab="general"]').click();
+      await sheet.locator("[data-interface-language]").click();
+      await page.locator(`[data-language-option="${language}"]`).click();
+      await sheet.locator(`[data-theme-option="${theme}"]`).click();
+      const slider = sheet.locator('[data-font-size] [role="slider"]');
+      await slider.press("End");
+      await expect(slider).toHaveAttribute("aria-valuenow", (await slider.getAttribute("aria-valuemax"))!);
+      const about = sheet.locator('[data-settings-tab="about"]');
+      await sheet.locator('[data-settings-tab="general"]').focus();
+      await expect(about).toBeInViewport({ ratio: 1 });
+      const foot = (await about.boundingBox())!.y;
+      const pages = sheet.locator("[data-settings-page-list]");
+      expect(await pages.evaluate(node => node.scrollHeight - node.clientHeight)).toBeGreaterThan(0);
+      await sheet.locator('[data-settings-tab="general"]').focus();
+      for (const name of ["general", "notifications", "usage", "devices", "shortcuts", "agents", "hideAi", "mobile", "github", "about"]) {
+        const tab = sheet.locator(`[data-settings-tab="${name}"]`);
+        await expect(tab).toBeFocused();
+        await expect(tab).toBeInViewport({ ratio: 1 });
+        await expect(about).toBeInViewport({ ratio: 1 });
+        expect((await about.boundingBox())!.y).toBe(foot);
+        if (name !== "about") await page.keyboard.press("ArrowDown");
+      }
+      if (!(await details.evaluate(node => (node as HTMLDetailsElement).open))) await details.locator("summary").click();
+      const listScroll = await pages.evaluate(node => node.scrollTop);
+      await panel.evaluate(node => node.scrollTo({ top: node.scrollHeight }));
+      expect(await pages.evaluate(node => node.scrollTop)).toBe(listScroll);
+      const pageScroll = await panel.evaluate(node => node.scrollTop);
+      expect(pageScroll).toBeGreaterThan(0);
+      await pages.evaluate(node => node.scrollTo({ top: 0 }));
+      expect(await panel.evaluate(node => node.scrollTop)).toBe(pageScroll);
+      expect((await about.boundingBox())!.y).toBe(foot);
+      await screenshot(page, `settings-about-${language}-${theme}-maximum-text`);
     }
   } finally {
     daemon?.stop();

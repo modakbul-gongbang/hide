@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::turns::TurnTracker;
 use crate::{
@@ -49,6 +50,163 @@ pub struct LabelTranscriptRequest {
     /// when the read starts over.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turns: Option<TurnTracker>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkTurnRequest {
+    pub agent: Agent,
+    pub session_id: String,
+    pub path: Option<String>,
+    pub cwd: String,
+    pub offset: u64,
+    pub witness: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkTurn {
+    pub request: String,
+    pub assistant: String,
+}
+
+impl WorkTurn {
+    /// An append-safe witness of the exact material judged at this END.
+    pub fn witness(&self) -> String {
+        let mut digest = Sha256::new();
+        for part in [&self.request, &self.assistant] {
+            digest.update((part.len() as u64).to_le_bytes());
+            digest.update(part.as_bytes());
+        }
+        format!("{:x}", digest.finalize())
+    }
+}
+
+/// The same original-turn material from a label worker's already read events.
+pub fn work_turn(events: &[LabelEvent], offset: u64) -> Option<WorkTurn> {
+    let first = events
+        .iter()
+        .position(|e| e.kind == LabelEventKind::Human && e.offset == offset)?;
+    let request = events[first].text.clone();
+    if request.chars().count() > WORK_TURN_REQUEST_CHARS {
+        return None;
+    }
+    let mut assistant = String::new();
+    let mut chars = 0;
+    for event in events[first + 1..]
+        .iter()
+        .take_while(|e| e.kind != LabelEventKind::Human)
+    {
+        if event.kind != LabelEventKind::Assistant {
+            continue;
+        }
+        chars += event.text.chars().count() + 1;
+        if chars > WORK_TURN_ASSISTANT_CHARS {
+            return None;
+        }
+        if !assistant.is_empty() {
+            assistant.push('\n');
+        }
+        assistant.push_str(&event.text);
+    }
+    Some(WorkTurn { request, assistant })
+}
+
+fn witnessed(answer: Option<WorkTurn>, expected: &str) -> Result<WorkTurn, String> {
+    let answer = answer.ok_or("work_turn_missing")?;
+    if expected.len() != 64 || answer.witness() != expected {
+        return Err("work_turn_changed".into());
+    }
+    Ok(answer)
+}
+
+pub const WORK_TURN_REQUEST_CHARS: usize = 16_000;
+pub const WORK_TURN_ASSISTANT_CHARS: usize = 32_000;
+const WORK_TURN_PAGES: usize = 64;
+
+/// Return only the requested original turn, through the same location,
+/// owner and replacement checks as labels. No other turn reaches a caller.
+pub fn read_work_turn(home: &Path, turn: &WorkTurnRequest) -> Result<WorkTurn, String> {
+    let (kind, value) = if matches!(turn.agent, Agent::OpenCode | Agent::Cursor) {
+        ("id", turn.session_id.as_str())
+    } else {
+        turn.path
+            .as_deref()
+            .map_or(("id", turn.session_id.as_str()), |path| ("path", path))
+    };
+    let mut request = LabelTranscriptRequest {
+        agent: turn.agent,
+        reference_kind: kind.into(),
+        reference_value: value.into(),
+        cwd: Some(turn.cwd.clone()),
+        checkpoint: None,
+        subagents: BTreeMap::new(),
+        turns: None,
+    };
+    if turn.agent == Agent::OpenCode {
+        request.checkpoint = Some(
+            crate::opencode::message_checkpoint(home, &turn.session_id, &turn.cwd, turn.offset)?.0,
+        );
+    } else if turn.agent != Agent::Cursor {
+        let (path, confirmed) = locate_confirmed(home, turn.agent, kind, value, Some(&turn.cwd))?;
+        if confirmed.native_session_id.as_deref() != Some(&turn.session_id) {
+            return Err("work_turn_owner_mismatched".into());
+        }
+        request.checkpoint = Some(
+            ConversationCheckpoint::for_turn(&path, turn.offset)
+                .map_err(|_| "work_turn_offset_invalid")?,
+        );
+    }
+    let mut answer: Option<WorkTurn> = None;
+    let mut chars = 0;
+    for _ in 0..WORK_TURN_PAGES {
+        let page = read(home, &request)?;
+        if page.confirmed.native_session_id.as_deref() != Some(&turn.session_id)
+            || page.rescanned.is_some()
+        {
+            return Err("work_turn_owner_changed".into());
+        }
+        for event in page.events {
+            if event.kind == LabelEventKind::Human {
+                if answer.is_some() {
+                    return witnessed(answer, &turn.witness);
+                }
+                if event.offset == turn.offset {
+                    if event.text.chars().count() > WORK_TURN_REQUEST_CHARS {
+                        return Err("work_turn_request_capacity".into());
+                    }
+                    answer = Some(WorkTurn {
+                        request: event.text,
+                        assistant: String::new(),
+                    });
+                }
+            } else if event.kind == LabelEventKind::Assistant
+                && let Some(answer) = answer.as_mut()
+            {
+                chars += event.text.chars().count() + 1;
+                if chars > WORK_TURN_ASSISTANT_CHARS {
+                    return Err("work_turn_assistant_capacity".into());
+                }
+                if !answer.assistant.is_empty() {
+                    answer.assistant.push('\n');
+                }
+                answer.assistant.push_str(&event.text);
+            }
+        }
+        if !page.has_more {
+            return witnessed(answer, &turn.witness);
+        }
+        if request
+            .checkpoint
+            .as_ref()
+            .is_some_and(|previous| previous.offset() == page.checkpoint.offset())
+        {
+            return Err("work_turn_read_stalled".into());
+        }
+        request.checkpoint = Some(page.checkpoint);
+        request.subagents = page.subagents;
+        request.turns = page.turns;
+    }
+    Err("work_turn_page_capacity".into())
 }
 
 /// The most Memory receipts one read reports; Hide writes at most one a prompt.
@@ -148,14 +306,17 @@ pub struct LabelTranscript {
     /// Code's `ai-title`, Codex's `thread_name`, OpenCode's session title.
     #[serde(default)]
     pub title: Option<String>,
-    /// The name the operator gave the session (Claude Code's `/rename`),
-    /// which wins over `title`.
+    /// A name with explicit manual provenance (Claude Code's `custom-title`,
+    /// Grok's `title_is_manual`, omp's `source: user`). A source-less native
+    /// name stays in `title`, even when a rename can write it.
     #[serde(default)]
     pub custom_title: Option<String>,
     /// Pull request addresses the session's tools printed in what this read
     /// covered (PRD overview-request-view D-31).
     #[serde(default)]
     pub pr_sightings: Vec<crate::PrSighting>,
+    #[serde(default)]
+    pub issue_sightings: Vec<crate::PrSighting>,
     /// Hide's Project Memory receipts the session stored in context only its
     /// runtime injects: a hook's context for Claude Code, Codex, Pi and omp,
     /// and the synthetic prompt part Hide's plugin writes for OpenCode. The
@@ -359,6 +520,7 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
         title,
         custom_title: parsed.custom_title.clone(),
         pr_sightings,
+        issue_sightings: parsed.issue_sightings.clone(),
         memory_receipts,
         subagents,
         turns,

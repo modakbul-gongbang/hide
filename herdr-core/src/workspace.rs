@@ -268,6 +268,8 @@ fn space_occupies_checkout(
 pub struct PathIndex {
     paths: BTreeMap<String, PathFact>,
     notes: BTreeMap<String, Result<BTreeMap<String, BranchNote>, String>>,
+    /// Each repository's remotes, by main root (`PathFacts::remotes`).
+    remotes: BTreeMap<String, Vec<String>>,
 }
 
 /// How long the core's own node may take to read the paths of one rebuild.
@@ -278,6 +280,7 @@ impl PathIndex {
     pub const NONE: Self = Self {
         paths: BTreeMap::new(),
         notes: BTreeMap::new(),
+        remotes: BTreeMap::new(),
     };
 
     pub fn new(facts: PathFacts) -> Self {
@@ -321,15 +324,29 @@ impl PathIndex {
         Self {
             paths,
             notes: facts.repositories,
+            remotes: facts.remotes,
         }
     }
 
     /// Asks `node` what `paths` are, in parts of at most
     /// `PATH_FACTS_LIMIT`.
     pub fn ask(node: &dyn NodeLink, paths: BTreeSet<String>) -> Result<Self, String> {
+        Self::ask_while(node, paths, || true)
+    }
+
+    /// Check owner cancellation between bounded node calls, never accept a
+    /// partially read index as a complete answer.
+    pub(crate) fn ask_while(
+        node: &dyn NodeLink,
+        paths: BTreeSet<String>,
+        current: impl Fn() -> bool,
+    ) -> Result<Self, String> {
         let paths = paths.into_iter().collect::<Vec<_>>();
         let mut facts = PathFacts::default();
         for part in paths.chunks(PATH_FACTS_LIMIT) {
+            if !current() {
+                return Err("catalog owner ended during path read".to_owned());
+            }
             let answer: PathFacts = call_as(
                 node,
                 Call::PathFacts {
@@ -340,6 +357,7 @@ impl PathIndex {
             .map_err(|error| error.to_string())?;
             facts.paths.extend(answer.paths);
             facts.repositories.extend(answer.repositories);
+            facts.remotes.extend(answer.remotes);
         }
         Ok(Self::new(facts))
     }
@@ -355,6 +373,14 @@ impl PathIndex {
             .get(path)
             .map(|fact| fact.comparison.clone())
             .unwrap_or_else(|| comparison_by_names(Path::new(path)))
+    }
+
+    /// The repositories the remotes of the repository `path` is in name,
+    /// as its node read them; `None` when the node did not say.
+    pub fn remotes(&self, path: &str) -> Option<&[String]> {
+        self.remotes
+            .get(&self.place(path)?.main_root)
+            .map(Vec::as_slice)
     }
 
     /// The repository `path` is in, as its node read it.
@@ -600,6 +626,7 @@ fn inspect_space(node: &NodeId, space: &SessionSpace, paths: &PathIndex) -> Vec<
                     .unwrap_or(&space.label)
                     .to_owned();
                 projects.push(WorkspaceSnapshot {
+                    agent_presence: Default::default(),
                     agent_scope: Default::default(),
                     home_issues: Default::default(),
                     pull_requests: Vec::new(),
@@ -908,6 +935,7 @@ fn inspect(
     };
 
     WorkspaceSnapshot {
+        agent_presence: Default::default(),
         agent_scope: Default::default(),
         home_issues: Default::default(),
         pull_requests: Vec::new(),
@@ -1484,6 +1512,7 @@ mod tests {
             },
         ];
         let project = WorkspaceSnapshot {
+            agent_presence: Default::default(),
             agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
@@ -1548,6 +1577,7 @@ mod tests {
         ];
         let checkout = fs::canonicalize(&checkout).expect("the checkout's real path");
         let project = WorkspaceSnapshot {
+            agent_presence: Default::default(),
             agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),

@@ -47,6 +47,7 @@ const DEVICE_READ_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// What every coordinator's worker shares: the store and the analyzer.
 pub(crate) struct LabelServices {
+    pub(crate) ledger: Arc<Mutex<Option<crate::links::worker::LinkClient>>>,
     pub(crate) store: Arc<LabelStore>,
     pub(crate) analyzer: Arc<LabelAnalyzer>,
     /// How the agent Hide AI runs on stood at the analyzer's last job.
@@ -71,6 +72,8 @@ impl LabelServices {
         runtime: Weak<Mutex<Runtime>>,
         node: &crate::node::NodeId,
         own_node: Arc<dyn NodeLink>,
+        gate: Arc<hide_ai::UsageLimits>,
+        usage: Arc<dyn hide_ai::AiUsageSink>,
     ) -> Result<Self, String> {
         let store = Arc::new(LabelStore::open(state_dir, home.as_deref(), node.as_str()));
         let settings_home = home.clone();
@@ -80,8 +83,11 @@ impl LabelServices {
             Box::new(move || analysis_settings(&runtime, settings_home.as_deref())),
             Arc::clone(&standing),
             own_node,
+            gate,
+            usage,
         )?;
         Ok(Self {
+            ledger: Arc::default(),
             store,
             analyzer: Arc::new(analyzer),
             standing,
@@ -114,6 +120,7 @@ impl LabelServices {
                     herdr_socket: Some(socket_path.display().to_string()),
                 },
                 input: Arc::clone(&self.input),
+                ledger: Arc::clone(&self.ledger),
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),
@@ -151,6 +158,7 @@ impl LabelServices {
                     herdr_socket: None,
                 },
                 input: Arc::clone(&self.input),
+                ledger: Arc::clone(&self.ledger),
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),
@@ -249,6 +257,9 @@ impl TranscriptSource for NodeTranscripts {
                 if error.code == hide_node_link::ErrorCode::InvalidRequest =>
             {
                 ReadFailure::Refused("device_helper_unsupported".to_owned())
+            }
+            LinkError::Refused(error) if error.code == hide_node_link::ErrorCode::Busy => {
+                ReadFailure::Pending(error.message)
             }
             LinkError::Refused(error) => ReadFailure::Refused(error.message),
         })

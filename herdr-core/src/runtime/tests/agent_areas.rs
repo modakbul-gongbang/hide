@@ -1,5 +1,6 @@
 use super::workspace_view::with_new_views;
 use super::*;
+use crate::model::InputRequestState;
 
 fn setup() -> (Runtime, String) {
     let (runtime, checkout) = tab_order_runtime("/agent-groups");
@@ -623,6 +624,7 @@ fn replacement_retry_with_missing_shell_at_capacity_sends_no_effect() {
     let mut context = runtime.close_context(&tab).unwrap();
     context.replacement_shell = true;
     let request = live::CloseCaptureRequest {
+        failed_terminals: Vec::new(),
         retain_for_reopen: true,
         key: "retained-close".into(),
         connection_generation: runtime.live_generation,
@@ -659,6 +661,7 @@ fn capacity_close_request(runtime: &Runtime, key: &str) -> live::CloseCaptureReq
     let mut context = runtime.close_context(tab).unwrap();
     context.replacement_shell = true;
     live::CloseCaptureRequest {
+        failed_terminals: Vec::new(),
         retain_for_reopen: true,
         key: key.into(),
         connection_generation: runtime.live_generation,
@@ -686,6 +689,8 @@ fn replacement_unknown_claim_survives_refusal_and_dismissal() {
     operation.replacement_effect_started = true;
     runtime.ingest_close_effect_result(
         &live::CloseEffectRequest {
+            safety: None,
+            failed_terminals: Vec::new(),
             retain_for_reopen: true,
             key: request.key.clone(),
             connection_generation: runtime.live_generation,
@@ -1188,6 +1193,245 @@ fn a_close_that_needs_a_replacement_shell_keeps_its_tab_in_place() {
     assert_eq!(drawn(&mut runtime), [area("w-order:t1", &["w-order:t1"])]);
 }
 
+/// Another registered folder of this machine; returns its checkout id.
+pub(super) fn register_folder(runtime: &mut Runtime, name: &str) -> String {
+    let id = format!("workspace:{name}");
+    let path = format!("/{name}");
+    runtime
+        .snapshot
+        .ui_state
+        .workspace_registrations
+        .push(WorkspaceRegistration {
+            primary_checkout_id: None,
+            id: id.clone(),
+            label: name.to_owned(),
+            path: path.clone(),
+            device_id: crate::node::TEST_NODE.to_owned(),
+            pinned: false,
+            home: false,
+        });
+    runtime.rebuild_catalog();
+    workspace::checkout_id_for_path(&id, Path::new(&path))
+}
+
+/// Adds Herdr workspace `w-else`, holding the one tab `w-else:t1` in
+/// /elsewhere, to a session.
+pub(super) fn add_elsewhere_tab(payload: &mut SessionSnapshotPayload) {
+    let elsewhere: SessionSnapshotPayload =
+        crate::sidebar::owned_label_fixture(serde_json::json!({
+            "agents": [],
+            "workspaces": [{"workspace_id": "w-else", "label": "else", "active_tab_id": "w-else:t1"}],
+            "tabs": [{"workspace_id": "w-else", "tab_id": "w-else:t1", "label": "", "number": 1}],
+            "panes": [{"pane_id": "w-else:t1:p", "cwd": "/elsewhere"}],
+            "layouts": [{
+                "workspace_id": "w-else",
+                "tab_id": "w-else:t1",
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": "w-else:t1:p",
+                "panes": [{"pane_id": "w-else:t1:p", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                "splits": []
+            }]
+        }))
+        .expect("elsewhere session payload");
+    payload.workspaces.extend(elsewhere.workspaces);
+    payload.tabs.extend(elsewhere.tabs);
+    payload.panes.extend(elsewhere.panes);
+    payload.layouts.extend(elsewhere.layouts);
+}
+
+pub(super) fn choose_checkout(runtime: &mut Runtime, workspace_id: &str, checkout_id: &str) {
+    runtime.dispatch_json(&explorer_event(
+        "focus_checkout",
+        serde_json::json!({"workspace_id": workspace_id, "checkout_id": checkout_id}),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+}
+
+fn front(runtime: &Runtime) -> Option<String> {
+    runtime.snapshot().navigator.focused_checkout_id.clone()
+}
+
+/// The Workspace in front and whether a reload opens on it (D-11).
+fn resumed(runtime: &mut Runtime) -> (String, bool) {
+    runtime.sync_workspace_view();
+    let view = runtime.snapshot.workspace_view.clone().expect("front");
+    (view.path, view.resumed)
+}
+
+/// /agent-groups holding `tabs` in Herdr workspace w-order, beside
+/// /elsewhere's one tab.
+fn session_with_elsewhere(tabs: &[&str]) -> SessionSnapshotPayload {
+    let mut payload = tab_order_payload("/agent-groups", tabs, tabs, "w-order:t1");
+    add_elsewhere_tab(&mut payload);
+    payload
+}
+
+/// The operator was in /elsewhere, which holds a tab, and came to
+/// /agent-groups, holding `tabs`, where they are on t1. /empty, a registered
+/// folder with no tab, is there to visit too.
+fn entered_from_elsewhere(tabs: &[&str]) -> (Runtime, String, String) {
+    let (mut runtime, checkout) = live_tab_order_runtime("/agent-groups");
+    let elsewhere = register_folder(&mut runtime, "elsewhere");
+    register_folder(&mut runtime, "empty");
+    let mut runtime = with_new_views(runtime, "agent-groups-leave");
+    runtime.ingest_session(Ok(session_with_elsewhere(tabs)));
+    choose_checkout(&mut runtime, "workspace:elsewhere", &elsewhere);
+    choose_checkout(&mut runtime, "workspace:order", &checkout);
+    assert_eq!(front(&runtime).as_deref(), Some(checkout.as_str()));
+    (runtime, checkout, elsewhere)
+}
+
+fn refuse_close(runtime: &mut Runtime) {
+    answer_close(
+        runtime,
+        Err(hide_herdr_client::ApiError::Remote {
+            code: "tab_not_closable".into(),
+            message: "refused".into(),
+        }),
+    );
+    assert!(runtime.close_operations.is_empty(), "the refusal ended it");
+}
+
+/// Closing the last tab of the checkout in front is leaving it: the screen
+/// goes back to the checkout the operator was in before, in the frame the
+/// close is approved, and a reload opens there. A refusal, even after Herdr
+/// has reported its session again meanwhile, brings the tab back, and the
+/// operator back to it.
+#[test]
+fn closing_the_last_tab_goes_back_to_the_checkout_before_and_a_refusal_comes_back() {
+    let (mut runtime, checkout, elsewhere) = entered_from_elsewhere(&["w-order:t1"]);
+
+    close_tab(&mut runtime, "w-order:t1");
+    assert_eq!(front(&runtime).as_deref(), Some(elsewhere.as_str()));
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w-else:t1:p")
+    );
+    assert_eq!(
+        resumed(&mut runtime),
+        ("/elsewhere".to_owned(), true),
+        "a reload opens where the close went"
+    );
+
+    runtime.ingest_session(Ok(session_with_elsewhere(&["w-order:t1"])));
+    assert_eq!(front(&runtime).as_deref(), Some(elsewhere.as_str()));
+    refuse_close(&mut runtime);
+    assert_eq!(front(&runtime).as_deref(), Some(checkout.as_str()));
+    assert_eq!(drawn(&mut runtime), [area("w-order:t1", &["w-order:t1"])]);
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w-order:t1:p")
+    );
+    assert_eq!(resumed(&mut runtime), ("/agent-groups".to_owned(), true));
+}
+
+/// Closing the only pane of the last tab is closing that tab, and goes back
+/// the same way; a refusal that arrives after the operator chose somewhere
+/// else leaves them there.
+#[test]
+fn closing_the_last_pane_goes_back_too_and_a_late_refusal_leaves_a_later_choice_alone() {
+    let (mut runtime, _, elsewhere) = entered_from_elsewhere(&["w-order:t1"]);
+    runtime.dispatch_json(&explorer_event(
+        "close_pane",
+        serde_json::json!({"pane_id": "w-order:t1:p", "confirmed": false}),
+    ));
+    assert_eq!(front(&runtime).as_deref(), Some(elsewhere.as_str()));
+
+    let empty = workspace::checkout_id_for_path("workspace:empty", Path::new("/empty"));
+    choose_checkout(&mut runtime, "workspace:empty", &empty);
+    let request = runtime
+        .close_operations
+        .values()
+        .next()
+        .expect("the close")
+        .request
+        .clone();
+    let _ = runtime
+        .ingest_close_capture_result(&request, Err("the capture could not be read".to_owned()));
+    assert!(
+        runtime
+            .close_operations
+            .values()
+            .all(|operation| operation.phase == "failed")
+    );
+    assert_eq!(front(&runtime).as_deref(), Some(empty.as_str()));
+}
+
+/// The checkout to go back to is the most recent one with a tab left: a
+/// folder with no tab is passed over, and with no such checkout the screen
+/// stays on the Agent area's empty state. A close that leaves another tab
+/// moves only to that tab.
+#[test]
+fn closing_the_last_tab_passes_over_a_checkout_with_no_tab_and_stays_with_none() {
+    let (mut runtime, checkout, elsewhere) = entered_from_elsewhere(&["w-order:t1"]);
+    let empty = workspace::checkout_id_for_path("workspace:empty", Path::new("/empty"));
+    choose_checkout(&mut runtime, "workspace:empty", &empty);
+    choose_checkout(&mut runtime, "workspace:order", &checkout);
+    close_tab(&mut runtime, "w-order:t1");
+    assert_eq!(front(&runtime).as_deref(), Some(elsewhere.as_str()));
+
+    let (runtime, checkout) = live_tab_order_runtime("/agent-groups");
+    let mut runtime = with_new_views(runtime, "agent-groups-stay");
+    let empty = register_folder(&mut runtime, "empty");
+    ingest(&mut runtime, &["w-order:t1"]);
+    choose_checkout(&mut runtime, "workspace:empty", &empty);
+    choose_checkout(&mut runtime, "workspace:order", &checkout);
+    close_tab(&mut runtime, "w-order:t1");
+    assert_eq!(runtime.close_operations.len(), 1);
+    assert_eq!(front(&runtime).as_deref(), Some(checkout.as_str()));
+
+    let (mut runtime, checkout, _) =
+        entered_from_elsewhere(&["w-order:t1", "w-order:t2", "w-order:t3"]);
+    close_tab(&mut runtime, "w-order:t1");
+    assert_eq!(front(&runtime).as_deref(), Some(checkout.as_str()));
+    let pane = runtime.snapshot().terminal.pane_id.clone();
+    assert!(
+        matches!(pane.as_deref(), Some("w-order:t2:p" | "w-order:t3:p")),
+        "the keyboard went to a tab left, got {pane:?}"
+    );
+}
+
+/// A checkout whose project is being removed is no place to go back to,
+/// even while its tabs are still open.
+#[test]
+fn closing_the_last_tab_passes_over_a_checkout_being_removed() {
+    let (mut runtime, checkout, _) = entered_from_elsewhere(&["w-order:t1"]);
+    runtime
+        .workspace_removals_in_flight
+        .insert("workspace:elsewhere".to_owned());
+    close_tab(&mut runtime, "w-order:t1");
+    assert_eq!(front(&runtime).as_deref(), Some(checkout.as_str()));
+}
+
+/// A close that first opens a replacement shell keeps its checkout busy, so
+/// it leaves the screen where it is.
+#[test]
+fn a_close_that_opens_a_replacement_shell_stays_on_its_checkout() {
+    let (mut runtime, checkout, _) = entered_from_elsewhere(&["w-order:t1"]);
+    let primary = crate::domain::WorktreeProjection {
+        repo_key: "repo".into(),
+        repo_name: "repo".into(),
+        repo_root: "/repo".into(),
+        checkout_path: "/repo".into(),
+        is_linked_worktree: false,
+    };
+    runtime
+        .herdr_worktrees
+        .insert("w-order".into(), primary.clone());
+    runtime.herdr_worktrees.insert(
+        "linked".into(),
+        crate::domain::WorktreeProjection {
+            is_linked_worktree: true,
+            ..primary
+        },
+    );
+    close_tab(&mut runtime, "w-order:t1");
+    let operation = runtime.close_operations.values().next().expect("a close");
+    assert!(operation.request.context.replacement_shell);
+    assert_eq!(front(&runtime).as_deref(), Some(checkout.as_str()));
+}
+
 fn reopen(runtime: &mut Runtime) {
     runtime.dispatch_json(&explorer_event("reopen_closed", serde_json::json!({})));
 }
@@ -1353,5 +1597,292 @@ fn a_followed_reopen_seed_that_goes_leaves_the_operator_on_the_restored_tab() {
     assert_eq!(
         runtime.snapshot().terminal.pane_id.as_deref(),
         Some("w-order:t4:p")
+    );
+}
+
+fn order(runtime: &Runtime) -> Vec<String> {
+    layout(runtime).tree.areas()[0]
+        .displays
+        .iter()
+        .map(|tab| tab.id.clone())
+        .collect()
+}
+
+fn pending_fork(runtime: &mut Runtime, source: &str, request_id: Option<&str>) {
+    runtime.forks_in_flight.insert(
+        source.into(),
+        super::agents::PendingFork {
+            press: runtime.forks_in_flight.len() as u64 + 1,
+            generation: runtime.live_generation,
+            issued_serial: runtime.control_lane.issued_serial(),
+            tab_id: None,
+            focused: None,
+        },
+    );
+    if let Some(request_id) = request_id {
+        runtime.input_requests.open(
+            request_id,
+            super::terminal_input::InputOrigin::Fork(source.into()),
+        );
+        runtime.sync_input_requests();
+    }
+}
+
+fn input_state(runtime: &Runtime, request_id: &str) -> Option<InputRequestState> {
+    runtime
+        .snapshot
+        .terminal
+        .input_requests
+        .iter()
+        .find(|request| request.request_id == request_id)
+        .map(|request| request.state)
+}
+
+// PRD fork-operator-root B2: `Fork agent` puts the fork's tab right of the
+// source's tab, whether Herdr's session or the worker's answer comes first.
+#[test]
+fn a_fork_tab_lands_right_of_its_source_whichever_answer_comes_first() {
+    let all = ["w-order:t1", "w-order:t2", "w-order:t3", "w-order:t4"];
+    // The worker's answer first: the tab waits for its place.
+    let (mut runtime, _) = setup();
+    pending_fork(&mut runtime, "w-order:t1:p", None);
+    runtime.ingest_fork_pane("w-order:t1:p", Some("w-order:t4"), "w-order:t4:p");
+    ingest(&mut runtime, &all);
+    assert_eq!(
+        order(&runtime),
+        ["w-order:t1", "w-order:t4", "w-order:t2", "w-order:t3"]
+    );
+    assert!(
+        runtime
+            .workspace_views
+            .as_ref()
+            .unwrap()
+            .agent_placements
+            .is_empty()
+    );
+
+    // Herdr's session first: the appended tab moves next to its source.
+    let (mut runtime, _) = setup();
+    pending_fork(&mut runtime, "w-order:t2:p", None);
+    ingest(&mut runtime, &all);
+    assert_eq!(order(&runtime), all);
+    runtime.ingest_fork_pane("w-order:t2:p", Some("w-order:t4"), "w-order:t4:p");
+    assert_eq!(
+        order(&runtime),
+        ["w-order:t1", "w-order:t2", "w-order:t4", "w-order:t3"]
+    );
+
+    // A source whose tab closed meanwhile leaves the tab at the end.
+    let (mut runtime, _) = setup();
+    pending_fork(&mut runtime, "w-order:t9:p", None);
+    runtime.ingest_fork_pane("w-order:t9:p", Some("w-order:t4"), "w-order:t4:p");
+    ingest(&mut runtime, &all);
+    assert_eq!(order(&runtime), all);
+}
+
+// PRD fork-operator-root B1, B4, B5, B7: the fork takes the keyboard when
+// Herdr makes its pane, and what was typed meanwhile reaches its agent once
+// it has started; a view chosen after the press keeps the keyboard, and a
+// failed fork drops the keys, its placement, and gives the source back.
+#[test]
+fn a_fork_takes_the_keyboard_when_its_pane_exists_and_its_keys_when_it_starts() {
+    let source = "w-order:t1:p";
+    let (mut runtime, _) = setup();
+    pending_fork(&mut runtime, source, Some("fork-keys"));
+    runtime.ingest_fork_pane(source, None, "w-order:t3:p");
+    assert_eq!(
+        runtime.snapshot.focused.pane_id.as_deref(),
+        Some("w-order:t3:p")
+    );
+    assert_eq!(
+        input_state(&runtime, "fork-keys"),
+        Some(InputRequestState::Pending)
+    );
+    assert_eq!(
+        runtime.snapshot.terminal.input_requests[0]
+            .held_for
+            .as_deref(),
+        Some("w-order:t3:p")
+    );
+    runtime.ingest_fork_result(source, Ok("w-order:t3:p".into()), 1);
+    assert_eq!(
+        input_state(&runtime, "fork-keys"),
+        Some(InputRequestState::Ready)
+    );
+    assert!(runtime.forks_in_flight.is_empty());
+
+    let (mut runtime, _) = setup();
+    pending_fork(&mut runtime, source, Some("fork-keys"));
+    runtime.last_view_intent_serial = runtime.control_lane.issued_serial() + 1;
+    let before = runtime.snapshot.focused.pane_id.clone();
+    runtime.ingest_fork_pane(source, None, "w-order:t3:p");
+    assert_eq!(runtime.snapshot.focused.pane_id, before);
+    assert_eq!(
+        input_state(&runtime, "fork-keys"),
+        Some(InputRequestState::Discarded)
+    );
+    runtime.ingest_fork_result(source, Ok("w-order:t3:p".into()), 1);
+    assert_eq!(runtime.snapshot.focused.pane_id, before);
+
+    let (mut runtime, _) = setup();
+    pending_fork(&mut runtime, "w-order:t2:p", Some("fork-keys"));
+    runtime.ingest_fork_pane("w-order:t2:p", Some("w-order:t4"), "w-order:t4:p");
+    assert_eq!(
+        runtime.snapshot.focused.pane_id.as_deref(),
+        Some("w-order:t4:p")
+    );
+    runtime.ingest_fork_result("w-order:t2:p", Err("start refused".into()), 1);
+    assert_eq!(
+        input_state(&runtime, "fork-keys"),
+        Some(InputRequestState::Discarded)
+    );
+    assert_eq!(
+        runtime
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("pane.fork_failed")
+    );
+    assert!(
+        runtime
+            .workspace_views
+            .as_ref()
+            .unwrap()
+            .agent_placements
+            .is_empty()
+    );
+    assert_eq!(
+        runtime.snapshot.focused.pane_id.as_deref(),
+        Some("w-order:t2:p")
+    );
+}
+
+// PRD fork-operator-root B6: a second press while the pane's fork is starting,
+// in either placement, is refused by name, and its keys go nowhere.
+#[test]
+fn a_second_fork_of_a_pane_still_forking_is_refused_whichever_item_asked() {
+    let (mut runtime, _) = setup();
+    let mut agents = project_agents(
+        crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [
+            {"pane_id":"w-order:t1:p","agent":"claude","agent_status":"idle","state_change_seq":1}
+        ]}))
+        .unwrap(),
+    )
+    .agents;
+    agents[0].session_id = Some("3f2b1c00-0000-4000-8000-000000000001".into());
+    runtime.snapshot.navigator.agents = agents;
+    pending_fork(&mut runtime, "w-order:t1:p", None);
+    runtime.dispatch_json(&explorer_event(
+        "fork_pane",
+        serde_json::json!({"pane_id":"w-order:t1:p","placement":"side","request_id":"second"}),
+    ));
+    assert_eq!(
+        runtime
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("pane.fork_already_running")
+    );
+    assert_eq!(
+        input_state(&runtime, "second"),
+        Some(InputRequestState::Discarded)
+    );
+    assert_eq!(runtime.forks_in_flight.len(), 1);
+}
+
+// PRD fork-operator-root D-10: one fork's keyboard move is not the operator
+// choosing a view, so of two forks starting at once the later press keeps the
+// keyboard, whichever pane Herdr makes first.
+#[test]
+fn of_two_forks_starting_at_once_the_later_press_keeps_the_keyboard() {
+    for later_first in [false, true] {
+        let (mut runtime, _) = setup();
+        pending_fork(&mut runtime, "w-order:t1:p", Some("first"));
+        pending_fork(&mut runtime, "w-order:t2:p", Some("second"));
+        let earlier =
+            |runtime: &mut Runtime| runtime.ingest_fork_pane("w-order:t1:p", None, "w-order:t9:p");
+        let later =
+            |runtime: &mut Runtime| runtime.ingest_fork_pane("w-order:t2:p", None, "w-order:t8:p");
+        if later_first {
+            later(&mut runtime);
+            earlier(&mut runtime);
+        } else {
+            earlier(&mut runtime);
+            later(&mut runtime);
+        }
+        assert_eq!(
+            runtime.snapshot.focused.pane_id.as_deref(),
+            Some("w-order:t8:p"),
+            "later first: {later_first}"
+        );
+        assert_eq!(
+            input_state(&runtime, "second"),
+            Some(InputRequestState::Pending)
+        );
+        assert_eq!(
+            input_state(&runtime, "first"),
+            Some(if later_first {
+                InputRequestState::Discarded
+            } else {
+                InputRequestState::Pending
+            })
+        );
+    }
+}
+
+// PRD fork-operator-root B2, D-10: a fork's tab the full Agent area cannot
+// show waits in the strip as a new tab does, and does not take the keys.
+#[test]
+fn a_fork_tab_the_full_agent_area_cannot_show_does_not_take_the_keyboard() {
+    let (mut runtime, _) = setup();
+    let ids = (1..=64)
+        .map(|n| format!("w-order:t{n}"))
+        .collect::<Vec<_>>();
+    ingest(
+        &mut runtime,
+        &ids.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
+    assert_eq!(layout(&runtime).tree.display_count(), 64);
+    pending_fork(&mut runtime, "w-order:t1:p", Some("fork-keys"));
+    let before = runtime.snapshot.focused.pane_id.clone();
+    runtime.ingest_fork_pane("w-order:t1:p", Some("w-order:t65"), "w-order:t65:p");
+    assert_eq!(runtime.snapshot.focused.pane_id, before);
+    assert_eq!(
+        input_state(&runtime, "fork-keys"),
+        Some(InputRequestState::Discarded)
+    );
+}
+
+// A pane the replaced Herdr made is neither placed nor focused on the
+// connection that replaced it.
+#[test]
+fn a_fork_pane_from_a_replaced_herdr_is_not_placed_or_focused() {
+    let (mut runtime, _) = setup();
+    pending_fork(&mut runtime, "w-order:t1:p", Some("fork-keys"));
+    runtime.live_generation += 1;
+    let before = runtime.snapshot.focused.pane_id.clone();
+    assert!(!runtime.ingest_fork_pane("w-order:t1:p", Some("w-order:t4"), "w-order:t4:p"));
+    assert_eq!(runtime.snapshot.focused.pane_id, before);
+    assert!(
+        runtime
+            .workspace_views
+            .as_ref()
+            .unwrap()
+            .agent_placements
+            .is_empty()
+    );
+    runtime.ingest_fork_result(
+        "w-order:t1:p",
+        Err("session_fork_execution_changed".into()),
+        1,
+    );
+    assert_eq!(runtime.snapshot.focused.pane_id, before);
+    assert_eq!(
+        input_state(&runtime, "fork-keys"),
+        Some(InputRequestState::Discarded)
     );
 }

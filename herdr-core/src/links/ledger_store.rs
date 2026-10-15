@@ -1,0 +1,1541 @@
+//! The work ledger shares the link writer, version, size cap and retention.
+
+use super::{LinkStore, SessionKey, failed};
+use crate::labels::analysis::LabelEnd;
+use crate::links::ledger::*;
+use crate::links::{CREATED_AFTER_MS, CREATED_BEFORE_MS, SUMMARY_SESSION_LIMIT};
+use rusqlite::{OptionalExtension, Transaction, params};
+use std::collections::{BTreeMap, BTreeSet};
+
+pub(super) const SCHEMA: &str = "
+ALTER TABLE session_parents ADD COLUMN parent_device TEXT NOT NULL DEFAULT '';
+UPDATE session_parents SET parent_device=device;
+CREATE TABLE ledger_titles(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL,
+ native_title TEXT, manual_title TEXT, state TEXT, PRIMARY KEY(device,agent,id));
+CREATE TABLE ledger_excluded(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL,
+ offset INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(device,agent,id,offset));
+CREATE TABLE ledger_unjudged(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL,
+ offset INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(device,agent,id,offset));
+CREATE TABLE ledger_sightings(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL,
+ kind TEXT NOT NULL, repo TEXT NOT NULL, number INTEGER NOT NULL, at INTEGER NOT NULL,
+ PRIMARY KEY(device,agent,id,kind,repo,number));
+CREATE TABLE ledger_output_facts(repo TEXT NOT NULL, kind TEXT NOT NULL, number INTEGER NOT NULL,
+ title TEXT NOT NULL, url TEXT NOT NULL, state TEXT NOT NULL, created_at INTEGER, stale INTEGER NOT NULL, read_at INTEGER,
+ PRIMARY KEY(repo,kind,number));
+CREATE TABLE ledger_requests(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL,
+ offset INTEGER NOT NULL, at INTEGER NOT NULL, text TEXT NOT NULL, author TEXT NOT NULL,
+ chapter TEXT, task_ids TEXT NOT NULL DEFAULT '[]', judged INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(device,agent,id,offset));
+CREATE INDEX ledger_requests_time ON ledger_requests(device,agent,id,at);
+CREATE TABLE ledger_chapters(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL,
+ chapter TEXT NOT NULL, goal TEXT NOT NULL, at INTEGER NOT NULL,
+ PRIMARY KEY(device,agent,id,chapter));
+CREATE TABLE ledger_tasks(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL,
+ task TEXT NOT NULL, chapter TEXT NOT NULL, name TEXT NOT NULL, at INTEGER NOT NULL,
+ last_at INTEGER NOT NULL, end TEXT NOT NULL, PRIMARY KEY(device,agent,id,task));
+CREATE TABLE ledger_missed(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL,
+ missed TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL,
+ at INTEGER NOT NULL, turn_offset INTEGER NOT NULL, issue_repo TEXT, issue_number INTEGER,
+ resolved_issue_number INTEGER, resolved_turn_offset INTEGER, turn_witness TEXT,
+ PRIMARY KEY(device,agent,id,missed));
+CREATE TABLE ledger_turns(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL,
+ offset INTEGER NOT NULL, start_at INTEGER NOT NULL, end_at INTEGER NOT NULL,
+ end TEXT NOT NULL, task_ids TEXT NOT NULL, output_task TEXT,
+ PRIMARY KEY(device,agent,id,offset));
+CREATE TABLE ledger_outputs(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL,
+ kind TEXT NOT NULL, repo TEXT NOT NULL, number INTEGER NOT NULL, title TEXT NOT NULL,
+ url TEXT NOT NULL, state TEXT NOT NULL, created_at INTEGER NOT NULL,
+ sighted_at INTEGER NOT NULL, task TEXT, PRIMARY KEY(device,agent,id,kind,repo,number));
+CREATE TABLE ledger_issue_attempts(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL,
+ missed TEXT NOT NULL, repo TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL,
+ started_at INTEGER NOT NULL, state TEXT NOT NULL, number INTEGER, url TEXT, failure TEXT,
+ PRIMARY KEY(device,agent,id,missed));
+INSERT INTO ledger_requests(device,agent,id,offset,at,text,author)
+ SELECT device,agent,id,0,COALESCE(last_request_at,ended_at,started_at,0),last_request,'\"operator\"'
+ FROM sessions WHERE last_request IS NOT NULL AND trim(last_request)!='';
+";
+
+pub(super) const ORIGIN_SCHEMA: &str = "
+CREATE TABLE ledger_project_connections(project TEXT PRIMARY KEY, repository TEXT, since_at INTEGER NOT NULL, epoch INTEGER NOT NULL);
+CREATE TABLE ledger_session_origins(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL,
+ project TEXT, repository TEXT, PRIMARY KEY(device,agent,id));
+INSERT INTO ledger_session_origins(device,agent,id) SELECT device,agent,id FROM sessions;
+";
+
+/// One immutable, nullable identity per retained session. A first discovery
+/// of old history is not evidence of the repository connected today.
+pub(super) fn capture_session_origin(
+    tx: &Transaction<'_>,
+    session: &SessionIdentity,
+    cwd: Option<&str>,
+    started_at: Option<u64>,
+) -> Result<(), String> {
+    if tx
+        .query_row(
+            "SELECT 1 FROM ledger_session_origins WHERE device=?1 AND agent=?2 AND id=?3",
+            params![session.device_id, session.agent, session.session_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(failed)?
+        .is_some()
+    {
+        return Ok(());
+    }
+    let mut statement = tx.prepare("SELECT DISTINCT p.root,c.repository,c.since_at,p.root FROM projects p JOIN ledger_project_connections c ON c.project=p.key WHERE p.device=?1 UNION SELECT DISTINCT p.root,c.repository,c.since_at,w.path FROM projects p JOIN ledger_project_connections c ON c.project=p.key JOIN worktrees w ON w.project=p.key WHERE p.device=?1 LIMIT ?2").map_err(failed)?;
+    let candidates = statement
+        .query_map(
+            params![session.device_id, (LEDGER_QUEUE_LIMIT + 1) as i64],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, u64>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .map_err(failed)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(failed)?;
+    if candidates.len() > LEDGER_QUEUE_LIMIT {
+        return Err("ledger_project_capacity".into());
+    }
+    let owner = candidates
+        .into_iter()
+        .filter(|(_, _, _, path)| cwd.is_some_and(|cwd| super::within(cwd, path)))
+        .max_by_key(|(_, _, _, path)| path.len());
+    let (project, repository) = owner.map_or((None, None), |(root, repository, since, _)| {
+        if started_at.is_some_and(|at| at >= since) {
+            (Some(root), repository)
+        } else {
+            (None, None)
+        }
+    });
+    tx.execute(
+        "INSERT INTO ledger_session_origins VALUES(?1,?2,?3,?4,?5)",
+        params![
+            session.device_id,
+            session.agent,
+            session.session_id,
+            project,
+            repository
+        ],
+    )
+    .map_err(failed)?;
+    Ok(())
+}
+
+fn encoded(value: &impl serde::Serialize) -> Result<String, String> {
+    serde_json::to_string(value).map_err(|_| "ledger_value_invalid".to_owned())
+}
+
+fn decoded<T: serde::de::DeserializeOwned>(value: String) -> Result<T, String> {
+    serde_json::from_str(&value).map_err(|_| "ledger_record_invalid".to_owned())
+}
+
+fn identity(key: &SessionKey) -> SessionIdentity {
+    SessionIdentity {
+        device_id: key.device.clone(),
+        agent: key.agent.clone(),
+        session_id: key.id.clone(),
+    }
+}
+
+/// A late delegation changes the authority of past requests. Retract their
+/// judgments atomically; an already acknowledged external intent is retained.
+pub(super) fn retract_operator_work(
+    tx: &Transaction<'_>,
+    session: &SessionIdentity,
+) -> Result<(), String> {
+    let invalid: Vec<u64> = tx.prepare("SELECT offset FROM ledger_requests WHERE device=?1 AND agent=?2 AND id=?3 AND author='\"operator\"'")
+        .map_err(failed)?.query_map(params![session.device_id,session.agent,session.session_id],|r|r.get(0)).map_err(failed)?.collect::<Result<_,_>>().map_err(failed)?;
+    for offset in &invalid {
+        tx.execute("UPDATE ledger_missed SET status='\"open\"',issue_repo=NULL,issue_number=NULL,resolved_issue_number=NULL,resolved_turn_offset=NULL WHERE device=?1 AND agent=?2 AND id=?3 AND resolved_turn_offset=?4 AND NOT EXISTS(SELECT 1 FROM ledger_issue_attempts a WHERE a.device=ledger_missed.device AND a.agent=ledger_missed.agent AND a.id=ledger_missed.id AND a.missed=ledger_missed.missed)",params![session.device_id,session.agent,session.session_id,*offset as i64]).map_err(failed)?;
+        tx.execute(
+            "DELETE FROM ledger_missed WHERE device=?1 AND agent=?2 AND id=?3 AND turn_offset=?4",
+            params![
+                session.device_id,
+                session.agent,
+                session.session_id,
+                *offset as i64
+            ],
+        )
+        .map_err(failed)?;
+        tx.execute(
+            "DELETE FROM ledger_turns WHERE device=?1 AND agent=?2 AND id=?3 AND offset=?4",
+            params![
+                session.device_id,
+                session.agent,
+                session.session_id,
+                *offset as i64
+            ],
+        )
+        .map_err(failed)?;
+        tx.execute(
+            "DELETE FROM ledger_tasks WHERE device=?1 AND agent=?2 AND id=?3 AND task=?4",
+            params![
+                session.device_id,
+                session.agent,
+                session.session_id,
+                format!("task-{offset}")
+            ],
+        )
+        .map_err(failed)?;
+    }
+    if invalid.is_empty() {
+        return Ok(());
+    }
+    // Remove references to retracted tasks, including later continuations.
+    for table in ["ledger_turns", "ledger_requests"] {
+        tx.execute(&format!("UPDATE {table} SET task_ids=(SELECT json_group_array(j.value) FROM json_each({table}.task_ids) j WHERE EXISTS(SELECT 1 FROM ledger_tasks t WHERE t.device={table}.device AND t.agent={table}.agent AND t.id={table}.id AND t.task=j.value)) WHERE device=?1 AND agent=?2 AND id=?3"),params![session.device_id,session.agent,session.session_id]).map_err(failed)?;
+    }
+    tx.execute("UPDATE ledger_tasks SET (end,last_at)=(SELECT t.end,t.end_at FROM ledger_turns t,json_each(t.task_ids) j WHERE t.device=ledger_tasks.device AND t.agent=ledger_tasks.agent AND t.id=ledger_tasks.id AND j.value=ledger_tasks.task ORDER BY t.end_at DESC,t.offset DESC LIMIT 1) WHERE device=?1 AND agent=?2 AND id=?3",params![session.device_id,session.agent,session.session_id]).map_err(failed)?;
+    tx.execute("UPDATE ledger_turns SET output_task=NULL WHERE device=?1 AND agent=?2 AND id=?3 AND NOT EXISTS(SELECT 1 FROM ledger_tasks t WHERE t.device=ledger_turns.device AND t.agent=ledger_turns.agent AND t.id=ledger_turns.id AND t.task=ledger_turns.output_task)",params![session.device_id,session.agent,session.session_id]).map_err(failed)?;
+    assign_outputs(tx, session)?;
+    crate::diagnostic!(
+        serde_json::json!({"component":"links","kind":"ledger.lineage_retracted","device_id":session.device_id,"session_id":session.session_id,"count":invalid.len()})
+    );
+    Ok(())
+}
+
+fn key(session: &SessionIdentity) -> SessionKey {
+    SessionKey {
+        device: session.device_id.clone(),
+        agent: session.agent.clone(),
+        id: session.session_id.clone(),
+    }
+}
+
+fn issue_attempt(
+    tx: &Transaction<'_>,
+    source: &MissedSource,
+) -> Result<Option<IssueAttempt>, String> {
+    tx.query_row("SELECT repo,title,body,started_at,number,url FROM ledger_issue_attempts WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4",
+        params![source.session.device_id,source.session.agent,source.session.session_id,source.id],|r|Ok(IssueAttempt {
+            repository:r.get(0)?, title:r.get(1)?, body:r.get(2)?, started_at_unix_ms:r.get(3)?,reconcile:true,number:r.get(4)?,url:r.get(5)?,
+        })).optional().map_err(failed)
+}
+
+pub(super) fn apply_reader(
+    tx: &Transaction<'_>,
+    device: &str,
+    agent: &str,
+    id: &str,
+    facts: &hide_session::links::LinkFacts,
+) -> Result<(), String> {
+    let session = SessionIdentity {
+        device_id: device.into(),
+        agent: agent.into(),
+        session_id: id.into(),
+    };
+    if facts.requests_capped > 0 {
+        crate::diagnostic!(
+            serde_json::json!({"component":"links","kind":"ledger.reader_capacity","session_id":id,"device_id":device,"agent":agent,"dropped":facts.requests_capped})
+        );
+    }
+    let parent: Option<String> = tx
+        .query_row(
+            "SELECT parent_name FROM session_parents WHERE device=?1 AND agent=?2 AND id=?3",
+            params![device, agent, id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(failed)?;
+    let known_first: Option<u64> = tx
+        .query_row(
+            "SELECT MIN(offset) FROM ledger_requests WHERE device=?1 AND agent=?2 AND id=?3",
+            params![device, agent, id],
+            |r| r.get(0),
+        )
+        .map_err(failed)?;
+    let first = known_first
+        .into_iter()
+        .chain(facts.requests.iter().map(|request| request.offset))
+        .min();
+    for request in &facts.requests {
+        let counts = match parent.as_deref() {
+            Some(parent) => match request.sender.as_deref() {
+                Some(sender) => {
+                    sender == parent && request.letter_kind.as_deref() == Some("request")
+                }
+                None => Some(request.offset) == first,
+            },
+            None => request.sender.is_none(),
+        };
+        if !counts {
+            continue;
+        }
+        tx.execute("INSERT INTO ledger_requests(device,agent,id,offset,at,text,author) \
+            SELECT ?1,?2,?3,?4,?5,?6,?7 WHERE NOT EXISTS(SELECT 1 FROM ledger_excluded WHERE device=?1 AND agent=?2 AND id=?3 AND offset=?4) \
+            ON CONFLICT(device,agent,id,offset) DO UPDATE SET text=excluded.text,at=excluded.at",
+            params![device,agent,id,request.offset as i64,request.at_unix_ms as i64,hide_session::links::cut(&request.text),encoded(&if parent.is_some() {WorkAuthor::Parent} else {WorkAuthor::Operator})?]).map_err(failed)?;
+    }
+    for (kind, marks) in [("issue", &facts.issues)] {
+        for mark in marks {
+            tx.execute("INSERT INTO ledger_sightings VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(device,agent,id,kind,repo,number) DO UPDATE SET at=MIN(at,excluded.at)",
+                params![device,agent,id,kind,mark.repository.to_ascii_lowercase(),mark.number as i64,mark.at_unix_ms as i64]).map_err(failed)?;
+        }
+    }
+    cap(tx, &session, "ledger_requests", REQUEST_LIMIT)?;
+    cap(tx, &session, "ledger_sightings", TASK_LIMIT)?;
+    Ok(())
+}
+
+pub(super) fn apply_output_facts(
+    tx: &Transaction<'_>,
+    outputs: &[crate::links::OutputFact],
+) -> Result<(), String> {
+    for output in outputs {
+        tx.execute("INSERT INTO ledger_output_facts VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(repo,kind,number) DO UPDATE SET title=excluded.title,url=excluded.url,state=excluded.state,created_at=COALESCE(excluded.created_at,created_at),stale=excluded.stale,read_at=COALESCE(excluded.read_at,read_at)",
+            params![output.repository.to_ascii_lowercase(),output.kind,output.number as i64,output.title,output.url,output.state,output.created_at.map(|n|n as i64),i64::from(output.stale),output.last_read_at.map(|n|n as i64)]).map_err(failed)?;
+    }
+    Ok(())
+}
+
+fn cap(
+    tx: &Transaction<'_>,
+    session: &SessionIdentity,
+    table: &str,
+    limit: usize,
+) -> Result<(), String> {
+    let count: usize = tx
+        .query_row(
+            &format!("SELECT count(*) FROM {table} WHERE device=?1 AND agent=?2 AND id=?3"),
+            params![session.device_id, session.agent, session.session_id],
+            |row| row.get(0),
+        )
+        .map_err(failed)?;
+    if count > limit {
+        tx.execute(
+            &format!(
+                "DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} \
+                WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY at,rowid LIMIT ?4)"
+            ),
+            params![
+                session.device_id,
+                session.agent,
+                session.session_id,
+                (count - limit) as i64
+            ],
+        )
+        .map_err(failed)?;
+        crate::diagnostic!(serde_json::json!({
+            "component":"links", "kind":"ledger.capacity", "table":table,
+            "device_id":session.device_id, "agent":session.agent,
+            "session_id":session.session_id, "removed":count-limit,
+        }));
+    }
+    Ok(())
+}
+
+impl LinkStore {
+    /// An incremental native read may omit the session header. The cursor's
+    /// retained identity is authoritative for the context that changed.
+    pub fn ledger_file_session(
+        &self,
+        device: &str,
+        path: &str,
+    ) -> Result<Option<SessionIdentity>, String> {
+        self.connection
+            .query_row(
+                "SELECT agent,session FROM cursors WHERE device=?1 AND path=?2 AND session IS NOT NULL AND subagent=0",
+                [device, path],
+                |row| Ok(SessionIdentity {
+                    device_id: device.to_owned(),
+                    agent: row.get(0)?,
+                    session_id: row.get(1)?,
+                }),
+            )
+            .optional()
+            .map_err(failed)
+    }
+
+    pub fn recover_issue_attempts(&self) -> Result<(), String> {
+        self.connection
+            .execute(
+                "UPDATE ledger_issue_attempts SET state='unknown' WHERE state='creating'",
+                [],
+            )
+            .map_err(failed)?;
+        Ok(())
+    }
+
+    pub fn ledger_call(&mut self, call: LedgerCall) -> Result<LedgerAnswer, String> {
+        if let LedgerCall::Record(session) = &call {
+            return self
+                .ledger_record(session)
+                .map(Box::new)
+                .map(LedgerAnswer::Record);
+        }
+        // Only explicit external-effect calls use FULL. Its WAL sync completes
+        // before the RPC acknowledgement permits GitHub to run.
+        self.connection
+            .pragma_update(None, "synchronous", "FULL")
+            .map_err(failed)?;
+        let result = self.ledger_issue_call(call);
+        let restored = self
+            .connection
+            .pragma_update(None, "synchronous", "NORMAL")
+            .map_err(failed);
+        restored?;
+        result
+    }
+
+    fn ledger_issue_call(&mut self, call: LedgerCall) -> Result<LedgerAnswer, String> {
+        let tx = self.connection.transaction().map_err(failed)?;
+        let answer = match call {
+            LedgerCall::Record(_) => unreachable!(),
+            LedgerCall::ReserveIssue {
+                source,
+                repository,
+                title,
+                body,
+                at_unix_ms,
+            } => {
+                if !hide_node_link::gh::is_repository(&repository) {
+                    return Err("ledger_issue_repository_invalid".into());
+                }
+                let existing = issue_attempt(&tx, &source)?;
+                if let Some(attempt) = existing {
+                    if !attempt.repository.eq_ignore_ascii_case(&repository) {
+                        return Err("ledger_issue_repository_changed".into());
+                    }
+                    LedgerAnswer::Attempt(attempt)
+                } else {
+                    let status:Option<String> = tx.query_row("SELECT status FROM ledger_missed WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4",
+                        params![source.session.device_id,source.session.agent,source.session.session_id,source.id],|r|r.get(0)).optional().map_err(failed)?;
+                    if status.as_deref() != Some(encoded(&MissedStatus::Open)?.as_str()) {
+                        return Err("ledger_missed_not_open".into());
+                    }
+                    let title = crate::local_issues::validated_title(&title)
+                        .map_err(|_| "ledger_issue_title_invalid")?;
+                    let body = crate::local_issues::validated_body(&body)
+                        .map_err(|_| "ledger_issue_body_invalid")?;
+                    tx.execute("INSERT INTO ledger_issue_attempts VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'creating',NULL,NULL,NULL)",
+                        params![source.session.device_id,source.session.agent,source.session.session_id,source.id,repository,title,body,at_unix_ms as i64]).map_err(failed)?;
+                    LedgerAnswer::Attempt(IssueAttempt {
+                        repository,
+                        title,
+                        body,
+                        started_at_unix_ms: at_unix_ms,
+                        reconcile: false,
+                        number: None,
+                        url: None,
+                    })
+                }
+            }
+            LedgerCall::StartIssue {
+                source,
+                title,
+                body,
+                at_unix_ms,
+            } => {
+                let title = crate::local_issues::validated_title(&title)
+                    .map_err(|_| "ledger_issue_title_invalid")?;
+                let body = crate::local_issues::validated_body(&body)
+                    .map_err(|_| "ledger_issue_body_invalid")?;
+                let changed=tx.execute("UPDATE ledger_issue_attempts SET title=?5,body=?6,started_at=?7,state='creating',failure=NULL WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4 AND number IS NULL",
+                    params![source.session.device_id,source.session.agent,source.session.session_id,source.id,title,body,at_unix_ms as i64]).map_err(failed)?;
+                if changed != 1 {
+                    return Err("ledger_issue_attempt_missing".into());
+                }
+                LedgerAnswer::Saved
+            }
+            LedgerCall::FinishIssue {
+                source,
+                number,
+                url,
+            } => {
+                let attempt = issue_attempt(&tx, &source)?.ok_or("ledger_issue_attempt_missing")?;
+                let reference = crate::issues::IssueReference::parse(&url, None)
+                    .map_err(|_| "ledger_issue_url_invalid")?;
+                if !reference
+                    .repository
+                    .eq_ignore_ascii_case(&attempt.repository)
+                    || u64::from(reference.number) != number
+                    || attempt.number.is_some_and(|kept| kept != number)
+                {
+                    return Err("ledger_issue_answer_mismatched".into());
+                }
+                tx.execute("UPDATE ledger_issue_attempts SET state='complete',number=?5,url=?6,failure=NULL WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4",
+                    params![source.session.device_id,source.session.agent,source.session.session_id,source.id,number as i64,url]).map_err(failed)?;
+                let changed=tx.execute("UPDATE ledger_missed SET status=?5,issue_repo=?6,issue_number=?7 WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4",
+                    params![source.session.device_id,source.session.agent,source.session.session_id,source.id,encoded(&MissedStatus::Issue)?,attempt.repository,number as i64]).map_err(failed)?;
+                if changed != 1 {
+                    return Err("ledger_missed_missing".into());
+                }
+                LedgerAnswer::Saved
+            }
+            LedgerCall::UnknownIssue(source) => {
+                tx.execute("UPDATE ledger_issue_attempts SET state='unknown' WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4 AND number IS NULL",
+                    params![source.session.device_id,source.session.agent,source.session.session_id,source.id]).map_err(failed)?;
+                LedgerAnswer::Saved
+            }
+        };
+        tx.commit().map_err(failed)?;
+        Ok(answer)
+    }
+
+    pub fn apply_ledger_update(&mut self, update: &LedgerUpdate) -> Result<(), String> {
+        let tx = self.connection.transaction().map_err(failed)?;
+        match update {
+            LedgerUpdate::Unjudged { session, offsets } => {
+                if offsets.len() > REQUEST_LIMIT {
+                    return Err("ledger_request_capacity".into());
+                }
+                for offset in offsets {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO ledger_unjudged VALUES(?1,?2,?3,?4,?4)",
+                        params![
+                            session.device_id,
+                            session.agent,
+                            session.session_id,
+                            *offset as i64
+                        ],
+                    )
+                    .map_err(failed)?;
+                }
+                cap(&tx, session, "ledger_unjudged", REQUEST_LIMIT)?;
+            }
+            LedgerUpdate::ExcludeRequests {
+                session,
+                parent_name,
+                offsets,
+            } => {
+                let current_parent: Option<String> = tx.query_row("SELECT parent_name FROM session_parents WHERE device=?1 AND agent=?2 AND id=?3", params![session.device_id,session.agent,session.session_id], |r| r.get(0)).optional().map_err(failed)?;
+                if &current_parent != parent_name {
+                    return Ok(());
+                }
+                if offsets.len() > REQUEST_LIMIT {
+                    return Err("ledger_request_capacity".into());
+                }
+                for offset in offsets {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO ledger_excluded VALUES(?1,?2,?3,?4,?4)",
+                        params![
+                            session.device_id,
+                            session.agent,
+                            session.session_id,
+                            *offset as i64
+                        ],
+                    )
+                    .map_err(failed)?;
+                    tx.execute("DELETE FROM ledger_requests WHERE device=?1 AND agent=?2 AND id=?3 AND offset=?4 AND judged=0",
+                    params![session.device_id,session.agent,session.session_id,*offset as i64]).map_err(failed)?;
+                }
+                cap(&tx, session, "ledger_excluded", REQUEST_LIMIT)?;
+            }
+            LedgerUpdate::Title {
+                session,
+                native_title,
+                manual_title,
+                state,
+            } => {
+                tx.execute(
+                    "INSERT INTO ledger_titles VALUES(?1,?2,?3,?4,?5,?6) \
+                    ON CONFLICT(device,agent,id) DO UPDATE SET native_title=excluded.native_title, \
+                    manual_title=excluded.manual_title,state=excluded.state",
+                    params![
+                        session.device_id,
+                        session.agent,
+                        session.session_id,
+                        native_title,
+                        manual_title,
+                        state
+                    ],
+                )
+                .map_err(failed)?;
+            }
+            LedgerUpdate::Requests {
+                session,
+                cwd,
+                path,
+                requests,
+            } => {
+                if requests.len() > REQUEST_LIMIT {
+                    return Err("ledger_request_capacity".to_owned());
+                }
+                tx.execute("INSERT INTO sessions(device,agent,id,path,cwd) VALUES(?1,?2,?3,?4,?5) \
+                    ON CONFLICT(device,agent,id) DO UPDATE SET cwd=COALESCE(excluded.cwd,cwd),path=COALESCE(excluded.path,path)",
+                    params![session.device_id,session.agent,session.session_id,path,cwd]).map_err(failed)?;
+                for request in requests {
+                    let parent: Option<String> = tx.query_row("SELECT parent_name FROM session_parents WHERE device=?1 AND agent=?2 AND id=?3",params![session.device_id,session.agent,session.session_id],|r|r.get(0)).optional().map_err(failed)?;
+                    let first: Option<u64> = tx.query_row("SELECT MIN(offset) FROM ledger_requests WHERE device=?1 AND agent=?2 AND id=?3",params![session.device_id,session.agent,session.session_id],|r|r.get(0)).map_err(failed)?;
+                    if parent.is_some()
+                        && request.author == WorkAuthor::Operator
+                        && first.is_some_and(|first| first != request.offset)
+                    {
+                        continue;
+                    }
+                    let author = if parent.is_some() {
+                        WorkAuthor::Parent
+                    } else {
+                        request.author.clone()
+                    };
+                    let text = hide_session::links::cut(&request.text);
+                    tx.execute(
+                        "INSERT INTO ledger_requests(device,agent,id,offset,at,text,author) \
+                        SELECT ?1,?2,?3,?4,?5,?6,?7 WHERE NOT EXISTS(SELECT 1 FROM ledger_excluded \
+                        WHERE device=?1 AND agent=?2 AND id=?3 AND offset=?4) ON CONFLICT(device,agent,id,offset) DO UPDATE \
+                        SET text=excluded.text,at=excluded.at",
+                        params![
+                            session.device_id,
+                            session.agent,
+                            session.session_id,
+                            request.offset as i64,
+                            request.at_unix_ms as i64,
+                            text,
+                            encoded(&author)?
+                        ],
+                    )
+                    .map_err(failed)?;
+                }
+                cap(&tx, session, "ledger_requests", REQUEST_LIMIT)?;
+            }
+            LedgerUpdate::Chapter {
+                session,
+                goal,
+                at_unix_ms,
+            } => {
+                let previous: Option<String> = tx
+                    .query_row(
+                        "SELECT goal FROM ledger_chapters \
+                    WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY at DESC,rowid DESC LIMIT 1",
+                        params![session.device_id, session.agent, session.session_id],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(failed)?;
+                if previous.as_deref() != Some(goal) {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO ledger_chapters VALUES(?1,?2,?3,?4,?5,?6)",
+                        params![
+                            session.device_id,
+                            session.agent,
+                            session.session_id,
+                            format!("chapter-{at_unix_ms}"),
+                            goal,
+                            *at_unix_ms as i64
+                        ],
+                    )
+                    .map_err(failed)?;
+                    cap(&tx, session, "ledger_chapters", TASK_LIMIT)?;
+                }
+            }
+            LedgerUpdate::TurnEnd {
+                session,
+                offset,
+                at_unix_ms,
+                end,
+                work_author,
+                turn_witness,
+                judgment,
+            } => {
+                let exists: bool = tx
+                    .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM ledger_turns \
+                    WHERE device=?1 AND agent=?2 AND id=?3 AND offset=?4) OR EXISTS(SELECT 1 FROM ledger_unjudged \
+                    WHERE device=?1 AND agent=?2 AND id=?3 AND offset=?4)",
+                        params![
+                            session.device_id,
+                            session.agent,
+                            session.session_id,
+                            *offset as i64
+                        ],
+                        |row| row.get(0),
+                    )
+                    .map_err(failed)?;
+                if exists {
+                    return Ok(());
+                }
+                if judgment.missed.len() > NEW_MISSED_LIMIT
+                    || judgment.resolved.len() > MISSED_LIMIT
+                {
+                    return Err("ledger_judgment_capacity".to_owned());
+                }
+                let chapter: Option<String> = tx
+                    .query_row(
+                        "SELECT chapter FROM ledger_chapters \
+                    WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY at DESC,rowid DESC LIMIT 1",
+                        params![session.device_id, session.agent, session.session_id],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(failed)?;
+                let start: Option<u64> = tx
+                    .query_row(
+                        "SELECT at FROM ledger_requests \
+                    WHERE device=?1 AND agent=?2 AND id=?3 AND offset=?4",
+                        params![
+                            session.device_id,
+                            session.agent,
+                            session.session_id,
+                            *offset as i64
+                        ],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(failed)?;
+                let mut tasks = Vec::new();
+                // Lineage may have arrived while END was in flight. A
+                // request removed by its current owner cannot create work.
+                if *work_author && start.is_none() {
+                    crate::diagnostic!(
+                        serde_json::json!({"component":"links","kind":"ledger.work_request_unavailable","device_id":session.device_id,"session_id":session.session_id,"offset":offset})
+                    );
+                    return Ok(());
+                }
+                if *work_author {
+                    match &judgment.task {
+                        TaskDecision::New { name } => {
+                            let chapter = chapter.as_deref().ok_or("ledger_chapter_missing")?;
+                            if name.trim().is_empty() || name.chars().count() > MISSED_CHARS {
+                                return Err("ledger_task_invalid".to_owned());
+                            }
+                            let task = format!("task-{offset}");
+                            tx.execute(
+                                "INSERT INTO ledger_tasks VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                                params![
+                                    session.device_id,
+                                    session.agent,
+                                    session.session_id,
+                                    task,
+                                    chapter,
+                                    name,
+                                    start.unwrap_or(*at_unix_ms) as i64,
+                                    *at_unix_ms as i64,
+                                    encoded(end)?
+                                ],
+                            )
+                            .map_err(failed)?;
+                            tasks.push(task);
+                        }
+                        TaskDecision::Continue { ids } => {
+                            if ids.is_empty() || ids.len() > CONTINUED_TASK_LIMIT {
+                                return Err("ledger_task_capacity".to_owned());
+                            }
+                            for task in ids {
+                                let changed = tx
+                                    .execute(
+                                        "UPDATE ledger_tasks SET end=?5,last_at=?6 \
+                                    WHERE device=?1 AND agent=?2 AND id=?3 AND task=?4",
+                                        params![
+                                            session.device_id,
+                                            session.agent,
+                                            session.session_id,
+                                            task,
+                                            encoded(end)?,
+                                            *at_unix_ms as i64
+                                        ],
+                                    )
+                                    .map_err(failed)?;
+                                if changed == 0 {
+                                    return Err("ledger_task_unknown".to_owned());
+                                }
+                                if !tasks.contains(task) {
+                                    tasks.push(task.clone());
+                                }
+                            }
+                        }
+                        TaskDecision::None => {}
+                    }
+                }
+                let output_task = if tasks.len() == 1 {
+                    tasks.first().cloned()
+                } else {
+                    judgment
+                        .output_task_id
+                        .as_ref()
+                        .filter(|id| tasks.contains(id))
+                        .cloned()
+                };
+                tx.execute(
+                    "INSERT INTO ledger_turns VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                    params![
+                        session.device_id,
+                        session.agent,
+                        session.session_id,
+                        *offset as i64,
+                        start.unwrap_or(*at_unix_ms) as i64,
+                        *at_unix_ms as i64,
+                        encoded(end)?,
+                        encoded(&tasks)?,
+                        output_task
+                    ],
+                )
+                .map_err(failed)?;
+                tx.execute(
+                    "UPDATE ledger_requests SET judged=1,chapter=?5,task_ids=?6 \
+                    WHERE device=?1 AND agent=?2 AND id=?3 AND offset=?4",
+                    params![
+                        session.device_id,
+                        session.agent,
+                        session.session_id,
+                        *offset as i64,
+                        chapter,
+                        encoded(&tasks)?
+                    ],
+                )
+                .map_err(failed)?;
+                for (index, missed) in judgment.missed.iter().enumerate() {
+                    if missed.text.trim().is_empty() || missed.text.chars().count() > MISSED_CHARS {
+                        return Err("ledger_missed_invalid".to_owned());
+                    }
+                    tx.execute("INSERT INTO ledger_missed(device,agent,id,missed,kind,text,status,at,turn_offset,turn_witness) \
+                        VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                        params![session.device_id,session.agent,session.session_id,format!("missed-{offset}-{index}"),
+                            encoded(&missed.kind)?,missed.text,encoded(&MissedStatus::Open)?,*at_unix_ms as i64,*offset as i64,turn_witness]).map_err(failed)?;
+                }
+                for resolved in &judgment.resolved {
+                    // A printed existing issue is insufficient: only this
+                    // session's verified creation can close as an issue.
+                    let created: Option<String> = match resolved.issue_number {
+                        Some(number) => tx
+                            .query_row(
+                                "SELECT repo FROM ledger_outputs WHERE device=?1 AND agent=?2 \
+                            AND id=?3 AND kind='issue' AND number=?4 AND sighted_at BETWEEN ?5 AND ?6 LIMIT 1",
+                                params![
+                                    session.device_id,
+                                    session.agent,
+                                    session.session_id,
+                                    number as i64,
+                                    start.unwrap_or(*at_unix_ms) as i64,
+                                    *at_unix_ms as i64
+                                ],
+                                |row| row.get(0),
+                            )
+                            .optional()
+                            .map_err(failed)?,
+                        None => None,
+                    };
+                    let status = if created.is_some() {
+                        MissedStatus::Issue
+                    } else {
+                        MissedStatus::Resolved
+                    };
+                    tx.execute(
+                        "UPDATE ledger_missed SET status=?5,issue_repo=?6,issue_number=?7,resolved_issue_number=?9,resolved_turn_offset=?10 \
+                        WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4 AND status=?8",
+                        params![
+                            session.device_id,
+                            session.agent,
+                            session.session_id,
+                            resolved.id,
+                            encoded(&status)?,
+                            created,
+                            created
+                                .as_ref()
+                                .and(resolved.issue_number)
+                                .map(|n| n as i64),
+                            encoded(&MissedStatus::Open)?,
+                            resolved.issue_number.map(|number| number as i64),
+                            *offset as i64
+                        ],
+                    )
+                    .map_err(failed)?;
+                }
+                cap(&tx, session, "ledger_tasks", TASK_LIMIT)?;
+                cap(&tx, session, "ledger_missed", MISSED_LIMIT)?;
+                tx.execute("DELETE FROM ledger_issue_attempts WHERE device=?1 AND agent=?2 AND id=?3 AND state!='creating' AND NOT EXISTS(SELECT 1 FROM ledger_missed m WHERE m.device=ledger_issue_attempts.device AND m.agent=ledger_issue_attempts.agent AND m.id=ledger_issue_attempts.id AND m.missed=ledger_issue_attempts.missed)",params![session.device_id,session.agent,session.session_id]).map_err(failed)?;
+                // Turns use their end timestamp for bounded retention.
+                tx.execute("DELETE FROM ledger_turns WHERE rowid IN (SELECT rowid FROM ledger_turns \
+                    WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY end_at DESC LIMIT -1 OFFSET ?4)",
+                    params![session.device_id,session.agent,session.session_id,REQUEST_LIMIT as i64]).map_err(failed)?;
+                assign_outputs(&tx, session)?;
+            }
+            LedgerUpdate::MissedStatus {
+                session,
+                id,
+                status,
+            } => {
+                if !matches!(status, MissedStatus::Open | MissedStatus::Dismissed) {
+                    return Err("ledger_status_invalid".to_owned());
+                }
+                let changed=tx.execute("UPDATE ledger_missed SET status=?5,issue_repo=NULL,issue_number=NULL,resolved_issue_number=NULL,resolved_turn_offset=NULL \
+                    WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4 AND status!=?6 \
+                    AND NOT EXISTS(SELECT 1 FROM ledger_issue_attempts a WHERE a.device=?1 AND a.agent=?2 \
+                    AND a.id=?3 AND a.missed=?4 AND a.state='creating')",
+                    params![session.device_id,session.agent,session.session_id,id,encoded(status)?,encoded(&MissedStatus::Issue)?]).map_err(failed)?;
+                if changed == 0 {
+                    return Err("ledger_missed_unavailable".to_owned());
+                }
+            }
+        }
+        tx.commit().map_err(failed)
+    }
+
+    pub fn ledger_record(&self, session: &SessionIdentity) -> Result<SessionRecord, String> {
+        let mut visited = BTreeSet::new();
+        let mut budget = REQUEST_LIMIT;
+        self.record_tree(session, &mut visited, 0, &mut budget, true)
+    }
+
+    fn record_tree(
+        &self,
+        session: &SessionIdentity,
+        visited: &mut BTreeSet<SessionIdentity>,
+        depth: usize,
+        request_budget: &mut usize,
+        include_requests: bool,
+    ) -> Result<SessionRecord, String> {
+        if depth > LEDGER_DEPTH_LIMIT || visited.len() >= SUMMARY_SESSION_LIMIT {
+            return Err("ledger_descendant_capacity".to_owned());
+        }
+        if !visited.insert(session.clone()) {
+            return Err("ledger_parent_cycle".to_owned());
+        }
+        let row = self
+            .session(&key(session))?
+            .ok_or("ledger_session_missing")?;
+        let args = params![session.device_id, session.agent, session.session_id];
+        let mut record = SessionRecord {
+            session: session.clone(),
+            fallback_title: crate::sidebar::provider_name(Some(&session.agent)),
+            cwd: row.cwd,
+            path: row.path,
+            started_at_unix_ms: row.started_at,
+            ended_at_unix_ms: row.ended_at,
+            ..SessionRecord::default()
+        };
+        let origin: Option<(Option<String>, Option<String>)> = self.connection.query_row(
+            "SELECT project,repository FROM ledger_session_origins WHERE device=?1 AND agent=?2 AND id=?3",
+            params![session.device_id,session.agent,session.session_id], |row| Ok((row.get(0)?,row.get(1)?))).optional().map_err(failed)?;
+        if let Some((project, repository)) = origin {
+            record.project = project;
+            record.repository = repository;
+        }
+        let titles:Option<(Option<String>,Option<String>,Option<String>)>=self.connection.query_row(
+            "SELECT native_title,manual_title,state FROM ledger_titles WHERE device=?1 AND agent=?2 AND id=?3",
+            params![session.device_id,session.agent,session.session_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(failed)?;
+        if let Some((native, manual, state)) = titles {
+            record.native_title = native;
+            record.manual_title = manual;
+            record.state = state;
+        }
+        let last_end: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT end FROM ledger_turns \
+            WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY end_at DESC LIMIT 1",
+                params![session.device_id, session.agent, session.session_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(failed)?;
+        record.last_end = last_end.map(decoded).transpose()?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT chapter,goal,at FROM ledger_chapters \
+            WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY at",
+            )
+            .map_err(failed)?;
+        record.chapters = statement
+            .query_map(args, |r| {
+                Ok(WorkChapter {
+                    id: r.get(0)?,
+                    goal: r.get(1)?,
+                    at_unix_ms: r.get(2)?,
+                })
+            })
+            .map_err(failed)?
+            .collect::<Result<_, _>>()
+            .map_err(failed)?;
+        record.title = record
+            .chapters
+            .last()
+            .map(|chapter| chapter.goal.clone())
+            .or_else(|| record.native_title.clone())
+            .unwrap_or_else(|| crate::sidebar::provider_name(Some(&session.agent)));
+        if include_requests {
+            let mut statement=self.connection.prepare("SELECT offset,at,text,author,task_ids,chapter,judged \
+            FROM ledger_requests WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY at DESC,offset DESC LIMIT ?4").map_err(failed)?;
+            let requests = statement
+                .query_map(
+                    params![
+                        session.device_id,
+                        session.agent,
+                        session.session_id,
+                        *request_budget as i64 + 1
+                    ],
+                    |r| {
+                        Ok((
+                            r.get::<_, u64>(0)?,
+                            r.get::<_, u64>(1)?,
+                            r.get::<_, String>(2)?,
+                            r.get::<_, String>(3)?,
+                            r.get::<_, String>(4)?,
+                            r.get::<_, Option<String>>(5)?,
+                            r.get::<_, bool>(6)?,
+                        ))
+                    },
+                )
+                .map_err(failed)?;
+            for request in requests {
+                if *request_budget == 0 {
+                    return Err("ledger_record_request_capacity".into());
+                }
+                *request_budget -= 1;
+                let (offset, at, text, author, tasks, chapter, judged) = request.map_err(failed)?;
+                record.requests.push(RecordedRequest {
+                    offset,
+                    at_unix_ms: at,
+                    text,
+                    author: decoded(author)?,
+                    task_ids: decoded(tasks)?,
+                    chapter_id: chapter,
+                    judged,
+                });
+            }
+        }
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT task,chapter,name,at,last_at,end FROM ledger_tasks \
+            WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY at DESC",
+            )
+            .map_err(failed)?;
+        let tasks = statement
+            .query_map(
+                params![session.device_id, session.agent, session.session_id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, u64>(3)?,
+                        r.get::<_, u64>(4)?,
+                        r.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .map_err(failed)?;
+        for task in tasks {
+            let (id, chapter, name, at, last, end) = task.map_err(failed)?;
+            record.tasks.push(WorkTask {
+                id,
+                chapter_id: chapter,
+                name,
+                at_unix_ms: at,
+                last_at_unix_ms: last,
+                end: decoded(end)?,
+                done: false,
+            });
+        }
+        record.missed = self.ledger_missed(session)?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT o.kind,o.repo,o.number,o.title,o.url,o.state,o.created_at,o.task,COALESCE(f.stale,1),f.read_at \
+            FROM ledger_outputs o LEFT JOIN ledger_output_facts f ON f.repo=o.repo AND f.kind=o.kind AND f.number=o.number \
+            WHERE o.device=?1 AND o.agent=?2 AND o.id=?3 ORDER BY o.created_at DESC LIMIT 2001",
+            )
+            .map_err(failed)?;
+        record.outputs = statement
+            .query_map(
+                params![session.device_id, session.agent, session.session_id],
+                |r| {
+                    Ok(WorkOutput {
+                        kind: r.get(0)?,
+                        repository: r.get(1)?,
+                        number: r.get(2)?,
+                        title: r.get(3)?,
+                        url: r.get(4)?,
+                        state: r.get(5)?,
+                        created_at_unix_ms: r.get(6)?,
+                        task_id: r.get(7)?,
+                        stale: r.get(8)?,
+                        last_read_at_unix_ms: r.get(9)?,
+                        source: session.clone(),
+                        source_name: record.title.clone(),
+                    })
+                },
+            )
+            .map_err(failed)?
+            .collect::<Result<_, _>>()
+            .map_err(failed)?;
+        if record.outputs.len() > REQUEST_LIMIT {
+            return Err("ledger_output_capacity".into());
+        }
+        // A child is part of the record once the ledger records it: a spawn
+        // is known before its file is read, and a Pi or omp child's edge is
+        // under its file until the reader names it.
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT p.device,p.agent,p.id FROM session_parents p JOIN sessions s \
+            ON s.device=p.device AND s.agent=p.agent AND s.id=p.id \
+            WHERE p.parent_device=?1 AND p.parent_agent=?2 AND p.parent_id=?3 LIMIT ?4",
+            )
+            .map_err(failed)?;
+        let children = statement
+            .query_map(
+                params![
+                    session.device_id,
+                    session.agent,
+                    session.session_id,
+                    SUMMARY_SESSION_LIMIT as i64
+                ],
+                |r| {
+                    Ok(SessionIdentity {
+                        device_id: r.get(0)?,
+                        agent: r.get(1)?,
+                        session_id: r.get(2)?,
+                    })
+                },
+            )
+            .map_err(failed)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(failed)?;
+        for child in children {
+            let child =
+                self.record_tree(&child, visited, depth + 1, request_budget, include_requests)?;
+            let spawn_task: Option<String> = self.connection.query_row("SELECT output_task FROM ledger_turns WHERE device=?1 AND agent=?2 AND id=?3 AND ?4 BETWEEN start_at AND end_at ORDER BY start_at DESC LIMIT 1",
+                params![session.device_id,session.agent,session.session_id,child.started_at_unix_ms.map(|n|n as i64)],|r|r.get(0)).optional().map_err(failed)?.flatten();
+            record
+                .outputs
+                .extend(child.outputs.iter().cloned().map(|mut output| {
+                    output.task_id = spawn_task.clone();
+                    output
+                }));
+            if record.outputs.len() > REQUEST_LIMIT {
+                return Err("ledger_output_capacity".into());
+            }
+            record.children.push(child);
+        }
+        let mut outputs_seen = BTreeSet::new();
+        record.outputs.retain(|output| {
+            outputs_seen.insert((
+                output.kind.clone(),
+                output.repository.clone(),
+                output.number,
+            ))
+        });
+        for task in &mut record.tasks {
+            task.done = task.end == LabelEnd::Done
+                && record
+                    .outputs
+                    .iter()
+                    .filter(|o| o.kind == "pr" && o.task_id.as_deref() == Some(&task.id))
+                    .all(|o| o.state == "merged");
+        }
+        Ok(record)
+    }
+
+    fn ledger_missed(&self, session: &SessionIdentity) -> Result<Vec<MissedWork>, String> {
+        let mut missed_items = Vec::new();
+        let mut statement=self.connection.prepare("SELECT missed,kind,text,status,at,turn_offset,issue_repo,issue_number, \
+            EXISTS(SELECT 1 FROM ledger_issue_attempts a WHERE a.device=m.device AND a.agent=m.agent AND a.id=m.id \
+            AND a.missed=m.missed AND a.state='creating'),turn_witness FROM ledger_missed m WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY at DESC").map_err(failed)?;
+        let missed = statement
+            .query_map(
+                params![session.device_id, session.agent, session.session_id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, u64>(4)?,
+                        r.get::<_, u64>(5)?,
+                        r.get::<_, Option<String>>(6)?,
+                        r.get::<_, Option<u64>>(7)?,
+                        r.get::<_, bool>(8)?,
+                        r.get::<_, Option<String>>(9)?,
+                    ))
+                },
+            )
+            .map_err(failed)?;
+        for missed in missed {
+            let (id, kind, text, status, at, offset, repo, number, creating, witness) =
+                missed.map_err(failed)?;
+            missed_items.push(MissedWork {
+                id,
+                kind: decoded(kind)?,
+                text,
+                status: decoded(status)?,
+                at_unix_ms: at,
+                turn_offset: offset,
+                turn_witness: witness,
+                issue_repository: repo,
+                issue_number: number,
+                creating,
+            });
+        }
+        Ok(missed_items)
+    }
+
+    /// What a later turn of `session` continues. A session the ledger has
+    /// not recorded, one whose file no read has reached yet or one retention
+    /// removed, has no work to continue, only the parent that started it.
+    pub fn ledger_context(&self, session: &SessionIdentity) -> Result<LedgerContext, String> {
+        let parent_name = self
+            .connection
+            .query_row(
+                "SELECT parent_name FROM session_parents WHERE device=?1 AND agent=?2 AND id=?3",
+                params![session.device_id, session.agent, session.session_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(failed)?;
+        if self.session(&key(session))?.is_none() {
+            return Ok(LedgerContext {
+                parent_name,
+                ..LedgerContext::default()
+            });
+        }
+        // The same descendant-to-spawn-turn attribution decides both the
+        // visible verdict and which tasks a later turn may continue.
+        let record = self.record_tree(session, &mut BTreeSet::new(), 0, &mut 0, false)?;
+        Ok(LedgerContext {
+            parent_name,
+            open_tasks: record.tasks.into_iter().filter(|task| !task.done).collect(),
+            open_missed: record
+                .missed
+                .into_iter()
+                .filter(|missed| missed.status == MissedStatus::Open)
+                .collect(),
+        })
+    }
+
+    pub fn ledger_parent(
+        &self,
+        session: &SessionIdentity,
+    ) -> Result<Option<SessionIdentity>, String> {
+        self.connection.query_row("SELECT parent_device,parent_agent,parent_id FROM session_parents WHERE device=?1 AND agent=?2 AND id=?3", params![session.device_id,session.agent,session.session_id], |r| Ok(SessionIdentity { device_id:r.get(0)?,agent:r.get(1)?,session_id:r.get(2)? })).optional().map_err(failed)
+    }
+
+    /// Closed issues also need creation facts; feed sightings to the existing
+    /// bounded GitHub reader, never fetch from record/search code.
+    ///
+    /// A sighting is the project's only when its session works inside the
+    /// project and its issue is in the project's repository, the one GitHub
+    /// answered for the project's checkout: the same two facts that join a
+    /// session's pull requests to a project (`project_paths`). An address an
+    /// agent only printed, such as a test fixture's `acme/repo`, is no issue
+    /// of the project's, and one that does not resolve once failed every issue
+    /// read of the project. A project whose repository is not known yet has
+    /// none.
+    pub fn ledger_issue_refs(
+        &self,
+        project: &str,
+    ) -> Result<Vec<crate::issues::IssueReference>, String> {
+        let project = self.project(project)?.ok_or("ledger_project_missing")?;
+        let Some(repo) = project.repo.as_deref() else {
+            return Ok(Vec::new());
+        };
+        let paths = self.project_paths(&project)?;
+        let mut statement = self.connection.prepare("SELECT DISTINCT x.device,x.agent,x.id,x.repo,x.number FROM ledger_sightings x LEFT JOIN repo_names r ON r.name=x.repo WHERE x.kind='issue' AND COALESCE(r.repo,x.repo)=?2 ORDER BY x.at DESC LIMIT ?1").map_err(failed)?;
+        let rows = statement
+            .query_map(params![SUMMARY_SESSION_LIMIT as i64 + 1, repo], |r| {
+                Ok((
+                    SessionIdentity {
+                        device_id: r.get(0)?,
+                        agent: r.get(1)?,
+                        session_id: r.get(2)?,
+                    },
+                    r.get::<_, String>(3)?,
+                    r.get::<_, u64>(4)?,
+                ))
+            })
+            .map_err(failed)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(failed)?;
+        if rows.len() > SUMMARY_SESSION_LIMIT {
+            return Err("ledger_sighting_capacity".into());
+        }
+        let mut refs = BTreeSet::new();
+        for (session, repo, number) in rows {
+            if self
+                .session(&key(&session))?
+                .is_some_and(|row| row.inside(&paths))
+            {
+                let reference = crate::issues::IssueReference::parse(
+                    &format!("https://github.com/{repo}/issues/{number}"),
+                    None,
+                )
+                .map_err(|_| "ledger_issue_reference_invalid")?;
+                refs.insert(reference);
+            }
+        }
+        if refs.len() > crate::issues::ISSUE_LIMIT {
+            crate::diagnostic!(
+                serde_json::json!({"component":"links","kind":"ledger.issue_read_capacity","limit":crate::issues::ISSUE_LIMIT,"omitted":refs.len()-crate::issues::ISSUE_LIMIT})
+            );
+        }
+        Ok(refs.into_iter().take(crate::issues::ISSUE_LIMIT).collect())
+    }
+
+    pub fn ledger_summaries(&self, project: &str) -> Result<Vec<SessionWorkSummary>, String> {
+        let project = self.project(project)?.ok_or("ledger_project_missing")?;
+        let paths = self.project_paths(&project)?;
+        // A summary never loads request bodies or record trees. It reads
+        // bounded counts once, then rolls each count along stored lineage.
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT device,agent,id,count(*) FROM ledger_missed \
+            WHERE status=?1 GROUP BY device,agent,id LIMIT ?2",
+            )
+            .map_err(failed)?;
+        let counts = statement
+            .query_map(
+                params![
+                    encoded(&MissedStatus::Open)?,
+                    SUMMARY_SESSION_LIMIT as i64 + 1
+                ],
+                |r| {
+                    Ok((
+                        SessionIdentity {
+                            device_id: r.get(0)?,
+                            agent: r.get(1)?,
+                            session_id: r.get(2)?,
+                        },
+                        r.get::<_, usize>(3)?,
+                    ))
+                },
+            )
+            .map_err(failed)?
+            .collect::<Result<BTreeMap<_, _>, _>>()
+            .map_err(failed)?;
+        if counts.len() > SUMMARY_SESSION_LIMIT {
+            return Err("ledger_summary_capacity".into());
+        }
+        let mut statement = self
+            .connection
+            .prepare("SELECT device,agent,id,parent_agent,parent_id,parent_device FROM session_parents LIMIT ?1")
+            .map_err(failed)?;
+        let parents = statement
+            .query_map([SUMMARY_SESSION_LIMIT as i64 + 1], |r| {
+                let device: String = r.get(0)?;
+                Ok((
+                    SessionIdentity {
+                        device_id: device.clone(),
+                        agent: r.get(1)?,
+                        session_id: r.get(2)?,
+                    },
+                    SessionIdentity {
+                        device_id: r.get(5)?,
+                        agent: r.get(3)?,
+                        session_id: r.get(4)?,
+                    },
+                ))
+            })
+            .map_err(failed)?
+            .collect::<Result<BTreeMap<_, _>, _>>()
+            .map_err(failed)?;
+        if parents.len() > SUMMARY_SESSION_LIMIT {
+            return Err("ledger_summary_capacity".into());
+        }
+        let mut subtree = counts.clone();
+        for (child, count) in &counts {
+            let mut held = child;
+            let mut visited = BTreeSet::new();
+            while let Some(parent) = parents.get(held) {
+                if visited.len() >= 32 || !visited.insert(parent.clone()) {
+                    return Err("ledger_parent_cycle".into());
+                }
+                *subtree.entry(parent.clone()).or_default() += count;
+                held = parent;
+            }
+        }
+        let sessions = self
+            .all_sessions()?
+            .into_iter()
+            .filter(|session| session.inside(&paths))
+            .take(SUMMARY_SESSION_LIMIT + 1)
+            .collect::<Vec<_>>();
+        if sessions.len() > SUMMARY_SESSION_LIMIT {
+            return Err("ledger_summary_capacity".into());
+        }
+        let mut statement=self.connection.prepare("SELECT \
+            (SELECT goal FROM ledger_chapters WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY at DESC LIMIT 1), \
+            (SELECT native_title FROM ledger_titles WHERE device=?1 AND agent=?2 AND id=?3), \
+            (SELECT manual_title FROM ledger_titles WHERE device=?1 AND agent=?2 AND id=?3)").map_err(failed)?;
+        let mut summaries = Vec::new();
+        let mut missed_count = 0;
+        for session in sessions {
+            let identity = identity(&session.key);
+            let (goal, native, manual) = statement
+                .query_row(
+                    params![identity.device_id, identity.agent, identity.session_id],
+                    |r| {
+                        Ok((
+                            r.get::<_, Option<String>>(0)?,
+                            r.get::<_, Option<String>>(1)?,
+                            r.get::<_, Option<String>>(2)?,
+                        ))
+                    },
+                )
+                .map_err(failed)?;
+            let missed = if counts.get(&identity).copied().unwrap_or(0) > 0 {
+                self.ledger_missed(&identity)?
+                    .into_iter()
+                    .filter(|missed| missed.status == MissedStatus::Open)
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            missed_count += missed.len();
+            if missed_count > SUMMARY_SESSION_LIMIT {
+                return Err("ledger_summary_capacity".into());
+            }
+            summaries.push(SessionWorkSummary {
+                fallback_title: crate::sidebar::provider_name(Some(&identity.agent)),
+                title: goal
+                    .or_else(|| native.clone())
+                    .unwrap_or_else(|| crate::sidebar::provider_name(Some(&identity.agent))),
+                native_title: native,
+                manual_title: manual,
+                cwd: session.cwd,
+                ended_at_unix_ms: session.ended_at,
+                open_missed: counts.get(&identity).copied().unwrap_or(0),
+                subtree_open_missed: subtree.get(&identity).copied().unwrap_or(0),
+                missed,
+                session: identity,
+            });
+        }
+        Ok(summaries)
+    }
+
+    pub fn ledger_search(
+        &self,
+        query: &str,
+        summaries: bool,
+    ) -> Result<Vec<SessionSearchHit>, String> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        if query.chars().count() > 200 {
+            return Err("ledger_query_capacity".to_owned());
+        }
+        let pattern = format!(
+            "%{}%",
+            query
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        );
+        let values = if summaries {
+            "SELECT device,agent,id,text,at FROM ledger_requests UNION ALL SELECT device,agent,id,name,at FROM ledger_tasks UNION ALL SELECT device,agent,id,goal,at FROM ledger_chapters"
+        } else {
+            "SELECT device,agent,id,text,at FROM ledger_requests"
+        };
+        let goal = if summaries {
+            "(SELECT goal FROM ledger_chapters c WHERE c.device=s.device AND c.agent=s.agent AND c.id=s.id ORDER BY at DESC LIMIT 1)"
+        } else {
+            "NULL"
+        };
+        let sql = format!(
+            "WITH matched AS (SELECT *,row_number() OVER(PARTITION BY device,agent,id ORDER BY at DESC,text) AS rank FROM ({values}) WHERE text LIKE ?1 ESCAPE '\\') \
+            SELECT s.device,s.agent,s.id,COALESCE(t.manual_title,{goal},t.native_title),r.text,r.at,s.cwd \
+            FROM sessions s JOIN matched r ON s.device=r.device AND s.agent=r.agent AND s.id=r.id \
+            LEFT JOIN ledger_titles t ON t.device=s.device AND t.agent=s.agent AND t.id=s.id WHERE r.rank=1 ORDER BY r.at DESC,s.id LIMIT ?2"
+        );
+        let mut statement = self.connection.prepare(&sql).map_err(failed)?;
+        statement
+            .query_map(params![pattern, SEARCH_LIMIT as i64], |r| {
+                let agent: String = r.get(1)?;
+                let title = r
+                    .get::<_, Option<String>>(3)?
+                    .unwrap_or_else(|| crate::sidebar::provider_name(Some(&agent)));
+                Ok(SessionSearchHit {
+                    session: SessionIdentity {
+                        device_id: r.get(0)?,
+                        agent,
+                        session_id: r.get(2)?,
+                    },
+                    title,
+                    matched: r.get(4)?,
+                    at_unix_ms: r.get(5)?,
+                    cwd: r.get(6)?,
+                })
+            })
+            .map_err(failed)?
+            .collect::<Result<_, _>>()
+            .map_err(failed)
+    }
+
+    pub fn ledger_creators(
+        &self,
+        work: &[SessionWorkSummary],
+    ) -> Result<Vec<OutputCreator>, String> {
+        let sessions = encoded(
+            &work
+                .iter()
+                .map(|record| &record.session)
+                .collect::<Vec<_>>(),
+        )?;
+        let mut statement = self.connection.prepare("SELECT o.device,o.agent,o.id,o.kind,o.repo,o.number FROM ledger_outputs o \
+            JOIN json_each(?1) s ON o.device=json_extract(s.value,'$.device_id') AND o.agent=json_extract(s.value,'$.agent') AND o.id=json_extract(s.value,'$.session_id') \
+            ORDER BY o.created_at DESC,o.kind,o.number LIMIT ?2").map_err(failed)?;
+        let creators = statement
+            .query_map(params![sessions, REQUEST_LIMIT as i64 + 1], |row| {
+                Ok(OutputCreator {
+                    source: SessionIdentity {
+                        device_id: row.get(0)?,
+                        agent: row.get(1)?,
+                        session_id: row.get(2)?,
+                    },
+                    kind: row.get(3)?,
+                    repository: row.get(4)?,
+                    number: row.get(5)?,
+                })
+            })
+            .map_err(failed)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(failed)?;
+        if creators.len() > REQUEST_LIMIT {
+            return Err("ledger_creator_capacity".into());
+        }
+        Ok(creators)
+    }
+
+    /// Apply verified PR creation sightings after each project refresh.
+    pub fn refresh_ledger_outputs(&mut self) -> Result<(), String> {
+        let tx = self.connection.transaction().map_err(failed)?;
+        refresh_outputs(&tx)?;
+        tx.commit().map_err(failed)
+    }
+}
+
+/// Either side of the creation join can arrive last: the repository's
+/// creation fact or a newly read tool sighting. Commit its derived output
+/// with the read rather than waiting for another repository refresh.
+pub(super) fn refresh_outputs(tx: &Transaction<'_>) -> Result<(), String> {
+    tx.execute("INSERT INTO ledger_outputs(device,agent,id,kind,repo,number,title,url,state,created_at,sighted_at) \
+            SELECT s.device,s.agent,s.id,'pr',s.repo_name,p.number,p.title,p.url,CASE WHEN p.merged_at IS NOT NULL THEN 'merged' \
+            WHEN p.closed_at IS NOT NULL THEN 'closed' ELSE 'open' END,p.created_at,s.at \
+            FROM session_prs s JOIN repo_names n ON n.name=s.repo_name JOIN prs p ON p.repo=n.repo AND p.number=s.number \
+            WHERE p.created_at IS NOT NULL AND s.at>=p.created_at-?1 AND s.at<=p.created_at+?2 \
+            ON CONFLICT(device,agent,id,kind,repo,number) DO UPDATE SET title=excluded.title,url=excluded.url,state=excluded.state",
+            params![CREATED_BEFORE_MS as i64,CREATED_AFTER_MS as i64]).map_err(failed)?;
+    tx.execute("UPDATE ledger_outputs SET task=(SELECT output_task FROM ledger_turns t WHERE t.device=ledger_outputs.device \
+            AND t.agent=ledger_outputs.agent AND t.id=ledger_outputs.id AND ledger_outputs.sighted_at BETWEEN t.start_at AND t.end_at \
+            ORDER BY t.start_at DESC LIMIT 1) WHERE kind='pr'",[]).map_err(failed)?;
+    tx.execute("INSERT INTO ledger_outputs(device,agent,id,kind,repo,number,title,url,state,created_at,sighted_at) \
+            SELECT s.device,s.agent,s.id,s.kind,s.repo,s.number,f.title,f.url,f.state,f.created_at,s.at \
+            FROM ledger_sightings s JOIN ledger_output_facts f ON f.repo=s.repo AND f.kind=s.kind AND f.number=s.number \
+            WHERE f.created_at IS NOT NULL AND s.at>=f.created_at-?1 AND s.at<=f.created_at+?2 \
+            ON CONFLICT(device,agent,id,kind,repo,number) DO UPDATE SET title=excluded.title,url=excluded.url,state=excluded.state",
+            params![CREATED_BEFORE_MS as i64,CREATED_AFTER_MS as i64]).map_err(failed)?;
+    tx.execute("UPDATE ledger_outputs SET state=COALESCE((SELECT f.state FROM ledger_output_facts f WHERE f.kind=ledger_outputs.kind AND f.number=ledger_outputs.number AND (f.repo=ledger_outputs.repo OR f.repo=(SELECT name FROM repo_names n WHERE n.repo=ledger_outputs.repo LIMIT 1))),state)",[]).map_err(failed)?;
+    tx.execute("UPDATE ledger_outputs SET task=(SELECT output_task FROM ledger_turns t WHERE t.device=ledger_outputs.device AND t.agent=ledger_outputs.agent AND t.id=ledger_outputs.id AND ledger_outputs.sighted_at BETWEEN t.start_at AND t.end_at ORDER BY t.start_at DESC LIMIT 1) WHERE kind='issue'",[]).map_err(failed)?;
+    // GitHub may arrive after END. Retain the proposed number and the
+    // resolving turn, then attach only that turn's verified creation.
+    tx.execute("UPDATE ledger_missed AS m SET status=?1,issue_number=resolved_issue_number,issue_repo=(SELECT repo FROM ledger_outputs o JOIN ledger_turns t ON t.device=o.device AND t.agent=o.agent AND t.id=o.id AND t.offset=m.resolved_turn_offset WHERE o.device=m.device AND o.agent=m.agent AND o.id=m.id AND o.kind='issue' AND o.number=m.resolved_issue_number AND o.sighted_at BETWEEN t.start_at AND t.end_at LIMIT 1) WHERE m.status=?2 AND m.resolved_issue_number IS NOT NULL AND EXISTS(SELECT 1 FROM ledger_outputs o JOIN ledger_turns t ON t.device=o.device AND t.agent=o.agent AND t.id=o.id AND t.offset=m.resolved_turn_offset WHERE o.device=m.device AND o.agent=m.agent AND o.id=m.id AND o.kind='issue' AND o.number=m.resolved_issue_number AND o.sighted_at BETWEEN t.start_at AND t.end_at)",params![encoded(&MissedStatus::Issue)?,encoded(&MissedStatus::Resolved)?]).map_err(failed)?;
+    Ok(())
+}
+
+fn assign_outputs(tx: &Transaction<'_>, session: &SessionIdentity) -> Result<(), String> {
+    tx.execute("UPDATE ledger_outputs SET task=(SELECT output_task FROM ledger_turns t WHERE t.device=?1 \
+        AND t.agent=?2 AND t.id=?3 AND ledger_outputs.sighted_at BETWEEN t.start_at AND t.end_at ORDER BY t.start_at DESC LIMIT 1) \
+        WHERE device=?1 AND agent=?2 AND id=?3",params![session.device_id,session.agent,session.session_id]).map_err(failed)?;
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "ledger_store_tests.rs"]
+mod tests;

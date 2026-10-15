@@ -39,12 +39,13 @@ A `request` or `block` letter waits for its answer until one of four things ends
 When the last two end it, the letter keeps its `state`, `waiting_answer` turns `false`, `finished_at_unix_ms` is set, and `answer_wait_ended` says why: `party_ended` or `deadline`; it is `null` on every other letter.
 The sender reads it in the answer of `hide request show` (and in every other answer that carries the letter); `hide inbox` lists the same letters as before and does not announce a wait that ended.
 A letter that ended its wait without an answer no longer counts against the open-letter limit, and the recipient can still reply to it by the same rules.
-It is still a retained letter: it leaves the 5000-letter total only after the 30-day cleanup counted from the time its wait ended.
+It is still a retained letter: it leaves the ledger one day after its wait ended, or earlier when the 5000-letter total is full and it is the finished letter that finished first (see [Persistence, clocks and limits](#persistence-clocks-and-limits)).
 Acknowledgement is the recipient's receipt for every agent kind: only the recipient's own pane and native session can acknowledge (`hide request ack` from a pane-bound caller is the only path, with no operator or helper path), so it records `hook_confirmed: true` and ends a matching report watch; a reply separately closes the original request's answer wait.
-Retry the same intent after an interrupted call: the same sender identity and intent return the existing letter during its retention period, including after cancellation or delivery.
+Retry the same intent after an interrupted call: the same sender identity and intent return the existing letter during its retention period, including after cancellation or delivery, for one day after the letter finished or until a full ledger drops it first; a send with the same intent after that creates a new letter.
 Use a new intent for a new letter.
 The envelope identifies the sender and letter kind; it is not a session-level authority or anti-forgery proof.
 The current first-line format is `Hide letter <id> from <name> (<agent>) [<kind>]`, with independent writer and transcript-reader examples in [delivery-envelope.json](../contracts/delivery-envelope.json).
+`<name>` is the sender's [wire name](#names-on-the-wire-and-on-screen), and so are the names of a letter's and a watch's endpoints in every answer.
 A batch keeps the first letter's sender attribution in the request view; neither later headers nor older delivery formats select a sender.
 
 ### The contract a calling tool checks
@@ -95,7 +96,7 @@ Their letters ride their next prompt instead (below), and a bell is reconsidered
 Herdr 0.9.1 reads a built-in slash picker such as `/model` or `/resume` as `done`, not `blocked`, for both targets, and a bell typed into an open picker is accepted by it.
 Hide therefore does not take the Enter that opens a picker for a submission: the pane holds as a draft, and stays held after `/clear`, `/model` or `/help` until the next real prompt runs its hook.
 The same holds after an Esc or Ctrl-C that interrupts a turn, since no prompt hook runs for it.
-Three residuals remain: a turn the operator did not start (a scheduled wake or a finished subagent) moves the pane to `working` and clears a half-typed draft, a prompt queued while the pane works leaves it held after its turn until the next prompt submitted from rest (its hook runs while `working` and clears nothing), and a pane restarted with hided or whose observation is dropped from a snapshot starts with no draft known.
+Two residuals remain: a turn the operator did not start (a scheduled wake or a finished subagent) moves the pane to `working` and clears a half-typed draft, a prompt queued while the pane works leaves it held after its turn until the next prompt submitted from rest (its hook runs while `working` and clears nothing).
 A letter that cannot be belled waits, and the reason is logged as `doorbell.held` once per change with the letter and pane ids, never with its body and never on screen.
 The verdict's reasons are `working`, `blocked`, `awaiting_operator`, `session_unread`, `draft`, `quiet_period`, `kind_not_belled`, `session_changed`, `pane_unavailable`, `status_not_at_rest` and `core_pending` (a core on a move's copy types into no pane until the move's link commits it, [ARCHITECTURE.md](ARCHITECTURE.md#moving-the-core)).
 Between the verdict and the input the doorbell asks Herdr again and checks its own memory last, and each refusal there has its own reason: `launch_pending` and `not_ready` (Herdr's readiness), `identity_changed` (Herdr's agent in the pane has another name, kind or native session), `sequence_moved` (Herdr's status or state sequence moved), `input_after_verdict` (hide routed input to the pane) and `letter_changed` (the letter was confirmed, cancelled, expired or reserved meanwhile).
@@ -103,7 +104,14 @@ A letter refused there is tried again in the same pane episode after 5 seconds, 
 A failed Herdr call is not retried on that schedule, since the bell may already have been typed; it waits for the pane to move.
 If the pane or its device's link goes away after such a failure (`pane_unavailable`), the wait ends: a bell that started a turn would have moved the pane, so a pane that comes back idle at the same state sequence is tried again rather than waiting for a move that never comes.
 A letter still held when its deadline passes is logged once as `doorbell.expired` with the reason it last waited for.
-After a hided restart every pane starts with no key known and a 30 second grace; a draft typed before the restart cannot be known.
+After a hided restart, an app update or a device's return, a pane starts with a 30 second grace and no draft assumed, except one the last run held as a draft.
+The draft is on the screen and nowhere else, so the one fact that cannot be read back is written down: `composer-marks.json` in the state directory (`hide_kit::layout::composer_marks`, written by `composer_store.rs` on a thread of its own, never under the runtime lock) names each pane, by device, pane id and native session, whose composer held an unsent draft in a pane the doorbell rings.
+A mark is written when the draft begins and removed when it ends, a prompt hook of the pane's own session or the pane entering `working`, so the file moves once a prompt and not once a key.
+A pane first seen again with its mark starts as a draft, input newer than its submit, and stays held by it until the same events end it; a pane that is `working` when it comes back drops the mark, since a turn started while the daemon was away took the draft.
+A mark of a pane that is not observed is kept for seven days, at most 256 marks are kept, and a missing, damaged or other-version file is ignored with a `composer_marks.discarded` diagnostic.
+A pane with no mark is not held beyond the grace, so a restart never silences an idle pane for good.
+The residual is the window the daemon is down: a prompt submitted then runs a hook that reaches nobody, and the mark stays until the pane's next prompt or turn clears it.
+Two records trace what moved the pane's input clock, both without content and at most one a second per pane: `terminal.input` from the node for the keys it saw (`path`, `keys`, `bytes`, `submitted`; `path` is `write_key`, or `write_key_attachment_hold` and `write_key_asleep` when the key was held for a paste or a sleeping pane), and `delivery.input` from the core for the input it noted itself (`path` is `find`, `attachment`, `phone` or `phone_reply`).
 The adapter never copies, clears or restores a draft.
 Each letter has at most three durable doorbell reservations, including successful input and attempts interrupted before confirmation.
 The reservation is persisted before input, and the adapter repeats the native inspection (`agent.get`: readiness, kind, session, status, sequence) after the persistence wait.
@@ -159,7 +167,8 @@ The doorbell types `🔔 <writer> <kind>: <the letter's first line>`, then ` · 
 ```
 
 The kind reads 요청 for a request, 막힘 for a block, 보고 for a report, 답장 for a reply and 감시 for a watch warning.
-The writer is the name the sender registered under (`hide agent register`, `hide agent spawn --name`), else the title Hide's screens give it while its pane still hosts that session (not the runtime's name, such as Codex, that a row without a title shows), else its Herdr agent id; a watch warning is named by the agent it watches, and its first line says for how long nothing moved.
+The writer is the name the sender registered under (`hide agent register`, `hide agent spawn --name`), else the title Hide's screens give it while its pane still hosts that session, else its runtime's name, such as Codex; never a pane id and never its registration id, which belong to the letter's envelope ([Names](#names-on-the-wire-and-on-screen)).
+A watch warning is named by the agent it watches, and its first line says for how long nothing moved.
 Both are looked up in memory when the bell rings, on the doorbell's thread, never on the session-sync thread.
 The first line is the body's first line that has anything to show, cut to 60 characters with `…`, and the writer is cut to 32; a body with no such line leaves the colon and summary out.
 Agents learn from their session guidance that this first line is the letter's one-line summary, and that a prompt beginning with `🔔` brings a letter that `hide inbox` shows if the prompt did not.
@@ -195,6 +204,8 @@ The answer is kept with the Herdr `state_change_seq` the read was asked under, a
 Herdr can read the agent at rest before Codex writes how the turn ended; that state's read then does not settle a plan-mode turn, so the bell holds and the row shows no wait until Herdr's next state is read, because this rule adds no session reads of its own (PRD codex-plan-approval-hold B10).
 The same turn tracker reads Claude Code's native `AskUserQuestion` calls and matching tool-result records.
 When a supported session reader says a native question or plan approval waits, the bell holds with `awaiting_operator`.
+This includes Codex 0.162.1's `request_user_input_async` question, which stays open after Codex returns to work or stops, until its reply arrives.
+The hold is what keeps a wake from landing on it: in an isolated Codex 0.162.1 TUI (2026-10-15) the question is plain assistant text over an ordinary composer, and a bell-shaped line plus Enter was submitted as an ordinary prompt that started a new turn, writing no reply, so the question stayed unanswered in Codex while Hide would have read the person's message as the end of the wait.
 For an agent whose read reports turns, a state that no read has settled holds the bell too, with `session_unread`: a session file not found (Codex is looked up in its seven newest day folders), a failed read, a device helper that predates the field, a read still behind Herdr's newest state, a record past the line cap the read could not structure (until the next turn starts or a person writes; `docs/ARCHITECTURE.md`, What the last turn waits for), or a daemon that does not hold the label generator lock and so reads nothing.
 That lock is one per Herdr server and taken with `flock` (`herdr-core/src/labels/generator.rs`): the operator's single daemon lacks it only while another hided follows the same Herdr server (a candidate or development daemon pointed at the operator's socket, even with a private HOME), or, after a restart that overlapped the old daemon, until its next attempt, at most thirty seconds after the old one exits; the kernel frees a crashed holder's lock.
 Unknown is never read as "nothing waits".
@@ -213,6 +224,10 @@ An uncertain replacement disables further delivery effects until a validated res
 The canonical platform boundary currently refuses Windows directory-chain establishment with `Unsupported`; that is an open cross-OS requirement, and delivery does not become ready through a legacy no-op.
 A corrupt, oversized or unsafe existing ledger is preserved, and commands return `ledger_unavailable` with a diagnostic instead of starting an empty ledger.
 Capacity errors retain existing letters and watches.
+Finished letters never refuse a new one: the one-day cleanup is the normal way a finished letter leaves, and a full total is the backstop, so a mailbox that finishes more than 5000 letters in a day keeps its newest finished letters and loses the oldest ahead of the day.
+The store runs the cleanup on its own once a second when a finished letter is over a day old, including its first pass after start, so a ledger that was full of older finished letters shrinks without a new letter.
+A dropped letter leaves no reference that must resolve: a reply's `reply_to` and an agent's escalation read the ledger as it is and treat a missing original as absent, as they already do after the one-day cleanup; the machine clocks follow only letters awaiting intake, which are open; and the same intent sent again after the drop is a new letter.
+Every `capacity` refusal of a letter writes one `letter.capacity_refused` diagnostic with `cap` (`body`, `open`, or `total` when all 5000 are open), both panes, the body size, the letter count and the open count, never the body.
 
 | Resource or clock | Bound |
 | --- | --- |
@@ -223,8 +238,8 @@ Capacity errors retain existing letters and watches.
 | Second inactivity warning | First-warning time plus 60 minutes, at most two warnings per episode |
 | Unanswered parent warning notification | First-warning time plus 60 minutes, once per native target and inactivity episode |
 | Answer wait of a `request` or `block` | 24 hours from the send, then `answer_wait_ended: "deadline"`; an end of either registration ends it at once as `party_ended` for a letter the recipient took in |
-| Intent retention and finished-letter cleanup | 30 days; open letters remain |
-| Open / retained letters | 1024 / 5000; a letter is open while it awaits intake or a reply |
+| Intent retention and finished-letter cleanup | One day from the finish; open letters remain; a full 5000-letter total drops sooner (next row) |
+| Open / retained letters | 1024 / 5000; a letter is open while it awaits intake or a reply; at 5000 a new letter drops the finished letter that finished first (ties: the earlier sent), never an open one, and is refused with `capacity` only when none is finished |
 | Watches | 32 |
 | Letter body / ledger file | 16 KiB / 16 MiB |
 | Hook batch / context / total deadline | Five letters / 8 KiB / two seconds |
@@ -291,6 +306,30 @@ A watch observed by a Factory warns after that Factory's stall window (`stall_mi
 
 Hide itself is a second code-owned identity, `hide:<role>` of kind `hide`, today only `hide:memory`: the origin of the agent a Memory card's promotion starts ([ARCHITECTURE.md: Project sessions and Memory](ARCHITECTURE.md#project-sessions-and-memory)).
 It is registered on its first spawn, sends nothing and receives nothing, and a pane or agent name that starts with `hide:` is refused at registration like `factory:`.
+A spawn is Hide AI's own when it is a handoff whose origin is that identity (`coordination::started::hide_started`): a Factory worker is a delegation of a Factory identity and a pane agent's handoff has a pane's identity as its origin, so neither counts, and no branch or worktree name ever decides it.
+Only that identity may give a spawn a `task` (`SpawnTask`: a `kind` code such as `memory_promote` and a `target` such as the card `m72`, the codes the screen words), on a handoff; any other caller that sets one is refused `task_reserved`, and the task is part of the intent, so the same intent with another task is an `intent_conflict`.
+A receipt from before the task existed has none, and its agent and checkout are still Hide AI's, which the screen names `Hide AI` alone.
+The kind is a closed set in code (`TaskKind`), and each known kind names its home, the screen that shows its work (`TaskKind::home`, today `memory_promote` to the Memory tab); a new kind cannot be added without naming one.
+A kind this build does not know loads from the ledger as it was written, so a record a newer build wrote never fails the load or loses the rest of the ledger, and its agent stays an operator's row.
+A new spawn of a kind with no home is refused `task_kind_unknown`, and the first time an agent of such a kind is seen the diagnostic log records `hide_ai.task_kind_unknown` once.
+
+## Names on the wire and on screen
+
+An agent has two kinds of name, and each is made in one place.
+
+- The wire name is what a program reads and compares: the envelope header, the `name` of a letter's or a watch's sender, recipient, target and observer, an agent's `name` in `hide agent show` and `list`, and the `parent_name` the label worker matches a parent's request against.
+  It is the name the agent registered under, else its registration id (`agent-12`), which is stable and which `hide request send` and `--parent` already resolve; an agent that never registered is called by the only identifier Herdr gave it, its Herdr agent name or else its pane id.
+  `coordination::wire_name` makes it, the writing side (`mailbox::send`, `watch::start`) and the reading side (`link_parent_facts`) both call it, and nothing else may spell it, because the label worker accepts a parent's request as the child's work only when the two strings are equal ([status-model.md](status-model.md#task-identity)).
+  It never follows a screen title, which changes every turn.
+- The screen name is what a person reads: the name it registered under, else the title Hide's screens give it while its pane hosts it, else its runtime's name (the bell line, the sidebar and Sessions rows).
+  It is derived when it is drawn and stored nowhere.
+
+A registration stores a name only when it has one of its own.
+A parent that `hide agent spawn --parent here` registers for the caller takes the name Herdr has for the pane, and none when Herdr has none, so a pane id is never stored as a name (`AgentRecord::name` is optional, and an executor-made record drops a name that only restates its pane).
+On disk the field stays a string on every record, so a build before this one reads the ledger this one writes: an unnamed record is written under its registration id, and reading a name equal to the record's own id or to its pane as no name turns that back (`AgentRecordOnDisk`).
+A ledger written by an earlier build can hold a pane id as a name; reading it that way gives such a record no name, with no migration file, and a code-owned identity keeps its name, which is also its pane.
+A letter keeps the endpoint names it was written with, so a letter written before this rule keeps a pane id in its history until its one-day retention ends.
+`hide inbox` and a letter's envelope show the registration id of an unnamed sender, not its title, and show the pane id of a sender that never registered and that Herdr never named.
 
 ## Agent registration and spawning
 
@@ -319,6 +358,17 @@ A completed spawn stores a durable receipt for its caller and intent, so retries
 Changing only responsibility mode on the same intent returns `intent_conflict` before creating anything.
 Only incomplete intents resume their recorded creation and registration steps; starting a new watch after completion requires explicit `hide watch start`.
 Remote starts through a caller's own device use Hide's existing device start path with the same caller, modes and focus rules.
+
+Spawn creation keeps its recovery marker until the receipt contains the checkout, pane and terminal incarnation.
+The created tab then takes the registered task name; a created workspace takes the checkout branch, or the repository name for its primary checkout.
+The receipt reports separate workspace and tab naming outcomes (`pending`, `applied`, `preserved`, `failed`); a failed rename does not undo the child or its watch.
+The existing lineage worker retries unfinished names once per connection, in bounded batches, without a separate poller.
+Repair requires the receipt's device, checkout, pane and terminal to match the current unique target and its exact recovery marker.
+A newly created workspace's first tab may carry Herdr's generated label when shell replacement is unavailable.
+Its creation response's exact tab id and label are saved with the first durable placement, so that unchanged label can be named too; an older receipt cannot infer this proof from a current default label.
+User labels and targets with insufficient proof are preserved, and successful targets are not renamed again.
+Herdr's rename API has no compare-and-set, so a user rename between the final read and write remains a race.
+Completed intent replay returns the durable receipt without contacting Herdr, including while a device is offline.
 
 `--machine <device id>` starts the child on a connected device instead of the caller's own; it works with delegation and handoff alike.
 The id is the `device_id` that `hide workspace info` shows and the `machine` that `hide agent list` shows for agents there; a device label is not accepted, and the caller's own id is the same as leaving the flag out, so a spawn without `--machine` is exactly the spawn above.
@@ -357,19 +407,21 @@ The Claude Code and Codex `PreToolUse` spawn guard refuses such a call in a regi
 The guard remains bypassable guidance; it does not change either mode's authority or execution path.
 A launch chained behind another command is refused whole, and a launch inside `bash -c`, `$(...)`, a script or an alias is not seen, so a child started that way has no parent line, as before the guard.
 A first spawn of a new Codex child can answer `native_identity_unavailable` until that Codex has bound its session after its first turn; running the same `hide agent spawn` again with the same intent converges on the same child.
-A start Herdr typed whose agent never showed (the program exited before Herdr saw it) leaves Herdr holding the agent's name in that pane, and the pinned Herdr keeps holding it.
-Running the same intent again then answers `agent_not_started` and types nothing, since the same start would end the same way; its next action is to look at that pane and spawn with a new intent.
+A spawn's tab runs the account's shell with Hide's shell integration where that shell is zsh, bash or fish (Windows PowerShell on Windows), and its start is typed only after the shell marked its first prompt ([ARCHITECTURE.md](ARCHITECTURE.md)); a shell stopped at a startup question within the 30 s wait is refused as `shell_starting` with that question's line, nothing typed, and the next action is to answer it in that pane and spawn again.
+A start Herdr typed whose agent never showed (a startup question took its first letter in a bash pane, or the program exited before Herdr saw it) leaves Herdr holding the agent's name in that pane until its 120 s deadline, and Herdr gives that name to any agent that appears there meanwhile.
+Running the same intent again while the name is held answers `native_identity_unavailable` and types nothing; once Herdr let it go and the shell alone holds the terminal it types the start once more (`start.resent`), and a second start that never showed, or anything else in the foreground, answers `agent_not_started`, whose next action is to look at that pane and spawn with a new intent.
 A spawn about to start its agent closes the pane of every earlier spawn of the same parent, name and device that made a pane and never bound a child, where no agent shows and the shell alone holds the terminal, so a new attempt leaves no extra tab and Herdr no longer holds the name for it; each close is logged as `spawn` / `unstarted_attempt.close`, and a pane that cannot be read or closed is left to Herdr's refusal.
 A spawn records the Herdr terminal its pane runs (`terminal_id` from `pane.get`) together with the pane, because Herdr hands a pane id out again once its server is replaced, so an earlier spawn's pane id can name an unrelated shell the operator opened.
 An earlier pane is closed only while Herdr still reports the terminal its spawn recorded; a pane id now running another terminal is logged with the reason `pane_replaced`, and a spawn record written before terminals were recorded with `pane_identity_unrecorded`, and both panes are left open.
 
 The existing one-second `agent.list` refresh, also requested by native events, reconciles only panes whose four lineage tokens differ; startup and reconnect perform one full pass.
+The same pass writes the read axis's server mark (`hide_server`) on a pane whose saved read record or completion names the current connection's mark and that does not carry it, in the pane's lineage report when it has one ([status-model.md](status-model.md#across-a-herdr-restart)); a change in which panes want a mark replans like a moved registration.
 Each server's pass reads the registrations recorded under its machine: this machine's are keyed by its node id, the same `machine` that `hide agent list` shows, and a device's by its device id, so a token Herdr drops (a live handoff drops every pane token) is written again on this machine as on a device.
 An unchanged native observation and append-only registration count skip planning; unrelated letter/watch writes and label/process/catalog publications do not start a lineage pass.
 The native pane and positive session select the matching retained registration, including an ended one, independently of append order.
 A positive child-session replacement clears stale tokens; an absent native session or agent end leaves the pane's tokens in place, while unchanged readers reject obsolete session identities.
 There is no separate lineage timer, subprocess on the input path or blocking work under `Mutex<Runtime>`.
-The token readers and digest contract remain unchanged.
+The lineage token readers and digest contract remain unchanged; the server mark is read only by the read axis (`wire::server_mark`).
 
 People receive notifications only for an unanswered parent inactivity warning and an overdue undelivered letter.
 A first warning left unacknowledged, uncancelled and unreplied for 60 minutes triggers one human notification per native target and inactivity episode, shared across sibling watches and phone Web Push/Herdr channels.

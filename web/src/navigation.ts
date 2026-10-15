@@ -15,8 +15,10 @@ import type { BoardProject } from "./projectBoard";
 import { projectsOf } from "./remote";
 import { machineName, registeredName } from "./screenMachine";
 import { entryBox } from "./agentGraph";
-import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, localDeviceId, type AgentRow, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
+import { hideAiPlace } from "./hideAiOrigin";
+import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, localDeviceId, type AgentRow, type Device, type HideAi, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
 import { entryLens, useUiStore, type OverviewLens } from "./ui";
+import type { Tool } from "./workspace";
 
 export type AgentGroup = "needs_you" | "done" | "working" | "seen";
 export const AGENT_GROUPS: readonly { group: AgentGroup; label: MessageKey }[] = [
@@ -124,22 +126,28 @@ export function agentPlaces(
   localWorkspaces: Workspace[] | undefined,
   remote: RemoteStatus[] | undefined,
   devices: Device[] | undefined,
+  hideAi?: ReadonlyMap<string, HideAi>,
 ): (device: string | null, paneId: string) => string | null {
-  const byDevice = new Map<string | null, Map<string, string>>([[null, checkoutPlaces(localWorkspaces ?? [])]]);
+  const byDevice = new Map<string | null, Map<string, string>>([[null, checkoutPlaces(localWorkspaces ?? [], hideAi)]]);
   for (const status of remote ?? []) {
-    byDevice.set(deviceLabel(devices, status.target_id), checkoutPlaces((status.session?.workspaces ?? []).filter((p) => p.agent_scope.places_live)));
+    byDevice.set(deviceLabel(devices, status.target_id), checkoutPlaces((status.session?.workspaces ?? []).filter((p) => p.agent_scope.places_live), hideAi));
   }
   return (device, paneId) => byDevice.get(device)?.get(paneId) ?? null;
 }
 
-/** Where each pane sits, as `project › branch` (Home, or the project alone for a plain folder), keyed by pane id. */
-export function checkoutPlaces(workspaces: Workspace[]): Map<string, string> {
+/**
+ * Where each pane sits, as `project › branch` (Home, or the project alone for
+ * a plain folder), keyed by pane id. A pane whose agent Hide AI started names
+ * its task where the branch would stand (`project › Memory 올리기 · m72`).
+ */
+export function checkoutPlaces(workspaces: Workspace[], hideAi?: ReadonlyMap<string, HideAi>): Map<string, string> {
   const places = new Map<string, string>();
   for (const workspace of workspaces) {
     for (const [pane, value] of Object.entries(workspace.agent_scope.places)) {
       const checkout = workspace.checkouts.find((c) => c.id === value.checkout_id);
       if (!checkout) throw new Error(`Missing place checkout: ${value.checkout_id}`);
-      places.set(pane, value.kind === "home" ? translate("common.home") : value.kind === "folder" ? workspace.label : `${workspace.label} › ${checkout.branch ?? checkout.label}`);
+      const started = hideAi?.get(pane);
+      places.set(pane, value.kind === "home" ? translate("common.home") : value.kind === "folder" ? workspace.label : started ? hideAiPlace(translate, workspace.label, started) : `${workspace.label} › ${checkout.branch ?? checkout.label}`);
     }
   }
   return places;
@@ -328,6 +336,15 @@ export function overviewProject(rest: SnapshotRest | null, localAgents: AgentRow
 
 /** Herdr states in which a catalog will not change on its own soon. */
 const SETTLED_HERDR = new Set(["connected", "unconfigured", "socket_missing", "unreachable", "stale", "incompatible"]);
+const FAILED_HERDR = new Set([...SETTLED_HERDR].filter(state => state !== "connected"));
+
+/** Whether the local saved choice is pending, rather than failed or restored. */
+export function waitingForSavedWorkspace(rest: SnapshotRest | null): boolean {
+  // Herdr can connect before the asynchronous catalog and persisted View
+  // arrive. The core retains a saved choice until its path facts settle;
+  // absence during that restore must not choose Main permanently.
+  return Boolean(rest && !focusedRemoteDevice(rest) && !FAILED_HERDR.has(rest.status?.herdr?.state ?? "") && rest.ui_state?.focused_checkout_id && !rest.workspace_view);
+}
 
 /**
  * The first screen (S6 B19, D-11): the Workspace in front when the core
@@ -340,8 +357,9 @@ const SETTLED_HERDR = new Set(["connected", "unconfigured", "socket_missing", "u
  */
 export function startupScreen(rest: SnapshotRest | null, hasFront: boolean): "workspace" | "main" | null {
   if (!rest) return null;
-  if (hasFront) return rest.workspace_view?.resumed ? "workspace" : "main";
   const device = focusedRemoteDevice(rest);
+  if (waitingForSavedWorkspace(rest)) return null;
+  if (hasFront) return rest.workspace_view?.resumed ? "workspace" : "main";
   if (!device) {
     const state = rest.status?.herdr?.state;
     return state && SETTLED_HERDR.has(state) ? "main" : null;
@@ -353,7 +371,7 @@ export function startupScreen(rest: SnapshotRest | null, hasFront: boolean): "wo
 }
 
 /** What All projects, an Overview or the Agents list asked to bring forward (B2, B12, B21). */
-export type OpenTarget = { checkoutId: string; deviceId: string; path: string | null; workspaceId?: string; expanded?: boolean } | { paneId: string };
+export type OpenTarget = { checkoutId: string; deviceId: string; path: string | null; workspaceId?: string; expanded?: boolean; tool?: Tool } | { paneId: string };
 
 /**
  * A Workspace or agent asked for and not yet in front. The screen changes
@@ -371,6 +389,10 @@ export function openingLanded(rest: SnapshotRest | null, target: OpenTarget): bo
   const front = frontCheckout(rest);
   if (!front) return false;
   if ("paneId" in target) return front.tabs.some((tab) => tab.panes.some((pane) => pane.id === target.paneId));
+  if (target.tool !== undefined) {
+    const view = rest?.workspace_view;
+    if (!view || view.tool !== target.tool || view.device_id !== target.deviceId || view.path !== front.path) return false;
+  }
   if (target.expanded !== undefined && !(rest?.ui_state?.session_collapsed_checkout_ids ?? []).includes(target.checkoutId) !== target.expanded) return false;
   if (front.id === target.checkoutId) return true;
   // A device project with no Herdr workspace yet gets one at its folder, under a new id.
@@ -432,13 +454,3 @@ export function projectEntryLens(rest: SnapshotRest | null, projectId: string): 
   return entryLens(entryBox(workspace, frontCheckout(rest)?.id), useUiStore.getState().tasksMode);
 }
 
-/**
- * A Project's Overview on its PRs tab with pull request `number`, when one
- * is named, in view with its panel open (PRD overview-lenses-prs B21,
- * link-graph B36): where a PR chip, a session's PR chip, the Issues
- * board's `이슈 없는 PR` line and the sidebar's PR card lead. A Project's
- * Overview already on screen keeps the rest of its lens.
- */
-export function pullRequestLens(lens: OverviewLens, number: number | null): OverviewLens {
-  return { ...lens, tab: "prs", focusTask: null, panel: null, prs: { ...lens.prs, panel: number ?? lens.prs.panel, focus: number } };
-}

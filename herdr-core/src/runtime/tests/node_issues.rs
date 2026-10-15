@@ -472,6 +472,7 @@ fn a_node_s_github_project_lists_its_repository_s_issues_and_links_its_checkouts
         &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
+                viewer: None,
                 pull_requests_read: true,
                 issues_read: true,
                 issues: crate::issues::ProjectIssuesSnapshot {
@@ -525,6 +526,7 @@ fn a_node_s_github_project_lists_its_repository_s_issues_and_links_its_checkouts
         &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
+                viewer: None,
                 root_path: repo.root.clone(),
                 status: crate::model::GithubStatusSnapshot {
                     available: true,
@@ -603,6 +605,7 @@ fn a_node_project_says_when_this_machine_s_gh_is_signed_out() {
         &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
+                viewer: None,
                 root_path: repo.root.clone(),
                 status: crate::model::GithubStatusSnapshot {
                     available: false,
@@ -677,6 +680,37 @@ fn a_repository_the_node_refused_to_read_says_why_on_its_board() {
     );
 }
 
+/// A node's repository whose origin names no GitHub repository is an answer,
+/// as a local one's is: no reason is drawn on its checkouts.
+#[test]
+fn a_node_repository_without_a_github_remote_draws_no_reason() {
+    let repo = repo(None, "feature");
+    let shared = node_runtime(
+        &repo,
+        FakeDevice::new(),
+        Recording::of(None),
+        Default::default(),
+    );
+    let runtime = shared.lock().unwrap();
+    let project = node_project(&runtime).unwrap();
+    assert!(!project.checkouts.is_empty());
+    for checkout in &project.checkouts {
+        let github = &checkout.github;
+        assert_eq!(
+            (
+                github.available,
+                github.unavailable_reason.as_deref(),
+                github.failure_category
+            ),
+            (
+                true,
+                None,
+                Some(crate::model::GithubFailureCategory::NoGithubRemote)
+            )
+        );
+    }
+}
+
 /// Before this machine's GitHub read answers, and while every read fails,
 /// a node project is named by the repository the node read, so ⌘K's GitHub
 /// search covers it.
@@ -718,6 +752,7 @@ fn a_node_project_is_named_and_searched_by_the_repository_the_node_read() {
         &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
+                viewer: None,
                 root_path: repo.root.clone(),
                 status: crate::model::GithubStatusSnapshot {
                     available: false,
@@ -750,6 +785,7 @@ fn a_new_github_issue_for_a_node_project_is_made_by_repository_name_here() {
             &Default::default(),
             crate::model::GithubSnapshot {
                 projects: vec![crate::model::GithubProjectSnapshot {
+                    viewer: None,
                     pull_requests_read: true,
                     issues_read: true,
                     issues: crate::issues::ProjectIssuesSnapshot {
@@ -1583,6 +1619,7 @@ fn ingest_node_pull_request(runtime: &mut Runtime, repo: &Repo) {
         &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
+                viewer: None,
                 pull_requests_read: true,
                 issues_read: true,
                 issues: crate::issues::ProjectIssuesSnapshot {
@@ -1613,6 +1650,7 @@ fn ingest_node_pull_request(runtime: &mut Runtime, repo: &Repo) {
                     closed_at_unix_ms: None,
                     head_oid: None,
                     cross_repository: false,
+                    work: Default::default(),
                 }],
             }],
         },
@@ -1912,6 +1950,7 @@ fn ingest_node_issues(runtime: &mut Runtime, repo: &Repo, numbers: &[u32]) {
         &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
+                viewer: None,
                 pull_requests_read: true,
                 issues_read: true,
                 issues: crate::issues::ProjectIssuesSnapshot {
@@ -2387,4 +2426,46 @@ fn a_node_project_sends_its_issues_once_as_tasks() {
         sent,
         serde_json::json!({"repository": "acme/app", "issues": [], "overflow": false})
     );
+}
+
+#[test]
+fn confirmed_override_names_remote_search_and_auto_source_before_a_provider_reply() {
+    let repo = repo(None, "12-fix-login");
+    let shared = node_runtime(
+        &repo,
+        FakeDevice::new(),
+        Recording::of(None),
+        Default::default(),
+    );
+    assert_eq!(
+        node_project(&shared.lock().unwrap())
+            .unwrap()
+            .tasks
+            .source
+            .as_ref()
+            .unwrap()
+            .kind,
+        "local"
+    );
+    dispatch(
+        &shared,
+        "project_settings_set",
+        serde_json::json!({"device_id": NODE, "root": repo.root, "request_id": "override", "patch": {"repository": {"mode": "repository", "repository": "example/override"}}}),
+    );
+    let id = crate::project_settings::key(NODE, &repo.root);
+    wait(&shared, "durable remote override", |runtime| {
+        runtime.snapshot.ui_state.project_settings.contains_key(&id)
+    });
+    let runtime = shared.lock().unwrap();
+    let project = node_project(&runtime).unwrap();
+    assert_eq!(
+        project.home_issues.repository.as_deref(),
+        Some("example/override")
+    );
+    assert_eq!(project.tasks.source.as_ref().unwrap().kind, "github");
+    assert!(project.tasks.source.as_ref().unwrap().reading);
+    assert!(task_ids(project).is_empty());
+    let (targets, _) = runtime.github_search_targets();
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].repository.as_deref(), Some("example/override"));
 }

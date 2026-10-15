@@ -64,6 +64,29 @@ fn connected_remote_panes_receive_once_and_disconnect_keeps_the_same_letter_pend
             remote_hooks.is_file(),
             "private remote kit lacks its hook sibling"
         );
+        // A named reference can disappear while the pane stays alive. The
+        // actual remote CLI must still send a new kernel proof and get guidance.
+        let missing = fixture.remote.environment.home.join("gone-reference.json");
+        ensure!(
+            !missing.exists(),
+            "missing-reference fixture already exists"
+        );
+        let guidance = fixture
+            .remote
+            .run_in_pane(&format!(
+                "HIDE_CAP_REF={} {} workspace info --hook",
+                quote(&missing),
+                quote(&remote_hide),
+            ))?
+            .json()?;
+        ensure!(
+            guidance["context"]["device_id"] == "remote"
+                && guidance["capabilities"]
+                    .as_array()
+                    .is_some_and(|caps| caps.iter().any(|cap| cap == "workspace.info")),
+            "fresh remote proof did not return remote guidance: {guidance}"
+        );
+
         let send = format!(
             "{} request send remote-child --intent bridge-1 --body {}",
             quote(&fixture.hide),
@@ -512,13 +535,49 @@ fn a_spawn_with_machine_starts_the_agent_on_the_device_under_its_caller() -> Res
             agent_pane(&fixture.local.run(&["agent", "list"])?, "remote-worker").is_none(),
             "the agent was also started on the caller's own Herdr"
         );
+        // B8/B11: the real device server's workspace and tab leave their
+        // recovery markers only after placement has reached the receipt.
+        wait_for("receipt-proven names on the device", || {
+            let state = fixture.remote.run(&["api", "snapshot"])?;
+            let state = &state["result"]["snapshot"];
+            let pane = state["panes"]
+                .as_array()
+                .context("device panes")?
+                .iter()
+                .find(|pane| pane["pane_id"] == child.pane)
+                .context("child pane")?;
+            let workspace = state["workspaces"]
+                .as_array()
+                .context("device workspaces")?
+                .iter()
+                .find(|workspace| workspace["workspace_id"] == pane["workspace_id"])
+                .context("child workspace")?;
+            let tab = state["tabs"]
+                .as_array()
+                .context("device tabs")?
+                .iter()
+                .find(|tab| tab["tab_id"] == pane["tab_id"])
+                .context("child tab")?;
+            let saved = fixture.ledger()?;
+            let record = saved
+                .spawns
+                .iter()
+                .find(|record| record.id == spawn_record.id)
+                .context("naming receipt")?;
+            let names = serde_json::to_value(record)?;
+            Ok((workspace["label"] == "remote-worker"
+                && tab["label"] == "remote-worker"
+                && names["names"]["workspace"] == "applied"
+                && names["names"]["tab"] == "applied")
+                .then_some(()))
+        })?;
         ensure!(
             ledger
                 .watches
                 .iter()
                 .any(|watch| watch.target.device_id == "remote"
                     && watch.target.name == "remote-worker"
-                    && watch.parent.name == parent.name),
+                    && Some(&watch.parent.name) == parent.name.as_ref()),
             "the caller has no watch on the device's agent"
         );
 

@@ -164,6 +164,15 @@ pub(super) struct CreateTabPayload {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ProjectMemoryNavigatePayload {
+    pub(super) device_id: String,
+    pub(super) workspace_id: String,
+    pub(super) checkout_id: String,
+    pub(super) request_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct FocusCheckoutPayload {
     /// Sidebar row disclosure, committed with checkout focus. Omitted by other open entrypoints.
     #[serde(default)]
@@ -356,6 +365,17 @@ pub(super) struct PaneTargetPayload {
     pub(super) pane_id: String,
 }
 
+/// Fork agent from the pane menu: where the fork goes, chosen at the press,
+/// and the shell's key request, which holds what is typed until the fork's
+/// agent has started.
+#[derive(Debug, Deserialize)]
+pub(super) struct ForkPanePayload {
+    pub(super) pane_id: String,
+    pub(super) placement: crate::fork::ForkPlacement,
+    #[serde(default)]
+    pub(super) request_id: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct RemoteControlPayload {
     pub(super) target_id: String,
@@ -471,6 +491,11 @@ pub(super) struct FileOpenPayload {
     /// to its right (PRD S7 B4). Only a shell with View areas reads it.
     #[serde(default)]
     pub(super) beside: bool,
+    /// The Workspace in front, named when the file is another checkout's: a
+    /// terminal link opens it there as an ordinary tab and moves no checkout
+    /// (`open_file_in_front_view`). Only a shell with View areas sends it.
+    #[serde(default)]
+    pub(super) view: Option<super::view_areas::ViewWorkspace>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -687,6 +712,8 @@ fn default_true() -> bool {
 /// number, as agents name them.
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct MemoryActionPayload {
+    #[serde(default)]
+    pub(super) numbers: Vec<u64>,
     pub(super) workspace_id: String,
     pub(super) action: crate::model::MemoryAction,
     /// The card a forget or an undo names.
@@ -818,6 +845,8 @@ pub(super) struct GitWorktreeSetBasePayload {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateWorktreePayload {
+    #[serde(default)]
+    pub(super) request_id: Option<String>,
     /// The device that holds the repository; this machine when absent.
     #[serde(default)]
     pub(super) device_id: Option<String>,
@@ -868,6 +897,8 @@ pub(super) struct IssueCreatePayload {
     pub(super) title: String,
     #[serde(default)]
     pub(super) body: String,
+    #[serde(default)]
+    pub(super) missed: Option<crate::links::ledger::MissedSource>,
 }
 
 /// `issue_detail_request`: one issue's body, labels, author, assignees and
@@ -936,6 +967,55 @@ pub(super) struct PrFeedbackReadPayload {
     pub(super) request_id: String,
     pub(super) workspace_id: String,
     pub(super) pr_number: u32,
+}
+
+/// `pr_card_read`: what the card shows beyond the list (D-06), asked when
+/// the card opens, when its pull request changed, and by a part's retry.
+/// `look_again` is the operator's Look again after a refused write, which
+/// also dismisses its notice and reads the list; no automatic read does.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PrCardReadPayload {
+    pub(super) workspace_id: String,
+    pub(super) pr_number: u32,
+    #[serde(default)]
+    pub(super) look_again: bool,
+}
+
+/// `pr_merge`: Merge from the card (D-21, D-22), conditioned on the head
+/// commit the operator was shown. A repository with a merge queue takes no
+/// `method`; any other takes one of the methods the card offered.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PrMergePayload {
+    pub(super) workspace_id: String,
+    pub(super) pr_number: u32,
+    pub(super) head: String,
+    #[serde(default)]
+    pub(super) method: Option<hide_node_link::gh::PrMergeMethod>,
+}
+
+/// `pr_update_branch`: brings a BEHIND pull request's branch up to its base,
+/// conditioned on the head commit the operator was shown (D-22).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PrUpdateBranchPayload {
+    pub(super) workspace_id: String,
+    pub(super) pr_number: u32,
+    pub(super) head: String,
+}
+
+/// `pr_open`: a pull request's decision card (PRD work-tab-pr-lens D-02,
+/// D-03, D-28), opened in one event: the Workspace it opens in, the agent
+/// brought forward and the card tab, all chosen by the core. `checkout_id`
+/// is the Workspace the operator asked from, when it is one of the project's.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PrOpenPayload {
+    pub(super) workspace_id: String,
+    pub(super) pr_number: u32,
+    #[serde(default)]
+    pub(super) checkout_id: Option<String>,
 }
 
 /// `pr_delegate`: an agent started on a pull request's branch with the
@@ -1103,6 +1183,9 @@ pub(super) struct AiSettingsPayload {
     /// The agent-summary switch (PRD overview-request-view D-11).
     #[serde(default)]
     pub(super) agent_summary: Option<bool>,
+    /// The PR-summary switch (PRD work-tab-pr-lens D-29).
+    #[serde(default)]
+    pub(super) pr_summary: Option<bool>,
     /// Use Hide AI (D-14): off, no model is asked anything.
     #[serde(default)]
     pub(super) enabled: Option<bool>,
@@ -1113,6 +1196,10 @@ pub(super) struct AiSettingsPayload {
     /// An agent to take out of that list.
     #[serde(default)]
     pub(super) fallback_remove: Option<String>,
+    /// The Usage limit (PRD hide-ai-usage-limit D-01): a percent from 1 to
+    /// 100, or `"none"`. A value that is neither is refused with the event.
+    #[serde(default)]
+    pub(super) usage_limit: Option<hide_ai::UsageLimit>,
 }
 
 /// One pane search. An empty `term` clears the search rather than needing its
@@ -1176,11 +1263,31 @@ pub(super) struct FirstRunAdvancePayload {
 #[derive(Debug, Deserialize)]
 pub(super) struct DesktopNotificationsSetPayload {
     pub(super) enabled: bool,
+    /// The reopened wizard's Not now disables both with its one event.
+    #[serde(default)]
+    pub(super) done_enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct DesktopNotificationsDoneSetPayload {
+    pub(super) enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ScreenIntroSeenPayload {
     pub(super) screen: crate::model::ScreenIntro,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct UsagePinSetPayload {
+    pub(super) agent: String,
+    pub(super) window: hide_agent_adapter::usage::WindowKind,
+    pub(super) enabled: bool,
+}
+#[derive(Debug, Deserialize)]
+pub(super) struct UsageHiddenSetPayload {
+    pub(super) agent: String,
+    pub(super) hidden: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1193,6 +1300,16 @@ pub(super) struct InterfaceLanguageSetPayload {
 #[derive(Debug, Deserialize)]
 pub(super) struct ThemeSetPayload {
     pub(super) theme: crate::model::ThemePreference,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AgentLogoModeSetPayload {
+    pub(super) mode: crate::model::AgentLogoMode,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ColorThemeSetPayload {
+    pub(super) color_theme: crate::model::ColorTheme,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1295,7 +1412,7 @@ pub(super) enum Event {
     RetryAgentClose(CheckCloseStatusPayload),
     DismissAgentClose(CheckCloseStatusPayload),
     ReopenClosed,
-    ForkPane(PaneTargetPayload),
+    ForkPane(ForkPanePayload),
     AgentSleepSet(AgentSleepSetPayload),
     AgentSleep(PaneTargetPayload),
     PaneInputSubmitted(PaneTargetPayload),
@@ -1330,6 +1447,12 @@ pub(super) enum Event {
     SessionSearch(super::session_search::SearchPayload),
     LinksOpen(super::links::LinksOpenPayload),
     LinksClose,
+    SessionRecordOpen(super::links::RecordOpenPayload),
+    SessionRecordClose,
+    SessionWorkSearch(super::links::RecordSearchPayload),
+    SessionMissedStatus(super::links::MissedStatusPayload),
+    SessionIssueDraft(crate::links::ledger::MissedSource),
+    SessionIssueDraftCancel,
     FactoryAction(Box<super::factory::FactoryActionPayload>),
     FactoryTaskOpen(super::factory::FactoryTaskOpenPayload),
     FactoryTaskClose,
@@ -1338,6 +1461,7 @@ pub(super) enum Event {
     ArchiveOpen(ArchiveOpenPayload),
     MemoryAction(MemoryActionPayload),
     MemoryOpen(MemoryOpenPayload),
+    ProjectMemoryNavigate(ProjectMemoryNavigatePayload),
     MemoryExpand(MemoryExpandPayload),
     MemorySearch(MemorySearchPayload),
     RetryConnect(RetryConnectPayload),
@@ -1358,16 +1482,22 @@ pub(super) enum Event {
     PaneTextScale(PaneTextScalePayload),
     EditorTextScale(EditorTextScalePayload),
     ThemeSet(ThemeSetPayload),
+    AgentLogoModeSet(AgentLogoModeSetPayload),
+    ColorThemeSet(ColorThemeSetPayload),
     InterfaceLanguageSet(InterfaceLanguageSetPayload),
+    UsagePinSet(UsagePinSetPayload),
+    UsageHiddenSet(UsageHiddenSetPayload),
     AgentOnboardingApply(AgentOnboardingApplyPayload),
     FirstRunAdvance(FirstRunAdvancePayload),
     DesktopNotificationsSet(DesktopNotificationsSetPayload),
+    DesktopNotificationsDoneSet(DesktopNotificationsDoneSetPayload),
     ScreenIntroSeen(ScreenIntroSeenPayload),
     ChangesSelect(ChangesSelectPayload),
     GitWorktreeOpen(GitWorktreeOpenPayload),
     GitWorktreeSetBase(GitWorktreeSetBasePayload),
     CreateWorktree(CreateWorktreePayload),
     IssueSourceSet(IssueSourceSetPayload),
+    ProjectSettingsSet(super::project_settings::SetPayload),
     IssueSettingsSet(IssueSettingsSetPayload),
     IssueCreate(IssueCreatePayload),
     IssueDetailRequest(IssueDetailRequestPayload),
@@ -1378,6 +1508,10 @@ pub(super) enum Event {
     PrLinkIssue(PrLinkIssuePayload),
     PrFeedbackRead(PrFeedbackReadPayload),
     PrDelegate(PrDelegatePayload),
+    PrOpen(PrOpenPayload),
+    PrCardRead(PrCardReadPayload),
+    PrMerge(PrMergePayload),
+    PrUpdateBranch(PrUpdateBranchPayload),
     SetCheckoutPurpose(SetCheckoutPurposePayload),
     SetCheckoutIssue(SetCheckoutPurposePayload),
     MigrateMainBranch(MigrateMainBranchPayload),
@@ -1514,7 +1648,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "retry_agent_close" => decode!(CheckCloseStatusPayload, RetryAgentClose),
         "dismiss_agent_close" => decode!(CheckCloseStatusPayload, DismissAgentClose),
         "reopen_closed" => Ok(Event::ReopenClosed),
-        "fork_pane" => decode!(PaneTargetPayload, ForkPane),
+        "fork_pane" => decode!(ForkPanePayload, ForkPane),
         "agent_sleep_set" => decode!(AgentSleepSetPayload, AgentSleepSet),
         "agent_sleep" => decode!(PaneTargetPayload, AgentSleep),
         "pane_input_submitted" => decode!(PaneTargetPayload, PaneInputSubmitted),
@@ -1553,6 +1687,12 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "sessions_set_filter" => decode!(SessionsFilterPayload, SessionsSetFilter),
         "session_search" => decode!(super::session_search::SearchPayload, SessionSearch),
         "links_open" => decode!(super::links::LinksOpenPayload, LinksOpen),
+        "session_record_open" => decode!(super::links::RecordOpenPayload, SessionRecordOpen),
+        "session_record_close" => Ok(Event::SessionRecordClose),
+        "session_work_search" => decode!(super::links::RecordSearchPayload, SessionWorkSearch),
+        "session_missed_status" => decode!(super::links::MissedStatusPayload, SessionMissedStatus),
+        "session_issue_draft" => decode!(crate::links::ledger::MissedSource, SessionIssueDraft),
+        "session_issue_draft_cancel" => Ok(Event::SessionIssueDraftCancel),
         "factory_action" => serde_json::from_value::<super::factory::FactoryActionPayload>(payload)
             .map(|payload| Event::FactoryAction(Box::new(payload)))
             .map_err(|_| invalid_payload(&kind)),
@@ -1563,6 +1703,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "archive_open" => decode!(ArchiveOpenPayload, ArchiveOpen),
         "memory_action" => decode!(MemoryActionPayload, MemoryAction),
         "memory_open" => decode!(MemoryOpenPayload, MemoryOpen),
+        "project_memory_navigate" => decode!(ProjectMemoryNavigatePayload, ProjectMemoryNavigate),
         "memory_expand" => decode!(MemoryExpandPayload, MemoryExpand),
         "memory_search" => decode!(MemorySearchPayload, MemorySearch),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
@@ -1583,11 +1724,21 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pane_text_scale" => decode!(PaneTextScalePayload, PaneTextScale),
         "editor_text_scale" => decode!(EditorTextScalePayload, EditorTextScale),
         "theme_set" => decode!(ThemeSetPayload, ThemeSet),
+        "agent_logo_mode_set" => decode!(AgentLogoModeSetPayload, AgentLogoModeSet),
+        "color_theme_set" => decode!(ColorThemeSetPayload, ColorThemeSet),
+        "usage_pin_set" => decode!(UsagePinSetPayload, UsagePinSet),
+        "usage_hidden_set" => decode!(UsageHiddenSetPayload, UsageHiddenSet),
         "interface_language_set" => decode!(InterfaceLanguageSetPayload, InterfaceLanguageSet),
         "agent_onboarding_apply" => decode!(AgentOnboardingApplyPayload, AgentOnboardingApply),
         "first_run_advance" => decode!(FirstRunAdvancePayload, FirstRunAdvance),
         "desktop_notifications_set" => {
             decode!(DesktopNotificationsSetPayload, DesktopNotificationsSet)
+        }
+        "desktop_notifications_done_set" => {
+            decode!(
+                DesktopNotificationsDoneSetPayload,
+                DesktopNotificationsDoneSet
+            )
         }
         "screen_intro_seen" => decode!(ScreenIntroSeenPayload, ScreenIntroSeen),
         "changes_select" => decode!(ChangesSelectPayload, ChangesSelect),
@@ -1595,6 +1746,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "git_worktree_set_base" => decode!(GitWorktreeSetBasePayload, GitWorktreeSetBase),
         "create_worktree" => decode!(CreateWorktreePayload, CreateWorktree),
         "issue_source_set" => decode!(IssueSourceSetPayload, IssueSourceSet),
+        "project_settings_set" => decode!(super::project_settings::SetPayload, ProjectSettingsSet),
         "issue_settings_set" => decode!(IssueSettingsSetPayload, IssueSettingsSet),
         "issue_create" => decode!(IssueCreatePayload, IssueCreate),
         "issue_detail_request" => decode!(IssueDetailRequestPayload, IssueDetailRequest),
@@ -1605,6 +1757,10 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pr_link_issue" => decode!(PrLinkIssuePayload, PrLinkIssue),
         "pr_feedback_read" => decode!(PrFeedbackReadPayload, PrFeedbackRead),
         "pr_delegate" => decode!(PrDelegatePayload, PrDelegate),
+        "pr_open" => decode!(PrOpenPayload, PrOpen),
+        "pr_card_read" => decode!(PrCardReadPayload, PrCardRead),
+        "pr_merge" => decode!(PrMergePayload, PrMerge),
+        "pr_update_branch" => decode!(PrUpdateBranchPayload, PrUpdateBranch),
         "set_checkout_issue" => decode!(SetCheckoutPurposePayload, SetCheckoutIssue),
         "set_checkout_purpose" => decode!(SetCheckoutPurposePayload, SetCheckoutPurpose),
         "migrate_main_branch" => decode!(MigrateMainBranchPayload, MigrateMainBranch),
@@ -1655,6 +1811,8 @@ impl Runtime {
             Event::CreateTab(payload) => payload.request_id.clone(),
             Event::CreatePane(payload) => payload.request_id.clone(),
             Event::AgentStartInCheckout(payload) => payload.request_id.clone(),
+            Event::CreateWorktree(payload) => payload.request_id.clone(),
+            Event::ForkPane(payload) => payload.request_id.clone(),
             _ => None,
         };
         let mut changed = self.apply_event(event);
@@ -1662,6 +1820,43 @@ impl Runtime {
             changed |= self.settle_creation_request(&request_id);
         }
         changed
+    }
+
+    /// A sleeping project's fold is its own: opening it holds it open until
+    /// an agent wakes, and the project's ordinary fold stays as the operator
+    /// set it (PRD sidebar-titlebar-refresh D-19). `None` when the project is
+    /// not asleep, so the caller folds it the ordinary way; otherwise whether
+    /// the fold moved. `expanded` absent flips it.
+    fn fold_asleep_project(&mut self, workspace_id: &str, expanded: Option<bool>) -> Option<bool> {
+        let asleep = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .chain(
+                self.snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .filter_map(|remote| remote.session.as_ref())
+                    .flat_map(|session| &session.workspaces),
+            )
+            .find(|workspace| workspace.id == workspace_id)
+            .and_then(|workspace| workspace.agent_presence.asleep.clone())?;
+        let expanded = expanded.unwrap_or(!asleep.expanded);
+        if expanded == asleep.expanded {
+            return Some(false);
+        }
+        let key = crate::project_context::asleep_fold_key(workspace_id);
+        let keys = &mut self.snapshot.ui_state.session_open_folds;
+        keys.retain(|open| open != &key);
+        if expanded {
+            keys.push(key);
+            keys.sort();
+        }
+        self.refresh_inactive_groups();
+        self.persist_ui_state();
+        Some(true)
     }
 
     /// Opens or folds one agent's children in the sidebar tree, or in
@@ -1720,6 +1915,12 @@ impl Runtime {
             },
             Event::SessionSearch(payload) => self.request_session_search(payload),
             Event::LinksOpen(payload) => self.open_links(payload),
+            Event::SessionRecordOpen(payload) => self.open_session_record(payload),
+            Event::SessionRecordClose => self.close_session_record(),
+            Event::SessionWorkSearch(payload) => self.search_work_sessions(payload),
+            Event::SessionMissedStatus(payload) => self.set_missed_status(payload),
+            Event::SessionIssueDraft(payload) => self.draft_missed_issue(payload),
+            Event::SessionIssueDraftCancel => self.cancel_session_issue_draft(),
             Event::FactoryAction(payload) => self.factory_action(*payload),
             Event::FactoryTaskOpen(payload) => self.factory_task_open(payload),
             Event::FactoryTaskClose => self.factory_task_close(),
@@ -1736,6 +1937,7 @@ impl Runtime {
             },
             Event::MemoryAction(payload) => self.apply_memory_action(payload),
             Event::MemoryOpen(payload) => self.open_project_memory(payload.workspace_id),
+            Event::ProjectMemoryNavigate(payload) => self.navigate_project_memory(payload),
             Event::MemoryExpand(payload) => {
                 self.expand_memory_card(&payload.workspace_id, payload.number)
             }
@@ -1761,7 +1963,7 @@ impl Runtime {
                 crate::agent_state::sessions::ResolveSource::Operator,
             ),
             Event::PaneInputSent(payload) => {
-                self.note_delivery_key(&payload.pane_id);
+                self.note_delivery_key(&payload.pane_id, "phone");
                 false
             }
             Event::PaneVisit(payload) => self.record_pane_visit(payload.pane_id),
@@ -2114,7 +2316,11 @@ impl Runtime {
                     self.set_error(error.kind(), error.message(), false);
                     return true;
                 }
-                if let Some(expanded) = payload.project_expanded {
+                if let Some(expanded) = payload.project_expanded
+                    && self
+                        .fold_asleep_project(&payload.workspace_id, Some(expanded))
+                        .is_none()
+                {
                     let ids = &mut self.snapshot.ui_state.collapsed_workspace_ids;
                     ids.retain(|id| id != &payload.workspace_id);
                     if !expanded {
@@ -2204,6 +2410,7 @@ impl Runtime {
                     return true;
                 };
                 let checkout_path = checkout.path.clone();
+                let presentation_key = (self.node.as_str().to_owned(), checkout_path.clone());
                 // Hide owns the visible tab, so the active mark moves here,
                 // on the frame the operator asked for it, and Herdr is told
                 // afterwards. Focusing a tab still does not reorder the
@@ -2233,6 +2440,7 @@ impl Runtime {
                 // answers.
                 self.select_terminal_pane(next_pane_id.clone());
                 self.sync_active_tab_projection();
+                self.choose_view_presentation(presentation_key, payload.tab_id.clone());
                 // The operator chose this tab, so its pane now holds Hide's
                 // keyboard and the read record follows it. Leaving the record
                 // on the pane of the tab just left kept marking that pane read
@@ -2299,6 +2507,11 @@ impl Runtime {
                 true
             }
             Event::ProjectCheckoutsFold(payload) => {
+                if let Some(changed) =
+                    self.fold_asleep_project(&payload.workspace_id, payload.expanded)
+                {
+                    return changed;
+                }
                 let ids = &mut self.snapshot.ui_state.collapsed_workspace_ids;
                 let was_expanded = !ids.contains(&payload.workspace_id);
                 let expanded = payload.expanded.unwrap_or(!was_expanded);
@@ -2561,11 +2774,14 @@ impl Runtime {
                 // project registrations, expanded folders and file tabs. Its
                 // panes, agents and folders are not touched.
                 let scope = format!("remote:{}:", payload.device_id);
-                let cleanup_key = format!("cleanup/{}", payload.device_id);
-                self.snapshot
-                    .ui_state
-                    .session_open_folds
-                    .retain(|key| !key.starts_with(&scope) && key != &cleanup_key);
+                let device_folds = [
+                    format!("cleanup/{}", payload.device_id),
+                    crate::project_context::no_agents_fold_key(&payload.device_id),
+                ];
+                self.snapshot.ui_state.session_open_folds.retain(|key| {
+                    let project = key.strip_prefix("asleep/").unwrap_or(key);
+                    !project.starts_with(&scope) && !device_folds.contains(key)
+                });
                 let registrations = self.snapshot.ui_state.workspace_registrations.len();
                 self.snapshot
                     .ui_state
@@ -2805,8 +3021,9 @@ impl Runtime {
                 };
                 // A fork blocks until the agent has started, which takes long
                 // enough for a second click to land. Refusing the second one by
-                // name is what keeps one activation from becoming two sessions.
-                if !self.forks_in_flight.insert(pane_id.clone()) {
+                // name is what keeps one activation from becoming two sessions,
+                // whichever placement either asked for.
+                if self.forks_in_flight.contains_key(&pane_id) {
                     self.set_error(
                         "pane.fork_already_running",
                         format!("Pane {pane_id} is already being forked"),
@@ -2814,6 +3031,19 @@ impl Runtime {
                     );
                     return true;
                 }
+                self.fork_sequence += 1;
+                self.forks_in_flight.insert(
+                    pane_id.clone(),
+                    super::agents::PendingFork {
+                        press: self.fork_sequence,
+                        generation: self.live_generation,
+                        // A view the operator chooses after this press is
+                        // where they are now, and the fork does not take it.
+                        issued_serial: self.control_lane.issued_serial(),
+                        tab_id: None,
+                        focused: None,
+                    },
+                );
                 let Some(context) = self.live.as_ref().cloned() else {
                     self.forks_in_flight.remove(&pane_id);
                     self.set_error(
@@ -2823,17 +3053,23 @@ impl Runtime {
                     );
                     return true;
                 };
-                let cwd = self
+                // A fork's tab is named as a new tab is, so the strip calls it
+                // by its agent rather than by the Herdr name it starts under.
+                let (cwd, tab_label) = self
                     .snapshot
                     .navigator
                     .workspaces
                     .iter()
                     .flat_map(|workspace| workspace.checkouts.iter())
-                    .flat_map(|checkout| checkout.tabs.iter())
-                    .flat_map(|tab| tab.panes.iter())
-                    .find(|pane| pane.id == pane_id)
-                    .map(|pane| pane.cwd.clone());
-                self.fork_sequence += 1;
+                    .find_map(|checkout| {
+                        let pane = checkout
+                            .tabs
+                            .iter()
+                            .flat_map(|tab| tab.panes.iter())
+                            .find(|pane| pane.id == pane_id)?;
+                        Some((pane.cwd.clone(), checkout.next_tab_label.clone()))
+                    })
+                    .unzip();
                 let name = fork_name(
                     &pane_id,
                     &format!("{}-{}", self.fork_sequence, unix_milliseconds()),
@@ -2850,8 +3086,20 @@ impl Runtime {
                         .and_then(|facts| facts.native_reference.clone()),
                     cwd,
                     name,
+                    tab_label,
+                    placement: payload.placement,
                     codex_daemon: self.codex_daemon_for_pane(&pane_id),
                 };
+                // Keys typed between the press and the agent's start wait for
+                // the fork's agent rather than reaching the shell that starts
+                // it (B4); `ingest_fork_result` resolves or discards them.
+                if let Some(request_id) = payload.request_id.as_deref() {
+                    self.input_requests.open(
+                        request_id,
+                        super::terminal_input::InputOrigin::Fork(pane_id.clone()),
+                    );
+                    self.sync_input_requests();
+                }
                 self.push_diagnostic("pane.fork.requested", format!("Forking pane {pane_id}"));
                 if let Err(message) = live::spawn_agent_fork(context, request) {
                     // A worker that never started is a fork that failed, and
@@ -2861,8 +3109,25 @@ impl Runtime {
                 }
                 true
             }
-            Event::RemoteControl(payload) => self.request_remote_control(payload),
+            Event::RemoteControl(payload) => {
+                if let RemoteControlRequest::FocusTab { tab_id } = &payload.request {
+                    self.choose_remote_view_presentation(&payload.target_id, tab_id);
+                }
+                self.request_remote_control(payload)
+            }
             Event::RemoteFileList(payload) => self.request_remote_file_list(payload),
+            Event::FileOpen(payload) if payload.view.is_some() && self.separate_view_areas() => {
+                let view = payload.view.as_ref().expect("matched above");
+                self.open_file_in_front_view(
+                    view,
+                    &payload.workspace_id,
+                    &payload.checkout_id,
+                    &payload.path,
+                    payload.beside,
+                );
+                self.persist_current_ui_state();
+                true
+            }
             Event::FileOpen(payload) => {
                 let context_exists = self
                     .catalog_checkout(&payload.workspace_id, &payload.checkout_id)
@@ -2877,8 +3142,12 @@ impl Runtime {
                     );
                     return true;
                 }
-                if self.separate_view_areas() {
+                if self.separate_view_areas()
+                    && let Some(key) =
+                        self.workspace_key(&payload.workspace_id, &payload.checkout_id)
+                {
                     self.open_file_in_view(
+                        &key,
                         &payload.workspace_id,
                         &payload.checkout_id,
                         &payload.path,
@@ -3437,6 +3706,7 @@ impl Runtime {
             Event::CreateWorktree(payload) => self.create_project_worktree(payload),
             Event::SetCheckoutIssue(payload) => self.set_checkout_issue(payload),
             Event::IssueSourceSet(payload) => self.set_issue_source(payload),
+            Event::ProjectSettingsSet(payload) => self.set_project_settings(payload),
             Event::IssueSettingsSet(payload) => self.set_issue_settings(payload),
             Event::IssueCreate(payload) => self.create_issue(payload),
             Event::IssueDetailRequest(payload) => self.request_issue_detail(payload),
@@ -3447,6 +3717,11 @@ impl Runtime {
             Event::PrLinkIssue(payload) => self.link_pr_issue(payload),
             Event::PrFeedbackRead(payload) => self.read_pr_feedback(payload),
             Event::PrDelegate(payload) => self.delegate_pr(payload),
+            Event::PrOpen(payload) => self.open_pull_request_card(payload),
+            Event::PrCardRead(payload) if payload.look_again => self.look_again_pr_card(payload),
+            Event::PrCardRead(payload) => self.read_pr_card(payload),
+            Event::PrMerge(payload) => self.merge_pull_request(payload),
+            Event::PrUpdateBranch(payload) => self.update_pull_request_branch(payload),
             Event::SetCheckoutPurpose(payload) => self.set_checkout_purpose(payload),
             Event::MigrateMainBranch(payload) => self.migrate_main_branch(payload),
             Event::TaskOperationAck(payload) => self.acknowledge_task_operation(payload.id),
@@ -3470,10 +3745,50 @@ impl Runtime {
             Event::FirstRunAdvance(payload) => {
                 self.advance_first_run(payload.from, payload.notifications)
             }
-            Event::DesktopNotificationsSet(payload) => {
-                self.set_desktop_notifications(payload.enabled)
+            Event::DesktopNotificationsSet(payload) => self
+                .set_desktop_notification_preferences(Some(payload.enabled), payload.done_enabled),
+            Event::DesktopNotificationsDoneSet(payload) => {
+                self.set_desktop_notification_preferences(None, Some(payload.enabled))
             }
             Event::ScreenIntroSeen(payload) => self.mark_screen_intro_seen(payload.screen),
+            Event::UsagePinSet(payload) => {
+                match self.snapshot.ui_state.usage.pin(
+                    crate::usage::prefs::Pin {
+                        agent: payload.agent,
+                        window: payload.window,
+                    },
+                    payload.enabled,
+                    &self.snapshot.usage,
+                ) {
+                    Ok(false) => false,
+                    Ok(true) => {
+                        self.persist_ui_state();
+                        true
+                    }
+                    Err(kind) => {
+                        self.set_error(kind, "Usage preferences were not saved", false);
+                        true
+                    }
+                }
+            }
+            Event::UsageHiddenSet(payload) => {
+                match self
+                    .snapshot
+                    .ui_state
+                    .usage
+                    .hide(payload.agent, payload.hidden)
+                {
+                    Ok(false) => false,
+                    Ok(true) => {
+                        self.persist_ui_state();
+                        true
+                    }
+                    Err(kind) => {
+                        self.set_error(kind, "Usage preferences were not saved", false);
+                        true
+                    }
+                }
+            }
             Event::InterfaceLanguageSet(payload) => {
                 if !payload.language.is_null()
                     && serde_json::from_value::<crate::model::InterfaceLanguage>(
@@ -3501,6 +3816,22 @@ impl Runtime {
                     return false;
                 }
                 self.snapshot.ui_state.theme = payload.theme;
+                self.persist_ui_state();
+                true
+            }
+            Event::AgentLogoModeSet(payload) => {
+                if self.snapshot.ui_state.agent_logo_mode == payload.mode {
+                    return false;
+                }
+                self.snapshot.ui_state.agent_logo_mode = payload.mode;
+                self.persist_ui_state();
+                true
+            }
+            Event::ColorThemeSet(payload) => {
+                if self.snapshot.ui_state.color_theme == payload.color_theme {
+                    return false;
+                }
+                self.snapshot.ui_state.color_theme = payload.color_theme;
                 self.persist_ui_state();
                 true
             }
@@ -3595,6 +3926,9 @@ impl Runtime {
                     }
                     self.usage_popover_open = open;
                 }
+                if payload.usage_window_visible.is_some() || payload.usage_popover_open.is_some() {
+                    self.feed_usage_ledger();
+                }
                 // Pet placement, visibility, and shortcut belong to the pet
                 // events; a navigator or keyboard save must not erase them.
                 let current = self.snapshot.ui_state.clone();
@@ -3640,6 +3974,8 @@ impl Runtime {
                     expanded_inactive_project_device_ids: current
                         .expanded_inactive_project_device_ids,
                     project_base_branches: current.project_base_branches,
+                    project_settings: current.project_settings,
+                    project_settings_writes: current.project_settings_writes,
                     expanded_agent_pane_ids: current.expanded_agent_pane_ids,
                     sessions_expanded_agent_pane_ids: current.sessions_expanded_agent_pane_ids,
                     selected_path: payload.selected_path,
@@ -3687,7 +4023,12 @@ impl Runtime {
                     accent_hex: payload.accent_hex.unwrap_or(current.accent_hex),
                     // `theme_set` owns the theme; a shared UI-state save carries it through.
                     theme: current.theme,
+                    // `agent_logo_mode_set` owns the logo mode the same way.
+                    agent_logo_mode: current.agent_logo_mode,
+                    // `color_theme_set` owns the color theme the same way.
+                    color_theme: current.color_theme,
                     interface_language: current.interface_language,
+                    usage: current.usage,
                     // `agent_onboarding_*` events own the first-run choice.
                     agent_onboarding: current.agent_onboarding,
                     agent_onboarding_agents: current.agent_onboarding_agents,
@@ -3695,6 +4036,7 @@ impl Runtime {
                     // notification switch and the introductions seen.
                     first_run: current.first_run,
                     desktop_notifications: current.desktop_notifications,
+                    desktop_notifications_done: current.desktop_notifications_done,
                     screen_intros_seen: current.screen_intros_seen,
                     // A width outside the drag's range keeps the last one; the
                     // shell never sends it, so there is nothing to show.
@@ -3722,6 +4064,7 @@ impl Runtime {
                     editor_text_scale: current.editor_text_scale,
                     conversation_pane_ids: current.conversation_pane_ids,
                     pane_read_records: current.pane_read_records,
+                    pane_completions: current.pane_completions,
                     request_verbs: current.request_verbs,
                     // `agent_sleep_set` owns the setting and the core owns
                     // the sleep records; a shared save carries both through.

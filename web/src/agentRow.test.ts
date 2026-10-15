@@ -1,7 +1,7 @@
 import { sectionTree, sectionCount, directChildren, unfoldedRows } from "../test/legacyRowTree";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
-import { badgeParts, badgeWords, branchChip, lineText, rowAccessibleName, lineShownAtRest, lineTone, markTone, rowLine, sidebarLine } from "./agentRow";
+import { badgeParts, badgeWords, branchChip, forkLabel, lineText, rowAccessibleName, lineShownAtRest, lineTone, markTone, rowLine, sidebarLine } from "./agentRow";
 import { createInterfaceI18n } from "./i18n/instance";
 import type { AgentRow } from "./snapshot";
 
@@ -56,7 +56,7 @@ describe("the second line (sidebar-agent-status D-05, B7, B8)", () => {
 describe("the mark and the badge (D-01, D-02)", () => {
   it("draws a waiting root's ring in the working colour and every other row from its own axes", () => {
     expect(markTone(row("root", { activity: "stopped", symbol: "○", wait: "children" }))).toBe("text-agent-working");
-    expect(markTone(row("idle", { activity: "stopped", symbol: "○" }))).toBe("text-subtle-foreground");
+    expect(markTone(row("idle", { activity: "stopped", symbol: "○" }))).toBe("text-status-seen");
     expect(markTone(row("ask", { demand: "question", activity: "stopped", group: "needs_you", emphasized: true, unread: true }))).toBe("text-warning");
   });
 
@@ -91,7 +91,20 @@ describe("the row's accessible name", () => {
   it("reads out everything the row shows, since its visible text is hidden from assistive technology", async () => {
     const { t } = await createInterfaceI18n("en");
     const child = row("child", { identity_label: "웹 디자인 시스템 리셋 구현", delegated: true, lineage_worktree_badge: "web-design-system-reset", detail: "토큰 이관 중" });
-    expect(rowAccessibleName(t, child, "mini")).toBe("웹 디자인 시스템 리셋 구현, mini, web-design-system-reset, claude, Working, 토큰 이관 중");
+    expect(rowAccessibleName(t, child, "mini")).toBe("웹 디자인 시스템 리셋 구현, mini, web-design-system-reset, Claude Code, Working, 토큰 이관 중");
+  });
+});
+
+// PRD fork-operator-root B8, B9, B22: what a fork's mark and row name say.
+describe("a fork's mark", () => {
+  it("names the source while it runs the forked conversation, and only that it was forked once it does not", async () => {
+    const en = (await createInterfaceI18n("en")).t;
+    const ko = (await createInterfaceI18n("ko")).t;
+    const named = row("fork", { forked_from: { pane_id: "source", label: "Agent two" } });
+    expect(forkLabel(en, named)).toBe("Forked from Agent two");
+    expect(forkLabel(ko, named)).toBe("Agent two에서 포크됨");
+    expect(forkLabel(en, row("fork", { forked_from: {} }))).toBe("Forked from another pane");
+    expect(forkLabel(en, row("child", { delegated: true }))).toBeNull();
   });
 });
 

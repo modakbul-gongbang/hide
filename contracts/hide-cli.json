@@ -40,6 +40,30 @@
                     ],
                     "type": "string"
                 },
+                "Names": {
+                    "properties": {
+                        "tab": {
+                            "$ref": "#/definitions/Outcome"
+                        },
+                        "workspace": {
+                            "$ref": "#/definitions/Outcome"
+                        }
+                    },
+                    "required": [
+                        "workspace",
+                        "tab"
+                    ],
+                    "type": "object"
+                },
+                "Outcome": {
+                    "enum": [
+                        "pending",
+                        "applied",
+                        "preserved",
+                        "failed"
+                    ],
+                    "type": "string"
+                },
                 "Runtime": {
                     "enum": [
                         "running",
@@ -139,6 +163,17 @@
                 },
                 "name": {
                     "type": "string"
+                },
+                "names": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/definitions/Names"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "description": "Naming has its own receipt; it never changes successful spawn identity."
                 },
                 "origin": {
                     "description": "The spawner, independently of responsibility; null for ordinary roots.",
@@ -256,6 +291,17 @@
                         "name": {
                             "type": "string"
                         },
+                        "names": {
+                            "anyOf": [
+                                {
+                                    "$ref": "#/definitions/Names"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "description": "Naming has its own receipt; it never changes successful spawn identity."
+                        },
                         "origin": {
                             "description": "The spawner, independently of responsibility; null for ordinary roots.",
                             "type": [
@@ -321,6 +367,30 @@
                     "enum": [
                         "connected",
                         "disconnected"
+                    ],
+                    "type": "string"
+                },
+                "Names": {
+                    "properties": {
+                        "tab": {
+                            "$ref": "#/definitions/Outcome"
+                        },
+                        "workspace": {
+                            "$ref": "#/definitions/Outcome"
+                        }
+                    },
+                    "required": [
+                        "workspace",
+                        "tab"
+                    ],
+                    "type": "object"
+                },
+                "Outcome": {
+                    "enum": [
+                        "pending",
+                        "applied",
+                        "preserved",
+                        "failed"
                     ],
                     "type": "string"
                 },
@@ -1474,6 +1544,7 @@
                 "repository_unavailable",
                 "agent_not_installed",
                 "intent_conflict",
+                "shell_starting",
                 "agent_not_started"
             ],
             "repeats_at_most": null,
@@ -1779,7 +1850,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:2a707fc42f87ed42d8b1caf94072b2a18940ccacea4f57f3bd850bf752e89443",
+    "digest": "sha256:303916961363f3bd60bb93ebea0832127465086e579fd464ac818e77ccf54dbe",
     "envelopes": {
         "agent": {
             "answer": "value",

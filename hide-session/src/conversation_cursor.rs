@@ -5,7 +5,7 @@ use crate::turns::{
 };
 use crate::{
     Agent, AppendedBytes, ParsedSession, Result, SESSION_LINE_LIMIT_BYTES, SessionCursor,
-    SessionError, SkipReason, parse_events_into,
+    SessionError, SkipReason, parse_events_followed,
 };
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -27,6 +27,34 @@ pub struct ConversationCheckpoint {
 }
 
 impl ConversationCheckpoint {
+    /// A node-proven JSONL turn boundary. Keep the current file identity so
+    /// replacement cannot turn the saved byte offset into another turn.
+    pub(crate) fn for_turn(path: &Path, offset: u64) -> Result<Self> {
+        let mut file = crate::open_session_file(path)
+            .map_err(|error| SessionError::io("open", path, error))?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| SessionError::io("metadata", path, error))?;
+        if offset >= metadata.len() {
+            return Err(SessionError::Checkpoint("turn_offset_invalid".into()));
+        }
+        if offset > 0 {
+            file.seek(SeekFrom::Start(offset - 1))
+                .map_err(|error| SessionError::io("seek", path, error))?;
+            let mut before = [0];
+            file.read_exact(&mut before)
+                .map_err(|error| SessionError::io("read", path, error))?;
+            if before[0] != b'\n' {
+                return Err(SessionError::Checkpoint("turn_offset_invalid".into()));
+            }
+        }
+        Ok(crate::CursorCheckpoint {
+            offset,
+            identity: Some(crate::FileIdentity::from_metadata(&metadata)),
+            pending: Vec::new(),
+        }
+        .into())
+    }
     /// A position that is a count rather than a file offset: OpenCode's
     /// messages read so far, with its witness: the session's creation time
     /// and a digest of the last message read, so a session rewound and grown
@@ -348,7 +376,10 @@ impl ConversationCursor {
             ..ParsedSession::default()
         };
         let mut found = crate::links::LinkAccumulator::default();
+        let mut consumed = 0;
+        let window_start = start_offset.saturating_sub(self.cursor.pending.len() as u64);
         for fragment in appended.split_inclusive(|byte| *byte == b'\n') {
+            consumed += fragment.len();
             let line_start = offset.saturating_sub(pending.len() as u64 + discarded_bytes);
             offset += fragment.len() as u64;
             let complete = fragment.last() == Some(&b'\n');
@@ -415,12 +446,27 @@ impl ConversationCursor {
                     continue;
                 }
             }
-            let line = parse_events_into(
+            let text = String::from_utf8_lossy(&pending);
+            let mut line = parse_events_followed(
                 agent,
-                &String::from_utf8_lossy(&pending),
+                &text,
                 line_start,
                 &mut found,
+                Some(&appended[consumed..]),
             );
+            if line.held_command && has_more && line_start <= window_start {
+                // A command that opens a full window cannot wait for a reply
+                // beyond it: holding would stall the reader, so it is decided
+                // on what the window shows, as a whole-file reader does.
+                line = parse_events_followed(agent, &text, line_start, &mut found, None);
+            }
+            if line.held_command {
+                // A command whose reply is not written yet: read it again
+                // with the poll that holds the reply, so neither is lost.
+                offset = line_start;
+                pending.clear();
+                break;
+            }
             parsed.events.extend(line.events);
             parsed.event_offsets.extend(line.event_offsets);
             parsed.skipped_lines += line.skipped_lines;
@@ -644,6 +690,9 @@ struct LargeRecord {
     tool_capacity: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     payload_question: bool,
+    /// The payload's tool is `request_user_input_async`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    payload_async: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     payload_call: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -829,7 +878,8 @@ impl LargeRecord {
                     } else if token.field == "name" {
                         match token.scope {
                             Scope::Payload => {
-                                self.payload_question = token.value == "request_user_input"
+                                self.payload_question = token.value == "request_user_input";
+                                self.payload_async = token.value == "request_user_input_async"
                             }
                             Scope::Block => {
                                 if let Some(frame) = self.frames.last_mut() {
@@ -1098,6 +1148,11 @@ impl LargeRecord {
                     Ok(None) => Err(SkipReason::UserTurnInvalid),
                     Err(reason) => Err(reason),
                 }
+            }
+            // How many questions a call this large asked is not known, so
+            // which replies end the wait is not either.
+            ("response_item", "function_call") if self.payload_async => {
+                Ok(Some(TurnMark::Unreadable))
             }
             ("response_item", "function_call_output") => {
                 bounded(self.payload_call.clone()).map(|call| {

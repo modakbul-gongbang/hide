@@ -12,9 +12,11 @@ import { createActions } from "../actions";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { FirstRunWizard, useSetupWalk } from "../FirstRunWizard";
 import type { HostBridge, NotificationPermission } from "../host";
+import type { MobileState } from "../mobileSettings";
 import { clientI18n } from "../i18n/translator";
 import { OverviewPage } from "../Overview";
 import { SettingsGate } from "../SettingsSheet";
+import { SETTINGS_GROUPS, type SettingsTab } from "../settings";
 import { Sidebar } from "../sidebar";
 import type { AiProvider, KitAgent, KitPiece, SnapshotRest } from "../snapshot";
 import { StartPanelHost } from "../StartPanel";
@@ -45,6 +47,8 @@ export const ONBOARDING_STATES = [
   "settings-on",
   "settings-off",
   "settings-blocked",
+  "settings-done-only",
+  "settings-both",
 ] as const;
 
 export type OnboardingState = (typeof ONBOARDING_STATES)[number];
@@ -54,9 +58,11 @@ export type OnboardingSceneParams = {
   theme: "light" | "dark";
   state: OnboardingState;
   system: OnboardingSystem;
-  language: "en" | "ko";
+  language: "en" | "ko" | "ja" | "zh-CN";
   /** The interface text scale Appearance's font size sets (`--interface-scale`); the largest is 17/13 (B41). */
   scale: number;
+  /** The Settings page a `settings-*` state opens (PRD settings-left-nav); Notifications unless the query names another. */
+  page?: SettingsTab;
 };
 
 export function onboardingSceneParams(params: URLSearchParams): OnboardingSceneParams {
@@ -65,13 +71,34 @@ export function onboardingSceneParams(params: URLSearchParams): OnboardingSceneP
   const system = params.get("system") ?? "mac";
   if (system !== "mac" && system !== "windows" && system !== "linux") throw new Error(`Unknown onboarding scene system ${system}`);
   // The long content is the Korean copy, the longest of the four languages (B41).
-  const language = params.get("lang") === "ko" || params.get("content") === "long" ? "ko" : "en";
+  const requestedLanguage = params.get("lang");
+  const language = requestedLanguage === "ko" || requestedLanguage === "ja" || requestedLanguage === "zh-CN" ? requestedLanguage : params.get("content") === "long" ? "ko" : "en";
   const scale = Number(params.get("scale") ?? "1");
   if (!(scale > 0)) throw new Error(`Scene scale must be a positive number, got ${params.get("scale")}`);
-  return { theme: params.get("theme") === "light" ? "light" : "dark", state: state as OnboardingState, system, language, scale };
+  const page = params.get("page") ?? "notifications";
+  if (!SETTINGS_GROUPS.some((group) => group.tabs.includes(page as SettingsTab)) && page !== "about") throw new Error(`Unknown Settings page ${page}`);
+  return { theme: params.get("theme") === "light" ? "light" : "dark", state: state as OnboardingState, system, language, scale, page: page as SettingsTab };
 }
 
 const HOME = "/Users/me";
+
+/** Phone access off, no phone paired, push only while the app is closed: the daemon's `mobile` frame on a fresh Mac. */
+const SCENE_MOBILE: MobileState = {
+  enabled: false,
+  exposure: "off",
+  checklist: null,
+  download_url: "https://example.test/tailscale",
+  admin_url: "https://example.test/admin",
+  foreign_target: null,
+  failure: null,
+  url: null,
+  qr: null,
+  code_expires_at_ms: null,
+  phones: [],
+  max_phones: 4,
+  push_mode: "app_closed",
+  now_ms: 0,
+};
 const PLATFORM: Record<OnboardingSystem, string> = { mac: "darwin", windows: "win32", linux: "linux" };
 
 /** The kit's agents in its order, each as KitAgentSnapshot reports it on a Mac whose kit has not run. */
@@ -113,7 +140,7 @@ function providers(): AiProvider[] {
 function permissionOf(state: OnboardingState, system: OnboardingSystem): NotificationPermission {
   if (state === "notifications-no-service") return "no_service";
   if (system !== "mac") return "unsupported";
-  if (state === "notifications-on" || state === "settings-on") return "granted";
+  if (state === "notifications-on" || state === "settings-on" || state === "settings-done-only" || state === "settings-both") return "granted";
   if (state === "notifications-blocked" || state === "settings-blocked") return "denied";
   if (state === "notifications-unreadable") return "unknown";
   return "not_determined";
@@ -136,7 +163,8 @@ function sceneHost(system: OnboardingSystem, permission: NotificationPermission)
     onNotificationOpen: none,
     withdrawNotifications: () => undefined,
     notificationPermission: async () => permission,
-    openNotificationSettings: () => undefined,
+    onWindowChrome: () => () => undefined, editorAvailable: async () => false, openInEditor: () => undefined, openNotificationSettings: () => undefined,
+    reportBadge: () => undefined,
     browser: { sync: () => undefined, endCycle: () => undefined, capture: async () => null, command: () => undefined, onEvent: none },
   };
 }
@@ -149,7 +177,7 @@ function sceneRest(state: OnboardingState, system: OnboardingSystem): SnapshotRe
   // Help's walk is the page's own, over a first run that ended (B45).
   const step = state === "agents-setup" ? "done" : state.startsWith("agents") ? "agents" : state.startsWith("notifications") ? "notifications" : state === "project" ? "project" : "done";
   // The switch is on once Turn on was pressed; macOS's answer is the host's (`permissionOf`).
-  const enabled = (state.startsWith("notifications-") && state !== "notifications-no-service") || state === "settings-on" || state === "settings-blocked";
+  const enabled = (state.startsWith("notifications-") && state !== "notifications-no-service") || state === "settings-on" || state === "settings-blocked" || state === "settings-both";
   const agents = kitAgents(state, system).map((agent) => (step === "agents" || agent.availability !== "available" ? agent : { ...agent, enabled: true, chosen: true }));
   return {
     revision: 1,
@@ -167,18 +195,19 @@ function sceneRest(state: OnboardingState, system: OnboardingSystem): SnapshotRe
       first_run: { version: 1, step },
       agent_onboarding: step === "agents" ? "pending" : "done",
       desktop_notifications: enabled,
+      desktop_notifications_done: state === "settings-done-only" || state === "settings-both",
       workspace_registrations: [{ id: "home", label: "hide", path: `${HOME}/hide`, device_id: "local", pinned: false, home: true }, ...projects.map((row) => ({ id: row.id, label: row.label, path: row.path, device_id: "local", pinned: false }))],
     },
     status: { background_ai: { enabled: true, provider: "claude", chosen: true, providers: providers(), unavailable_reason: null } },
   } as unknown as SnapshotRest;
 }
 
-export function OnboardingScene({ theme, state, system, language, scale }: OnboardingSceneParams) {
+export function OnboardingScene({ theme, state, system, language, scale, page = "notifications" }: OnboardingSceneParams) {
   const actions = useMemo(() => createActions(() => true), []);
   // The host and the stores are in place before the first render, since the wizard asks the host which one it is in.
   useMemo(() => {
     window.hideHost = sceneHost(system, permissionOf(state, system));
-    useShellStore.setState({ connection: "live", rest: sceneRest(state, system), agents: [], revision: 1 } as never);
+    useShellStore.setState({ connection: "live", rest: sceneRest(state, system), agents: [], revision: 1, mobile: SCENE_MOBILE } as never);
     useUiStore.setState({ sidebarMode: "projects", screen: { kind: "main" }, overviewOpen: false } as never);
   }, [state, system]);
 
@@ -201,14 +230,14 @@ export function OnboardingScene({ theme, state, system, language, scale }: Onboa
       press();
     };
     if (state === "agents-setup") useSetupWalk.getState().open();
-    if (state.startsWith("settings-")) useUiStore.getState().openSettings("general");
+    if (state.startsWith("settings-")) useUiStore.getState().openSettings(page);
     if (state.startsWith("start-panel")) useStartPanel.getState().open(false, { projectId: "my-app", kind: state === "start-panel" ? "claude" : "codex" });
     // Effects run twice in development, so the toggle is pressed only while it is closed.
     if (state === "agents-changes") click('[data-first-run-what-changes][aria-expanded="false"]');
     // The pass that took the press has landed.
     if (state === "agents-failed") click("[data-onboarding-apply]", () => useShellStore.setState((current) => ({ revision: current.revision + 1 }) as never));
     if (state !== "agents-changes" && state !== "agents-failed") settle();
-  }, [state]);
+  }, [state, page]);
 
   useLayoutEffect(() => {
     void clientI18n.changeLanguage(language);

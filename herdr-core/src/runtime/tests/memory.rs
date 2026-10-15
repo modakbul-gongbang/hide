@@ -45,6 +45,7 @@ fn action(workspace: &str, action: MemoryAction) -> crate::runtime::events::Memo
         workspace_id: workspace.to_owned(),
         action,
         number: None,
+        numbers: Vec::new(),
     }
 }
 
@@ -489,7 +490,12 @@ fn turning_memory_on_updates_the_hooks_first_and_then_turns_it_on() {
             hide_kit::ComponentId::CodexHook
         ])))
     );
-    assert_eq!(pending(&guard), None, "Memory waits for the hooks");
+    assert_eq!(
+        pending(&guard),
+        Some(MemoryAction::Enable),
+        "Memory waits for the hooks"
+    );
+    assert!(opened(&guard).unwrap().preparing_hooks);
 
     guard.ingest_hook_diagnosis(diagnosis(hide_agent_hooks::HookStatus::Installed {
         version: hide_agent_hooks::HOOK_VERSION,
@@ -506,6 +512,69 @@ fn turning_memory_on_updates_the_hooks_first_and_then_turns_it_on() {
         guard.snapshot.status.last_error, None,
         "a second hook read starts no second enable"
     );
+}
+
+#[test]
+fn a_switch_pressed_before_the_hooks_are_read_turns_memory_on_once_they_are() {
+    // Issue 1086: a press at launch waits for the first hook read instead of
+    // being refused.
+    let (runtime, workspace) = opened_project();
+    let runtime = Arc::new(Mutex::new(runtime));
+    let mut guard = runtime.lock().unwrap();
+    guard.install_worker_context(
+        Arc::downgrade(&runtime),
+        crate::handle::ChangeNotifier::noop(),
+    );
+    let pending = |runtime: &Runtime| opened(runtime).and_then(|project| project.pending_action);
+
+    guard.apply_memory_action(action(&workspace, MemoryAction::Enable));
+    assert_eq!(
+        guard.snapshot.status.last_error, None,
+        "the press is held, not refused"
+    );
+    assert_eq!(
+        pending(&guard),
+        Some(MemoryAction::Enable),
+        "the switch shows the held press"
+    );
+
+    guard.ingest_hook_diagnosis(hide_agent_hooks::Diagnosis {
+        runtimes: vec![hide_agent_hooks::diagnosis::RuntimeDiagnosis {
+            runtime: hide_agent_hooks::AgentRuntime::Codex,
+            label: "Codex".to_owned(),
+            path: "/fixture/.codex/hooks.json".to_owned(),
+            status: hide_agent_hooks::HookStatus::Installed {
+                version: hide_agent_hooks::HOOK_VERSION,
+            },
+            current_version: hide_agent_hooks::HOOK_VERSION,
+            memory_compatibility: hide_agent_hooks::MemoryCompatibility::Supported {
+                version: "999.0.0".to_owned(),
+            },
+        }],
+        last_report_failure: None,
+    });
+    assert_eq!(pending(&guard), Some(MemoryAction::Enable));
+}
+
+#[test]
+fn a_switch_held_for_a_hook_read_that_fails_is_refused() {
+    let (mut runtime, workspace) = opened_project();
+    runtime.apply_memory_action(action(&workspace, MemoryAction::Enable));
+    assert!(runtime.hook_diagnosis_failed());
+    assert_eq!(
+        runtime
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("memory.hooks_unread")
+    );
+    assert_eq!(
+        opened(&runtime).and_then(|project| project.pending_action),
+        None
+    );
+    assert!(!runtime.hook_diagnosis_failed(), "nothing else was held");
 }
 
 #[test]
@@ -546,8 +615,8 @@ fn one_unsupported_runtime_does_not_disable_another_supported_runtime() {
 }
 
 #[test]
-fn a_project_only_a_device_lists_is_kept_on_that_device_not_unregistered() {
-    // B16: "Memory는 이 Mac의 세션에만 씁니다. 이 pane은 mini에서 돌아갑니다."
+fn a_registered_device_project_keeps_its_memory_scope_while_the_link_is_down() {
+    // A disconnected device retains its node-scoped Project, awaiting its link.
     let mut runtime = runtime();
     let mut project = workspace(
         "remote:mini:workspace:w",
@@ -562,8 +631,7 @@ fn a_project_only_a_device_lists_is_kept_on_that_device_not_unregistered() {
     );
     project.device_id = "mini".into();
     project.remote_target_id = Some("mini".into());
-    // A device the core dials keeps no Memory, connected or not (PRD
-    // core-host-node-move Q20); only a node that dials in has it.
+
     runtime
         .snapshot
         .ui_state
@@ -600,8 +668,34 @@ fn a_project_only_a_device_lists_is_kept_on_that_device_not_unregistered() {
     });
 
     assert!(runtime.open_project_memory(Some("remote:mini:workspace:w".into())));
-    assert!(matches!(
-        opened(&runtime).unwrap().unavailable,
-        Some(MemoryUnavailableSnapshot::RemoteDevice { .. })
-    ));
+    assert_eq!(opened(&runtime).unwrap().unavailable, None);
+}
+
+#[test]
+fn memory_enable_and_disable_failures_stay_with_the_requested_project() {
+    let (mut runtime, workspace) = opened_project();
+    // The press waits for the first hook read; that read failing refuses it.
+    runtime.apply_memory_action(action(&workspace, MemoryAction::Enable));
+    assert_eq!(opened(&runtime).unwrap().action_failure, None);
+    assert!(runtime.hook_diagnosis_failed());
+    assert_eq!(
+        opened(&runtime).unwrap().action_failure,
+        Some(MemoryAction::Enable)
+    );
+    assert_eq!(opened(&runtime).unwrap().pending_action, None);
+    runtime.apply_memory_action(action(&workspace, MemoryAction::Disable));
+    assert_eq!(
+        opened(&runtime).unwrap().action_failure,
+        Some(MemoryAction::Disable)
+    );
+    assert_eq!(opened(&runtime).unwrap().pending_action, None);
+    runtime.open_project_memory(Some("another-project".into()));
+    runtime.sync_project_memory();
+    assert_eq!(opened(&runtime).unwrap().action_failure, None);
+    runtime.open_project_memory(Some(workspace));
+    runtime.sync_project_memory();
+    assert_eq!(
+        opened(&runtime).unwrap().action_failure,
+        Some(MemoryAction::Disable)
+    );
 }

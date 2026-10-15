@@ -28,6 +28,10 @@ Only checkouts in the current connected catalog contribute to that inventory; a 
   The core checks an HTML file against that checkout on its own device and reads it outside the core lock before placing its Browser View.
   The action result confirms View placement, while `hide view status <view-id>` returns `pending`, `loading`, `loaded`, `failed`, `disconnected`, or `unsupported` for its native page.
   `disconnected` means a native page existed for that load but was removed or its desktop renderer disconnected; `unsupported` means no desktop renderer was available for a pending page.
+  A background pane open updates its own Agent tab with independent display and area identities, leaving the operator's same-URL page and load unchanged.
+  A new hidden page can stay pending until that tab is shown.
+  An agent reads its own tab's Views (`hide view list`, `hide view status`, select, close, `--wait`) even when that tab is not its Workspace's active tab and the Workspace was never in front: with no tab owning the Workspace's layout yet, the tab Herdr reports active is the projected one, for the open and for every read, so such a page is listed as `pending` rather than missing.
+  `--reveal` selects the actual caller tab; pane-less callers use the current checkout presentation.
   `--wait` polls that state for at most ten seconds and returns a failure if the page fails, disconnects, or remains pending; it does not reveal a hidden View.
   If a later status query fails, the refusal still carries the applied open request ID and View ID for reconciliation.
   The action receipt and page status carry the load stamp, so a concurrent reopen that supersedes the requested load returns `page_superseded` instead of the newer load's result.
@@ -37,6 +41,11 @@ Only checkouts in the current connected catalog contribute to that inventory; a 
   If discovery fails after placement, the result retains its applied View receipt and carries `browser_control.state: unavailable` with a retry command; discovery does not undo or repeat the open.
 - Open in Browser in the Explorer's menu on an HTML file of a local or connected device checkout.
   The device host must have file access consent for a remote page to load.
+- Click an HTML path (`.html`, `.htm` or `.xhtml`, case-insensitive) in a local desktop terminal, or choose Open in browser from that path's right-click menu.
+  The shell sends one `browser_open` event with the owning registered checkout and `reveal: true`, so the page and its checkout come forward together; the existing local `file:` boundary checks the address.
+  An HTML file of another checkout than the one in front opens in the front Workspace instead, with no reveal, so no checkout moves; the same boundary admits a file of any registered checkout.
+  Open source in the same menu opens the file in the editor at the link's line instead.
+  A path outside registered checkouts follows the desktop host's default-application boundary.
 - A page that opens a tab, a `target=_blank` link (an image a page wraps in one), a shift-click or `window.open` without window features, gets another browser display in the same Workspace, beside that page so the page that asked stays in view.
   The shell names the page (`beside_display`), and the core places the new display in the View area next to the page's area in Open to the side's order (right, left, down, up), else, the page's area being the only one, in a new area to its right; with the page gone it opens where any page would.
   An address the Workspace already shows is focused and loaded again there instead.
@@ -255,6 +264,7 @@ The page-side code is chromux's (MIT, `modakbul-gongbang/chromux` `93f770f`), ke
 ## The file boundary
 
 A client names a local file through a `file:` URL, so hided checks it like any path a client sends, on `browser_open`, `browser_state` and the `view_layout` `navigate` action.
+The shell and daemon spell a Windows drive path as `file:///C:/...`, preserving the drive as part of the path rather than a hostname.
 It decodes the path, refuses one that names another host or does not decode (`invalid_path`), runs it through the same checkout boundary the Explorer uses (`outside_checkout` for a file outside every registered checkout), and writes the checked path back as the one spelling the shell and the CLI also produce.
 A refusal is a `path_refused` frame to that client and never reaches the core.
 For a native `browser_state` report, a registered checkout's pinned physical root can be mapped back to its registered spelling before that same boundary checks the file.
@@ -329,9 +339,9 @@ A `mailto:` link from a page on screen goes to the default mail app without aski
 Refused and logged with their scheme only: a scheme no app claims; a scheme Chromium answers itself (`data:`, `blob:`, `javascript:`, every `chrome` one and the like); a scheme macOS hands to a file share, a shell, a script or a remote session (`smb:`, `afp:`, `ftp:`, `ssh:`, `telnet:`, `vnc:`, `news:`, `applescript:`, `shortcuts:`, every `x-apple` one and the like), so one click on an unexpected question never mounts a share or runs anything (`appScheme` in `browserSync.ts`); a link from a hidden page or an HTML file preview; and a link that arrives while a question is open.
 The link never reaches the log, since an app link often carries a sign-in code.
 
-The shell tells the host, in one sync, every browser display of the Workspace in front, the rectangle its slot occupies now, and the core's retained Browser View inventory across all Workspaces.
+The shell tells the host, in one sync, every browser display of the Workspace in front, the rectangle its slot occupies now, and the core's retained Browser View inventory across all Workspaces and their live tab presentations.
 A display the inventory no longer names is closed, which ends its renderer process even when its Workspace is in the background.
-A retained display of a Workspace not in front, or not shown in its area, is hidden and keeps its page, so moving a page between areas or Workspaces never reloads it.
+A retained display absent from the current front placements, including another tab of the same Workspace, is hidden and keeps its page, so moving a page between areas or Workspaces never reloads it.
 At most 12 pages live at once (`MAX_LIVE_VIEWS`); past that, the page shown least recently among the hidden ones is closed and loads its address again when it is next shown.
 The host checks every field of a sync before it places anything and drops a message that fails whole; only the shell the daemon serves may send one.
 Native page reports carry the display's current load stamp, so a late report from a previous reload cannot mark the new request loaded.
@@ -393,11 +403,11 @@ When the palette, a menu, a dialog, a popover, a focused-area, Global Recent Pan
 In that same flush, ahead of the sync that hides the page, the shell asks the host for a fresh capture; the host answers only for a page it still shows (`browser.capture_refused` otherwise), and IPC from one renderer is handled in order, so the capture is taken of the page as it is now and replaces the still and the cached one when it arrives.
 A capture that fails or comes back empty leaves the place blank or the older still, draws no message, and is logged (`browser.capture_failed`, `browser.capture_empty`).
 The page comes back live when the overlay is gone, and its still goes a frame later, so nothing flashes between the two.
-A shell drag (a tab, a divider, a column divider, an Explorer item) marks the document root with `data-view-drag` or `data-agent-drag` while it runs (`web/src/shellDrag.ts`), and every page of the front Workspace freezes the same way until the mark is gone, so the drag's guide or preview draws over the pages and its drop never reaches one.
+A shell drag (a tab, a divider, a lane divider, a tree item) marks the document root with `data-view-drag` or `data-agent-drag` while it runs (`web/src/shellDrag.ts`), and every page of the front Workspace freezes the same way until the mark is gone, so the drag's guide or preview draws over the pages and its drop never reaches one.
 A new shell drag sets that mark rather than adding its guide to the overlay selector; a drag inside a page never touches the shell and is the page's own.
 Radix layers and the Recent cycle mount as children of the body, where the sync watches for them.
 While a layer that can move with its anchor (a popover, a menu) is drawn over a page the sync follows it every frame.
-No column is a layer: File Views, where pages sit, and Tools are docked side by side (PRD three-column-panel D-11), so a page is never under Tools and needs no still for it; a column turned off or out of a narrow body's one column unmounts its slots, which hides their pages without closing them.
+Pages sit only in the right lane's files tool, and the lane is drawn over Agent Views or beside them, never under another part of the shell (PRD right-lane D-02), so a page needs no still for the lane; a lane put away or closed, or the files tool under another tool, hides its slots before the lane goes inert, which hides their pages without closing them.
 
 The idle still is one capture per shown page of the front Workspace, kept with the page's address and its slot's size; a still of another address or size is never drawn.
 It is taken once a page has been quiet for half a second (`STILL_QUIET_MS`) after its load finished, its address changed, its slot changed size, or it came into view, and only while the page is shown, uncovered, loaded and not failed; nothing else asks, so an idle page is not captured again, and there is no timer per frame or per tick.
@@ -425,7 +435,7 @@ pnpm --dir desktop e2e
 ```
 
 `desktop/e2e/browser.spec.ts` drives a desktop app it launched itself against a private hided and an isolated Herdr, never the operator's.
-It opens a page with `hide browser open`, checks the native view sits on its slot, posts a sign-in popup's result back to its opener, holds a hostile popup's window features to a framed, closable window on the work area, caps popups and closes them with their page, asks before a navigation, a redirect and a frame hand a link to another app (with macOS's app lookup, sheet and opener stood in for), opens it only on Open and asks nothing more after a Cancel until the page navigates, opens a shift-clicked link as a display beside its page, which stays in view, refuses a popup and an app link from a hidden page, zooms a focused page with the text-size commands and ⌘+ without moving any text size, pinches a page before and after it moves to another renderer, types Hangul into the page, splits and resizes without a reload, freezes the pages under the palette, the Recent Panels list and a divider drag, hides a page with the palette's first frames while the host's capture is held back and turns its still to what the page shows now, hides a page when a narrow window calls Tools into its one column and puts it back on its slot when File Views is called again, opens a page tab's wrapped hint beside the tab rather than over the page, navigates and goes back, shows a failed load, opens an HTML file from the Explorer, refuses a file outside the checkout, ends a closed page's renderer, restores the page after a relaunch, and shows the notice in a plain browser tab.
+It opens a page with `hide browser open`, checks the native view sits on its slot, posts a sign-in popup's result back to its opener, holds a hostile popup's window features to a framed, closable window on the work area, caps popups and closes them with their page, asks before a navigation, a redirect and a frame hand a link to another app (with macOS's app lookup, sheet and opener stood in for), opens it only on Open and asks nothing more after a Cancel until the page navigates, opens a shift-clicked link as a display beside its page, which stays in view, refuses a popup and an app link from a hidden page, zooms a focused page with the text-size commands and ⌘+ without moving any text size, pinches a page before and after it moves to another renderer, types Hangul into the page, splits and resizes without a reload, freezes the pages under the palette, the Recent Panels list and a divider drag, hides a page with the palette's first frames while the host's capture is held back and turns its still to what the page shows now, hides a page when the lane switches to Sessions and puts it back on its slot when Files shows again, opens a page tab's wrapped hint beside the tab rather than over the page, navigates and goes back, shows a failed load, opens an HTML file from the Explorer, refuses a file outside the checkout, ends a closed page's renderer, restores the page after a relaunch, and shows the notice in a plain browser tab.
 The test window never activates the app or takes the keyboard, because the e2e fixture launches every app with `--hide-show-inactive` and `--disable-backgrounding-occluded-windows` (see [BUILD.md](BUILD.md#the-desktop-app)); it is shown behind the operator's windows, keeps painting there, and captures of it are taken by window id.
 The zoom test needs the key window: it is tagged `@needs-focus` and brings its window to the front itself.
 Keep screenshots and logs under local-only `agents/runs/`.
@@ -455,7 +465,7 @@ Playwright dismisses a dialog no listener handles, so that test listens and answ
 
 ## Running Workspace servers
 
-The Workspace toolbar’s globe, `Open server`, left of the File Views and Tools icons, reuses the existing cwd-attributed pane listener projection.
+The top row’s globe, `Open server`, right of the Overview icon, reuses the existing cwd-attributed pane listener projection.
 The projection retains each bind address as well as its port, mapping wildcard listeners to loopback of the same address family.
 The current device, checkout ID, path and endpoint are checked again when a choice is made; identical paths on a remote Project never authorize a local listener.
 One endpoint uses the existing explicit Workspace `browser_open` route directly, and multiple endpoints use the shared popover picker.

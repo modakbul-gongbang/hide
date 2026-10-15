@@ -220,6 +220,10 @@ fn inside_grok_the_claude_code_hook_and_cursors_entries_say_and_ask_nothing() {
     })
     .to_string();
     let run = machine.run_event("claude-code", "PreToolUse", &claude, Some(PANE), GROK);
+    assert!(
+        run.status.success(),
+        "Claude Code compatibility hook: {run:?}"
+    );
     assert_eq!(run.stdout, "");
     for event in ["PreToolUse", "SubagentStart"] {
         let run = machine.run_event(
@@ -229,7 +233,7 @@ fn inside_grok_the_claude_code_hook_and_cursors_entries_say_and_ask_nothing() {
             Some(PANE),
             GROK,
         );
-        assert!(run.status_ok, "{event}");
+        assert!(run.status.success(), "{event}: {run:?}");
         assert_eq!(run.stdout, "", "{event}");
     }
     assert!(
@@ -245,6 +249,47 @@ fn inside_grok_the_claude_code_hook_and_cursors_entries_say_and_ask_nothing() {
     );
     assert!(machine.reason(&run).contains("hide agent spawn"));
     assert_eq!(machine.calls().len(), 1);
+}
+
+// macOS refuses a native helper before main when its file's signature cannot
+// be admitted. Fixture staging must admit its private copy, not change the
+// build output or let a rejected --help start count as readiness.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_private_hook_is_admitted_without_changing_an_unsigned_source() {
+    let machine = Machine::new("registered");
+    let source = machine.root.join("unsigned-hook");
+    let original = crate::programs::hook();
+    std::io::copy(
+        &mut std::fs::File::open(original).unwrap(),
+        &mut std::fs::File::create(&source).unwrap(),
+    )
+    .unwrap();
+    std::fs::set_permissions(&source, std::fs::metadata(original).unwrap().permissions()).unwrap();
+    let codesign = |args: &[&str]| {
+        let mut command = std::process::Command::new("/usr/bin/codesign");
+        command
+            .args(args)
+            .arg(&source)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        hide_platform::process::OwnedChild::spawn(&mut command)
+            .unwrap()
+            .capture_until(
+                std::time::Instant::now() + Duration::from_secs(60),
+                64 * 1024,
+            )
+            .unwrap()
+    };
+    assert!(codesign(&["--remove-signature"]).status.success());
+    crate::stand_ins::place(&source, &machine.hook);
+    let run = machine.run_event("cursor", "PreToolUse", "{}", Some(PANE), GROK);
+    assert!(run.status.success(), "{run:?}");
+    assert_eq!(run.stdout, "");
+    assert_eq!(run.stderr, "");
+    assert!(machine.calls().is_empty());
+    assert!(!codesign(&["--verify", "--strict"]).status.success());
 }
 
 #[test]

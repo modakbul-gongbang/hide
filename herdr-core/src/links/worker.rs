@@ -9,6 +9,10 @@
 //! backfill never competes with input, and from every other connected node
 //! a batch a minute.
 
+use super::ledger::{
+    LEDGER_DEPTH_LIMIT, LEDGER_QUEUE_LIMIT, LEDGER_RPC_LIMIT, LedgerAnswer, LedgerCall,
+    LedgerContext, LedgerUpdate, SessionIdentity, SessionRecord, SessionSearchHit,
+};
 use super::store::{IssueLinks, LinkStore, LocalFiles, Opened, PrLinks};
 use super::{
     BACKFILL_MS, PaneFact, ParentFact, ProjectFacts, ProjectLinkSummary, files_present, link_code,
@@ -55,6 +59,8 @@ pub(crate) const LISTED_AT: &str = "listed_at";
 
 /// What the worker hands back to the runtime.
 pub trait Sink: Send + 'static {
+    fn record(&self, _generation: u64, _answer: Result<SessionRecord, String>) {}
+    fn session_search(&self, _generation: u64, _answer: Result<Vec<SessionSearchHit>, String>) {}
     /// Each project's counts and chips, by workspace id, when one changed.
     fn summaries(&self, summaries: BTreeMap<String, ProjectLinkSummary>);
     /// A panel read's answer; `generation` fences a superseded one.
@@ -94,19 +100,160 @@ struct Mailbox {
     panel: Option<PanelRequest>,
     /// The open panel closed: its reads stop following writes.
     panel_closed: bool,
+    ledger: VecDeque<LedgerUpdate>,
+    ledger_pending: usize,
+    contexts: VecDeque<SessionIdentity>,
+    record: Option<(u64, SessionIdentity)>,
+    record_closed: bool,
+    search: Option<(u64, String, bool)>,
+    calls: VecDeque<(
+        LedgerCall,
+        std::sync::mpsc::SyncSender<Result<LedgerAnswer, String>>,
+    )>,
+    calls_pending: usize,
 }
 
 /// The runtime's handle on the worker's mailbox.
 #[derive(Clone)]
-pub struct LinkClient(Arc<(Mutex<Mailbox>, Condvar)>);
+pub struct LinkClient(
+    Arc<(Mutex<Mailbox>, Condvar)>,
+    Arc<Mutex<ContextCache>>,
+    Arc<std::sync::atomic::AtomicU64>,
+);
+
+#[derive(Default)]
+struct ContextCache {
+    values: BTreeMap<SessionIdentity, LedgerContext>,
+    used: VecDeque<SessionIdentity>,
+}
 
 impl LinkClient {
+    #[cfg(test)]
+    pub(crate) fn take_project_facts_for_test(&self) -> Option<Arc<Vec<ProjectFacts>>> {
+        self.0.0.lock().unwrap().projects.take()
+    }
+    #[cfg(test)]
+    pub(crate) fn parent_facts_for_test(&self) -> Option<Arc<Vec<ParentFact>>> {
+        self.0.0.lock().unwrap().parents.clone()
+    }
+    #[cfg(test)]
+    pub(crate) fn prime_context_for_test(&self, session: SessionIdentity, context: LedgerContext) {
+        let mut cache = self.1.lock().unwrap();
+        cache.used.push_back(session.clone());
+        cache.values.insert(session, context);
+    }
+    #[cfg(test)]
+    pub(crate) fn full_mailbox_for_test() -> Self {
+        Self(
+            Arc::new((
+                Mutex::new(Mailbox {
+                    ledger_pending: LEDGER_QUEUE_LIMIT,
+                    ..Default::default()
+                }),
+                Condvar::new(),
+            )),
+            Arc::default(),
+            Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+        )
+    }
+    /// Only a background worker may wait for a reply. Admission is bounded
+    /// and every mutation is committed before its acknowledgement.
+    pub fn call(&self, call: LedgerCall) -> Result<LedgerAnswer, String> {
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        {
+            let (lock, wake) = &*self.0;
+            let mut mailbox = lock.lock().map_err(|_| "links_worker_closed")?;
+            if mailbox.stop {
+                return Err("links_worker_closed".into());
+            }
+            if mailbox.calls_pending >= LEDGER_RPC_LIMIT {
+                crate::diagnostic!(
+                    serde_json::json!({"component":"links","kind":"ledger.rpc_capacity","limit":LEDGER_RPC_LIMIT})
+                );
+                return Err("ledger_rpc_capacity".into());
+            }
+            mailbox.calls_pending += 1;
+            mailbox.calls.push_back((call, send));
+            wake.notify_one();
+        }
+        receive
+            .recv_timeout(Duration::from_secs(15))
+            .map_err(|_| "links_worker_timeout".to_owned())?
+    }
+    pub fn ledger_started_at(&self) -> Option<u64> {
+        let at = self.2.load(std::sync::atomic::Ordering::Acquire);
+        (at != u64::MAX).then_some(at)
+    }
+    pub fn ledger(&self, update: LedgerUpdate) -> Result<(), String> {
+        let (lock, wake) = &*self.0;
+        let mut mailbox = lock.lock().map_err(|_| "links_worker_closed")?;
+        if mailbox.stop {
+            return Err("links_worker_closed".to_owned());
+        }
+        if mailbox.ledger_pending >= LEDGER_QUEUE_LIMIT {
+            crate::diagnostic!(
+                serde_json::json!({"component":"links","kind":"ledger.queue_capacity","session_id":update.session().session_id})
+            );
+            return Err("ledger_queue_capacity".to_owned());
+        }
+        mailbox.ledger_pending += 1;
+        mailbox.ledger.push_back(update);
+        wake.notify_one();
+        Ok(())
+    }
+
+    pub fn context(&self, session: &SessionIdentity) -> Option<LedgerContext> {
+        {
+            let mut cache = self.1.lock().ok()?;
+            if let Some(context) = cache.values.get(session).cloned() {
+                cache.used.retain(|held| held != session);
+                cache.used.push_back(session.clone());
+                return Some(context);
+            }
+        }
+        // A miss is unknown authority. Request a bounded worker read without
+        // blocking the label worker, the runtime or a session-sync thread.
+        self.post(|mailbox| {
+            if mailbox.contexts.contains(session) {
+                return;
+            }
+            if mailbox.contexts.len() >= LEDGER_QUEUE_LIMIT {
+                crate::diagnostic!(serde_json::json!({"component":"links","kind":"ledger.context_request_capacity","limit":LEDGER_QUEUE_LIMIT}));
+                return;
+            }
+            mailbox.contexts.push_back(session.clone());
+        });
+        None
+    }
+
+    pub fn read_record(&self, generation: u64, session: SessionIdentity) {
+        self.post(|mailbox| {
+            mailbox.record = Some((generation, session));
+            mailbox.record_closed = false;
+        });
+    }
+
+    pub fn close_record(&self) {
+        self.post(|mailbox| {
+            mailbox.record = None;
+            mailbox.record_closed = true;
+        });
+    }
+
+    pub fn search_sessions(&self, generation: u64, query: String, summaries: bool) {
+        self.post(|mailbox| mailbox.search = Some((generation, query, summaries)));
+    }
     fn post(&self, put: impl FnOnce(&mut Mailbox)) {
         let (lock, wake) = &*self.0;
         if let Ok(mut mailbox) = lock.lock() {
             put(&mut mailbox);
             wake.notify_one();
         }
+    }
+
+    fn native_origin_before(&self, read_started: u64) -> Option<u64> {
+        let mailbox = self.0.0.lock().ok()?;
+        (!mailbox.stop && mailbox.projects.is_none()).then_some(read_started)
     }
 
     pub fn projects(&self, projects: Arc<Vec<ProjectFacts>>) {
@@ -163,7 +310,11 @@ impl Drop for LinkWorker {
 impl LinkWorker {
     /// `own` answers for `paths.local_device`, the node the core runs on.
     pub fn spawn(paths: Paths, own: Arc<dyn NodeLink>, sink: impl Sink) -> Result<Self, String> {
-        let client = LinkClient(Arc::new((Mutex::new(Mailbox::default()), Condvar::new())));
+        let client = LinkClient(
+            Arc::new((Mutex::new(Mailbox::default()), Condvar::new())),
+            Arc::default(),
+            Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+        );
         let mailbox = client.clone();
         let join = thread::Builder::new()
             .name("hide-links".into())
@@ -181,6 +332,11 @@ impl LinkWorker {
 }
 
 struct State {
+    ledger: VecDeque<LedgerUpdate>,
+    ledger_retry_at: Option<Instant>,
+    record: Option<(u64, SessionIdentity)>,
+    record_answer: Option<Result<SessionRecord, String>>,
+    search: Option<(u64, String, bool)>,
     projects: Arc<Vec<ProjectFacts>>,
     /// Projects posted but not yet written, kept while the store is closed.
     projects_due: bool,
@@ -306,6 +462,7 @@ fn open_store(path: &Path) -> Result<LinkStore, String> {
             "component": "links", "kind": "store.rebuilt", "code": "links_store_corrupt",
         }));
     }
+    store.recover_issue_attempts()?;
     Ok(store)
 }
 
@@ -315,6 +472,11 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
     let mut store = open_store(&paths.store);
     let mut opened_at = Instant::now();
     let mut state = State {
+        ledger: VecDeque::new(),
+        ledger_retry_at: None,
+        record: None,
+        record_answer: None,
+        search: None,
         projects: Arc::default(),
         projects_due: false,
         panes: Arc::default(),
@@ -349,6 +511,12 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
             && mailbox.parents.is_none()
             && mailbox.panel.is_none()
             && !mailbox.panel_closed
+            && mailbox.ledger.is_empty()
+            && mailbox.record.is_none()
+            && !mailbox.record_closed
+            && mailbox.search.is_none()
+            && mailbox.calls.is_empty()
+            && (store.is_err() || mailbox.contexts.is_empty())
             && wait > Duration::ZERO
         {
             mailbox = match wake.wait_timeout(mailbox, wait) {
@@ -364,7 +532,31 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
         let parents = mailbox.parents.take();
         let panel = mailbox.panel.take();
         let panel_closed = std::mem::take(&mut mailbox.panel_closed);
+        let ledger = std::mem::take(&mut mailbox.ledger);
+        let record = mailbox.record.take();
+        let record_closed = std::mem::take(&mut mailbox.record_closed);
+        let search = mailbox.search.take();
+        let calls = std::mem::take(&mut mailbox.calls);
+        let contexts = if store.is_ok() {
+            let count = mailbox.contexts.len().min(16);
+            mailbox.contexts.drain(..count).collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         drop(mailbox);
+        // Admission counts both mailbox and worker-owned pending updates.
+        state.ledger.extend(ledger);
+        if record_closed {
+            state.record = None;
+            state.record_answer = None;
+        }
+        if let Some(record) = record {
+            state.record = Some(record);
+            state.record_answer = None;
+        }
+        if let Some(search) = search {
+            state.search = Some(search);
+        }
 
         if panel_closed {
             state.panel = None;
@@ -399,6 +591,18 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
         let store = match store.as_mut() {
             Ok(store) => store,
             Err(code) => {
+                for (_, answer) in calls {
+                    let _ = answer.send(Err(code.clone()));
+                    if let Ok(mut mailbox) = client.0.0.lock() {
+                        mailbox.calls_pending = mailbox.calls_pending.saturating_sub(1);
+                    }
+                }
+                if let Some((generation, _)) = state.record.as_ref() {
+                    sink.record(*generation, Err(code.clone()));
+                }
+                if let Some((generation, _, _)) = state.search.take() {
+                    sink.session_search(generation, Err(code.clone()));
+                }
                 if let Some(request) = state.panel.as_ref()
                     && state.panel_answer.is_none()
                 {
@@ -409,9 +613,70 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
                 continue;
             }
         };
+        for (call, answer) in calls {
+            let result = store.ledger_call(call);
+            if let Err(code) = &result {
+                log_write(code, "ledger_call");
+            }
+            if matches!(&result, Ok(LedgerAnswer::Saved | LedgerAnswer::Attempt(_))) {
+                state.dirty_at.get_or_insert_with(Instant::now);
+            }
+            let _ = answer.send(result);
+            if let Ok(mut mailbox) = client.0.0.lock() {
+                mailbox.calls_pending = mailbox.calls_pending.saturating_sub(1);
+            }
+        }
+        if client.ledger_started_at().is_none() {
+            let started = match store.meta("ledger_started_at") {
+                Ok(Some(value)) => value
+                    .parse::<u64>()
+                    .map_err(|_| "ledger_start_invalid".to_owned()),
+                Ok(None) => {
+                    let now = now_ms();
+                    store
+                        .set_meta("ledger_started_at", &now.to_string())
+                        .map(|()| now)
+                }
+                Err(code) => Err(code),
+            };
+            match started {
+                Ok(at) => client.2.store(at, std::sync::atomic::Ordering::Release),
+                Err(code) => log_write(&code, "ledger_start"),
+            }
+        }
         if state.filled_unknown {
             state.filled_unknown = false;
             state.filled = store.meta(BACKFILL_DONE).is_ok_and(|done| done.is_some());
+        }
+        if state.ledger_retry_at.is_none_or(|at| at <= Instant::now()) {
+            for _ in 0..16 {
+                let Some(update) = state.ledger.front() else {
+                    break;
+                };
+                let session = update.session().clone();
+                let result = store.apply_ledger_update(update);
+                if let Err(code) = &result
+                    && !code.starts_with("links_store_")
+                {
+                    log_write(code, "ledger_rejected");
+                    state.ledger.pop_front();
+                    if let Ok(mut mailbox) = client.0.0.lock() {
+                        mailbox.ledger_pending = mailbox.ledger_pending.saturating_sub(1);
+                    }
+                    continue;
+                }
+                if !state.wrote(result, "ledger") {
+                    state.ledger_retry_at = Some(Instant::now() + Duration::from_secs(1));
+                    break;
+                }
+                state.ledger.pop_front();
+                state.ledger_retry_at = None;
+                if let Ok(mut mailbox) = client.0.0.lock() {
+                    mailbox.ledger_pending = mailbox.ledger_pending.saturating_sub(1);
+                }
+                state.dirty_at.get_or_insert_with(Instant::now);
+                update_context_ancestors(client, store, &session);
+            }
         }
         if std::mem::take(&mut state.projects_due) {
             let projects = Arc::clone(&state.projects);
@@ -419,23 +684,56 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
                 let result = store.apply_project(project, now_ms());
                 state.wrote(result, "project");
             }
+            let result = store.refresh_ledger_outputs();
+            state.wrote(result, "ledger_outputs");
+            let held = client
+                .1
+                .lock()
+                .map(|contexts| contexts.values.keys().cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            for session in held {
+                update_context_ancestors(client, store, &session);
+            }
             state.dirty_at.get_or_insert_with(Instant::now);
         }
         if state.panes_at.is_none_or(|at| at.elapsed() >= PANES_EVERY) {
             if !state.panes.is_empty() {
                 let result = store.apply_panes(&state.panes, now_ms());
                 state.wrote(result, "panes");
+                for pane in state.panes.iter() {
+                    update_context(
+                        client,
+                        store,
+                        &SessionIdentity {
+                            device_id: pane.device_id.clone(),
+                            agent: pane.agent.clone(),
+                            session_id: pane.session_id.clone(),
+                        },
+                    );
+                }
                 state.dirty_at.get_or_insert_with(Instant::now);
             }
             state.panes_at = Some(Instant::now());
         }
         if let Some(parents) = state.parents.take() {
-            let result = store.apply_parents(&parents);
-            state.wrote(result, "parents");
+            let children = store.apply_parents(&parents);
+            for child in children.iter().flatten() {
+                update_context_ancestors(client, store, child);
+            }
+            state.wrote(children.map(|_| ()), "parents");
             state.dirty_at.get_or_insert_with(Instant::now);
+        }
+        for session in contexts {
+            update_context(client, store, &session);
         }
         if state.panel.is_some() && state.panel_answer.is_none() {
             answer_panel(store, own, paths, &mut state, sink);
+        }
+        if state.record.is_some() && state.record_answer.is_none() {
+            answer_record(store, &mut state, sink);
+        }
+        if let Some((generation, query, summaries)) = state.search.take() {
+            sink.session_search(generation, store.ledger_search(&query, summaries));
         }
         if state.queue.is_empty() {
             let next_page = state.listing.as_ref().and_then(|listing| listing.next);
@@ -448,11 +746,11 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
                 list(store, own, paths, &mut state);
             }
         }
-        read_turn(store, own, paths, &mut state);
+        read_turn(store, own, paths, &mut state, client);
         if state.queue.is_empty() {
             finish_listing(store, &mut state);
         }
-        device_turn(store, sink, &mut state);
+        device_turn(store, sink, &mut state, client);
         // The spinner is the first fill's, never a later listing's (B24).
         let filling = (!state.filled && !state.queue.is_empty())
             || state
@@ -470,19 +768,22 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
         }
         if state
             .dirty_at
-            .is_some_and(|at| at.elapsed() >= SUMMARY_AFTER || state.queue.is_empty())
+            .is_some_and(|at| at.elapsed() >= SUMMARY_AFTER)
         {
             state.dirty_at = None;
             publish_summaries(store, &mut state, sink);
             if state.panel.is_some() {
                 answer_panel(store, own, paths, &mut state, sink);
             }
+            if state.record.is_some() {
+                answer_record(store, &mut state, sink);
+            }
         }
     }
 }
 
 fn list_every(state: &State) -> Duration {
-    if state.panel.is_some() {
+    if state.panel.is_some() || state.record.is_some() {
         LIST_OPEN_EVERY
     } else {
         LIST_EVERY
@@ -490,6 +791,9 @@ fn list_every(state: &State) -> Duration {
 }
 
 fn next_wait(state: &State) -> Duration {
+    if !state.ledger.is_empty() && state.ledger_retry_at.is_none_or(|at| at <= Instant::now()) {
+        return REST;
+    }
     // A listing with another page to take goes on at once, even when the
     // page before held nothing new.
     let paging = state
@@ -508,6 +812,9 @@ fn next_wait(state: &State) -> Duration {
     }
     let every = list_every(state);
     let mut wait = every;
+    if let Some(at) = state.ledger_retry_at {
+        wait = wait.min(at.saturating_duration_since(Instant::now()));
+    }
     if let Some(at) = state.dirty_at {
         wait = wait.min(SUMMARY_AFTER.saturating_sub(at.elapsed()));
     }
@@ -606,7 +913,13 @@ fn finish_listing(store: &LinkStore, state: &mut State) {
 
 /// Reads queued files for one turn: one read budget per file per step, a
 /// file with more waiting goes back to the front.
-fn read_turn(store: &mut LinkStore, own: &dyn NodeLink, paths: &Paths, state: &mut State) {
+fn read_turn(
+    store: &mut LinkStore,
+    own: &dyn NodeLink,
+    paths: &Paths,
+    state: &mut State,
+    client: &LinkClient,
+) {
     if state.queue.is_empty() {
         return;
     }
@@ -639,6 +952,7 @@ fn read_turn(store: &mut LinkStore, own: &dyn NodeLink, paths: &Paths, state: &m
                 continue;
             }
         };
+        let read_started = now_ms();
         let read = hide_node_link::readers::links(
             own,
             vec![ReadRequest {
@@ -694,13 +1008,19 @@ fn read_turn(store: &mut LinkStore, own: &dyn NodeLink, paths: &Paths, state: &m
             }));
         }
         let more = answer.has_more && answer.error.is_none();
-        let result = store.apply_answer(&paths.local_device, &answer, &candidate.stamp);
+        let result = store.apply_answer_observed(
+            &paths.local_device,
+            &answer,
+            &candidate.stamp,
+            client.native_origin_before(read_started),
+        );
         if !state.wrote(result, "session") {
             if let Some(listing) = state.listing.as_mut() {
                 listing.failed = true;
             }
             continue;
         }
+        refresh_reader_context(client, store, &paths.local_device, &answer);
         state.dirty_at.get_or_insert_with(Instant::now);
         if more {
             state.queue.push_front(candidate);
@@ -734,7 +1054,7 @@ impl DeviceQueue {
 /// helper. A device that is gone keeps every row it gave; when it returns,
 /// its listing starts where the last one did, so what changed meanwhile is
 /// read then (B40). A failed call leaves the device for [`DEVICE_RETRY`].
-fn device_turn(store: &mut LinkStore, sink: &impl Sink, state: &mut State) {
+fn device_turn(store: &mut LinkStore, sink: &impl Sink, state: &mut State, client: &LinkClient) {
     let paging = state.devices.values().any(|device| {
         device
             .listing
@@ -788,6 +1108,7 @@ fn device_turn(store: &mut LinkStore, sink: &impl Sink, state: &mut State) {
                 channel.as_ref(),
                 entry,
                 &mut state.write_failure,
+                client,
             );
             state.dirty_at.get_or_insert_with(Instant::now);
         }
@@ -803,6 +1124,7 @@ fn read_device(
     channel: &dyn NodeLink,
     entry: &mut DeviceQueue,
     write_failure: &mut Option<String>,
+    client: &LinkClient,
 ) {
     let batch = entry
         .queue
@@ -835,6 +1157,7 @@ fn read_device(
             }
         }
     }
+    let read_started = now_ms();
     let answers = match hide_node_link::readers::links(channel, requests, DEVICE_TIMEOUT) {
         Ok(answers) => answers,
         Err(error) => {
@@ -877,7 +1200,12 @@ fn read_device(
         if let Some(code) = answer.error.as_deref() {
             log_device(device, "session", code);
         }
-        if let Err(code) = store.apply_answer(device, answer, &candidate.stamp) {
+        if let Err(code) = store.apply_answer_observed(
+            device,
+            answer,
+            &candidate.stamp,
+            client.native_origin_before(read_started),
+        ) {
             log_write(&code, "session");
             *write_failure = Some(code);
             if let Some(listing) = entry.listing.as_mut() {
@@ -886,6 +1214,7 @@ fn read_device(
             continue;
         }
         *write_failure = None;
+        refresh_reader_context(client, store, device, answer);
         if answer.has_more && answer.error.is_none() {
             entry.queue.push_back(candidate);
         }
@@ -976,7 +1305,37 @@ fn publish_summaries(store: &LinkStore, state: &mut State, sink: &impl Sink) {
     let mut summaries = BTreeMap::new();
     for project in state.projects.iter() {
         match store.summary(&project.key, &project.worktrees) {
-            Ok(summary) => {
+            Ok(mut summary) => {
+                match store.ledger_issue_refs(&project.key) {
+                    Ok(refs) => summary.record_issues = refs,
+                    Err(code) => {
+                        log_write(&code, "ledger_issue_refs");
+                        if let Some(held) = state.summaries.get(&project.workspace_id) {
+                            summary.record_issues = held.record_issues.clone();
+                        }
+                    }
+                }
+                match store.ledger_summaries(&project.key) {
+                    Ok(work) => {
+                        match store.ledger_creators(&work) {
+                            Ok(creators) => summary.creators = creators,
+                            Err(code) => {
+                                log_write(&code, "ledger_creators");
+                                if let Some(held) = state.summaries.get(&project.workspace_id) {
+                                    summary.creators = held.creators.clone();
+                                }
+                            }
+                        }
+                        summary.work = work;
+                    }
+                    Err(code) => {
+                        log_write(&code, "ledger_summary");
+                        if let Some(held) = state.summaries.get(&project.workspace_id) {
+                            summary.work = held.work.clone();
+                            summary.creators = held.creators.clone();
+                        }
+                    }
+                }
                 summaries.insert(project.workspace_id.clone(), summary);
             }
             Err(code) => {
@@ -993,6 +1352,79 @@ fn publish_summaries(store: &LinkStore, state: &mut State, sink: &impl Sink) {
     if summaries != state.summaries {
         state.summaries = summaries.clone();
         sink.summaries(summaries);
+    }
+}
+
+fn refresh_reader_context(
+    client: &LinkClient,
+    store: &LinkStore,
+    device: &str,
+    answer: &links::ReadAnswer,
+) {
+    if answer.facts.prs.is_empty() && answer.facts.issues.is_empty() {
+        return;
+    }
+    match store.ledger_file_session(device, &answer.path) {
+        Ok(Some(session)) => update_context_ancestors(client, store, &session),
+        Ok(None) => {}
+        Err(code) => log_write(&code, "ledger_reader_context"),
+    }
+}
+
+fn update_context_ancestors(client: &LinkClient, store: &LinkStore, session: &SessionIdentity) {
+    let mut current = session.clone();
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..=LEDGER_DEPTH_LIMIT {
+        if !seen.insert(current.clone()) {
+            break;
+        }
+        update_context(client, store, &current);
+        match store.ledger_parent(&current) {
+            Ok(Some(parent)) => current = parent,
+            Ok(None) => return,
+            Err(code) => {
+                log_write(&code, "ledger_parent");
+                return;
+            }
+        }
+    }
+    log_write("ledger_parent_capacity", "ledger_context");
+}
+
+fn update_context(client: &LinkClient, store: &LinkStore, session: &SessionIdentity) {
+    match store.ledger_context(session) {
+        Ok(context) => {
+            if let Ok(mut contexts) = client.1.lock() {
+                if !contexts.values.contains_key(session)
+                    && contexts.values.len() >= LEDGER_QUEUE_LIMIT
+                {
+                    if let Some(first) = contexts.used.pop_front() {
+                        contexts.values.remove(&first);
+                    }
+                    crate::diagnostic!(
+                        serde_json::json!({"component":"links","kind":"ledger.context_capacity"})
+                    );
+                }
+                contexts.used.retain(|held| held != session);
+                contexts.used.push_back(session.clone());
+                contexts.values.insert(session.clone(), context);
+            }
+        }
+        Err(code) => log_write(&code, "ledger_context"),
+    }
+}
+
+fn answer_record(store: &LinkStore, state: &mut State, sink: &impl Sink) {
+    let Some((generation, session)) = &state.record else {
+        return;
+    };
+    let answer = match state.write_failure.as_ref() {
+        Some(code) => Err(code.clone()),
+        None => store.ledger_record(session),
+    };
+    if state.record_answer.as_ref() != Some(&answer) {
+        sink.record(*generation, answer.clone());
+        state.record_answer = Some(answer);
     }
 }
 
@@ -1045,6 +1477,247 @@ mod tests {
 
     const CREATED: u64 = 1_790_000_000_000;
 
+    #[test]
+    fn a_leaf_change_refreshes_the_cached_root_at_the_supported_depth_limit() {
+        use crate::labels::analysis::LabelEnd;
+        use crate::links::ledger::{RecordedRequest, TaskDecision, TurnJudgment, WorkAuthor};
+        let directory = tempfile::tempdir().unwrap();
+        let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+        let chain = (0..=LEDGER_DEPTH_LIMIT)
+            .map(|depth| SessionIdentity {
+                device_id: "remote".into(),
+                agent: "claude".into(),
+                session_id: format!("session-{depth}"),
+            })
+            .collect::<Vec<_>>();
+        for session in &chain {
+            store
+                .apply_ledger_update(&LedgerUpdate::Requests {
+                    session: session.clone(),
+                    cwd: "/repo".into(),
+                    path: None,
+                    requests: vec![RecordedRequest {
+                        offset: 1,
+                        at_unix_ms: CREATED,
+                        text: "Build the current root task".into(),
+                        author: WorkAuthor::Operator,
+                        task_ids: vec![],
+                        chapter_id: None,
+                        judged: false,
+                    }],
+                })
+                .unwrap();
+        }
+        store
+            .apply_parents(
+                &chain
+                    .windows(2)
+                    .map(|pair| ParentFact {
+                        device_id: pair[1].device_id.clone(),
+                        agent: pair[1].agent.clone(),
+                        session_id: pair[1].session_id.clone(),
+                        parent_device_id: pair[0].device_id.clone(),
+                        parent_agent: pair[0].agent.clone(),
+                        parent_session_id: pair[0].session_id.clone(),
+                        parent_name: "Parent".into(),
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        let client = LinkClient::full_mailbox_for_test();
+        client.prime_context_for_test(chain[0].clone(), store.ledger_context(&chain[0]).unwrap());
+        store
+            .apply_ledger_update(&LedgerUpdate::Chapter {
+                session: chain[0].clone(),
+                goal: "Current goal".into(),
+                at_unix_ms: CREATED,
+            })
+            .unwrap();
+        store
+            .apply_ledger_update(&LedgerUpdate::TurnEnd {
+                session: chain[0].clone(),
+                offset: 1,
+                at_unix_ms: CREATED + 1,
+                end: LabelEnd::Working,
+                work_author: true,
+                turn_witness: None,
+                judgment: TurnJudgment {
+                    task: TaskDecision::New {
+                        name: "Current root task".into(),
+                    },
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+        assert!(client.context(&chain[0]).unwrap().open_tasks.is_empty());
+        update_context_ancestors(&client, &store, chain.last().unwrap());
+        assert_eq!(
+            client.context(&chain[0]).unwrap().open_tasks[0].name,
+            "Current root task"
+        );
+    }
+
+    /// A Claude Code session file that printed pull request 7.
+    fn printed_a_pull_request(home: &Path, id: &str, at: &str) -> String {
+        let folder = home.join(".claude/projects/-work-app");
+        std::fs::create_dir_all(&folder).unwrap();
+        let lines = [
+            serde_json::json!({"type": "user", "uuid": format!("{id}-u"), "parentUuid": null,
+                "message": {"role": "user", "content": "Open the pull request"},
+                "timestamp": at, "origin": {"kind": "human"}, "userType": "external",
+                "promptId": "p", "cwd": "/work/app", "sessionId": id, "gitBranch": "feat/x"}),
+            serde_json::json!({"type": "pr-link", "sessionId": id, "prNumber": 7,
+                "prRepository": "acme/app", "prUrl": "https://github.com/acme/app/pull/7",
+                "timestamp": at}),
+        ];
+        let path = folder.join(format!("{id}.jsonl"));
+        std::fs::write(&path, lines.map(|line| format!("{line}\n")).concat()).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    fn read_to_the_end(store: &mut LinkStore, home: &Path, path: &str) -> links::ReadAnswer {
+        let answer = links::read(
+            home,
+            &[links::ReadRequest {
+                agent: hide_session::Agent::Claude,
+                path: path.to_owned(),
+                checkpoint: None,
+            }],
+        )
+        .remove(0);
+        assert!(answer.error.is_none() && !answer.has_more);
+        store.apply_answer("local", &answer, "stamp").unwrap();
+        answer
+    }
+
+    /// The ledger's links can name a session it holds no record of: a Pi or
+    /// omp child is named by its file until its reader reads it, a spawn is
+    /// known before its file is read, and retention removes a
+    /// session while its file's cursor stays. Each was a write failure on
+    /// every read answer that reached it, about one every two seconds, and
+    /// the failure kept the parent's work from the turns that continue it.
+    #[test]
+    fn a_session_the_ledger_never_recorded_fails_no_write_and_stops_no_context() {
+        use crate::labels::analysis::LabelEnd;
+        use crate::links::ledger::{RecordedRequest, TaskDecision, TurnJudgment, WorkAuthor};
+        let home = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+        let session = |id: &str| SessionIdentity {
+            device_id: "local".into(),
+            agent: "claude".into(),
+            session_id: id.into(),
+        };
+        // A session retention removed: its file's cursor still names it.
+        let removed = printed_a_pull_request(home.path(), "removed", "2026-07-01T00:00:00Z");
+        let removed_answer = read_to_the_end(&mut store, home.path(), &removed);
+        let mut present = |_: &[String]| Ok(std::collections::BTreeSet::new());
+        assert_eq!(
+            store
+                .prune(&|_| None, "local", &mut present, CREATED + 91 * 86_400_000)
+                .unwrap(),
+            1
+        );
+        // A root with open work, a child whose file printed a pull request,
+        // and a Pi child its spawn named by its file.
+        store
+            .apply_ledger_update(&LedgerUpdate::Requests {
+                session: session("root"),
+                cwd: "/work/app".into(),
+                path: None,
+                requests: vec![RecordedRequest {
+                    offset: 1,
+                    at_unix_ms: CREATED,
+                    text: "Build the release".into(),
+                    author: WorkAuthor::Operator,
+                    task_ids: vec![],
+                    chapter_id: None,
+                    judged: false,
+                }],
+            })
+            .unwrap();
+        store
+            .apply_ledger_update(&LedgerUpdate::Chapter {
+                session: session("root"),
+                goal: "Ship the release".into(),
+                at_unix_ms: CREATED,
+            })
+            .unwrap();
+        store
+            .apply_ledger_update(&LedgerUpdate::TurnEnd {
+                session: session("root"),
+                offset: 1,
+                at_unix_ms: CREATED + 1,
+                end: LabelEnd::Working,
+                work_author: true,
+                turn_witness: None,
+                judgment: TurnJudgment {
+                    task: TaskDecision::New {
+                        name: "Release build".into(),
+                    },
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+        let child = printed_a_pull_request(home.path(), "child", "2026-09-27T00:00:00Z");
+        let pi = SessionIdentity {
+            device_id: "local".into(),
+            agent: "pi".into(),
+            session_id: "/operator/.pi/agent/sessions/--work-app--/2026-10-10_01a1.jsonl".into(),
+        };
+        let parented = |child: &SessionIdentity| ParentFact {
+            device_id: child.device_id.clone(),
+            agent: child.agent.clone(),
+            session_id: child.session_id.clone(),
+            parent_device_id: "local".into(),
+            parent_agent: "claude".into(),
+            parent_session_id: "root".into(),
+            parent_name: "lead".into(),
+        };
+        store
+            .apply_parents(&[parented(&session("child")), parented(&pi)])
+            .unwrap();
+        let child_answer = read_to_the_end(&mut store, home.path(), &child);
+
+        let client = LinkClient::full_mailbox_for_test();
+        let ((), records) = crate::diagnostics::capture(|| {
+            refresh_reader_context(&client, &store, "local", &removed_answer);
+            refresh_reader_context(&client, &store, "local", &child_answer);
+            update_context(&client, &store, &pi);
+        });
+        assert!(
+            !records
+                .iter()
+                .any(|record| record["kind"] == "store.write_failed"),
+            "{records:?}"
+        );
+        assert_eq!(
+            client.context(&session("root")).unwrap().open_tasks[0].name,
+            "Release build"
+        );
+        let unrecorded = client.context(&pi).unwrap();
+        assert_eq!(unrecorded.parent_name.as_deref(), Some("lead"));
+        assert!(unrecorded.open_tasks.is_empty());
+        assert!(
+            client
+                .context(&session("removed"))
+                .unwrap()
+                .open_tasks
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .ledger_record(&session("root"))
+                .unwrap()
+                .children
+                .iter()
+                .map(|record| record.session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            ["child"],
+            "the record lists the child it holds"
+        );
+    }
+
     /// A connected device whose helper answers the two link calls from its
     /// own home, the way `hided node serve` does.
     struct Device {
@@ -1076,6 +1749,105 @@ mod tests {
             };
             Ok(LinkAnswer::Parsed(value.unwrap()))
         }
+    }
+
+    struct ConnectionChangesDuringRead {
+        device: Device,
+        client: LinkClient,
+        observations: Vec<Arc<Vec<ProjectFacts>>>,
+    }
+
+    impl NodeLink for ConnectionChangesDuringRead {
+        fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+            self.device.reader_features()
+        }
+        fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
+            let reading = matches!(call, Call::LinkRead { .. });
+            let answer = self.device.call(call, timeout)?;
+            if reading {
+                for facts in &self.observations {
+                    self.client.projects(Arc::clone(facts));
+                }
+            }
+            Ok(answer)
+        }
+    }
+
+    #[test]
+    fn a_connection_edit_during_native_intake_cannot_certify_the_old_repository() {
+        intake_connection_changes(false);
+    }
+
+    #[test]
+    fn an_a_to_b_to_a_edit_during_native_intake_cannot_certify_the_old_repository() {
+        intake_connection_changes(true);
+    }
+
+    fn intake_connection_changes(return_to_original: bool) {
+        let directory = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        device_session(home.path());
+        let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+        let project = |repository: &str, connection_epoch| ProjectFacts {
+            key: hide_project::project_id("mini", Path::new("/mini/app")),
+            device_id: "mini".into(),
+            root: "/mini/app".into(),
+            repository: Some(repository.into()),
+            connection_epoch,
+            ..Default::default()
+        };
+        store
+            .apply_project(&project("acme/original", 0), CREATED - 70_000)
+            .unwrap();
+        let client = LinkClient::full_mailbox_for_test();
+        let mut observations = vec![Arc::new(vec![project("acme/new", 1)])];
+        if return_to_original {
+            observations.push(Arc::new(vec![project("acme/original", 2)]));
+        }
+        let node = ConnectionChangesDuringRead {
+            device: Device {
+                home: home.path().into(),
+                connected: AtomicBool::new(true),
+            },
+            client: client.clone(),
+            observations,
+        };
+        let candidates = links::candidates(home.path(), 0, None).unwrap();
+        assert_eq!(candidates.len(), 1);
+        let mut queue = DeviceQueue {
+            queue: candidates.into(),
+            ..Default::default()
+        };
+        let mut failure = None;
+        read_device(&mut store, "mini", &node, &mut queue, &mut failure, &client);
+        assert_eq!(failure, None);
+        let identity = SessionIdentity {
+            device_id: "mini".into(),
+            agent: "claude".into(),
+            session_id: "s-mini".into(),
+        };
+        assert_eq!(store.ledger_record(&identity).unwrap().repository, None);
+        // Applying the newest connection and replaying cannot promote unknown.
+        let latest = client.0.0.lock().unwrap().projects.take().unwrap();
+        for facts in latest.iter() {
+            store.apply_project(facts, CREATED + 2_000).unwrap();
+        }
+        let answers = links::read(
+            home.path(),
+            &[ReadRequest {
+                agent: hide_session::Agent::Claude,
+                path: home
+                    .path()
+                    .join(".claude/projects/-mini-app/s-mini.jsonl")
+                    .to_string_lossy()
+                    .into(),
+                checkpoint: None,
+            }],
+        );
+        store
+            .apply_answer_observed("mini", &answers[0], "replay", Some(now_ms()))
+            .unwrap();
+        assert_eq!(store.ledger_record(&identity).unwrap().repository, None);
     }
 
     #[derive(Default)]
@@ -1199,6 +1971,7 @@ mod tests {
             root: "/work/app".into(),
             repository: Some("acme/app".into()),
             repository_id: None,
+            connection_epoch: 0,
             worktrees: vec![WorktreeFact {
                 path: "/work/app".into(),
                 branch: Some("main".into()),
@@ -1217,6 +1990,7 @@ mod tests {
                 hide_issue_known: false,
             }],
             prs_read: true,
+            outputs: Vec::new(),
         }]));
         client.read(PanelRequest {
             generation: 1,

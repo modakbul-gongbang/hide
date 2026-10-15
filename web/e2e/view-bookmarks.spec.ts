@@ -4,10 +4,10 @@ import path from "node:path";
 import { fixtureExecutable } from "./platform-fixture";
 import { runInPane, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, enterWorkspace, screenshot } from "./wire";
+import { countSent, enterWorkspace, screenshot, showTool } from "./wire";
 
-// PRD tab-view-bookmark: two Agent tabs of one checkout share File Views'
-// View list, and each remembers which View was in front for it.
+// CLI background Views: each Agent tab owns its list and selected View.
+// The operator's B presentation stays intact while A opens behind it.
 
 test.describe.configure({ timeout: 180_000 });
 test.use({ actionTimeout: 15_000 });
@@ -62,23 +62,26 @@ test("an Agent tab gets back the View it had in front, and an agent in another t
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     await expect(agentTab(page, second)).toBeVisible();
-    // File Views on, so the agents' opens without --reveal are seen; with
-    // nothing open it starts on a New tab page (PRD three-column-panel B16).
-    await page.locator('[data-column-toggle="views"]').click();
-    await expect(page.locator("[data-view-area]")).toBeVisible();
+    // The files tool pinned open, so the agents' opens without --reveal are
+    // seen through the tab clicks below (PRD right-lane B5).
+    await showTool(page, "files");
+    await page.locator("[data-lane-pin]").click();
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "docked");
 
     // Tab 1 is in front and opens a.md: that is its bookmark.
     await hideFrom(herdr, daemon, firstPane, ["file", "open", "a.md"], 1);
     await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
-    await closeNewTabPage(page);
 
-    // Tab 2 has no bookmark, so File Views stays; its own agent opens b.md.
+    // Tab 2 is shown for the first time, so it starts with no Views: the
+    // pinned lane stays and shows the tree alone (PRD right-lane B12, B15),
+    // and its own agent opens b.md.
     await agentTab(page, second).click();
     await expect(agentTab(page, second)).toHaveAttribute("aria-selected", "true");
-    await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
+    await expect(viewTabs(page)).toHaveCount(0);
+    await expect(page.locator('[data-lane-tree="only"]')).toBeVisible();
     await hideFrom(herdr, daemon, secondPane, ["file", "open", "b.md"], 2);
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
-    await expect(viewTabs(page)).toHaveCount(2);
+    await expect(viewTabs(page)).toHaveCount(1);
 
     // B1, B2: back and forth, one tab click each, and the page sends no
     // View action of its own after the switch.
@@ -87,7 +90,7 @@ test("an Agent tab gets back the View it had in front, and an agent in another t
     await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
     await agentTab(page, second).click();
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
-    await expect(viewTabs(page)).toHaveCount(2);
+    await expect(viewTabs(page)).toHaveCount(1);
     expect(sent.get("view_layout") ?? 0).toBe(viewActions);
     await screenshot(page, "view-bookmarks-tab-2-front");
     await agentTab(page, first).click();
@@ -95,20 +98,22 @@ test("an Agent tab gets back the View it had in front, and an agent in another t
     await screenshot(page, "view-bookmarks-tab-1-front");
 
     // B12: while the operator is on tab 2, tab 1's agent opens c.md. The
-    // screen stays on b.md, c.md joins the strip, and tab 1 shows it later.
+    // screen and strip stay on B's b.md; tab 1 alone gets c.md.
     await agentTab(page, second).click();
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
     await hideFrom(herdr, daemon, firstPane, ["file", "open", "c.md"], 3);
-    await expect(viewTabs(page)).toHaveCount(3);
+    await expect(viewTabs(page)).toHaveCount(1);
+    await expect(viewTabs(page).filter({ hasText: "c.md" })).toHaveCount(0);
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
     await screenshot(page, "view-bookmarks-agent-open-behind");
     await agentTab(page, first).click();
     await expect(front(page)).toHaveAttribute("aria-label", /\/c\.md/);
+    await expect(viewTabs(page)).toHaveCount(2);
     await agentTab(page, second).click();
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
 
     // B18: the bookmarks are in the file and survive a daemon restart.
-    await expect.poll(() => fs.readFileSync(path.join(daemon!.stateDir, "workspace-views.json"), "utf8")).toContain("view_bookmarks");
+    await expect.poll(() => fs.readFileSync(path.join(daemon!.stateDir, "workspace-views.json"), "utf8")).toContain("view_presentations");
     await expect.poll(() => savedAgentTabs(daemon!)).toContain(second);
     daemon = await daemon.restart();
     await page.goto("about:blank");
@@ -123,12 +128,3 @@ test("an Agent tab gets back the View it had in front, and an agent in another t
     herdr.stop();
   }
 });
-
-/** Closes the New tab page File Views starts on when it is turned on with nothing open. */
-async function closeNewTabPage(page: Page): Promise<void> {
-  const blank = page.locator('[data-view-tab-bar] [role="tab"]').filter({ hasNotText: /\.md/ });
-  await expect(blank).toHaveCount(1);
-  await blank.hover();
-  await blank.getByRole("button", { name: /Close view/ }).click();
-  await expect(blank).toHaveCount(0);
-}

@@ -13,7 +13,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { fixtureExecutable } from "./platform-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
+import { countSent, enterWorkspace, screenshot, showExplorer, showProjectRow } from "./wire";
 import { chord, held, label } from "./chords";
 
 test.describe.configure({ timeout: 120_000 });
@@ -70,7 +70,7 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     const display = await displayLocator.getAttribute("data-display");
 
     // Then beta's terminal, from the sidebar.
-    await page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first().click();
+    await (await showProjectRow(page, page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first())).click();
     await expect(canvas).toHaveAttribute("data-canvas", betaTab);
 
     // ⌥` once, held: the previous surface is the other checkout's display.
@@ -115,18 +115,19 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     await expect.poll(() => page.evaluate(() => document.activeElement?.closest("[data-view-area]") !== null)).toBe(true);
 
     // Escape while held keeps the original selection and commits nothing.
-    // Meanwhile every row wears its marks: an agent's status mark then which
-    // agent it is, the neutral mark for a tab of several, a file's own mark.
+    // Meanwhile every row wears its marks: an agent's status mark alone (its
+    // product name is in the row's label), the neutral mark for a tab with no
+    // single agent, a file's own mark.
     const quiet = [sent.get("focus_checkout") ?? 0, sent.get("focus_tab") ?? 0];
     await page.keyboard.down("Alt");
     await page.keyboard.press("KeyG");
     await expect(page.locator("[data-cycle=panels]")).toBeVisible();
     const marks = (row: string) => page.locator(`[data-cycle=panels] [data-cycle-row="${row}"] [data-cycle-marks]`);
-    await expect(marks(betaTab)).toHaveAttribute("data-cycle-marks", "codex");
+    await expect(marks(betaTab)).toHaveAttribute("data-cycle-marks", "status");
     await expect(marks(betaTab).locator("[data-cycle-status]")).toHaveCount(1);
-    await expect(marks(betaTab).locator('[data-agent-mark="codex"]')).toHaveCount(1);
-    await expect(page.locator(`[data-cycle=panels] [data-cycle-row="${betaTab}"]`)).toHaveAttribute("aria-label", /codex agent/);
-    await expect(page.locator('[data-cycle=panels] [data-cycle-marks="claude"] [data-agent-mark="claude"]')).toHaveCount(1);
+    await expect(marks(betaTab).locator("[data-agent-mark]")).toHaveCount(0);
+    await expect(page.locator(`[data-cycle=panels] [data-cycle-row="${betaTab}"]`)).toHaveAttribute("aria-label", /Codex agent/);
+    await expect(page.locator('[data-cycle=panels] [data-agent-mark]:not([data-agent-mark="neutral"])')).toHaveCount(0);
     await expect(marks(herdr.tab)).toHaveAttribute("data-cycle-marks", "herdr");
     await expect(marks(herdr.tab).locator('[data-agent-mark="neutral"]')).toHaveCount(1);
     await expect(marks(herdr.tab).locator("[data-cycle-status]")).toHaveCount(0);
@@ -141,10 +142,10 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     // then in the pane the fixture opens on, and the first candidate is
     // beta's pane, which one focus_pane brings back with its project.
     const betaPane = beta.result.root_pane.pane_id;
-    await page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first().click();
+    await (await showProjectRow(page, page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first())).click();
     await expect(canvas).toHaveAttribute("data-canvas", betaTab);
     await page.locator(`[data-pane-view="${betaPane}"]`).click();
-    await page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first().click();
+    await (await showProjectRow(page, page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first())).click();
     await expect(canvas).not.toHaveAttribute("data-canvas", betaTab);
     const fixturePane = (await page.locator('[data-pane-view][data-focused="true"]').getAttribute("data-pane-view"))!;
     // The fixture's View panel stays open over the agents' right side.
@@ -157,7 +158,7 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     await expect(agents.locator("[role=option]").first()).toHaveAttribute("data-cycle-row", fixturePane);
     await expect(cycleRow).toHaveAttribute("data-cycle-row", betaPane);
     await expect(cycleRow).toContainText("beta · Terminal");
-    await expect(cycleRow).toHaveAttribute("aria-label", /codex agent/);
+    await expect(cycleRow).toHaveAttribute("aria-label", /Codex agent/);
     // Only panes: no View display, Overview or project rows.
     await expect(agents.locator('[role=option]:not([data-cycle-kind="herdr"])')).toHaveCount(0);
     await screenshot(page, "recent-agent-panes");
@@ -187,7 +188,7 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     // The Explorer also opens the agent list; Escape cancels without a move.
     await showExplorer(page);
     const file = page.locator(`[data-explorer-row="${path.join(root, "plan.txt")}"]`);
-    const explorer = page.locator('[data-workspace-tools] [role="tree"]');
+    const explorer = page.locator('[data-lane-tree] [role="tree"]');
     await explorer.focus();
     await expect(explorer).toBeFocused();
     focuses = sent.get("focus_pane") ?? 0;

@@ -52,7 +52,23 @@ test("a worktree with only a delegated child draws no checkout line, and the roo
     await screenshot(page, "sidebar-root-only");
 
     // The way to the child is the root's tree.
-    await project.locator(`[data-tree-chevron="${root}"]`).first().click();
+    const disclosure = project.locator(`[data-tree-chevron="${root}"]`).first();
+    const sidebar = page.locator("nav[data-sidebar] > .sidebar-header-container");
+    for (const width of [240, 292]) {
+      await sidebar.evaluate((node, size) => { (node as HTMLElement).style.width = `${size}px`; (node as HTMLElement).style.flex = "none"; }, width);
+      await page.evaluate(() => document.fonts.ready);
+      const bounds = (await sidebar.boundingBox())!;
+      const affordance = (await disclosure.boundingBox())!;
+      console.info("singleton lineage fold bounds", JSON.stringify({ width, sidebar: bounds, disclosure: affordance }));
+      expect(affordance.x).toBeGreaterThanOrEqual(bounds.x);
+      expect(affordance.x + affordance.width).toBeLessThanOrEqual(bounds.x + bounds.width);
+      await expect(disclosure).toBeVisible();
+      await disclosure.click();
+      await expect(page.locator(`nav[data-sidebar] [data-pane="${child}"]`).first()).toBeVisible();
+      await disclosure.click();
+      await expect(page.locator(`nav[data-sidebar] [data-pane="${child}"]`)).toHaveCount(0);
+    }
+    await disclosure.click();
     await expect(page.locator(`nav[data-sidebar] [data-pane="${child}"]`).first()).toBeVisible();
     await screenshot(page, "sidebar-root-only-tree");
   } finally {

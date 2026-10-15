@@ -60,7 +60,7 @@ export function displaysOfDocument(root: ViewNode, tabId: string): ViewDisplaySn
 }
 
 import {
-  areasOf, locateDisplay, neighbourArea,
+  activeDisplay, areasOf, locateDisplay, neighbourArea,
   splitEligibility as areaSplitEligibility, dropTarget as areaDropTarget,
   resizeTarget as areaResizeTarget, roomToSplit, areaSentence, splitLabel, moveLabel, type AreaWords,
   type LocatedItem, type Edge, type LayoutSizes,
@@ -164,7 +164,7 @@ function displayCommands(
     const label = labelOf();
     if (id === "reveal_external") {
       // A page is not a file of the checkout.
-      const [entry] = display.kind === "browser" ? [] : revealExternalEntry(external.host, external.device, external.node, translate, revealBlocked(display));
+      const [entry] = display.kind === "browser" || display.kind === "pull_request" ? [] : revealExternalEntry(external.host, external.device, external.node, translate, revealBlocked(display));
       return entry ? { ...entry, hidden: false } : { id, label, unavailable: null, hidden: true };
     }
     const edge = menuEdge(id);
@@ -181,8 +181,8 @@ function displayCommands(
       hidden = unavailable !== null;
     } else if (id === "select_in_tree") {
       unavailable = revealBlocked(display);
-      // A page is not a file of the checkout.
-      hidden = display.kind === "browser";
+      // A page or a pull request's card is not a file of the checkout.
+      hidden = display.kind === "browser" || display.kind === "pull_request";
     }
     const named = id === "copy_path" && display.kind === "browser" ? translate("documents.view.copyAddress") : label;
     return { id, label: named, unavailable, hidden, separated: id === "copy_path" || id === "close_view" };
@@ -229,6 +229,7 @@ export function menuEdge(id: ViewMenuId): Edge | null {
 /** What a display is, for its tooltip and accessible name (B21): kind, full path and state. */
 export function displayIdentity(display: ViewDisplaySnapshot, t: TFunction<"translation">): string {
   if (display.kind === "browser" && !display.url) return t("panes.area.newTab");
+  if (display.kind === "pull_request") return t("work.card.aria", { number: display.pr ?? 0 });
   if (display.kind === "browser") return t("documents.view.identityPage", { target: `${display.title ? `${display.title} · ` : ""}${display.url ?? ""}` });
   const kind = display.kind === "diff" ? (display.committed ? t("documents.view.kindBranchDiff") : t("documents.view.kindWorkingDiff")) : t("documents.view.kindFile");
   const state =
@@ -268,23 +269,32 @@ export function viewAreaStepUnavailable(layout: ViewLayoutSnapshot, drawn: { geo
 
 /**
  * Where the keyboard goes once the core shows it (B20): a display a menu,
- * the palette or a drop moved or split, with where it stood when asked, or
- * an area a focus command chose; each in the Workspace it was asked in.
+ * the palette or a drop moved or split, with where it stood when asked; an
+ * area a focus command chose; or a file or diff the operator opened, which
+ * has no display id until the core places it; each in the Workspace it was
+ * asked in.
  */
 export type ViewFocusRequest =
   | { workspace: string; displayId: string; from: { areaId: string; index: number } | null }
-  | { workspace: string; areaId: string };
+  | { workspace: string; areaId: string }
+  | { workspace: string; opened: { path: string; kind: "file" | "diff"; committed: boolean | null } };
 
 /**
  * Whether the core now shows what a focus request asked for, so the keyboard
- * can follow: the named area active, or the display active in the active
- * area and no longer where it stood when asked. A move or split of the
- * active view therefore resolves once it has landed, never on the frame it
- * was asked from, and a refused one never resolves.
+ * can follow: the named area active, the display active in the active area
+ * and no longer where it stood when asked, or the opened file or diff (of
+ * its own History group) the active area's view once it is past opening. A move or split of the active
+ * view therefore resolves once it has landed, never on the frame it was
+ * asked from, and a refused one never resolves.
  */
 export function focusRequestArrived(request: ViewFocusRequest, workspace: string, layout: ViewLayoutSnapshot): boolean {
   if (request.workspace !== workspace) return false;
   if ("areaId" in request) return layout.active_area === request.areaId;
+  if ("opened" in request) {
+    const shown = activeDisplay(layout)?.display;
+    const { path, kind, committed } = request.opened;
+    return shown?.kind === kind && shown.path === path && shown.committed === committed && shown.state !== "opening";
+  }
   const located = locateDisplay(layout.root, request.displayId);
   if (!located || layout.active_area !== located.area.id || located.area.active !== request.displayId) return false;
   return !request.from || located.area.id !== request.from.areaId || located.index !== request.from.index;

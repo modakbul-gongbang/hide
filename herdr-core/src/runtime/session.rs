@@ -224,6 +224,12 @@ impl Runtime {
         Arc::clone(&self.catalog_paths)
     }
 
+    /// Establish this before the coordinator's first asynchronous read, so
+    /// even an empty initial answer cannot fall back to node I/O under lock.
+    pub(crate) fn begin_catalog_coordinator(&mut self) {
+        self.catalog_from_coordinator = true;
+    }
+
     /// The paths a session applied without a precomputed catalog reads: the
     /// last the coordinator brought once it feeds this runtime, so nothing is
     /// asked under the lock, else what the core's own node answers now.
@@ -300,7 +306,7 @@ impl Runtime {
         }
         spaces
     }
-    pub(super) fn pane_cwd(payload: &SessionSnapshotPayload, pane_id: &str) -> Option<String> {
+    pub(crate) fn pane_cwd(payload: &SessionSnapshotPayload, pane_id: &str) -> Option<String> {
         payload
             .panes
             .iter()
@@ -330,6 +336,19 @@ impl Runtime {
         precomputed: Option<session_sync::PrecomputedCatalog>,
         inline_paths: Option<Arc<workspace::PathIndex>>,
     ) -> bool {
+        let accepted_tab_paths = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .flat_map(|checkout| {
+                checkout
+                    .tabs
+                    .iter()
+                    .filter_map(|tab| Some((tab.id.clone()?, checkout.path.clone())))
+            })
+            .collect::<HashMap<_, _>>();
         // Catalog reconstruction precedes canonical machine-qualified lineage.
         // Preserve known ownership until that pass, so admission cannot evict
         // the keyboard from an unchanged delegated canvas at the normal cap.
@@ -346,7 +365,7 @@ impl Runtime {
         self.issue_tokens = crate::wire::issue_tokens(payload);
         // The catalog reads what the core's own node says of its paths, so
         // the sync coordinator asks and builds it before taking the runtime
-        // lock. A precomputation whose registrations no longer match current
+        // lock. A precomputation whose registrations or worktrees no longer match current
         // state is stale; the last accepted catalog stands in for it and the
         // next publish, a second away, brings a fresh one. Nothing is asked
         // here once the coordinator feeds this runtime: one `git rev-parse`
@@ -357,7 +376,8 @@ impl Runtime {
         // fixture and test path, asks its node inline.
         let (mut workspaces, paths) = match precomputed {
             Some(catalog)
-                if catalog.registrations == self.snapshot.ui_state.workspace_registrations =>
+                if catalog.registrations == self.snapshot.ui_state.workspace_registrations
+                    && catalog.worktrees == self.worktree_catalog =>
             {
                 self.last_session_spaces = Self::session_spaces(payload, &catalog.paths);
                 self.last_accepted_catalog = Some(catalog.workspaces.clone());
@@ -368,7 +388,7 @@ impl Runtime {
             Some(_) if self.last_accepted_catalog.is_some() => {
                 self.push_diagnostic(
                     "catalog.precomputed_stale",
-                    "The precomputed workspace catalog no longer matches the registrations; the last accepted catalog stands until the next publish".to_owned(),
+                    "The precomputed workspace catalog no longer matches its inputs; the last accepted catalog stands until the next publish".to_owned(),
                 );
                 self.last_session_spaces = Self::session_spaces(payload, &self.catalog_paths);
                 (
@@ -493,7 +513,7 @@ impl Runtime {
                     // authoritative for attaching the live layout to the
                     // registered checkout. Falling back to the agent record
                     // keeps agent-specific cwd handling intact.
-                    let context_path = layout.panes.iter().find_map(|pane| {
+                    let mut context_path = layout.panes.iter().find_map(|pane| {
                         payload
                             .panes
                             .iter()
@@ -511,6 +531,19 @@ impl Runtime {
                                     .and_then(|agent| agent.cwd.clone())
                             })
                     });
+                    if self.catalog_from_coordinator
+                        && context_path
+                            .as_deref()
+                            .is_some_and(|path| !paths.knows(path))
+                    {
+                        // A changed directory is not a new checkout until the
+                        // node answers. Keep this tab's confirmed placement;
+                        // a new tab with no confirmed place waits for facts.
+                        context_path = accepted_tab_paths.get(&session_tab.tab_id).cloned();
+                        if context_path.is_none() {
+                            continue;
+                        }
+                    }
                     let Some(workspace_snapshot) = find_workspace_for_context(
                         &self.node,
                         &mut workspaces,
@@ -1359,6 +1392,15 @@ impl Runtime {
         }
         for workspace in workspaces.iter_mut() {
             for checkout in workspace.checkouts.iter_mut() {
+                // A registered row can exist before the coordinator knows its
+                // path. Its empty tab list cannot prune a durable Agent layout
+                // or choose a replacement tab until that path is answered.
+                if self.catalog_from_coordinator
+                    && workspace.device_id == self.node.as_str()
+                    && !self.catalog_paths.knows(&checkout.path)
+                {
+                    continue;
+                }
                 let key = (workspace.device_id.clone(), checkout.path.clone());
                 let mut restored_agent_tab = None;
                 let mut placed_tabs: Option<HashSet<String>> = None;
@@ -2030,7 +2072,6 @@ impl Runtime {
         if !self.restore_hint_pending {
             return;
         }
-        self.restore_hint_pending = false;
         // A saved selection this session does not hold is gone, or was this
         // machine's under another core, which saved it as its device's and
         // so never at all (a core move's rekey says so, `focus_from_herdr`).
@@ -2078,6 +2119,24 @@ impl Runtime {
                     .flat_map(|workspace| workspace.checkouts.iter())
                     .any(|checkout| checkout.id == checkout_id)
             });
+        // A coordinator starts before its first path answer. An absent row
+        // while the saved pane's directory is still unknown is not evidence
+        // that its checkout disappeared. Unrelated unknown directories must
+        // not hold an already answered restore choice.
+        if self.catalog_from_coordinator
+            && restored_pane_exists
+            && self.snapshot.ui_state.focused_checkout_id.is_some()
+            && self
+                .snapshot
+                .ui_state
+                .selected_pane_id
+                .as_deref()
+                .and_then(|pane| Self::pane_cwd(payload, pane))
+                .is_some_and(|path| !self.catalog_paths.knows(&path))
+        {
+            return;
+        }
+        self.restore_hint_pending = false;
         let moved = std::mem::take(&mut self.snapshot.ui_state.focus_from_herdr);
         let restore_missed = moved
             || (self.snapshot.ui_state.selected_pane_id.is_some() && !restored_pane_exists)
@@ -2209,13 +2268,34 @@ impl Runtime {
     /// leaves the answer without authority. An unconfirmed answer changes
     /// nothing and is not asked again until the next session update; an
     /// update that arrived while the read was out is that next update.
+    ///
+    /// Herdr's focus on another pane is the readback doing its work: the
+    /// stream showed a move older than Herdr's focus, most often older than
+    /// Hide's own last focus. Only a readback Herdr could not answer while
+    /// it was still the latest is a failure, logged with Herdr's reason; one
+    /// a newer focus, selection or connection overtook ends quietly.
     pub(crate) fn finish_pane_focus_readback(
         &mut self,
         identity: PendingPaneFocusControl,
-        confirmed: bool,
+        answer: crate::live::FocusReadback,
     ) -> (bool, Option<PendingPaneFocusControl>) {
         self.pane_focus_readback = None;
         let again = std::mem::take(&mut self.pane_focus_readback_again);
+        // The move must still be the one the selected pane's layout shows:
+        // the apply below rechecks the identity only inside that layout, so
+        // an answer for another tab than the selected one has no authority.
+        let latest = self.pane_focus_readback_target().as_ref() == Some(&identity);
+        if latest && let crate::live::FocusReadback::Unread(message) = &answer {
+            crate::diagnostic!(serde_json::json!({
+                "component": "pane_focus",
+                "kind": "pane.focus.stream_readback_failed",
+                "pane_id": identity.target_id,
+                "serial": identity.serial,
+                "connection_generation": identity.live_generation,
+                "message": message,
+            }));
+        }
+        let confirmed = answer == crate::live::FocusReadback::Confirmed;
         let stored = self
             .snapshot
             .pane_layouts
@@ -2223,11 +2303,8 @@ impl Runtime {
             .find(|layout| layout.focused_pane_id == identity.target_id)
             .cloned();
         let mut changed = false;
-        // The move must still be the one the selected pane's layout shows:
-        // the apply below rechecks the identity only inside that layout, so
-        // an answer for another tab than the selected one has no authority.
         if confirmed
-            && self.pane_focus_readback_target().as_ref() == Some(&identity)
+            && latest
             && let Some(layout) = stored.clone()
         {
             changed |= self.apply_pane_layout_with_focus_check(
@@ -2297,6 +2374,7 @@ impl Runtime {
             // Herdr's tab ids are its own server's; a later connection may
             // hand one to a tab Hide never created.
             self.created_tab_checkouts.clear();
+            self.provisional_tabs.clear();
         }
         // The session update is this runtime's only regular tick, so it is
         // also where a notification Herdr never answered stops being pending.
@@ -2401,6 +2479,7 @@ impl Runtime {
                     })
             });
         let mut requests_changed = false;
+        let mut terminal_metadata_changed = false;
         let live_pane_ids = fetched.as_ref().ok().map(|payload| {
             payload
                 .layouts
@@ -2413,6 +2492,14 @@ impl Runtime {
             let keep =
                 |pane_id: &str| pane_id.starts_with("remote:") || live_pane_ids.contains(pane_id);
             self.retain_terminal_pane_state(keep);
+            // Metadata belongs to the session's panes, not its selection.
+            // Prune even when the selected creation still has no layout.
+            let before = self.snapshot.terminal.panes.len();
+            self.snapshot
+                .terminal
+                .panes
+                .retain(|pane| keep(&pane.pane_id));
+            terminal_metadata_changed = before != self.snapshot.terminal.panes.len();
             let panes_closing = &self.panes_closing;
             if self
                 .input_requests
@@ -2497,6 +2584,15 @@ impl Runtime {
                         .any(|layout| layout.panes.iter().any(|pane| pane.pane_id == pane_id))
                 });
                 let selected_pane_missing = selected_pane_id.is_some() && !selected_still_exists;
+                // An acknowledged owner opening has a root pane before its
+                // workspace/layout can be projected. The bounded creation
+                // record ends on confirmation, timeout or connection loss.
+                let selected_creation_pending = selected_pane_missing
+                    && selected_pane_id.as_deref().is_some_and(|pane_id| {
+                        focused_checkout.is_some_and(|checkout| {
+                            self.created_pane_awaits_layout(pane_id, &checkout.path)
+                        })
+                    });
                 let selected_was_projected = previously_projected_in_focused_checkout
                     && selected_pane_id.as_deref() == previously_projected_pane.as_deref();
                 let selected_left_focused_checkout =
@@ -2640,6 +2736,7 @@ impl Runtime {
                         })
                 };
                 let selected_pane_invalid_for_context = selected_pane_id.is_some()
+                    && !self.restore_hint_pending
                     && ((focused_checkout.is_some() && target_pane_id.is_none())
                         || (focused_checkout.is_none()
                             && self.snapshot.ui_state.focused_checkout_id.is_some()));
@@ -2650,7 +2747,7 @@ impl Runtime {
                         retired_pane_id,
                         format!("Pane {retired_pane_id} retired before Herdr confirmed focus."),
                     );
-                    self.clear_terminal_projection();
+                    self.clear_selected_terminal_state();
                     self.snapshot.terminal.pane_id = replacement_pane_id.clone();
                     self.snapshot.focused.pane_id = replacement_pane_id.clone();
                     self.snapshot.ui_state.selected_pane_id = replacement_pane_id.clone();
@@ -2675,13 +2772,15 @@ impl Runtime {
                     );
                     self.push_diagnostic("pane.selection_retired", message);
                     selection_changed = true;
-                } else if selected_pane_missing || selected_pane_invalid_for_context {
+                } else if !selected_creation_pending
+                    && (selected_pane_missing || selected_pane_invalid_for_context)
+                {
                     let pane_id = selected_pane_id.as_deref().unwrap_or("<missing>");
                     self.fail_pending_pane_focus_for_target(
                         pane_id,
                         format!("Pane {pane_id} is no longer available in the selected checkout."),
                     );
-                    self.clear_terminal_projection();
+                    self.clear_selected_terminal_state();
                     self.set_error(
                         "pane.projection_unavailable",
                         format!(
@@ -2758,6 +2857,7 @@ impl Runtime {
         let mut changed = catalog_changed
             || requests_changed
             || selection_changed
+            || terminal_metadata_changed
             || timed_out
             || tab_move_timed_out
             || close_timed_out
@@ -2799,6 +2899,14 @@ impl Runtime {
                 self.persist_ui_state();
                 changed = true;
             }
+            // Completions are kept first, so the lineage hands up the ones a
+            // restored server no longer reports.
+            self.apply_pane_completions(
+                &mut agents,
+                None,
+                ReadRecordScope::Local,
+                live_pane_ids.as_ref(),
+            );
             crate::agent_state::apply_lineage(
                 &mut agents,
                 &self.snapshot.navigator.workspaces,
@@ -3681,7 +3789,9 @@ impl Runtime {
                     purpose_error,
                     unconfirmed_purpose_token,
                     issue_error,
+                    shell,
                 } = outcome;
+                self.task_pane_shell = Some((id, shell));
                 if let Some(tab_id) = created_tab_id.as_deref() {
                     match device.as_deref() {
                         None => self.record_created_tab_checkout(tab_id, &path),
@@ -3723,7 +3833,7 @@ impl Runtime {
                         .map(|checkout| checkout.next_tab_label.clone())
                         .unwrap_or_default();
                     self.draw_created_tab(super::drawn_ahead::ProvisionalTab {
-                        workspace_id,
+                        workspace_id: Some(workspace_id),
                         tab_id: tab_id.to_owned(),
                         pane_id: pane_id.clone(),
                         cwd: path.clone(),
@@ -4496,6 +4606,11 @@ impl Runtime {
             args: launch.map(|launch| launch.args.clone()).unwrap_or_default(),
             codex_daemon: self
                 .codex_daemon(operation.device_id.as_deref().unwrap_or(self.node.as_str())),
+            shell: self
+                .task_pane_shell
+                .clone()
+                .filter(|(task, _)| *task == id)
+                .map_or(crate::agent_start::ShellStart::Plain, |(_, shell)| shell),
         })
     }
 
@@ -4774,21 +4889,23 @@ impl Runtime {
                 }
                 // The tab is drawn from this answer, as one pane with Herdr's
                 // ids, until Herdr's layout replaces it (D-03, D-05). Opening
-                // an owner makes a Herdr workspace as well, which the screen
-                // waits for.
-                if let (
-                    Some(tab_id),
-                    Some(pane_id),
+                // an owner may also make a workspace: keep the same pending
+                // state, but wait for Herdr to name that workspace to draw it.
+                let creation = match &action {
                     RemoteControlAction::CreateTab {
                         workspace_id,
                         cwd,
                         label,
                         ..
-                    },
-                ) = (created_tab_id.as_ref(), created_pane_id.as_ref(), &action)
+                    } => Some((Some(workspace_id.clone()), cwd, label)),
+                    RemoteControlAction::OpenOwner { cwd, label, .. } => Some((None, cwd, label)),
+                    _ => None,
+                };
+                if let (Some(tab_id), Some(pane_id), Some((workspace_id, cwd, label))) =
+                    (created_tab_id.as_ref(), created_pane_id.as_ref(), creation)
                 {
                     self.draw_created_tab(super::drawn_ahead::ProvisionalTab {
-                        workspace_id: workspace_id.clone(),
+                        workspace_id,
                         tab_id: tab_id.clone(),
                         pane_id: pane_id.clone(),
                         cwd: cwd.clone(),
@@ -5316,6 +5433,13 @@ impl Runtime {
             );
             return;
         };
+        // A link the operator clicked while this Workspace's files tool
+        // showed the tree alone keeps the tree beside the file (B11, B12).
+        let lone_tree = self.front_lone_tree().filter(|key| {
+            self.workspace_key(&payload.workspace_id, &payload.checkout_id)
+                .as_ref()
+                == Some(key)
+        });
         if self.snapshot.navigator.focused_checkout_id.as_deref()
             != Some(payload.checkout_id.as_str())
         {
@@ -5342,12 +5466,11 @@ impl Runtime {
                 false,
             );
         }
-        // The reveal calls the columns of its own checkout's Workspace, once
-        // it has settled there, not of whichever was in front when it was
-        // asked, and not when its file was refused as it landed (D-08). A
-        // file opens in File Views and leaves Tools as it was (B4); a folder
-        // shows only in the Explorer, so it turns Tools on and leaves File
-        // Views as it was.
+        // The reveal calls the lane of its own checkout's Workspace, once it
+        // has settled there, not of whichever was in front when it was asked,
+        // and not when its file was refused as it landed (PRD right-lane
+        // D-13). A file opens in the files tool; a folder shows only in the
+        // tree, so it opens the files tool with the tree on (B16).
         if self.separate_view_areas()
             && self.snapshot.status.last_error == error_before
             && let Some(key) = self.workspace_key(&payload.workspace_id, &payload.checkout_id)
@@ -5355,9 +5478,12 @@ impl Runtime {
             let intent = if payload.is_directory {
                 super::workspace_view::AreaIntent::RevealFolder
             } else {
-                super::workspace_view::AreaIntent::Views
+                super::workspace_view::AreaIntent::Files
             };
             self.apply_area_intent_to(&key, intent);
+            if lone_tree.as_ref() == Some(&key) {
+                self.keep_lone_tree(&key);
+            }
         }
         self.push_diagnostic(
             "path.revealed",
@@ -5565,6 +5691,7 @@ impl Runtime {
                 Ok(outcome.session),
                 Some(session_sync::PrecomputedCatalog {
                     registrations: self.snapshot.ui_state.workspace_registrations.clone(),
+                    worktrees: self.worktree_catalog.clone(),
                     workspaces: outcome.workspaces,
                     paths: outcome.paths,
                 }),
@@ -5607,7 +5734,7 @@ impl Runtime {
     /// already placed the tab under another checkout, the local coordinator is
     /// asked to republish, because nothing else would place it again until an
     /// unrelated change.
-    fn record_created_tab_checkout(&mut self, tab_id: &str, path: &str) {
+    pub(super) fn record_created_tab_checkout(&mut self, tab_id: &str, path: &str) {
         // The same tab acknowledged twice is one record: a second one would
         // start its window again and read an entered folder as a birth value.
         if self.created_tab_checkouts.contains_key(tab_id) {

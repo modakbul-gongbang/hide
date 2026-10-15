@@ -570,6 +570,7 @@ pub(crate) fn apply_registrations(
         let known = facts.known(&registration.path);
         let branch = known.and_then(|facts| facts.branch.clone());
         session.workspaces.push(WorkspaceSnapshot {
+            agent_presence: Default::default(),
             agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
@@ -629,6 +630,8 @@ pub(crate) struct DeviceWorktrees {
     pub in_flight: Option<u64>,
     /// Asked again while a read ran; one more read follows it.
     pub again: bool,
+    /// A confirmed base changed while this bounded worker was reading.
+    pub discard_answer: bool,
     pub unavailable: Option<String>,
     /// The next read covers every repository, because a new connection has
     /// not confirmed what the last one listed.

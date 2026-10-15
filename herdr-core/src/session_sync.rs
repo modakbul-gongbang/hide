@@ -48,11 +48,6 @@ const ARRIVAL_BUFFER_LIMIT: usize = 256;
 /// fresh snapshot. Eight ticks is two seconds, longer than any event the
 /// read can have run ahead of takes to arrive.
 const ACTIVE_TAB_READ_ATTEMPT_LIMIT: u32 = 8;
-/// How often the hook diagnosis is read back while the Settings agents tab
-/// is on screen. A hook report that failed is written by the hook helper,
-/// in another process, and this is the only way the screen the tooltip
-/// sends the operator to can learn of it.
-const HOOK_DIAGNOSIS_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const RECONNECT_INITIAL_DELAY: Duration = Duration::from_millis(100);
 const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(5);
@@ -88,6 +83,7 @@ const TOPOLOGY_SUBSCRIPTIONS: &[&str] = &[
 /// registrations it came from so Runtime can reject a stale computation.
 pub struct PrecomputedCatalog {
     pub registrations: Vec<WorkspaceRegistration>,
+    pub worktrees: crate::model::WorktreeCatalogSnapshot,
     pub workspaces: Vec<WorkspaceSnapshot>,
     /// What the core's own node said about every path the catalog and the
     /// reconcile read, so neither reads a folder under the runtime lock.
@@ -109,6 +105,7 @@ impl PrecomputedCatalog {
         let paths = workspace::paths_here(wanted);
         let spaces = Runtime::session_spaces(payload, &paths);
         Self {
+            worktrees: worktrees.clone(),
             workspaces: workspace::build_catalog(&node, &registrations, &spaces, worktrees, &paths),
             registrations,
             paths: Arc::new(paths),
@@ -224,6 +221,15 @@ impl SessionSyncContext {
         matches!(self.target, SessionSyncTarget::Local { .. })
     }
 
+    /// The target the runtime keeps this connection's read view under:
+    /// none for this machine's server, the device's id for a device's.
+    fn read_target(&self) -> Option<&str> {
+        match &self.target {
+            SessionSyncTarget::Local { .. } => None,
+            SessionSyncTarget::Remote { target_id, .. } => Some(target_id),
+        }
+    }
+
     fn node(&self) -> Option<&Arc<dyn crate::node_access::NodeLink>> {
         self.node.as_ref()
     }
@@ -258,7 +264,6 @@ pub(crate) struct CatalogCache {
     workspaces: Vec<WorkspaceSnapshot>,
     /// The paths `paths` answered, so a publish asking the same ones within
     /// `CATALOG_REFRESH_INTERVAL` reuses the answer; empty after a failed ask.
-    asked: BTreeSet<String>,
     paths: Arc<workspace::PathIndex>,
     built_at: Instant,
     /// The unconfirmed created purposes the purpose mirror last synced this
@@ -266,6 +271,23 @@ pub(crate) struct CatalogCache {
     /// such as an agent status change, has no purpose to mirror (PRD
     /// instant-pane-topology D-18).
     purposes_synced: Option<HashMap<String, String>>,
+}
+
+#[derive(Default)]
+struct CatalogState {
+    cache: Option<CatalogCache>,
+    reader: Option<path_facts::PathReader>,
+    connection: u64,
+    wake: Option<RepublishWaker>,
+}
+
+impl CatalogState {
+    fn as_ref(&self) -> Option<&CatalogCache> {
+        self.cache.as_ref()
+    }
+    fn as_mut(&mut self) -> Option<&mut CatalogCache> {
+        self.cache.as_mut()
+    }
 }
 
 pub(crate) struct SessionSyncHandle {
@@ -363,6 +385,7 @@ impl ActiveSubscription {
 }
 
 mod coordinator;
+mod path_facts;
 mod process_info;
 mod projection;
 mod replica;

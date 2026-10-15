@@ -5,6 +5,7 @@
 
 mod adapter_contract;
 mod bell_intake;
+mod claude_subagent_counts;
 mod codex_trust;
 mod grok_cursor_hooks;
 mod guidance_hook;
@@ -15,6 +16,7 @@ mod opencode_helper;
 mod opencode_plugin;
 mod pi_extension;
 mod programs;
+mod session_start_probes;
 mod spawn_guard;
 #[path = "../../../hide-platform/tests/it/stand_ins.rs"]
 mod stand_ins;

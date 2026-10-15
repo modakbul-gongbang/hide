@@ -246,7 +246,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
     ]);
   }
   function placeRow(id, glyph, label, right, selected) {
-    return frame(id, label, {width: 'fill_container', height: 36, layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm'], cornerRadius: '$--radius-sm', ...(selected ? {fill: '$--secondary'} : {})}, [
+    return frame(id, label, {width: 'fill_container', height: 36, layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm'], cornerRadius: '$--radius-sm', ...(selected ? {fill: '$--color-selected'} : {})}, [
       icon(`${id}-i`, glyph, {size: 14, fill: selected ? FG : SUB}), text(`${id}-t`, label, {size: '$--text-subhead', weight: '600'}), spacer(`${id}-s`), ...right,
     ]);
   }
@@ -259,7 +259,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   }
   // A Factory under the sidebar's Factory row: picking it is the same choice as the header's project picker.
   function factoryChild(id, f) {
-    return frame(id, f.project, {width: 'fill_container', height: 26, layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm', 0, 26], cornerRadius: '$--radius-sm', ...(f.selected ? {fill: '$--secondary'} : {})}, [
+    return frame(id, f.project, {width: 'fill_container', height: 26, layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm', 0, 26], cornerRadius: '$--radius-sm', ...(f.selected ? {fill: '$--color-selected'} : {})}, [
       frame(`${id}-m`, f.paused ? 'Paused' : 'No mark', {width: 12, height: 12, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, f.paused ? [icon(`${id}-pg`, 'pause', {size: 10, fill: MUT})] : []),
       icon(`${id}-i`, 'folder-git-2', {size: 12, fill: MUT}),
       text(`${id}-t`, f.project, {size: '$--text-body', fill: f.selected ? FG : SUB}),
@@ -284,7 +284,6 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
       frame(`${id}-tabs`, 'Tabs', {layout: 'horizontal', gap: '$--spacing-xxs', padding: '$--spacing-xxs', fill: '$--card', cornerRadius: '$--radius-sm'}, ['Projects', 'Agents'].map((label, i) =>
         frame(`${id}-tab${i}`, label, {layout: 'horizontal', alignItems: 'center', height: 22, padding: [0, '$--spacing-md'], cornerRadius: '$--radius-xs', ...(i === 0 ? {fill: '$--secondary'} : {})}, [text(`${id}-tab${i}-t`, label, {size: '$--text-body', weight: '500', fill: i === 0 ? FG : SUB})]))),
       frame(`${id}-g2`, 'Gap', {width: 1, height: 4}, []),
-      placeRow(`${id}-home`, 'house', 'Home', [cap(`${id}-homen`, '3', MUT, {mono: true})], false),
       placeRow(`${id}-p1`, 'folder-git-2', 'hide', [cap(`${id}-p1n`, '9', MUT, {mono: true}), icon(`${id}-p1c`, 'chevron-down', {size: 12, fill: MUT})], false),
       checkoutRow(`${id}-c0`, 'house', 'main', null, ''),
       checkoutRow(`${id}-c1`, 'git-branch', '412-board-sort', 'work', '2m'),

@@ -20,12 +20,7 @@ export type AgentScope = {
   raised: { group: "needs_you" | "done"; shown: AgentRef[]; more: AgentRef[] }[];
   owners: Record<string, string>;
   badge_total: number;
-  prs: {
-    counts: Record<"turn" | "fixing" | "blocked" | "review" | "draft" | "look", number>;
-    rows: { number: number; checkout_id: string | null; agents: AgentRef[]; lineage: (AgentRef & { depth: number })[]; needs_look: boolean; group: "turn" | "fixing" | "blocked" | "merged"; issue: { key: string; label: string; url: string | null; task_key: string | null } | null }[];
-    groups: { group: "turn" | "fixing" | "blocked" | "merged"; numbers: number[] }[];
-    open: number;
-  };
+  prs: PrBoard;
   rows: AgentRef[];
   total: number;
   overview_total: number;
@@ -124,4 +119,42 @@ export type AgentGraphScope = {
   checkouts: Record<string, { primary: boolean; cleanup: "merged" | "missing" | null; fold: "empty" | "cleanup" | "resting" | null; members: string[]; rank: 0 | 1 | 2 | 3 | 4; resting: boolean }>;
   variants: number[];
   tucked: Record<string, Partial<Record<"error" | "approval" | "question" | "working" | "stopped" | "done" | "idle", number>>>[];
+};
+
+/** Why a pull request stands where it does, as a kind the web words (`Reason`, PRD work-tab-pr-lens D-16). */
+export type PrReasonKind = "merge" | "update" | "assign_reviewer" | "review" | "team_review" | "reply" | "check" | "working" | "conflict" | "failed" | "changes" | "ci" | "waiting_review" | "draft" | "queued" | "merged" | "checking";
+
+export type PrReason = {
+  kind: PrReasonKind;
+  /** A person, team, agent or check the reason is about. */
+  name?: string;
+  /** A question's first line. */
+  text?: string;
+  count?: number;
+  /** The instant the reason began; durations are drawn from it. */
+  since_unix_ms?: number;
+  /** The base branch a conflict or update names. */
+  base?: string;
+};
+
+export type PrGroupId = "needs_you" | "working" | "blocked" | "waiting" | "drafts" | "bots" | "merged";
+
+/** The PRs basis of one scope, decided by the core (`Board`). */
+export type PrBoard = {
+  rows: {
+    number: number;
+    group: PrGroupId;
+    /** `team` or `old`: drawn as a folded line inside the group, never counted. */
+    fold: "team" | "old" | null;
+    reason: PrReason;
+    /** The pull request's live agents, most urgent first. */
+    agents: AgentRef[];
+    agent_pane: string | null;
+    checkout_id: string | null;
+    checkout_ids: string[];
+    issue: { key: string; label: string; url: string | null; task_key: string | null } | null;
+  }[];
+  groups: { group: PrGroupId; numbers: number[] }[];
+  /** Needs You rows that are not folded. */
+  needs_you: number;
 };

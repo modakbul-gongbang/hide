@@ -157,6 +157,26 @@ describe("the first screen", () => {
     expect(startupScreen({ ...local, status: { herdr: { state: "connected" } } } as unknown as SnapshotRest, true)).toBe("main");
   });
 
+  it("keeps the saved Workspace pending while its catalog and view are being restored", () => {
+    const pending = { ...local, ui_state: { focused_checkout_id: "saved" }, status: { herdr: { state: "connected" } } };
+    expect(startupScreen(pending as unknown as SnapshotRest, false)).toBeNull();
+    expect(startupScreen(pending as unknown as SnapshotRest, true)).toBeNull();
+    for (const state of ["connecting", "not_connected"]) {
+      const reaching = { ...pending, status: { herdr: { state } } };
+      expect(startupScreen(reaching as unknown as SnapshotRest, false)).toBeNull();
+      expect(startupScreen(reaching as unknown as SnapshotRest, true)).toBeNull();
+    }
+    const removed = { ...pending, ui_state: { focused_checkout_id: null } };
+    expect(startupScreen(removed as unknown as SnapshotRest, false)).toBe("main");
+    const restored = { ...pending, workspace_view: { resumed: true } };
+    expect(startupScreen(restored as unknown as SnapshotRest, true)).toBe("workspace");
+    for (const state of ["socket_missing", "unconfigured", "unreachable", "incompatible", "stale"]) {
+      const failed = { ...pending, status: { herdr: { state } } };
+      expect(startupScreen(failed as unknown as SnapshotRest, false)).toBe("main");
+      expect(startupScreen(failed as unknown as SnapshotRest, true)).toBe("main");
+    }
+  });
+
   it("waits for the device in front, not for this machine's Herdr", () => {
     const connecting = { ...device, status: { herdr: { state: "connected" }, remote: [{ target_id: "mini", state: "not_connected" }] } };
     expect(startupScreen(connecting as unknown as SnapshotRest, false)).toBeNull();
@@ -201,6 +221,18 @@ describe("an open from Main or an Overview", () => {
     const accepted = { ...rest("c2"), ui_state: { session_collapsed_checkout_ids: [] } } as unknown as SnapshotRest;
     expect(openingProgress(accepted, opening)).toBe("landed");
     expect(openingProgress({ ...accepted, navigator: rest("c1").navigator }, opening)).toBeNull();
+  });
+
+  it("waits for the requested tool on the target checkout and device", () => {
+    const opening = { target: { workspaceId: "w", checkoutId: "c2", deviceId: "local", path: "/w2", tool: "memory" as const }, errorBefore: null, failure: null };
+    const arrived = { ...rest("c2"), workspace_view: { device_id: "local", path: "/w2", tool: "memory", pinned: false, tree: false, lane_width: null, tree_width: null, lane_called: 0, lane_calls: 0 } } as SnapshotRest;
+    expect(openingProgress(rest("c2"), opening)).toBeNull();
+    expect(openingProgress({ ...arrived, workspace_view: { ...arrived.workspace_view!, tool: null } }, opening)).toBeNull();
+    expect(openingProgress({ ...arrived, workspace_view: { ...arrived.workspace_view!, tool: "files" } }, opening)).toBeNull();
+    expect(openingProgress({ ...arrived, workspace_view: { ...arrived.workspace_view!, device_id: "other" } }, opening)).toBeNull();
+    expect(openingProgress({ ...arrived, workspace_view: { ...arrived.workspace_view!, path: "/w" } }, opening)).toBeNull();
+    expect(openingProgress({ ...arrived, navigator: rest("c1").navigator }, opening)).toBeNull();
+    expect(openingProgress(arrived, opening)).toBe("landed");
   });
 
   it("silently cancels a vanished local row, with or without agents", () => {

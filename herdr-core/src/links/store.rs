@@ -12,6 +12,7 @@ use super::{
     ProjectLinkSummary, SESSION_PR_LIMIT, STORE_PAGE_LIMIT, SUMMARY_SESSION_LIMIT, SessionPrChip,
     SessionRole, WorktreeFact, within,
 };
+use crate::links::ledger::SessionIdentity;
 use hide_session::ConversationCheckpoint;
 use hide_session::links::ReadAnswer;
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension, Transaction, params};
@@ -20,7 +21,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const SCHEMA_VERSION: i64 = 1;
+#[path = "ledger_store.rs"]
+mod ledger;
+
+const SCHEMA_VERSION: i64 = 3;
 
 const SCHEMA: &str = "
 CREATE TABLE projects(key TEXT PRIMARY KEY, device TEXT NOT NULL, root TEXT NOT NULL,
@@ -203,6 +207,11 @@ impl LinkStore {
             return Err(OpenFailure::Corrupt);
         }
         migrate(&connection)?;
+        // Observations before a stopped writer cannot prove which connection
+        // an unobserved historical session started under.
+        connection
+            .execute("DELETE FROM ledger_project_connections", [])
+            .map_err(classify)?;
         Ok(Self { connection })
     }
 
@@ -260,7 +269,8 @@ impl LinkStore {
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM projects WHERE device=?1) \
                  OR EXISTS(SELECT 1 FROM sessions WHERE device=?1) \
-                 OR EXISTS(SELECT 1 FROM cursors WHERE device=?1)",
+                 OR EXISTS(SELECT 1 FROM cursors WHERE device=?1) \
+                 OR EXISTS(SELECT 1 FROM session_parents WHERE parent_device=?1)",
                 [device],
                 |row| row.get(0),
             )
@@ -303,7 +313,7 @@ impl LinkStore {
                 params![new, to, old],
             )
             .map_err(|error| format!("moving project {old} to {new} failed: {error}"))?;
-            for table in ["prs", "worktrees"] {
+            for table in ["prs", "worktrees", "ledger_project_connections"] {
                 tx.execute(
                     &format!("UPDATE {table} SET project=?1 WHERE project=?2"),
                     params![new, old],
@@ -334,6 +344,11 @@ impl LinkStore {
             )
             .map_err(|error| format!("moving {table} to {to} failed: {error}"))?;
         }
+        tx.execute(
+            "UPDATE session_parents SET parent_device=?1 WHERE parent_device=?2",
+            [to, from],
+        )
+        .map_err(|_| "links_parent_device_move_failed".to_owned())?;
         tx.commit().map_err(failed)?;
         Ok(projects.len())
     }
@@ -391,6 +406,11 @@ impl LinkStore {
             ],
         )
         .map_err(failed)?;
+        // A repository observation can prove ownership only for sessions
+        // started after that connection was known. A later historical file
+        // must not inherit today's repository from its cwd.
+        tx.execute("INSERT INTO ledger_project_connections(project,repository,since_at,epoch) VALUES(?1,?2,?3,?4) ON CONFLICT(project) DO UPDATE SET since_at=CASE WHEN repository IS NOT excluded.repository OR epoch!=excluded.epoch THEN excluded.since_at ELSE since_at END,repository=excluded.repository,epoch=excluded.epoch",
+            params![project.key,project.repository.as_deref().map(str::to_ascii_lowercase),now as i64,project.connection_epoch as i64]).map_err(failed)?;
         for worktree in &project.worktrees {
             let Some(branch) = worktree.branch.as_deref() else {
                 continue;
@@ -458,6 +478,7 @@ impl LinkStore {
                 }
             }
         }
+        ledger::apply_output_facts(&tx, &project.outputs)?;
         tx.commit().map_err(failed)
     }
 
@@ -497,11 +518,24 @@ impl LinkStore {
     /// One file's read: its facts join the session it names, and the cursor
     /// moves to where the read stopped. `stamp` is recorded only once the
     /// file has been read to its end, so a partly read file is read again.
+    #[cfg(test)]
     pub fn apply_answer(
         &mut self,
         device: &str,
         answer: &ReadAnswer,
         stamp: &str,
+    ) -> Result<(), String> {
+        self.apply_answer_observed(device, answer, stamp, Some(u64::MAX))
+    }
+
+    /// Only a current project observation may certify a native birth, and
+    /// that birth must precede the node read that witnessed it.
+    pub fn apply_answer_observed(
+        &mut self,
+        device: &str,
+        answer: &ReadAnswer,
+        stamp: &str,
+        origin_before: Option<u64>,
     ) -> Result<(), String> {
         let tx = self.connection.transaction().map_err(failed)?;
         let path = answer.path.as_str();
@@ -545,6 +579,7 @@ impl LinkStore {
             )
             .optional()
             .map_err(failed)?;
+        let named_before = previous.as_ref().and_then(|row| row.session.clone());
         let continuing = !answer.rescanned
             && previous
                 .as_ref()
@@ -562,6 +597,7 @@ impl LinkStore {
             )
             .map_err(failed)?;
         }
+        let seen_session = previous.as_ref().and_then(|row| row.session.clone());
         let previous = previous.filter(|_| continuing);
         // A Codex file names its session only in its first record: a later
         // read of it belongs to the session the cursor recorded.
@@ -590,7 +626,27 @@ impl LinkStore {
             } else {
                 None
             };
+            if named_before.as_deref() != Some(id) {
+                name_file(&tx, device, agent, path, id)?;
+            }
             upsert_session(&tx, device, agent, id, path, facts)?;
+            if !facts.subagent {
+                ledger::capture_session_origin(
+                    &tx,
+                    &crate::links::ledger::SessionIdentity {
+                        device_id: device.into(),
+                        agent: agent.into(),
+                        session_id: id.into(),
+                    },
+                    facts.cwd.as_deref(),
+                    facts.first_at_unix_ms.filter(|at| {
+                        !continuing
+                            && seen_session.as_deref() != Some(id)
+                            && origin_before.is_some_and(|before| *at < before)
+                    }),
+                )?;
+                ledger::apply_reader(&tx, device, agent, id, facts)?;
+            }
             for (index, span) in facts.spans.iter().enumerate() {
                 let stated = if span.inherited {
                     last_branch.clone()
@@ -726,6 +782,9 @@ impl LinkStore {
             ],
         )
         .map_err(failed)?;
+        if !facts.prs.is_empty() || !facts.issues.is_empty() {
+            ledger::refresh_outputs(&tx)?;
+        }
         tx.commit().map_err(failed)
     }
 
@@ -788,26 +847,42 @@ impl LinkStore {
         tx.commit().map_err(failed)
     }
 
-    /// Which session `hide agent spawn` started for which (D-27).
-    pub fn apply_parents(&mut self, parents: &[ParentFact]) -> Result<(), String> {
+    /// Which session `hide agent spawn` started for which (D-27), and the
+    /// name the record gives each child: a fact can name a session by the
+    /// file Herdr reported for it, the record by its reader's name.
+    pub fn apply_parents(
+        &mut self,
+        parents: &[ParentFact],
+    ) -> Result<Vec<SessionIdentity>, String> {
         let tx = self.connection.transaction().map_err(failed)?;
+        let mut children = Vec::with_capacity(parents.len());
         for parent in parents {
-            tx.execute(
-                "INSERT INTO session_parents VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(device,agent,id) \
-                 DO UPDATE SET parent_agent=excluded.parent_agent, parent_id=excluded.parent_id, \
-                 parent_name=excluded.parent_name",
-                params![
-                    parent.device_id,
-                    parent.agent,
-                    parent.session_id,
-                    parent.parent_agent,
-                    parent.parent_session_id,
-                    parent.parent_name,
-                ],
-            )
-            .map_err(failed)?;
+            let child = SessionIdentity {
+                device_id: parent.device_id.clone(),
+                agent: parent.agent.clone(),
+                session_id: session_name(
+                    &tx,
+                    &parent.device_id,
+                    &parent.agent,
+                    &parent.session_id,
+                )?,
+            };
+            let named = Parent {
+                device: parent.parent_device_id.clone(),
+                agent: parent.parent_agent.clone(),
+                id: session_name(
+                    &tx,
+                    &parent.parent_device_id,
+                    &parent.parent_agent,
+                    &parent.parent_session_id,
+                )?,
+                name: parent.parent_name.clone(),
+            };
+            record_parent(&tx, &child, &named)?;
+            children.push(child);
         }
-        tx.commit().map_err(failed)
+        tx.commit().map_err(failed)?;
+        Ok(children)
     }
 
     /// Removes the sessions their project's Copied history no longer keeps
@@ -903,6 +978,18 @@ impl LinkStore {
                 "session_branches",
                 "session_prs",
                 "session_parents",
+                "ledger_requests",
+                "ledger_excluded",
+                "ledger_unjudged",
+                "ledger_sightings",
+                "ledger_titles",
+                "ledger_chapters",
+                "ledger_tasks",
+                "ledger_missed",
+                "ledger_turns",
+                "ledger_outputs",
+                "ledger_issue_attempts",
+                "ledger_session_origins",
             ] {
                 tx.execute(
                     &format!("DELETE FROM {table} WHERE device=?1 AND agent=?2 AND id=?3"),
@@ -911,6 +998,7 @@ impl LinkStore {
                 .map_err(failed)?;
             }
         }
+        tx.execute("DELETE FROM ledger_output_facts AS f WHERE NOT EXISTS(SELECT 1 FROM ledger_outputs o WHERE o.repo=f.repo AND o.kind=f.kind AND o.number=f.number) AND NOT EXISTS(SELECT 1 FROM ledger_sightings s WHERE s.repo=f.repo AND s.kind=f.kind AND s.number=f.number) AND NOT EXISTS(SELECT 1 FROM session_prs s WHERE f.kind='pr' AND s.repo_name=f.repo AND s.number=f.number)", []).map_err(failed)?;
         tx.commit().map_err(failed)?;
         if !gone.is_empty() {
             // `secure_delete` clears the main file's pages; the pruned text
@@ -1384,22 +1472,22 @@ impl LinkStore {
     }
 
     fn parent(&self, key: &SessionKey) -> Result<Option<LinkedParent>, String> {
-        let row: Option<(String, String, String)> = self
+        let row: Option<(String, String, String, String)> = self
             .connection
             .query_row(
-                "SELECT parent_agent, parent_id, parent_name FROM session_parents \
+                "SELECT parent_agent, parent_id, parent_name, parent_device FROM session_parents \
                  WHERE device=?1 AND agent=?2 AND id=?3",
                 params![key.device, key.agent, key.id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()
             .map_err(failed)?;
-        let Some((agent, session_id, name)) = row else {
+        let Some((agent, session_id, name, device)) = row else {
             return Ok(None);
         };
         let available = self
             .session(&SessionKey {
-                device: key.device.clone(),
+                device,
                 agent: agent.clone(),
                 id: session_id.clone(),
             })?
@@ -1676,6 +1764,23 @@ impl LinkStore {
                 if line.role != SessionRole::Created && !line.on_branch {
                     continue;
                 }
+                summary
+                    .pr_workers
+                    .entry(pr.number)
+                    .or_default()
+                    .extend(line.ids.iter().cloned());
+                if let Some(checkout) = line
+                    .cwd
+                    .as_deref()
+                    .filter(|_| line.device_id == row.device)
+                    .and_then(|cwd| deepest_checkout(checkouts, cwd))
+                {
+                    summary
+                        .pr_checkouts
+                        .entry(pr.number)
+                        .or_default()
+                        .insert(checkout.path.clone());
+                }
                 // A checkout's sessions are the ones that started in it since
                 // it was added, so a worktree made again at a used path
                 // inherits nothing, and one whose age is not read yet has
@@ -1772,17 +1877,20 @@ fn migrate(connection: &Connection) -> Result<(), OpenFailure> {
     if !(0..=SCHEMA_VERSION).contains(&version) {
         return Err(OpenFailure::Newer);
     }
-    if version == 0 {
+    if version < SCHEMA_VERSION {
+        let initial = if version == 0 { SCHEMA } else { "" };
+        let work_ledger = if version < 2 { ledger::SCHEMA } else { "" };
         connection
             .execute_batch(&format!(
-                "BEGIN IMMEDIATE; {SCHEMA} PRAGMA user_version={SCHEMA_VERSION}; COMMIT;"
+                "BEGIN IMMEDIATE; {initial} {work_ledger} {} PRAGMA user_version={SCHEMA_VERSION}; COMMIT;",
+                ledger::ORIGIN_SCHEMA
             ))
             .map_err(|error| {
                 let _ = connection.execute_batch("ROLLBACK");
                 classify(error)
             })?;
     }
-    Ok(())
+    name_read_files(connection)
 }
 
 /// The record's key for a repository GitHub named: its id when GitHub gave
@@ -1847,6 +1955,237 @@ fn issues_open(
         })
         .and_then(Iterator::collect)
         .map_err(failed)
+}
+
+/// The parent side of a lineage edge, named as the record names sessions.
+struct Parent {
+    device: String,
+    agent: String,
+    id: String,
+    name: String,
+}
+
+/// What the record calls the session a fact names by `reference`.
+///
+/// The record calls a session what its reader calls it: the id in the
+/// session's own records. Herdr reports a Pi or omp session as its file, so a
+/// fact can name a session by a path; once the reader has read that file, its
+/// cursor holds the reader's name for it. A reference no read file answers
+/// is kept as it is: either it is already that name, or it is a file not read
+/// yet (Pi writes its file at the first message), whose edges [`name_file`]
+/// moves when the reader first names it.
+fn session_name(
+    tx: &Transaction<'_>,
+    device: &str,
+    agent: &str,
+    reference: &str,
+) -> Result<String, String> {
+    Ok(tx
+        .query_row(
+            "SELECT session FROM cursors WHERE device=?1 AND path=?2 AND agent=?3 \
+             AND session IS NOT NULL",
+            params![device, reference, agent],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(failed)?
+        .unwrap_or_else(|| reference.to_owned()))
+}
+
+/// Records `child` as started by `parent`. A parent learned after the
+/// child's requests were recorded makes its first request the parent's and
+/// retracts what was judged as the operator's.
+fn record_parent(
+    tx: &Transaction<'_>,
+    child: &SessionIdentity,
+    parent: &Parent,
+) -> Result<(), String> {
+    let changed = tx
+        .query_row(
+            "SELECT parent_device,parent_agent,parent_id,parent_name FROM session_parents \
+             WHERE device=?1 AND agent=?2 AND id=?3",
+            params![child.device_id, child.agent, child.session_id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(failed)?
+        .is_none_or(|(device, agent, id, name)| {
+            device != parent.device
+                || agent != parent.agent
+                || id != parent.id
+                || name != parent.name
+        });
+    tx.execute(
+        "INSERT INTO session_parents VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(device,agent,id) \
+         DO UPDATE SET parent_agent=excluded.parent_agent, parent_id=excluded.parent_id, \
+         parent_name=excluded.parent_name,parent_device=excluded.parent_device",
+        params![
+            child.device_id,
+            child.agent,
+            child.session_id,
+            parent.agent,
+            parent.id,
+            parent.name,
+            parent.device,
+        ],
+    )
+    .map_err(failed)?;
+    tx.execute(
+        "UPDATE ledger_requests SET author=?4 WHERE device=?1 AND agent=?2 AND id=?3 AND offset=(SELECT MIN(offset) FROM ledger_requests WHERE device=?1 AND agent=?2 AND id=?3)",
+        params![
+            child.device_id,
+            child.agent,
+            child.session_id,
+            serde_json::to_string(&crate::links::ledger::WorkAuthor::Parent)
+                .map_err(|_| "ledger_value_invalid")?
+        ],
+    )
+    .map_err(failed)?;
+    ledger::retract_operator_work(tx, child)?;
+    tx.execute(
+        "DELETE FROM ledger_requests WHERE device=?1 AND agent=?2 AND id=?3 AND author=?4",
+        params![
+            child.device_id,
+            child.agent,
+            child.session_id,
+            "\"operator\""
+        ],
+    )
+    .map_err(failed)?;
+    if changed {
+        // Lineage arrived after the first catalog read: rescan only
+        // this session through its existing bounded reader.
+        tx.execute(
+            "UPDATE cursors SET stamp='',checkpoint=NULL WHERE device=?1 AND agent=?2 AND session=?3",
+            params![child.device_id, child.agent, child.session_id],
+        )
+        .map_err(failed)?;
+        tx.execute(
+            "DELETE FROM ledger_excluded WHERE device=?1 AND agent=?2 AND id=?3",
+            params![child.device_id, child.agent, child.session_id],
+        )
+        .map_err(failed)?;
+    }
+    Ok(())
+}
+
+/// The reader named the file `path` as session `id`: an edge recorded under
+/// the file before it was read moves to that name, as it would have been
+/// recorded had the read come first.
+fn name_file(
+    tx: &Transaction<'_>,
+    device: &str,
+    agent: &str,
+    path: &str,
+    id: &str,
+) -> Result<(), String> {
+    tx.execute(
+        "UPDATE OR REPLACE session_parents SET parent_id=?4 \
+         WHERE parent_device=?1 AND parent_agent=?2 AND parent_id=?3",
+        params![device, agent, path, id],
+    )
+    .map_err(failed)?;
+    let parent = tx
+        .query_row(
+            "SELECT parent_device,parent_agent,parent_id,parent_name FROM session_parents \
+             WHERE device=?1 AND agent=?2 AND id=?3",
+            params![device, agent, path],
+            |r| {
+                Ok(Parent {
+                    device: r.get(0)?,
+                    agent: r.get(1)?,
+                    id: r.get(2)?,
+                    name: r.get(3)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(failed)?;
+    let Some(parent) = parent else {
+        return Ok(());
+    };
+    tx.execute(
+        "DELETE FROM session_parents WHERE device=?1 AND agent=?2 AND id=?3",
+        params![device, agent, path],
+    )
+    .map_err(failed)?;
+    record_parent(
+        tx,
+        &SessionIdentity {
+            device_id: device.to_owned(),
+            agent: agent.to_owned(),
+            session_id: id.to_owned(),
+        },
+        &parent,
+    )
+}
+
+/// The `meta` key of the edges' naming: `1` once every edge recorded under a
+/// file the reader had read is under the reader's name. An older build reads
+/// the same tables, so the store's schema version stays where it is.
+const SESSION_NAMES: &str = "session_names";
+
+/// Moves the edges an earlier build recorded under a Pi or omp session's file
+/// to the reader's name for it, once.
+fn name_read_files(connection: &Connection) -> Result<(), OpenFailure> {
+    let done: Option<String> = connection
+        .query_row(
+            "SELECT value FROM meta WHERE key=?1",
+            [SESSION_NAMES],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(classify)?;
+    if done.as_deref() == Some("1") {
+        return Ok(());
+    }
+    let tx = connection.unchecked_transaction().map_err(classify)?;
+    let files = {
+        let mut statement = tx
+            .prepare(
+                "SELECT c.device,c.agent,c.path,c.session FROM session_parents p JOIN cursors c \
+                 ON c.device=p.device AND c.path=p.id AND c.agent=p.agent \
+                 WHERE c.session IS NOT NULL \
+                 UNION SELECT c.device,c.agent,c.path,c.session FROM session_parents p \
+                 JOIN cursors c ON c.device=p.parent_device AND c.path=p.parent_id \
+                 AND c.agent=p.parent_agent WHERE c.session IS NOT NULL",
+            )
+            .map_err(classify)?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(classify)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(classify)?
+    };
+    for (device, agent, path, id) in &files {
+        name_file(&tx, device, agent, path, id).map_err(OpenFailure::Failed)?;
+    }
+    tx.execute(
+        "INSERT INTO meta VALUES(?1,'1') ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        [SESSION_NAMES],
+    )
+    .map_err(classify)?;
+    tx.commit().map_err(classify)?;
+    if !files.is_empty() {
+        crate::diagnostic!(serde_json::json!({
+            "component": "links", "kind": "store.session_names_moved", "files": files.len(),
+        }));
+    }
+    Ok(())
 }
 
 /// Where the last read of a file stopped, and what it knew of the file.

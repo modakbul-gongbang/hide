@@ -166,7 +166,9 @@ pub fn sync_checkout_agent_summaries(
         let Some(&index) = owners.get(agent.pane_id.as_str()) else {
             continue;
         };
-        if !counted.insert(agent.pane_id.as_str()) {
+        // A row its home owns is no part of the checkout's count unless it
+        // calls the operator out (PRD hide-ai-work-home B2).
+        if !listed_for_operator(agent) || !counted.insert(agent.pane_id.as_str()) {
             continue;
         }
         let summary = &mut summaries[index];
@@ -231,6 +233,9 @@ pub fn summarize(agents: &[SidebarAgentSnapshot], connected: bool) -> PetSummary
         // The groups are decided once, in the projection. The pet counts them
         // through the projection's own enum rather than reading tokens, axes,
         // or group names a second time.
+        if !listed_for_operator(agent) {
+            continue;
+        }
         match crate::agent_state::group_of(agent) {
             AgentGroup::NeedsYou => {
                 summary.needs_you += 1;
@@ -360,6 +365,10 @@ pub mod phone {
         /// elapsed time from it, so time passing sends nothing.
         pub changed_at_unix_ms: Option<u64>,
         pub line: Option<Line>,
+        /// The core's chosen sentence, including a raised root's detail that
+        /// the compact phone row may not draw. Used only by notice transport.
+        #[serde(skip)]
+        pub detail: Option<String>,
         pub status_code: String,
         pub demand: String,
         /// Whether the compact title is emphasized, independent of the detail view.
@@ -453,6 +462,10 @@ pub mod phone {
         /// resolves the value; it is part of the projection so a change republishes
         /// the frame like any other change.
         pub interface_language: Option<String>,
+        /// The core's color theme (`ui_state.color_theme`) as published, so
+        /// the phone draws the operator's palette (hide-color-theme D-12);
+        /// the phone reads anything but `neutral` as Hide.
+        pub color_theme: Option<String>,
     }
 
     impl Projection {
@@ -615,6 +628,20 @@ pub mod phone {
             if pane_id.is_empty() {
                 continue;
             }
+            // `listed_for_operator` on the wire form: a row its home owns is
+            // on the phone only while it is in Needs You (PRD
+            // hide-ai-work-home B4); its detail stays reachable from there.
+            if agent
+                .pointer("/hide_ai/home")
+                .is_some_and(|home| !home.is_null())
+                && !agent
+                    .get("delegated")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                && str_of(agent, "group") != "needs_you"
+            {
+                continue;
+            }
             let title = agent
                 .get("identity_label")
                 .and_then(Value::as_str)
@@ -653,6 +680,11 @@ pub mod phone {
                 device_label: device_label.map(str::to_owned),
                 changed_at_unix_ms: agent.get("changed_at_unix_ms").and_then(Value::as_u64),
                 line: line(agent),
+                detail: agent
+                    .get("detail")
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                    .map(str::to_owned),
                 status_code: str_of(agent, "status_code").to_owned(),
                 demand: agent
                     .get("demand")
@@ -762,9 +794,14 @@ pub mod phone {
             .pointer("/ui_state/interface_language")
             .and_then(Value::as_str)
             .map(str::to_owned);
+        let color_theme = rest
+            .pointer("/ui_state/color_theme")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         Projection {
             groups,
             interface_language,
+            color_theme,
         }
     }
 }

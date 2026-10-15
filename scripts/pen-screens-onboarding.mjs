@@ -1,7 +1,7 @@
 // The boards of `Screen / Onboarding` (PRD first-run-onboarding D-20, D-27,
 // B1-B52): the three-step wizard as a dialog over the dimmed shell with every
 // state its steps carry, the start panel it closes into, the empty Home, the
-// sidebar's Add project on the Projects label, Settings > General
+// sidebar's Add project on the Projects label, Settings >
 // Notifications on each system, the one-time line on Factory, and the startup
 // and failure screen. Drawn on this document's local tokens plus library refs
 // (Button, Kbd, Switch, Select, Tabs, Icon Button, Tooltip), the way every other
@@ -11,13 +11,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {frame, icon, num, text as baseText} from './pen-system.mjs';
+import {settingsParts} from './pen-screens-settings.mjs';
 
 /**
  * Every board as {id, name, spec, lightOnly, build(suffix)}; `build` returns the
  * board's frames for one theme. The board ids are unique within the sheet and
  * the caller prefixes them for the document.
  */
-export function onboardingBoards(tokens, root, {themedXref, screenButton, screenIconButton, screenSelect, screenTabs, tabRefs}) {
+export function onboardingBoards(tokens, root, {themedXref, screenButton, screenIconButton, screenSelect, screenSwatch, screenTabs}) {
   // Each agent's mark as web/src/agentLogos.ts reads it, by its path from design/.
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'web/src/assets/agents/manifest.json'), 'utf8'));
   const LOGO = Object.fromEntries([...manifest.existing, ...manifest.logos].map(({id, file}) => [id, path.posix.join('../web/src/assets/agents', file)]));
@@ -74,9 +75,9 @@ export function onboardingBoards(tokens, root, {themedXref, screenButton, screen
     failed: 'Codex was not set up: ~/.codex/hooks.json could not be written.', retry: 'Try again',
     hook: 'hook', skill: 'skill', plugin: 'plugin', extension: 'extension', herdr: 'Herdr integration', command: 'the hide command',
     s2Title: 'Know when an agent needs you',
-    s2Sub: 'When an agent asks for approval or finishes while Hide is in the background, macOS shows a notification. Click it to go to that agent.',
-    s2SubWin: 'When an agent asks for approval or finishes while Hide is in the background, Windows shows a notification. Click it to go to that agent.',
-    s2SubLinux: 'When an agent asks for approval or finishes while Hide is in the background, your desktop shows a notification. Click it to go to that agent.',
+    s2Sub: 'When an agent needs your attention while Hide is in the background, macOS shows a notification. Click it to go to that agent.',
+    s2SubWin: 'When an agent needs your attention while Hide is in the background, Windows shows a notification. Click it to go to that agent.',
+    s2SubLinux: 'When an agent needs your attention while Hide is in the background, your desktop shows a notification. Click it to go to that agent.',
     noService: 'This desktop has no notification service, so Hide can’t show notifications here.',
     notOnWindows: 'Not on Windows yet',
     turnOn: 'Turn on notifications', notNow: 'Not now', waiting: 'Waiting for your answer…',
@@ -94,7 +95,7 @@ export function onboardingBoards(tokens, root, {themedXref, screenButton, screen
     cont: '계속',
     hook: '훅', skill: '스킬', plugin: '플러그인', extension: '확장', herdr: 'Herdr 연동', command: 'hide 명령',
     s2Title: '에이전트가 나를 부르면 알려 드릴게요',
-    s2Sub: 'Hide가 뒤에 있을 때 에이전트가 승인을 기다리거나 일을 끝내면 macOS 알림을 보냅니다. 누르면 그 에이전트로 갑니다.',
+    s2Sub: 'Hide가 뒤에 있을 때 에이전트가 나를 부르면 macOS 알림을 보냅니다. 누르면 그 에이전트로 갑니다.',
     turnOn: '알림 켜기', notNow: '나중에', waiting: 'macOS 창에서 답을 기다리는 중…',
     on: '알림이 켜졌습니다', test: '테스트 알림', blocked: 'macOS가 Hide 알림을 막고 있습니다', openSettings: '시스템 설정 열기',
     unreadable: 'Hide가 알림 설정을 읽지 못합니다', phone: '폰으로도 받기 →',
@@ -358,44 +359,11 @@ export function onboardingBoards(tokens, root, {themedXref, screenButton, screen
 
   // -- settings (B30) ------------------------------------------------------------------
 
-  function settingsSheet(p, state) {
-    const SW = num(tokens, '--size-settings-sheet-w');
-    const bodyW = SW - 2 * PAD;
-    const row = (id, label, controls) => F(id, 'Row', {layout: 'horizontal', alignItems: 'center', gap: '$--spacing-md', width: 'fill_container', padding: ['$--spacing-sm', '$--spacing-md']}, [
-      T(`${id}-l`, label, {size: 'subhead'}), spacer(`${id}-sp`), ...controls,
-    ]);
-    const group = (id, title, rows, note) => F(id, title, {layout: 'vertical', gap: '$--spacing-sm', width: bodyW}, [
-      T(`${id}-t`, title, {weight: '600', fill: '$--subtle-foreground'}),
-      F(`${id}-box`, 'Box', {layout: 'vertical', width: bodyW, cornerRadius: '$--radius-md', fill: '$--card', stroke: '$--border', strokeWidth: 1, strokeAlignment: 'inner'},
-        rows.flatMap((r, i) => i === 0 ? [r] : [F(`${id}-sep${i}`, 'Divider', {width: 'fill_container', height: 1, fill: '$--border'}, []), r])),
-      ...(note ? [T(`${id}-n`, note, {fill: '$--muted-foreground', width: bodyW})] : []),
-    ]);
-    const on = state !== 'off' && state !== 'pc-off' && state !== 'no-service';
-    const rows = [row(`${p}-nr`, 'Notify me when an agent needs me', [sw(`${p}-sw`, on)])];
-    if (state === 'on') rows.push(row(`${p}-pr`, 'macOS permission', [status(`${p}-ps`, 'ok', 'Allowed'), btn(`${p}-test`, 'Send a test', {variant: 'secondary'})]));
-    if (state === 'pc-on') rows.push(row(`${p}-tr`, 'Test notification', [btn(`${p}-test`, 'Send a test', {variant: 'secondary'})]));
-    if (state === 'no-service') rows[0] = F(`${p}-nrw`, 'Row', {layout: 'vertical', gap: '$--spacing-xs', width: 'fill_container'}, [
-      {...row(`${p}-nr`, 'Notify me when an agent needs me', [{...sw(`${p}-sw`, false), opacity: num(tokens, '--opacity-disabled')}]), padding: ['$--spacing-sm', '$--spacing-md', 0, '$--spacing-md']},
-      F(`${p}-nrn`, 'Detail', {padding: [0, '$--spacing-md', '$--spacing-sm', '$--spacing-md']}, [status(`${p}-nrs`, 'muted', L.noService)]),
-    ]);
-    if (state === 'blocked') rows.push(row(`${p}-pr`, 'macOS permission', [status(`${p}-ps`, 'warn', 'Blocked by macOS'), btn(`${p}-open`, 'Open System Settings', {variant: 'secondary'})]));
-    return F(`${p}-sheet`, 'Settings', {width: SW, layout: 'vertical', cornerRadius: '$--radius-lg', fill: '$--popover', stroke: '$--border', strokeWidth: 1, strokeAlignment: 'inner'}, [
-      F(`${p}-hdr`, 'Header', {layout: 'horizontal', alignItems: 'start', width: SW, padding: '$--spacing-lg'}, [
-        F(`${p}-hdrt`, 'Text', {layout: 'vertical', gap: '$--spacing-xxs'}, [
-          T(`${p}-title`, 'Settings', {size: 'headline', weight: '600'}),
-          T(`${p}-sub`, 'Language, look and what this hide is running.', {fill: '$--subtle-foreground'}),
-        ]),
-        spacer(`${p}-hdrsp`), iconBtn(`${p}-x`, 'x'),
-      ]),
-      F(`${p}-nav`, 'Tabs', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: SW, padding: ['$--spacing-sm', '$--spacing-lg'], fill: '$--sidebar'},
-        tabRefs(`${p}-tabs`, ['General', 'Agents', 'Hide AI', 'Devices', 'Mobile', 'Shortcuts'], 0)),
-      F(`${p}-body`, 'Body', {layout: 'vertical', gap: '$--spacing-lg', width: SW, padding: '$--spacing-lg'}, [
-        group(`${p}-app`, 'Appearance', [row(`${p}-lang`, 'Language', [screenSelect(`${p}-langv`, {content: 'English', width: 140})])]),
-        group(`${p}-notif`, 'Notifications', rows, on ? 'Sent only while no Hide window is in front.' : null),
-        group(`${p}-conn`, 'Connections', [row(`${p}-gh`, 'GitHub', [status(`${p}-ghs`, 'ok', 'Connected as you')])]),
-      ]),
-    ]);
-  }
+  // Settings > Notifications as Screen / Settings draws it, with the desktop rows in each answer (B30).
+  const settings = settingsParts(tokens, root, {themedXref, screenIconButton, screenSwatch});
+  // Windows calls its machine This PC and Linux This computer, as the list and the desktop group do there.
+  const MACHINE = {'pc-on': 'This PC', 'pc-off': 'This PC', 'no-service': 'This computer'};
+  const settingsSheet = (p, state) => settings.settingsSheet(p, {page: 'notifications', notify: state, height: 480, machine: MACHINE[state] ?? null});
 
   // -- first-visit line (B43) ------------------------------------------------------------
 
@@ -469,11 +437,6 @@ export function onboardingBoards(tokens, root, {themedXref, screenButton, screen
       T(`${p}-emptyt`, 'No project on this machine yet.', {size: 'caption', fill: '$--muted-foreground'}),
     ]);
     const list = F(`${p}-list`, 'Project list', {width: 'fill_container', height: 'fill_container', layout: 'vertical', padding: [0, '$--spacing-xs']}, [
-      F(`${p}-home`, 'Home', {width: 'fill_container', height: ROW, layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-xs', 0, '$--spacing-sm']}, [
-        icon(`${p}-home-i`, 'house', {size: 14, fill: '$--subtle-foreground'}),
-        T(`${p}-home-t`, 'Home', {size: 'subhead', weight: '600', width: 'fill_container'}),
-        T(`${p}-home-n`, n === 1 ? "1 project" : `${n} projects`, {fill: '$--muted-foreground'}),
-      ]),
       label,
       ...(projects ? names.map(projectRow) : [empty]),
     ]);
@@ -575,8 +538,8 @@ export function onboardingBoards(tokens, root, {themedXref, screenButton, screen
       ], [
         cell(`eh1-${t}`, 'Projects, no agent', sidebarWindow(`eh1-${t}`, {projects: ONE})),
       ]])]),
-    board('b07-settings-notifications', '07 · Settings > General, Notifications',
-      'A group between Appearance and Connections. On: the switch and one permission row, Allowed with Send a test. Off: only the switch; the permission row appears once it is on, since nothing on it is actionable while off. Blocked: Blocked by macOS with Open System Settings and no test (it could not arrive). The note says why none arrives while Hide is in front (B36).',
+    board('b07-settings-notifications', '07 · Settings > Notifications',
+      'The This Mac group of the Notifications page (PRD settings-left-nav B6), above the Phone push. On: the switch and one permission row, Allowed with Send a test. Off: only the switch; the permission row appears once it is on, since nothing on it is actionable while off. Blocked: Blocked by macOS with Open System Settings and no test (it could not arrive). The note says why none arrives while Hide is in front (B36).',
       t => [grid(`st-${t}`, [[cell(`sto-${t}`, 'On', settingsSheet(`sto-${t}`, 'on')), cell(`stf-${t}`, 'Off', settingsSheet(`stf-${t}`, 'off'))], [cell(`stb-${t}`, 'Blocked by macOS', settingsSheet(`stb-${t}`, 'blocked'))]])]),
     board('b08-first-visit-line', '08 · The one-time line on Factory (B43)',
       'Shown the first time Factory opens, above its own content, and never again; the existing empty state stays. One line says what Factory does and its first action. Settings > Devices gets no line: its description already says what the tab is for.',
@@ -615,11 +578,11 @@ export function onboardingBoards(tokens, root, {themedXref, screenButton, screen
       t => [grid(`ns-${t}`, [[
         cell(`nsw-${t}`, 'Linux · no notification service', step2(`nsw-${t}-w`, 'noService', {linux: true})),
       ]])])),
-    onSystem('win', () => board('b13-settings-notifications-pc', '13 · Settings > General, Notifications on Windows and Linux',
+    onSystem('win', () => board('b13-settings-notifications-pc', '13 · Settings > Notifications on Windows and Linux',
       'No permission row: the system gives no permission state. On: the switch and a Test notification row with Send a test. Off: the switch only. Third (with board 12): Linux with no notification service, the switch disabled and one quiet line under it.',
       t => [grid(`sp2-${t}`, [[
-        cell(`spo-${t}`, 'Windows or Linux · on', settingsSheet(`spo-${t}`, 'pc-on')),
-        cell(`spf-${t}`, 'Windows or Linux · off', settingsSheet(`spf-${t}`, 'pc-off')),
+        cell(`spo-${t}`, 'Windows · on (Linux reads This computer)', settingsSheet(`spo-${t}`, 'pc-on')),
+        cell(`spf-${t}`, 'Windows · off', settingsSheet(`spf-${t}`, 'pc-off')),
       ], [
         cell(`spn-${t}`, 'Linux · no notification service', settingsSheet(`spn-${t}`, 'no-service')),
       ]])])),

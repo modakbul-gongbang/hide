@@ -230,6 +230,7 @@ pub const COMMANDS: &[Spec] = &[
             "repository_unavailable",
             "agent_not_installed",
             "intent_conflict",
+            "shell_starting",
             "agent_not_started",
         ],
     },

@@ -18,6 +18,27 @@ pub(super) enum PreparedFileTab {
 }
 
 impl Runtime {
+    /// The projection can admit a failed terminal close; the effect must still
+    /// prove this incarnation and failure against Herdr immediately before closing.
+    pub(super) fn failed_terminal_id(&self, pane_id: &str) -> Option<&str> {
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .chain(
+                self.snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .filter_map(|status| status.session.as_ref())
+                    .flat_map(|session| session.workspaces.iter()),
+            )
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .flat_map(|tab| tab.panes.iter())
+            .find(|pane| pane.id == pane_id)
+            .and_then(|pane| pane.failed_terminal_id.as_deref())
+    }
     pub(super) fn file_tab_id(workspace_id: &str, checkout_id: &str, path: &str) -> String {
         format!("file:{workspace_id}:{checkout_id}:{path}")
     }
@@ -92,7 +113,11 @@ impl Runtime {
         match tab.kind {
             EditorTabKind::File => {
                 self.snapshot.editor.document = document;
-                self.snapshot.ui_state.selected_path = Some(tab.path);
+                // The Explorer shows the front checkout's tree, which has no
+                // row for another checkout's file a terminal link opened here.
+                if self.front_checkout() == Some((&tab.workspace_id, &tab.checkout_id)) {
+                    self.snapshot.ui_state.selected_path = Some(tab.path);
+                }
             }
             EditorTabKind::Diff => {
                 let committed = tab.diff_committed.expect("validated above");
@@ -219,7 +244,23 @@ impl Runtime {
         preview: bool,
     ) {
         if self.separate_view_areas() {
-            self.show_file_in_view(prepared, workspace_id, checkout_id, path, preview, false);
+            let Some(key) = self.workspace_key(workspace_id, checkout_id) else {
+                self.set_error(
+                    "file.invalid_context",
+                    "The file's project or checkout is no longer available",
+                    false,
+                );
+                return;
+            };
+            self.show_file_in_view(
+                prepared,
+                &key,
+                workspace_id,
+                checkout_id,
+                path,
+                preview,
+                false,
+            );
             return;
         }
         let tab_id = match prepared {
@@ -971,7 +1012,9 @@ impl Runtime {
                     .iter()
                     .any(|pane_id| pane_id == &agent.pane_id),
             };
-            in_target && agent.requires_close_status_check
+            in_target
+                && (agent.requires_close_status_check
+                    && self.failed_terminal_id(&agent.pane_id).is_none())
         });
         if activity_status_unknown {
             return Some(
@@ -1008,7 +1051,9 @@ impl Runtime {
                         .iter()
                         .any(|pane_id| pane_id == &agent.pane_id),
                 };
-                in_target && agent.requires_close_confirmation
+                in_target
+                    && (agent.requires_close_confirmation
+                        && self.failed_terminal_id(&agent.pane_id).is_none())
             })
             .map(|agent| agent.pane_id.as_str())
             .collect::<Vec<_>>();
@@ -1102,6 +1147,25 @@ impl Runtime {
         };
         if self.close_selection_state(restore.checkout_id.as_deref()) != restore.after {
             return;
+        }
+        // The close took the operator to the checkout they were in before
+        // (`leave_emptied_checkout`); its tab is back, so they go back too.
+        if restore.before.focused_checkout_id != restore.after.focused_checkout_id
+            && let Some(checkout_id) = restore.before.focused_checkout_id.as_deref()
+            && let Some(workspace_id) = self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .find(|workspace| {
+                    workspace
+                        .checkouts
+                        .iter()
+                        .any(|checkout| checkout.id == checkout_id)
+                })
+                .map(|workspace| workspace.id.clone())
+        {
+            self.bring_checkout_forward_for_close(&workspace_id, checkout_id);
         }
         if let Some(checkout_id) = restore.checkout_id.as_deref() {
             match restore.before.visible_tab_id.clone() {
@@ -1203,6 +1267,12 @@ impl Runtime {
         };
         context.replacement_shell &=
             matches!(target, live::CloseCaptureTarget::Tab { .. }) || tab.panes.len() == 1;
+        // A failed last terminal must remain explicitly closable even when
+        // its folder cannot launch a replacement shell. The project registration stays.
+        context.replacement_shell &= !tab
+            .panes
+            .iter()
+            .all(|pane| pane.failed_terminal_id.is_some());
         if context.replacement_shell && !self.admit_agent_tab(&context.checkout_path) {
             return true;
         }
@@ -1228,6 +1298,19 @@ impl Runtime {
                         && record.close_key.is_none()
                 });
         let request = live::CloseCaptureRequest {
+            failed_terminals: tab
+                .panes
+                .iter()
+                .filter(|pane| match &target {
+                    live::CloseCaptureTarget::Pane { pane_id } => &pane.id == pane_id,
+                    live::CloseCaptureTarget::Tab { .. } => true,
+                })
+                .filter_map(|pane| {
+                    pane.failed_terminal_id
+                        .as_ref()
+                        .map(|id| (pane.id.clone(), id.clone()))
+                })
+                .collect(),
             retain_for_reopen,
             key: self.next_recent_closed_key(),
             connection_generation: self.live_generation,
@@ -1262,10 +1345,30 @@ impl Runtime {
                         .iter()
                         .any(|pane_id| pane_id == &agent.pane_id),
                 };
-                in_target && agent.requires_close_confirmation
+                in_target
+                    && (agent.requires_close_confirmation
+                        && self.failed_terminal_id(&agent.pane_id).is_none())
             })
             .map(|agent| agent.pane_id.clone())
             .collect::<Vec<_>>();
+        let approved_peer_terminals = tab
+            .panes
+            .iter()
+            .filter(|pane| protected_agent_pane_ids.contains(&pane.id))
+            .filter_map(|pane| {
+                pane.terminal_id.as_ref().map(|terminal| live::ClosePeer {
+                    pane_id: pane.id.clone(),
+                    terminal_id: terminal.clone(),
+                    session: self
+                        .snapshot
+                        .navigator
+                        .agents
+                        .iter()
+                        .find(|agent| agent.pane_id == pane.id)
+                        .and_then(|agent| agent.close_session.clone()),
+                })
+            })
+            .collect();
         let restore_checkout_id = tab.checkout_id.clone();
         let selection_before = self.close_selection_state(restore_checkout_id.as_deref());
         let label = match &request.target {
@@ -1291,6 +1394,7 @@ impl Runtime {
                 scope_pane_ids,
                 pane_ids: pane_ids.clone(),
                 protected_agent_pane_ids,
+                approved_peer_terminals,
                 label,
                 item: None,
                 phase: "preparing".to_owned(),
@@ -1327,7 +1431,13 @@ impl Runtime {
         self.panes_closing.extend(pane_ids);
         // The node refuses keys for a closing pane from now on.
         self.sync_terminal_intents();
-        self.move_from_closing_target(&request.target, &tab);
+        if request.failed_terminals.is_empty() {
+            // A sleep's own close (not kept for reopen) is Hide's, not the
+            // operator's, so it never takes the screen elsewhere. One that
+            // opens a replacement shell keeps its tab (`leaving_tab`), so its
+            // checkout is never empty.
+            self.move_from_closing_target(&request.target, &tab, request.retain_for_reopen);
+        }
         let selection_after = self.close_selection_state(restore_checkout_id.as_deref());
         if selection_before != selection_after
             && let Some(operation) = self.close_operations.get_mut(&request.key)
@@ -1351,11 +1461,15 @@ impl Runtime {
     /// Keeps the operator on a confirmed alternative as soon as a close is
     /// approved, and only when the closing item is the one in use. The
     /// alternative is chosen from the existing projection, so this never
-    /// invents geometry or follows a global Herdr focus change.
+    /// invents geometry or follows a global Herdr focus change. When the
+    /// close leaves the checkout with no tab at all and `may_leave_checkout`
+    /// says it is the operator's own, the alternative is the checkout they
+    /// were in before (`leave_emptied_checkout`).
     pub(super) fn move_from_closing_target(
         &mut self,
         target: &live::CloseCaptureTarget,
         tab: &TabSnapshot,
+        may_leave_checkout: bool,
     ) {
         let Some(checkout_id) = tab.checkout_id.as_deref() else {
             return;
@@ -1397,7 +1511,101 @@ impl Runtime {
         }
         if let Some(replacement) = self.closing_tab_replacement(checkout_id, tab_id) {
             self.focus_close_alternative(checkout_id, replacement);
+        } else if may_leave_checkout && self.checkout_emptied_by_closes(checkout_id) {
+            self.leave_emptied_checkout(checkout_id);
         }
+    }
+
+    /// Whether every tab of the checkout is one a running close is taking
+    /// away, so nothing of it is left to show. A tab off the strip (a
+    /// delegated child's) is still a tab the sidebar reaches, so a checkout
+    /// holding one is not empty.
+    fn checkout_emptied_by_closes(&self, checkout_id: &str) -> bool {
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .find(|checkout| checkout.id == checkout_id)
+            .is_some_and(|checkout| !self.has_tab_left(checkout))
+    }
+
+    /// Whether the checkout holds a tab no running close is taking away.
+    fn has_tab_left(&self, checkout: &CheckoutSnapshot) -> bool {
+        checkout.tabs.iter().any(|tab| {
+            !tab.id.as_deref().is_some_and(|id| {
+                self.close_operations
+                    .values()
+                    .any(|operation| operation.leaving_tab() == Some(id))
+            })
+        })
+    }
+
+    /// Brings back the checkout of this machine the operator was in before
+    /// the one their close just emptied, the way choosing it from the
+    /// sidebar does, so the screen never stands on a checkout with nothing
+    /// left in it (docs/UI_BEHAVIOR.md, Agent areas). A checkout with no tab
+    /// left, or one whose worktree or project is being removed, is no place
+    /// to go. With no such checkout, or with another device in front, the
+    /// screen stays and the Agent area's empty state shows.
+    fn leave_emptied_checkout(&mut self, checkout_id: &str) {
+        if !self.device_in_front(self.node.as_str()) {
+            return;
+        }
+        let node = self.node.as_str();
+        let previous = self
+            .snapshot
+            .ui_state
+            .recent_checkouts
+            .iter()
+            .filter(|record| record.device_id == node && record.checkout_id != checkout_id)
+            .find_map(|record| {
+                self.snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .filter(|workspace| workspace.device_id == node)
+                    .find_map(|workspace| {
+                        workspace
+                            .checkouts
+                            .iter()
+                            .find(|checkout| checkout.id == record.checkout_id)
+                            .filter(|checkout| {
+                                self.has_tab_left(checkout)
+                                    && !self.removal_in_flight(&workspace.id, &checkout.path)
+                            })
+                            .map(|checkout| (workspace.id.clone(), checkout.id.clone()))
+                    })
+            });
+        let Some((workspace_id, previous)) = previous else {
+            return;
+        };
+        self.bring_checkout_forward_for_close(&workspace_id, &previous);
+    }
+
+    /// Whether this machine's project `workspace_id`, or its worktree at
+    /// `checkout_path`, is being removed.
+    fn removal_in_flight(&self, workspace_id: &str, checkout_path: &str) -> bool {
+        self.workspace_removals_in_flight.contains(workspace_id)
+            || self
+                .snapshot
+                .worktree_removal
+                .as_ref()
+                .is_some_and(|removal| {
+                    removal.device_id.is_none()
+                        && removal.checkout_path == checkout_path
+                        && matches!(removal.phase.as_str(), "checking" | "closing" | "removing")
+                })
+    }
+
+    /// A checkout a close moves the operator to, or back from, comes forward
+    /// as a sidebar choice does: on its own tab, as the Workspace a reload
+    /// opens on, waking what sleeps there.
+    fn bring_checkout_forward_for_close(&mut self, workspace_id: &str, checkout_id: &str) {
+        let prior = self.focused_visible_tab_id();
+        self.focus_checkout(workspace_id, checkout_id);
+        self.mark_front_chosen();
+        self.agent_sleep_visit(prior.as_deref());
     }
 
     /// Puts the operator on a tab the way a click on its chip does, so Herdr
@@ -1537,6 +1745,7 @@ impl Runtime {
                 },
                 pane_ids,
                 protected_agent_pane_ids: Vec::new(),
+                approved_peer_terminals: Vec::new(),
                 label: request.context.tab_label.clone(),
                 item: None,
                 phase: "preparing".to_owned(),
@@ -1644,6 +1853,19 @@ impl Runtime {
             },
         ));
         let effect = live::CloseEffectRequest {
+            safety: (!request.failed_terminals.is_empty()).then(|| live::CloseSafety {
+                approved_peers: operation.approved_peer_terminals.clone(),
+                pane_ids: operation.scope_pane_ids.clone(),
+                deadline: std::time::Instant::now()
+                    + std::time::Duration::from_millis(
+                        operation
+                            .deadline_at_unix_ms
+                            .unwrap_or_default()
+                            .saturating_sub(unix_milliseconds())
+                            .min(CLOSE_STAGE_TIMEOUT_MS),
+                    ),
+            }),
+            failed_terminals: request.failed_terminals.clone(),
             retain_for_reopen: request.retain_for_reopen,
             allow_replacement_create: operation.allow_replacement_create,
             key: request.key.clone(),
@@ -1687,6 +1909,7 @@ impl Runtime {
                 live::CloseCaptureTarget::Tab { tab_id } => tab_id.clone(),
             };
             self.ensure_pending_close_from_request(&live::CloseCaptureRequest {
+                failed_terminals: request.failed_terminals.clone(),
                 retain_for_reopen: request.retain_for_reopen,
                 key: request.key.clone(),
                 connection_generation: request.connection_generation,
@@ -2775,7 +2998,9 @@ impl Runtime {
             .map(|pane| pane.id.as_str())
             .collect::<HashSet<_>>();
         let status_unknown = self.snapshot.navigator.agents.iter().any(|agent| {
-            pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_status_check
+            pane_ids.contains(agent.pane_id.as_str())
+                && (agent.requires_close_status_check
+                    && self.failed_terminal_id(&agent.pane_id).is_none())
         });
         if status_unknown {
             self.set_error(
@@ -2788,7 +3013,9 @@ impl Runtime {
             return true;
         }
         let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
-            pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_confirmation
+            pane_ids.contains(agent.pane_id.as_str())
+                && (agent.requires_close_confirmation
+                    && self.failed_terminal_id(&agent.pane_id).is_none())
         });
         if requires_confirmation && !confirmed {
             self.set_error(
@@ -2818,12 +3045,11 @@ impl Runtime {
         confirmed: bool,
         may_queue: bool,
     ) -> bool {
-        let status_unknown = self
-            .snapshot
-            .navigator
-            .agents
-            .iter()
-            .any(|agent| agent.pane_id == pane_id && agent.requires_close_status_check);
+        let status_unknown = self.snapshot.navigator.agents.iter().any(|agent| {
+            agent.pane_id == pane_id
+                && (agent.requires_close_status_check
+                    && self.failed_terminal_id(&agent.pane_id).is_none())
+        });
         if status_unknown {
             self.set_error(
                 "pane.close_status_unknown",
@@ -2834,12 +3060,11 @@ impl Runtime {
             );
             return true;
         }
-        let requires_confirmation = self
-            .snapshot
-            .navigator
-            .agents
-            .iter()
-            .any(|agent| agent.pane_id == pane_id && agent.requires_close_confirmation);
+        let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
+            agent.pane_id == pane_id
+                && (agent.requires_close_confirmation
+                    && self.failed_terminal_id(&agent.pane_id).is_none())
+        });
         if requires_confirmation && !confirmed {
             self.set_error(
                 "pane.close_confirmation_required",
@@ -2886,8 +3111,14 @@ impl Runtime {
                             if *closing == pane_id
                     )
             });
-            if queued {
-                self.move_from_closing_target(&live::CloseCaptureTarget::Pane { pane_id }, &tab);
+            if queued && self.failed_terminal_id(&pane_id).is_none() {
+                // One pane among several: its tab stays, so it empties no
+                // checkout until its turn starts the close.
+                self.move_from_closing_target(
+                    &live::CloseCaptureTarget::Pane { pane_id },
+                    &tab,
+                    false,
+                );
             }
             return true;
         }

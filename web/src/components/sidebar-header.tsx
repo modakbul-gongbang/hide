@@ -1,8 +1,8 @@
 import { useInterfaceTranslation } from "../i18n/client";
 import { ChevronDownIcon, CirclePauseIcon, FactoryIcon, FolderGit2Icon, LaptopIcon, LayoutDashboardIcon, PlusIcon, SearchIcon, ServerIcon, SparkleIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { Badge } from "./ui/badge";
 import { Kbd } from "./ui/kbd";
-import { Button } from "./ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { Hint } from "./ui/tooltip";
 
@@ -23,74 +23,71 @@ export type DeviceMenu = {
 };
 
 /**
- * The top of the sidebar (quick device-rail-badges, replacing PRD
- * home-device-rail D-13, D-14). Every device's sidebar is the same three lines:
- * the name of the device in front (`This Mac`, `mini Remote`) with Search at
- * its right end, the shared Overview row, with the project tree directly below
- * (whose Projects title carries Add project, PRD first-run-onboarding D-27). While
- * the rail is hidden the name is a menu that lists the devices, Add device
- * and Show rail, since the rail is no longer the way to another device. A
- * device that cannot be read shows its name alone: it has no list to switch.
- * Drawn from what the caller reads out of the stores, so a test renders it
- * without them.
+ * The device in front (`This Mac`, `mini Remote`) as the window's top row
+ * draws it over the rail and the sidebar (PRD sidebar-titlebar-refresh B17,
+ * B21). While the rail is hidden the name is a menu that lists the devices,
+ * Add device and Show rail, since the rail is no longer the way to another
+ * device.
+ */
+export function DeviceTitle({ rail, title, deviceMenu }: { rail: boolean; title: { name: string; note: string | null }; deviceMenu: DeviceMenu }) {
+  if (!rail) return <HiddenRailMenu title={title} menu={deviceMenu} />;
+  return (
+    <span className="flex min-w-0 flex-1 items-baseline gap-sm">
+      <span className="min-w-0 truncate text-subhead font-semibold text-foreground" data-sidebar-title-name="true">
+        {title.name}
+      </span>
+      {title.note ? <span className="shrink-0 text-caption text-muted-foreground">{title.note}</span> : null}
+    </span>
+  );
+}
+
+/**
+ * The top of the sidebar under the window's top row (PRD
+ * sidebar-titlebar-refresh D-08): a visible Search row with the ⌘K chord as
+ * bound, then the shared Overview row and the Factory place, with the project
+ * tree directly below (whose Projects title carries Add project, PRD
+ * first-run-onboarding D-27). Drawn from what the caller reads out of the
+ * stores, so a test renders it without them.
  */
 export function SidebarHeader({
-  rail,
-  title,
   overview,
   factory,
   compact = false,
   searchChord,
-  deviceMenu,
   onSearch,
 }: {
-  /** The device rail is showing; hidden, the name opens the device menu. */
-  rail: boolean;
-  /** The device in front, and the smaller word after it. */
-  title: { name: string; note: string | null };
   compact?: boolean;
   overview?: { selected: boolean; count: number; chord: string | null; onOpen: () => void };
   /**
    * The Factory place (PRD software-factory-ui D-02, B1, B12, B23): its row
    * with the 내 차례 number, and the secretary's row under it once a Factory
    * exists; `status` is the secretary agent's mark while its pane is listed.
+   * `soon` is the row before the Factory opens: its name and a 'Soon' chip,
+   * which opens nothing (`factory/launch.ts`).
    */
-  factory?: { selected: boolean; count: number; chord: string | null; onOpen: () => void; projects: FactoryProjectRow[]; secretary: { status: ReactNode; onOpen: () => void } | null };
+  factory?: "soon" | { selected: boolean; count: number; chord: string | null; onOpen: () => void; projects: FactoryProjectRow[]; secretary: { status: ReactNode; onOpen: () => void } | null };
   searchChord: string | null;
-  deviceMenu: DeviceMenu;
   onSearch: () => void;
 }) {
   const { t } = useInterfaceTranslation();
-  const search = (
-    <Hint label={t("common.search")} shortcut={searchChord}>
-      <Button variant="ghost" size="icon-sm" data-sidebar-search="true" onClick={onSearch}>
-        <SearchIcon />
-      </Button>
-    </Hint>
-  );
-  const name = (
-    <span className="min-w-0 truncate text-subhead font-semibold text-foreground" data-sidebar-title-name="true">
-      {title.name}
-    </span>
-  );
-  const note = title.note ? <span className="shrink-0 text-caption text-muted-foreground">{title.note}</span> : null;
   return (
     <>
-      <div className="flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border pr-xs pl-md" data-sidebar-title="true">
-        {rail ? (
-          <span className="flex min-w-0 flex-1 items-baseline gap-sm">
-            {name}
-            {note}
-          </span>
-        ) : (
-          <HiddenRailMenu title={title} menu={deviceMenu} />
-        )}
-        {search}
+      <div className="shrink-0 px-sm pt-sm pb-xs">
+        <button
+          type="button"
+          data-sidebar-search="true"
+          onClick={onSearch}
+          className="flex h-(--size-sidebar-search) w-full items-center gap-sm rounded-sm border border-border bg-background px-sm text-left text-body text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          <SearchIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
+          <span className="min-w-0 flex-1 truncate">{t("common.search")}</span>
+          {searchChord ? <Kbd data-sidebar-search-chord={searchChord}>{searchChord}</Kbd> : null}
+        </button>
       </div>
       {overview ? (
         <Hint label={overview.count > 0 ? t("overview.needsYouHint", { count: overview.count }) : t("overview.title")} shortcut={overview.chord}>
           <button type="button" aria-current={overview.selected ? "page" : undefined} data-sidebar-overview="true" onClick={overview.onOpen}
-            className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border px-md text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${overview.selected ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
+            className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border px-md text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${overview.selected ? "bg-selected text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
             <LayoutDashboardIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
             <span className="min-w-0 flex-1 truncate text-left">{t("overview.title")}</span>
             {overview.count > 0 ? <span data-overview-count="true" className="text-caption text-warning">{t("overview.askingCount", { count: overview.count })}</span> : null}
@@ -98,11 +95,17 @@ export function SidebarHeader({
           </button>
         </Hint>
       ) : null}
-      {factory ? (
+      {factory === "soon" ? (
+        <div data-sidebar-factory-soon="true" className="flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border px-md text-body text-muted-foreground">
+          <FactoryIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
+          <span className="min-w-0 flex-1 truncate">{t("factory.title")}</span>
+          <Badge>{t("factory.sidebar.soon")}</Badge>
+        </div>
+      ) : factory ? (
         <>
           <Hint label={factory.count > 0 ? t("factory.sidebar.turnHint", { count: factory.count }) : t("factory.title")} shortcut={factory.chord}>
             <button type="button" aria-current={factory.selected ? "page" : undefined} data-sidebar-factory="true" onClick={factory.onOpen}
-              className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm px-md text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${factory.secretary ? "" : "border-b border-border"} ${factory.selected ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
+              className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm px-md text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${factory.secretary ? "" : "border-b border-border"} ${factory.selected ? "bg-selected text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
               <FactoryIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
               <span className="min-w-0 flex-1 truncate text-left">{t("factory.title")}</span>
               {factory.count > 0 ? <span data-factory-badge={factory.count} className="text-caption text-warning">{factory.count}</span> : null}
@@ -112,7 +115,7 @@ export function SidebarHeader({
           {factory.projects.map((project) => (
             <Hint key={project.id} label={project.paused ? `${project.name} · ${t("factory.pausedChip")}` : project.name}>
               <button type="button" aria-current={project.selected ? "page" : undefined} data-sidebar-factory-project={project.id} data-factory-paused={project.paused ? "true" : undefined} onClick={project.onOpen}
-                className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm pr-md pl-xl text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${project.selected ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
+                className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm pr-md pl-xl text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${project.selected ? "bg-selected text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
                 <FolderGit2Icon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
                 <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
                 {project.paused ? <CirclePauseIcon aria-label={t("factory.pausedChip")} className="size-(--size-icon-sm) shrink-0 text-muted-foreground" /> : null}
@@ -135,7 +138,7 @@ export function SidebarHeader({
 }
 
 /** The device name as a menu while the rail is hidden: every device, Add device, and the way to show the rail again. */
-function HiddenRailMenu({ title, menu }: { title: { name: string; note: string | null }; menu: DeviceMenu }) {
+export function HiddenRailMenu({ title, menu }: { title: { name: string; note: string | null }; menu: DeviceMenu }) {
   const { t } = useInterfaceTranslation();
   return (
     <DropdownMenu>

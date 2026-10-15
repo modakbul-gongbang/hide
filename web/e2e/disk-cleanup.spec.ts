@@ -21,6 +21,7 @@ import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
 import { countSent, screenshot } from "./wire";
 import { openProjectOverview } from "./overview-entry";
+import { initGithubRepository } from "./github-remote";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -61,6 +62,9 @@ function fakeGh(dir: string, branch: string, head: string): string {
 const key = args.slice(0, 2).join(" ");
 const answers = { "pr list": ${JSON.stringify(pulls)}, "repo view": '{"nameWithOwner":"acme/repo"}', "issue list": "[]" };
 if (key === "auth status") process.exit(0);
+if (key === "api user") { console.log("example-user"); process.exit(0); }
+if (process.argv.slice(2).join(" ").includes("review-requested:@me")) { console.log("[]"); process.exit(0); }
+if (process.argv.slice(2).join(" ").includes("HidePrFacts")) { console.log('{"data":{"repository":{"pullRequests":{"nodes":[]}}}}'); process.exit(0); }
 if (args.join(" ").includes("--state merged")) { console.log("[]"); process.exit(0); }
 if (key in answers) { console.log(answers[key]); process.exit(0); }
 console.error("unsupported: " + args.join(" "));
@@ -122,7 +126,7 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
   try {
     const repo = path.join(herdr.root, "repo");
     fs.mkdirSync(repo);
-    git(repo, ["init"]);
+    initGithubRepository(repo);
     fs.writeFileSync(path.join(repo, "README.md"), "# repo\n");
     fs.writeFileSync(path.join(repo, "Cargo.toml"), '[package]\nname = "fixture"\n');
     fs.writeFileSync(path.join(repo, "package.json"), '{"name":"fixture"}\n');
@@ -395,7 +399,7 @@ test("a worktree left with only a finished agent's pane is chosen and its pane c
     const status = await setFixtureLifecycle(herdr, pane, "idle");
     // The core hears Herdr's status change a moment after Herdr reports it, and a review reads the agents the
     // core holds, the same rows the project's badge counts: the review opens once the badge shows the turn over.
-    await expect(page.locator("[data-project-row]", { hasText: /^repo/ }).locator(`[data-badge-part="${status}"]`)).toHaveText(/\b1$/, { timeout: 30_000 });
+    await expect(page.locator("[data-project]", { has: page.locator("[data-project-row]", { hasText: /^repo/ }) }).locator(`[data-project-status] [data-badge-part="${status}"]`)).toHaveText(/\b1$/, { timeout: 30_000 });
     await open();
     await expect(row().locator("[data-disk-in-use]")).toHaveCount(0);
     await expect(row().locator('[data-disk-cell$=":worktree"]')).toHaveAttribute("data-disk-cell-state", "selectable");

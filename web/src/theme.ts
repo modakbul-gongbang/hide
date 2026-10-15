@@ -3,6 +3,9 @@
 // every rule is tested without a browser; `App.tsx` applies the result.
 
 import { ACCENT_STORED_HEX } from "./generated/accents";
+import type { ColorTheme } from "./generated/hided-ws";
+
+export type { ColorTheme };
 
 export type ThemeChoice = "system" | "light" | "dark";
 export type Theme = "light" | "dark";
@@ -22,6 +25,27 @@ export function readTheme(value: unknown): { choice: ThemeChoice; unknown: boole
   if (value === undefined || value === null) return { choice: "dark", unknown: false };
   if (value === "system" || value === "light" || value === "dark") return { choice: value, unknown: false };
   return { choice: "dark", unknown: true };
+}
+
+/** The color themes Settings offers, in its order (hide-color-theme D-02). */
+export const COLOR_THEMES: readonly ColorTheme[] = ["hide", "neutral"];
+
+/**
+ * The class on the document root that selects the Hide palette's token blocks
+ * (`scripts/gen-tokens.mjs` writes them under the same name); without it the
+ * page draws Neutral.
+ */
+export const PALETTE_HIDE_CLASS = "palette-hide";
+
+/**
+ * The stored color theme when the page knows it. Absent (a core older than
+ * the setting, or no snapshot yet) is Hide, the default, with nothing to
+ * report; a value the page does not know is Hide and worth a diagnostic (D-09).
+ */
+export function readColorTheme(value: unknown): { choice: ColorTheme; unknown: boolean } {
+  if (value === undefined || value === null) return { choice: "hide", unknown: false };
+  if (value === "hide" || value === "neutral") return { choice: value, unknown: false };
+  return { choice: "hide", unknown: true };
 }
 
 /** What the page draws: System follows the OS appearance. */

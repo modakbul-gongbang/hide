@@ -147,6 +147,7 @@ mod tests {
             other => (other, "none"),
         };
         SidebarAgentSnapshot {
+            close_session: None,
             state: Default::default(),
             resolved: None,
             resolved_recent: false,
@@ -156,7 +157,8 @@ mod tests {
             descendant_line: None,
             id: pane_id.to_owned(),
             herdr_name: None,
-            started_as_fork: false,
+            declared_fork: None,
+            forked_from: None,
             pane_id: pane_id.to_owned(),
             workspace_label: "Fixture".to_owned(),
             identity_label: "Fixture".to_owned(),
@@ -194,6 +196,7 @@ mod tests {
             spawned_from_machine_id: None,
             declared_parent_session: None,
             lineage_session: None,
+            server_mark: None,
             delegated: false,
             descendant_counts: crate::model::DescendantCountsSnapshot::default(),
             direct_child_counts: crate::model::DescendantCountsSnapshot::default(),
@@ -215,6 +218,7 @@ mod tests {
             sleep: None,
             row_facts: None,
             reply_wait: false,
+            hide_ai: None,
             request: None,
         }
     }

@@ -1,3 +1,5 @@
+import statusAxisScope from "./sidebarStatusAxisScope.json";
+import type { AgentScope } from "../agentScope";
 import { EMPTY_GALLERY_SCOPE, galleryScopes } from "./agentScopes";
 // The Projects sidebar's gallery scene (PRD design-review-workflow D-04,
 // B3, B4): a synthetic snapshot the real sidebar renders, with the content
@@ -7,7 +9,7 @@ import { EMPTY_GALLERY_SCOPE, galleryScopes } from "./agentScopes";
 // a machine. The folds are this scene's own ui state, applied by `applyEvent`
 // the way the core applies the same events, so a chevron really folds.
 
-import type { AgentRow, Checkout, MarkCounts, PullRequest, SnapshotRest, Workspace } from "../snapshot";
+import type { AgentRow, Checkout, MarkCounts, PullRequest, SleepingSession, SnapshotRest, Workspace } from "../snapshot";
 import { galleryAgentState } from "./agentStates";
 
 /** Which titles the scene carries: the Pen frame's, or long Korean ones for truncation. */
@@ -35,6 +37,10 @@ export type SceneFolds = {
   expandedAgents: string[];
   inactiveCheckoutsOpen: string[];
   inactiveProjectsOpen: boolean;
+  /** The No agents fold is open (`no_agents/local`, PRD sidebar-titlebar-refresh D-01). */
+  noAgentsOpen: boolean;
+  /** Sleeping projects the operator opened (`asleep/<project>`, D-19); every other one starts folded. */
+  asleepOpen: string[];
   /** The device the core has in front (`focus_device`); a rail tile changes it. */
   frontDevice: string;
 };
@@ -46,8 +52,15 @@ export const REFERENCE_FOLDS: SceneFolds = {
   expandedAgents: ["a1"],
   inactiveCheckoutsOpen: [],
   inactiveProjectsOpen: false,
+  noAgentsOpen: false,
+  asleepOpen: [],
   frontDevice: "local",
 };
+
+/** The projects with no agent row and no sleeping conversation, which the core folds under No agents. */
+const NO_AGENT_PROJECTS = ["investment", "landing-page", "modakbul-site"];
+/** The projects whose every agent sleeps, with how many days ago the latest fell asleep. */
+const SLEEPING_PROJECTS: Record<string, number> = { "codex-daemon-apply-spec": 4, "sticky-notes": 14 };
 
 const ROOT = "/work";
 const NO_MARKS: MarkCounts = { error: 0, approval: 0, question: 0, working: 0, stopped: 0, done: 0, idle: 0 };
@@ -157,7 +170,7 @@ export function checkout(spec: CheckoutSpec, nowSeconds: number): Checkout {
         },
     pull_request: spec.pr ? { url: "", review: null, ...spec.pr } : null,
     github: { failure_category: null, available: true, loading: false, stale: false, last_success_at_unix_ms: nowSeconds * 1000, unavailable_reason: null },
-    tabs: panes.length ? [{ id: `${spec.id}:t1`, workspace_id: spec.workspace, checkout_id: spec.id, label: "1", empty: false, delegated: false, panes: panes.map(pane) }] : [],
+    tabs: panes.length ? [{ id: `${spec.id}:t1`, workspace_id: spec.workspace, checkout_id: spec.id, label: "1", sidebar: { manual_name: null, number: 1 }, empty: false, delegated: false, panes: panes.map(pane) }] : [],
     active_tab_id: panes.length ? `${spec.id}:t1` : null,
     strip: [],
     next_tab_label: "2",
@@ -192,6 +205,21 @@ export function workspace(id: string, extra: Partial<Workspace> & Pick<Workspace
     ...extra,
     id,
   };
+}
+
+/**
+ * What the core says of each project's agents (`agent_presence`): working
+ * while a checkout counts a mark other than the resting ring, asleep for the
+ * scene's sleeping projects, which follow their own fold.
+ */
+function withPresence(row: Workspace, folds: SceneFolds, nowMs: number): Workspace {
+  const days = SLEEPING_PROJECTS[row.id];
+  if (days !== undefined) return { ...row, agent_presence: { working: false, asleep: { since_unix_ms: nowMs - days * 86_400_000, expanded: folds.asleepOpen.includes(row.id) } } };
+  const working = row.checkouts.some((value) => {
+    const counts = value.agent_summary?.marks;
+    return !!counts && counts.error + counts.approval + counts.question + counts.working + counts.stopped + counts.done > 0;
+  });
+  return { ...row, agent_presence: { working } };
 }
 
 /** a1's children in the order the core lists them; the sidebar ranks them most urgent first. */
@@ -347,16 +375,37 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       folds,
     ),
     workspace("sasu", { checkouts: [checkout({ id: "sasu:main", workspace: "sasu", branch: "main", primary: true, age: 3 * 3600, purpose: "파이프라인 정리", marks: { working: 1, done: 1, idle: 1 } }, now)] }, folds),
+    workspace("codex-daemon-apply-spec", { is_git: false, checkouts: [checkout({ id: "codex-daemon-apply-spec:folder", workspace: "codex-daemon-apply-spec", branch: null, folder: true, age: 4 * 86400 }, now)] }, folds),
+    workspace("sticky-notes", { checkouts: [checkout({ id: "sticky-notes:main", workspace: "sticky-notes", branch: "main", primary: true, age: 27 * 86400 }, now)] }, folds),
+    ...NO_AGENT_PROJECTS.map((id, index) => workspace(id, { checkouts: [checkout({ id: `${id}:main`, workspace: id, branch: "main", primary: true, age: (2 + index) * 86400 }, now)] }, folds)),
     ...["old-prototype", "dotfiles", "research-notes"].map((id, index) =>
       workspace(id, { checkouts: [checkout({ id: `${id}:main`, workspace: id, branch: "main", primary: true, age: (30 + index) * 86400 }, now)] }, folds),
     ),
-  ];
+  ].map((row) => withPresence(row, folds, nowMs));
+  if (content === "long") for (const project of workspaces) for (const checkout of project.checkouts) for (const tab of checkout.tabs) {
+    if (tab.sidebar) tab.sidebar.manual_name = "아주 긴 한국어 탭 이름과 작업 묶음의 경계 확인";
+  }
+  const sleeping: SleepingSession[] = Object.entries(SLEEPING_PROJECTS).map(([id, days]) => ({
+    sleep_id: `sleep-${id}`,
+    node_id: "local",
+    checkout_path: workspaces.find((row) => row.id === id)!.checkouts[0]!.path,
+    kind: "claude",
+    identity_label: id === "sticky-notes" ? "메모 동기화 정리" : "codex-daemon 적용 이슈 #64 정리",
+    group: "idle",
+    phase: "sleeping",
+    since_unix_ms: nowMs - days * 86_400_000,
+    reason: null,
+    wake_available: true,
+    checking: false,
+  }));
 
   const world = devices !== "one" ? deviceWorld(content, workspaces, now, folds, devices === "busy") : null;
   const rest: SnapshotRest = {
     navigator: {
       workspaces: world ? [...workspaces, world.home] : workspaces,
       inactive_projects: [{ device_id: "local", expanded: folds.inactiveProjectsOpen, project_ids: ["old-prototype", "dotfiles", "research-notes"] }],
+      no_agent_projects: [{ device_id: "local", expanded: folds.noAgentsOpen, project_ids: NO_AGENT_PROJECTS }],
+      sleeping_sessions: sleeping,
       agents,
       devices: [{ agent_scope: EMPTY_GALLERY_SCOPE, id: "local", label: "This Mac", kind: "local", state: "local", message: null, ssh_alias: null, agent_count: agents.length, test: null }, ...(world?.devices ?? [])],
       focused_device_id: folds.frontDevice,
@@ -371,6 +420,22 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
     ...(world ? { status: { remote: world.remote } } : {}),
   };
   return { rest: galleryScopes(rest, `${content}:${devices}`, folds.expandedAgents), agents };
+}
+
+/** The approved 2-1-2 cutout, rendered by the production Sidebar with invented facts. */
+export function sidebarStatusAxisScene(content: SceneContent, folds: SceneFolds, nowMs: number): { rest: SnapshotRest; agents: AgentRow[] } {
+  const base = sidebarScene(content, folds, nowMs);
+  const labels = ["탭 경계·여백 정리", "왼쪽 pane 검토", "세션 기록 동기화", "PR 질문 표시 개선", "탐색 개선"];
+  const ages = ["1m", "8m", "2s", "6m", "11m"];
+  const ids = ["a1", "a2", "a3", "q1", "e1"];
+  const agents = ids.map((id, index) => agent({ pane_id: id, identity_label: content === "long" ? `${labels[index]} · 여러 프로젝트의 한국어 작업 기록과 진행 상황을 확인합니다` : labels[index], agent_kind: index > 0 && index < 4 ? "codex" : "claude", group: index === 4 ? "seen" : "working", symbol: index === 4 ? "○" : "●", status_code: index === 4 ? "idle" : "working", elapsed: ages[index]!, state: galleryAgentState(index === 4 ? "h2" : "e1", null, nowMs) }));
+  const main = checkout({ id: "hide:main", workspace: "hide", branch: "main", primary: true, age: 480, panes: ids, marks: { working: 4, idle: 1 } }, nowMs / 1000);
+  main.tabs = [["a1", "a2"], ["a3"], ["q1", "e1"]].map((panes, index) => ({ ...main.tabs[0]!, id: `hide:main:t${index + 1}`, sidebar: { number: index + 1, manual_name: index === 0 ? "아주 긴 한국어 탭 이름과 작업 묶음의 경계 확인 · Sidebar tab groups" : null }, panes: panes.map(pane) }));
+  const scope = statusAxisScope as unknown as AgentScope;
+  main.agent_scope = scope;
+  const project = workspace("hide", { checkouts: [main], agent_scope: scope, agent_presence: { working: true } }, folds);
+  const rest = { ...base.rest, navigator: { ...base.rest.navigator, agent_scope: scope, devices: [{ ...base.rest.navigator!.devices![0]!, agent_scope: scope, agent_count: 5 }], workspaces: [project], agents, sleeping_sessions: [], inactive_projects: [], no_agent_projects: [] }, ui_state: { ...base.rest.ui_state, workspace_registrations: [registrationOf(project, "local")] } };
+  return { rest, agents };
 }
 
 const HOME_AGENTS: Record<SceneContent, AgentRow[]> = {
@@ -485,6 +550,12 @@ function toggled(list: string[], id: string): string[] {
 export function applyEvent(folds: SceneFolds, event: { kind: string; payload: Record<string, unknown> }): SceneFolds | null {
   const { kind, payload } = event;
   if (kind === "checkout_agents_toggle") return { ...folds, collapsedCheckouts: toggled(folds.collapsedCheckouts, String(payload.checkout_id)) };
+  if (kind === "session_fold_toggle" && payload.key === "no_agents/local") return { ...folds, noAgentsOpen: !folds.noAgentsOpen };
+  if (kind === "project_checkouts_fold" && String(payload.workspace_id) in SLEEPING_PROJECTS) {
+    const id = String(payload.workspace_id);
+    const expanded = typeof payload.expanded === "boolean" ? payload.expanded : !folds.asleepOpen.includes(id);
+    return { ...folds, asleepOpen: expanded ? [...new Set([...folds.asleepOpen, id])].sort() : folds.asleepOpen.filter((item) => item !== id) };
+  }
   if (kind === "project_checkouts_fold") {
     const id = String(payload.workspace_id);
     const expanded = typeof payload.expanded === "boolean" ? payload.expanded : folds.collapsedWorkspaces.includes(id);

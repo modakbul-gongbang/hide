@@ -488,6 +488,9 @@ fn tab_strip_reorder_moves_a_file_tab_without_asking_herdr() {
 fn a_closed_projected_pane_retargets_to_the_remaining_pane_in_its_checkout() {
     let mut runtime = runtime();
     let checkout_path = "/tmp/hide-closed-selected-pane";
+    let paths = workspace::paths_here([checkout_path]);
+    let checkout_path = paths.comparison(checkout_path);
+    let checkout_path = checkout_path.as_str();
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
     let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
     let registration = WorkspaceRegistration {
@@ -558,9 +561,12 @@ fn a_closed_projected_pane_retargets_to_the_remaining_pane_in_its_checkout() {
     assert!(runtime.ingest_session_with_catalog(
         Ok(payload),
         Some(session_sync::PrecomputedCatalog {
+            worktrees: runtime.worktree_catalog(),
             registrations: vec![registration],
             workspaces: vec![current_workspace],
-            paths: Default::default(),
+            // This fixture's checkout has answered facts; unknown paths are
+            // deliberately held apart by the asynchronous catalog contract.
+            paths: paths.into(),
         }),
     ));
     assert_eq!(
@@ -963,6 +969,65 @@ fn explorer_visibility_keeps_one_checkout_scoped_changes_reader_alive() {
         runtime.changes_request().is_none(),
         "a hidden Explorer adds no background Git work"
     );
+}
+
+/// The machine's node, counting each `Changes` call it answers.
+struct CountingChanges {
+    changes: std::sync::atomic::AtomicUsize,
+}
+
+impl crate::node_access::NodeLink for CountingChanges {
+    fn call(
+        &self,
+        call: hide_node_link::protocol::Call,
+        timeout: std::time::Duration,
+    ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+        if matches!(call, hide_node_link::protocol::Call::Changes { .. }) {
+            self.changes
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        hide_node::Local::of_process().call(call, timeout)
+    }
+}
+
+/// With no renderer attached History asks its node nothing, whatever panel
+/// the operator left open, and the first renderer back reads the same
+/// checkout again: one `Changes` call per change of what is shown.
+#[test]
+fn the_changes_reader_asks_nothing_while_no_renderer_is_attached() {
+    let (mut runtime, root, _checkout_id, _second, _second_id) = reveal_runtime();
+    let node = std::sync::Arc::new(CountingChanges {
+        changes: std::sync::atomic::AtomicUsize::new(0),
+    });
+    runtime.own_node = node.clone();
+    runtime.snapshot.ui_state.right_panel_visible = true;
+    runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Changes;
+    let mut reader = crate::changes::ChangesReader::new();
+    let mut wake = |runtime: &mut Runtime| {
+        let _ = reader.read_if_due(runtime.changes_request());
+        reader.join_pending();
+        let _ = reader.read_if_due(runtime.changes_request());
+        node.changes.load(std::sync::atomic::Ordering::SeqCst)
+    };
+    let attached = |runtime: &mut Runtime, attached: bool| {
+        runtime.dispatch_json(
+            &serde_json::to_vec(&serde_json::json!({
+                "schema_version": 2, "kind": "ui_attached", "payload": {"attached": attached}
+            }))
+            .unwrap(),
+        );
+    };
+    assert_eq!(wake(&mut runtime), 1);
+    attached(&mut runtime, false);
+    assert!(runtime.changes_request().is_none());
+    assert_eq!([wake(&mut runtime), wake(&mut runtime)], [1, 1]);
+    attached(&mut runtime, true);
+    assert_eq!(
+        runtime.changes_request().map(|request| request.root_path),
+        Some(root.to_string_lossy().into_owned()),
+        "the panel left open shows the same checkout again"
+    );
+    assert_eq!(wake(&mut runtime), 2);
 }
 
 /// B3, D-04: a create lands on disk, settles the slot, and moves the
@@ -1619,6 +1684,8 @@ fn rejected_close_removes_only_its_reserved_item() {
 
     runtime.ingest_close_effect_result(
         &live::CloseEffectRequest {
+            safety: None,
+            failed_terminals: Vec::new(),
             retain_for_reopen: true,
             allow_replacement_create: true,
             replacement: None,
@@ -1654,6 +1721,8 @@ fn ambiguous_close_result_keeps_the_reserved_item_for_reconciliation() {
         runtime.push_recent_closed(closed_file("first", "/repo/first.rs"));
         runtime.ingest_close_effect_result(
             &live::CloseEffectRequest {
+                safety: None,
+                failed_terminals: Vec::new(),
                 retain_for_reopen: true,
                 allow_replacement_create: true,
                 replacement: None,

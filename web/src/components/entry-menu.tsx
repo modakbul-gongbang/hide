@@ -80,8 +80,8 @@ function EntryItems<Id extends string>({ items, onSelect, parts }: { items: Menu
 
 /**
  * Wraps a target so a right-click opens its menu at the pointer, and the menu
- * key or ⇧F10 under the target. `items` is read when the menu opens, so a
- * target whose state changed while it was closed offers what it can do now.
+ * key or ⇧F10 under the target. `items` is read while the menu is open, so
+ * confirmed changes keep its choices current without reopening it.
  * The `data-*` hooks name both the target and its menu, which opens in a
  * portal outside the target. `asChild` makes the one child element the
  * target itself (a list row) instead of wrapping it. A `disabled` target, or
@@ -108,17 +108,12 @@ export function EntryContextMenu<Id extends string>({
   asChild?: boolean;
   disabled?: boolean;
 } & Record<`data-${string}`, string>) {
-  const [entries, setEntries] = useState<MenuEntry<Id>[]>([]);
+  const [open, setOpen] = useState(false);
+  const entries = open ? items() : [];
   return (
     <ContextMenu
-      canOpen={() => {
-        const next = items();
-        setEntries(next);
-        return next.length > 0;
-      }}
-      onOpenChange={(open) => {
-        if (!open) setEntries([]);
-      }}
+      canOpen={() => items().length > 0}
+      onOpenChange={setOpen}
     >
       <ContextMenuTrigger asChild={asChild} disabled={disabled} className={cn("relative", className)} {...data}>
         {children}
@@ -143,20 +138,31 @@ export function EntryDropdown<Id extends string>({
   trigger,
   hint,
   align = "end",
+  onOpenChange,
+  ...data
 }: {
   label: string;
-  items: MenuEntry<Id>[];
+  /** The items, or a reader called while open so confirmed changes keep its choices current. */
+  items: MenuEntry<Id>[] | (() => MenuEntry<Id>[]);
   onSelect: (id: Id) => void;
   trigger: ReactNode;
   hint?: string;
   align?: "start" | "center" | "end";
-}) {
+  onOpenChange?: (open: boolean) => void;
+} & Record<`data-${string}`, string>) {
+  const [open, setOpen] = useState(false);
+  const entries = typeof items === "function" ? (open ? items() : []) : items;
   const control = <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>;
   return (
-    <DropdownMenu>
+    <DropdownMenu
+      onOpenChange={(open) => {
+        setOpen(open);
+        onOpenChange?.(open);
+      }}
+    >
       {hint ? <Hint label={hint}>{control}</Hint> : control}
-      <DropdownMenuContent aria-label={label} align={align}>
-        <EntryItems items={items} onSelect={onSelect} parts={{ Item: DropdownMenuItem, Separator: DropdownMenuSeparator }} />
+      <DropdownMenuContent aria-label={label} align={align} {...data}>
+        <EntryItems items={entries} onSelect={onSelect} parts={{ Item: DropdownMenuItem, Separator: DropdownMenuSeparator }} />
       </DropdownMenuContent>
     </DropdownMenu>
   );

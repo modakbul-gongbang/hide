@@ -1,0 +1,33 @@
+import type { AgentRow, RemoteStatus } from "./snapshot";
+
+let lastLocal: AgentRow[] | null = null;
+let lastRemote: RemoteStatus[] | undefined;
+let lastRows: AgentRow[] = [];
+
+/**
+ * Every agent row this page knows: this machine's and each device's retained
+ * topology. The answer keeps its identity while no row moved, even when the
+ * device rows around the sessions did, so a snapshot that left the agents alone
+ * wakes nobody who selects it.
+ */
+export function allAgents(local: AgentRow[], remote: RemoteStatus[] | undefined): AgentRow[] {
+  if (local === lastLocal && remote === lastRemote) return lastRows;
+  const rows = remote?.some((row) => row.session?.agents?.length) ? [...local, ...remote.flatMap((row) => row.session?.agents ?? [])] : local;
+  lastLocal = local;
+  lastRemote = remote;
+  if (rows.length === lastRows.length && rows.every((row, index) => row === lastRows[index])) return lastRows;
+  lastRows = rows;
+  return rows;
+}
+
+const indexes = new WeakMap<AgentRow[], ReadonlyMap<string, AgentRow>>();
+
+/** The rows by pane, built once per agents array instead of once per header that asks. */
+export function agentsByPane(agents: AgentRow[]): ReadonlyMap<string, AgentRow> {
+  let index = indexes.get(agents);
+  if (!index) {
+    index = new Map(agents.map((agent) => [agent.pane_id, agent]));
+    indexes.set(agents, index);
+  }
+  return index;
+}

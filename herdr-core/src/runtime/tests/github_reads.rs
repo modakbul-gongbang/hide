@@ -37,6 +37,7 @@ fn pull_request(number: u32, branch: &str, badge: PullRequestBadge) -> PullReque
         closed_at_unix_ms: Some(3),
         head_oid: Some(format!("{number:040x}")),
         cross_repository: false,
+        work: Default::default(),
     }
 }
 
@@ -290,6 +291,42 @@ fn failures_in_a_row_wait_longer_up_to_five_minutes_and_a_success_starts_the_cou
     now += Duration::from_secs(1);
     let wait = seconds_until_asked_again(&mut runtime, "/tmp/a", now).unwrap();
     assert_eq!(wait, 30, "the count started over after the success");
+}
+
+/// A read whose pull requests came back and whose issues did not backs off
+/// like any failed read: before, it counted as a success and was asked again
+/// every minute for as long as the issues failed. Its pull requests were
+/// read, so one a session prints is still read for at once.
+#[test]
+fn a_read_whose_issues_failed_backs_off_and_still_reads_a_printed_pull_request() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![git_project("a", "/tmp/a", "main")];
+    let mut now = Instant::now();
+    runtime.reread_stale_github(now);
+    let issues_failed = || {
+        let mut read = read_ok("/tmp/a", vec![pull_request_in("owner/a", 1)], 10);
+        read.issues_read = false;
+        read.status.stale = true;
+        read.status.unavailable_reason = Some("gh api graphql: no answer".into());
+        GithubSnapshot {
+            projects: vec![read],
+        }
+    };
+    let mut waits = Vec::new();
+    for _ in 0..3 {
+        runtime.ingest_github_answer(issues_failed(), true);
+        now += Duration::from_secs(1);
+        let wait = seconds_until_asked_again(&mut runtime, "/tmp/a", now).unwrap();
+        waits.push(wait);
+        now += Duration::from_secs(wait);
+    }
+    assert_eq!(waits, vec![30, 60, 120]);
+
+    runtime.ingest_github_answer(issues_failed(), true);
+    runtime.reread_stale_github(now);
+    let before = generation_of(&runtime, "/tmp/a");
+    runtime.read_sighted_pull_requests(&[sighted("w9:p1", "owner/a", 2)], (now, NOW_MS));
+    assert_eq!(generation_of(&runtime, "/tmp/a"), before + 1);
 }
 
 #[test]
@@ -1017,5 +1054,152 @@ fn a_sighting_does_not_overtake_any_ask_its_project_has_out() {
         generation(&runtime, "/tmp/a"),
         refreshed + 1,
         "a sighted ask still in flight"
+    );
+}
+
+/// This machine's node as the GitHub reader and the catalog reach it: path
+/// facts and Git from the real node in this process, and each `gh` command
+/// kept and answered by its first words, so no test reaches GitHub.
+struct Machine {
+    gh: Mutex<Vec<String>>,
+    answers: &'static [(&'static str, &'static str)],
+}
+
+impl crate::node_access::NodeLink for Machine {
+    fn call(
+        &self,
+        call: hide_node_link::protocol::Call,
+        timeout: Duration,
+    ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+        let hide_node_link::protocol::Call::Gh { args, .. } = &call else {
+            return hide_node::Local::of_process().call(call, timeout);
+        };
+        let command = args.join(" ");
+        self.gh.lock().unwrap().push(command.clone());
+        let stdout = self
+            .answers
+            .iter()
+            .find(|(words, _)| command.starts_with(words))
+            .map(|(_, stdout)| (*stdout).to_owned())
+            .unwrap_or_default();
+        Ok(crate::node_access::LinkAnswer::Parsed(
+            serde_json::to_value(hide_node_link::gh::GhAnswer::Output { stdout }).unwrap(),
+        ))
+    }
+}
+
+/// A repository with no remote is answered "no GitHub remote" from the
+/// config its node already reads for the catalog, with no `gh` call, and the
+/// clock never asks for it again; once a remote is added the next catalog
+/// read carries it and the project is read at once. Before, each read ran
+/// `gh pr list` twice to learn "no git remotes found" and was retried every
+/// five minutes forever.
+#[test]
+fn a_repository_without_a_remote_asks_gh_nothing_until_a_remote_is_added() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap().join("app");
+    std::fs::create_dir(&root).unwrap();
+    let root = root.to_string_lossy().into_owned();
+    super::device_worktrees::git(&root, &["init", "-q", "-b", "main"]);
+    let node = Arc::new(Machine {
+        gh: Mutex::new(Vec::new()),
+        answers: &[
+            ("api user", "operator"),
+            (
+                "api graphql",
+                r#"{"data":{"repository":{"pullRequests":{"nodes":[]}}}}"#,
+            ),
+            ("pr list", "[]"),
+            ("repo view", r#"{"nameWithOwner":"acme/app","id":"R_1"}"#),
+            ("issue list", "[]"),
+        ],
+    });
+    let reader = std::cell::RefCell::new(crate::github::GithubReader::new(node.clone()));
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![git_project("app", &root, "main")];
+    let read_catalog = |runtime: &mut Runtime| {
+        runtime.catalog_paths = Arc::new(
+            crate::workspace::PathIndex::ask(node.as_ref(), [root.clone()].into()).unwrap(),
+        );
+    };
+    let read_github = |runtime: &mut Runtime| {
+        let request = runtime.github_request();
+        let answer = std::cell::RefCell::new(None);
+        wait_for("the GitHub reader's answer", || {
+            let mut answer = answer.borrow_mut();
+            if answer.is_none() {
+                *answer = reader.borrow_mut().read_if_due(request.clone());
+            }
+            answer.is_some()
+        });
+        let answer = answer.into_inner().unwrap();
+        runtime.ingest_github_answer(answer.snapshot, true);
+    };
+
+    let start = Instant::now();
+    read_catalog(&mut runtime);
+    runtime.reread_stale_github(start);
+    read_github(&mut runtime);
+    assert_eq!(*node.gh.lock().unwrap(), Vec::<String>::new(), "no gh call");
+    let status = &runtime.github.project(&root).expect("answered").status;
+    assert_eq!(
+        status.failure_category,
+        Some(crate::model::GithubFailureCategory::NoGithubRemote)
+    );
+    assert!(
+        !status.stale && status.unavailable_reason.is_none(),
+        "an answer, not a failure"
+    );
+    runtime.reread_stale_github(start + Duration::from_secs(1));
+    runtime.reread_stale_github(start + Duration::from_secs(10_000));
+    assert_eq!(generation_of(&runtime, &root), 0, "not asked again");
+
+    super::device_worktrees::git(
+        &root,
+        &["remote", "add", "origin", "https://github.com/acme/app.git"],
+    );
+    read_catalog(&mut runtime);
+    runtime.reread_stale_github(start + Duration::from_secs(10_001));
+    assert_eq!(
+        generation_of(&runtime, &root),
+        1,
+        "asked once its remote is added"
+    );
+    read_github(&mut runtime);
+    let asked = node.gh.lock().unwrap().clone();
+    assert!(
+        asked.iter().any(|command| command.starts_with("pr list")),
+        "{asked:?}"
+    );
+    let project = runtime.github.project(&root).expect("answered");
+    assert_eq!(
+        project.read_outcome(),
+        crate::model::GithubReadOutcome::Read,
+        "{:?} {asked:?}",
+        project.status.unavailable_reason
+    );
+    assert_eq!(project.issues.repository.as_deref(), Some("acme/app"));
+}
+
+/// Remotes the catalog does not know (an included config, an older node) can
+/// gain a GitHub one where the catalog cannot see, so `gh`'s word that there
+/// is none is asked again on the full wait rather than never.
+#[test]
+fn a_repository_gh_finds_no_remote_in_is_read_again_when_its_remotes_are_unknown() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![git_project("a", "/tmp/a", "main")];
+    let now = Instant::now();
+    runtime.reread_stale_github(now);
+    let mut no_remote = read_failed("/tmp/a");
+    no_remote.status.failure_category = Some(crate::model::GithubFailureCategory::NoGithubRemote);
+    runtime.ingest_github_answer(
+        GithubSnapshot {
+            projects: vec![no_remote],
+        },
+        true,
+    );
+    assert_eq!(
+        seconds_until_asked_again(&mut runtime, "/tmp/a", now + Duration::from_secs(1)),
+        Some(300)
     );
 }

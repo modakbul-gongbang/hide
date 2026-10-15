@@ -4,14 +4,17 @@
 //! lifecycle, query-dependent retrieval, token budgets, and the read-only hook
 //! projection.
 
+mod budget;
 mod engine;
 mod evidence;
 pub mod hook;
 mod matcher;
+mod reconcile;
 mod redaction;
 mod store;
 mod verify;
 
+pub use budget::{MemoryCallDeferral, MemoryCallKind, memory_call_reset_at};
 pub use engine::{
     AliasBackfill, AnalysisOutput, HideNativeAnalyzer, HideNativeOutputError,
     SYSTEM_PROMPT_LIMIT_BYTES,
@@ -20,6 +23,9 @@ pub use evidence::{
     EVIDENCE_ROW_LIMIT, Evidence, EvidenceFact, EvidenceKind, NAME_CANDIDATE_LIMIT, WrittenNames,
     still_holds, written_names,
 };
+pub use reconcile::{
+    COMPARISON_EXCERPT_BYTES, DocumentAuthority, DocumentComparison, PROMOTION_BATCH_LIMIT,
+};
 pub use redaction::{RedactedText, redact};
 pub use store::{
     AnalysisBatch, ApplyOptions, ApplySummary, Candidate, CandidateKind, CandidateOutcome,
@@ -27,15 +33,16 @@ pub use store::{
     InjectedItem, Injection, InjectionKind, InjectionOutcome, MemoryDetail, MemoryError,
     MemoryItem, MemoryLifecycle, MemorySource, MemoryStore, PendingCard, PreviousRevision,
     ProjectMemoryState, Promotion, PromotionState, PromotionSuggestion, ReceiptRecord,
-    RetrievalQuery, SessionCursorRecord, SessionSourceRecord, StoreMode, card_name,
+    RetrievalQuery, SessionCursorRecord, SessionSourceRecord, StoreMode, branch_name, card_name,
     parse_card_name, repository_path,
 };
 pub use verify::{
     Correction, DOCUMENT_EXCERPT_BYTES, DOCUMENT_LIMIT, EXCERPT_SOURCE_BYTES, Excerpt,
     FILE_EXCERPT_BYTES, FILE_EXCERPT_LIMIT, GLOBAL_EXCERPT_BYTES, GLOBAL_LIMIT,
     PROMOTE_CHECK_FEATURE, PromoteCheck, PromoteCheckCard, VERIFY_FEATURE, Verification,
-    VerifyError, cited_files, parse_promote_check, parse_verification, pointer_target,
-    promote_check_request, query_words, relevant_excerpt, sensitive_path, verify_request,
+    VerifyError, cited_files, creation_docs_request, parse_promote_check, parse_verification,
+    pointer_target, promote_check_request, query_words, relevant_excerpt, sensitive_path,
+    verify_request,
 };
 
 /// The Memory store's file name inside a state folder.
@@ -99,8 +106,8 @@ pub const REVERIFY_INTERVAL_MS: u64 = 86_400_000;
 /// Cards one pass verifies again, and cards one pass checks before a
 /// suggestion (D-11): each is one provider call under the daily cap.
 pub const REVERIFY_PER_PASS: usize = 4;
-/// Checks of existing cards (a re-verification or a check before a
-/// suggestion) are made only while the day's calls are under this, so a
-/// store full of cards to check cannot use the cap analysis shares with them.
+/// The bounded share of the day's calls for existing-card checks. Due
+/// re-verifications and promotion checks reserve their remaining share from
+/// analysis; without due checks, analysis may use the whole remaining total.
 pub const MAINTENANCE_CALL_LIMIT: u64 = DAILY_ANALYSIS_CALL_LIMIT / 2;
 pub const PROMOTION_CHECKS_PER_PASS: usize = 3;

@@ -122,6 +122,8 @@ pub(crate) fn of(
             0,
             None,
         )
+    } else if pane.failed_terminal_id.is_some() {
+        band("restore_failed", "error", None, None, None, 0, None)
     } else if let Some(sleep) = &pane.sleep {
         band(
             &sleep.state,
@@ -222,10 +224,17 @@ pub(crate) fn of(
         band: band(
             kind,
             tone,
-            agent
-                .request
-                .as_ref()
-                .and_then(|request| request.line.clone()),
+            // An Answer says what the row's ask says (`detail`), so a native
+            // question reads as itself here too, not as the label's line
+            // about the work around it.
+            if tag == Some(Tag::Answer) {
+                agent.detail.clone()
+            } else {
+                agent
+                    .request
+                    .as_ref()
+                    .and_then(|request| request.line.clone())
+            },
             agent.state.request_since,
             action,
             if demand { agent.raised.len() } else { 0 },

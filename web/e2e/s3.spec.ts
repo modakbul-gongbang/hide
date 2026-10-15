@@ -13,7 +13,7 @@ import zlib from "node:zlib";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
+import { countSent, enterWorkspace, screenshot, showExplorer, showProjectRow, showTool } from "./wire";
 import { chord } from "./chords";
 import { dumpOnFailure } from "./failure-dump";
 import { onDisk, quietFor } from "./wait";
@@ -139,13 +139,13 @@ async function openCheckout(page: Page, beforeLoad?: (page: Page) => Promise<voi
     await beforeLoad?.(page);
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
 
-    // Focus the repository checkout and show the Explorer in the Tools
-    // column: that is where the tree lives (S6 D-05, B10).
-    const row = page.locator("[data-project]", { hasText: "repo" }).locator("[data-checkout]").first();
+    // Focus the repository checkout and show the files tool with its tree
+    // (PRD right-lane B9).
+    const row = await showProjectRow(page, page.locator("[data-project]", { hasText: "repo" }).locator("[data-checkout]").first());
     await row.click();
     await expect(row).toHaveAttribute("aria-current", "true");
     await showExplorer(page);
-    await expect(page.locator('[data-right-panel="explorer"]')).toBeVisible();
+    await expect(page.locator("[data-lane-tree] [data-explorer]")).toBeVisible();
     await expect(page.locator(`[data-explorer-row="${repo}/src"]`)).toBeVisible();
 
     // Expand src and open the file into the preview tab.
@@ -243,11 +243,13 @@ test("the Explorer lists a checkout, expands a folder and opens a preview tab", 
     await expect.poll(() => sent.get("ui_state_update")).toBeGreaterThanOrEqual(2);
     await screenshot(page, "s3-explorer-expanded");
 
-    // A single click opened the checkout's preview tab (B3).
+    // A single click opened the checkout's preview tab (B3), and the
+    // keyboard went with it out of the tree.
     const fileTab = page.locator('[data-tab-kind="file"]');
     await expect(fileTab).toHaveCount(1);
     await expect(fileTab).toHaveAttribute("data-preview", "true");
     expect(lastSent.get("file_open")).toMatchObject({ path: `${repo}/src/main.ts`, preview: true });
+    await expect(page.locator("[data-editor-codemirror] .cm-content")).toBeFocused();
     await screenshot(page, "s3-preview-tab");
 
     // ⌘⇧K promotes the preview display to an ordinary one (B3; S7 B2).
@@ -255,9 +257,9 @@ test("the Explorer lists a checkout, expands a folder and opens a preview tab", 
     await expect.poll(() => sent.get("view_layout.keep_open")).toBe(1);
     await expect(fileTab).toHaveAttribute("data-preview", "false");
 
-    // Closing the view is one view_layout close and the terminal canvas returns.
-    await fileTab.hover();
-    await fileTab.locator("button").click();
+    // ⌘W closes the file the click opened: one view_layout close, and the
+    // terminal canvas returns.
+    await page.keyboard.press(chord("close_tab"));
     await expect.poll(() => sent.get("view_layout.close")).toBe(1);
     await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
     await expect(page.locator("[data-canvas]")).toBeVisible();
@@ -1042,12 +1044,13 @@ test("⌘P opens a file by name and ⌘K switches checkout", { tag: "@platform" 
     // row again through the core's expanded set (B3).
     await page.locator(`[data-explorer-row="${repo}/src"]`).click();
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(0);
-    await page.keyboard.press(chord("toggle_right_panel"));
-    await expect(page.locator('[data-column="views"]')).toHaveCount(0);
+    await page.keyboard.press(chord("toggle_lane"));
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
 
     // ⌘P: hided indexes the checkout, ranks the typed name and opens it in the
-    // preview tab (B12). The open turns File Views back on and reveals its
-    // row in the Explorer (S6 B10; PRD three-column-panel B2).
+    // preview tab (B12). The open brings the files tool back with the tree
+    // the close left on, and it shows the row revealed (PRD right-lane B11,
+    // B16).
     await page.keyboard.press(chord("open_file"));
     const input = page.locator('[data-palette="Open file"] [data-palette-input]');
     await expect(input).toBeVisible();
@@ -1058,7 +1061,7 @@ test("⌘P opens a file by name and ⌘K switches checkout", { tag: "@platform" 
     await row.click();
     await expect(page.locator("[data-palette-input]")).toHaveCount(0);
     await expect(page.locator('[data-tab-kind="file"]').filter({ hasText: "main.ts" })).toHaveCount(1);
-    await expect(page.locator('[data-right-panel="explorer"]')).toBeVisible();
+    await expect(page.locator("[data-lane-tree] [data-explorer]")).toBeVisible();
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveAttribute("data-selected", "true", { timeout: 10_000 });
     expect(sent.get("file_index") ?? 0).toBeGreaterThanOrEqual(1);
 
@@ -1571,6 +1574,7 @@ test("a save refused at the daemon's boundary keeps the draft unsaved, across a 
 
     await page.reload();
     await expect(content).toContainText("answer = 55", { timeout: 20_000 });
+    await showTool(page, "files");
     await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
     expect(fs.readFileSync(file, "utf8")).toBe(original);
 

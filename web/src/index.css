@@ -25,16 +25,24 @@
 }
 
 /*
- * The Seti glyph subset the file rows draw (MIT, notice at
- * desktop/resources/THIRD_PARTY_NOTICES/seti-ui-MIT.txt) and the codepoints
- * fileIcons.ts resolves. block rather than swap: the glyphs
- * are private-use codepoints, so a fallback face would draw tofu for every row
- * until the font landed.
+ * The selected fill of the row that stands for the focus (sidebar and
+ * Sessions): the chosen accent at the selected-fill share, so it reads apart
+ * from a hovered row's neutral accent. Inline, so it follows Settings >
+ * Appearance's accent and theme where the row is drawn.
  */
-@font-face {
-  font-family: "seti";
-  src: url("./assets/seti-subset.woff") format("woff");
-  font-display: block;
+@theme inline {
+  --color-selected: color-mix(in oklab, var(--primary) calc(var(--opacity-selected-fill) * 100%), transparent);
+}
+
+/*
+ * A file or folder mark (components/file-mark.tsx): the picture fileIcons.ts
+ * resolved, and the light theme's own where the icon theme draws one.
+ */
+[data-file-mark] {
+  background: var(--file-mark) center / contain no-repeat;
+}
+.light [data-file-mark] {
+  background-image: var(--file-mark-light);
 }
 
 @layer base {
@@ -195,4 +203,25 @@ html[data-view-drag="row-resize"] * {
   .graph-edge-flow {
     display: none;
   }
+}
+
+/*
+ * The window's top row is where the desktop app's window is dragged from
+ * (PRD sidebar-titlebar-refresh B19): the row is a drag region and every
+ * control inside it is not, so a press on the path, an icon or the device
+ * menu acts instead of dragging. A browser tab ignores the property.
+ */
+.window-drag {
+  -webkit-app-region: drag;
+}
+.window-drag :is(button, a, input, [role="button"], [role="menuitem"], [data-window-control]) {
+  -webkit-app-region: no-drag;
+}
+
+/*
+ * The sidebar list scrolls under its stuck section header (D-05), so a
+ * focused row is brought into view below it, never under it (B10).
+ */
+[data-project-list] {
+  scroll-padding-top: var(--size-sidebar-section-header);
 }

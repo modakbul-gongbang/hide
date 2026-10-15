@@ -16,8 +16,31 @@ use crate::request_view::{self, RowPlace};
 const PENDING_CHECKS_REREAD: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl Runtime {
+    /// The PRs list turns a working agent stalled and a pull request old with
+    /// the clock alone (PRD work-tab-pr-lens D-10, D-11), so the projection
+    /// is judged again once a minute while any pull request is listed. The
+    /// scope cache compares what it computes, so a minute that changes
+    /// nothing publishes nothing.
+    pub(super) fn tick_work_clock(&mut self, at: u64) -> bool {
+        let minute = at / 60_000;
+        if minute == self.work_clock_minute {
+            return false;
+        }
+        self.work_clock_minute = minute;
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .any(|workspace| !workspace.pull_requests.is_empty())
+            && self.refresh_agent_scopes_at(at)
+    }
+
     pub(super) fn refresh_agent_scopes(&mut self) -> bool {
-        self.agent_scope_cache.refresh(&mut self.snapshot) | self.refresh_pane_headers()
+        self.refresh_agent_scopes_at(crate::runtime::unix_milliseconds())
+    }
+
+    fn refresh_agent_scopes_at(&mut self, now: u64) -> bool {
+        self.agent_scope_cache.refresh(&mut self.snapshot, now) | self.refresh_pane_headers()
     }
 
     /// Lays the block on this Mac's rows, whose pull requests come from
@@ -172,9 +195,9 @@ impl Runtime {
     }
 
     /// Once a minute while the request view is shown, asks GitHub again for
-    /// each local project a row's pull request has checks running in, so a
-    /// finished run moves its row without a new turn (D-32, B12). Nothing is
-    /// asked while no window shows the view or no checks are running.
+    /// each local project a pull request has checks running in, so a finished
+    /// run moves its row without a new turn (D-32, B12, work-tab-pr-lens B44).
+    /// Nothing is asked while no window shows the view or no checks are running.
     pub(crate) fn reread_pending_checks(&mut self, now: std::time::Instant) {
         if !self.request_view_observed
             || self
@@ -184,7 +207,30 @@ impl Runtime {
             return;
         }
         self.pending_checks_read_at = Some(now);
+        // A pull request the Work list shows (D-25), an agent's or not, with
+        // checks running counts: the lens and a card draw them (PRD
+        // work-tab-pr-lens B44). A teammate's pull request nothing reaches is
+        // not read for.
         let running: BTreeSet<String> = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| {
+                self.github
+                    .projects
+                    .iter()
+                    .any(|project| project.root_path == workspace.path)
+                    && workspace.pull_requests.iter().any(|pull_request| {
+                        !pull_request.badge.is_settled()
+                            && pull_request.checks == crate::model::PullRequestChecks::Pending
+                            && crate::agent_state::work::board::listed(pull_request)
+                    })
+            })
+            .map(|workspace| workspace.path.clone())
+            .collect();
+        // A row of the request view with a pull request of its own checks running.
+        let agents: BTreeSet<String> = self
             .snapshot
             .navigator
             .agents
@@ -209,6 +255,7 @@ impl Runtime {
                     .map(|project| project.root_path.clone())
             })
             .collect();
+        let running: BTreeSet<String> = running.union(&agents).cloned().collect();
         for project in running {
             self.refresh_pull_requests(&project);
         }
@@ -238,20 +285,28 @@ impl Runtime {
             .any(|row| row.pane_id == pane_id)
         {
             let mut agents = self.snapshot.navigator.agents.clone();
-            changes =
-                crate::agent_state::apply_read_state(&mut agents, &mut records, Some(pane_id));
+            changes = crate::agent_state::apply_read_state(
+                &mut agents,
+                &mut records,
+                &mut self.local_read_connection,
+                Some(pane_id),
+            );
         } else {
-            for remote in &self.snapshot.status.remote {
-                if let Some(session) = remote.session.as_ref()
-                    && session.agents.iter().any(|row| row.pane_id == pane_id)
-                {
-                    let mut agents = session.agents.clone();
-                    changes = crate::agent_state::apply_read_state(
-                        &mut agents,
-                        &mut records,
-                        Some(pane_id),
-                    );
-                }
+            let remote = self.snapshot.status.remote.iter().find_map(|remote| {
+                let session = remote.session.as_ref()?;
+                session
+                    .agents
+                    .iter()
+                    .any(|row| row.pane_id == pane_id)
+                    .then(|| (remote.target_id.clone(), session.agents.clone()))
+            });
+            if let Some((target_id, mut agents)) = remote {
+                changes = crate::agent_state::apply_read_state(
+                    &mut agents,
+                    &mut records,
+                    self.read_connection(Some(&target_id)),
+                    Some(pane_id),
+                );
             }
         }
         self.snapshot.ui_state.pane_read_records = records;
@@ -262,7 +317,8 @@ impl Runtime {
         // The rows take the new record with the focus each server reports.
         let mut changed = self.refresh_pane_read_state();
         let mut records = std::mem::take(&mut self.snapshot.ui_state.pane_read_records);
-        for remote in &mut self.snapshot.status.remote {
+        let mut remotes = std::mem::take(&mut self.snapshot.status.remote);
+        for remote in &mut remotes {
             let Some(session) = remote.session.as_mut() else {
                 continue;
             };
@@ -270,10 +326,12 @@ impl Runtime {
             crate::agent_state::apply_read_state(
                 &mut session.agents,
                 &mut records,
+                self.read_connection(Some(&remote.target_id)),
                 session.focused_pane_id.as_deref(),
             );
             changed |= before != session.agents;
         }
+        self.snapshot.status.remote = remotes;
         self.snapshot.ui_state.pane_read_records = records;
         changed | self.sync_request_rows()
     }

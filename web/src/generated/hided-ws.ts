@@ -1,9 +1,6 @@
 /* Generated from contracts/hided-ws.schema.json. */
 
-/**
- * Handshake, server frames, close reason codes, path refusal reason codes, and client dispatch events for hided.
- */
-export type HidedWebSocketContract =
+export type HidedWs =
   | Handshake
   | ServerFrame
   | ClientEvent
@@ -13,6 +10,72 @@ export type HidedWebSocketContract =
   | LinksQuery
   | MemoryHookAsk
   | WorkspaceResult;
+export type LimitCell =
+  | {
+      state: "unsupported";
+    }
+  | {
+      state: "loading";
+    }
+  | {
+      state: "unavailable";
+      cause: UsageCause;
+      last_checked_at_ms: number | null;
+    }
+  | {
+      state: "reading";
+      value: LimitReading;
+      freshness: "fresh" | "stale" | "fallback";
+      observed_at_ms: number;
+    };
+export type UsageCause =
+  | "signed_out"
+  | "not_installed"
+  | "offline"
+  | "timed_out"
+  | "rate_limited"
+  | "format_changed"
+  | "capped"
+  | "no_records";
+export type WindowKind = "five_hour" | "weekly" | "monthly";
+export type WindowOutcome =
+  | {
+      state: "not_started";
+    }
+  | {
+      state: "open";
+      used_percent: number;
+      resets_at_s: number;
+    }
+  | {
+      state: "expired";
+      reset_at_s: number;
+    }
+  | {
+      state: "not_offered";
+    }
+  | {
+      state: "unreadable";
+      cause: UsageCause;
+    };
+export type ConsumptionCell =
+  | {
+      state: "unsupported";
+    }
+  | {
+      state: "loading";
+    }
+  | {
+      state: "unavailable";
+      cause: UsageCause;
+      last_checked_at_ms: number | null;
+    }
+  | {
+      state: "reading";
+      value: ConsumptionReading;
+      freshness: "fresh" | "stale" | "fallback";
+      observed_at_ms: number;
+    };
 export type WorkspaceRequestId = string;
 export type WorkspaceCommand =
   | {
@@ -53,12 +116,47 @@ export type WorkspaceCommand =
       area_id: string;
       index: number;
     };
+export type SnapshotSections =
+  | UsageSnapshot1
+  | UsagePreferences
+  | UsagePinSetPayload
+  | UsageHiddenSetPayload
+  | UiStateUsageHints
+  | FocusCheckoutPayload
+  | InterfaceLanguageSetPayload
+  | AgentLogoMode
+  | AgentLogoModeSetPayload
+  | ColorThemeSetPayload
+  | TerminalFrame
+  | AgentNotice
+  | DesktopNoticesPayload;
+/**
+ * The core's shared explicit interface language. Null follows each client's primary system language, with English for unsupported languages. Invalid stored values publish en with a diagnostic and remain stored until an explicit edit.
+ */
+export type InterfaceLanguage = null | "en" | "ko" | "zh-CN" | "ja";
+/**
+ * Whether the sidebar, the Sessions list and the tab bar draw an agent's provider logo before its title. Hidden is the default and what a store without the field, or with a value this build does not know, publishes.
+ */
+export type AgentLogoMode = "shown" | "hidden";
+/**
+ * The palette every window draws in, `ui_state.color_theme`: hide is the landing page's Owl Field colors and the default (a store without the field opens hide), neutral the grey chrome. Independent of `ui_state.theme`, which picks light, dark or system. A stored value the core does not know opens hide with the diagnostic ui_state.color_theme_unknown.
+ */
+export type ColorTheme = "hide" | "neutral";
 
+export interface HideWireTypes {
+  frame?: HidedWs;
+  sections?: SnapshotSections;
+  [k: string]: unknown;
+}
 export interface Handshake {
   token: string;
   schema_version: 2;
   client_kind?: "web" | "desktop";
   have_revision?: number;
+  /**
+   * Explicitly requests independently retained rest fields, with nested navigator, terminal and status omissions. Missing keeps schema-2 complete-rest replacement. Unknown formats close with schema_mismatch (4003).
+   */
+  snapshot_format?: "semantic-rest-v1";
   /**
    * The `core_instance` of the daemon frame that came before the snapshot `have_revision` was read from. A core started since (a move, a rollback or an update) answers a whole snapshot whatever `have_revision` says, since each core numbers its own revisions.
    */
@@ -96,9 +194,208 @@ export interface ServerFrame {
     | "core_link"
     | "agent_notice";
   payload: {
+    /**
+     * Present only after snapshot_format negotiation. Each rest field replaces one semantic value; omissions retain, explicit null/empty values clear. Navigator, terminal and status merge their independently revisioned fields. Cursor zero/reset carries all fields.
+     */
+    rest_format?: "semantic-rest-v1";
+    usage?: UsageSnapshot;
     [k: string]: unknown;
   };
   message?: string;
+}
+/**
+ * The independently revisioned top-level usage section in a snapshot or delta. Delta omission preserves the previous value; an empty nodes array clears it. A fresh snapshot, including a future-cursor reset, always carries the complete section. Usage-only changes do not resend rest.
+ */
+export interface UsageSnapshot {
+  nodes: NodeUsage[];
+}
+export interface NodeUsage {
+  node: string;
+  agents: AgentUsage[];
+  history: UsageHistory | null;
+}
+export interface AgentUsage {
+  agent: string;
+  limits: LimitCell;
+  consumption: ConsumptionCell;
+}
+export interface LimitReading {
+  /**
+   * @maxItems 16
+   */
+  windows: WindowReading[];
+}
+export interface WindowReading {
+  kind: WindowKind;
+  scope:
+    | {
+        kind: "all";
+      }
+    | {
+        kind: "model";
+        label: string;
+      };
+  outcome: WindowOutcome;
+}
+export interface ConsumptionReading {
+  popover: UsageRange;
+  year: UsageRange;
+  retained: {
+    since: string | null;
+    amount: UsageAmount;
+    /**
+     * @maxItems 32
+     */
+    providers: string[];
+  } | null;
+}
+export interface UsageRange {
+  /**
+   * Inclusive civil-date calendar bound owned by the core.
+   */
+  calendar_start: string;
+  /**
+   * Inclusive civil-date calendar bound owned by the core.
+   */
+  calendar_end: string;
+  /**
+   * Sparse recorded days, including calls with zero new tokens. The shell fills omitted dates inside the inclusive calendar bounds.
+   *
+   * @maxItems 371
+   */
+  days: UsageDay[];
+  amount: UsageAmount;
+  since: string | null;
+  active_days: number;
+  observed_days: number;
+  peak: {
+    date: string;
+    new_tokens: number;
+  } | null;
+  current_streak: number;
+  longest_streak: number;
+  reading: boolean;
+  limited: boolean;
+  files_done: number;
+  files_total: number;
+  /**
+   * The first retained day Hide AI was counted on; no earlier day is. Only the all-agents range carries it.
+   */
+  hide_ai_since: string | null;
+}
+export interface UsageDay {
+  date: string;
+  week: number;
+  weekday: number;
+  today: boolean;
+  recent_week: boolean;
+  level: number;
+  pending: boolean;
+  amount: UsageAmount;
+  /**
+   * @maxItems 3
+   */
+  top_agents: UsageContribution[];
+  /**
+   * @maxItems 6
+   */
+  agents: UsageContribution[];
+  other_agents: number;
+  /**
+   * Only the all-agents range carries it, on a day Hide AI was counted; an agent's own range is that agent's sessions.
+   */
+  hide_ai: UsageHideAiDay | null;
+}
+export interface UsageAmount {
+  calls: number;
+  new_tokens: number;
+  tokens: UsageTokens;
+  cost: UsageCost;
+}
+export interface UsageTokens {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+  cache_write_1h: number;
+  reasoning: number | null;
+}
+export interface UsageCost {
+  micro_usd: number;
+  partial: boolean;
+  waiting: boolean;
+  stale: boolean;
+  incomplete: boolean;
+  /**
+   * @maxItems 8
+   */
+  unpriced_models: string[];
+  other_unpriced_models: number;
+}
+export interface UsageContribution {
+  agent: string;
+  new_tokens: number;
+  share_basis_points: number;
+}
+/**
+ * Hide's own background AI on one day. Its known part is already inside the day's amount.
+ */
+export interface UsageHideAiDay {
+  amount: UsageAmount1;
+  /**
+   * The known Hide AI new tokens over the day's new tokens.
+   */
+  share_basis_points: number;
+  /**
+   * @maxItems 5
+   */
+  features: UsageHideAiFeature[];
+  /**
+   * Attempts that were submitted and reported no usage. A count of calls, never tokens, so it is in no amount.
+   */
+  unknown_calls: number;
+}
+/**
+ * The sum of features. A lower bound (cost.partial) when unknown_calls is not zero.
+ */
+export interface UsageAmount1 {
+  calls: number;
+  new_tokens: number;
+  tokens: UsageTokens;
+  cost: UsageCost;
+}
+export interface UsageHideAiFeature {
+  /**
+   * The closed group a router request's feature id falls into; an id outside the list is other.
+   */
+  feature: "labels" | "memory" | "factory" | "issue" | "other";
+  amount: UsageAmount;
+  /**
+   * Provider ids of the models that answered, for the row's marks.
+   *
+   * @maxItems 8
+   */
+  providers: string[];
+}
+export interface UsageHistory {
+  popover: UsageHistorySurface;
+  year: UsageHistorySurface;
+}
+export interface UsageHistorySurface {
+  range: UsageRange;
+  /**
+   * @maxItems 6
+   */
+  shares: UsageShare[];
+}
+export interface UsageShare {
+  contribution: UsageContribution;
+  since: string | null;
+  lifetime: UsageAmount;
+  /**
+   * @maxItems 32
+   */
+  providers: string[];
 }
 export interface ClientEvent {
   schema_version: 2;
@@ -161,7 +458,7 @@ export interface LinksQuery {
   };
 }
 /**
- * `hide workspace memory`: an agent hook's Project Memory, answered by the core from the one store it owns whichever machine the agent runs on, as a workspace_result without a shell. The Project is the one holding the caller pane's attested checkout, read by that checkout's own node; the request never names it. Only the core's own node and a node that dials in have Memory; a device the core dials is refused with memory_unavailable, and the node of a machine whose link to the core is down refuses its callers at once with hide_unavailable. result is {context, outcome, count?}: context is the Memory text or null, a prompt's cards with their signed receipt and a session start's card index without one, and outcome one of provided (with count), empty, disabled, unavailable, deadline, project_unresolved. The prompt is at most its first 8 KiB, and the core spends at most 1 s on the answer.
+ * `hide workspace memory`: an agent hook's Project Memory, answered by the core from the one store it owns whichever machine the agent runs on, as a workspace_result without a shell. The Project is the one holding the caller pane's attested checkout, read by that checkout's own node; the request never names it. The core's own node and any registered linked device have Memory through that device's node, regardless of connection direction; a link that is down or a helper without a Memory reader refuses immediately with a diagnostic reason, and a disconnected node refuses its callers with hide_unavailable. No store is copied to the device. result is {context, outcome, count?}: context is the Memory text or null, a prompt's cards with their signed receipt and a session start's card index without one, and outcome one of provided (with count), empty, disabled, unavailable, deadline, project_unresolved. The prompt is at most its first 8 KiB, and the core spends at most 1 s on the answer.
  */
 export interface MemoryHookAsk {
   type: "memory_hook";
@@ -185,31 +482,30 @@ export interface WorkspaceResult {
   next_action?: string;
   [k: string]: unknown;
 }
-/**
- * One row of a snapshot's `navigator.provider_usage`: a provider's seven-day account window as herdr-core/src/usage.rs reads it (docs/AI_PROVIDERS.md, Weekly usage display). state is `loading` until the first read answers, `available` for a current read, `stale` for a success kept while the provider is offline (message says how old), `fallback` for Codex's latest local session window, and `unavailable` with message saying why, a window whose reset has passed included. used_percent and resets_at_unix_seconds are null in `loading` and `unavailable`. buckets are scoped windows under the row, such as one model's own weekly limit.
- */
-export interface ProviderUsage {
-  provider: string;
-  label: string;
-  window_minutes: number;
-  state: "loading" | "available" | "stale" | "fallback" | "unavailable";
-  used_percent: number | null;
-  resets_at_unix_seconds: number | null;
-  message: string | null;
-  last_checked_at_unix_ms: number | null;
-  last_success_at_unix_ms: number | null;
-  last_error_kind: string | null;
-  buckets: ProviderUsageBucket[];
+export interface UsageSnapshot1 {
+  nodes: NodeUsage[];
 }
-/**
- * A scoped window under a providerUsage row. state is the row's own `available` or `stale` while the bucket has a value, and `unavailable` with message when its line could not be read or its reset has passed.
- */
-export interface ProviderUsageBucket {
-  label: string;
-  state: "available" | "stale" | "unavailable";
-  used_percent: number | null;
-  resets_at_unix_seconds: number | null;
-  message: string | null;
+export interface UsagePreferences {
+  /**
+   * @maxItems 3
+   */
+  pinned: {
+    agent: string;
+    window: WindowKind;
+  }[];
+  /**
+   * @maxItems 7
+   */
+  hidden: string[];
+}
+export interface UsagePinSetPayload {
+  agent: string;
+  window: WindowKind;
+  enabled: boolean;
+}
+export interface UsageHiddenSetPayload {
+  agent: string;
+  hidden: boolean;
 }
 /**
  * Two fields a `ui_state_update` payload may carry beside the UI state it replaces; the core never persists or echoes them, and an absent field keeps the core's value. usage_window_visible: a shell window is on screen, so the core reads each provider every five minutes. usage_popover_open: the Weekly Usage popover is open; its change from false to true reads again any provider last read more than a minute ago.
@@ -231,15 +527,22 @@ export interface FocusCheckoutPayload {
   project_expanded?: boolean;
 }
 /**
- * The core's shared explicit interface language. Null follows each client's primary system language, with English for unsupported languages. Invalid stored values publish en with a diagnostic and remain stored until an explicit edit.
- */
-export type InterfaceLanguage = null | "en" | "ko" | "zh-CN" | "ja";
-
-/**
  * Payload of interface_language_set. This event alone edits the core preference; ui_state_update never changes it.
  */
 export interface InterfaceLanguageSetPayload {
   language: InterfaceLanguage;
+}
+/**
+ * Payload of agent_logo_mode_set. This event alone edits the core preference; ui_state_update never changes it, and a mode the event does not name is refused and changes nothing.
+ */
+export interface AgentLogoModeSetPayload {
+  mode: AgentLogoMode;
+}
+/**
+ * Payload of color_theme_set. This event alone edits the color theme; ui_state_update never changes it, a value outside colorTheme is refused, and the current value again saves nothing.
+ */
+export interface ColorThemeSetPayload {
+  color_theme: ColorTheme;
 }
 /**
  * Payload of a terminal frame: pane output from the screen-side hub (PRD core-host-node-terminal D-11, D-22), in the order the panes' nodes produced it. One sequence numbers every pane's chunks; terminal_sequence is the client's cursor after this frame, which it names as have_terminal_sequence, with terminal_epoch as have_terminal_epoch, when it reconnects; each daemon's hub has its own epoch, so a cursor resumes only on the hub that gave it. After a whole snapshot the client resets every terminal and is sent a terminal frame with no chunks that gives its new cursor. A pane whose output a client left unsent past 1 MiB, or that a resume cannot reach, sends that client nothing more until a full frame redraws it. Keys go the other way as the `key` event {pane_id or pending_request, bytes_base64}, and a view's grid as `terminal_viewport` {pane_id, cols, rows, new_view}; both reach the pane's node directly and never the core.
@@ -263,6 +566,28 @@ export interface AgentNotice {
     title: string;
     state: "needs_you" | "done";
     place: string;
+    /**
+     * The root row's status word code. Optional for older frames.
+     */
+    status_code?:
+      | "error"
+      | "question"
+      | "approval"
+      | "working"
+      | "done"
+      | "idle"
+      | "unknown"
+      | "waiting"
+      | "stopped"
+      | "attached"
+      | "sleeping"
+      | "waking"
+      | "sleep_failed"
+      | null;
+    /**
+     * The core's chosen row detail, untranslated; absent or null means the original state-and-project body.
+     */
+    detail?: string | null;
   }[];
   clear: string[];
 }

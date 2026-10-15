@@ -10,6 +10,130 @@ use hide_host::protocol::Call;
 use hide_host::serve::handle;
 use hide_host::worktrees::{ConfirmedRemoval, ignored_repositories};
 
+/// The node's documented 45-second read includes discovering the main
+/// worktree and its metadata, not just measuring the rows afterwards.
+/// Each Git answer here takes 10 seconds, five under its individual
+/// 15-second limit so a loaded machine cannot time out the first one;
+/// renewing the repository budget after discovery would end the read near
+/// 55 seconds, five past what the assertion allows.
+#[test]
+fn a_public_read_spends_one_deadline_on_discovery_metadata_and_measurement() {
+    use std::time::{Duration, Instant};
+
+    const CHILD_ROOT: &str = "HIDE_TEST_WORKTREE_DEADLINE_ROOT";
+    if let Some(root) = std::env::var_os(CHILD_ROOT) {
+        let started = Instant::now();
+        let facts = hide_host::worktrees::read(
+            Path::new(&root),
+            &Default::default(),
+            None,
+            &hide_host::worktrees::Measured::default(),
+            false,
+        )
+        .expect("the delayed real repository remains a repository");
+        let elapsed = started.elapsed();
+        eprintln!("public repository read returned after {elapsed:?}");
+        // Five seconds allows owned-child/pipe cleanup and scheduler delay,
+        // but cannot hide even one renewed 10-second preliminary command.
+        assert!(elapsed < Duration::from_secs(50), "{elapsed:?}");
+        // Every answer is delayed, so the read cannot finish inside the one
+        // deadline; whichever part it reached last, the repository or its
+        // worktree's measurement, says it was not finished.
+        let measured_none = !facts.worktrees.is_empty()
+            && facts
+                .worktrees
+                .iter()
+                .all(|worktree| worktree.unavailable_reason.is_some());
+        assert!(
+            facts.unavailable_reason.is_some() || measured_none,
+            "{facts:?}"
+        );
+        return;
+    }
+
+    let repository = repository();
+    git(
+        repository.path(),
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    );
+    git(
+        repository.path(),
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ],
+    );
+    let inherited_path = std::env::var_os("PATH").expect("fixture requires Git on PATH");
+    let real_git = std::env::split_paths(&inherited_path)
+        .map(|directory| directory.join(format!("git{}", std::env::consts::EXE_SUFFIX)))
+        .find(|path| path.is_file())
+        .expect("fixture requires a real Git executable");
+    // The only generated executable is inside this checkout's build tree.
+    // A native Rust stand-in works on Windows too, without a shell or a
+    // product-only test hook. PATH changes only in the isolated child.
+    let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target");
+    std::fs::create_dir_all(&target).unwrap();
+    let fixture = tempfile::tempdir_in(target).unwrap();
+    let source = fixture.path().join("delayed_git.rs");
+    std::fs::write(
+        &source,
+        r#"fn main() {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "--version") {
+        return;
+    }
+    std::thread::sleep(std::time::Duration::from_secs(10));
+    let status = std::process::Command::new(std::env::var_os("HIDE_TEST_REAL_GIT").unwrap())
+        .args(args).status().unwrap();
+    std::process::exit(status.code().unwrap_or(1));
+}
+"#,
+    )
+    .unwrap();
+    let delayed_git = fixture
+        .path()
+        .join(format!("git{}", std::env::consts::EXE_SUFFIX));
+    let compiled = hide_host::worktrees::output_within(
+        Command::new("rustc")
+            .arg(&source)
+            .arg("-o")
+            .arg(&delayed_git),
+        Duration::from_secs(60),
+    )
+    .unwrap()
+    .expect("fixture compiler did not finish");
+    assert!(compiled.status.success(), "{compiled:?}");
+    // Pay the platform's first-executable check before timing the read.
+    let ready = hide_host::worktrees::output_within(
+        Command::new(&delayed_git).arg("--version"),
+        Duration::from_secs(60),
+    )
+    .unwrap()
+    .expect("fixture executable was not ready");
+    assert!(ready.status.success(), "{ready:?}");
+    let path = std::env::join_paths(
+        std::iter::once(fixture.path().to_owned()).chain(std::env::split_paths(&inherited_path)),
+    )
+    .unwrap();
+    let result = hide_host::worktrees::output_within(
+        Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "worktrees::a_public_read_spends_one_deadline_on_discovery_metadata_and_measurement",
+                "--nocapture",
+            ])
+            .env(CHILD_ROOT, repository.path())
+            .env("HIDE_TEST_REAL_GIT", real_git)
+            .env("PATH", path),
+        Duration::from_secs(90),
+    )
+    .unwrap()
+    .expect("isolated public read did not return");
+    assert!(result.status.success(), "{result:?}");
+    eprintln!("{}", String::from_utf8_lossy(&result.stderr));
+}
+
 fn removal(root: &Path, linked: &Path) -> ConfirmedRemoval {
     ConfirmedRemoval {
         repository_root: root.to_string_lossy().into_owned(),
@@ -38,7 +162,14 @@ fn a_locked_worktree_is_named_with_its_reason_and_manual_unlock_action_before_re
             linked.to_str().unwrap(),
         ],
     );
-    let facts = hide_host::worktrees::read(&root, &Default::default(), None).unwrap();
+    let facts = hide_host::worktrees::read(
+        &root,
+        &Default::default(),
+        None,
+        &hide_host::worktrees::Measured::default(),
+        false,
+    )
+    .unwrap();
     assert_eq!(facts.worktrees[1].lock_reason.as_deref(), Some(reason));
     let mut request = removal(&root, &linked);
     request.discard_changes = true;

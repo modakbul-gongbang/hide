@@ -21,17 +21,18 @@
 // assembled here (`selection.ts`), not by xterm.
 
 import { FitAddon } from "@xterm/addon-fit";
-import { WebglAddon } from "@xterm/addon-webgl";
-import { Terminal, type ITheme } from "@xterm/xterm";
+import { Terminal, type IDisposable, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { submitFiles } from "./attachments";
 import { keySystem } from "./host";
 import { terminalKey } from "./keys";
 import { noteWriteComplete, probeEnabled } from "./probe";
+import { loadTerminalRenderer } from "./terminalRenderer";
 import { remoteControl, remoteTargetOfPane } from "./remote";
 import { keyPayload, noteTerminalFocus } from "./keyTarget";
 import { bufferRow, selectionToText, type CellRow } from "./selection";
-import { osc8Handler, registerTerminalLinks, type LinkState, type TerminalLinkActions } from "./terminalLinkProvider";
+import { osc8Handler, registerTerminalLinks, terminalLinkAtCell, terminalPathOwner, type LinkState, type TerminalContextLink, type TerminalLinkActions } from "./terminalLinkProvider";
+import { isHtmlFile } from "./browserViews";
 import { pointerModifiers, wheelRows } from "./wheel";
 import type { TerminalPane } from "./snapshot";
 import { useShellStore, type TerminalChunk } from "./store";
@@ -40,6 +41,8 @@ import type { DispatchFn } from "./ws";
 type Instance = {
   term: Terminal;
   fit: FitAddon;
+  /** Lives with the instance, including while parked; no retry after fallback. */
+  renderer: IDisposable | null;
   dispatch: DispatchFn;
   /** Where a clicked link goes; replaced on every attach, like `dispatch`. */
   links: TerminalLinkActions;
@@ -215,6 +218,7 @@ export function attachedPaneIds(): string[] {
 
 function disposeInstance(paneId: string, instance: Instance) {
   instance.disposeHandlers();
+  instance.renderer?.dispose();
   instance.term.dispose();
   instance.element.remove();
   instances.delete(paneId);
@@ -418,6 +422,19 @@ export function terminalSelectionText(paneId: string): string | null {
   return instance ? selectedText(instance) : null;
 }
 
+/** Resolves only the cell right-clicked, using the link provider's existing bounds and cache. */
+export async function terminalLinkAt(paneId: string, point: { clientX: number; clientY: number }): Promise<TerminalContextLink | null> {
+  const instance = instances.get(paneId);
+  const geometry = instance && cellGeometry(instance);
+  if (!instance || !geometry || point.clientX < geometry.rect.left || point.clientX >= geometry.rect.right
+    || point.clientY < geometry.rect.top || point.clientY >= geometry.rect.bottom) return null;
+  const cell = cellAt(geometry, point);
+  const link = await terminalLinkAtCell(instance.term, paneId, instance.link, cell.column + 1, instance.term.buffer.active.viewportY + cell.row + 1);
+  if (link?.target.kind !== "path" || link.found?.kind !== "file" || !isHtmlFile(link.found.real)) return link;
+  const owner = await terminalPathOwner(link.found);
+  return { ...link, inCheckout: !!owner };
+}
+
 /** Pastes text as typed input, wrapped in bracketed paste when the program asked for it. */
 export function pasteText(paneId: string, text: string) {
   instances.get(paneId)?.term.paste(text);
@@ -506,6 +523,7 @@ function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLin
   const instance: Instance = {
     term,
     fit,
+    renderer: null,
     dispatch,
     links,
     link,
@@ -594,11 +612,9 @@ export function attachTerminal(
   shown.links = links;
   if (fresh) {
     shown.term.open(shown.element);
-    try {
-      shown.term.loadAddon(new WebglAddon());
-    } catch {
-      /* xterm's DOM renderer remains */
-    }
+    shown.renderer = loadTerminalRenderer(shown.term, (reason) => {
+      if (probeEnabled()) useShellStore.getState().noteDiagnostic(`terminal.renderer pane=${paneId} mode=dom reason=${reason}`);
+    });
     // Clicking into a pane is the operator moving keyboard focus; the core
     // owns the focus pane, so the click is an event and the header follows
     // the snapshot, not the click.

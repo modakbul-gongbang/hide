@@ -13,9 +13,17 @@ import { redact } from "./redact";
 
 type Translate = TFunction<"translation">;
 
-export type SettingsTab = "general" | "agents" | "hideAi" | "devices" | "mobile" | "shortcuts";
+export type SettingsTab = "general" | "notifications" | "usage" | "devices" | "shortcuts" | "agents" | "hideAi" | "mobile" | "github" | "about";
 
-export const SETTINGS_TABS: readonly SettingsTab[] = ["general", "agents", "hideAi", "devices", "mobile", "shortcuts"];
+/**
+ * The Settings list, top to bottom (PRD settings-left-nav B2): the App group,
+ * then the group this window's machine names (This Mac), then About apart at
+ * the foot. A group's name is a label, never a page.
+ */
+export const SETTINGS_GROUPS: readonly { id: "app" | "machine"; tabs: readonly SettingsTab[] }[] = [
+  { id: "app", tabs: ["general", "notifications", "usage", "devices", "shortcuts"] },
+  { id: "machine", tabs: ["agents", "hideAi", "mobile", "github"] },
+];
 
 /**
  * The Sleep idle agents choices (PRD agent-sleep D-10), in the hours the core
@@ -436,6 +444,23 @@ export type DiagnosticsInput = {
   lastError: { kind: string; message: string } | null | undefined;
   userAgent: string;
 };
+
+/**
+ * Copy diagnostics' input from what the stores hold, the same for Settings'
+ * About and the sidebar's Help menu (PRD sidebar-titlebar-refresh D-12).
+ */
+export function diagnosticsInputOf(state: { daemon: DaemonInfo | null; connection: string; rest: { status?: { herdr?: HerdrStatus; environment?: EnvironmentStatus[]; diagnostics?: CoreDiagnostic[]; last_error?: { kind: string; message: string } | null } } | null }, userAgent: string): DiagnosticsInput {
+  const status = state.rest?.status;
+  return {
+    daemon: state.daemon,
+    connection: state.connection,
+    herdr: status?.herdr,
+    environment: status?.environment ?? [],
+    diagnostics: status?.diagnostics ?? [],
+    lastError: status?.last_error,
+    userAgent,
+  };
+}
 
 /** How many of the core's newest diagnostics the copy carries. */
 export const COPIED_DIAGNOSTICS = 40;

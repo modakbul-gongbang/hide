@@ -10,7 +10,7 @@ import type { MessageKey } from "./i18n/catalogs";
 import { formatRelativeTime } from "./i18n/format";
 import type { InterfaceLanguage } from "./i18n/locale";
 import type { DeviceAvailability } from "./navigation";
-import { readFailureText, stageOf, type BoardProject, type PrBoard, type TasksBoard } from "./projectBoard";
+import { readFailureText, stageOf, type BoardProject, type TasksBoard } from "./projectBoard";
 import type { AgentRow, Checkout, ProjectSessions, Task, Workspace } from "./snapshot";
 
 // --- agents ------------------------------------------------------------------
@@ -69,7 +69,7 @@ export function scopeAgents(projects: readonly BoardProject[]): LensAgent[] {
 /** One stretch of a tile's bar, with the name and count its legend reads. */
 export type TileSegment = { key: string; label: string; count: number };
 
-export type TileId = "requests" | "agents" | "issues" | "prs" | "sessions";
+export type TileId = "requests" | "agents" | "issues" | "sessions";
 
 /**
  * A lens tile (D-02): its name, the big number and its unit, the yellow
@@ -141,38 +141,6 @@ export function issuesTile(board: TasksBoard, now: number, lastReadAt: number | 
             { key: "review", label: t("board.stage.review"), count: stage("review") },
           ],
     failure,
-  };
-}
-
-/**
- * The PRs tile (PRD overview-lenses-prs B1): the open pull requests once
- * GitHub has answered, the badge of the ones waiting on the operator split
- * into review, drafts and finished agents to look at, and the bar of the
- * operator's turn, an agent fixing and the blocked ones. A failed read keeps
- * the last value and says so by the name (B22).
- */
-export function prsTile(board: PrBoard, t: TFunction<"translation">): Tile {
-  const counts = board.counts;
-  const parts = [
-    { key: "review", label: t("board.stage.review"), count: counts.review },
-    { key: "draft", label: t("agentSessions.pr.draft"), count: counts.draft },
-    { key: "look", label: t("overview.reviewFinishedAgent"), count: counts.look },
-  ].filter((part) => part.count > 0);
-  return {
-    id: "prs",
-    label: t("overview.prs"),
-    value: board.open,
-    unit: t("board.unit.open"),
-    badge: board.open !== null && counts.turn > 0 ? { count: counts.turn, parts } : null,
-    bar:
-      board.open === null
-        ? null
-        : [
-            { key: "turn", label: t("board.prGroup.turn"), count: counts.turn },
-            { key: "fixing", label: t("board.prGroup.fixing"), count: counts.fixing },
-            { key: "blocked", label: t("board.prGroup.blocked"), count: counts.blocked },
-          ],
-    failure: board.failure ? readFailureText(board.failure, t) : null,
   };
 }
 

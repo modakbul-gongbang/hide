@@ -12,13 +12,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, Notification, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent, type NativeImage } from "electron";
 import { SETUP_COMMAND } from "../../../web/src/host";
 import type { MenuCommand } from "./menu";
-import { BINDINGS_CHANNEL, COMMAND_CHANNEL, LANGUAGE_CHANNEL, NOTIFY_CHANNEL, NOTIFY_OPEN_CHANNEL, NOTIFY_PERMISSION_CHANNEL, NOTIFY_SETTINGS_CHANNEL, NOTIFY_WITHDRAW_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
+import { BINDINGS_CHANNEL, COMMAND_CHANNEL, EDITOR_AVAILABLE_CHANNEL, EDITOR_OPEN_CHANNEL, LANGUAGE_CHANNEL, NOTIFY_BADGE_CHANNEL, NOTIFY_CHANNEL, NOTIFY_OPEN_CHANNEL, NOTIFY_PERMISSION_CHANNEL, NOTIFY_SETTINGS_CHANNEL, NOTIFY_WITHDRAW_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL, WINDOW_CHROME_CHANNEL, WINDOW_CHROME_GET_CHANNEL } from "../channel";
 import { BrowserViews, type ResolvedPage } from "./browser";
 import { BrowserCdpGateway, CdpActionUncertain, parseBrowserControlResult, type CdpAction, type CdpActionResult, type CdpScope } from "./browserCdp";
 import {
+  cliRecords,
   HAS_LOGIN_SHELL,
   loginPathCommand,
   healthFailure,
@@ -46,11 +47,14 @@ import { ChildRunner, startDetached, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
 import { openRoute, probe, probeRequest } from "./localPath";
 import { revealTarget } from "./reveal";
-import { KeptNotifications, notifyRequest, withdrawRequest } from "./notify";
+import { badgeRequest, ClickGate, KeptNotifications, launchedId, notifyRequest, OVERLAY_SIZE, overlayDot, toastXml, withdrawRequest } from "./notify";
+import { Editor } from "./editor";
+import { frameOptions, hidesTitleBar, windowChrome } from "./windowChrome";
 import { NOTIFICATION_SETTINGS_URL, NotificationPermissionReader } from "./notificationPermission";
 import { fromPage, toPage, WirePathError } from "./wirePath";
 
 declare const __HIDE_BACKGROUND__: string;
+declare const __HIDE_WARNING__: string;
 
 const CONNECT_TIMEOUT_MS = 25_000;
 const STATUS_TIMEOUT_MS = 5_000;
@@ -129,6 +133,12 @@ export class DesktopHost {
   /** Shown Factory and agent notifications, kept so their click still reaches the shell. */
   private readonly notifications = new KeptNotifications<Notification>();
   private readonly permission: NotificationPermissionReader;
+  /** Notification clicks, held until the shell reports its count, which it does once it holds a live snapshot to open them in. */
+  private readonly clicks = new ClickGate();
+  /** The app icon's count as last shown. */
+  private badge = 0;
+  private overlay: NativeImage | null = null;
+  private readonly editor: Editor;
 
   constructor(
     private readonly env: DesktopEnv,
@@ -139,6 +149,18 @@ export class DesktopHost {
     private readonly language: HostLanguage,
   ) {
     this.permission = new NotificationPermissionReader(process.platform, path.dirname(process.execPath), log, () => Notification.isSupported());
+    this.editor = new Editor(
+      log,
+      () => ({
+        platform: process.platform,
+        home: app.getPath("home"),
+        // The folders a CLI child searches: what was inherited, the install folders, and the login shell's once it answered.
+        searchPath: [...(this.childEnvironment().PATH ?? "").split(path.delimiter), ...(this.loginPath ?? "").split(path.delimiter)].filter(Boolean),
+        exists: (file) => fs.existsSync(file),
+        isExecutable,
+      }),
+      () => this.childEnvironment(),
+    );
   }
 
   // --- lifecycle ------------------------------------------------------------
@@ -164,7 +186,10 @@ export class DesktopHost {
     this.listenPickFolder();
     this.listenLocalPaths();
     this.listenNotify();
+    this.listenWindowChrome();
+    this.listenEditor();
     this.openWindow();
+    if (process.platform === "win32") this.listenToastActivation();
     void this.discover("launch");
   }
 
@@ -185,6 +210,7 @@ export class DesktopHost {
     this.stopWatch();
     this.runner.stop();
     this.permission.stop();
+    this.editor.stop();
     // Revoke sockets and debugger leases immediately; hold quit only for
     // the bounded authenticated unregister, never for the operator daemon.
     const close = this.browserCdp?.close() ?? Promise.resolve();
@@ -289,19 +315,27 @@ export class DesktopHost {
         replaced.removeAllListeners();
         replaced.close();
       }
-      const shown = new Notification({ title: request.title, body: request.body });
+      // Windows takes the toast Hide writes, so a click after Hide quit still names it (`toastXml`).
+      const shown = new Notification(process.platform === "win32" ? { toastXml: toastXml(request) } : { title: request.title, body: request.body });
       shown.on("click", () => {
         this.notifications.forget(request.id);
         this.log.event("notify.clicked", {});
-        if (!this.window || this.window.isDestroyed()) return;
-        if (this.window.isMinimized()) this.window.restore();
-        this.present(this.window, true);
-        this.window.webContents.send(NOTIFY_OPEN_CHANNEL, request.id);
+        this.openNotification(request.id);
       });
       shown.on("close", () => this.notifications.forget(request.id));
+      shown.on("show", () => this.permission.showSucceeded());
+      // The log records what the system said, never the words shown. Linux
+      // fails within `show()`, so a failed notification is not also logged shown.
+      let failed = false;
+      shown.on("failed", (_event, error) => {
+        failed = true;
+        this.notifications.forget(request.id);
+        this.permission.showFailed();
+        this.log.event("notify.failed", { detail: error });
+      });
       this.notifications.keep(request.id, shown)?.removeAllListeners("click");
       shown.show();
-      this.log.event("notify.shown", { replaced: replaced !== null });
+      if (!failed) this.log.event("notify.shown", { replaced: replaced !== null });
     });
     ipcMain.on(NOTIFY_WITHDRAW_CHANNEL, (event: IpcMainEvent, reported: unknown) => {
       if (!this.fromShell(event)) {
@@ -330,6 +364,20 @@ export class DesktopHost {
       }
       return this.permission.read();
     });
+    ipcMain.on(NOTIFY_BADGE_CHANNEL, (event: IpcMainEvent, reported: unknown) => {
+      if (!this.fromShell(event)) {
+        this.log.event("notify.badge_refused", { reason: "sender" });
+        return;
+      }
+      const count = badgeRequest(reported);
+      if (typeof count !== "number") {
+        this.log.event("notify.badge_refused", { reason: count.refused });
+        return;
+      }
+      if (count !== this.badge) this.showBadge(count);
+      const held = this.clicks.shellLive();
+      if (held !== null) event.sender.send(NOTIFY_OPEN_CHANNEL, held);
+    });
     ipcMain.on(NOTIFY_SETTINGS_CHANNEL, (event: IpcMainEvent) => {
       if (!this.fromShell(event)) {
         this.log.event("notify.settings_refused", { reason: "sender" });
@@ -341,6 +389,117 @@ export class DesktopHost {
         (error: unknown) => this.log.event("notify.settings_failed", { detail: String(error) }),
       );
     });
+  }
+
+  /**
+   * A notification the operator clicked: the window comes forward and the
+   * shell opens what the id names. A click before the shell holds a live
+   * snapshot (one that started Hide, or while the status page shows or the
+   * daemon is lost) waits for the shell's next count (`ClickGate`).
+   */
+  private openNotification(id: string): void {
+    const window = this.window;
+    if (!window || window.isDestroyed()) return;
+    if (window.isMinimized()) window.restore();
+    this.present(window, true);
+    const now = this.clicks.click(id);
+    if (now !== null) window.webContents.send(NOTIFY_OPEN_CHANNEL, now);
+  }
+
+  /**
+   * Windows: a click on a toast in Action Center after Hide quit starts Hide
+   * through the toast activator Electron registers, and reaches only this
+   * callback, which Electron also calls at once for a click that came before
+   * it was set (`Notification.handleActivation`). Electron makes the
+   * activator, and the Start Menu shortcut that ties Hide's AppUserModelID to
+   * it, when it first builds its notification presenter, on a thread-pool
+   * task (`shell/browser/notifications/win/windows_toast_activator.cc`,
+   * `RegisterActivator`). Building it here, at launch, starts that task long
+   * before the first toast, which could otherwise show before the shortcut
+   * exists and vanish, though nothing waits for it, and registers the
+   * activator in this process, so a click while Hide runs reaches it rather
+   * than starting a second instance that the single-instance lock would end.
+   * Not on macOS, where building the presenter asks for permission, which
+   * the wizard's button does (D-02).
+   */
+  private listenToastActivation(): void {
+    this.log.event("notify.presenter", { supported: Notification.isSupported() });
+    Notification.handleActivation((details) => {
+      const id = launchedId(details.arguments);
+      this.log.event("notify.activated", { type: details.type, named: id !== null });
+      if (id !== null) this.openNotification(id);
+    });
+  }
+
+  /**
+   * The window frame the shell's top row is drawn inside (PRD
+   * sidebar-titlebar-refresh D-15, D-17): asked once by the shell and sent on
+   * every fullscreen change. Only this window's page on the daemon origin is
+   * answered or told; the status page draws its own drag strip.
+   */
+  private listenWindowChrome(): void {
+    ipcMain.handle(WINDOW_CHROME_GET_CHANNEL, (event: IpcMainInvokeEvent) => {
+      if (!this.fromShell(event) || !this.window) {
+        this.log.event("window_chrome.refused", { reason: "sender" });
+        return null;
+      }
+      return windowChrome(process.platform, this.window.isFullScreen());
+    });
+  }
+
+  /** Tells the shell in `window` that the window entered or left fullscreen. */
+  private sendWindowChrome(window: BrowserWindow): void {
+    if (window.isDestroyed() || !this.isDaemonUrl(window.webContents.getURL())) return;
+    window.webContents.send(WINDOW_CHROME_CHANNEL, windowChrome(process.platform, window.isFullScreen()));
+  }
+
+  /**
+   * Open in VS Code (PRD sidebar-titlebar-refresh D-13, D-14, B15, B16):
+   * whether VS Code is installed, found once per launch, and a folder handed
+   * to it. Only this window's page on the daemon origin is heard; a refused
+   * or failed open shows nothing, and the log records the outcome, never the
+   * path (`editor.ts`).
+   */
+  private listenEditor(): void {
+    ipcMain.handle(EDITOR_AVAILABLE_CHANNEL, (event: IpcMainInvokeEvent) => {
+      if (!this.fromShell(event)) {
+        this.log.event("editor.refused", { reason: "sender" });
+        return false;
+      }
+      return this.editor.available();
+    });
+    ipcMain.on(EDITOR_OPEN_CHANNEL, (event: IpcMainEvent, reported: unknown) => {
+      if (!this.fromShell(event)) {
+        this.log.event("editor.refused", { reason: "sender" });
+        return;
+      }
+      this.editor.open(reported).catch(() => this.log.event("editor.failed", { reason: "unexpected" }));
+    });
+  }
+
+  /**
+   * The app icon's count of agents that need the operator, zero clearing it.
+   * macOS draws it on the Dock once it lets Hide notify and Linux where the
+   * desktop takes the LauncherEntry API, both through `app.setBadgeCount`;
+   * Windows has no app badge, so the taskbar button wears an amber dot,
+   * with the count in words for assistive technology, as VS Code does
+   * (`setOverlayIcon`).
+   */
+  private showBadge(count: number): void {
+    this.badge = count;
+    if (process.platform === "win32") {
+      const window = this.window;
+      if (!window || window.isDestroyed()) return;
+      this.overlay ??= nativeImage.createFromBitmap(overlayDot(__HIDE_WARNING__), { width: OVERLAY_SIZE, height: OVERLAY_SIZE });
+      window.setOverlayIcon(count > 0 ? this.overlay : null, count > 0 ? this.language.t("overview.needsYou", { count }) : "");
+      this.log.event("notify.badge", { count });
+    } else if (process.platform === "linux") {
+      // False where the desktop has no launcher that takes counts.
+      this.log.event("notify.badge", { count, shown: app.setBadgeCount(count) });
+    } else {
+      app.setBadgeCount(count);
+      this.log.event("notify.badge", { count });
+    }
   }
 
   /**
@@ -466,7 +625,9 @@ export class DesktopHost {
     if (!cli) return this.fail(attempt, "cli_missing", "no executable hide CLI");
     await this.ensureHerdrServer(attempt);
     if (this.quitting) return;
-    const answer = parseConnect(await this.runCli(cli.path, ["connect"], CONNECT_TIMEOUT_MS));
+    const connected = await this.runCli(cli.path, ["connect"], CONNECT_TIMEOUT_MS);
+    for (const record of cliRecords(connected.stderr)) this.log.event(record.event, { attempt, ...record.fields });
+    const answer = parseConnect(connected);
     if (this.quitting) return;
     if (answer.kind === "failed") return this.fail(attempt, answer.reason, answer.detail, answer);
     this.log.event("discovery.attached", { attempt, port: answer.port, pid: answer.pid });
@@ -654,7 +815,7 @@ export class DesktopHost {
       if (misses >= LOST_AFTER_MISSES) {
         this.log.event("daemon.lost", { port: current.port, pid: current.pid });
         // The shell keeps its own disconnected state on screen; nothing is reloaded here.
-        this.state = { ...current, kind: "lost" };
+        this.enter({ ...current, kind: "lost" });
         this.browserControlChanged();
         this.startLostPoll();
         return;
@@ -675,7 +836,7 @@ export class DesktopHost {
         this.log.event("daemon.found", { port: status.port, pid: status.pid, same_url: status.url === lost.url });
         if (status.url === lost.url) {
           // The same daemon answered again; the shell reconnects on its own.
-          this.state = { ...lost, kind: "attached" };
+          this.enter({ ...lost, kind: "attached" });
           this.browserControlChanged();
           this.startHealthWatch();
         } else {
@@ -692,9 +853,21 @@ export class DesktopHost {
   // --- the window -------------------------------------------------------------
 
   private setState(next: HostState): void {
-    this.state = next;
+    this.enter(next);
     this.browserControlChanged();
     this.render();
+  }
+
+  /**
+   * Every state change goes through here. Outside `attached` the shell has
+   * no live snapshot: a count it can no longer vouch for leaves the icon,
+   * and a click waits for its next report, which comes once it is live again.
+   */
+  private enter(next: HostState): void {
+    this.state = next;
+    if (next.kind === "attached") return;
+    this.clicks.shellGone();
+    if (this.badge !== 0) this.showBadge(0);
   }
 
   // --- scoped browser automation ---------------------------------------------
@@ -879,6 +1052,8 @@ export class DesktopHost {
       state_refused: t("native.status.stateRefused"),
       core_newer_title: t("native.status.coreNewerTitle"),
       update_failed_title: t("native.status.updateFailedTitle"),
+      // macOS draws its window buttons over the page's top, so the page keeps a drag strip there.
+      titlebar: hidesTitleBar(process.platform) ? "hidden" : "framed",
     };
     return { query, lang: query.lang };
   }
@@ -916,6 +1091,8 @@ export class DesktopHost {
   /** Draws the status page again in the language now in effect; the daemon's page follows the core itself and is left alone. */
   languageChanged(): void {
     if (this.window?.webContents.getURL().startsWith(STATUS_PAGE_URL)) this.render();
+    // The taskbar overlay's words are the host's.
+    if (process.platform === "win32" && this.badge > 0) this.showBadge(this.badge);
   }
 
   private load(pending: Promise<unknown>, state: HostState["kind"]): void {
@@ -955,6 +1132,7 @@ export class DesktopHost {
       minHeight: MIN_SIZE.height,
       show: false,
       title: "hide",
+      ...frameOptions(process.platform),
       backgroundColor: __HIDE_BACKGROUND__,
       webPreferences: {
         preload: path.join(__dirname, "preload.js"),
@@ -978,6 +1156,8 @@ export class DesktopHost {
     window.on("closed", () => {
       if (this.window === window) this.window = null;
     });
+    window.on("enter-full-screen", () => this.sendWindowChrome(window));
+    window.on("leave-full-screen", () => this.sendWindowChrome(window));
     this.guardNavigation(window);
     if (this.state.kind === "lost") {
       // A fresh page cannot load a daemon that is gone; show the search instead.
@@ -1064,6 +1244,10 @@ export class DesktopHost {
 
   private guardNavigation(window: BrowserWindow): void {
     const contents = window.webContents;
+    // A new page is not the shell that reported until it reports itself.
+    contents.on("did-start-navigation", (details) => {
+      if (details.isMainFrame && !details.isSameDocument) this.clicks.shellGone();
+    });
     contents.on("will-navigate", (event, url) => {
       if (this.isDaemonUrl(url)) return;
       event.preventDefault();

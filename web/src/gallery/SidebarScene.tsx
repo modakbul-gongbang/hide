@@ -9,12 +9,15 @@ import { useLayoutEffect, useMemo, useState } from "react";
 import { createActions } from "../actions";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { Sidebar } from "../sidebar";
+import { TitleRow } from "../TitleRow";
+import { SettingsGate } from "../SettingsSheet";
 import { useShellStore } from "../store";
 import { entryLens, useUiStore } from "../ui";
-import { applyEvent, OFFLINE_DEVICE, REFERENCE_FOLDS, sidebarScene, type SceneContent, type SceneDevices, type SceneFolds, type SceneFront } from "./sceneData";
+import { applyEvent, OFFLINE_DEVICE, REFERENCE_FOLDS, sidebarScene, sidebarStatusAxisScene, type SceneContent, type SceneDevices, type SceneFolds, type SceneFront } from "./sceneData";
 
 /** What one scene document shows; every value comes from its query string. */
 export type SceneParams = {
+  axis?: boolean;
   theme: "light" | "dark";
   /** The sidebar's width in CSS pixels, seeded as the core's `ui_state.sidebar_width`; absent, the sidebar's default. */
   width: number | null;
@@ -46,7 +49,7 @@ export function sceneParams(params: URLSearchParams): SceneParams {
   return { theme: params.get("theme") === "light" ? "light" : "dark", width: width === null ? null : Number(width), scale, content, devices, front, rail };
 }
 
-export function SidebarScene({ theme, width, scale, content, devices, front, rail }: SceneParams) {
+export function SidebarScene({ theme, width, scale, content, devices, front, rail, axis = false }: SceneParams) {
   const [folds, setFolds] = useState<SceneFolds>({ ...REFERENCE_FOLDS, frontDevice: front === "mini" ? "mini" : front === "offline" ? OFFLINE_DEVICE : "local" });
   const actions = useMemo(
     () =>
@@ -61,16 +64,16 @@ export function SidebarScene({ theme, width, scale, content, devices, front, rai
   );
 
   // Seed the app's stores before the first paint, and again on every fold.
-  const scene = useMemo(() => sidebarScene(content, folds, Date.now(), devices), [content, folds, devices]);
+  const scene = useMemo(() => axis ? sidebarStatusAxisScene(content, folds, Date.now()) : sidebarScene(content, folds, Date.now(), devices), [content, folds, devices, axis]);
   useLayoutEffect(() => {
     const sized = width === null ? scene.rest : { ...scene.rest, ui_state: { ...scene.rest.ui_state, sidebar_width: width } };
     const rest = { ...sized, ui_state: { ...sized.ui_state, device_rail_visible: rail === "shown" } };
-    useShellStore.setState({ rest, agents: scene.agents, connection: "live" });
-  }, [scene, width, rail]);
+    useShellStore.setState({ rest, agents: scene.agents, connection: "live", ...(axis ? { focusedPaneId: "a1" } : {}) });
+  }, [scene, width, rail, axis]);
 
   useLayoutEffect(() => {
-    useUiStore.setState({ sidebarMode: "projects", screen: { kind: "main" }, overviewProjectId: "hide", overviewLens: entryLens(null, "board") });
-  }, [front]);
+    useUiStore.setState({ sidebarMode: "projects", screen: axis ? { kind: "workspace" } : { kind: "main" }, overviewProjectId: "hide", overviewLens: entryLens(null, "board"), overviewOpen: false });
+  }, [front, axis]);
 
   useLayoutEffect(() => {
     const root = document.documentElement;
@@ -82,9 +85,14 @@ export function SidebarScene({ theme, width, scale, content, devices, front, rai
 
   return (
     <TooltipProvider>
-      <div className="flex h-full bg-background text-foreground" data-gallery-scene="projects-sidebar" data-scene-content={content} data-scene-devices={devices} data-scene-front={front} data-scene-rail={rail}>
-        <Sidebar actions={actions} />
+      <div className="flex h-full flex-col bg-background text-foreground" data-gallery-scene="projects-sidebar" data-scene-content={content} data-scene-devices={devices} data-scene-front={front} data-scene-rail={rail}>
+        {/* The device name sits in the window's top row over the sidebar (PRD sidebar-titlebar-refresh B17). */}
+        <TitleRow actions={actions} />
+        <div className="flex min-h-0 flex-1">
+          <Sidebar actions={actions} />
+        </div>
       </div>
+      <SettingsGate actions={actions} />
     </TooltipProvider>
   );
 }

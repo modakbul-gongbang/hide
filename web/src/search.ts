@@ -15,7 +15,8 @@ import { translate } from "./i18n/client";
 import { herdrPaneId, projectsOf } from "./remote";
 import { PR_LOOK } from "./prMark";
 import { machineName, windowDeviceId, windowFirst } from "./screenMachine";
-import type { AgentRow, Checkout, Device, GithubSearchResult, PrState, PullRequest, SnapshotRest, Task, Workspace } from "./snapshot";
+import type { AgentRow, Checkout, Device, GithubSearchResult, PrState, PullRequest, SessionWorkSearch, SnapshotRest, Task, WorkSession, Workspace } from "./snapshot";
+import { workKey } from "./sessionWork";
 
 /** The header an entry is drawn under: one per kind of thing; `label` is the catalog key the palette translates where it draws the header. */
 export type SearchGroup = { id: string; label: MessageKey };
@@ -29,6 +30,7 @@ const DEVICES_GROUP: SearchGroup = { id: "devices", label: "search.group.devices
 /** The one command ⌘K keeps. */
 const COMMANDS_GROUP: SearchGroup = { id: "commands", label: "search.group.commands" };
 export const GITHUB_GROUP: SearchGroup = { id: "github", label: "search.group.github" };
+export const SESSIONS_GROUP: SearchGroup = { id: "sessions", label: "sessionWork.sessions" };
 /** The Related list's own header; an entry in it keeps its kind's group for search. */
 export const RELATED_GROUP: SearchGroup = { id: "related", label: "search.group.related" };
 /** The empty query's second header: the checkouts last brought to the front (PRD cmdk-recent). */
@@ -36,7 +38,7 @@ export const RECENT_GROUP: SearchGroup = { id: "recent", label: "search.group.re
 /** How many Recent rows ⌘K shows; the core keeps ten so the exclusions still leave five. */
 export const RECENT_SHOWN = 5;
 
-type EntryKind = "agent" | "project" | "checkout" | "device" | "issue" | "pr" | "command";
+type EntryKind = "agent" | "session" | "project" | "checkout" | "device" | "issue" | "pr" | "command";
 
 /** A colour family for a state; the palette maps each to a token class. */
 export type Tone = "working" | "attention" | "done" | "open" | "pending" | "failed" | "muted";
@@ -44,6 +46,7 @@ export type Tone = "working" | "attention" | "done" | "open" | "pending" | "fail
 export type EntryStatus = { tone: Tone; label: string };
 
 export type SearchEntry = {
+  session?: WorkSession;
   id: string;
   title: string;
   subtitle: string;
@@ -88,6 +91,12 @@ export type SearchEntry = {
   /** A Recent row of a device that is not connected: drawn dimmed, found by arrows, and ↵ does nothing (PRD cmdk-recent D-11). */
   dimmed?: boolean;
 };
+
+/** Local work-record results have their own group and never replace Agents. */
+export function sessionEntries(answer: SessionWorkSearch | null, query: string): SearchEntry[] {
+  if (!answer || answer.query !== query || answer.loading || answer.failure) return [];
+  return answer.results.map((hit) => ({ id:`session:${workKey(hit.session)}`,title:hit.title,subtitle:hit.matched,place:hit.cwd ?? undefined,kind:"session",group:SESSIONS_GROUP,agentKind:hit.session.agent,deviceId:hit.session.device_id,session:hit.session }));
+}
 
 /** The fuzzy score of `query` against `candidate`, the same scorer hided's
  * index runs (`hided/src/index.rs`): characters in order, early and
@@ -422,6 +431,11 @@ export function numberQuery(query: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
+/** Whether the core links the agent of `entry` to pull request `number` (`request.pull_requests`: its session made it or its branch has it), every one it links, a merged one included, which is more than the PR mark draws. */
+function agentHasPr(entry: SearchEntry, number: number): boolean {
+  return entry.kind === "agent" && (entry.agent?.request?.pull_requests ?? []).some((pr) => pr.number === number);
+}
+
 /** The agents whose pane's Herdr id holds `query`, in its case since Herdr tells `pB` from `pb`, the shortest id (the whole one) first. */
 function paneIdMatches(entries: SearchEntry[], query: string): SearchEntry[] {
   return entries
@@ -438,7 +452,8 @@ function paneIdMatches(entries: SearchEntry[], query: string): SearchEntry[] {
  * a name with a colon (`fix: bug`) is held by no id, and without a colon no id
  * matches, so a name or a number never finds a pane by its id. A number (`273`, or with a hash) puts the
  * issues and then the pull requests numbered exactly that ahead of every title
- * match, each as its own row (PRD B12); the other rows must hold the digits.
+ * match, each as its own row (PRD B12), then the agents the core links to a
+ * pull request of that number; the other rows must hold the digits.
  */
 export function filterEntries(entries: SearchEntry[], query: string, limit = 80): SearchEntry[] {
   const trimmed = query.trim();
@@ -447,7 +462,7 @@ export function filterEntries(entries: SearchEntry[], query: string, limit = 80)
   const number = numberQuery(needle);
   const exact = [
     ...(trimmed.includes(":") ? paneIdMatches(entries, trimmed) : []),
-    ...(number === null ? [] : [...entries.filter((entry) => entry.kind === "issue" && entry.number === number), ...entries.filter((entry) => entry.kind === "pr" && entry.number === number)]),
+    ...(number === null ? [] : [...entries.filter((entry) => entry.kind === "issue" && entry.number === number), ...entries.filter((entry) => entry.kind === "pr" && entry.number === number), ...entries.filter((entry) => agentHasPr(entry, number))]),
   ];
   const taken = new Set(exact);
   const digits = number === null ? null : String(number);

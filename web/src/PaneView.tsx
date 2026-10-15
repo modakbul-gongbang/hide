@@ -4,10 +4,11 @@ import { memo, useEffect, useRef } from "react";
 import type { Actions } from "./actions";
 import { refusalText, submitFiles } from "./attachments";
 import { AgentMark } from "./AgentMark";
+import { agentProductName } from "./agentAdapters";
 import { StatusMark } from "./components/status-mark";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
-import { PaneForkMark, PaneHeaderBand, PanePrChip, PaneTreeButton } from "./PaneHeaderBand";
+import { PaneForkMark, PaneHeaderBand, PanePrChip } from "./PaneHeaderBand";
 import { PaneConnectionChip } from "./PaneConnection";
 import { AncestorPath, usePaneMenu, type TerminalMenuContext } from "./PaneRelations";
 import { chordLabel, commandLabel } from "./shortcutLabels";
@@ -18,7 +19,7 @@ import { wakingLine } from "./sleep";
 import type { AgentSleep, PaneRow, TerminalPane } from "./snapshot";
 import { caughtUp } from "./operatorFocus";
 import { useShellStore } from "./store";
-import { attachTerminal, bracketedPaste, focusTerminal, requestView, setTextScale, terminalSelectionText } from "./terminals";
+import { attachTerminal, bracketedPaste, focusTerminal, requestView, setTextScale, terminalLinkAt, terminalSelectionText } from "./terminals";
 
 /**
  * Transport states with a live stream; anything else is drawn as a caption in
@@ -264,7 +265,7 @@ export const PaneView = memo(function PaneView({
       zoomed,
       paneCount,
       chords: terminalMenuChords(),
-    });
+    }, terminalLinkAt(paneId, event));
   };
   const zoomChord = zoomed ? terminalMenuChords().zoom : "";
   const hidden = paneCount - 1;
@@ -297,15 +298,15 @@ export const PaneView = memo(function PaneView({
       >
         <AncestorPath pane={pane} actions={actions} />
         {agentKind && markSymbol ? <StatusMark symbol={markSymbol} className={markTone} data-pane-status-mark={markSymbol} /> : null}
-        {agentKind ? <AgentMark kind={agentKind} /> : <TerminalSquareIcon className="size-(--size-icon-sm) shrink-0" aria-label={t("agentSessions.shell")} />}
-        <Hint label={title} reveals>
+        {agentKind ? <Hint label={agentProductName(agentKind)}><span className="flex shrink-0"><AgentMark kind={agentKind} /></span></Hint> : <TerminalSquareIcon className="size-(--size-icon-sm) shrink-0" aria-label={t("agentSessions.shell")} />}
+        <Hint label={agentKind ? `${title}\n${agentProductName(agentKind)}` : title} reveals>
         <span className="min-w-0 truncate">
           {title}
+          {agentKind ? <span className="sr-only">, {agentProductName(agentKind)}</span> : null}
         </span>
         </Hint>
-        {agentKind ? <PaneForkMark pane={pane} /> : null}
+        {agentKind ? <PaneForkMark pane={pane} actions={actions} /> : null}
         {agentKind ? <PanePrChip paneId={paneId} actions={actions} /> : null}
-        {agentKind ? <PaneTreeButton paneId={paneId} actions={actions} /> : null}
         <span className="flex-1" />
         <PaneConnectionChip pane={pane} actions={actions} local={local} />
         {zoomed ? (
@@ -370,8 +371,16 @@ export const PaneView = memo(function PaneView({
           </div>
         ) : null}
         <PaneHeaderBand paneId={paneId} header={header} actions={actions} />
-        {sleep ? <SleepBody paneId={paneId} sleep={sleep} actions={actions} /> : null}
-        {caption?.reconnects && !sleep ? (
+        {pane.failed_terminal_id ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-sm overflow-auto bg-card px-lg text-center" data-pane-restore-failed={paneId}>
+            <CircleAlertIcon className="size-(--size-icon-lg) shrink-0 text-destructive" aria-hidden="true" />
+            <p className="text-subhead text-foreground" role="status">{t("panes.restore.failed")}</p>
+            <p className="max-w-full break-all text-caption text-muted-foreground">{pane.cwd}</p>
+            <p className="max-w-full text-caption text-muted-foreground">{t("panes.restore.explanation")}</p>
+            <Button size="sm" variant="outline" onClick={() => actions.closePane(paneId)}>{t("panes.restore.close")}</Button>
+          </div>
+        ) : sleep ? <SleepBody paneId={paneId} sleep={sleep} actions={actions} /> : null}
+        {caption?.reconnects && !sleep && !pane.failed_terminal_id ? (
           <button
             type="button"
             className="absolute inset-0 flex items-center justify-center bg-card text-caption text-subtle-foreground"

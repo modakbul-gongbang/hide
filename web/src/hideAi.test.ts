@@ -12,6 +12,10 @@ import {
   resetTime,
   runsOnChoices,
   unusableProviders,
+  usageLimitChoices,
+  usageLimitOf,
+  usageLimitToValue,
+  valueToUsageLimit,
 } from "./hideAi";
 import type { AiProvider, BackgroundAi, KitAgent } from "./snapshot";
 
@@ -176,5 +180,23 @@ describe("whether Hide AI would answer now (B7, B66)", () => {
     const older = ai([ready]);
     delete older.enabled;
     expect(hideAiCanAnswer(older)).toBe(true);
+  });
+});
+
+describe("the usage limit menu (PRD hide-ai-usage-limit D-01)", () => {
+  it("offers 80, 90, 95 and No limit, plus a stored percent that is none of them", () => {
+    expect(usageLimitChoices(90)).toEqual(["80", "90", "95", "none"]);
+    expect(usageLimitChoices(null)).toEqual(["80", "90", "95", "none"]);
+    expect(usageLimitChoices(85)).toEqual(["80", "85", "90", "95", "none"]);
+  });
+
+  it("reads an older daemon's missing limit as 90 and null as No limit, and round-trips the select value", () => {
+    expect(usageLimitOf(undefined)).toBe(90);
+    expect(usageLimitOf(ai([]))).toBe(90);
+    expect(usageLimitOf(ai([], { usage_limit: 95 }))).toBe(95);
+    expect(usageLimitOf(ai([], { usage_limit: null }))).toBeNull();
+    expect(usageLimitToValue(null)).toBe("none");
+    expect(valueToUsageLimit("none")).toBe("none");
+    expect(valueToUsageLimit("80")).toBe(80);
   });
 });

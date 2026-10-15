@@ -80,6 +80,13 @@ pub fn serve_with_terminals(
             opened_roots: None,
             browser: None,
             factory: false,
+            // A device's helper serves its core for the helper's whole life,
+            // and keeps its worktree facts across its restarts.
+            worktree_facts: std::env::var_os("HOME").map(|home| {
+                hide_kit::layout::worktree_facts(&hide_kit::layout::state_dir_from_process(
+                    Path::new(&home),
+                ))
+            }),
         },
     )
 }
@@ -115,6 +122,11 @@ pub struct Services<'a> {
     /// that dialed its core (PRD core-host-node-move Q17). A device its core
     /// dialed keeps no Factory and refuses it.
     pub factory: bool,
+    /// Where the node keeps what it measured of each repository's worktrees
+    /// beyond this link (`hide_kit::layout::worktree_facts`), so a node
+    /// that restarted or linked again measures only the worktrees that
+    /// moved; none keeps them for this link only.
+    pub worktree_facts: Option<PathBuf>,
 }
 
 /// The checkout roots a node's core opened on it over one link, which are
@@ -181,6 +193,7 @@ impl Services<'_> {
             opened_roots: None,
             browser: None,
             factory: false,
+            worktree_facts: None,
         }
     }
 }
@@ -200,6 +213,13 @@ fn serve_in(
     env: Env,
     services: Services<'_>,
 ) -> io::Result<()> {
+    let env = match services.worktree_facts {
+        Some(folder) => Env {
+            worktrees: Arc::new(worktrees::Measured::kept_in(folder)),
+            ..env
+        },
+        None => env,
+    };
     let terminals = services.terminals;
     let heartbeat = services.heartbeat;
     let factory = services.factory;
@@ -695,6 +715,7 @@ pub fn label_transcript(
     let transcript = hide_session::label_transcript::read(home, request).map_err(|reason| {
         let code = match reason.as_str() {
             "session_file_missing" => ErrorCode::NotFound,
+            "opencode_db_busy" | "opencode_db_changed" => ErrorCode::Busy,
             "session_kind_unsupported" => ErrorCode::Unsupported,
             reason if reason.starts_with("session_capacity:") => ErrorCode::TooLarge,
             _ => ErrorCode::Io,
@@ -729,6 +750,9 @@ pub fn session_activity(
 pub struct Env {
     pub home: Option<PathBuf>,
     pub kit: KitPlace,
+    /// The shell this account starts a pane with, and the variables Hide's
+    /// shell integration replaces and gives back.
+    pub shell: crate::shell_integration::UserShell,
     /// Raised when the node's owner goes away: a kit step still running
     /// ends the child it waits on, and no further part starts.
     pub stop: Arc<AtomicBool>,
@@ -740,6 +764,10 @@ pub struct Env {
     /// The label generator locks this node's core took, released when the
     /// last copy of the environment is dropped: with the link it served.
     pub label_locks: Arc<crate::label_lock::LabelLocks>,
+    /// What this node last measured of each repository's worktrees, which a
+    /// read of the same repository reuses for a worktree whose inputs did
+    /// not move.
+    pub worktrees: Arc<worktrees::Measured>,
 }
 
 /// The AI backends a node answering for this process keeps, shared by every
@@ -770,10 +798,12 @@ impl Env {
         Self {
             home: std::env::var_os("HOME").map(PathBuf::from),
             kit: KitPlace::Installed,
+            shell: crate::shell_integration::UserShell::of_process(),
             stop: crate::kit::process_stop(),
             ai: process_ai(),
             factory: Arc::default(),
             label_locks: Arc::default(),
+            worktrees: Arc::default(),
         }
     }
 
@@ -784,10 +814,12 @@ impl Env {
         Self {
             home,
             kit: KitPlace::Standalone,
+            shell: crate::shell_integration::UserShell::of_process(),
             stop: Arc::default(),
             ai: Arc::default(),
             factory: Arc::default(),
             label_locks: Arc::default(),
+            worktrees: Arc::default(),
         }
     }
 
@@ -905,10 +937,13 @@ pub fn handle_with_progress(
             path,
             bases,
             base_override,
+            reuse_unchanged,
         } => to_value(worktrees::read(
             &absolute(&path)?,
             &bases,
             base_override.as_deref(),
+            &env.worktrees,
+            reuse_unchanged,
         )),
         Call::BranchCheck { path, branch } => {
             worktrees::check_new_branch(&absolute(&path)?, &branch)?;
@@ -1039,15 +1074,10 @@ pub fn handle_with_progress(
             env.ai.release(instance);
             to_value(())
         }
-        Call::CodexCredentials { codex_home } => {
-            to_value(crate::usage::codex_credentials(&absolute(&codex_home)?))
-        }
-        Call::CodexSessionUsage { codex_home } => {
-            to_value(crate::usage::codex_session_usage(&absolute(&codex_home)?))
-        }
-        Call::ClaudeUsageText { cwd } => {
-            let cwd = absolute(&cwd)?;
-            to_value(crate::usage::claude_usage_text(&cwd, &mut || {
+        Call::UsagePriceFetch => to_value(crate::usage::fetch_prices()),
+        Call::UsageLimitFetch { source, root } => {
+            let root = absolute(&root)?;
+            to_value(crate::usage::fetch(source, &root, &mut || {
                 progress(Value::Null)
             }))
         }
@@ -1061,6 +1091,18 @@ pub fn handle_with_progress(
         ),
         Call::AgentInstalled { name } => {
             to_value(hide_ai::resolve_binary(Path::new(&name)).is_some())
+        }
+        Call::ShellIntegration => {
+            let home =
+                env.home("HOME is not set, so the shell integration has no place to live")?;
+            to_value(
+                crate::shell_integration::install(&home, &env.shell).map_err(|error| {
+                    HostError::new(
+                        ErrorCode::Io,
+                        format!("the shell integration could not be written: {error}"),
+                    )
+                })?,
+            )
         }
         Call::TerminateGroup { leader } => {
             if leader <= 1 {
@@ -1153,6 +1195,17 @@ pub fn handle_with_progress(
             let home = env.home("label_session_home_unavailable")?;
             label_transcript(Path::new(&home), &request)
         }
+        Call::SessionWorkContext {
+            request,
+            checkout_path,
+        } => {
+            let home = env.home("session_work_home_unavailable")?;
+            to_value(crate::session_work::read(
+                Path::new(&home),
+                &request,
+                &checkout_path,
+            )?)
+        }
         Call::SessionActivity { request } => {
             let home = env.home("session_activity_home_unavailable")?;
             session_activity(Path::new(&home), &request)
@@ -1166,6 +1219,27 @@ pub fn handle_with_progress(
                 hide_session::links::candidates(Path::new(&home), since_unix_ms, until_unix_ms)
                     .map_err(|code| HostError::new(ErrorCode::Io, code))?;
             to_value(listed)
+        }
+        Call::UsageFiles {
+            agent,
+            since_unix_ms,
+        } => {
+            let home = env.home("usage_home_unavailable")?;
+            let candidates = hide_session::usage::list(Path::new(&home), agent, since_unix_ms)
+                .map_err(|reason| HostError::new(ErrorCode::Io, reason.to_string()))?;
+            to_value(candidates)
+        }
+        Call::UsageRead {
+            agent,
+            path,
+            checkpoint,
+        } => {
+            let home = env.home("usage_home_unavailable")?;
+            let path = hide_platform::path::from_wire(&path)
+                .map_err(|_| HostError::new(ErrorCode::InvalidPath, "usage_path_invalid"))?;
+            let step = hide_session::usage::read(Path::new(&home), agent, &path, checkpoint)
+                .map_err(|reason| HostError::new(ErrorCode::Io, reason.to_string()))?;
+            to_value(step)
         }
         Call::SessionIndexRead {
             agent: hide_session::Agent::OpenCode,
@@ -1342,7 +1416,15 @@ pub fn handle_with_progress(
                 ));
             }
             let home = env.home("links_home_unavailable")?;
-            to_value(hide_session::links::read(Path::new(&home), &requests))
+            let mut answers = hide_session::links::read(Path::new(&home), &requests);
+            // Agent records carry this node's native cwd. Catalog paths use
+            // wire spelling; only the owning node may convert between them.
+            for answer in &mut answers {
+                if let Some(cwd) = answer.facts.cwd.as_mut() {
+                    *cwd = hide_platform::path::to_wire_lossy(Path::new(cwd));
+                }
+            }
+            to_value(answers)
         }
         Call::WorktreeRemove { removal } => {
             absolute(&removal.repository_root)?;
@@ -1958,7 +2040,7 @@ mod tests {
         let requests = [
             r#"{"id":1,"op":"gh","cwd":null,"args":["auth","status"]}"#,
             r#"{"id":2,"op":"factory","call":{"factory":"hide_program"}}"#,
-            r#"{"id":3,"op":"codex_credentials","codex_home":"/"}"#,
+            r#"{"id":3,"op":"usage_limit_fetch","source":"codex_usage","root":"/"}"#,
             r#"{"id":4,"op":"hello"}"#,
         ];
         let input = requests.join("\n") + "\n";

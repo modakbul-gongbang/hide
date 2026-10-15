@@ -116,6 +116,9 @@ The existing web-shell runner also completed a one-pane run with three idle batc
 The pane requested one line every 8 ms, with fifty additional markers during the driven phase.
 Here latency starts immediately before spawning `herdr pane send-text` and ends at xterm write completion.
 It is recomputed from the saved `hops` as `write_ms - t0_ms`, including CLI launch; the historical CLI-return-relative field can be negative and is not used for these public figures.
+This recomputation still subtracts a Node-clock timestamp from a page-probe timestamp without per-run clock-offset calibration.
+The headless CLI echo figures in this section and the attached-tab section below remain historical diagnostics, not calibrated latency or current acceptance evidence; the unused CLI-return-relative field also starts after input admission.
+Use the current [screen-key measurement boundary](PERFORMANCE_TESTING.md#screen-key-echo-lost-keys-and-the-terminal-paths-cost) for same-page-clock input timing.
 
 | Headless one-pane observation | n | p50 | p95 | Maximum |
 | --- | ---: | ---: | ---: | ---: |

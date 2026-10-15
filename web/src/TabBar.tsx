@@ -4,11 +4,13 @@ import type { Actions } from "./actions";
 import { StatusMark } from "./components/status-mark";
 import { markTone } from "./agentRow";
 import { AgentMark } from "./AgentMark";
+import { useAgentLogosShown } from "./agentLogoMode";
+import { agentProductName } from "./agentAdapters";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Keycap } from "./components/ui/keycap";
 import { Hint, Tooltip, TooltipTrigger, TooltipContent } from "./components/ui/tooltip";
-import type { AsyncOperation, Checkout, StripTab } from "./snapshot";
+import type { AsyncOperation, Checkout, StripTab, TabAgent } from "./snapshot";
 import { useShellStore } from "./store";
 import { tabFit, type AreaTabInteraction } from "./AreaTree";
 import { useInterfaceTranslation } from "./i18n/client";
@@ -29,9 +31,25 @@ export function closingSuffix(targetId: string, kind: "tab.close" | "pane.close"
 export function AgentTab({ number, entry, checkout, interaction, actions, renaming, onCancelRename }: { number: number | null; entry: StripTab; checkout: Checkout; interaction: AreaTabInteraction; actions: Actions; renaming: boolean; onCancelRename: () => void }) {
   const { t } = useInterfaceTranslation();
   const operations = useShellStore((s) => s.rest?.status?.async_operations) ?? NONE;
-  const agent = checkout.tabs.find((row) => row.id === entry.source_id)?.agent;
-  const identity = `${agent ? t("panes.agent.tabIdentityAgent", { kind: agent.agent_kind, label: entry.label }) : t("panes.agent.tabIdentityTerminal", { label: entry.label })}${agent ? ` · ${statusText(t, agent.status_code)}` : ""}`;
-  return <TabButton entry={entry} editor={renaming ? <TabRenameInput key={entry.source_id} entry={entry} actions={actions} onCancel={onCancelRename} /> : null} identity={identity} mark={<>{agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-tab-status={agent.status_code} /> : null}<AgentMark kind={agent?.agent_kind} /></>} number={number} active={interaction.selected} areaActive={interaction.areaActive} closing={closingSuffix(entry.source_id, "tab.close", operations)} closeLabel={t("shell.closeTab", { title: entry.label })} fit={interaction.fit} dragging={interaction.dragging} onSelect={interaction.select} onClose={() => actions.closeTab(entry.source_id)} onPointerDown={interaction.press} />;
+  const tab = checkout.tabs.find((row) => row.id === entry.source_id);
+  const agent = tab?.agent;
+  // The core gives only agent panes an identity, on local and device tabs alike.
+  // Native subagents live inside that pane and are not additional panes.
+  const agentPaneCount = tab?.panes.reduce((count, pane) => count + Number(pane.identity_label !== null), 0) ?? 0;
+  const identity = `${agent ? t("panes.agent.tabIdentityAgent", { kind: agentProductName(agent.agent_kind), label: entry.label }) : t("panes.agent.tabIdentityTerminal", { label: entry.label })}${agent ? ` · ${statusText(t, agent.status_code)}` : ""}${agentPaneCount > 0 ? ` · ${t("panes.agent.tabPaneCount", { count: agentPaneCount })}` : ""}`;
+  return <TabButton entry={entry} editor={renaming ? <TabRenameInput key={entry.source_id} entry={entry} actions={actions} onCancel={onCancelRename} /> : null} identity={identity} agentPaneCount={agentPaneCount} mark={<TabMark agent={agent} />} number={number} active={interaction.selected} areaActive={interaction.areaActive} closing={closingSuffix(entry.source_id, "tab.close", operations)} closeLabel={t("shell.closeTab", { title: entry.label })} fit={interaction.fit} dragging={interaction.dragging} onSelect={interaction.select} onClose={() => actions.closeTab(entry.source_id)} onPointerDown={interaction.press} />;
+}
+
+/**
+ * An agent tab's mark: its status, then its logo while logos are shown or an
+ * ⌥ hold peeks at them (PRD agent-logo-view-mode B7, B13); a tab with no agent
+ * is the neutral `>_` in both modes.
+ */
+function TabMark({ agent }: { agent: TabAgent | null | undefined }) {
+  const shown = useAgentLogosShown();
+  const status = agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-tab-status={agent.status_code} /> : null;
+  if (agent && !shown) return status;
+  return <>{status}<AgentMark kind={agent?.agent_kind} /></>;
 }
 
 function TabRenameInput({ entry, actions, onCancel }: { entry: StripTab; actions: Actions; onCancel: () => void }) {
@@ -95,6 +113,7 @@ function TabRenameInput({ entry, actions, onCancel }: { entry: StripTab; actions
 const TabButton = memo(function TabButton({
   entry,
   identity,
+  agentPaneCount,
   editor,
   mark,
   active,
@@ -110,6 +129,7 @@ const TabButton = memo(function TabButton({
 }: {
   entry: StripTab;
   identity: string;
+  agentPaneCount: number;
   editor: React.ReactNode;
   mark: React.ReactNode;
   active: boolean;
@@ -150,9 +170,20 @@ const TabButton = memo(function TabButton({
       }}
     >
       {mark}
-      {editor ?? <span className={`min-w-0 flex-1 truncate ${fit.title}`}>
+      {editor ?? <span className={`@container/tab-title flex min-w-0 flex-1 items-center gap-xs ${fit.title}`}>
+        <span className="min-w-0 flex-1 truncate">
         {entry.label}
         {closing ? <span className="text-muted-foreground"> {t("panes.transport.closing")}</span> : null}
+        </span>
+        {/* Keep title room and the close/keycap slot even at the title minimum.
+            CSS follows the available title slot without another resize observer. */}
+        {agentPaneCount >= 2 && slotFit === "titled" ? <span aria-hidden="true" data-agent-pane-count={agentPaneCount} className="hidden shrink-0 items-center gap-xxs text-micro text-muted-foreground tabular-nums agent-tab-count-room:inline-flex">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1" className="size-(--size-icon-sm) shrink-0">
+            <rect x="1.5" y="2" width="11" height="10" rx="1.5" />
+            <path d="M7 2v10M7 7h5.5" />
+          </svg>
+          {agentPaneCount}
+        </span> : null}
       </span>}
       <Hint label={closeLabel}>
         <Button

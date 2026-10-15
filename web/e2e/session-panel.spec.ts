@@ -6,7 +6,7 @@ import path from "node:path";
 import { declareParent, labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { chord } from "./chords";
-import { chooseTheme, countSent, screenshot } from "./wire";
+import { chooseTheme, countSent, screenshot, showTool } from "./wire";
 import { quietFor, unchangedForFrames } from "./wait";
 
 test.describe.configure({ timeout: 240_000 });
@@ -43,10 +43,7 @@ const QUESTION = "긴 한국어 요청을 읽은 뒤 질문 표시가 흐려지�
 const sentTotal = (sent: Map<string, number>) => [...sent.values()].reduce((sum, count) => sum + count, 0);
 
 async function ensureSessions(page: Page) {
-  if (!await page.locator("[data-session-panel]").isVisible()) {
-    if (!await page.locator("[data-tool-tabs]").isVisible()) await page.getByRole("button", { name: "Tools", exact: true }).click();
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
-  }
+  await showTool(page, "work");
   await expect(page.locator("[data-session-panel]")).toBeVisible();
 }
 
@@ -88,9 +85,8 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator(`nav[data-sidebar] [data-agent-open="${parent}"]`).first().click();
-    await page.getByRole("button", { name: "Tools", exact: true }).click();
-    await expect(page.locator('[data-tool-tabs] [data-tool-tab]')).toHaveText(["Sessions", "Explorer", "History", "Memory"]);
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    await expect.poll(() => page.locator("[data-lane-tool]").evaluateAll((tools) => tools.map((tool) => tool.getAttribute("aria-label")))).toEqual(["Work", "Memory", "Files", "Changes"]);
+    await showTool(page, "work");
     const panel = page.locator("[data-session-panel]");
     const showSessions = () => ensureSessions(page);
     const row = (pane: string) => panel.locator(`[data-session-row="${pane}"]`);
@@ -107,7 +103,7 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await expect.poll(() => last.get("request_view")?.observing).toBe(true);
     expect(last.get("ui_state_update")?.right_panel_section).not.toBe("sessions");
     const children = panel.locator(`[data-session-chevron="${parent}"]`);
-    await expect(row(parent).locator('[data-descendant-mark="working"]')).toContainText("1");
+    await expect(row(parent).locator('[data-descendant-mark]')).toHaveCount(0);
     await children.click();
     await expect(panel.locator(`[data-session-child="${child}"]`)).toContainText("하위 작업 검증");
     expect(await rightEdge(panel.locator(`[data-session-child="${child}"] [data-resolve-slot]`))).toBe(await rightEdge(row(parent).locator("[data-session-resolve]")));
@@ -137,11 +133,12 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await head("resolved").click();
     await expect(row(stopped)).toBeVisible();
     expect(JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "core-state.json"), "utf8")).resolved_sessions[stopped]).toBeTruthy();
-    // Closing/reopening the document retains both the chosen tool and resolution.
+    // A restart keeps the chosen tool up over the agents (PRD right-lane B22), and the resolution.
     daemon = await daemon.restart();
     await page.goto("about:blank");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await expect(page.locator('[data-tool-tab="agent_sessions"]')).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator('[data-workspace-screen][data-lane-mode="overlay"]')).toHaveAttribute("data-lane-shows", "work");
+    await showSessions();
     await expect(head("resolved")).toContainText("1");
     await expect(page.locator(`nav[data-sidebar] [data-pane="${stopped}"]`)).toHaveCount(0);
     await head("resolved").click();
@@ -155,15 +152,15 @@ test("Sessions groups, read rules, child navigation and durable resolution share
       await chooseTheme(page, theme);
       await screenshot(page, `sessions-panel-${theme}`);
     }
-    // All projects has three tabs; project Overview has conversation history, no Requests.
+    // All projects includes Usage; project Overview has conversation history, no Requests.
     await page.keyboard.press(chord("sidebar_agents"));
     const modal = page.getByRole("dialog", { name: "Overview", exact: true });
     await modal.getByRole("tab", { name: "repo", exact: true }).click();
-    expect(await modal.locator("[data-lens-tile]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-lens-tile")))).toEqual(["agents", "issues", "prs", "sessions"]);
+    expect(await modal.locator("[data-lens-tile]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-lens-tile")))).toEqual(["agents", "issues", "sessions"]);
     await expect(modal.locator('[data-lens-tile="sessions"]')).toContainText("Conversation history");
+    await modal.getByRole("tab", { name: "All projects", exact: true }).click();
+    expect(await modal.locator("[data-main-tab]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-main-tab")))).toEqual(["agents", "tasks", "projects", "usage"]);
     await page.keyboard.press("Escape");
-    await page.locator("[data-home-destination]").click();
-    expect(await page.locator("[data-main-tab]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-main-tab")))).toEqual(["agents", "tasks", "projects"]);
     await page.locator(`nav[data-sidebar] [data-agent-open="${stopped}"]`).first().click();
     await showSessions();
     await page.mouse.move(2, 998);

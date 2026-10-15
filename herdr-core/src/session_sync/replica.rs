@@ -148,6 +148,9 @@ impl SessionReplica {
     }
 
     pub(crate) fn from_decoded(state: ProjectionState) -> Result<Self, SessionFetchError> {
+        for pane in &state.panes {
+            report_restore_failure(pane);
+        }
         let generation = NEXT_REPLICA_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let tab_moves = crate::sidebar::SessionTabMoves::new(generation);
         let replica = Self {
@@ -325,6 +328,7 @@ impl SessionReplica {
     }
 
     pub(crate) fn refresh_published_state(&mut self) -> Result<bool, SessionFetchError> {
+        self.restore_missing_pane_focus();
         let ready = self.ready_to_publish();
         let mut next = if ready {
             self.validate()?;
@@ -346,6 +350,36 @@ impl SessionReplica {
         let changed = next != self.published_state;
         self.published_state = next;
         Ok(changed)
+    }
+
+    fn restore_missing_pane_focus(&mut self) {
+        if self.state.focused_pane_id.is_some() {
+            return;
+        }
+        let Some(workspace) = self.state.workspaces.iter().find(|workspace| {
+            Some(&workspace.workspace_id) == self.state.focused_workspace_id.as_ref()
+        }) else {
+            return;
+        };
+        if self
+            .pending_active_tab_focuses
+            .contains(&workspace.workspace_id)
+            || self
+                .pending_workspace_closures
+                .contains(&workspace.workspace_id)
+            || self.pending_layouts.contains(&workspace.active_tab_id)
+        {
+            return;
+        }
+        // A close can select another tab without a pane focus or layout event.
+        // Its confirmed layout already carries Herdr's selected pane. Only the
+        // focused workspace may supply it; a background layout is no focus move.
+        if let Some(layout) = self.state.layouts.iter().find(|layout| {
+            layout.workspace_id == workspace.workspace_id
+                && layout.tab_id == workspace.active_tab_id
+        }) {
+            self.state.focused_pane_id = Some(layout.focused_pane_id.clone());
+        }
     }
 
     /// The remote session built from `payload`, which is [`Self::project`]
@@ -454,6 +488,11 @@ impl SessionReplica {
                                 let agent =
                                     agents.iter().find(|agent| agent.pane_id == pane.pane_id);
                                 PaneSnapshot {
+                                    terminal_id: Some(pane.terminal_id.clone()),
+                                    failed_terminal_id: pane
+                                        .restore_error
+                                        .as_ref()
+                                        .map(|_| pane.terminal_id.clone()),
                                     id: remote_pane_id(target_id, &pane.pane_id),
                                     herdr_label: non_blank(pane.label.as_deref()),
                                     terminal_title: non_blank(
@@ -472,7 +511,9 @@ impl SessionReplica {
                                     identity_label: agent.map(|agent| agent.identity_label.clone()),
                                     activity_at_unix_ms: agent
                                         .and_then(|agent| agent.changed_at_unix_ms),
-                                    fork: crate::runtime::pane_fork_snapshot(agent),
+                                    // Fork agent runs on this machine's panes
+                                    // only, so a device pane offers none.
+                                    fork: Default::default(),
                                     // Ports describe this machine's listeners,
                                     // so a remote pane reports none rather than
                                     // claiming the local machine's.
@@ -548,6 +589,7 @@ impl SessionReplica {
                 let active_tab_id = Some(remote_tab_id(target_id, &workspace.active_tab_id))
                     .filter(|active| tabs.iter().any(|tab| tab.id.as_ref() == Some(active)));
                 WorkspaceSnapshot {
+                    agent_presence: Default::default(),
                     agent_scope: Default::default(),
                     home_issues: Default::default(),
                     pull_requests: Vec::new(),
@@ -1532,21 +1574,8 @@ impl SessionReplica {
                     ));
                 }
                 let tab_id = input_layout.tab_id.clone();
-                let focused_was_missing =
-                    self.state.focused_pane_id.as_ref().is_none_or(|focused| {
-                        !self.state.panes.iter().any(|pane| &pane.pane_id == focused)
-                    });
                 upsert_layout(&mut self.state.layouts, input_layout);
                 self.pending_layouts.remove(&tab_id);
-                if focused_was_missing
-                    && let Some(layout) = self
-                        .state
-                        .layouts
-                        .iter()
-                        .find(|layout| layout.tab_id == tab_id)
-                {
-                    self.state.focused_pane_id = Some(layout.focused_pane_id.clone());
-                }
             }
             ReplicaEvent::Unrequested(unknown) => {
                 return Err(SessionFetchError::Malformed(format!(
@@ -2189,10 +2218,24 @@ fn upsert_pane(panes: &mut Vec<ProjectedPane>, mut pane: ProjectedPane) {
         .iter_mut()
         .find(|existing| existing.pane_id == pane.pane_id)
     {
+        if pane.restore_error != existing.restore_error || pane.terminal_id != existing.terminal_id
+        {
+            report_restore_failure(&pane);
+        }
         pane.foreground_process = existing.foreground_process.clone();
         *existing = pane;
     } else {
+        report_restore_failure(&pane);
         panes.push(pane);
+    }
+}
+
+fn report_restore_failure(pane: &ProjectedPane) {
+    if let Some(error) = &pane.restore_error {
+        crate::diagnostic!(serde_json::json!({
+            "component": "session_sync", "kind": "terminal_restore_failed",
+            "pane_id": pane.pane_id, "terminal_id": pane.terminal_id, "detail": error,
+        }));
     }
 }
 

@@ -1,5 +1,6 @@
 //! Bootstrap of short-lived Workspace credentials. This local socket does
-//! only kernel peer attestation and credential issuance; commands use `/ws`.
+//! kernel peer attestation and credential issuance, and the bounded hook
+//! reads; other commands use `/ws`.
 //!
 //! A caller is bound one of two ways. A process descending from the shell
 //! Herdr runs for the named pane gets a pane-bound capability that records
@@ -17,12 +18,13 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use herdr_core::workspace_control::{Caller, Context, Query, checkout_caller_id};
 use hide_node::pane_proof::{PaneIdentity, caller_directory, descends_from, process_start};
 use hide_node::ssh::RemoteHost;
+use hide_node_link::panes::StreamCaller;
 use hide_node_link::protocol::Call;
 use hide_platform::fs::private;
 use serde::{Deserialize, Serialize};
@@ -33,11 +35,7 @@ use crate::state_file::new_token;
 
 const MAX_CAPABILITIES: usize = 64;
 const CAPABILITY_LIFETIME: Duration = Duration::from_secs(8 * 60 * 60);
-/// What a caller can do when its checkout no longer resolves: the same
-/// sentence at bootstrap (CLI), at a refused command (server), and in the
-/// caller's own refusal text.
-pub const CHECKOUT_NEXT_ACTION: &str = "Run the command from a shell inside a registered project checkout, or reconnect Hide, and retry";
-pub const PANE_NEXT_ACTION: &str = "Reconnect the pane and retry";
+pub use hide_node_link::panes::{CHECKOUT_NEXT_ACTION, PANE_NEXT_ACTION, refusal_next_action};
 const UNCLAIMED_LIFETIME: Duration = Duration::from_secs(30);
 const MAX_BOOTSTRAPS: usize = 8;
 const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -69,6 +67,11 @@ pub struct Capability {
 }
 
 impl Capability {
+    pub(crate) fn same_identity(&self, other: &Self) -> bool {
+        (self.binding == Binding::Checkout || self.pane_id == other.pane_id)
+            && self.context == other.context
+            && self.binding == other.binding
+    }
     pub fn question_guard_terminal(&self) -> Option<&str> {
         match &self.binding {
             Binding::Pane { terminal_id, .. } => Some(terminal_id),
@@ -103,14 +106,6 @@ impl Capability {
     }
 }
 
-/// The next step for a refused command, by the daemon's reason.
-pub fn refusal_next_action(reason: &str) -> &'static str {
-    match reason {
-        "checkout_not_registered" | "caller_unavailable" => CHECKOUT_NEXT_ACTION,
-        _ => PANE_NEXT_ACTION,
-    }
-}
-
 /// A device pane's credential: the node that vouched for the pane and the
 /// link it vouched over. It holds only while that link does (B18).
 #[derive(Clone)]
@@ -129,6 +124,53 @@ pub(crate) struct RemoteGrant {
 
 /// How long a device's node may take to re-read a pane for a command.
 const PANE_INSPECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// What a device's node proved about the process that opened a command's
+/// stream (`NodeEvent::StreamOpen`), with the node and link it came over.
+pub struct StreamAttestation {
+    pub node: String,
+    pub link: RemoteHost,
+    pub caller: StreamCaller,
+    /// Receipt on this core's clock. A delayed handshake or executor job
+    /// must not reuse the stream-open proof past a normal inspection budget.
+    pub received: Instant,
+}
+
+/// The identity of a device credential's pane that a command is checked
+/// against: the one its node read when the command's stream opened, when
+/// that came over the link that vouched for the credential and names the
+/// credential's pane; otherwise the node's answer to `Call::PaneInspect`
+/// now, within `timeout`.
+fn remote_identity(
+    cap: &Capability,
+    remote: &RemoteCapability,
+    attested: Option<&StreamAttestation>,
+    timeout: Duration,
+) -> Result<PaneIdentity, &'static str> {
+    if let Some(attested) = attested.filter(|attested| {
+        cap.vouched_by(&attested.node, &attested.link)
+            && attested.caller.pane_id == remote.source_pane_id
+            && attested.received.elapsed() < PANE_INSPECT_TIMEOUT
+    }) {
+        return Ok(attested.caller.identity.clone());
+    }
+    hide_node_link::call_as(
+        &remote.link,
+        Call::PaneInspect {
+            pane_id: remote.source_pane_id.clone(),
+        },
+        timeout,
+    )
+    .map_err(|_| "remote_unavailable")
+}
+
+fn pane_binding(identity: PaneIdentity) -> Binding {
+    Binding::Pane {
+        terminal_id: identity.terminal_id,
+        shell_pid: identity.shell_pid,
+        shell_started: identity.shell_started,
+    }
+}
 
 fn entry_alive(entry: &Capability) -> bool {
     if entry.created.elapsed() >= CAPABILITY_LIFETIME
@@ -237,6 +279,17 @@ impl Registry {
         port: u16,
         holder: Option<(i32, u64)>,
     ) -> Result<(PathBuf, bool), &'static str> {
+        self.issue_with_token(attestation, nonce, port, holder)
+            .map(|(path, new, _)| (path, new))
+    }
+
+    fn issue_with_token(
+        &self,
+        attestation: &Attestation,
+        nonce: &str,
+        port: u16,
+        holder: Option<(i32, u64)>,
+    ) -> Result<(PathBuf, bool, String), &'static str> {
         let path = self.reference_path(nonce)?;
         let mut entries = self.entries.lock().map_err(|_| "capability_unavailable")?;
         if self.closed.load(Ordering::SeqCst) {
@@ -250,11 +303,11 @@ impl Registry {
             alive
         });
         if holder.is_none()
-            && let Some(existing) = entries.values().find(|entry| {
+            && let Some((token, existing)) = entries.iter().find(|(_, entry)| {
                 !entry.one_shot && entry.remote.is_none() && same_caller(entry, attestation)
             })
         {
-            return Ok((existing.path.clone(), false));
+            return Ok((existing.path.clone(), false, token.clone()));
         }
         if entries.len() >= MAX_CAPABILITIES {
             return Err("capability_limit");
@@ -269,11 +322,9 @@ impl Registry {
             },
         })
         .map_err(|_| "reference_unavailable")?;
-        if file
-            .write_all(&bytes)
-            .and_then(|_| file.sync_all())
-            .is_err()
-        {
+        // Not flushed to disk: the reference lives no longer than the token
+        // it names, which no restart keeps, and only this machine reads it.
+        if file.write_all(&bytes).is_err() {
             let _ = fs::remove_file(&path);
             return Err("reference_unavailable");
         }
@@ -291,7 +342,7 @@ impl Registry {
                 remote: None,
             },
         );
-        Ok((path, true))
+        Ok((path, true, token))
     }
 
     pub(crate) fn issue_remote(
@@ -376,6 +427,30 @@ impl Registry {
             .filter(|capability| capability.vouched_by(node, link))
     }
 
+    /// A hook's named token constrains a fresh proof only while it exists.
+    /// An extant token must belong to this node and this very connection.
+    pub(crate) fn hook_reference(
+        &self,
+        token: &str,
+        node: &str,
+        link: &RemoteHost,
+        request_id: &str,
+    ) -> Result<Option<Capability>, &'static str> {
+        let Some(cap) = self.get(token) else {
+            herdr_core::diagnostic!(json!({
+                "component": "node_panes",
+                "kind": "hook.reference_missing",
+                "node": node,
+                "request_id": request_id,
+            }));
+            return Ok(None);
+        };
+        if !cap.vouched_by(node, link) {
+            return Err("credential_expired");
+        }
+        Ok(Some(cap))
+    }
+
     pub fn revoke_vouched(&self, node: &str, link: &RemoteHost, token: &str) {
         if let Ok(mut entries) = self.entries.lock()
             && entries
@@ -384,6 +459,16 @@ impl Registry {
         {
             entries.remove(token);
         }
+    }
+
+    /// Whether a command claimed `token`, while the registry holds it.
+    #[cfg(test)]
+    pub(crate) fn claimed(&self, token: &str) -> Option<bool> {
+        self.entries
+            .lock()
+            .ok()?
+            .get(token)
+            .map(|entry| entry.claimed)
     }
 
     pub fn claim(&self, token: &str) -> Result<(), &'static str> {
@@ -398,11 +483,14 @@ impl Registry {
         Ok(())
     }
 
+    /// Checks `token` for one command. A device credential's pane is read
+    /// as `attested` says when that holds for it ([`remote_identity`]).
     pub fn validate(
         &self,
         token: &str,
         herdr_socket: Option<&Path>,
         core: &CoreHandle,
+        attested: Option<&StreamAttestation>,
     ) -> Result<Capability, &'static str> {
         let cap = self.get(token).ok_or("credential_expired")?;
         if cap.binding == Binding::Checkout {
@@ -427,14 +515,18 @@ impl Registry {
             return Err(outcome);
         }
         let actual = if let Some(remote) = &cap.remote {
-            let identity: PaneIdentity = hide_node_link::call_as(
-                &remote.link,
-                Call::PaneInspect {
-                    pane_id: remote.source_pane_id.clone(),
-                },
+            let binding = pane_binding(remote_identity(
+                &cap,
+                remote,
+                attested,
                 PANE_INSPECT_TIMEOUT,
-            )
-            .map_err(|_| "remote_unavailable")?;
+            )?);
+            // A pane that changed is refused before the core is asked, as
+            // the question guard does.
+            if binding != cap.binding {
+                self.revoke(token);
+                return Err("pane_changed");
+            }
             let context = core
                 .workspace_query(&cap.context.device_id, &cap.pane_id, Query::Info)
                 .map_err(|_| "pane_not_connected")?
@@ -442,11 +534,7 @@ impl Registry {
             Attestation {
                 pane_id: cap.pane_id.clone(),
                 context,
-                binding: Binding::Pane {
-                    terminal_id: identity.terminal_id,
-                    shell_pid: identity.shell_pid,
-                    shell_started: identity.shell_started,
-                },
+                binding,
             }
         } else {
             let socket = herdr_socket.ok_or("pane_unavailable")?;
@@ -466,6 +554,7 @@ impl Registry {
         token: &str,
         herdr_socket: Option<&Path>,
         core: &CoreHandle,
+        attested: Option<&StreamAttestation>,
         deadline: Instant,
     ) -> Result<Capability, &'static str> {
         let cap = self.get(token).ok_or("credential_expired")?;
@@ -479,14 +568,7 @@ impl Registry {
                 .ok_or("factory_guard_expired")
         };
         let identity = if let Some(remote) = &cap.remote {
-            hide_node_link::call_as::<PaneIdentity>(
-                &remote.link,
-                Call::PaneInspect {
-                    pane_id: remote.source_pane_id.clone(),
-                },
-                remaining()?,
-            )
-            .map_err(|_| "remote_unavailable")?
+            remote_identity(&cap, remote, attested, remaining()?)?
         } else {
             hide_node::pane_proof::inspect_until(
                 herdr_socket.ok_or("pane_unavailable")?,
@@ -494,12 +576,7 @@ impl Registry {
                 deadline,
             )?
         };
-        let actual = Binding::Pane {
-            terminal_id: identity.terminal_id,
-            shell_pid: identity.shell_pid,
-            shell_started: identity.shell_started,
-        };
-        if actual != cap.binding {
+        if pane_binding(identity) != cap.binding {
             return Err("pane_changed");
         }
         let context = core
@@ -610,6 +687,23 @@ pub struct Attestation {
     pane_id: String,
     context: Context,
     binding: Binding,
+}
+
+#[cfg(test)]
+impl Attestation {
+    /// What a bootstrap proves for a caller in `pane_id` whose shell is
+    /// `shell_pid`, for a test that issues the credential itself.
+    pub(crate) fn pane(pane_id: &str, context: Context, shell_pid: i32) -> Self {
+        Self {
+            pane_id: pane_id.to_owned(),
+            context,
+            binding: Binding::Pane {
+                terminal_id: "terminal".to_owned(),
+                shell_pid,
+                shell_started: process_start(shell_pid).expect("a running shell"),
+            },
+        }
+    }
 }
 
 /// The bootstrap's attestation. The pane path runs unchanged first; any
@@ -817,6 +911,7 @@ pub async fn serve(
     herdr_socket: Option<PathBuf>,
     port: u16,
     shutdown: crate::ending::Ending,
+    desktop_renderers: Arc<AtomicUsize>,
 ) {
     use tokio::sync::Semaphore;
     // Closed however this future ends, a drop included, so the accept
@@ -881,9 +976,17 @@ pub async fn serve(
         let registry = Arc::clone(&registry);
         let core = Arc::clone(&core);
         let herdr_socket = herdr_socket.clone();
+        let desktop_renderers = Arc::clone(&desktop_renderers);
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            answer_bootstrap(stream, &registry, &core, herdr_socket.as_deref(), port);
+            answer_bootstrap(
+                stream,
+                &registry,
+                &core,
+                herdr_socket.as_deref(),
+                port,
+                desktop_renderers.load(Ordering::SeqCst) > 0,
+            );
         });
     }
 }
@@ -920,6 +1023,7 @@ fn answer_bootstrap(
     core: &CoreHandle,
     herdr_socket: Option<&Path>,
     port: u16,
+    desktop: bool,
 ) {
     use std::io::{BufRead, BufReader};
     let Some(peer) = stream
@@ -933,10 +1037,79 @@ fn answer_bootstrap(
     // A Windows pipe has no write timeout; the answer is one short line.
     let _ = stream.set_write_timeout(Some(BOOTSTRAP_TIMEOUT));
     let mut line = String::new();
-    let result = BufReader::new(&mut stream)
-        .take(4096)
+    let read = BufReader::new(&mut stream)
+        .take(hide_node_link::panes::HOOK_REQUEST_LIMIT as u64 + 1)
         .read_line(&mut line)
-        .map_err(|_| "invalid_request")
+        .map_err(|_| "invalid_request");
+    if read.is_ok()
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(&line)
+        && value.get("hook").is_some()
+    {
+        let result = (|| {
+            if line.len() > hide_node_link::panes::HOOK_REQUEST_LIMIT {
+                return Err("invalid_request");
+            }
+            let request: BootstrapRequest =
+                serde_json::from_value(value.clone()).map_err(|_| "invalid_request")?;
+            let hook: hide_node_link::panes::HookRequest =
+                serde_json::from_value(value["hook"].clone()).map_err(|_| "invalid_request")?;
+            if request.one_shot != hook.command.one_shot() || !crate::hook_request::valid(&hook) {
+                return Err("invalid_request");
+            }
+            let (attestation, _) = attest_bootstrap(peer, &request, herdr_socket, core)?;
+            let holder = if request.one_shot {
+                Some((peer, process_start(peer).ok_or("caller_unavailable")?))
+            } else {
+                None
+            };
+            let (path, issued_new, token) =
+                registry.issue_with_token(&attestation, &request.nonce, port, holder)?;
+            let token = crate::hook_request::Token(registry, token, issued_new);
+            let cap = registry.validate(&token.1, herdr_socket, core, None)?;
+            if let Some(named) = hook.token.as_deref()
+                && registry.get(named).is_some()
+            {
+                let prior = registry.validate(named, herdr_socket, core, None)?;
+                if !cap.same_identity(&prior) {
+                    return Err("pane_changed");
+                }
+            }
+            let mut answer = crate::hook_request::answer(core, &cap, &hook, desktop);
+            if !request.one_shot && answer["ok"] == true {
+                answer["reference"] = json!(
+                    hide_platform::path::to_wire(&path).map_err(|_| "reference_unavailable")?
+                );
+                if answer.to_string().len() + 1 > hide_node_link::panes::HOOK_RESPONSE_LIMIT {
+                    return Err("response_too_large");
+                }
+                Ok((answer, Some(token)))
+            } else {
+                Ok((answer, None))
+            }
+        })();
+        let (answer, persistent) = match result {
+            Ok(answer) => answer,
+            Err(reason) => (
+                json!({"ok":false,"reason":reason,"next_action":refusal_next_action(reason)}),
+                None,
+            ),
+        };
+        if writeln!(stream, "{answer}").is_ok()
+            && let Some(token) = persistent
+            && registry.claim(&token.1).is_ok()
+        {
+            token.keep();
+        }
+        return;
+    }
+    let result = read
+        .and({
+            if line.len() <= 4096 {
+                Ok(())
+            } else {
+                Err("invalid_request")
+            }
+        })
         .and_then(|_| {
             serde_json::from_str::<BootstrapRequest>(&line).map_err(|_| "invalid_request")
         })
@@ -987,6 +1160,7 @@ fn answer_bootstrap(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
 
     fn device_attestation(node: &str) -> Attestation {
         Attestation {
@@ -1062,6 +1236,352 @@ mod tests {
                 .err(),
             Some("hide_unavailable")
         );
+    }
+
+    #[test]
+    fn a_hook_token_ends_on_return_and_unwind_and_cannot_be_reused() {
+        let directory = tempfile::tempdir().unwrap();
+        let registry = Registry::new(directory.path()).unwrap();
+        let link = RemoteHost::detached("node-a");
+        for unwind in [false, true] {
+            let (token, _) = registry
+                .issue_remote(
+                    &device_attestation("node-a"),
+                    RemoteGrant {
+                        one_shot: true,
+                        ..device_grant("node-a", &link)
+                    },
+                )
+                .unwrap();
+            let held = token.clone();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _request = crate::hook_request::Token(&registry, held, true);
+                assert!(registry.vouched(&token, "node-a", &link).is_some());
+                if unwind {
+                    panic!("request unwound");
+                }
+            }));
+            assert_eq!(result.is_err(), unwind);
+            assert!(registry.vouched(&token, "node-a", &link).is_none());
+            assert_eq!(registry.claim(&token), Err("credential_expired"));
+        }
+    }
+
+    #[test]
+    fn a_named_hook_reference_constrains_the_proved_pane_and_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let registry = Registry::new(directory.path()).unwrap();
+        let link = RemoteHost::detached("node-a");
+        let (token, _) = registry
+            .issue_remote(&device_attestation("node-a"), device_grant("node-a", &link))
+            .unwrap();
+        let cap = registry.get(&token).unwrap();
+        let mut other = cap.clone();
+        other.pane_id = "remote:node-a:pane:w1:p2".to_owned();
+        assert!(!cap.same_identity(&other));
+        other = cap.clone();
+        other.binding = Binding::Pane {
+            terminal_id: "replaced".to_owned(),
+            shell_pid: 42,
+            shell_started: 10,
+        };
+        assert!(!cap.same_identity(&other));
+        other = cap.clone();
+        other.context.device_id = "node-b".to_owned();
+        assert!(!cap.same_identity(&other));
+        assert!(cap.same_identity(&cap));
+    }
+
+    #[test]
+    fn a_named_hook_token_from_another_node_or_link_is_refused_but_a_gone_one_is_not_authority() {
+        let directory = tempfile::tempdir().unwrap();
+        let registry = Registry::new(directory.path()).unwrap();
+        let link = RemoteHost::detached("node-a");
+        let other = RemoteHost::detached("node-b");
+        let (token, _) = registry
+            .issue_remote(&device_attestation("node-a"), device_grant("node-a", &link))
+            .unwrap();
+        for (node, connection) in [("node-b", &other), ("node-a", &other), ("node-b", &link)] {
+            assert_eq!(
+                registry
+                    .hook_reference(&token, node, connection, "hook-1")
+                    .err(),
+                Some("credential_expired")
+            );
+        }
+        assert!(
+            registry
+                .hook_reference(&token, "node-a", &link, "hook-1")
+                .unwrap()
+                .is_some()
+        );
+        registry.revoke(&token);
+        assert!(
+            registry
+                .hook_reference(&token, "node-a", &link, "hook-2")
+                .unwrap()
+                .is_none()
+        );
+        let (fresh, _) = registry
+            .issue_remote(&device_attestation("node-a"), device_grant("node-a", &link))
+            .unwrap();
+        assert!(registry.vouched(&fresh, "node-a", &link).is_some());
+        assert!(registry.get(&token).is_none());
+    }
+
+    #[test]
+    fn late_guidance_is_not_claimed_and_releases_only_the_new_token() {
+        use hide_node_link::panes::ProofAnswer;
+        use hide_node_link::protocol::{Outcome, Request, Response};
+        use std::io::BufRead;
+        let directory = tempfile::tempdir().unwrap();
+        let registry = Registry::new(directory.path()).unwrap();
+        let (core_end, node_end) = hide_platform::ipc::LocalStream::pair().unwrap();
+        // The real node has already forgotten the waiting caller. Its false
+        // receipt travels back over the real link to the core's claim path.
+        let node = std::thread::spawn(move || {
+            let panes = hide_host::panes::Panes::new();
+            let mut writer = node_end.duplicate();
+            for line in std::io::BufReader::new(node_end).lines() {
+                let Ok(line) = line else {
+                    break;
+                };
+                let request: Request = serde_json::from_str(&line).unwrap();
+                let Call::PaneProofAnswer {
+                    request: id,
+                    answer,
+                } = request.call
+                else {
+                    panic!("unexpected call");
+                };
+                if id == 100 {
+                    break; // The link ends before the receipt can be sent.
+                }
+                let accepted = panes.answer_proof(id, answer).unwrap();
+                assert_eq!(accepted, json!(false));
+                let response = Response {
+                    id: request.id,
+                    outcome: Outcome::Ok(accepted),
+                };
+                if writeln!(writer, "{}", serde_json::to_string(&response).unwrap()).is_err() {
+                    break;
+                }
+            }
+        });
+        let link =
+            hide_node::ssh::host::over_local_stream("node-a", core_end, None, Box::new(|_| {}))
+                .unwrap();
+        for issued_new in [true, false] {
+            let (token, _) = registry
+                .issue_remote(&device_attestation("node-a"), device_grant("node-a", &link))
+                .unwrap();
+            assert_eq!(registry.claimed(&token), Some(false));
+            let delivered = crate::node_panes::send_proof(
+                Some(&registry),
+                "node-a",
+                &link,
+                99,
+                ProofAnswer::WorkspaceInfo {
+                    token: token.clone(),
+                    issued_new,
+                    answer: json!({"ok":true}),
+                },
+            );
+            assert!(!delivered);
+            assert_eq!(
+                registry.claimed(&token),
+                if issued_new { None } else { Some(false) }
+            );
+            if issued_new {
+                assert_eq!(registry.claim(&token), Err("credential_expired"));
+            }
+            registry.revoke(&token);
+        }
+        let (lost, _) = registry
+            .issue_remote(&device_attestation("node-a"), device_grant("node-a", &link))
+            .unwrap();
+        assert!(!crate::node_panes::send_proof(
+            Some(&registry),
+            "node-a",
+            &link,
+            100,
+            ProofAnswer::WorkspaceInfo {
+                token: lost.clone(),
+                issued_new: true,
+                answer: json!({"ok":true})
+            }
+        ));
+        assert_eq!(registry.claimed(&lost), None);
+        assert_eq!(registry.claim(&lost), Err("credential_expired"));
+        link.close("fixture finished");
+        drop(link);
+        node.join().unwrap();
+    }
+
+    /// A device's node on a local link that answers `Call::PaneInspect`
+    /// with `identity`, counting how often it was asked.
+    fn inspecting_node(identity: PaneIdentity) -> (RemoteHost, Arc<AtomicUsize>) {
+        use hide_node_link::protocol::{Outcome, Request, Response};
+        use std::io::BufRead;
+        let (core_end, node_end) = hide_platform::ipc::LocalStream::pair().unwrap();
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&asked);
+        std::thread::spawn(move || {
+            let mut writer = node_end.duplicate();
+            let mut reader = std::io::BufReader::new(node_end);
+            let mut line = String::new();
+            while reader.read_line(&mut line).is_ok_and(|read| read > 0) {
+                let request: Request = serde_json::from_str(&line).unwrap();
+                line.clear();
+                let answer = match request.call {
+                    Call::PaneInspect { .. } => {
+                        counted.fetch_add(1, Ordering::SeqCst);
+                        serde_json::to_value(&identity).unwrap()
+                    }
+                    _ => serde_json::Value::Null,
+                };
+                let response = Response {
+                    id: request.id,
+                    outcome: Outcome::Ok(answer),
+                };
+                if writeln!(writer, "{}", serde_json::to_string(&response).unwrap()).is_err() {
+                    return;
+                }
+            }
+        });
+        let link =
+            hide_node::ssh::host::over_local_stream("node-a", core_end, None, Box::new(|_| {}))
+                .unwrap();
+        (link, asked)
+    }
+
+    /// A device credential's pane is checked against what its node proved
+    /// when the command's stream opened, with no call back down the link: a
+    /// matching proof asks the node nothing, a proof of another shell is
+    /// refused `pane_changed` and ends the credential, and a proof the
+    /// credential cannot take (none, or another link's, node's or pane's)
+    /// leaves the check to `PaneInspect`, as before.
+    #[test]
+    fn a_node_attested_stream_is_checked_without_asking_the_node_again() {
+        let directory = tempfile::tempdir().unwrap();
+        let registry = Registry::new(directory.path()).unwrap();
+        let core = CoreHandle::bare(directory.path());
+        // The identity `device_attestation` binds.
+        let proved = PaneIdentity {
+            terminal_id: "t1".to_owned(),
+            shell_pid: 42,
+            shell_started: 9,
+        };
+        let (link, asked) = inspecting_node(proved.clone());
+        let asked = || asked.load(Ordering::SeqCst);
+        let issue = || {
+            let grant = RemoteGrant {
+                one_shot: true,
+                ..device_grant("node-a", &link)
+            };
+            registry
+                .issue_remote(&device_attestation("node-a"), grant)
+                .unwrap()
+                .0
+        };
+        let stream = |node: &str, link: &RemoteHost, pane_id: &str, identity: &PaneIdentity| {
+            StreamAttestation {
+                node: node.to_owned(),
+                link: link.clone(),
+                caller: StreamCaller {
+                    pane_id: pane_id.to_owned(),
+                    identity: identity.clone(),
+                },
+                received: Instant::now(),
+            }
+        };
+        let guard_deadline = || Instant::now() + Duration::from_secs(10);
+        // This core knows no device, so a command that passed the pane check
+        // stops at the context the core holds for it.
+        let past_the_pane = Some("pane_not_connected");
+
+        let token = issue();
+        let same = stream("node-a", &link, "w1:p1", &proved);
+        let persistent = registry
+            .issue_remote(&device_attestation("node-a"), device_grant("node-a", &link))
+            .unwrap()
+            .0;
+        assert_eq!(
+            registry
+                .validate(&persistent, None, &core, Some(&same))
+                .err(),
+            past_the_pane
+        );
+        assert_eq!(asked(), 0, "a persistent reference uses the same proof");
+        assert_eq!(
+            registry.validate(&token, None, &core, Some(&same)).err(),
+            past_the_pane
+        );
+        assert_eq!(
+            registry
+                .validate_question_guard(&token, None, &core, Some(&same), guard_deadline())
+                .err(),
+            past_the_pane
+        );
+        assert_eq!(asked(), 0);
+        let restarted = PaneIdentity {
+            shell_started: 10,
+            ..proved.clone()
+        };
+        let changed = stream("node-a", &link, "w1:p1", &restarted);
+        assert_eq!(
+            registry
+                .validate(&persistent, None, &core, Some(&changed))
+                .err(),
+            Some("pane_changed")
+        );
+        assert!(registry.get(&persistent).is_none());
+        assert_eq!(
+            registry
+                .validate_question_guard(&token, None, &core, Some(&changed), guard_deadline())
+                .err(),
+            Some("pane_changed")
+        );
+        assert_eq!(
+            registry.validate(&token, None, &core, Some(&changed)).err(),
+            Some("pane_changed")
+        );
+        assert!(registry.get(&token).is_none());
+        assert_eq!(asked(), 0);
+
+        let token = issue();
+        let next = RemoteHost::detached("node-a");
+        let elsewhere = [
+            ("another link", stream("node-a", &next, "w1:p1", &proved)),
+            ("another node", stream("node-b", &link, "w1:p1", &proved)),
+            ("another pane", stream("node-a", &link, "w1:p2", &proved)),
+        ];
+        for (why, attested) in &elsewhere {
+            let before = asked();
+            assert_eq!(
+                registry.validate(&token, None, &core, Some(attested)).err(),
+                past_the_pane,
+                "{why}"
+            );
+            assert_eq!(asked(), before + 1, "{why}");
+        }
+        assert_eq!(
+            registry.validate(&token, None, &core, None).err(),
+            past_the_pane
+        );
+        assert_eq!(asked(), 4);
+        let delayed = StreamAttestation {
+            received: Instant::now() - PANE_INSPECT_TIMEOUT,
+            ..same
+        };
+        assert_eq!(
+            registry.validate(&token, None, &core, Some(&delayed)).err(),
+            past_the_pane
+        );
+        assert_eq!(asked(), 5, "a delayed stream must re-read its pane");
+        core.shutdown();
+        next.close("fixture finished");
+        link.close("fixture finished");
     }
 
     #[tokio::test]
@@ -1308,7 +1828,7 @@ mod tests {
         assert!(!path.exists());
         assert!(pane_path.exists());
         assert_eq!(
-            registry.validate(&reference.token, None, &core).err(),
+            registry.validate(&reference.token, None, &core, None).err(),
             Some("credential_expired")
         );
         core.shutdown();
@@ -1340,7 +1860,7 @@ mod tests {
                 .question_guard_source_matches(Some(("node-a", &RemoteHost::detached("ssh:a"))))
         );
         assert!(matches!(registry.validate_question_guard(
-            &reference.token, None, &core, Instant::now() + Duration::from_secs(2),
+            &reference.token, None, &core, None, Instant::now() + Duration::from_secs(2),
         ), Err(reason) if reason == "agent_pane_required"));
         core.shutdown();
         registry.claim(&reference.token).unwrap();

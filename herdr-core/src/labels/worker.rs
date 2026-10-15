@@ -43,10 +43,14 @@ use super::generator::{GeneratorLock, LockPlace};
 use super::input::{OperatorInput, Submit};
 use super::overlay::LabelOverlay;
 use super::store::{LabelStore, PaneRecord};
+use crate::links::ledger::{LedgerUpdate, RecordedRequest, SessionIdentity, WorkAuthor};
+use crate::links::worker::LinkClient;
 
 /// The minimum interval between native-file current-metadata reads, also
 /// used for the single follow-up when a starting turn has no prompt yet.
 const FOLLOW_UP_READ: Duration = Duration::from_secs(3);
+/// A cold context is read by the links worker; retry without spending a call.
+const CONTEXT_READ_RETRY: Duration = Duration::from_millis(250);
 /// How long a read the machine could not answer (a device whose helper is
 /// not connected) waits before it is tried again, so the pane catches up
 /// after a reconnect without waiting for its next state change (B14).
@@ -81,6 +85,8 @@ pub(crate) enum ReadFailure {
     /// The machine cannot be reached now (a device without a helper
     /// connection). The pane keeps its label and waits for its next change.
     Unavailable(String),
+    /// The native writer prevented a consistent read; previous proof stands.
+    Pending(String),
     /// The read ran and refused, with a stable reason code.
     Refused(String),
 }
@@ -145,6 +151,7 @@ pub(crate) struct ObservedAgent {
 }
 
 pub(crate) struct WorkerConfig {
+    pub(crate) ledger: Arc<std::sync::Mutex<Option<LinkClient>>>,
     /// The store key: the core's node id, or `device:<id>`.
     pub(crate) target: String,
     /// Where the Herdr server's generator lock is (D-10); see `generator`.
@@ -161,17 +168,21 @@ enum WorkerResult {
         generation: u64,
         reference: String,
         from_start: bool,
-        /// The read began at the conversation's start.
-        from_beginning: bool,
         /// Herdr's `state_change_seq` the read was asked under.
         state_change_seq: Option<u64>,
         result: Box<Result<LabelTranscript, ReadFailure>>,
     },
-    Analysis(AnalysisOutcome),
+    Analysis(Box<AnalysisOutcome>),
 }
 
 /// What an analysis was asked under, carried back with its answer.
 struct AnalysisMeta {
+    ledger_session: Option<SessionIdentity>,
+    work_author: bool,
+    turn_witness: Option<String>,
+    offset: Option<u64>,
+    at_unix_ms: u64,
+    request_at_unix_ms: u64,
     pane: String,
     generation: u64,
     owner: String,
@@ -214,6 +225,8 @@ struct PaneState {
     next_analysis_at: Option<Instant>,
     follow_up_at: Option<Instant>,
     follow_up_armed: bool,
+    /// One retry per transient read episode; a new state or success resets it.
+    pending_retried: bool,
     /// The last failure logged, so a repeating one is logged once.
     last_failure: Option<String>,
     /// When this worker began seeing the pane, and so its input (D-19).
@@ -228,6 +241,7 @@ struct PaneState {
 }
 
 pub(crate) struct LabelWorker {
+    ledger: Arc<std::sync::Mutex<Option<LinkClient>>>,
     target: String,
     store: Arc<LabelStore>,
     analyzer: Arc<LabelAnalyzer>,
@@ -259,6 +273,7 @@ pub(crate) struct LabelWorker {
     /// asked for and the overlay lays no AI field; reads go on, because the
     /// rows stand on what they find.
     summaries: bool,
+    summaries_on_since: u64,
 }
 
 impl LabelWorker {
@@ -272,6 +287,7 @@ impl LabelWorker {
         let (sender, results) = channel();
         let reader = Reader::spawn(source, sender.clone(), Arc::clone(&wake))?;
         Ok(Self {
+            ledger: config.ledger,
             records: store.target(&config.target),
             generator: GeneratorLock::new(config.lock, &config.target, Arc::clone(&wake)),
             target: config.target,
@@ -293,6 +309,7 @@ impl LabelWorker {
             receipts: Vec::new(),
             handed_sessions: Default::default(),
             summaries: true,
+            summaries_on_since: 0,
         })
     }
 
@@ -422,6 +439,7 @@ impl LabelWorker {
                             follow_up_at: (resumable && agent.requires_native_file_proof())
                                 .then_some(now + FOLLOW_UP_READ),
                             follow_up_armed: status_moved,
+                            pending_retried: false,
                             last_failure: None,
                             input_observed_since_unix_ms: now_unix_ms,
                             claimed_submit: None,
@@ -440,6 +458,7 @@ impl LabelWorker {
                         pane.events_loaded = false;
                         pane.next_analysis_at = None;
                         pane.follow_up_at = None;
+                        pane.pending_retried = false;
                         pane.needs_read = reference_token.is_some();
                         self.waiting.retain(|id| id != &observed.pane_id);
                         changed = true;
@@ -453,6 +472,7 @@ impl LabelWorker {
                         }));
                     }
                     if seq_moved || status_moved {
+                        pane.pending_retried = false;
                         pane.needs_read |= reference_token.is_some();
                         pane.follow_up_armed = status == "working";
                     }
@@ -660,18 +680,17 @@ impl LabelWorker {
                     generation,
                     reference,
                     from_start,
-                    from_beginning,
                     state_change_seq,
                     result,
                 } => self.handle_read(
                     &pane,
                     generation,
                     &reference,
-                    (from_start, from_beginning, state_change_seq),
+                    (from_start, state_change_seq),
                     *result,
                     (now, now_unix_ms),
                 ),
-                WorkerResult::Analysis(outcome) => self.handle_analysis(outcome, now),
+                WorkerResult::Analysis(outcome) => self.handle_analysis(*outcome, now),
             };
         }
         self.schedule(now);
@@ -694,6 +713,7 @@ impl LabelWorker {
         }
         self.summaries = on;
         if on {
+            self.summaries_on_since = crate::links::now_ms();
             for (id, pane) in &self.panes {
                 if pane.events_loaded && !self.waiting.contains(id) {
                     self.waiting.push_back(id.clone());
@@ -847,7 +867,7 @@ impl LabelWorker {
         pane_id: &str,
         generation: u64,
         reference: &str,
-        (from_start, from_beginning, asked_seq): (bool, bool, Option<u64>),
+        (from_start, asked_seq): (bool, Option<u64>),
         result: Result<LabelTranscript, ReadFailure>,
         (now, now_unix_ms): (Instant, u64),
     ) -> bool {
@@ -869,6 +889,31 @@ impl LabelWorker {
                 }
                 return self.invalidate_turn_read(pane_id);
             }
+            Err(ReadFailure::Pending(reason)) => {
+                let pane = self.panes.get_mut(pane_id).expect("checked above");
+                let capped = pane.pending_retried;
+                pane.follow_up_at = (!capped).then_some(now + UNAVAILABLE_RETRY);
+                pane.pending_retried = true;
+                self.log_failure(
+                    pane_id,
+                    if capped {
+                        "read.retry_capped"
+                    } else {
+                        "read.pending"
+                    },
+                    &reason,
+                );
+                // A transaction in flight says nothing about session identity.
+                // Its previous wait is not proof of the current turn, however.
+                let released = self.release_turn_end(pane_id);
+                let changed = self
+                    .records
+                    .get_mut(pane_id)
+                    .and_then(|record| record.turns_seq.take())
+                    .is_some();
+                self.dirty |= changed || released;
+                return changed || released;
+            }
             Err(ReadFailure::Refused(reason)) => {
                 self.log_failure(pane_id, "read.refused", &reason);
                 if let Some(pane) = self.panes.get_mut(pane_id)
@@ -887,6 +932,7 @@ impl LabelWorker {
             self.log_failure(pane_id, "read.refused", "label_session_id_mismatch");
             return self.invalidate_turn_read(pane_id);
         }
+        let pi_name = pane.agent == hide_session::Agent::Pi;
         let target = self.target.clone();
         let record = self
             .records
@@ -973,14 +1019,31 @@ impl LabelWorker {
             pane.claimed_submit = None;
         }
         let submits = self.input.submits(&target, pane_id);
+        // Migrate Pi names written by older readers before applying the next
+        // name (including an explicit clear). Older remote helpers use that
+        // same source-less custom slot, so their reads are demoted too.
+        if pi_name && let Some(name) = record.facts.custom_title.take() {
+            record.facts.title = Some(name);
+            changed = true;
+        }
         changed |= record.facts.fold(
             ReadFacts {
                 events: &transcript.events,
-                title: transcript.title.as_deref(),
-                custom_title: transcript.custom_title.as_deref(),
+                title: if pi_name {
+                    transcript
+                        .title
+                        .as_deref()
+                        .or(transcript.custom_title.as_deref())
+                } else {
+                    transcript.title.as_deref()
+                },
+                custom_title: if pi_name {
+                    None
+                } else {
+                    transcript.custom_title.as_deref()
+                },
                 sightings: &transcript.pr_sightings,
                 subagents: &transcript.subagents,
-                from_beginning: from_beginning || transcript.rescanned.is_some(),
             },
             InputView {
                 submits: &submits,
@@ -993,6 +1056,98 @@ impl LabelWorker {
             },
         );
         changed |= record.facts.judge_created(&self.pull_request_times);
+        // Use the same kept requester verdict as labels. Sender envelopes
+        // remain other-agent messages even when they are the first message.
+        if let Some(native_id) = record.native_session_id.clone() {
+            let session = SessionIdentity {
+                device_id: self
+                    .target
+                    .strip_prefix("device:")
+                    .unwrap_or(&self.target)
+                    .to_owned(),
+                agent: pane.agent.as_str().to_owned(),
+                session_id: native_id,
+            };
+            let context = self
+                .ledger
+                .lock()
+                .ok()
+                .and_then(|client| client.as_ref().and_then(|client| client.context(&session)));
+            // A missing or evicted context is unknown lineage, not a root.
+            let parent = context
+                .as_ref()
+                .and_then(|context| context.parent_name.clone());
+            let requests = transcript
+                .events
+                .iter()
+                .filter(|event| {
+                    event.kind == LabelEventKind::Human
+                        && record.facts.feeds_work(event, parent.as_deref())
+                        && !event.text.trim().is_empty()
+                })
+                .map(|event| RecordedRequest {
+                    offset: event.offset,
+                    at_unix_ms: event.at_unix_ms,
+                    text: hide_session::links::cut(&event.text),
+                    author: if parent.is_some() {
+                        WorkAuthor::Parent
+                    } else {
+                        WorkAuthor::Operator
+                    },
+                    task_ids: vec![],
+                    chapter_id: None,
+                    judged: false,
+                })
+                .collect::<Vec<_>>();
+            let excluded = transcript
+                .events
+                .iter()
+                .filter(|event| {
+                    event.kind == LabelEventKind::Human
+                        && context.is_some()
+                        && !record.facts.feeds_work(event, parent.as_deref())
+                })
+                .map(|event| event.offset)
+                .collect::<Vec<_>>();
+            if let Some(client) = self.ledger.lock().ok().and_then(|client| client.clone()) {
+                let unjudged = requests
+                    .iter()
+                    .filter(|request| {
+                        !self.summaries || request.at_unix_ms < self.summaries_on_since
+                    })
+                    .map(|request| request.offset)
+                    .collect();
+                for update in [
+                    LedgerUpdate::Requests {
+                        session: session.clone(),
+                        cwd: pane.cwd.clone().unwrap_or_default(),
+                        path: record.native_source_path.clone(),
+                        requests,
+                    },
+                    LedgerUpdate::ExcludeRequests {
+                        session: session.clone(),
+                        parent_name: parent.clone(),
+                        offsets: excluded,
+                    },
+                    LedgerUpdate::Unjudged {
+                        session: session.clone(),
+                        offsets: unjudged,
+                    },
+                    LedgerUpdate::Title {
+                        session,
+                        native_title: record.facts.title.clone(),
+                        manual_title: record.facts.custom_title.clone(),
+                        state: pane.status.clone(),
+                    },
+                ] {
+                    if let Err(code) = client.ledger(update) {
+                        crate::diagnostic!(
+                            json!({"component":"labels","kind":"ledger.enqueue_failed","pane_id":pane_id,"code":code})
+                        );
+                    }
+                }
+            }
+        }
         self.note_sighted(pane_id, &transcript.pr_sightings, now_unix_ms);
         self.note_receipts(pane_id, &transcript.memory_receipts);
         let pane = self.panes.get_mut(pane_id).expect("checked above");
@@ -1013,6 +1168,7 @@ impl LabelWorker {
                 .extend(transcript.skipped_reasons.keys().cloned());
         }
         pane.last_failure = None;
+        pane.pending_retried = false;
         if from_start || transcript.rescanned.is_some() {
             pane.events.clear();
         }
@@ -1176,12 +1332,13 @@ impl LabelWorker {
         }
         // The goal reads the operator's requests only (D-09).
         let facts = &record.facts;
-        let operator = |event: &LabelEvent| facts.feeds_analysis(event.offset);
+        let operator =
+            |event: &LabelEvent| event.sender.is_none() && facts.feeds_analysis(event.offset);
         let operator_turn = events
             .iter()
             .rfind(|event| event.kind == LabelEventKind::Human)
             .is_some_and(operator);
-        let context = if initial_context {
+        let mut context = if initial_context {
             analysis_context(events, &operator)
         } else {
             let mut delta = new_human_turns(events, record.task_input_cursor);
@@ -1198,6 +1355,55 @@ impl LabelWorker {
         };
         if context.is_empty() {
             return false;
+        }
+        let ledger_session = record.native_session_id.as_ref().map(|id| SessionIdentity {
+            device_id: self
+                .target
+                .strip_prefix("device:")
+                .unwrap_or(&self.target)
+                .to_owned(),
+            agent: pane.agent.as_str().to_owned(),
+            session_id: id.clone(),
+        });
+        let ledger_client = self.ledger.lock().ok().and_then(|client| client.clone());
+        let ledger = ledger_session.as_ref().and_then(|session| {
+            ledger_client
+                .as_ref()
+                .and_then(|client| client.context(session))
+        });
+        if phase == AnalysisPhase::TurnEnd
+            && ledger_session.is_some()
+            && ledger_client.is_some()
+            && ledger.is_none()
+        {
+            // The link worker will fill a cold/evicted context. Never settle
+            // the turn with a fabricated root author or empty open work.
+            pane.next_analysis_at = Some(now + CONTEXT_READ_RETRY);
+            return false;
+        }
+        let ledger = ledger.unwrap_or_default();
+        let work_author = events
+            .iter()
+            .rfind(|event| event.kind == LabelEventKind::Human)
+            .is_some_and(|event| facts.feeds_work(event, ledger.parent_name.as_deref()));
+        let turn_witness = events
+            .iter()
+            .rfind(|event| event.kind == LabelEventKind::Human)
+            .and_then(|event| hide_session::label_transcript::work_turn(events, event.offset))
+            .map(|turn| turn.witness());
+        if phase == AnalysisPhase::TurnEnd {
+            let tasks = ledger
+                .open_tasks
+                .iter()
+                .map(|task| json!({"id":task.id,"name":task.name}))
+                .collect::<Vec<_>>();
+            let missed = ledger
+                .open_missed
+                .iter()
+                .map(|missed| json!({"id":missed.id,"kind":missed.kind,"text":missed.text}))
+                .collect::<Vec<_>>();
+            context.push_str(&format!("\n<work-author>{work_author}</work-author>\n<open-tasks>{}</open-tasks>\n<open-missed>{}</open-missed>",
+                super::analysis::redact(&json!(tasks).to_string()),super::analysis::redact(&json!(missed).to_string())));
         }
         let generation = pane.generation;
         let retry = if phase == AnalysisPhase::TurnEnd && pane.end_retried == Some(turn) {
@@ -1218,6 +1424,18 @@ impl LabelWorker {
             &context,
         );
         let meta = AnalysisMeta {
+            ledger_session,
+            work_author,
+            turn_witness,
+            offset: events
+                .iter()
+                .rfind(|event| event.kind == LabelEventKind::Human)
+                .map(|event| event.offset),
+            at_unix_ms: events.last().map_or(0, |event| event.at_unix_ms),
+            request_at_unix_ms: events
+                .iter()
+                .rfind(|event| event.kind == LabelEventKind::Human)
+                .map_or(0, |event| event.at_unix_ms),
             pane: pane_id.to_owned(),
             generation,
             owner,
@@ -1235,7 +1453,10 @@ impl LabelWorker {
             phase,
             request,
             done: Box::new(move |result| {
-                let _ = sender.send(WorkerResult::Analysis(AnalysisOutcome { meta, result }));
+                let _ = sender.send(WorkerResult::Analysis(Box::new(AnalysisOutcome {
+                    meta,
+                    result,
+                })));
                 wake();
             }),
         });
@@ -1281,17 +1502,52 @@ impl LabelWorker {
             Ok((provider, analysis)) => {
                 let record = self.records.get_mut(pane_id).expect("checked above");
                 let previous_goal = record.goal.clone();
-                // Only the first analysis or the start of a turn the
-                // operator asked for may move the goal (D-09).
-                let may_update_goal = outcome.initial_context
-                    || previous_goal.is_none()
-                    || (outcome.phase == AnalysisPhase::TurnStart
+                // A first goal or the start of a turn the operator asked
+                // for may move the goal (D-09). With goal_changed false,
+                // the provider's goal value is ignored, including null.
+                let may_update_goal = previous_goal.is_none()
+                    || ((outcome.initial_context || outcome.phase == AnalysisPhase::TurnStart)
                         && outcome.operator_turn
                         && analysis.goal_changed);
-                let goal_changed =
-                    may_update_goal && previous_goal.as_deref() != Some(analysis.goal.as_str());
+                let goal_changed = may_update_goal && previous_goal != analysis.goal;
                 if goal_changed {
-                    record.goal = Some(analysis.goal.clone());
+                    record.goal = analysis.goal.clone();
+                }
+                if let Some(session) = outcome.ledger_session.clone()
+                    && let Some(client) = self.ledger.lock().ok().and_then(|client| client.clone())
+                    && client
+                        .ledger_started_at()
+                        .is_some_and(|since| outcome.request_at_unix_ms >= since)
+                    && outcome.request_at_unix_ms >= self.summaries_on_since
+                {
+                    if let Some(goal) = record.goal.clone()
+                        && let Err(code) = client.ledger(LedgerUpdate::Chapter {
+                            session: session.clone(),
+                            goal,
+                            at_unix_ms: outcome.request_at_unix_ms,
+                        })
+                    {
+                        crate::diagnostic!(
+                            json!({"component":"labels","kind":"ledger.enqueue_failed","pane_id":pane_id,"code":code})
+                        );
+                    }
+                    if outcome.phase == AnalysisPhase::TurnEnd
+                        && let Some(offset) = outcome.offset
+                        && let Some(judgment) = analysis.work.clone()
+                        && let Err(code) = client.ledger(LedgerUpdate::TurnEnd {
+                            session,
+                            offset,
+                            at_unix_ms: outcome.at_unix_ms,
+                            end: analysis.end,
+                            work_author: outcome.work_author,
+                            turn_witness: outcome.turn_witness.clone(),
+                            judgment,
+                        })
+                    {
+                        crate::diagnostic!(
+                            json!({"component":"labels","kind":"ledger.enqueue_failed","pane_id":pane_id,"code":code})
+                        );
+                    }
                 }
                 record.line = analysis.line.clone();
                 record.end = Some(analysis.end);
@@ -1316,7 +1572,7 @@ impl LabelWorker {
                     "phase": outcome.phase.label(),
                     "goal_changed": goal_changed,
                     "operator_turn": outcome.operator_turn,
-                    "goal_chars": analysis.goal.chars().count(),
+                    "goal_chars": analysis.goal.as_ref().map_or(0, |goal| goal.chars().count()),
                     "line_chars": analysis.line.chars().count(),
                     "end": analysis.end,
                     "context_chars": outcome.context_chars,
@@ -1350,6 +1606,19 @@ impl LabelWorker {
                     pane.next_analysis_at = Some(now);
                     self.log_failure(pane_id, "analysis.retried", &failure.detail());
                     return cleared;
+                }
+                if outcome.phase == AnalysisPhase::TurnEnd
+                    && let Some(session) = outcome.ledger_session.clone()
+                    && let Some(offset) = outcome.offset
+                    && let Some(client) = self.ledger.lock().ok().and_then(|client| client.clone())
+                    && let Err(code) = client.ledger(LedgerUpdate::Unjudged {
+                        session,
+                        offsets: vec![offset],
+                    })
+                {
+                    crate::diagnostic!(
+                        json!({"component":"labels","kind":"ledger.enqueue_failed","pane_id":pane_id,"code":code})
+                    );
                 }
                 match failure.retry_after() {
                     Some(wait) => {
@@ -1440,7 +1709,6 @@ impl Reader {
                             generation: job.generation,
                             reference: job.reference,
                             from_start: job.from_start,
-                            from_beginning: job.request.checkpoint.is_none(),
                             state_change_seq: job.state_change_seq,
                             result: Box::new(result),
                         })

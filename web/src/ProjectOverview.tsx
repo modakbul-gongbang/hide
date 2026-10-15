@@ -14,9 +14,8 @@ import { AgentGraph, GraphFilterControls } from "./GraphView";
 import { foldId } from "./agentGraph";
 import { OverviewTitleRow } from "./OverviewTitleRow";
 import { LensTabs, lensHandlers } from "./OverviewLenses";
-import { agentsTile, issuesTile, lastIssueRead, prsTile, scopeAgents, sessionsTile } from "./overviewLens";
-import { boardLabels, buildPullRequests, buildTasks, projectStats, type BoardProject, type BoardStats, type TaskCard } from "./projectBoard";
-import { PullRequestsView } from "./PullRequestsView";
+import { agentsTile, issuesTile, lastIssueRead, scopeAgents, sessionsTile } from "./overviewLens";
+import { boardLabels, buildTasks, projectStats, type BoardProject, type BoardStats, type TaskCard } from "./projectBoard";
 import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
 import type { Workspace } from "./snapshot";
 import { useShellStore } from "./store";
@@ -24,6 +23,7 @@ import { readsHere } from "./devices";
 import { ProjectSessions } from "./ProjectSessions";
 import { IssueFilterControl, TasksModeToggle } from "./TaskBoards";
 import { toggledFold, useUiStore, type OverviewLens } from "./ui";
+import { settingsTarget } from "./projectSettings";
 
 // A Project's Overview (PRD web-project-overview, task-agents-views, the
 // issue-first rework and overview-lenses-tiles-agents): the Project scope the
@@ -65,13 +65,12 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const everyone = useMemo(() => scopeAgents(boardProjects(rest, agents)), [rest, agents]);
 
   const stats = useMemo(() => (workspace ? projectStats(workspace) : null), [workspace]);
-  const pullRequests = useMemo(() => (projects[0] ? buildPullRequests(projects[0], Date.now()) : null), [projects]);
   const tiles = useMemo(
     () =>
-      tasks && workspace && found && pullRequests
-        ? [agentsTile(workspace.agent_scope, found.availability, t), issuesTile(tasks, Date.now(), lastIssueRead(workspace), requireInterfaceLanguage(i18n.language), t), prsTile(pullRequests, t), sessionsTile(sessions, workspace.id, Date.now(), t)]
+      tasks && workspace && found
+        ? [agentsTile(workspace.agent_scope, found.availability, t), issuesTile(tasks, Date.now(), lastIssueRead(workspace), requireInterfaceLanguage(i18n.language), t), sessionsTile(sessions, workspace.id, Date.now(), t)]
         : [],
-    [tasks, workspace, found, lensAgents, sessions, pullRequests, t, i18n.language],
+    [tasks, workspace, found, lensAgents, sessions, t, i18n.language],
   );
   // The Git facts, pull requests and size of a Git project the core reads as
   // its own (its machine's, or a node's that dials it, measured and read on
@@ -100,7 +99,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
     if (canIssue && workspace) useUiStore.getState().setWorkspaceDialog({ kind: "new_issue", workspaceId: workspace.id });
   };
   useNewIssueShortcut(canIssue ? newIssue : null);
-  if (!found || !tasks || !stats || !pullRequests) {
+  if (!found || !tasks || !stats) {
     return (
       <section className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-caption text-muted-foreground" data-overview-missing={projectId}>
         <p>{t("overview.projectMissing")}</p>
@@ -131,9 +130,9 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   // An issue chip opens the Issues tile at its card with the issue's panel open.
   const view = lens.tab === "requests" ? "agents" : lens.tab;
   // With the issue panel open the board and the panel scroll on their own, under a header that stays (D-43).
-  const split = (view === "issues" && panelCard(tasks, lens.panel) !== null) || (view === "prs" && lens.prs.panel !== null);
+  const split = view === "issues" && panelCard(tasks, lens.panel) !== null;
   const state =
-    view === "issues" ? (tasks.cards.length === 0 ? "empty" : "board") : view === "agents" ? (lensAgents.length === 0 ? "empty" : "board") : view === "prs" ? (pullRequests.groups.length === 0 ? "empty" : "board") : "sessions";
+    view === "issues" ? (tasks.cards.length === 0 ? "empty" : "board") : view === "agents" ? (lensAgents.length === 0 ? "empty" : "board") : "sessions";
   const sessionsView = view === "sessions";
   return (
     <section
@@ -146,6 +145,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
       <header className="flex shrink-0 flex-col gap-xs border-b border-border px-lg py-sm">
         <OverviewTitleRow
           name={project.label}
+          openSettings={(returnFocus) => useUiStore.getState().openProjectSettings(settingsTarget(project), returnFocus)}
           path={project.path}
           remoteDevice={device && device.kind === "remote" ? device.label : null}
           onAllProjects={() => setProject(null)}
@@ -156,7 +156,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
       </header>
       <OpeningStatus actions={actions} />
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-md px-lg py-sm" data-overview-view-row="true">
-        <LensTabs tiles={tiles} selected={view} onSelect={(tab) => setLens({ tab, focusTask: null, panel: null, session: null, prs: { ...lens.prs, focus: null, panel: null } })} />
+        <LensTabs tiles={tiles} selected={view} onSelect={(tab) => setLens({ tab, focusTask: null, panel: null, session: null })} />
         {view === "agents" ? (
           <GraphFilterControls agents={lensAgents} filter={lens.graph} onChange={(graph) => setLens({ graph })} />
         ) : view === "issues" ? (
@@ -177,8 +177,6 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
           {/* Keyed by the Project, so another Project starts with its own filters and asks for itself. */}
           <ProjectSessions key={`${project.device_id}:${project.id}`} workspace={project} actions={actions} target={lens.session} onTarget={clearSessionTarget} />
         </div>
-      ) : view === "prs" ? (
-        <PullRequestsView board={pullRequests} project={project} lens={lens.prs} onLens={(prs) => setLens({ prs: { ...lens.prs, ...prs } })} handlers={lensActions} actions={actions} now={now} />
       ) : view === "agents" ? (
         // A device that does not answer shows its reason above and no graph: the last picture is not left standing (B32).
         availability.state === "ready" ? (

@@ -18,7 +18,7 @@ const EXAMPLES: Example[] = [
   { title: "자식 검토에서 답이 필요함", group: "needs_you", line: null, ask: { verb: "confirm", what: "입력 경계 검토", more: 1 } },
   { title: "세션 상태 투영 정리", group: "done", line: "투영 정리를 끝냈습니다", pr: "mergeable" },
   { title: "오래된 PR의 검토", group: "working", line: "실패한 검증을 고치는 중", pr: "failed" },
-  { title: "세션 패널 구현", group: "working", line: "프로젝트 범위를 연결하는 중", mark: { kind: "working", count: 2 } },
+  { title: "세션 패널 구현", group: "working", line: "프로젝트 범위를 연결하는 중", mark: { kind: "working", count: 3 } },
   { title: "회귀 테스트", group: "idle", line: "남은 경계 테스트 2개", unfinished: true, pr: "pending" },
   { title: "쉬는 세션", group: "idle", line: null },
   { title: "완료한 검토", group: "resolved", line: null, pr: "merged" },
@@ -35,7 +35,7 @@ const BANDS: [string, PaneHeader["band"]][] = [
   ["merge", { kind: "merge", tone: "pr", reason: "CI 통과 · 승인됨", since_unix_ms: null, action: { kind: "pr", workspace_id: "hide", url: "https://github.com/acme/app/pull/221", number: 221, checks: "passing", tone: "pr" }, more: 0, exit_code: null }],
   ["raised", { kind: "raised", tone: "warning", reason: null, since_unix_ms: null, action: { kind: "child", pane_id: "a1c1", label: RAISED.title }, more: 1, exit_code: null, raised: RAISED }],
   ["result", { kind: "result", tone: "success", reason: "보고서가 준비됐습니다", since_unix_ms: null, action: null, more: 0, exit_code: null }],
-  ["working", null], ["idle", null],
+  ["working", null], ["idle", null], ["children", null], ["unknown", null],
 ];
 
 // Panes drawn as a delegated child, so their header starts with the path back to the root (B20).
@@ -48,7 +48,7 @@ const MARKS: [string, StatusTone["kind"], RequestVerb][] = [
   ["○", "working", "waiting"], ["○", "subtle", "idle"], ["✓", "subtle", "result"],
 ];
 
-export function SessionWorkflowScene({ scene: kind, theme, content, scale }: SceneParams & { scene: "session-panel" | "pane-header" }) {
+export function SessionWorkflowScene({ scene: kind, theme, content, scale, width }: SceneParams & { scene: "session-panel" | "pane-header" }) {
   const actions = useMemo(() => createActions(() => true), []);
   const fixture = useMemo(() => {
     const base = sidebarScene(content, REFERENCE_FOLDS, Date.now());
@@ -62,6 +62,8 @@ export function SessionWorkflowScene({ scene: kind, theme, content, scale }: Sce
         ...seed, id: `s${index}`, pane_id: `s${index}`, symbol, agent_kind: index % 2 ? "codex" : "claude",
         identity_label: content === "long" ? `${example.title} - 긴 한국어 제목과 변경 사항을 좁은 화면에서 확인하는 작업` : example.title,
         lineage_child_pane_ids: index === 5 ? ["a1c1", "a1c2"] : [],
+        // One Working root is a fork of the row beside it (PRD fork-operator-root B8).
+        forked_from: index === 4 ? { pane_id: "s5", label: EXAMPLES[5]!.title } : null,
         descendant_mark: example.mark ?? null,
         state: { ...seed.state, verb, mark_tone: { kind: tone, read: false }, chip_tone: { kind: tone, read: false }, session: { group: example.group, line: example.line, unfinished: example.unfinished ?? false }, ask: example.ask ?? null, tree_rank: 1,
           pr: example.pr ? { count: 1, worst: example.pr, pulls: [{ index: 0, state: example.pr }] } : null,
@@ -84,7 +86,19 @@ export function SessionWorkflowScene({ scene: kind, theme, content, scale }: Sce
     base.rest.navigator!.focused_workspace_id = project.id;
     // The panel's tree opens on the row with children, so a child's columns are compared with its root's.
     base.rest.ui_state = { ...base.rest.ui_state!, sessions_expanded_agent_pane_ids: ["s5"] };
-    const children = base.agents.filter((row) => ["a1c1", "a1c2"].includes(row.pane_id));
+    // A has a different-checkout child, a same-checkout child, and a folded
+    // grandchild with a PR. The parent's count includes all three.
+    const children = base.agents.filter((row) => ["a1c1", "a1c2", "a1g1"].includes(row.pane_id)).map((child, index): AgentRow => {
+      const state: PrState = index === 1 ? "failed" : index === 2 ? "mergeable" : "pending";
+      const number = 230 + index;
+      const line = index === 0 ? "브랜치와 진행 설명을 분리하는 중" : index === 2 ? "좁은 화면 검증을 끝냈습니다" : null;
+      return { ...child, lineage_parent_pane_id: index === 2 ? "a1c1" : "s5", lineage_child_pane_ids: index === 0 ? ["a1g1"] : [],
+        state: { ...child.state, session: { group: index === 0 ? "working" : "idle", line, unfinished: false }, pr: { count: 1, worst: state, pulls: [{ index: 0, state }] }, branch_badge: index === 0 ? "feat/session-row-clarity-and-branch-label" : null },
+        request: { verb: index === 0 ? "working" : "idle", verb_since_unix_ms: Date.now(), request: null, later_by: null, reply: null, pull_requests: [{ number, title: child.identity_label, url: `https://example.invalid/pull/${number}`, badge: "open", checks: state === "failed" ? "failed" : state === "pending" ? "pending" : "passing", review: state === "mergeable" ? "approved" : "review_required", head_branch: "feat/session-row-clarity-and-branch-label", closing_issues: [], live: true, duty: true, created: true, settled_at_unix_ms: null }] } };
+    });
+    const childPanes = children.map((child) => ({ ...pane, id: child.pane_id, identity_label: child.identity_label }));
+    feature.tabs[0]!.panes.push(childPanes[0]!);
+    checkout.tabs[0]!.panes.push(...childPanes.slice(1));
     const headers = Object.fromEntries(BANDS.map(([id, band]) => [id, { working: id === "working", band: band && { ...band, since_unix_ms: ["approval", "answer", "fix", "merge", "raised", "result"].includes(id) ? Date.now() - 180_000 : band.since_unix_ms } }]));
     // The fix and merge panes own one PR each, so their header shows the own PR chip (B21, B22).
     const ownPr = (id: string): Pick<AgentRow, "state" | "request"> => {
@@ -94,9 +108,25 @@ export function SessionWorkflowScene({ scene: kind, theme, content, scale }: Sce
         request: { verb: "working", verb_since_unix_ms: Date.now(), line: undefined, request: null, later_by: null, reply: null, pull_requests: [{ number: 221, title: "세션 상태 투영 정리", url: "https://github.com/acme/app/pull/221", badge: "open", checks: state === "failed" ? "failed" : "passing", review: "approved", head_branch: "prd/session-ui", closing_issues: [], live: true, duty: true, created: true, settled_at_unix_ms: null }] },
       };
     };
-    const headerAgents = BANDS.map(([id]) => ({ ...seed, id, pane_id: id, lineage_child_pane_ids: ["a1c1", "a1c2"], ...(id === "fix" || id === "merge" ? ownPr(id) : {}) }));
+    // B2's full aggregate, unknown and empty examples use explicit snapshot
+    // facts, not a gallery implementation of the core's status decisions.
+    const childExamples: AgentRow[] = [
+      { ...children[0]!, id: "b2-working", pane_id: "b2-working", identity_label: "자식 상태 칩과 팝업 연결 구현", descendant_mark: null, state: { ...children[0]!.state, tree_rank: 1, line: { text: "작업 상태 칩과 팝업을 연결하는 중", mode: "news", tone: { kind: "working", read: false } } } },
+      { ...children[1]!, id: "b2-result", pane_id: "b2-result", identity_label: "헤더 배치 검토", symbol: "✓", status_code: "done", unknown: false, descendant_mark: null, state: { ...children[1]!.state, tree_rank: 2, line: null } },
+      { ...children[1]!, id: "b2-idle", pane_id: "b2-idle", identity_label: "다음 요청 대기", unknown: false, descendant_mark: null, state: { ...children[1]!.state, tree_rank: 3, line: null } },
+      { ...children[1]!, id: "b2-unknown", pane_id: "b2-unknown", identity_label: "상태 확인 중인 자식", symbol: "~", status_code: "unknown", activity: "unknown", demand: "none", descendant_mark: null, state: { ...children[1]!.state, tree_rank: 3, line: null } },
+      { ...children[1]!, id: "b2-question", pane_id: "b2-question", identity_label: "부모에게 PR 구성 질문", symbol: "?", status_code: "question", unknown: false, descendant_mark: null, state: { ...children[1]!.state, tree_rank: 0, line: { text: "기존 PR에 합칠지 부모 응답을 기다리는 중", mode: "quiet", tone: { kind: "subtle", read: false } } } },
+    ];
+    const headerAgents = BANDS.map(([id]) => ({ ...seed, id, pane_id: id,
+      device_id: id === "device" ? "mini" : seed.device_id,
+      descendant_mark: id === "raised" ? { kind: "raised" as const, count: 2 } : null,
+      raised: id === "raised" ? [RAISED, { ...RAISED, raised_pane_id: "a1c2", pane_id: "a1c2", open_pane_id: "a1c2", title: children[1]!.identity_label, verb: "answer" as const, what: "PR을 함께 올릴까요?" }] : [],
+      lineage_child_pane_ids: id === "idle" ? [] : id === "children" ? childExamples.map((child) => child.pane_id) : id === "unknown" ? ["b2-unknown"] : ["a1c1", "a1c2"],
+      direct_child_counts: id === "children" ? { error: 0, approval: 0, question: 1, working: 1, done: 1 } : id === "unknown" ? { error: 0, approval: 0, question: 0, working: 0, done: 0 } : { error: 0, approval: 0, question: 0, working: 1, done: 0 },
+      ...(id === "fix" || id === "merge" ? ownPr(id) : {}) }));
     base.rest.terminal = { headers };
-    return { ...base, agents: [...agents, ...children, ...headerAgents], pane };
+    base.rest.status = { ...base.rest.status, remote: [{ target_id: "mini", state: "not_connected", message: "Mac mini 연결되지 않음", herdr_version: null, session: null }] };
+    return { ...base, agents: [...agents, ...children, ...childExamples, ...headerAgents], pane };
   }, [content]);
   useLayoutEffect(() => {
     useShellStore.setState({ rest: fixture.rest, agents: fixture.agents, connection: "gone" });
@@ -104,5 +134,5 @@ export function SessionWorkflowScene({ scene: kind, theme, content, scale }: Sce
     document.documentElement.classList.toggle("light", theme === "light");
     document.documentElement.style.setProperty("--interface-scale", String(scale));
   }, [fixture, theme, scale]);
-  return <TooltipProvider>{kind === "session-panel" ? <div className="flex h-full bg-background text-foreground" data-gallery-scene={kind}><AgentSessions actions={actions} /></div> : <div className="grid grid-cols-2 gap-lg bg-background p-xl text-foreground" data-gallery-scene={kind}>{BANDS.map(([id]) => <div key={id} className="h-[var(--size-pane-state-example)] min-w-0 border border-border"><PaneView pane={{ ...fixture.pane, id, identity_label: content === "long" ? "긴 한국어 제목을 좁은 pane에서 확인하는 상태 검토" : "한국어 입력 경계 검토", fork: id === "working" ? { available: false, forked_from_pane_id: "a1" } : undefined, lineage_path: CHILD_PANES.includes(id) ? [{ pane_id: "a1", label: "hide 에이전트 지원 PR 묶음 머지 조율", siblings: [] }, { pane_id: id, label: "한국어 입력 경계 검토", siblings: [] }] : undefined }} transport={undefined} focused={false} scale={1} actions={actions} agentKind="codex" markSymbol="○" markTone="text-muted-foreground" paneCount={2} zoomed={false} /></div>)}</div>}</TooltipProvider>;
+  return <TooltipProvider>{kind === "session-panel" ? <div className="flex h-full bg-background text-foreground" data-gallery-scene={kind}><AgentSessions actions={actions} /></div> : <div style={{ width: width ?? undefined }} className="grid grid-cols-2 gap-lg bg-background p-xl text-foreground" data-gallery-scene={kind}>{BANDS.map(([id]) => <div key={id} className="h-[var(--size-pane-state-example)] min-w-0 border border-border"><PaneView pane={{ ...fixture.pane, id, identity_label: content === "long" ? "긴 한국어 제목을 좁은 pane에서 확인하는 상태 검토" : "한국어 입력 경계 검토", fork: id === "idle" ? { available: true, forked_from: { pane_id: "a1", label: "hide 에이전트 지원 PR 묶음 머지 조율" } } : undefined, lineage_path: CHILD_PANES.includes(id) ? [{ pane_id: "a1", label: "hide 에이전트 지원 PR 묶음 머지 조율", siblings: [] }, { pane_id: id, label: "한국어 입력 경계 검토", siblings: [] }] : undefined }} transport={undefined} focused={false} scale={1} actions={actions} agentKind="codex" markSymbol="○" markTone="text-muted-foreground" paneCount={2} zoomed={false} /></div>)}</div>}</TooltipProvider>;
 }

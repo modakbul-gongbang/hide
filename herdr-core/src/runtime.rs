@@ -39,6 +39,7 @@ mod pane_prediction;
 mod pane_reopen;
 pub(crate) mod project_memory;
 mod project_sessions;
+mod project_settings;
 mod projects;
 mod pull_requests;
 mod recent_checkouts;
@@ -48,12 +49,15 @@ mod request_view;
 mod session;
 pub(crate) mod session_search;
 mod session_state;
+mod session_work;
 mod snapshot_delta;
 mod ssh_hosts;
 mod tab_focus;
 mod terminal;
 mod terminal_input;
 mod tree_close;
+pub(crate) mod usage_ledger;
+mod usage_limit;
 mod view_areas;
 mod view_bookmarks;
 mod workspace_control;
@@ -424,6 +428,9 @@ struct WaitingExplorerChange {
     owner: Option<(String, String)>,
     request: ExplorerRequest,
 }
+
+/// Pull request summaries kept for their head commit (D-29).
+const PR_SUMMARY_CACHE_LIMIT: usize = 64;
 
 /// How many Explorer changes wait behind the running one. A drag and the
 /// keys that follow it queue one or two; past this the newest is refused.
@@ -1061,8 +1068,18 @@ pub(crate) struct DeviceGithubRead {
 pub struct Runtime {
     snapshot: Snapshot,
     delivery_ledger: Result<Arc<crate::delivery::ledger::Ledger>, String>,
+    /// What the ledger says Hide itself started, derived again only when a
+    /// ledger change moves it (PRD hide-ai-origin-mark D-01).
+    hide_started: crate::coordination::started::HideStarted,
     delivery_client: Option<crate::delivery::worker::Client>,
     delivery_observations: HashMap<String, delivery::Observation>,
+    /// The panes held as an unsent draft, kept across a restart so a daemon
+    /// that starts over does not type a bell over what the operator typed
+    /// (`composer_store.rs`); absent in a runtime with no state folder.
+    composer_marks: Vec<crate::composer_store::Mark>,
+    /// When each observed pane's input was last traced (`delivery.input`).
+    delivery_input_traced: HashMap<String, u64>,
+    composer_store: Option<crate::composer_store::ComposerStore>,
     /// Open Factories' code-owned recipients (`factory:<id>`), set by the
     /// Factory host; a letter to any other `factory:` name has no recipient.
     /// Each open Factory's id with its stall window (D-30, B24).
@@ -1107,6 +1124,7 @@ pub struct Runtime {
     state_save_pending: bool,
     state_save_active: bool,
     state_save_worker: Option<thread::JoinHandle<()>>,
+    project_settings_pending: BTreeMap<String, project_settings::Pending>,
     /// Where the SSH config that names each registered device's host lives;
     /// `None` when the process has no usable HOME, which every connect then
     /// reports rather than guessing a path.
@@ -1297,8 +1315,18 @@ pub struct Runtime {
     /// changed choice can restamp the rows without asking again.
     background_ai_providers: Vec<crate::model::BackgroundAiProviderSnapshot>,
     usage_window_visible: bool,
+    usage_ledger_client: Option<crate::usage_ledger::worker::Client>,
     usage_popover_open: bool,
     usage_popover_open_generation: u64,
+    /// The usage limit and the weekly figures the label and Memory routers
+    /// judge each request by; written from the settings and the usage rows
+    /// (`runtime/usage_limit.rs`).
+    usage_limits: Arc<hide_ai::UsageLimits>,
+    /// Where every router tells what its attempts cost; the usage ledger
+    /// worker drains it (`runtime/usage_ledger.rs`).
+    ai_usage: Arc<crate::usage_ledger::ai_usage::AiUsageQueue>,
+    /// Whether the diagnostic log last said the order is paused by the limit.
+    usage_pause_announced: bool,
     recent_visible_tabs: Vec<String>,
     pending_tab_rename: Option<rename::PendingRename>,
     /// Panes Hide has asked Herdr to close. Herdr closes the PTY first, so the
@@ -1412,6 +1440,10 @@ pub struct Runtime {
     search_generation: u64,
     /// What the link worker was last handed, and its panel reads.
     links_work: links::LinksWork,
+    session_issue_work: session_work::SessionIssueWork,
+    /// The minute the Work tab's PRs list was last judged against the clock
+    /// (`runtime/request_view.rs`, `tick_work_clock`).
+    work_clock_minute: u64,
     /// Project Memory's background pass, receipts and analysis state
     /// (`runtime/memory_analysis.rs`).
     memory_work: memory_analysis::MemoryWork,
@@ -1423,6 +1455,9 @@ pub struct Runtime {
     /// measures idleness from here, so roam and sleep are driven by real
     /// session activity rather than wall-clock uptime.
     pet_active_at_unix_ms: u64,
+    /// When an agent last worked or waited on the operator; 0 until one has
+    /// (the pet's own clock starts at launch, this one must not).
+    agent_worked_at_unix_ms: u64,
     pet_waking_until_unix_ms: u64,
     pet_dragging: bool,
     /// The pane the operator chose to look at, and the only pane whose read
@@ -1438,9 +1473,17 @@ pub struct Runtime {
     /// operator's behalf arms this, and it is memory only: a launch starts
     /// with the operator having looked at nothing.
     operator_focused_pane_id: Option<String>,
-    /// Persisted records waiting to compare against an agent after a fresh
-    /// Herdr connection. Agent detection can trail restored pane topology.
-    pending_read_record_reconciliation: HashSet<String>,
+    /// The read axis's view of the current connection to the local Herdr
+    /// server and to each device's: the mark that names the server and the
+    /// panes settled on it so far (`agent_state::ReadConnection`). Memory
+    /// only; every connection starts a new one.
+    local_read_connection: crate::agent_state::ReadConnection,
+    /// One per device target that has connected, so at most one per
+    /// registered device.
+    remote_read_connections: BTreeMap<String, crate::agent_state::ReadConnection>,
+    /// Numbers the marks this process makes, so two connections made in the
+    /// same millisecond still get different marks.
+    read_marks_made: u64,
     /// The tab Hide is showing in each checkout it has been asked about.
     ///
     /// Hide owns the visible tab. The navigator is rebuilt from Herdr's
@@ -1546,6 +1589,11 @@ pub struct Runtime {
     /// Ids for the `issue_work` slots, so a late answer for a replaced
     /// request is recognised and dropped.
     next_issue_work_id: u64,
+    /// The summary hide-ai made of a pull request at a head commit, kept for
+    /// that head (D-29). In memory, capped at [`PR_SUMMARY_CACHE_LIMIT`].
+    pr_summaries: BTreeMap<(String, u32), (String, String)>,
+    /// Summaries being asked for now, so one head is asked once.
+    pr_summaries_asked: BTreeSet<(String, u32, String)>,
     /// The one running GitHub search and the one waiting behind it
     /// (`issues::GithubSearchWork`).
     github_search: issues::GithubSearchWork,
@@ -1557,6 +1605,9 @@ pub struct Runtime {
     /// id. Kept off the snapshot: an issue body or a request has no business
     /// on the wire after the surface that sent it.
     task_agent_launch: Option<TaskAgentLaunch>,
+    /// How the pane a task created says its shell has finished starting,
+    /// by task id, for that task's agent start.
+    task_pane_shell: Option<(u64, crate::agent_start::ShellStart)>,
     /// Each device's Home link sync: the set last sent and whether it runs.
     home_links: HashMap<String, home::HomeLinkState>,
     /// The catalog and root index most recently accepted from the sync
@@ -1597,10 +1648,12 @@ pub struct Runtime {
     /// second, so the diagnostic is emitted when the set changes rather than
     /// on every tick.
     unresolved_active_tabs: BTreeSet<String>,
-    /// Panes whose fork has been started and not yet answered. `herdr agent
-    /// new` blocks until the agent has started, so without this a second
-    /// activation during that wait would bill a second session.
-    forks_in_flight: HashSet<String>,
+    /// Panes whose fork has been started and not yet answered, by source
+    /// pane. `agent.start` blocks until the agent has started, so without this
+    /// a second activation during that wait would bill a second session.
+    forks_in_flight: HashMap<String, agents::PendingFork>,
+    /// The last keyboard move made for a fork (`agents::ForkFocus`).
+    fork_focus: Option<agents::ForkFocus>,
     /// When the agent sleep decision may run next; the coordinator ticks every
     /// 250 ms and the decision runs once a minute (PRD agent-sleep).
     agent_sleep_next_decision_unix_ms: u64,
@@ -1651,9 +1704,11 @@ pub struct Runtime {
     /// off one read while it is recent and none after.
     github_sighted: HashMap<(String, u64), projects::Sighted>,
     /// Projects an answer arrived for since the clock last looked, each with
-    /// whether that read failed to get its pull requests; the next wake starts
-    /// their wait.
-    github_answered: HashMap<String, bool>,
+    /// how that read ended; the next wake starts their wait.
+    github_answered: HashMap<String, crate::model::GithubReadOutcome>,
+    /// The remotes each read project's repository had when the clock last
+    /// looked (`Runtime::github_remotes_moved`).
+    github_remotes: HashMap<String, Vec<String>>,
     /// The generation each project was last answered for: the reader returns
     /// its cached entry for every project in a request, and only a moved
     /// generation is a read.
@@ -1661,6 +1716,12 @@ pub struct Runtime {
     /// Local projects whose first read has been answered, with or without a
     /// result; until then a project without an answer is loading.
     github_settled: HashSet<String>,
+    /// Pull requests whose Merge Hide just saw GitHub accept, as (project
+    /// root, number) with the time it was seen: the list reads them as merged at once, since GitHub's
+    /// own list can still answer open (merge state unknown) for a moment
+    /// after its own merge. An entry leaves when a read shows the pull
+    /// request merged or closed, or no longer lists it.
+    merged_here: HashMap<(String, u32), u64>,
     /// The number of local Git projects past `GITHUB_PROJECT_LIMIT` last
     /// stated, so a count is logged once rather than on every wake.
     github_over_limit: usize,
@@ -1725,6 +1786,8 @@ pub struct Runtime {
     next_explorer_operation_id: u64,
     explorer_queue: VecDeque<WaitingExplorerChange>,
     delta: snapshot_delta::DeltaState,
+    /// Usage publications have their own wire revision, independent of navigation.
+    usage_edit: u64,
     agent_scope_cache: crate::agent_state::ScopeCache,
     /// Each Workspace's presentation; present only in a shell that draws
     /// separate Agent and View areas (`CoreOptions::workspace_views_path`).
@@ -1826,22 +1889,35 @@ impl Runtime {
             &crate::model::WorktreeCatalogSnapshot::default(),
             &catalog_paths,
         );
-        let diagnostic = match disposition {
-            persistence::LoadDisposition::Loaded => None,
-            persistence::LoadDisposition::UnknownTheme => Some((
-                "ui_state.theme_unknown",
-                "The stored theme was not recognized; Dark was used",
-            )),
-            persistence::LoadDisposition::Missing => Some((
+        let diagnostics: Vec<(&str, &str)> = match disposition {
+            persistence::LoadDisposition::Loaded => Vec::new(),
+            persistence::LoadDisposition::Unrecognized(fields) => fields
+                .iter()
+                .map(|field| match field {
+                    persistence::UnrecognizedField::Theme => (
+                        "ui_state.theme_unknown",
+                        "The stored theme was not recognized; Dark was used",
+                    ),
+                    persistence::UnrecognizedField::ColorTheme => (
+                        "ui_state.color_theme_unknown",
+                        "The stored color theme was not recognized; Hide was used",
+                    ),
+                    persistence::UnrecognizedField::AgentLogoMode => (
+                        "ui_state.agent_logo_mode_unknown",
+                        "The stored agent logo mode was not recognized; hidden was used",
+                    ),
+                })
+                .collect(),
+            persistence::LoadDisposition::Missing => vec![(
                 "ui_state.missing",
                 "UI state was not found; safe defaults were loaded",
-            )),
-            persistence::LoadDisposition::Corrupt => Some((
+            )],
+            persistence::LoadDisposition::Corrupt => vec![(
                 "ui_state.corrupt",
                 "UI state could not be decoded; safe defaults were loaded",
-            )),
+            )],
         };
-        if let Some((kind, message)) = diagnostic {
+        for (kind, message) in diagnostics {
             crate::diagnostic!(serde_json::json!({
                 "component": "ui_state",
                 "kind": kind,
@@ -1919,9 +1995,16 @@ impl Runtime {
         });
         let mut runtime = Self {
             snapshot,
+            hide_started: delivery_ledger
+                .as_ref()
+                .map(|ledger| crate::coordination::started::hide_started(ledger))
+                .unwrap_or_default(),
             delivery_ledger,
             delivery_client: None,
             delivery_observations: HashMap::new(),
+            composer_marks: Vec::new(),
+            delivery_input_traced: HashMap::new(),
+            composer_store: None,
             factory_recipients: std::collections::BTreeMap::new(),
             factory_panes: HashMap::new(),
             factory_screen: None,
@@ -2006,8 +2089,12 @@ impl Runtime {
             ai_start_observing: false,
             background_ai_providers: Vec::new(),
             usage_window_visible: false,
+            usage_ledger_client: None,
             usage_popover_open: false,
             usage_popover_open_generation: 0,
+            usage_limits: Arc::new(hide_ai::UsageLimits::new()),
+            ai_usage: crate::usage_ledger::ai_usage::AiUsageQueue::new(),
+            usage_pause_announced: false,
             recent_visible_tabs: Vec::new(),
             pending_tab_rename: None,
             panes_closing: HashSet::new(),
@@ -2055,6 +2142,8 @@ impl Runtime {
             search_client: None,
             search_generation: 0,
             links_work: links::LinksWork::default(),
+            session_issue_work: session_work::SessionIssueWork::default(),
+            work_clock_minute: 0,
             memory_work: Default::default(),
             project_memory: Default::default(),
             editor_tab_history: Vec::new(),
@@ -2068,11 +2157,15 @@ impl Runtime {
             state_save_pending: false,
             state_save_active: false,
             state_save_worker: None,
+            project_settings_pending: BTreeMap::new(),
             pet_active_at_unix_ms: unix_milliseconds(),
+            agent_worked_at_unix_ms: 0,
             pet_waking_until_unix_ms: 0,
             pet_dragging: false,
             operator_focused_pane_id: None,
-            pending_read_record_reconciliation: HashSet::new(),
+            local_read_connection: crate::agent_state::ReadConnection::new(read_mark(0)),
+            remote_read_connections: BTreeMap::new(),
+            read_marks_made: 1,
             visible_tab_ids: BTreeMap::new(),
             tab_focus_requests: Vec::new(),
             herdr_tab_moves_read: None,
@@ -2112,9 +2205,12 @@ impl Runtime {
             local_issues_save_active: false,
             local_issue_links: BTreeMap::new(),
             next_issue_work_id: 0,
+            pr_summaries: BTreeMap::new(),
+            pr_summaries_asked: BTreeSet::new(),
             github_search: issues::GithubSearchWork::default(),
             pr_link_checkout: None,
             task_agent_launch: None,
+            task_pane_shell: None,
             home_links: HashMap::new(),
             last_accepted_catalog: None,
             catalog_paths,
@@ -2125,7 +2221,8 @@ impl Runtime {
             pending_tab_move: BTreeMap::new(),
             next_tab_move_generation: 0,
             unresolved_active_tabs: BTreeSet::new(),
-            forks_in_flight: HashSet::new(),
+            forks_in_flight: HashMap::new(),
+            fork_focus: None,
             agent_sleep_next_decision_unix_ms: 0,
             node_sleep_next_decision_unix_ms: HashMap::new(),
             node_sleep_shown_tabs: HashMap::new(),
@@ -2143,8 +2240,10 @@ impl Runtime {
             github_wanted: HashSet::new(),
             github_sighted: HashMap::new(),
             github_answered: HashMap::new(),
+            github_remotes: HashMap::new(),
             github_read_generation: HashMap::new(),
             github_settled: HashSet::new(),
+            merged_here: HashMap::new(),
             github_over_limit: 0,
             github_store: None,
             disk_generation: 0,
@@ -2169,6 +2268,7 @@ impl Runtime {
             next_explorer_operation_id: 0,
             explorer_queue: VecDeque::new(),
             delta: snapshot_delta::DeltaState::default(),
+            usage_edit: 1,
             agent_scope_cache: crate::agent_state::ScopeCache::default(),
             workspace_views,
             workspace_actions: VecDeque::new(),
@@ -2437,6 +2537,12 @@ impl Runtime {
             .separate_view_areas()
             .then(|| AreaIntent::of(&event))
             .flatten();
+        // An open asked while the front files tool shows the tree alone
+        // keeps the tree beside what it opens, whichever route it takes and
+        // however late its view lands (B11, B12).
+        let lone_tree = (self.separate_view_areas() && AreaIntent::opens_view(&event))
+            .then(|| self.front_lone_tree())
+            .flatten();
         // A keystroke in a document is as frequent as terminal input and
         // moves no area either: its first edit keeps its own displays open,
         // and the next snapshot read's sync publishes that.
@@ -2445,10 +2551,14 @@ impl Runtime {
             event,
             Event::FocusCheckout(_) | Event::FocusPane(_) | Event::FocusTab(_)
         );
+        let supersedes_memory = matches!(event, Event::FocusDevice(_) | Event::FileFocus(_));
         let visible_tab_before = chooses_workspace
             .then(|| self.focused_visible_tab_id())
             .flatten();
         let mut changed = self.apply(event) || cleared_error;
+        if supersedes_memory && self.snapshot.status.last_error.is_none() {
+            self.supersede_memory_navigation();
+        }
         // A committed visit to another tab wakes what sleeps there (PRD
         // agent-sleep B12); a refused one moved nothing.
         if chooses_workspace && self.snapshot.status.last_error.is_none() {
@@ -2465,6 +2575,12 @@ impl Runtime {
                 // The call is numbered even when nothing else moved (an
                 // open of the view already shown), and the shell must hear it.
                 changed = true;
+            }
+            if let Some(key) = lone_tree
+                && self.snapshot.status.last_error.is_none()
+                && self.front_workspace_key().as_ref() == Some(&key)
+            {
+                changed |= self.keep_lone_tree(&key);
             }
             if chooses_workspace && self.snapshot.status.last_error.is_none() {
                 self.mark_front_chosen();
@@ -2517,6 +2633,8 @@ fn project_layout_panes(
                 .unwrap_or_else(|| fallback_cwd.to_owned());
             let ports = crate::ports::attributed_ports(&cwd, listening_ports);
             PaneSnapshot {
+                terminal_id: source.and_then(|source| source.terminal_id.clone()),
+                failed_terminal_id: source.and_then(|source| source.failed_terminal_id.clone()),
                 id: pane.pane_id.clone(),
                 herdr_label: source.and_then(|source| source.label.clone()),
                 terminal_title: source.and_then(|source| source.terminal_title.clone()),
@@ -2645,12 +2763,7 @@ pub fn pane_fork_snapshot(agent: Option<&SidebarAgentSnapshot>) -> PaneForkSnaps
         available,
         reason: (!available && ForkableAgent::parse(&agent.agent_kind).is_some())
             .then(|| "This agent has not reported its conversation yet".to_owned()),
-        // Any child a parent declared has a `spawned_from_pane_id`; only one
-        // that was started as a fork is a fork of it.
-        forked_from_pane_id: agent
-            .started_as_fork
-            .then(|| agent.spawned_from_pane_id.clone())
-            .flatten(),
+        forked_from: agent.forked_from.clone(),
     }
 }
 
@@ -2768,6 +2881,17 @@ fn import_native_app_shortcuts(snapshot: &mut Snapshot, source: &Path) -> bool {
     false
 }
 
+/// A mark no other connection has written: this process's start, its id and
+/// how many marks it has made. Two hided processes never share a pid at the
+/// same millisecond, and one never makes the same count twice.
+fn read_mark(made: u64) -> String {
+    format!(
+        "{:x}-{:x}-{made:x}",
+        unix_milliseconds(),
+        std::process::id()
+    )
+}
+
 fn unix_milliseconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2777,6 +2901,7 @@ fn unix_milliseconds() -> u64 {
 
 impl Drop for Runtime {
     fn drop(&mut self) {
+        self.cancel_session_issue_draft();
         self.cancel_memory_pass();
     }
 }

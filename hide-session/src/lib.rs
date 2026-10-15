@@ -42,10 +42,14 @@ pub mod search;
 pub mod search_read;
 pub mod session_activity;
 mod sightings;
+mod sqlite;
 pub mod turns;
+pub mod usage;
 
-pub use envelope::envelope_sender;
-pub use sightings::{MAX_SIGHTINGS_PER_OUTPUT, PrSighting, pull_request_addresses};
+pub use envelope::{envelope_header, envelope_sender};
+pub use sightings::{
+    MAX_SIGHTINGS_PER_OUTPUT, PrSighting, issue_addresses, pull_request_addresses,
+};
 
 pub use label_owner::{
     ConfirmedLabelSession, SessionReadScope, confirm_label_session, confirm_session_file,
@@ -574,7 +578,9 @@ pub struct ParsedSession {
     /// Claude Code writes an `ai-title` record once it has named the
     /// conversation and repeats it on later turns; the last one in the
     /// chunk wins. It is a property of the session rather than an event, so
-    /// it never enters `events`. Codex has no such record and leaves `None`.
+    /// it never enters `events`. A native name with no manual/automatic
+    /// provenance (Pi's `session_info.name`) also belongs here.
+    /// Codex has no such rollout record and leaves `None`.
     pub title: Option<String>,
     /// The name the operator gave the session (Claude Code's `/rename`, a
     /// `custom-title` record), which wins over `title`.
@@ -582,6 +588,7 @@ pub struct ParsedSession {
     /// Pull request addresses the session's tools printed, in record order
     /// (`sightings`).
     pub pr_sightings: Vec<PrSighting>,
+    pub issue_sightings: Vec<PrSighting>,
     /// What the chunk says about links: branches, pull request addresses,
     /// the run kind and continuation pointers (`links`).
     pub links: links::LinkFacts,
@@ -594,6 +601,10 @@ pub struct ParsedSession {
     pub skipped_lines: usize,
     pub skipped_reasons: BTreeMap<SkipReason, usize>,
     pub rescan_reason: Option<RescanReason>,
+    /// The read stopped at a Claude command record whose reply is not in the
+    /// file yet (`parse_events_followed`); the record and what follows it are
+    /// not in this result.
+    pub(crate) held_command: bool,
 }
 
 impl ParsedSession {
@@ -1249,7 +1260,76 @@ enum LineResult {
     },
     /// A tool's output, which is no turn, and the pull request addresses it
     /// printed.
-    Sightings(Vec<PrSighting>),
+    Sightings(GithubSightings),
+    /// A command record whose reply Claude Code has not written yet; the
+    /// record cannot be classified until it has (`CommandReply`).
+    Held,
+}
+
+/// What Claude Code wrote after a command record, which is what says whether
+/// the command was a request to the model (`parse_claude_line`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CommandReply {
+    /// Claude Code answered itself, as `/model` does with a
+    /// `<local-command-stdout>` record: the command is not a request.
+    Local,
+    /// Anything else follows, a skill's or a user command's expansion among
+    /// it: the command went to the model.
+    Model,
+    /// No conversation record follows yet.
+    Pending,
+}
+
+impl CommandReply {
+    /// The first conversation record at or after `rest`, then `following`;
+    /// [`Self::Pending`] when a reader that holds a command (`following` is
+    /// `Some`) has seen none, and [`Self::Model`] for one that does not.
+    fn after(rest: &[u8], following: Option<&[u8]>) -> Self {
+        for line in rest.split(|byte| *byte == b'\n').chain(
+            following
+                .into_iter()
+                .flat_map(|bytes| bytes.split(|byte| *byte == b'\n')),
+        ) {
+            if line.len() > SESSION_LINE_LIMIT_BYTES {
+                continue;
+            }
+            let Ok(item) = serde_json::from_slice::<Value>(line) else {
+                continue;
+            };
+            let kind = item.get("type").and_then(Value::as_str);
+            if !matches!(kind, Some("user" | "assistant" | "system")) {
+                continue;
+            }
+            let own_reply = match kind {
+                Some("system") => {
+                    item.get("subtype").and_then(Value::as_str) == Some("local_command")
+                }
+                _ => item
+                    .pointer("/message/content")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| {
+                        LOCAL_COMMAND_REPLIES
+                            .iter()
+                            .any(|tag| text.trim_start().starts_with(tag))
+                    }),
+            };
+            return if own_reply { Self::Local } else { Self::Model };
+        }
+        if following.is_some() {
+            Self::Pending
+        } else {
+            Self::Model
+        }
+    }
+}
+
+/// The tags Claude Code wraps its own answer to a command in.
+const LOCAL_COMMAND_REPLIES: &[&str] = &["<local-command-stdout>", "<local-command-stderr>"];
+
+#[derive(Default)]
+struct GithubSightings {
+    prs: Vec<PrSighting>,
+    issues: Vec<PrSighting>,
 }
 
 /// Parse Claude Code JSONL records into normalized events.
@@ -1287,6 +1367,21 @@ pub(crate) fn parse_events_into(
     base_offset: u64,
     found: &mut links::LinkAccumulator,
 ) -> ParsedSession {
+    parse_events_followed(agent, contents, base_offset, found, None)
+}
+
+/// [`parse_events_into`] for a reader that reads a file in polls. `following`
+/// is the rest of the poll after `contents`, and a Claude command record that
+/// nothing in `contents` or `following` answers is not classified: the result
+/// says `held_command` and the caller reads the record again with the poll
+/// that holds its reply, so a command and its reply may fall in different polls.
+pub(crate) fn parse_events_followed(
+    agent: Agent,
+    contents: &str,
+    base_offset: u64,
+    found: &mut links::LinkAccumulator,
+    following: Option<&[u8]>,
+) -> ParsedSession {
     match agent {
         Agent::Claude => parse_lines_at(
             contents,
@@ -1302,11 +1397,12 @@ pub(crate) fn parse_events_into(
                 large: None,
             },
             found,
+            following,
         ),
         Agent::Codex => parse_lines_at(
             contents,
             base_offset,
-            parse_codex_line,
+            |item, _| parse_codex_line(item),
             links::codex_line,
             Turns {
                 parser: Some(turns::native::codex),
@@ -1315,11 +1411,12 @@ pub(crate) fn parse_events_into(
                 large: None,
             },
             found,
+            following,
         ),
         Agent::Grok => parse_lines_at(
             contents,
             base_offset,
-            grok::parse_line,
+            |item, _| grok::parse_line(item),
             links::grok_line,
             Turns {
                 parser: Some(grok::turn),
@@ -1328,11 +1425,12 @@ pub(crate) fn parse_events_into(
                 large: Some(grok::reduced_line),
             },
             found,
+            following,
         ),
         Agent::Pi => parse_lines_at(
             contents,
             base_offset,
-            |item| native_file::parse_line(Agent::Pi, item),
+            |item, _| native_file::parse_line(Agent::Pi, item),
             links::pi_line,
             Turns {
                 parser: None,
@@ -1341,11 +1439,12 @@ pub(crate) fn parse_events_into(
                 large: None,
             },
             found,
+            following,
         ),
         Agent::Omp => parse_lines_at(
             contents,
             base_offset,
-            |item| native_file::parse_line(Agent::Omp, item),
+            |item, _| native_file::parse_line(Agent::Omp, item),
             links::pi_line,
             Turns {
                 parser: Some(turns::native::omp),
@@ -1354,6 +1453,7 @@ pub(crate) fn parse_events_into(
                 large: None,
             },
             found,
+            following,
         ),
         Agent::OpenCode | Agent::Cursor => ParsedSession::default(),
     }
@@ -1377,10 +1477,11 @@ struct Turns {
 fn parse_lines_at(
     contents: &str,
     base_offset: u64,
-    mut extract: impl FnMut(&Value) -> LineResult,
+    mut extract: impl FnMut(&Value, &dyn Fn() -> CommandReply) -> LineResult,
     link: links::LinkLine,
     turns: Turns,
     found: &mut links::LinkAccumulator,
+    following: Option<&[u8]>,
 ) -> ParsedSession {
     let Turns {
         parser: turn,
@@ -1435,8 +1536,15 @@ fn parse_lines_at(
                 Ok(None) => {}
             }
         }
-        match extract(&value) {
+        let after = &contents.as_bytes()[usize::try_from(relative_offset)
+            .unwrap_or(usize::MAX)
+            .min(contents.len())..];
+        match extract(&value, &|| CommandReply::after(after, following)) {
             LineResult::Ignore => {}
+            LineResult::Held => {
+                parsed.held_command = true;
+                break;
+            }
             LineResult::Skip(reason) => parsed.skipped(reason),
             LineResult::Event(event) => {
                 if turn.is_some() {
@@ -1450,7 +1558,7 @@ fn parse_lines_at(
                         parsed.turn_marks.push((line_offset, mark));
                     }
                 }
-                found.event(event.kind, event.at_unix_ms, &event.text);
+                found.event(event.kind, event.at_unix_ms, &event.text, line_offset);
                 parsed.events.push(event);
                 parsed.event_offsets.push(line_offset);
             }
@@ -1465,20 +1573,21 @@ fn parse_lines_at(
             }
             LineResult::TitleSnapshot { .. } => {}
             LineResult::Sightings(sightings) => {
-                found.sightings(&sightings);
-                parsed.pr_sightings.extend(sightings);
+                found.sightings(&sightings.prs);
+                found.issue_sightings(&sightings.issues);
+                parsed.pr_sightings.extend(sightings.prs);
+                parsed.issue_sightings.extend(sightings.issues);
             }
         }
     }
     parsed
 }
 
-fn parse_claude_line(item: &Value) -> LineResult {
+fn parse_claude_line(item: &Value, reply: &dyn Fn() -> CommandReply) -> LineResult {
     let title = |key: &str| {
         item.get(key)
             .and_then(Value::as_str)
             .map(str::trim)
-            .filter(|title| !title.is_empty())
             .map(str::to_owned)
     };
     let role = match item.get("type").and_then(Value::as_str) {
@@ -1541,7 +1650,7 @@ fn parse_claude_line(item: &Value) -> LineResult {
     let provider_injected = origin_is_injected || is_meta || is_system_prompt || is_compact_summary;
     let interrupted = is_interruption(&text);
     let command = slash_command_text(&text);
-    let kind = if interrupted {
+    let mut kind = if interrupted {
         EventKind::Interrupted
     } else if (origin_is_human || external_human)
         && !provider_injected
@@ -1551,6 +1660,15 @@ fn parse_claude_line(item: &Value) -> LineResult {
     } else {
         EventKind::Injected
     };
+    if kind == EventKind::Human && command.is_some() {
+        // A command is the operator's words only when it went to the model;
+        // what Claude Code answered itself (`/model`) is its own record.
+        match reply() {
+            CommandReply::Local => kind = EventKind::Injected,
+            CommandReply::Pending => return LineResult::Held,
+            CommandReply::Model => {}
+        }
+    }
     let text = if kind == EventKind::Human {
         command.unwrap_or(text)
     } else {
@@ -1621,10 +1739,21 @@ fn collect_text<'a>(value: Option<&'a Value>, into: &mut Vec<&'a str>) {
     }
 }
 
-fn sightings_in(outputs: &[&str], at_unix_ms: u64) -> Vec<PrSighting> {
+fn sightings_in(outputs: &[&str], at_unix_ms: u64) -> GithubSightings {
+    GithubSightings {
+        prs: address_sightings(outputs, at_unix_ms, pull_request_addresses),
+        issues: address_sightings(outputs, at_unix_ms, issue_addresses),
+    }
+}
+
+fn address_sightings(
+    outputs: &[&str],
+    at_unix_ms: u64,
+    addresses: fn(&str) -> Vec<(String, u64)>,
+) -> Vec<PrSighting> {
     let mut found: Vec<PrSighting> = Vec::new();
     for output in outputs {
-        for (repository, number) in pull_request_addresses(output) {
+        for (repository, number) in addresses(output) {
             if found.len() == MAX_SIGHTINGS_PER_OUTPUT {
                 return found;
             }
@@ -1678,9 +1807,12 @@ fn parse_codex_line(item: &Value) -> LineResult {
         }
         _ => return LineResult::Ignore,
     }
+    // Codex writes the instructions it adds to a turn as `developer`
+    // messages; a conversation names that role `system` on every
+    // provider, which is the closed set a page crosses the node link with.
     let role = match payload.get("role").and_then(Value::as_str) {
         Some("user") => "user",
-        Some("developer") => "developer",
+        Some("developer") => "system",
         Some("assistant") => "assistant",
         _ => return LineResult::Ignore,
     };
@@ -1702,7 +1834,7 @@ fn parse_codex_line(item: &Value) -> LineResult {
             text,
         ));
     }
-    if role == "developer" {
+    if role == "system" {
         return LineResult::Event(
             ConversationEvent::new(role, EventKind::Injected, timestamp, text)
                 .with_provider_injected(true),
@@ -1732,6 +1864,9 @@ pub const INJECTED_PREFIXES: &[&str] = &[
     "# AGENTS.md instructions",
     "<environment_context>",
     "<user_instructions>",
+    // Codex's record of the operator's answer to an async question: it
+    // answers that question and is not a request.
+    turns::native::ASYNC_REPLY_OPEN,
     // Claude Code's compaction summary, for a version that does not flag it.
     "This session is being continued from a previous conversation",
 ];
@@ -1745,6 +1880,7 @@ fn has_injected_prefix(text: &str) -> bool {
     memory_context
         || INJECTED_PREFIXES
             .iter()
+            .chain(LOCAL_COMMAND_REPLIES)
             .any(|prefix| text.starts_with(prefix))
 }
 
@@ -1770,7 +1906,8 @@ fn slash_command_text(text: &str) -> Option<String> {
         })
         .unwrap_or("");
     Some(if args.is_empty() {
-        format!("/{name}")
+        // Claude Code's `<command-name>` already carries the slash.
+        format!("/{}", name.trim_start_matches('/'))
     } else {
         args.to_owned()
     })
@@ -2081,7 +2218,7 @@ mod tests {
     }
 
     /// Claude's `ai-title` record is the session's own name: the last one
-    /// wins, it is not an event, and an empty one is nothing.
+    /// wins, it is not an event, and an empty one clears a stored title.
     #[test]
     fn claude_ai_title_is_the_session_title_and_not_an_event() {
         let chunk = concat!(
@@ -2138,7 +2275,7 @@ mod tests {
         .to_string();
         let parsed = parse_codex_events(&line);
         assert_eq!(parsed.events.len(), 1);
-        assert_eq!(parsed.events[0].role, "developer");
+        assert_eq!(parsed.events[0].role, "system");
         assert_eq!(parsed.events[0].kind, EventKind::Injected);
         assert!(parsed.events[0].is_provider_injected());
     }

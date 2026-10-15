@@ -3,6 +3,7 @@
 // owns (focus, tabs, layout, sidebar visibility) stays in `store.ts`.
 
 import { create } from "zustand";
+import type { ProjectSettingsTarget } from "./projectSettings";
 import type { Filter as DiskFilter } from "./diskCleanup";
 import type { Relation } from "./lineage";
 import type { Opening } from "./navigation";
@@ -13,14 +14,12 @@ import type { CycleItem } from "./recent";
 import type { NumberedFamily } from "./shortcuts";
 import type { ViewFocusRequest, ViewWorkspace } from "./viewLayout";
 import type { KeyboardOwner } from "./viewFocus";
-import { DEFAULT_SLOTS, NO_CALLS_SEEN, type BodyStep, type CallsSeen, type Column, type ColumnSlots } from "./workspace";
-
-export type HomeStart = { requestId: string; deviceId: string; refusal: string | null };
+import { NO_CALLS_SEEN, type CallsSeen, type LaneMode, type Tool } from "./workspace";
 
 export type { ViewFocusRequest } from "./viewLayout";
 
-/** The columns the Workspace screen draws now beside Agent Views, and how many the body holds. */
-export type ShownColumns = { views: boolean; tools: boolean; step: BodyStep };
+/** What the Workspace screen draws of the lane now, which the rail, the chords and the close shortcut read. */
+export type DrawnLane = { mode: LaneMode; tool: Tool | null };
 
 export type SidebarMode = "agents" | "projects";
 
@@ -91,10 +90,10 @@ export const FACTORY_ENTRY: FactoryPlace = { tab: "line", factory: null, column:
  * list of Projects (PRD task-agents-views D-01). A Project's Overview has its
  * own tiles instead (`OverviewLens`).
  */
-export type MainView = "requests" | "tasks" | "agents" | "projects";
+export type MainView = "requests" | "tasks" | "agents" | "projects" | "usage";
 
-/** A Project Overview's lens tabs (PRD overview-lenses-tiles-agents D-02, D-36; overview-lenses-prs D-14; overview-request-view): its agents, its requests, its issues, its pull requests, its sessions. */
-export type OverviewTab = "requests" | "agents" | "issues" | "prs" | "sessions";
+/** A Project Overview's lens tabs (PRD overview-lenses-tiles-agents D-02, D-36; overview-lenses-prs D-14; overview-request-view): its agents, its requests, its issues, its sessions. */
+export type OverviewTab = "requests" | "agents" | "issues" | "sessions";
 
 /**
  * The request view's own state (PRD overview-request-view B3, B6): the rows
@@ -104,15 +103,6 @@ export type OverviewTab = "requests" | "agents" | "issues" | "prs" | "sessions";
 export type RequestLens = { open: readonly string[]; full: readonly string[]; resting: boolean };
 
 export const NO_REQUEST_LENS: RequestLens = { open: [], full: [], resting: false };
-
-/**
- * The PRs tab's own state (PRD overview-lenses-prs B19, B21, link-graph B2):
- * the pull request whose panel is open beside the list, the row the keyboard
- * or a chip asked for, and whether `최근 머지` is open.
- */
-export type PrLens = { panel: number | null; focus: number | null; merged: boolean };
-
-export const NO_PR_LENS: PrLens = { panel: null, focus: null, merged: false };
 
 /** The session `View conversation` or a parent line opens on the Sessions tab, and the request it scrolls to once (PRD link-graph B11). */
 export type SessionTarget = { id: string; request: string | null };
@@ -141,8 +131,6 @@ export type OverviewLens = {
   panel: string | null;
   /** The Issues filter (B21). */
   filter: IssueFilter;
-  /** The PRs tab's rows and folds (PRD overview-lenses-prs). */
-  prs: PrLens;
   /** The request view's rows and fold (PRD overview-request-view). */
   requests: RequestLens;
   /** The session the Sessions tab opens on arrival, or null. */
@@ -160,7 +148,7 @@ export function toggledFold(folds: readonly string[], fold: string): string[] {
  * Tasks shows too (task-agents-views D-10).
  */
 export function entryLens(box: string | null, tasksMode: TasksMode): OverviewLens {
-  return { tab: "agents", tasksMode, box, folds: [], graph: NO_GRAPH_FILTER, focusTask: null, panel: null, filter: NO_FILTER, prs: NO_PR_LENS, requests: NO_REQUEST_LENS, session: null };
+  return { tab: "agents", tasksMode, box, folds: [], graph: NO_GRAPH_FILTER, focusTask: null, panel: null, filter: NO_FILTER, requests: NO_REQUEST_LENS, session: null };
 }
 
 /**
@@ -171,7 +159,7 @@ export function entryLens(box: string | null, tasksMode: TasksMode): OverviewLen
  */
 export type TasksMode = "board" | "list" | "dependencies";
 
-export type Overlay = "none" | "shortcuts" | "find" | "add_project" | "file_palette" | "diff_palette" | "search" | "settings";
+export type Overlay = "none" | "shortcuts" | "find" | "add_project" | "file_palette" | "diff_palette" | "search" | "settings" | "project_settings";
 
 /**
  * A notice the operator can act on: `refreshable` offers `refresh_status`
@@ -196,7 +184,7 @@ export type WorkspaceDialog =
   /** A new issue made from a pull request's title and body, then linked (B12, B13). */
   | { kind: "pr_new_issue"; workspaceId: string; prNumber: number }
   /** A pull request handed to an agent on its branch (B15, B16, B18). */
-  | { kind: "pr_delegate"; workspaceId: string; prNumber: number }
+  | { kind: "pr_delegate"; workspaceId: string; prNumber: number; /** `review`: the agent reads the pull request and reports to the operator (PRD work-tab-pr-lens B35). */ intent?: "review" }
   | { kind: "purpose"; workspaceId: string; checkoutId: string }
   | { kind: "delete_worktree"; workspaceId: string; checkoutId: string }
   /** The disk cleanup sheet of a local Git project, opened on a filter (PRD disk-layers B1-B3). */
@@ -264,12 +252,6 @@ type UiStore = {
   sidebarFocus: number;
   /** The raised Projects sections the operator unfolded past their cap; this page's alone, so a fresh list starts short. */
   raisedOpen: readonly string[];
-  /**
-   * The Home row's new-tab start this page sent: its `request_id` until its
-   * pane is opened, then, when it was refused, the reason that device's Home
-   * row shows until the next start or a click on the row (PRD home-device-rail B21).
-   */
-  homeStart: HomeStart | null;
   /** The Factory secretary being started (PRD software-factory-ui B23). */
   secretaryStart: import("./factory/secretary").SecretaryStart | null;
   /** The Explorer row the operator last touched; the core owns the opened
@@ -283,20 +265,26 @@ type UiStore = {
   agentFindRequest: { id: string; owner: KeyboardOwner } | null;
   viewFocusRequest: ViewFocusRequest | null;
   /**
-   * Which column a narrow Workspace body shows (PRD three-column-panel D-07):
-   * the one called last. Display only, never sent, so widening brings back
-   * what the core stores.
+   * Whether the front Workspace's unpinned lane is up over Agent Views (PRD
+   * right-lane D-02, D-11): Escape puts it away, and a call or the rail puts
+   * it up again; nothing else moves it, so a lane the operator left open
+   * stays open across a terminal click, an agent chosen, another Workspace
+   * and a restart. Never sent.
    */
-  columnSlots: ColumnSlots;
-  /** What the page has read of the core's File Views calls (`columnCalls.ts`). */
-  viewsCallsSeen: CallsSeen;
-  /** The columns the Workspace screen draws now, which the toolbar and the column chords read. */
-  shownColumns: ShownColumns;
+  laneShown: boolean;
+  /** Whether the lane takes the whole body (D-04); never sent. */
+  laneExpanded: boolean;
+  /** What the page has read of the core's lane calls (`laneCalls.ts`). */
+  laneCallsSeen: CallsSeen;
+  /** What the Workspace screen draws of the lane now. */
+  drawnLane: DrawnLane;
   /** The Explorer's inline name field, or null. */
   explorerDraft: ExplorerDraft | null;
   /** The trash confirmation the Explorer is showing, or null. */
   pendingTrash: PendingTrash | null;
   overlay: Overlay;
+  projectSettingsTarget: ProjectSettingsTarget | null;
+  projectSettingsReturnFocus: HTMLElement | null;
   /** The tab the Settings sheet opens on. */
   settingsTab: SettingsTab;
   /** Settings was opened to add a device: the Devices tab opens its Add dialog once and clears this. */
@@ -309,6 +297,9 @@ type UiStore = {
   notice: Notice | null;
   /** The management dialog a sidebar menu opened, or null. */
   workspaceDialog: WorkspaceDialog | null;
+  sessionWorkTarget: import("./snapshot").WorkSession | null;
+  /** The record's `내 말 보기` button is pressed: the operator's own words show under their tasks. Kept while the app runs, never stored. */
+  sessionRecordWords: boolean;
   /**
    * The task and removal this page started, so their later answers (an agent
    * start after the creation dialog closed, a removal that finished after its
@@ -357,7 +348,6 @@ type UiStore = {
   setLens: (patch: Partial<OverviewLens>) => void;
   setRelation: (relation: Relation | null) => void;
   setSidebarMode: (mode: SidebarMode) => void;
-  setHomeStart: (homeStart: HomeStart | null) => void;
   setSecretaryStart: (start: import("./factory/secretary").SecretaryStart | null) => void;
   toggleSidebarMode: () => void;
   toggleRaised: (group: string) => void;
@@ -365,11 +355,12 @@ type UiStore = {
   requestEditorFind: (displayId: string | null) => void;
   setAgentFindRequest: (request: { id: string; owner: KeyboardOwner } | null) => void;
   setViewFocusRequest: (request: ViewFocusRequest | null) => void;
-  /** A column was called (an open, a tool, an agent chosen): a narrow body shows it. */
-  callColumn: (column: Column) => void;
-  /** Another Workspace is drawn: a narrow body starts on Agent Views again. */
-  resetColumnSlots: () => void;
-  setShownColumns: (shown: ShownColumns) => void;
+  /** The lane was called (an open, a tool, a reveal): an unpinned lane comes up. */
+  showLane: () => void;
+  /** A terminal click, Escape or an agent chosen: an unpinned lane is put away and an expanded one returns. */
+  putLaneAway: () => void;
+  setLaneExpanded: (expanded: boolean) => void;
+  setDrawnLane: (drawn: DrawnLane) => void;
   setExplorerDraft: (draft: ExplorerDraft | null) => void;
   setPendingTrash: (trash: PendingTrash | null) => void;
   openOverlay: (overlay: Overlay) => void;
@@ -377,6 +368,7 @@ type UiStore = {
   searchOver: Overlay;
   closeOverlay: (overlay?: Overlay) => void;
   openSettings: (tab: SettingsTab) => void;
+  openProjectSettings: (target: ProjectSettingsTarget, returnFocus?: HTMLElement | null) => void;
   /** Opens Settings on Devices with the Add device dialog in front. */
   openAddDevice: () => void;
   clearAddDeviceRequest: () => void;
@@ -387,6 +379,8 @@ type UiStore = {
   setCycle: (cycle: Cycle | null) => void;
   setNotice: (notice: Notice | null) => void;
   setWorkspaceDialog: (dialog: WorkspaceDialog | null) => void;
+  setSessionWorkTarget: (target: import("./snapshot").WorkSession | null) => void;
+  setSessionRecordWords: (on: boolean) => void;
   setWatchedTask: (id: number | null) => void;
   setFocusWhenListed: (paneId: string | null) => void;
   setOpening: (opening: Opening | null) => void;
@@ -415,19 +409,21 @@ export const useUiStore = create<UiStore>((set, get) => ({
   sidebarMode: "projects",
   sidebarFocus: 0,
   raisedOpen: [],
-  homeStart: null,
   secretaryStart: null,
   explorerSelection: null,
   editorFindRequest: 0,
   editorFindDisplay: null,
   agentFindRequest: null,
   viewFocusRequest: null,
-  columnSlots: DEFAULT_SLOTS,
-  viewsCallsSeen: NO_CALLS_SEEN,
-  shownColumns: { views: false, tools: false, step: "wide" },
+  laneShown: true,
+  laneExpanded: false,
+  laneCallsSeen: NO_CALLS_SEEN,
+  drawnLane: { mode: "closed", tool: null },
   explorerDraft: null,
   pendingTrash: null,
   overlay: "none",
+  projectSettingsTarget: null,
+  projectSettingsReturnFocus: null,
   settingsTab: "general",
   addDeviceRequested: false,
   moveGiveUpRequested: false,
@@ -435,6 +431,8 @@ export const useUiStore = create<UiStore>((set, get) => ({
   cycle: null,
   notice: null,
   workspaceDialog: null,
+  sessionWorkTarget: null,
+  sessionRecordWords: false,
   watchedTask: null,
   focusWhenListed: null,
   opening: null,
@@ -474,7 +472,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
     if (sidebarMode === "agents") console.info("sidebar.mode.retired", { mode: sidebarMode });
     set({ sidebarMode: "projects" });
   },
-  setHomeStart: (homeStart) => set({ homeStart }),
   setSecretaryStart: (secretaryStart) => set({ secretaryStart }),
   toggleSidebarMode: () => {
     const index = SIDEBAR_MODES.indexOf(get().sidebarMode);
@@ -488,17 +485,18 @@ export const useUiStore = create<UiStore>((set, get) => ({
   requestEditorFind: (displayId) => set({ editorFindRequest: get().editorFindRequest + 1, editorFindDisplay: displayId }),
   setAgentFindRequest: (agentFindRequest) => set({ agentFindRequest }),
   setViewFocusRequest: (viewFocusRequest) => set({ viewFocusRequest }),
-  callColumn: (column) => {
-    const { columnSlots } = get();
-    const side = column === "agents" ? columnSlots.side : column;
-    if (columnSlots.single !== column || columnSlots.side !== side) set({ columnSlots: { side, single: column } });
+  showLane: () => {
+    if (!get().laneShown) set({ laneShown: true });
   },
-  resetColumnSlots: () => {
-    if (get().columnSlots !== DEFAULT_SLOTS) set({ columnSlots: DEFAULT_SLOTS });
+  putLaneAway: () => {
+    if (get().laneShown || get().laneExpanded) set({ laneShown: false, laneExpanded: false });
   },
-  setShownColumns: (shown) => {
-    const current = get().shownColumns;
-    if (current.views !== shown.views || current.tools !== shown.tools || current.step !== shown.step) set({ shownColumns: shown });
+  setLaneExpanded: (laneExpanded) => {
+    if (get().laneExpanded !== laneExpanded) set({ laneExpanded });
+  },
+  setDrawnLane: (drawn) => {
+    const current = get().drawnLane;
+    if (current.mode !== drawn.mode || current.tool !== drawn.tool) set({ drawnLane: drawn });
   },
   setExplorerDraft: (explorerDraft) => set({ explorerDraft }),
   setPendingTrash: (pendingTrash) => set({ pendingTrash }),
@@ -508,6 +506,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
     if (!overlay || get().overlay === overlay) set({ overlay: "none" });
   },
   openSettings: (settingsTab) => set({ overlay: "settings", settingsTab }),
+  openProjectSettings: (projectSettingsTarget, returnFocus) => set({ overlay: "project_settings", projectSettingsTarget, projectSettingsReturnFocus: returnFocus ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null) }),
   openAddDevice: () => set({ overlay: "settings", settingsTab: "devices", addDeviceRequested: true }),
   clearAddDeviceRequest: () => set({ addDeviceRequested: false }),
   openMoveGiveUp: () => set({ overlay: "settings", settingsTab: "devices", moveGiveUpRequested: true }),
@@ -516,6 +515,8 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setCycle: (cycle) => set({ cycle }),
   setNotice: (notice) => set({ notice }),
   setWorkspaceDialog: (workspaceDialog) => set({ workspaceDialog }),
+  setSessionWorkTarget: (sessionWorkTarget) => set({ sessionWorkTarget }),
+  setSessionRecordWords: (sessionRecordWords) => set({ sessionRecordWords }),
   setWatchedTask: (watchedTask) => set({ watchedTask }),
   setFocusWhenListed: (focusWhenListed) => set({ focusWhenListed }),
   setOpening: (opening) => set({ opening }),

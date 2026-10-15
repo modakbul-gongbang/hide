@@ -16,7 +16,7 @@ describe("close shortcut policy", () => {
   });
 
   it("never falls through from tools, no focus, a retired view or a retired pane", () => {
-    expect(decide({ kind: "tool", workspace: "workspace" })).toEqual({ kind: "nothing", reason: "the tool column owns the keyboard" });
+    expect(decide({ kind: "tool", workspace: "workspace" })).toEqual({ kind: "nothing", reason: "the lane's tool owns the keyboard" });
     expect(decide({ kind: "agent", workspace: "workspace" })).toMatchObject({ kind: "nothing" });
     expect(decide({ kind: "none" })).toEqual({ kind: "nothing", reason: "no keyboard owner" });
     expect(decide({ kind: "view", workspace: "workspace", areaId: "gone" }, null)).toMatchObject({ kind: "nothing" });

@@ -152,6 +152,106 @@ fn generated_web_contract_and_logo_document_sources_are_current() {
 }
 
 #[test]
+fn every_usage_cell_has_an_independent_declaration_and_unshipped_absences() {
+    use hide_agent_adapter::usage::{
+        AbsenceKind, LimitSource, SHIPPED_USAGE_LAYER, Support, UsageSource,
+    };
+    let fixtures: Vec<Value> =
+        serde_json::from_str(include_str!("../fixtures/support.json")).unwrap();
+    for row in ADAPTERS {
+        let fixture = fixtures.iter().find(|value| value["id"] == row.id).unwrap();
+        assert_eq!(
+            fixture["usage"].as_object().unwrap().len(),
+            row.usage.cells().len()
+        );
+        for (name, cell) in row.usage.cells() {
+            let actual = match cell {
+                Support::Supported(source) => match source {
+                    UsageSource::Limit(LimitSource::ClaudeUsageText) => "claude_usage_text".into(),
+                    UsageSource::Limit(LimitSource::CodexUsage) => "codex_usage".into(),
+                    UsageSource::Tokens(source) => serde_json::to_value(source)
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .into(),
+                    UsageSource::Cost(source) => serde_json::to_value(source)
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .into(),
+                    UsageSource::Models(source) => serde_json::to_value(source)
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .into(),
+                    UsageSource::Attribution(source) => serde_json::to_value(source)
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .into(),
+                },
+                Support::Unsupported(absence) => {
+                    assert!(!absence.reason.trim().is_empty(), "{} {name}", row.id);
+                    assert!(!absence.would_change.trim().is_empty(), "{} {name}", row.id);
+                    match absence.kind {
+                        AbsenceKind::NoSuchData => "no_such_data".into(),
+                        AbsenceKind::Excluded => "excluded".into(),
+                        AbsenceKind::NotBuilt { layer } => {
+                            assert!(
+                                layer > SHIPPED_USAGE_LAYER,
+                                "{} {name}: layer {layer} already ships",
+                                row.id
+                            );
+                            format!("not_built:{layer}")
+                        }
+                    }
+                }
+            };
+            assert_eq!(fixture["usage"][name], actual, "{} {name}", row.id);
+        }
+    }
+}
+
+#[test]
+fn usage_coverage_is_generated_from_the_complete_registry() {
+    let docs = std::fs::read_to_string(root().join("docs/AI_PROVIDERS.md")).unwrap();
+    let table = docs
+        .split("<!-- usage-coverage:start -->\n")
+        .nth(1)
+        .unwrap()
+        .split("<!-- usage-coverage:end -->")
+        .next()
+        .unwrap();
+    assert_eq!(table, hide_agent_adapter::usage::coverage_markdown());
+    let expected: Vec<_> = ADAPTERS
+        .iter()
+        .map(|row| {
+            serde_json::json!({
+                "agent": row.id,
+                "cells": row.usage.cells().into_iter().collect::<std::collections::BTreeMap<_, _>>()
+            })
+        })
+        .collect();
+    let actual: Value = serde_json::from_slice(
+        &std::fs::read(root().join("contracts/usage-coverage.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        actual,
+        serde_json::json!(expected),
+        "run export_usage_coverage"
+    );
+    // Multiple windows from one source never schedule multiple requests.
+    for row in ADAPTERS {
+        let sources: Vec<_> = row.usage.limit_sources().collect();
+        assert_eq!(
+            sources.len(),
+            usize::from(matches!(row.id, "claude-code" | "codex"))
+        );
+    }
+}
+
+#[test]
 fn the_factory_question_guard_names_each_agent_with_a_refusable_question_tool_by_its_herdr_kind() {
     use hide_agent_adapter::direct_ask_kind;
     assert_eq!(direct_ask_kind("claude-code"), Some("claude"));

@@ -2,6 +2,7 @@
 
 `hide-ai/` is the one boundary through which a Hide feature asks a language model for something in the background.
 Its consumers are the core's agent label analyzer (`herdr-core/src/labels/analyzer.rs`), Project Memory extraction under `hide-memory/`, the Software Factory's judgments (see [The Factory's judgments](#the-factorys-judgments)), and the Start dialog's worktree name; later features reuse the same boundary rather than a provider client of their own.
+The Sessions missed-work preview is another consumer, owned by `herdr-core/src/ai.rs` and `runtime/session_work.rs`.
 This guide owns the boundary's rules; the code under `hide-ai/src/` and the tests under `hide-ai/tests/` are its executable authority.
 
 ## Ownership split
@@ -13,16 +14,34 @@ There is no output token ceiling in the request, because no provider contract ho
 `hide-ai` owns everything about providers: which are installed and logged in, the child process and its protocol, timeouts and cancellation, the retry policy, fallback between providers, duplicate suppression, and the structured error a caller branches on.
 No feature type lives in the crate, and no provider detail leaks out of it.
 
+The session label requests use `context_label.v10`, retaining nullable goals at both boundaries; the existing END request adds a work judgment: new, continued or no assigned work, at most three short missed items (a problem found outside the assigned task or a proposed follow-up nobody has taken), resolved item ids and one output-task choice.
+There is no additional call per turn, and requests from periods with summaries Off or failed judgments are never backfilled by the provider.
+END waits for a known ledger context instead of treating missing parent authority or open work as empty.
+
+An explicit `이슈로` press submits the separate `session_issue_draft` feature, whose schema requires an editable title and body.
+The caller redacts the missed text, original witnessed request and assistant answer, and repository templates before submission; it caps the input and answer and owns cancellation and generation fencing.
+Its provider runs in the same read-only boundary as other features, cannot create an issue or wake an agent, and only the operator's later Create invokes GitHub.
+An unavailable provider, authentication or usage allowance keeps an editable title-only preview with an empty body and a reason.
+
 The Start dialog of the Overview uses feature id `worktree_name` (`herdr-core/src/ai.rs::suggest_worktree_name`): it sends the issue's title and at most 2,000 characters of its body, asks for `{slug}` against a schema, and the core keeps only lowercase ASCII words joined by hyphens, at most 48 characters, behind the issue-number prefix the dialog passed; the deadline is 30 seconds, a failure leaves the dialog's own name in place, and Settings › Issues turns the feature off.
+
+A pull request's card uses feature id `pr_summary` (`herdr-core/src/ai.rs::summarize_pull_request`, PRD work-tab-pr-lens D-04, D-29): it sends the title, at most 4,000 characters of the body, at most 100 changed files with their added and removed counts, and the names of the failed checks and the number of running ones, every text redacted again at the provider boundary, and asks for one `{summary}` of at most 600 characters in two or three plain sentences in the title's language.
+It never sends a diff, and the title, body, file names and check names are marked untrusted content in the instruction.
+The core asks once per head commit when a card with its parts read is open, keeps the answer for that head (at most 64 summaries), and drops it when the head moves, the switch turns off or the card's project stops showing; it runs on the label router, so the usage limit that pauses agent summaries pauses this too, and a paused, disabled or failed ask leaves the card without a summary and writes the class to the diagnostic log (`invalid_output` for an answer that does not fit the schema).
+The summary is drawn under the card's reason box with an `AI 요약` mark and changes neither the list's groups nor its second lines.
 
 Project Memory uses feature id `project_memory` with Hide's own extraction prompt (`hide-memory/src/engine.rs`, under 8 KiB) and strict schema: each card's text, a one-line title, aliases, kind, extraction confidence and salience, source offsets, cited repository paths, and a `new`, `same`, `supersedes`, `conflicts` or `discard` relation to one of the cards it was shown, plus titles and aliases for shown cards that have none.
 No third-party memory engine or prompt asset is part of it.
 The write service validates those proposals against source events, Project identity, privacy, provenance, lifecycle, and resource caps; only an operator's own words can supersede a card.
 It sends locally redacted, normalized human and assistant events after the durable session cursor, or an agent's note from `hide memory add`, plus the existing cards the model-free matcher finds most like them, so a same-meaning card is found across Korean and English.
 The comparison set is bounded by cards and serialized bytes so it and one event group fit the 64 KiB request-input cap, and both pass through the current local redactor again at the final provider egress boundary.
-Background analysis counts against a machine-wide 1,000 calls a UTC day and waits while the provider's weekly usage is at 80% or more; `hide memory add` counts against the daily cap only, and its provider tries end within 50 s.
+Background analysis counts against a machine-wide 1,000 calls a UTC day and is asked only of an agent under the operator's usage limit (see [The usage limit](#the-usage-limit)); `hide memory add` counts against the daily cap only, and its provider tries end within 50 s.
 The feature layer verifies the relation and provenance before the single-writer store changes anything; provider output never has direct write authority.
-Two more features use the same boundary and the same call cap and weekly deferral (PRD memory-card-quality D-07, D-08, D-11): `project_memory_verify` asks whether a card whose evidence moved still holds, and `project_memory_promote_check` asks whether a rule or lesson about to be suggested for the repository's documents is already said there (`hide-memory/src/verify.rs`).
+The `preference` kind records personal choices without proposing repository changes.
+`project_memory_creation_docs` is one comparison batch call for lexically matched new candidates: one repository excerpt per candidate, at most 3 KiB each, with the complete input capped at 15% of extraction input characters and bytes.
+Its same/differs/unrelated verdict suppresses duplicates, withholds differing claims before injection and leaves unrelated claims ordinary, without an extra initial check; conflicting quotes must appear in the exact excerpt sent.
+The call uses the existing analysis admission and router usage limit; `analysis.session_cards` reports Project/session IDs, counts and both input sizes without content.
+Two more features use the same boundary and the same call cap and usage limit (PRD memory-card-quality D-07, D-08, D-11): `project_memory_verify` asks whether a card whose evidence moved still holds, and `project_memory_promote_check` asks whether a rule or lesson about to be suggested for the repository's documents is already said there (`hide-memory/src/verify.rs`).
 Each sends the card, what the repository answers now for its evidence, and bounded excerpts (at most five cited files of 8 KiB for the first; at most five instruction documents of 8 KiB and three of the operator's own global instruction files of 5 KiB for the second), each a whole file when it fits and otherwise the sections (a heading and what follows) that share the most words with the card, read from at most the first 96 KiB of the file, all passed through the local redactor, within the 64 KiB request input (the last excerpts are dropped before a request is refused); a file named for credentials (`.env*`, keys and certificates, names containing `secret` or `credential`) is never read into a request, whatever a card cites; an answer that arrives but cannot be used (not the schema, a correction with no text, a document never shown) spends the card's day and the pass goes on to the next card, while a provider failure spends nothing and holds the Project; the answer is a strict-schema verdict and a corrected card when it is outdated, and a document named by an `in_docs` verdict must be one the request carried.
 A card is asked about at most once a day.
 The logs carry card numbers and verdicts, never card text, file text or a path.
@@ -31,6 +50,9 @@ It may fall through to a provider the operator added under fallback (see [Select
 The disclosure also names active-Memory retransmission, and its stored version disables previously enabled Projects when this material data-egress description changes so that the operator must opt in again.
 Not-authenticated, unavailable, usage-limited, and exhausted outcomes pause new analysis without disabling existing local Memory search or Sessions browsing.
 Logs retain request, feature, provider, Project/session subject IDs, counts, duration, and outcome, but never transcript text, prompt text, Memory body, file path, credential, or provider thread ID.
+
+The existing verification and promotion-check answers include `docs_disagree` with a shown repository path and exact conflicting quote; no extra conflict call is made.
+Authority is decided outside the provider from operator-source and file commit times, and an unknown or equal time needs an operator answer.
 
 ## Providers
 
@@ -121,7 +143,7 @@ The transcript never reaches an argument vector.
 | `grok` | `grok --prompt-file <f> --output-format json --json-schema <s> --system-prompt-override <sys> --tools "" --no-subagents --disable-web-search --max-turns 1 [--model <m>]` with `GROK_MEMORY=0` and `GROK_DISABLE_AUTOUPDATER=1` | transcript in a `0600` prompt file | no tool, no sub-agent, no web search, one turn | `grok models`: the `* default` line and `- <id>` lines | `grok models` printing "not authenticated" is `NeedsLogin` |
 | `pi` | `pi -p --no-tools --no-session --no-extensions --no-mcp --no-skills --no-prompt-templates --no-context-files --thinking off --system-prompt <sys+schema> [--model <m>] <instruction>` | transcript on stdin | no tool, no extension, no MCP, no session | `pi --list-models`, read tolerantly | `pi auth check --provider <p>` when the model is `provider/id` (exit 0 ready, 1 or 2 not), otherwise a non-empty model list |
 
-Gemini exit 42 (input error) and 53 (turn limit) are `InvalidOutput`.
+Gemini exit 42 (input error) is `Rejected`, so it adds no unknown call; exit 53 (turn limit) is `InvalidOutput`, because a model turn may have run.
 Grok's answer is `structured_output` when present and its `text` otherwise.
 Each CLI's own flags are the contract; a flag one of them stops accepting is a failed request that names the exit status, not a silent change of behaviour.
 
@@ -152,9 +174,13 @@ The file names a provider, a model per provider, whether Hide AI is on, an order
   "models": { "claude": "sonnet", "codex": "gpt-5.6-luna" },
   "enabled": true,
   "fallback": [{ "provider": "codex", "model": "gpt-5.6-luna" }],
-  "agent_summary": true
+  "agent_summary": true,
+  "pr_summary": true,
+  "usage_limit": 95
 }
 ```
+
+`usage_limit` is a percent from 1 to 100 or `"none"`, written only when it is not the default 90; a file without it reads 90, and any other value makes the file malformed, which is reported and not guessed around.
 
 `enabled` is the Settings › Hide AI switch and is on when the field is absent.
 Off, `AiRouter::execute` returns `AiError::Disabled` at once and asks no provider anything, and a feature treats it as nothing to do, never as a failure.
@@ -165,6 +191,8 @@ A provider the registry does not know is ignored wherever it appears, so a file 
 `agent_summary` is the Settings › Hide AI › Features Agent summaries switch (PRD overview-request-view D-11), on when the field is absent.
 Off, the label analyzer asks nothing and cancels the request it is running, and no surface shows a label; worktree naming and Project Memory keep their own switches.
 Turning it does not rebuild the router, because it is not part of the router's choice.
+`pr_summary` is the Settings › Hide AI › Features PR summaries switch, on when the field is absent; off, the core asks nothing for a card and drops the summaries it holds, and the rest of the card stands.
+It is not part of the router's choice either, and the usage limit applies to it as to every background feature.
 
 The defaults are the registry's own constants: `claude` with `sonnet`, `codex` with `gpt-5.6-luna`, and the CLI's own model for every other agent.
 `provider` is in the file only once it was chosen (`AiSettings.chosen`), so a file that only turned a switch makes no choice for the operator, and a settings value with nothing chosen asks no model anything (`router_config().enabled` is `enabled && chosen`).
@@ -182,9 +210,9 @@ A session with no home directory to write to reports that on the tab for the sam
 Choosing a provider changes which provider is asked first and nothing else.
 Every feature, Project Memory included, asks the chosen provider and then the fallback list under the policy below, while the router's retry, cooldown, cancellation, duplicate-suppression, process, and budget rules apply to all of them.
 
-The Hide AI tab reads `status.background_ai`, one section the core publishes (`herdr-core/src/model.rs`, `BackgroundAiSnapshot`): `enabled`, `provider` (null until one is chosen), `chosen`, `agent_summary`, one `providers` row per registered agent in the fixed order (`agent` is the shared agent adapter id, or `gemini-cli` for Gemini CLI, which names only its logo; `state` one of `ready`, `needs_login`, `usage_limited`, `not_installed`, `unavailable`, `unsupported`, `unread`, `installed`, `login_checked`, `selectable`, `retry_at_ms`, `model`, `models`, `models_fixed`, `cli_default`, and `models_unavailable_reason`), the ordered `fallback` list, and `refusal`.
+The Hide AI tab reads `status.background_ai`, one section the core publishes (`herdr-core/src/model.rs`, `BackgroundAiSnapshot`): `enabled`, `provider` (null until one is chosen), `chosen`, `agent_summary`, `pr_summary`, one `providers` row per registered agent in the fixed order (`agent` is the shared agent adapter id, or `gemini-cli` for Gemini CLI, which names only its logo; `state` one of `ready`, `needs_login`, `usage_limited`, `not_installed`, `unavailable`, `unsupported`, `unread`, `installed`, `login_checked`, `selectable`, `retry_at_ms`, `model`, `models`, `models_fixed`, `cli_default`, and `models_unavailable_reason`), the ordered `fallback` list, and `refusal`.
 Every reason in it is a code the shell turns into words, never prose, an account, a path or a conversation, and the cause of a failed model-list read stays in the diagnostic log (B68) as an `ai.models.unavailable` record with the agent and a `reason=` code, written when the reason first appears or changes and not on every read.
-`ai_settings` carries `enabled`, `provider` (Runs on), `model` (for Runs on, or for an agent in the fallback list, which keeps its own), `fallback_add`, `fallback_remove`, `agent_summary` and the two observation hints; the core refuses an agent that the last read did not find selectable (`ai_settings.provider_not_selectable`), an unknown one (`ai_settings.unknown_provider`), the Runs on agent as its own fallback (`ai_settings.fallback_is_runs_on`) and a listed one twice (`ai_settings.fallback_listed`).
+`ai_settings` carries `enabled`, `provider` (Runs on), `model` (for Runs on, or for an agent in the fallback list, which keeps its own), `fallback_add`, `fallback_remove`, `agent_summary`, `pr_summary` and the two observation hints; the core refuses an agent that the last read did not find selectable (`ai_settings.provider_not_selectable`), an unknown one (`ai_settings.unknown_provider`), the Runs on agent as its own fallback (`ai_settings.fallback_is_runs_on`) and a listed one twice (`ai_settings.fallback_listed`).
 `refusal` is how the label analyzer last found the chosen agent (`AiStanding`, written on the analyzer's thread after each job): its reason class, the end of a usage limit when the agent said, and the listed agent a request made now would run on (`using`), or none when no listed agent can answer, which is the Runs on row's reason (B41, B42).
 It is absent while the chosen agent answers and while Hide AI is off.
 
@@ -206,7 +234,7 @@ In the web shell the daemon holds that flag for every connected page: each page 
 
 ### What leaves the machine
 
-Hide AI sends redacted conversation summaries and Project Memory batches to the agent the operator chose in Settings (Runs on) and to the agents the operator added under fallback, and to no other.
+Hide AI sends redacted conversation summaries, Project Memory batches and a pull request's title, body start, file names and check names (for a card's summary) to the agent the operator chose in Settings (Runs on) and to the agents the operator added under fallback, and to no other.
 A registered agent that is neither chosen nor in the fallback list is never asked a request: its program may be installed and logged in, and it is only inspected, for the Settings screen, which starts no model turn.
 Because the list is the operator's, adding an agent to it is the consent for that agent, and Project Memory's disclosure names it (its version moves when this description changes, so earlier opt-ins are asked again).
 
@@ -250,13 +278,38 @@ The queue's terms are one request in flight, intake reviews before every other j
 Each request has a 180 second deadline and a schema version, and the router keeps its default caps.
 Because the routers are independent, they share the account's usage and the machine's CPU but not a queue; label latency has to be measured with a Factory running under load before the two are called independent.
 
-## Weekly usage display
+## Usage capability declarations
 
-The sidebar footer's Weekly Usage chips and popover ([UI_BEHAVIOR.md: Weekly usage](UI_BEHAVIOR.md#weekly-usage)) show a separate read-only capability owned by `herdr-core/src/usage.rs`.
-It uses the user's existing CLI logins to read each provider's seven-day account window, and it never routes a model request through `hide-ai`.
+`hide-agent-adapter/src/usage.rs` declares all nine usage cells for every adapter: four limit scopes, tokens, cost, model breakdown, session attribution and project attribution.
+Every unsupported cell names its reason and the condition that would change it; `NotBuilt { layer }` is refused by the contract test once that layer ships.
+`UsageDeclaration::cells()` destructures every field exhaustively and is the source of `contracts/usage-coverage.json`; `export_usage_coverage` regenerates that contract, while `export_web_contract` includes the same declaration in the shell's adapter catalog.
+The independent `hide-agent-adapter/tests/fixtures/support.json` matrix pins the expected support for all seven agents.
+Layer 4 includes the six historical token and cost readers, with model and source attribution retained from each native usage record; Cursor stays excluded.
+The table is generated by `export_usage_coverage --markdown`; the adapter contract test compares it byte for byte.
 
-For Claude Code, the core's own node runs `claude -p "/usage" --output-format json --no-session-persistence` through `ClaudeCliBackend::usage_text` (`hide-host/src/usage.rs`, the `claude_usage_text` call, which reports once a second so the reader's cancel ends the child) and the core parses the `result` text the CLI prints.
-The Codex row's `auth.json` read and its session-file fallback run on the same node (`codex_credentials`, `codex_session_usage`); the core keeps the schedule, the endpoint request and the rows.
+<!-- usage-coverage:start -->
+| Agent | 5h | Weekly | Scoped | Monthly | Tokens | Cost | Models | Session | Project |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Claude Code | Supported | Supported | Supported | No such data | Supported | Supported | Supported | Supported | Supported |
+| Codex | Supported | Supported | Not built (L5) | No such data | Supported | Supported | Supported | Supported | Supported |
+| Grok | No such data | Not built (L5) | No such data | No such data | Supported | Supported | Supported | Supported | Supported |
+| OpenCode | Excluded | Excluded | Excluded | Excluded | Supported | Supported | Supported | Supported | Supported |
+| Pi | No such data | No such data | No such data | No such data | Supported | Supported | Supported | Supported | Supported |
+| omp | No such data | No such data | No such data | No such data | Supported | Supported | Supported | Supported | Supported |
+| Cursor | Excluded | Excluded | Excluded | Excluded | No such data | No such data | No such data | No such data | No such data |
+<!-- usage-coverage:end -->
+
+## Usage limits
+
+The sidebar footer's Usage chips and popover ([UI_BEHAVIOR.md: Usage](UI_BEHAVIOR.md#usage)) show a separate read-only capability owned by `herdr-core/src/usage.rs`.
+It uses the user's existing CLI logins to read each declared provider's five-hour and seven-day account windows, and it never routes a model request through `hide-ai`.
+
+For Claude Code, the core's own node runs `claude -p "/usage" --output-format json --no-session-persistence` through `ClaudeCliBackend::usage_text` (`hide-host/src/usage.rs`, the `UsageLimitFetch` call, which reports once a second so the reader's cancel ends the child) and the core parses the `result` text the CLI prints.
+The core asks its own node for `UsageLimitFetch { source, root }`; a device refuses this call.
+Codex's `auth.json` read, HTTPS request and session-file fallback all run on that node; the core keeps the schedule, parsing and rows.
+The credential type is private to `hide-host` and cannot be serialized.
+The node bounds credential reads at 64 KiB and HTTP bodies at 256 KiB, returns only numeric window fields from Codex, and reads at most 2 MiB from each candidate session tail.
+The transport timeout is ten seconds; HTTP errors carry only a fixed diagnostic code, status and bounded Retry-After header.
 `/usage` is a local command: the CLI authenticates against its own keychain item, makes no model turn (`duration_api_ms` 0, cost 0), and with `--no-session-persistence` leaves nothing under `~/.claude/projects/`, in `claude --resume`, or in Hide's Agent Conversation list.
 Hide holds no Claude token at any point and never opens the keychain itself; the earlier direct keychain read is gone because an ad hoc signed dev build has a new code identity on every rebuild, so macOS revoked "always allow" and the row fell to a three-second timeout.
 The child receives exactly the variables `hide_platform::process::LOGIN_CHILD_VARIABLES` names (`hide_ai::USAGE_ENVIRONMENT`): `HOME`, `PATH`, `USER`, `LOGNAME` and `TMPDIR` on macOS and Linux, and `PATH`, `PATHEXT`, `SystemRoot`, `USERPROFILE`, `USERNAME`, `TEMP`, `TMP`, `APPDATA`, `LOCALAPPDATA`, `ComSpec`, `windir`, `SystemDrive`, `ProgramFiles`, `ProgramFiles(x86)`, `ProgramData`, `HOMEDRIVE`, `HOMEPATH` and `CLAUDE_CODE_GIT_BASH_PATH` on Windows, where Node reads its home from `USERPROFILE` and does not start without `SystemRoot`, and the Claude CLI needs Git Bash, which it finds through `CLAUDE_CODE_GIT_BASH_PATH` or `ProgramFiles`.
@@ -266,35 +319,131 @@ It runs in Hide's state directory (`~/.hide/state` by default).
 `--bare` cannot be used, because it never reads the keychain.
 `CLAUDE_CONFIG_DIR` is no longer an environment key Hide reads: the child does not receive it, so the CLI uses its default configuration directory.
 
-The parser reads the `Current week` lines as `Current week (<scope>): <n>% (used|left)[ · resets <Mon> <D>[, <YYYY>] at <h>[:mm](am|pm) (<IANA zone>)]`.
-`Current week (all models)` is the row, every other `Current week` line is a scoped bucket under it, and `left` is `100 - n`.
-A `Current session` line only proves the CLI read its login; nothing past its prefix is parsed, because the CLI prints the session line without a reset until a session starts, and a first read after an idle morning once failed on that line alone.
-The CLI prints ` · resets …` only when the window has a reset and the year only when the reset falls in another year.
-A row line without a reset is the `reset_missing` failure, a bucket line without one is an unavailable bucket, and a reset the reader cannot read is `reset_format`.
-The reset instant is the printed year's wall clock in the printed zone, or without a year the next wall-clock match, resolved through a tz database (`herdr-core/src/zoneinfo.rs`, on `jiff`: the system's `/usr/share/zoneinfo` on macOS and Linux, the database `jiff` bundles on Windows, which has none, so a Windows host answers reset times too); a match that passed within the last window is the reset that just passed, so the row reads as expired until the next read.
-The observed 2.1.274 output is fixed as a test fixture under `herdr-core/tests/fixtures/claude-usage/`, and the parsed reset agrees with the CLI's own `.usage-cache.json` value for the same window.
-Only English output is parsed; another locale reads as unavailable.
+The pure parser (`herdr-core/src/usage/limits/`) reads `Current session` as five hours and `Current week (all models)` as seven days; other weekly scopes become model rows.
+Percentages may say `used` or `left`; the latter is converted to used percent.
+A zero session line without a reset is `NotStarted`, never a displayed zero; another missing or malformed reset is `Unreadable` for that window alone.
+A reset that passed becomes `Expired` and carries no percent.
+Missing Codex five-hour data is `NotOffered`, because that window depends on the account plan; durations of 18,000 and 604,800 seconds identify its two windows regardless of their primary/secondary position.
+A whole response with no recognized window fails as `FormatChanged`, immediately discarding retained values.
+Readers cap the result at sixteen windows and a model label at 64 bytes.
 
-Claude failures are classified, never shown as a zero:
-
-- `/cost` text with no `Current` line (the CLI could not read its login): `Sign in with claude to see usage`.
-- A `claude` binary not on `PATH`: a row naming the binary, looked up again on the next read.
-- A timeout (the child is killed at 30 seconds) or a child that exits non-zero or reports `is_error`: transient, so a success from the last 15 minutes stays with a `Last checked Nm ago · offline` tooltip; with nothing to keep, `Claude Code weekly usage response is unavailable`.
-- stdout that is not a result frame, or a `Current` line the parser does not know: `Claude Code weekly usage response is unavailable` at once, whatever was kept.
-- A parsed reset that has already passed: the existing expired row.
+Claude reset times use the printed year and IANA zone, or the next wall-clock match when the year is absent; a match that passed within the last window is the reset that just passed.
+`herdr-core/src/zoneinfo.rs` uses `jiff`, with system zoneinfo on macOS and Linux and its bundled database on Windows.
+The observed 2.1.274 output is fixed as a scrubbed fixture under `herdr-core/tests/fixtures/claude-usage/`.
+Only English output is parsed; an unrecognized response is unavailable.
+A `/cost` response with no `Current` line means signed out; transport failures and timeouts retain a recent success for up to fifteen minutes.
+The snapshot carries cause codes, not screen wording: the web gives a sign-in action only for an authentication failure and keeps network diagnostics out of the screen.
 
 The child runs on a `BackgroundRead` worker, so the coordinator thread that applies every Herdr pane event never waits on it; one child runs at a time, and dropping the reader cancels a child still running at shutdown.
 The failure event carries the provider and the failure kind only; no terminal text, token, or account identifier is logged or placed in a snapshot.
 
-For Codex, the core reads `auth.json` under `CODEX_HOME` or `~/.codex`; an invalid explicit `CODEX_HOME` disables that read instead of falling back to `HOME`.
+For Codex, the core's own node reads `auth.json` under `CODEX_HOME` or `~/.codex`; an invalid explicit `CODEX_HOME` disables that read instead of falling back to `HOME`.
 The access token exists only long enough to build the HTTPS authorization header, and Hide never refreshes, persists, logs, or includes it in a snapshot.
 The Codex usage endpoint is called outside `Mutex<Runtime>`; a 429 honors `Retry-After` in either delay-seconds or HTTP-date form, or falls back to bounded 5, 10, and 15 minute delays.
-An offline response keeps a non-expired success for at most 15 minutes; Codex can then fall back to the latest weekly window in a local session JSONL file.
+An offline response keeps a non-expired success for at most 15 minutes; Codex can then fall back to the latest timestamped five-hour and weekly windows in a local session JSONL file.
 
-Both providers are first read one second after launch, every five minutes while a shell window is visible, and at once when the popover opens on a read older than a minute.
+The registry schedules one read per declared source, deduplicated across its windows.
+Non-hidden providers are first read one second after launch, every five minutes while a shell window is visible, and at once when the popover opens on a read older than a minute.
+A hidden provider stops scheduling unless Memory or Factory needs its limits; these consumers use the same `weekly()` and `exhausted_until()` accessors.
+The driver cancels and joins its workers when the coordinator ends, outside the runtime lock.
 The web shell reports its page visibility and its popover through the two `ui_state_update` hints `contracts/hided-ws.schema.json` declares as `uiStateUsageHints`.
 The previous Claude `.usage-cache.json` input is not read.
 Failures produce one structured event containing only provider, HTTP status where there is one, and error kind.
+
+## Local historical usage readers
+
+`hide-session::usage` reads content-free usage events from the local Claude Code, Codex, OpenCode, Pi, omp and Grok session stores.
+It opens agent files and the OpenCode database read-only, does not invoke an agent, and does not reuse conversation parsing.
+Candidates are confined to the selected agent's native root, including Claude subagent files and Codex archived sessions; Cursor is unsupported.
+Discovery reports its 10,000-candidate cap and unreadable entries.
+One read returns at most 1 MiB of source data, a bounded checkpoint, normalized events and skip counts; a checkpoint never contains a partial JSON line or conversation content.
+JSONL parsing yields after 20 ms and caps the event batch; the read budget includes the prefix and consumed-tail hashes that fence a rewritten checkpoint.
+File identity, truncation, parser version and a same-size rewrite also trigger a rescan, whose events still pass the ledger's first-value deduplication.
+The executable contracts are `hide-session/tests/it/usage.rs` and the scrubbed Grok fixture under `hide-session/tests/fixtures/usage/`.
+
+Input, output, cache read and cache write are disjoint components.
+Reasoning is a subset of output, and one-hour cache writes are retained as a subset of cache writes.
+Native identities are hashed with full SHA-256 digests so copies and repeated notifications keep one identity.
+Claude streaming updates retain their message/request identity, while its subagent files count separately.
+Pi and omp use session/message identities and retain their provider metadata and recorded cost.
+Codex prefers native per-response `TokenUsageRecord` items, excluding inherited records by thread identity, and ignores subsequent duplicate `TokenCount` notifications.
+Older rollouts use the last response's usage, with cumulative counters only as the repeated-notification identity; compaction estimates and context-window-full synthetic totals never count.
+A copied fork prefix without a native boundary is reported as skipped.
+Grok prompt totals include children: `summary.json`'s `session_kind` beginning with `subagent` excludes a child's own records, and preserved prompt/model identities deduplicate top-level fork copies.
+Grok incomplete usage or partial cost retains the reported token lower bound with an incomplete flag and no cost.
+OpenCode reads completed assistant messages' `step-finish` parts, whose input already excludes cache and whose output excludes reasoning, so reasoning is added once.
+Each part supplies its own cost; the accumulated message cost is used only for a single-step message without a part cost, and message tokens never feed totals.
+Its bounded keyset cursor revisits the last timestamp for late rows and restarts on file replacement or a changed schema version, including `VACUUM`.
+
+### Historical cost estimates
+
+Native recorded costs remain authoritative for Grok, OpenCode, Pi and omp.
+Claude and Codex use exact model-id matches from the public [LiteLLM price JSON](https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json), restricted to first-party Anthropic and OpenAI rows.
+That root-level dataset is outside LiteLLM's enterprise subtree and covered by its [MIT license](https://github.com/BerriAI/litellm/blob/main/LICENSE); the copyright and permission notice travel with the cached table.
+LiteLLM was selected because its native one-hour cache-write fields avoid guessing that price from a five-minute rate.
+
+The estimate uses standard API rates, including disjoint cache reads, five-minute and one-hour writes, and whole-request context tiers; it is not subscription billing or a reconstruction of an unrecorded fast, batch or regional mode.
+Daily rollups retain token-only bands at the supported 100,000, 200,000 and 272,000 prompt-token thresholds, counting input plus both cache categories before choosing a band.
+This lets a later table reprice old days after individual events expire.
+An unknown model, new unsupported context threshold, missing nonzero token-category rate or incomplete native usage produces a partial lower bound, never an invented zero price.
+
+The worker fetches one constant URL, with no credentials, usage payload, model query or redirects, and a five-second global timeout and 16 MiB response cap.
+It records the attempt in the ledger before starting the request, including failed attempts, so restart cannot exceed one attempt per day.
+The retained table is capped at 2 MiB and 2,048 models and is stale after 60 days; a failed refresh keeps the last table, and an offline first run leaves tokens available while cost waits for a table.
+The price worker asks only the own node for the fixed public URL; devices refuse this call and the core has no HTTP client.
+The price worker is joined on shutdown, and diagnostics contain fixed codes and counts rather than source paths or response bodies.
+
+## Counting Hide AI's own usage
+
+Hide AI's background calls (agent summaries, Memory, Factory judgments, issue drafts and worktree names) run through the provider CLIs without leaving a session file, so the historical readers above never see them.
+Each router built for one of those features carries an `AiUsageSink`, and the router tells it once per attempt that reached a provider.
+The Settings probe has no sink: it asks a CLI whether it is ready and is not a feature call.
+An agent pane that Hide starts (a Factory worker, a Memory promotion) is a native session, so its own transcript already counts it and the sink never hears of it.
+
+What counts is the attempt, not the request:
+
+- A response with usage is told with its per-model tokens, whether or not the answer then passes schema validation. A rejected answer cost the same tokens, and a retry or a fallback is its own attempt.
+  Several model entries still count as one backend attempt; only their tokens and costs are added separately.
+- Callers joined onto one in-flight request are told once.
+- A `Timeout`, a `CompletionUnknown`, a `Cancelled` or a backend-side `InvalidOutput` is told as an **unknown call**: the backend had the prompt, so a model turn may have run, and the error carries no usage.
+  Each is its own attempt: the second of two `InvalidOutput` attempts is a second dispatch, told once more.
+  A Codex turn that reports `interrupted` is `Cancelled`, and `responseStreamDisconnected` is `CompletionUnknown` regardless of its optional HTTP status: both may follow model work, count once, and are never retried automatically.
+  After `turn/start`, a failed turn with missing or unfamiliar `codexErrorInfo` is also `CompletionUnknown`; only a typed refusal or a failure to establish the HTTP/response-stream connection can remain retryable without an unknown call.
+- A response that arrives without usage (Gemini CLI, Pi, Grok today) is also an unknown call.
+- A refusal before the prompt went out (`ProviderUnavailable`, `NotAuthenticated`, `UsageLimited`, `Unsupported`, `Transient`, `OverBudget`) and a `Rejected` request (the provider refused the request itself: an HTTP 4xx, a prompt that does not fit, a Gemini input error, a Codex bad request or full context window) are not told: they did no model work.
+  Neither is a cancel that returns before a backend is asked, nor a caller joined onto another's flight that gives up, since neither dispatched anything.
+- A schema failure of an answer that did arrive is the answer's own attempt, told once with its usage; the failure adds nothing.
+
+An unknown call is a count on its day, provider and feature. It adds nothing to an amount and makes the day's known amounts a lower bound; the popover marks them `≥` and the table footnotes them.
+
+Claude's tokens come from the result frame.
+With one model in `modelUsage`, the frame's whole `usage` is that model's, including its cache categories.
+With several models, each model's own `modelUsage` entry is used, and their sum has to equal `usage` in every category or the call is unknown rather than guessed.
+When several models ran and `usage.cache_creation` reports one-hour writes, the one-hour share cannot be attributed to a model: the call keeps its writes as five-minute writes and is marked a lower bound, so its price is partial.
+Input and output are required; missing cache fields count as zero; one-hour writes above all cache writes make the call unknown.
+Codex's tokens come from the last `tokenUsage.total` of the app-server turn and the model from the `thread/start` response: input is `inputTokens` minus cached and cache-write tokens (a negative result makes the call unknown), and reasoning above output makes the call unknown.
+Grok reports no usage the code can read, so its calls are unknown (D-06 of the `hide-ai-usage-split` PRD).
+
+The ledger worker owns the writes.
+A router thread only appends to a bounded in-memory queue (256 attempts) under its own mutex: no I/O, no runtime lock, no time zone lookup and no clock read beyond the attempt time.
+Past the bound the oldest attempt is dropped and counted by the quarter hour it was made in, and the worker dates it as an unknown call with an `ai_usage_queue_full` diagnostic.
+The worker drains the queue at most once a second and writes the batch in one transaction into `ai_daily(day, provider, model, feature)`, a table of the same `usage.sqlite3` that holds totals and an unknown count and nothing that names a request, prompt, subject or path.
+Each row's totals JSON also keeps an `attempts` count separate from the per-model call count used to price its tokens.
+One attempt increments only its first successfully stored model row, so an earlier model refused at the row cap cannot hide the call or the surviving day's tokens.
+Feature ids outside the closed list (labels, memory, factory, issue) are counted as `other` and named once in an `ai_usage_feature_unmapped` diagnostic, so a new feature is counted from its first call.
+A write that fails loses its batch with the transaction, so each failed write names the number of calls it lost in a diagnostic; a Hide AI table that cannot be read at open is named in a diagnostic and does not stop the session ledger.
+A usage report that contradicts itself (an invalid model name, one-hour writes above all writes, reasoning above output) makes that attempt one unknown call with an `ai_usage_tokens_invalid` diagnostic.
+The table is capped at 40,000 rows; a combination that has no row yet is refused past the cap with `ai_usage_row_capacity`, an existing row still takes calls, and the earliest refused day is kept in a one-row `ai_state` table so every day since reads as incomplete until it ages out of retention.
+Rows age out with the daily retention horizon, 512 per maintenance turn.
+`user_version` is not raised: the tables are created `IF NOT EXISTS` on open, and a store from before this change simply has none.
+
+Nothing is backfilled: a call made before this change left no record, so the table counts from its first row.
+The full history names that day, and an earlier day reads "Before counting" rather than "No records".
+The projection prepares Hide AI on the all-agents range only, adds it to the headline day amounts, bars, grass levels and totals, and computes every agent's contribution, day and lifetime share, over the agents' session tokens alone.
+A day with only Hide AI calls is still a day of the calendar: it counts toward active days, streaks, the peak and the grass levels, as the headline does.
+Costs go through the same price table as a session call, by provider, and the popover shows tokens and a share but no money.
+Per call, Hide AI adds one queue append on a router thread; the worker's extra work is one batched write a second at most, and a publish only while a usage page is visible and the rows changed.
+Those costs are by construction, not measured: no CPU, memory or snapshot-size figure has been taken for this feature.
 
 ## Selection and fallback
 
@@ -313,7 +462,9 @@ A fixed 30 second request therefore spends at most 60 seconds across all provide
 `availability()` still reports each provider's own reason next to it.
 
 Every failure is one of two families.
-A refusal (`ProviderUnavailable`, `NotAuthenticated`, `UsageLimited`, `Unsupported`, `Transient`, `InvalidOutput`) means the provider never took the request, so asking again repeats nothing.
+A refusal (`ProviderUnavailable`, `NotAuthenticated`, `UsageLimited`, `Unsupported`, `Transient`) means the provider never took the request, so asking again repeats nothing.
+A `Rejected` request is a refusal that is retried like an `InvalidOutput` and reported to callers as the same `invalid_output` class.
+An `InvalidOutput` from a backend is not a refusal: the backend had the prompt and its answer was unusable, so a model turn may have run, and the usage ledger counts it as an unknown call (see Counting Hide AI's own usage).
 A completion-unknown outcome (`Timeout`, `Cancelled`, `CompletionUnknown`) means the request was submitted and its fate is not known: the deadline passed, the caller cancelled, or the connection or child was lost after `turn/start` went out.
 The codex backend draws that line at the `turn/start` write: a lost child before it is `ProviderUnavailable`, a lost or unanswered `turn/start` and anything after it is `CompletionUnknown`.
 
@@ -332,10 +483,28 @@ A completion-unknown outcome is final: one call, no second attempt on the same p
 An answer the schema refused is retried on the same provider only.
 There is no silent fallback: the result names the provider that answered, the log names it too, and a failure says why none did.
 
+## The usage limit
+
+One setting, `usage_limit` (`hide-ai/src/usage_limit.rs`), says how much of an agent's week Hide AI may use for what it starts on its own: agent labels, Memory analysis, the card recheck and the pre-promotion check.
+An agent whose weekly figure is at or past the limit cannot answer such a request, so the router moves on to the next agent of the same priority list as for any agent that cannot, and logs the move as `ai.usage_limit` with `reason=usage_limit`, the agent, its usage, the limit and `action=fallback` or `action=paused`, never any content.
+It is not a second order and not a second list.
+The judgment is a request-time check against a shared `UsageLimits` cell, not a flag on `AiRequest` (which crosses to the node): the core writes the limit and each agent's reading when either moves, a router reads them on its own worker thread, and a router built without the cell, or a request that names its agent with `pick`, is never judged.
+The routers for what the operator waits on (worktree names, issue intake review), `hide memory add` and the Factory's judgments are built without the cell, so the limit never delays them (PRD hide-ai-usage-limit D-03).
+`statuses()` and `availability()` stay ungated, so Settings still lists a past-limit agent as signed in; only `active` in `provider_state()` skips it.
+
+The figures are the weekly rows the toolbar's usage read already produces (`usage` through `weekly_reading()`, the seven-day account window with a percent and a future reset); no new read command exists.
+With no window attached the same reader also runs while a limit is set and Hide AI is on and either the order is paused (only a fresh figure can lift it) or an agent worked in the last 30 minutes, so labels are not judged by a figure that is days old; that is at most one read per agent every five minutes and none while nothing runs.
+Until the first read lands (one second after launch) an agent has no figure and is not limited.
+An agent with no figure, or whose reading belongs to a window that has already reset, is never past the limit, and No limit judges nothing.
+When every agent of the list is past the limit, or the list is empty because Hide AI is off, nothing is sent: `Runtime::usage_paused()` folds into the same states as Hide AI off, so labels show each session's own text, Memory analysis reports `AiNotReady` and the pass builds no router, and both resume on the next usage read, settings change or coordinator wake after the limit is raised or the week turns.
+Entering and leaving the pause is one `usage_limit.paused` or `usage_limit.resumed` diagnostic each.
+The limit belongs to the core machine like the rest of `ai.json`, so a window on another device shows the core's value and its choice is applied there.
+The snapshot carries `status.background_ai.usage_limit`, each agent row's `weekly` and `past_limit`, and the refusal's `past_limit` reason with `used_percent` and `limit`; they change only when a figure, the limit or the refusal changes, so an unchanged usage read publishes nothing.
+
 ## Retry policy
 
 - `Transient`: exponential backoff, at most four attempts on the same provider.
-- `InvalidOutput`: at most two attempts, because the input is deterministic.
+- `InvalidOutput`, `Rejected`: at most two attempts, because the input is deterministic; a backend-side `InvalidOutput` may have spent tokens and is counted as an unknown call, while an answer rejected by schema validation keeps its reported usage.
 - `Timeout`, `Cancelled`, `CompletionUnknown`: no retry anywhere; the caller decides what to do with the turn.
 - `Internal`: the request's leader thread panicked; every caller waiting on the same intent receives this error, the intent's key is freed, and the next call starts fresh.
 - `NotAuthenticated`: no retry; availability is re-read after its cache window.
@@ -349,7 +518,7 @@ The label worker parks a turn for good on a settled failure and asks again after
 
 ## Logging
 
-The router emits `ai.attempt`, `ai.request.finished`, `ai.request.joined`, `ai.fallback`, `ai.provider.degraded`, `ai.provider.recovered`, `ai.budget.exceeded`, `ai.app_server.over_budget` and, once per UTC day, `ai.daily_rollup`; the codex backend emits `ai.app_server.idle_exit`, `ai.codex_home.swept` and `ai.codex_home.sweep_failed`.
+The router emits `ai.attempt`, `ai.request.finished`, `ai.request.joined`, `ai.fallback`, `ai.usage_limit`, `ai.provider.degraded`, `ai.provider.recovered`, `ai.budget.exceeded`, `ai.app_server.over_budget` and, once per UTC day, `ai.daily_rollup`; the codex backend emits `ai.app_server.idle_exit`, `ai.codex_home.swept` and `ai.codex_home.sweep_failed`.
 A line carries the request id, feature id, provider, outcome class, attempt, duration, input length, output tokens and schema version.
 Every `ai.request.finished` of a provider that declares itself measurable (`AiBackend::measurable()`, today only codex, whose app-server is resident) also carries the app-server pid and the process measurement (`app_server_pid`, `descendants`, `rss_bytes`), or `measurement=unavailable` where the platform cannot measure it.
 It never carries the prompt, the input, the generated text, a token, a file path from a transcript, or a provider thread id.
@@ -371,4 +540,10 @@ A backend's events are produced on the node; the node holds at most 256 of them 
 - Cursor and OpenCode cannot be selected until a read-only one-shot mode is documented for them.
 - A Claude usage limit has not been observed against the live account.
   The mapping was measured end to end instead, by answering the CLI's own API request with each HTTP status and reading the frame it printed; the run that measured it is local evidence, not a tracked file.
+- Hide AI's counting is partial by design.
+  An `InvalidOutput` or `Cancelled` attempt that did spend tokens (for example a result with no structured output or `error_max_structured_output_retries`, a Codex turn that completed with no JSON message) is counted as an unknown call, not with its tokens, because the error path carries no usage; an error frame's usage is not read.
+  Gemini CLI, Pi and Grok report no usage the code reads, so their calls are only counts of unknown calls.
+  Unreleased experimental rows written before the separate `attempts` field keep their original per-model call count when read or extended; the original attempt boundaries cannot be reconstructed, so their historical count can exceed actual attempts.
+  New attempts add exactly one known call regardless of model count; no migration guesses a correction to older experiment data, and a downgrade to that experimental writer can discard this new count when it rewrites a row.
+  Calls before this feature are not backfilled.
 - Weekly usage in the toolbar reads Codex's usage endpoint, with Codex session JSONL as an offline fallback only, and Claude Code's `/usage` text; the router's daily rollup is a log line, not a popover value.

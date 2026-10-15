@@ -33,7 +33,9 @@
 // each with its reason; docs/UI_BEHAVIOR.md (Keyboard shortcuts per system)
 // lists the whole table on both systems.
 
+import { FACTORY_OPEN } from "./factory/launch";
 import type { HostKind } from "./host";
+import { TOOLS, type Tool } from "./laneTools";
 
 export type Chord = {
   code: string;
@@ -121,8 +123,9 @@ export type CommandId =
   | "sidebar_projects"
   | "sidebar_agents"
   | "toggle_device_rail"
-  | "toggle_explorer"
-  | "toggle_right_panel"
+  | "toggle_lane"
+  | LaneToolCommandId
+  | "toggle_file_tree"
   | "keep_open"
   | "find_in_pane"
   | "save_file"
@@ -155,6 +158,20 @@ export const AREA_COMMANDS = [
   "shrink_view_area",
 ] as const;
 export type AreaCommandId = (typeof AREA_COMMANDS)[number];
+
+/**
+ * One command per rail icon (PRD lane-last-tool-chords): the lane opens on
+ * that tool, or closes when it already shows it, as pressing the icon does.
+ * The chords are ⌥⌘1-4 in the rail's order (`TOOLS`), which is Alt+Shift+1-4 elsewhere.
+ */
+export type LaneToolCommandId = `toggle_lane_${Tool}`;
+export const LANE_TOOL_COMMANDS: readonly LaneToolCommandId[] = TOOLS.map((tool): LaneToolCommandId => `toggle_lane_${tool}`);
+const LANE_TOOL_TITLES: Record<LaneToolCommandId, string> = {
+  toggle_lane_work: "Toggle Work tool",
+  toggle_lane_files: "Toggle Files tool",
+  toggle_lane_changes: "Toggle Changes tool",
+  toggle_lane_memory: "Toggle Memory tool",
+};
 
 export type Digit = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 export const DIGITS: readonly Digit[] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
@@ -234,18 +251,20 @@ export const REGISTRY: readonly Command[] = [
   { id: "open_file", title: "Open file", group: "Navigate", browser: { code: "KeyP", meta: true }, electron: { code: "KeyP", meta: true }, moved: false },
   { id: "toggle_left_sidebar", title: "Toggle left sidebar", group: "Panels", browser: { code: "KeyB", meta: true }, electron: { code: "KeyB", meta: true }, moved: false },
   { id: "overview", title: "Overview", group: "Navigate", browser: { code: "KeyO", meta: true, shift: true }, electron: { code: "KeyO", meta: true, shift: true }, moved: false },
-  { id: "factory_open", title: "Open Factory", group: "Navigate", browser: { code: "KeyF", meta: true, shift: true }, electron: { code: "KeyF", meta: true, shift: true }, moved: false },
+  // Until the Factory opens, nothing claims ⇧⌘F and no sheet or menu lists it (`factory/launch.ts`).
+  ...(FACTORY_OPEN ? [{ id: "factory_open", title: "Open Factory", group: "Navigate", browser: { code: "KeyF", meta: true, shift: true }, electron: { code: "KeyF", meta: true, shift: true }, moved: false } satisfies Command] : []),
   { id: "sidebar_projects", title: "Focus sidebar", group: "Panels", browser: { code: "KeyP", meta: true, shift: true }, electron: { code: "KeyP", meta: true, shift: true }, moved: false },
   { id: "sidebar_agents", title: "Agents overview", group: "Panels", browser: { code: "KeyA", meta: true, shift: true }, electron: { code: "KeyA", meta: true, shift: true }, moved: false },
   { id: "toggle_device_rail", title: "Toggle device rail", group: "Panels", browser: null, electron: null, moved: false },
-  { id: "toggle_explorer", title: "Toggle Tools", group: "Panels", browser: { code: "KeyE", meta: true }, electron: { code: "KeyE", meta: true }, moved: false },
-  { id: "toggle_right_panel", title: "Toggle File Views", group: "Panels", browser: { code: "KeyB", meta: true, shift: true }, electron: { code: "KeyB", meta: true, shift: true }, moved: false },
+  { id: "toggle_lane", title: "Toggle right lane", group: "Panels", browser: { code: "KeyE", meta: true }, electron: { code: "KeyE", meta: true }, moved: false },
+  ...LANE_TOOL_COMMANDS.map((id, index): Command => ({ id, title: LANE_TOOL_TITLES[id], group: "Panels", browser: { code: `Digit${index + 1}`, meta: true, alt: true }, electron: { code: `Digit${index + 1}`, meta: true, alt: true }, moved: false })),
+  { id: "toggle_file_tree", title: "Toggle File Tree", group: "Panels", browser: { code: "KeyE", meta: true, shift: true }, electron: { code: "KeyE", meta: true, shift: true }, moved: false },
   { id: "find_in_pane", title: "Find in pane", group: "Panes", browser: { code: "KeyF", meta: true }, electron: { code: "KeyF", meta: true }, moved: false },
   { id: "save_file", title: "Save file", group: "Panes", browser: { code: "KeyS", meta: true }, electron: { code: "KeyS", meta: true }, moved: false },
   { id: "keep_open", title: "Keep open", group: "Panes", browser: { code: "KeyK", meta: true, shift: true }, electron: { code: "KeyK", meta: true, shift: true }, moved: false },
   { id: "split_right", title: "Split right", group: "Panes", browser: { code: "KeyD", meta: true }, electron: { code: "KeyD", meta: true }, moved: false },
   { id: "split_down", title: "Split down", group: "Panes", browser: { code: "KeyD", meta: true, shift: true }, electron: { code: "KeyD", meta: true, shift: true }, moved: false },
-  { id: "toggle_zoom", title: "Zoom pane", group: "Panes", browser: { code: "Enter", meta: true, alt: true }, electron: { code: "Enter", meta: true, alt: true }, moved: false },
+  { id: "toggle_zoom", title: "Zoom pane", group: "Panes", browser: { code: "Enter", meta: true, shift: true }, electron: { code: "Enter", meta: true, shift: true }, moved: false },
   { id: "close_pane", title: "Close pane", group: "Panes", browser: { code: "KeyW", alt: true, shift: true }, electron: { code: "KeyW", meta: true, shift: true }, moved: true },
   { id: "text_larger", title: "Larger text", group: "Panes", browser: { code: "Equal", meta: true }, electron: { code: "Equal", meta: true }, moved: false },
   { id: "text_smaller", title: "Smaller text", group: "Panes", browser: { code: "Minus", meta: true }, electron: { code: "Minus", meta: true }, moved: false },
@@ -407,6 +426,7 @@ export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
   "recent_area_tab", "previous_recent_area_tab", "recent_panel", "previous_recent_panel",
   "overview", "sidebar_projects", "sidebar_agents",
   "toggle_device_rail",
+  ...LANE_TOOL_COMMANDS,
   "split_right",
   "split_down",
   "toggle_zoom",

@@ -1,6 +1,6 @@
 // Synthetic native-format writers on actual pinned Herdr and hided.
 // Installed CLI measurements remain a separate acceptance boundary.
-import { expect, test, type BrowserContext } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -12,14 +12,26 @@ import {
   PI_TITLE, appendOmpQuestion, prepareNativeWriter, prepareOpenCodeWriter, reportNativeWriter, reportOpenCodeState, setGrokPlanApproval, updateOmpTitle,
   writeOpenCodeQuestion,
 } from "./session-reader-fixture";
-import { screenshot } from "./wire";
+import { openSleepingProject, screenshot } from "./wire";
 import { afterCleanup } from "./worker-owned";
 import { FakeTailscale } from "./fake-tailscale";
+import { dumpOnFailure } from "./failure-dump";
 import type { AgentRow } from "../src/snapshot";
 
 type QuestionRow = AgentRow & { user_turn?: { kind: string; content: { text: string; choices: string[]; truncated: boolean } | null } };
 
 test.describe.configure({ timeout: 150_000 });
+
+async function disableAgentSummaries(page: Page): Promise<void> {
+  await page.locator("[data-open-settings]").click();
+  await page.locator('[data-settings-tab="hideAi"]').click();
+  const summaries = page.locator("[data-ai-agent-summary]");
+  await expect(summaries).toHaveAttribute("data-ai-agent-summary", "true");
+  await summaries.click();
+  await expect(summaries).toHaveAttribute("data-ai-agent-summary", "false");
+  await page.locator("[data-settings-close]").click();
+  await expect(page.locator("[data-settings]")).toHaveCount(0);
+}
 
 for (const [kind, id, initialTitle, resumeFlag] of [["pi", PI_ID, PI_TITLE, "--session"], ["omp", OMP_ID, OMP_TITLE, "--resume"], ["grok", GROK_ID, GROK_TITLE, "--resume"], ["cursor", CURSOR_ID, CURSOR_GOAL, "--resume"]] as const) {
 test(`${kind} ${kind === "cursor" ? "generated goal" : "native title"} and durable sleep wake the exact conversation in a fresh pane`, async ({ page }) => {
@@ -42,6 +54,10 @@ test(`${kind} ${kind === "cursor" ? "generated goal" : "native title"} and durab
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator("[data-checkout]").first().click();
     const row = page.locator(`nav[data-sidebar] [data-checkout-agents-open] [data-pane="${sourcePane}"]`);
+    // status-model.md, Task identity: an automatic/source-less name follows the goal.
+    const selected = kind === "pi" ? "Generated Pi goal" : kind === "grok" ? "Generated Grok goal" : initialTitle;
+    await expect(row).toContainText(selected, { timeout: 30_000 });
+    if (kind === "pi" || kind === "grok") await disableAgentSummaries(page);
     await expect(row).toContainText(initialTitle, { timeout: 30_000 });
     await screenshot(page, `${kind}-native-title`);
     let title: string = initialTitle;
@@ -82,6 +98,8 @@ test(`${kind} ${kind === "cursor" ? "generated goal" : "native title"} and durab
     }
     await expect(page.locator('[data-menu-item="sleep_agent"]')).toBeEnabled({ timeout: 20_000 });
     await page.locator('[data-menu-item="sleep_agent"]').click();
+    // Every agent of the project sleeps now, so it folds behind its moon (PRD sidebar-titlebar-refresh B4).
+    await openSleepingProject(page);
     const sleeping = page.locator('[data-sleeping-session]');
     await expect(sleeping).toContainText(title, { timeout: 30_000 });
     await expect(row).toHaveCount(0);
@@ -233,17 +251,27 @@ test("OpenCode's root session titles its row, waits on its question and wakes by
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator("[data-checkout]").first().click();
     const row = page.locator(`nav[data-sidebar] [data-pane="${sourcePane}"]`);
+    // OpenCode records no manual source: goal first, native title with summaries off.
+    await expect(row).toContainText("Generated OpenCode goal", { timeout: 30_000 });
+    await disableAgentSummaries(page);
     await expect(row).toContainText(OPENCODE_TITLE, { timeout: 30_000 });
     await expect(page.locator("nav[data-sidebar]")).not.toContainText(OPENCODE_CHILD_TITLE);
     await screenshot(page, "opencode-native-title");
 
     // A question keeps OpenCode's answer unfinished; its answer completes it.
     const question = () => agents.find((agent) => agent.pane_id === sourcePane)?.user_turn;
+    const nativeReadState = () => ({
+      herdr: herdr.run(["agent", "list"]),
+      row: agents.find((agent) => agent.pane_id === sourcePane),
+      files: [database, `${database}-wal`, `${database}-shm`].map(file => ({ file, size: fs.existsSync(file) ? fs.statSync(file).size : null })),
+      diagnostic: fs.readFileSync(path.join(daemon!.stateDir, "Logs", "core.jsonl"), "utf8").trim().split("\n").slice(-40),
+    });
     await reportOpenCodeState(herdr, sourcePane, "working");
     writeOpenCodeQuestion(database, "running");
     await reportOpenCodeState(herdr, sourcePane, "idle");
-    await expect.poll(question, { message: "the native question reached the row", timeout: 30_000 })
-      .toEqual({ kind: "question", content: { text: "어느 브랜치에 올릴까요?", choices: ["main", "release"], truncated: false } });
+    await dumpOnFailure("OpenCode question native read", nativeReadState, () =>
+      expect.poll(question, { message: "the native question reached the row", timeout: 30_000 })
+        .toEqual({ kind: "question", content: { text: "어느 브랜치에 올릴까요?", choices: ["main", "release"], truncated: false } }));
     await expect(page.locator(`[data-pane="${sourcePane}"] [data-agent-status-mark="question"]`).first()).toBeVisible();
     await screenshot(page, "opencode-native-question");
     await reportOpenCodeState(herdr, sourcePane, "working");
@@ -251,10 +279,13 @@ test("OpenCode's root session titles its row, waits on its question and wakes by
     await reportOpenCodeState(herdr, sourcePane, "idle");
     await expect.poll(question, { message: "the answer cleared the question", timeout: 30_000 }).toBeUndefined();
 
-    await row.click();
+    // The answered turn is an unread completion, so the row is raised under Done as well.
+    await row.first().click();
     await page.locator(`[data-pane-menu="${sourcePane}"]`).click();
-    await expect(page.locator('[data-menu-item="sleep_agent"]')).toBeEnabled({ timeout: 20_000 });
+    await dumpOnFailure("OpenCode sleep native proof", nativeReadState, () =>
+      expect(page.locator('[data-menu-item="sleep_agent"]')).toBeEnabled({ timeout: 20_000 }));
     await page.locator('[data-menu-item="sleep_agent"]').click();
+    await openSleepingProject(page);
     const sleeping = page.locator("[data-sleeping-session]");
     await expect(sleeping).toContainText(OPENCODE_TITLE, { timeout: 30_000 });
     await expect.poll(() => JSON.stringify(herdr.run(["pane", "list"]))).not.toContain(`"pane_id":"${sourcePane}"`);

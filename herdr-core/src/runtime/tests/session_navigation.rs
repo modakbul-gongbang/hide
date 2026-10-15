@@ -1,4 +1,5 @@
 use super::*;
+use crate::live::FocusReadback;
 
 #[test]
 fn eligible_agent_panes_open_on_the_terminal_and_keep_the_conversation_they_asked_for() {
@@ -443,7 +444,10 @@ fn focusing_checkout_selects_only_the_target_checkout_pane() {
         runtime.snapshot().ui_state.selected_pane_id.as_deref(),
         Some("pane-b")
     );
-    assert!(runtime.snapshot().terminal.panes.is_empty());
+    // The selection moved; the entry of the pane left behind is the
+    // session's, and only the session drops it (ARCHITECTURE.md, Panes,
+    // tabs and the attach window).
+    assert_eq!(projected_pane_ids(&runtime), ["pane-a"]);
 
     let focus_empty = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION,
@@ -458,7 +462,7 @@ fn focusing_checkout_selects_only_the_target_checkout_pane() {
     );
     assert!(runtime.snapshot().terminal.pane_id.is_none());
     assert!(runtime.snapshot().active_pane_layout().is_none());
-    assert!(runtime.snapshot().terminal.panes.is_empty());
+    assert_eq!(projected_pane_ids(&runtime), ["pane-a"]);
 }
 
 /// Every tab in the session ships its own layout, keyed by its tab id.
@@ -2366,7 +2370,7 @@ fn pane_focus_rejects_a_stale_stream_after_confirmation_and_follows_a_verified_e
     let identity = identity.unwrap();
     // The update is ingested at once and Herdr's differing focus waits.
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
-    let (_, next) = runtime.finish_pane_focus_readback(identity, false);
+    let (_, next) = runtime.finish_pane_focus_readback(identity, FocusReadback::Elsewhere);
     assert!(next.is_none());
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
     assert_eq!(
@@ -2380,13 +2384,77 @@ fn pane_focus_rejects_a_stale_stream_after_confirmation_and_follows_a_verified_e
     // The same proposed move becomes external authority when Herdr's fresh
     // layout and active tab really agree, without any new operator request.
     let (_, identity) = runtime.ingest_session_awaiting_focus_readback(Ok(stale), None);
-    runtime.finish_pane_focus_readback(identity.unwrap(), true);
+    runtime.finish_pane_focus_readback(identity.unwrap(), FocusReadback::Confirmed);
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
     assert_eq!(
         runtime.snapshot().terminal.pane_id.as_deref(),
         Some("w1:p1")
     );
     assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 1);
+}
+
+/// Every `pane.focus.stream_readback_failed` line an installed build wrote
+/// on 2026-10-14 had one shape: Herdr answered a readback of the stream's
+/// older focus with the pane the operator had just focused. That is the
+/// readback refuting a stale layout, not a failure. Only a readback Herdr
+/// could not answer while it was still the latest is one, logged with
+/// Herdr's reason; one a newer focus overtook ends quietly.
+#[test]
+fn only_the_latest_readback_herdr_could_not_answer_is_a_failure_line() {
+    let failures = |records: &[serde_json::Value]| {
+        records
+            .iter()
+            .filter(|record| record["kind"] == "pane.focus.stream_readback_failed")
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let mut runtime = live_runtime();
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+    runtime.dispatch_json(&operator_focus_event("w1:p2"));
+    finish_running_pane_focus(&mut runtime, Ok(()));
+    let stale = finished_tab_payload(&panes, "w1:p1");
+
+    // Herdr already shows the operator's own pane.
+    let (_, identity) = runtime.ingest_session_awaiting_focus_readback(Ok(stale.clone()), None);
+    let ((_, next), records) = crate::diagnostics::capture(|| {
+        runtime.finish_pane_focus_readback(identity.unwrap(), FocusReadback::Elsewhere)
+    });
+    assert!(next.is_none());
+    assert_eq!(failures(&records), Vec::<serde_json::Value>::new());
+
+    // The operator focused another pane before Herdr answered at all.
+    let (_, identity) = runtime.ingest_session_awaiting_focus_readback(Ok(stale.clone()), None);
+    runtime.dispatch_json(&operator_focus_event("w1:p3"));
+    finish_running_pane_focus(&mut runtime, Ok(()));
+    let ((_, next), records) = crate::diagnostics::capture(|| {
+        runtime.finish_pane_focus_readback(
+            identity.unwrap(),
+            FocusReadback::Unread("pane.layout failed: timed out".into()),
+        )
+    });
+    assert_eq!(failures(&records), Vec::<serde_json::Value>::new());
+    if let Some(next) = next {
+        runtime.finish_pane_focus_readback(next, FocusReadback::Elsewhere);
+    }
+
+    // The latest readback, unanswered.
+    let (_, identity) = runtime.ingest_session_awaiting_focus_readback(Ok(stale), None);
+    let (_, records) = crate::diagnostics::capture(|| {
+        runtime.finish_pane_focus_readback(
+            identity.unwrap(),
+            FocusReadback::Unread("pane.layout failed: Herdr is not running".into()),
+        )
+    });
+    let failures = failures(&records);
+    assert_eq!(failures.len(), 1, "{records:?}");
+    assert_eq!(failures[0]["pane_id"], "w1:p1");
+    assert_eq!(
+        failures[0]["message"],
+        "pane.layout failed: Herdr is not running"
+    );
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p3"));
+    assert!(runtime.pane_focus_readback.is_none());
 }
 
 #[test]
@@ -2412,7 +2480,8 @@ fn pane_focus_readback_cannot_outlive_a_new_selection_or_connection() {
         // The old answer moves nothing. A read handed on instead is for the
         // current selection and connection, and Herdr's answer to that one
         // is the one that counts.
-        let (_, next) = runtime.finish_pane_focus_readback(identity.clone(), true);
+        let (_, next) =
+            runtime.finish_pane_focus_readback(identity.clone(), FocusReadback::Confirmed);
         assert_eq!(
             runtime.snapshot().focused.pane_id.as_deref(),
             Some(expected)
@@ -2420,7 +2489,7 @@ fn pane_focus_readback_cannot_outlive_a_new_selection_or_connection() {
         assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
         if let Some(next) = next {
             assert_ne!(next, identity);
-            runtime.finish_pane_focus_readback(next, false);
+            runtime.finish_pane_focus_readback(next, FocusReadback::Elsewhere);
         }
         assert!(runtime.pane_focus_readback.is_none());
     }
@@ -2470,7 +2539,7 @@ fn a_pane_focus_readback_for_another_tab_cannot_pull_focus_back() {
     finish_running_pane_focus(&mut runtime, Ok(()));
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p4"));
 
-    runtime.finish_pane_focus_readback(identity, true);
+    runtime.finish_pane_focus_readback(identity, FocusReadback::Confirmed);
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p4"));
     assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
 }
@@ -2508,11 +2577,11 @@ fn only_one_pane_focus_readback_is_outstanding_and_a_superseded_one_hands_on() {
 
     // The answer is for a focus the layout no longer shows, so it covers
     // nothing and the worker is handed the one the layout does show.
-    let (_, next) = runtime.finish_pane_focus_readback(first, true);
+    let (_, next) = runtime.finish_pane_focus_readback(first, FocusReadback::Confirmed);
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
     let next = next.unwrap();
     assert_eq!(next.target_id, "w1:p3");
-    runtime.finish_pane_focus_readback(next, true);
+    runtime.finish_pane_focus_readback(next, FocusReadback::Confirmed);
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p3"));
     assert!(runtime.pane_focus_readback.is_none());
 }
@@ -2535,11 +2604,11 @@ fn a_move_that_arrives_during_an_unconfirmed_readback_is_read_again() {
 
     // The read was answered before the move, so it does not confirm. The
     // move came after the read began, so it is read again rather than lost.
-    let (_, next) = runtime.finish_pane_focus_readback(stale, false);
+    let (_, next) = runtime.finish_pane_focus_readback(stale, FocusReadback::Elsewhere);
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
     let next = next.expect("the move that arrived during the read is read again");
     assert_eq!(next.target_id, "w1:p2");
-    runtime.finish_pane_focus_readback(next, true);
+    runtime.finish_pane_focus_readback(next, FocusReadback::Confirmed);
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
     assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 1);
     assert!(runtime.pane_focus_readback.is_none());
@@ -3495,7 +3564,15 @@ fn an_exited_panes_root_directory_does_not_become_a_checkout() {
 #[test]
 fn a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd() {
     let mut runtime = runtime();
-    let checkout_path = "/tmp/hide-selected-checkout";
+    let directory = scratch_dir("hide-selected-checkout-");
+    let path = directory
+        .path()
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let checkout_path = path.as_str();
+    runtime.test_dirs.push(directory);
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
     let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
     let registration = WorkspaceRegistration {
@@ -3578,9 +3655,10 @@ fn a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd() {
     }))
     .expect("overlapping cwd session payload");
     let catalog = session_sync::PrecomputedCatalog {
+        worktrees: runtime.worktree_catalog(),
         registrations: vec![registration],
         workspaces: vec![selected_workspace],
-        paths: Default::default(),
+        paths: Arc::new(workspace::paths_here([checkout_path])),
     };
 
     assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
@@ -3661,6 +3739,7 @@ fn a_missing_selected_pane_reports_without_falling_back_to_a_same_cwd_pane() {
     }))
     .expect("missing selected pane payload");
     let catalog = session_sync::PrecomputedCatalog {
+        worktrees: runtime.worktree_catalog(),
         registrations: vec![registration],
         workspaces: vec![selected_workspace],
         paths: Default::default(),
@@ -3699,6 +3778,144 @@ fn a_restored_selection_of_another_machine_opens_where_herdr_has_the_keyboard() 
     ] {
         restored_selection_opens_on_herdrs_focus(saved_pane, saved_checkout, moved);
     }
+}
+
+#[test]
+fn restored_checkout_waits_for_initial_path_facts() {
+    let (mut runtime, checkout, repository, _) = split_workspace_checkouts("restore-pending");
+    let repository = repository.to_string_lossy().into_owned();
+    let mut payload = split_workspace_payload(&[("w-order:t1", &repository)], "w-order:t1");
+    payload.focused_pane_id = Some("w-order:t1:p".to_owned());
+    runtime.snapshot.ui_state.focused_checkout_id = Some(checkout.clone());
+    runtime.snapshot.ui_state.selected_pane_id = Some("w-order:t1:p".to_owned());
+    runtime.snapshot.navigator.focused_checkout_id = Some(checkout.clone());
+    runtime.snapshot.navigator.workspaces.clear();
+    runtime.restore_hint_pending = true;
+    runtime.catalog_paths = Default::default();
+    runtime.begin_catalog_coordinator();
+
+    runtime.ingest_session(Ok(payload.clone()));
+    assert!(
+        runtime.restore_hint_pending,
+        "unknown is not a missing checkout"
+    );
+    assert_eq!(
+        runtime.snapshot.ui_state.focused_checkout_id.as_ref(),
+        Some(&checkout)
+    );
+    assert_eq!(runtime.snapshot.status.last_error, None);
+
+    let paths = runtime.ask_paths(BTreeSet::from([repository]));
+    let spaces = Runtime::session_spaces(&payload, &paths);
+    let catalog = session_sync::PrecomputedCatalog {
+        registrations: runtime.snapshot.ui_state.workspace_registrations.clone(),
+        worktrees: runtime.worktree_catalog(),
+        workspaces: workspace::build_catalog(
+            &runtime.node,
+            &runtime.snapshot.ui_state.workspace_registrations,
+            &spaces,
+            &runtime.worktree_catalog(),
+            &paths,
+        ),
+        paths,
+    };
+    runtime.ingest_session_with_catalog(Ok(payload), Some(catalog));
+    assert!(!runtime.restore_hint_pending);
+    assert_eq!(
+        runtime.snapshot.ui_state.focused_checkout_id.as_ref(),
+        Some(&checkout)
+    );
+    assert_eq!(
+        runtime.snapshot.terminal.pane_id.as_deref(),
+        Some("w-order:t1:p")
+    );
+}
+
+#[test]
+fn a_known_saved_checkout_does_not_wait_for_an_unrelated_unknown_path() {
+    let (mut runtime, checkout, repository, _) = split_workspace_checkouts("restore-known");
+    let repository = repository.to_string_lossy().into_owned();
+    let unrelated = format!("{repository}/not-yet-answered");
+    let mut payload = split_workspace_payload(
+        &[("w-order:t1", &repository), ("w-order:t2", &unrelated)],
+        "w-order:t1",
+    );
+    payload.focused_pane_id = Some("w-order:t1:p".to_owned());
+    runtime.snapshot.ui_state.focused_checkout_id = Some(checkout.clone());
+    runtime.snapshot.ui_state.selected_pane_id = Some("w-order:t1:p".to_owned());
+    runtime.restore_hint_pending = true;
+    runtime.catalog_paths = runtime.ask_paths(BTreeSet::from([repository]));
+    runtime.begin_catalog_coordinator();
+
+    runtime.ingest_session(Ok(payload));
+    assert!(
+        !runtime.restore_hint_pending,
+        "the saved pane's facts are known"
+    );
+    assert_eq!(
+        runtime.snapshot.ui_state.focused_checkout_id,
+        Some(checkout)
+    );
+    assert_eq!(
+        runtime.snapshot.terminal.pane_id.as_deref(),
+        Some("w-order:t1:p")
+    );
+    assert!(!runtime.catalog_paths.knows(&unrelated));
+}
+
+#[test]
+fn a_removed_saved_checkout_restores_the_panes_known_current_checkout() {
+    let (mut runtime, checkout, repository, worktree) =
+        split_workspace_checkouts("restore-removed");
+    let repository = repository.to_string_lossy().into_owned();
+    let worktree_path = worktree.to_string_lossy().into_owned();
+    let mut before = split_workspace_payload(
+        &[("w-order:t1", &repository), ("w-order:t2", &worktree_path)],
+        "w-order:t2",
+    );
+    before.focused_pane_id = Some("w-order:t2:p".to_owned());
+    runtime.ingest_session(Ok(before));
+    let saved_checkout = runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.checkouts)
+        .find(|row| row.path == worktree_path)
+        .expect("linked checkout")
+        .id
+        .clone();
+    runtime.snapshot.ui_state.focused_checkout_id = Some(saved_checkout.clone());
+    runtime.snapshot.ui_state.selected_pane_id = Some("w-order:t2:p".to_owned());
+    runtime.restore_hint_pending = true;
+    std::fs::remove_dir_all(&worktree).unwrap();
+    runtime.catalog_paths = runtime.ask_paths(BTreeSet::from([repository.clone(), worktree_path]));
+    runtime.begin_catalog_coordinator();
+    let unrelated = format!("{repository}/unanswered");
+    let mut after = split_workspace_payload(
+        &[("w-order:t2", &repository), ("w-order:t3", &unrelated)],
+        "w-order:t2",
+    );
+    after.focused_pane_id = Some("w-order:t2:p".to_owned());
+
+    runtime.ingest_session(Ok(after));
+    assert!(
+        !runtime.restore_hint_pending,
+        "the moved pane has known facts"
+    );
+    assert_eq!(
+        runtime.snapshot.ui_state.focused_checkout_id,
+        Some(checkout)
+    );
+    assert_eq!(
+        runtime.snapshot.terminal.pane_id.as_deref(),
+        Some("w-order:t2:p")
+    );
+    assert_ne!(
+        runtime.snapshot.ui_state.focused_checkout_id.as_ref(),
+        Some(&saved_checkout)
+    );
+    assert!(!runtime.catalog_paths.knows(&unrelated));
 }
 
 fn restored_selection_opens_on_herdrs_focus(
@@ -3823,6 +4040,7 @@ fn a_restored_pane_the_session_no_longer_has_retargets_without_reporting() {
     assert!(runtime.ingest_session_with_catalog(
         Ok(payload),
         Some(session_sync::PrecomputedCatalog {
+            worktrees: runtime.worktree_catalog(),
             registrations: Vec::new(),
             workspaces: Vec::new(),
             paths: Default::default(),

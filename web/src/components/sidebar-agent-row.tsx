@@ -1,10 +1,13 @@
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { memo, useRef, type KeyboardEvent, type ReactNode } from "react";
-import { AgentMark } from "../AgentMark";
+import { AgentRowMark } from "../AgentRowMark";
+import { agentProductName } from "../agentAdapters";
 import { agentClosing } from "../close";
 import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
-import { branchChip, lineText, lineTone, markTone, rowAccessibleName, sidebarLine } from "../agentRow";
+import { branchChip, forkLabel, lineText, lineTone, markTone, rowAccessibleName, sidebarLine } from "../agentRow";
+import { homeTurnLine, originLine } from "../hideAiOrigin";
+import { AgentForkMark } from "./fork-mark";
 import { cn } from "../lib/utils";
 import type { AgentRow } from "../snapshot";
 import type { AgentMenuItem } from "../workspaceManage";
@@ -134,7 +137,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   const attention = agent.state.attention;
   const unreachable = remote !== null && !remote.reachable;
   const titleTone = agent.state.title_emphasized || (selected && agent.state.selection_emphasizes_title) ? "text-foreground" : "text-subtle-foreground";
-  const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, agent.detail?.trim(), place].filter(Boolean).join("\n");
+  const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, agentProductName(agent.agent_kind), agent.detail?.trim(), place].filter(Boolean).join("\n");
   const staleness = ask ? undefined : agentPrStaleness;
   const folded = tree ? tree.open !== true : true;
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -167,15 +170,15 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       data-agent-device={device ?? undefined}
       data-depth={depth}
       data-unreachable={unreachable ? "true" : undefined}
-      className={cn("group/row relative flex rounded-sm pr-xs text-body", tree ? "items-stretch" : "items-start gap-xs py-xs", selected ? "bg-secondary" : "hover:bg-accent", unreachable && "opacity-(--opacity-dimmed)")}
-      style={{ paddingLeft: tree ? `calc(${inset} - var(--size-lineage-chevron) - var(--spacing-xs))` : inset }}
+      className={cn("group/row relative flex rounded-sm text-body", tree ? "items-stretch pr-xs" : "items-start gap-xs py-xs pr-xs", selected ? tree ? "bg-secondary" : "bg-selected" : "hover:bg-accent", unreachable && "opacity-(--opacity-dimmed)")}
+      style={{ paddingLeft: inset }}
     >
       <Hint label={hint} reveals>
         <button
           ref={main}
           type="button"
           disabled={unreachable}
-          aria-label={[rowAccessibleName(t, agent, device ?? remote?.label ?? null), closing ? t("agents.closingName") : null, place].filter(Boolean).join(", ")}
+          aria-label={[rowAccessibleName(t, agent, device ?? remote?.label ?? null), forkLabel(t, agent), closing ? t("agents.closingName") : null, place].filter(Boolean).join(", ")}
           aria-current={selected ? "true" : undefined}
           aria-expanded={tree && tree.open !== null && !tree.popover ? tree.open : undefined}
           data-agent-open={agent.pane_id}
@@ -185,11 +188,12 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
         />
       </Hint>
       {tree ? <TreeRails place={tree.place} /> : null}
-      {tree ? <RowChevron agent={agent} tree={tree} returnFocus={() => main.current?.focus()} /> : null}
-      <span className={cn("flex min-w-0 flex-1 items-start gap-xs", tree && "py-xs pl-xs")}>
+      {tree && tree.open !== null && depth > 0 ? <span className="absolute inset-y-0 flex w-(--size-agent-mark)" style={{ left: `calc(${inset} + var(--size-lineage-indent) * ${depth - 1})` }}><RowChevron agent={agent} tree={tree} returnFocus={() => main.current?.focus()} /></span> : null}
+      <span className={cn("flex min-w-0 flex-1 items-start gap-xs", tree && "py-xs")}>
         <span className="pointer-events-none flex min-h-(--size-sidebar-line) shrink-0 items-center gap-xs">
           <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.wait ? "waiting" : agent.status_code} />
-          <AgentMark kind={agent.agent_kind} />
+          {/* A Hide AI row is never in a tree; the Hide owl stands beside the status mark (PRD agent-mark-quiet D-04). The provider's logo follows the view mode or an ⌥ hold, with the owl as its badge (PRD agent-logo-view-mode D-04, D-09). */}
+          <AgentRowMark kind={agent.agent_kind} hideAi={agent.hide_ai && !tree ? "sidebar" : null} />
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-h-(--size-sidebar-line) min-w-0 items-center gap-xs">
@@ -197,6 +201,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
             <span aria-hidden="true" className={cn("pointer-events-none min-w-0 flex-auto truncate", titleTone)} data-agent-title="true">
               {agent.identity_label}
             </span>
+            <AgentForkMark agent={agent} />
             {closing ? (
               <span aria-hidden="true" className="pointer-events-none shrink-0 text-caption text-muted-foreground" data-agent-closing="true">
                 {t("agents.closing")}
@@ -217,9 +222,19 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
             {/* Every row ends in the fold slot, so every time ends on one column (sidebar-readability D-3). */}
             <FoldLane />
           </span>
-          {ask && agent.state.ask ? <span aria-hidden="true" className="pointer-events-none flex min-w-0 leading-(--size-sidebar-line-detail)"><AskLine ask={agent.state.ask} className="flex-1" /></span> : line ? (
+          {ask && agent.state.ask ? <span aria-hidden="true" className="pointer-events-none flex min-w-0 leading-(--size-sidebar-line-detail)"><AskLine ask={agent.state.ask} className="flex-1" /></span> : ask && agent.hide_ai?.turn && !(line && agent.status_code === "error") ? (
+            // What the row's home waits for, after the agent's own ask or block cause (PRD hide-ai-work-home D-14, D-16).
+            <span aria-hidden="true" data-agent-home-turn={agent.hide_ai.turn.kind} className="pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail) text-warning">
+              {homeTurnLine(t, agent.hide_ai.turn)}
+            </span>
+          ) : line ? (
             <span aria-hidden="true" data-agent-line={line.mode} className={cn("pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail)", lineTone(line, agent))}>
               {lineText(t, agent, line)}
+            </span>
+          ) : null}
+          {tree && agent.hide_ai ? (
+            <span aria-hidden="true" data-agent-task={originLine(t, agent.hide_ai)} className="pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail) text-muted-foreground">
+              {originLine(t, agent.hide_ai)}
             </span>
           ) : null}
           {remote ? (
@@ -234,6 +249,9 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           ) : null}
         </span>
       </span>
+      {tree && depth === 0 && tree.open !== null ? <button type="button" tabIndex={-1} aria-expanded={tree.open} aria-label={t(tree.open ? "agentSessions.tree.collapse" : "agentSessions.tree.expand", { name: agent.identity_label })} data-tree-chevron={agent.pane_id} className="absolute top-xs right-xs flex h-(--size-sidebar-line) w-(--size-lineage-chevron) items-center justify-center rounded-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" onClick={tree.onToggle}>
+        {tree.open ? <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />}
+      </button> : null}
       {number !== null ? <Keycap number={number} /> : null}
     </li>
     </EntryContextMenu>

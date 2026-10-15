@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { TOOLS } from "./laneTools";
+import { FACTORY_OPEN } from "./factory/launch";
 import {
   DIGITS,
   AREA_COMMANDS,
@@ -73,18 +75,19 @@ describe("shortcut registry", () => {
       // ⌘E shows the Explorer in both hosts (issue 170); the macOS set keeps
       // it on the sidebar switch, which has no chord here until one is bound.
       overview: "⇧⌘O",
-      factory_open: "⇧⌘F",
+      ...(FACTORY_OPEN ? { factory_open: "⇧⌘F" } : {}),
       sidebar_projects: "⇧⌘P",
       sidebar_agents: "⇧⌘A",
       toggle_device_rail: "",
-      toggle_explorer: "⌘E",
-      toggle_right_panel: "⇧⌘B",
+      toggle_lane: "⌘E",
+      ...Object.fromEntries(TOOLS.map((tool, index) => [`toggle_lane_${tool}`, `⌥⌘${index + 1}`])),
+      toggle_file_tree: "⇧⌘E",
       find_in_pane: "⌘F",
       save_file: "⌘S",
       keep_open: "⇧⌘K",
       split_right: "⌘D",
       split_down: "⇧⌘D",
-      toggle_zoom: "⌥⌘↩",
+      toggle_zoom: "⇧⌘↩",
       close_pane: "⇧⌘W",
       text_larger: "⌘=",
       text_smaller: "⌘-",
@@ -140,7 +143,8 @@ describe("shortcut registry", () => {
 
     it("refuses a pane chord bound onto a numbered one by that command's name", () => {
       expect(bindingProblem("split_right", { code: "Digit3", meta: true }, REGISTRY, "electron", "mac")).toEqual({ code: "conflict", chord: "⌘3", commandId: "select_tab_3" });
-      expect(bindingProblem("split_right", { code: "Digit3", alt: true, meta: true }, REGISTRY, "electron", "mac")).toBeNull();
+      expect(bindingProblem("split_right", { code: "Digit5", alt: true, meta: true }, REGISTRY, "electron", "mac")).toBeNull();
+      expect(bindingProblem("split_right", { code: "Digit3", alt: true, meta: true }, REGISTRY, "electron", "mac")).toEqual({ code: "conflict", chord: "⌥⌘3", commandId: `toggle_lane_${TOOLS[2]}` });
       expect(effectiveRegistry({ split_right: "command+3" }, "electron", "mac").diagnostic).toContain("conflict select_tab_3");
     });
 
@@ -179,14 +183,14 @@ describe("shortcut registry", () => {
   });
 
   it("runs each host's own stored set and never the other's", () => {
-    const uiState = { browser_shortcut_bindings: { split_right: "alt+KeyR" }, shortcut_bindings: { toggle_zoom: "command+shift+return" } };
+    const uiState = { browser_shortcut_bindings: { split_right: "alt+KeyR" }, shortcut_bindings: { toggle_zoom: "command+option+return" } };
     const browser = hostRegistry(uiState, "browser", "mac").registry;
     const desktop = hostRegistry(uiState, "electron", "mac").registry;
     expect(matchHost({ code: "KeyR", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, browser, "browser")?.id).toBe("split_right");
     expect(matchHost({ code: "KeyR", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, desktop, "electron")).toBeNull();
     expect(matchHost({ code: "KeyD", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false }, desktop, "electron")?.id).toBe("split_right");
-    expect(matchHost({ code: "Enter", metaKey: true, altKey: false, shiftKey: true, ctrlKey: false }, desktop, "electron")?.id).toBe("toggle_zoom");
-    expect(matchHost({ code: "Enter", metaKey: true, altKey: false, shiftKey: true, ctrlKey: false }, browser, "browser")).toBeNull();
+    expect(matchHost({ code: "Enter", metaKey: true, altKey: true, shiftKey: false, ctrlKey: false }, desktop, "electron")?.id).toBe("toggle_zoom");
+    expect(matchHost({ code: "Enter", metaKey: true, altKey: true, shiftKey: false, ctrlKey: false }, browser, "browser")).toBeNull();
     expect(hostRegistry({}, "electron", "mac").registry).toBe(REGISTRY);
   });
 
@@ -263,11 +267,12 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
     expect(effectiveRegistry({ split_right: "alt+KeyR", split_down: "alt+KeyR" }, "browser", "mac").registry).toBe(REGISTRY);
   });
 
-  it("edits the pane commands, the cycle commands, the sidebar switch, the device rail toggle and the eight area commands", () => {
+  it("edits the pane commands, the cycle commands, the sidebar switch, the device rail toggle, the four lane tool toggles and the eight area commands", () => {
     expect([...EDITABLE_PANE_COMMANDS].sort()).toEqual(
       [
         "recent_area_tab", "previous_recent_area_tab", "recent_panel", "previous_recent_panel",
         "close_pane", "split_down", "split_right", "text_larger", "text_reset", "text_smaller", "toggle_device_rail", "overview", "sidebar_projects", "sidebar_agents", "toggle_zoom",
+        "toggle_lane_work", "toggle_lane_files", "toggle_lane_changes", "toggle_lane_memory",
         "focus_next_agent_area", "focus_previous_agent_area", "grow_agent_area", "shrink_agent_area",
         "focus_next_view_area", "focus_previous_view_area", "grow_view_area", "shrink_view_area",
       ].sort(),
@@ -333,7 +338,7 @@ describe("the desktop app's macOS pane chords (user decision 2026-09-26)", () =>
     expect(matchHost(press("Enter", { meta: true, alt: true }), registry, "electron")).toBeNull();
     expect(displayCommand("text_larger", "electron", registry, "mac")).toBe("⌘=");
     // The browser column is untouched by the macOS set.
-    expect(registry.find((command) => command.id === "toggle_zoom")?.browser).toEqual({ code: "Enter", meta: true, alt: true });
+    expect(registry.find((command) => command.id === "toggle_zoom")?.browser).toEqual({ code: "Enter", meta: true, shift: true });
   });
 
   it("keeps the surfaceless Toggle Conversation in the set without running it", () => {
@@ -390,12 +395,13 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
       open_file: "Ctrl+Shift+P",
       toggle_left_sidebar: "Ctrl+Shift+B",
       overview: "Alt+Shift+O",
-      factory_open: "Alt+Shift+F",
+      ...(FACTORY_OPEN ? { factory_open: "Alt+Shift+F" } : {}),
       sidebar_projects: "Alt+Shift+P",
       sidebar_agents: "Alt+Shift+A",
       toggle_device_rail: "",
-      toggle_explorer: "Ctrl+Shift+E",
-      toggle_right_panel: "Alt+Shift+B",
+      toggle_lane: "Ctrl+Shift+E",
+      ...Object.fromEntries(TOOLS.map((tool, index) => [`toggle_lane_${tool}`, `Alt+Shift+${index + 1}`])),
+      toggle_file_tree: "Alt+Shift+E",
       find_in_pane: "Ctrl+Shift+F",
       save_file: "Ctrl+Shift+S",
       keep_open: "Alt+Shift+K",
@@ -470,6 +476,34 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
     for (const code of ["KeyC", "KeyR", "KeyW", "KeyK", "KeyT", "KeyD"]) expect(matchHost(pcPress(code, { ctrl: true }), pc, "electron"), code).toBeNull();
     expect(matchHost(pcPress("KeyT", { meta: true }), pc, "electron")).toBeNull();
     expect(matchHost(pcPress("Delete"), pc, "electron")).toBeNull();
+  });
+
+  it("answers ⌥⌘1-4 as the lane tools on a Mac and Alt+Shift+1-4 elsewhere, in both hosts, and takes no key Chrome keeps", () => {
+    const tools = TOOLS.map((tool) => `toggle_lane_${tool}`);
+    for (const host of ["electron", "browser"] as const) {
+      tools.forEach((id, index) => {
+        const code = `Digit${index + 1}`;
+        expect(matchHost({ code, metaKey: true, altKey: true, shiftKey: false, ctrlKey: false }, REGISTRY, host)?.id, `${host} mac ${id}`).toBe(id);
+        expect(matchHost(pcPress(code, { alt: true, shift: true }), pc, host)?.id, `${host} pc ${id}`).toBe(id);
+      });
+    }
+    for (const command of pc.filter((row) => tools.includes(row.id))) {
+      expect(command.moved, command.id).toBe(false);
+      expect(command.browser && isChromeReserved(command.browser, "pc"), command.id).toBeFalsy();
+    }
+    // Alt+n still selects the nth agent, and Ctrl+Shift+n the nth tab.
+    expect(matchHost(pcPress("Digit1", { alt: true }), pc, "electron")?.id).toBe("select_agent_1");
+    expect(matchHost(pcPress("Digit1", { ctrl: true, shift: true }), pc, "electron")?.id).toBe("select_tab_1");
+  });
+
+  it("reads a stored lane tool chord on both systems, and refuses ⇧⌘1 on Windows and Linux where it is ⌥⌘1", () => {
+    const first = `toggle_lane_${TOOLS[0]}`;
+    const stored = { toggle_lane_memory: "command+option+9" };
+    expect(displayCommand("toggle_lane_memory", "electron", effectiveRegistry(stored, "electron", "mac").registry, "mac")).toBe("⌥⌘9");
+    expect(displayCommand("toggle_lane_memory", "electron", effectiveRegistry(stored, "electron", "pc").registry, "pc")).toBe("Alt+Shift+9");
+    const crossing = { split_right: "command+shift+1" };
+    expect(effectiveRegistry(crossing, "electron", "mac").diagnostic).toBeNull();
+    expect(effectiveRegistry(crossing, "electron", "pc").diagnostic).toContain(`conflict ${first}`);
   });
 
   it("stores a chord as the macOS chord it stands for, so one set reads the same on both systems", () => {

@@ -409,10 +409,11 @@ impl Runtime {
                 );
             }
             let status_unknown = matches!(&payload.request, RemoteControlRequest::ClosePane { .. })
-                && session
-                    .agents
-                    .iter()
-                    .any(|agent| agent.pane_id == pane_id && agent.requires_close_status_check);
+                && session.agents.iter().any(|agent| {
+                    agent.pane_id == pane_id
+                        && (agent.requires_close_status_check
+                            && self.failed_terminal_id(&agent.pane_id).is_none())
+                });
             if status_unknown {
                 self.set_error(
                     "remote.control.close_status_unknown",
@@ -425,10 +426,11 @@ impl Runtime {
             }
             let needs_confirmation =
                 matches!(&payload.request, RemoteControlRequest::ClosePane { .. })
-                    && session
-                        .agents
-                        .iter()
-                        .any(|agent| agent.pane_id == pane_id && agent.requires_close_confirmation);
+                    && session.agents.iter().any(|agent| {
+                        agent.pane_id == pane_id
+                            && (agent.requires_close_confirmation
+                                && self.failed_terminal_id(&agent.pane_id).is_none())
+                    });
             if needs_confirmation && !payload.request.confirmed() {
                 self.set_error(
                     "remote.control.close_confirmation_required",
@@ -645,7 +647,9 @@ impl Runtime {
                     .map(|pane| pane.id.as_str())
                     .collect::<HashSet<_>>();
                 let status_unknown = session.agents.iter().any(|agent| {
-                    pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_status_check
+                    pane_ids.contains(agent.pane_id.as_str())
+                        && (agent.requires_close_status_check
+                            && self.failed_terminal_id(&agent.pane_id).is_none())
                 });
                 if status_unknown {
                     self.set_error(
@@ -658,7 +662,9 @@ impl Runtime {
                     return true;
                 }
                 let needs_confirmation = session.agents.iter().any(|agent| {
-                    pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_confirmation
+                    pane_ids.contains(agent.pane_id.as_str())
+                        && (agent.requires_close_confirmation
+                            && self.failed_terminal_id(&agent.pane_id).is_none())
                 });
                 if needs_confirmation && !confirmed {
                     self.set_error(
@@ -750,9 +756,93 @@ impl Runtime {
             format!("Sending {} to {target_id}", action.kind()),
         );
         let dispatched_request_id = request_id.clone();
-        if let Err(message) =
-            live::spawn_remote_control(context, request_id, action, connection_generation)
-        {
+        let failed_terminals = session
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .flat_map(|tab| tab.panes.iter().map(move |pane| (tab, pane)))
+            .filter_map(|(tab, pane)| {
+                let source = remote_pane_source_id(&target_id, &pane.id)?;
+                let selected = match &action {
+                    RemoteControlAction::Pane(PaneControlAction::Close { pane_id }) => {
+                        pane_id == source
+                    }
+                    RemoteControlAction::CloseTab { tab_id } => {
+                        tab.id
+                            .as_deref()
+                            .and_then(|id| remote_tab_source_id(&target_id, id))
+                            == Some(tab_id.as_str())
+                    }
+                    _ => false,
+                };
+                selected
+                    .then(|| {
+                        pane.failed_terminal_id
+                            .as_ref()
+                            .map(|id| (source.to_owned(), id.clone()))
+                    })
+                    .flatten()
+            })
+            .collect();
+        let scope_pane_ids: Vec<String> = session
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .filter(|tab| match &action {
+                RemoteControlAction::CloseTab { tab_id } => {
+                    tab.id
+                        .as_deref()
+                        .and_then(|id| remote_tab_source_id(&target_id, id))
+                        == Some(tab_id.as_str())
+                }
+                _ => false,
+            })
+            .flat_map(|tab| tab.panes.iter())
+            .filter_map(|pane| remote_pane_source_id(&target_id, &pane.id).map(str::to_owned))
+            .collect();
+        let approved_peers = session
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .flat_map(|checkout| &checkout.tabs)
+            .flat_map(|tab| &tab.panes)
+            .filter(|pane| pane.requires_close_confirmation && pane.failed_terminal_id.is_none())
+            .filter_map(|pane| {
+                let source = remote_pane_source_id(&target_id, &pane.id)?;
+                scope_pane_ids.contains(&source.to_owned()).then_some(())?;
+                Some(live::ClosePeer {
+                    pane_id: source.to_owned(),
+                    terminal_id: pane.terminal_id.clone()?,
+                    session: session
+                        .agents
+                        .iter()
+                        .find(|agent| agent.pane_id == pane.id)
+                        .and_then(|agent| agent.close_session.clone()),
+                })
+            })
+            .collect();
+        if let Err(message) = live::spawn_remote_control_checked(
+            context,
+            request_id,
+            action,
+            connection_generation,
+            failed_terminals,
+            live::CloseSafety {
+                pane_ids: scope_pane_ids,
+                approved_peers,
+                deadline: std::time::Instant::now()
+                    + std::time::Duration::from_millis(
+                        remote_operation_key
+                            .as_ref()
+                            .and_then(|key| self.remote_operations.get(key))
+                            .and_then(|operation| operation.deadline_at_unix_ms)
+                            .unwrap_or_else(unix_milliseconds)
+                            .saturating_sub(unix_milliseconds()),
+                    ),
+            },
+        ) {
             if let Some((operation_target, operation_request)) = remote_operation_key.as_ref() {
                 self.fail_remote_operation(operation_target, operation_request, message.clone());
             }
@@ -813,14 +903,27 @@ impl Runtime {
         )
     }
 
-    pub fn ingest_provider_usage(
-        &mut self,
-        provider_usage: Vec<crate::model::ProviderUsageSnapshot>,
-    ) -> bool {
-        if self.snapshot.navigator.provider_usage == provider_usage {
+    pub fn ingest_usage(&mut self, usage: Vec<crate::usage::model::AgentUsage>) -> bool {
+        let mut changed = false;
+        for reading in usage {
+            if let Some(row) = self.snapshot.usage.nodes[0]
+                .agents
+                .iter_mut()
+                .find(|row| row.agent == reading.agent)
+                && row.limits != reading.limits
+            {
+                row.limits = reading.limits;
+                changed = true;
+            }
+        }
+        if !changed {
             return false;
         }
-        self.snapshot.navigator.provider_usage = provider_usage;
+        self.usage_edit += 1;
+        if self.snapshot.ui_state.usage.reconcile(&self.snapshot.usage) {
+            self.persist_ui_state();
+        }
+        self.refresh_background_ai();
         true
     }
 
@@ -828,8 +931,35 @@ impl Runtime {
         crate::usage::UsageActivity {
             // Background Memory analysis reads the weekly figure with no
             // window attached (D-10 b).
-            window_visible: self.usage_window_visible || self.memory_reads_usage(),
+            window_visible: self.usage_window_visible
+                || self.memory_reads_usage()
+                || self.limit_reads_usage(),
             popover_open_generation: self.usage_popover_open_generation,
+            hidden: self.snapshot.ui_state.usage.hidden.clone(),
+            required: if !self.factory_recipients.is_empty() {
+                // A Factory may choose any supported worker; its admission
+                // reads every declared limit through the same accessor.
+                hide_agent_adapter::ADAPTERS
+                    .iter()
+                    .filter(|row| row.usage.limit_sources().next().is_some())
+                    .map(|row| row.herdr.name.into())
+                    .collect()
+            } else if self.memory_reads_usage() || self.limit_reads_usage() {
+                self.ai_settings
+                    .as_ref()
+                    .filter(|settings| settings.enabled && settings.chosen)
+                    .map(|settings| {
+                        settings
+                            .router_config()
+                            .priority
+                            .iter()
+                            .map(|provider| provider.as_str().to_owned())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            },
         }
     }
 
@@ -843,6 +973,7 @@ impl Runtime {
         let summary = crate::agent_state::summarize(agents, connected);
         if summary.needs_you + summary.working > 0 {
             self.pet_active_at_unix_ms = now;
+            self.agent_worked_at_unix_ms = now;
         }
         let idle_ms = now.saturating_sub(self.pet_active_at_unix_ms);
         let waking = now < self.pet_waking_until_unix_ms;
@@ -916,22 +1047,127 @@ impl Runtime {
         self.snapshot.pet.shortcut = self.snapshot.ui_state.pet_shortcut.clone();
     }
 
-    /// Arms the records that need one sequence reconciliation after a fresh
-    /// connection. The set is bounded by the persisted read ledger.
-    pub(crate) fn begin_local_read_record_reconciliation(&mut self) {
-        self.pending_read_record_reconciliation = self
-            .snapshot
-            .ui_state
-            .pane_read_records
-            .keys()
-            .filter(|pane_id| ReadRecordScope::Local.owns(pane_id))
-            .cloned()
-            .collect();
+    /// Starts the read axis's view of a new connection to one Herdr server:
+    /// a mark no earlier connection wrote, and no pane settled yet. Every
+    /// connect starts one, because a reconnect cannot tell whether the server
+    /// it reaches is the one it lost; the panes' marks say that
+    /// (`agent_state::ReadConnection`).
+    pub(crate) fn begin_read_connection(&mut self, target_id: Option<&str>) {
+        let connection =
+            crate::agent_state::ReadConnection::new(super::read_mark(self.read_marks_made));
+        self.read_marks_made = self.read_marks_made.saturating_add(1);
         crate::diagnostic!(serde_json::json!({
             "component": "read_state",
-            "kind": "reconciliation.started",
-            "record_count": self.pending_read_record_reconciliation.len(),
+            "kind": "connection.started",
+            "target": target_id.unwrap_or("local"),
+            "mark": connection.mark,
         }));
+        match target_id {
+            None => self.local_read_connection = connection,
+            Some(target_id) => {
+                self.remote_read_connections
+                    .insert(target_id.to_owned(), connection);
+            }
+        }
+    }
+
+    /// The connection the read axis judges one target's panes on.
+    pub(super) fn read_connection(
+        &mut self,
+        target_id: Option<&str>,
+    ) -> &mut crate::agent_state::ReadConnection {
+        match target_id {
+            None => &mut self.local_read_connection,
+            Some(target_id) => {
+                if !self.remote_read_connections.contains_key(target_id) {
+                    self.begin_read_connection(Some(target_id));
+                }
+                self.remote_read_connections
+                    .get_mut(target_id)
+                    .expect("inserted above")
+            }
+        }
+    }
+
+    /// The panes on one target's server that should carry this connection's
+    /// mark, by Herdr's own pane id: those whose saved read record or
+    /// completion names it. The lineage writer writes the ones that do not.
+    pub(crate) fn wanted_server_marks(&self, target_id: Option<&str>) -> BTreeMap<String, String> {
+        let (connection, agents, prefix) = match target_id {
+            None => (
+                &self.local_read_connection,
+                self.snapshot.navigator.agents.as_slice(),
+                None,
+            ),
+            Some(target_id) => {
+                let Some(connection) = self.remote_read_connections.get(target_id) else {
+                    return BTreeMap::new();
+                };
+                let Some(session) = self
+                    .snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .find(|remote| remote.target_id == target_id)
+                    .and_then(|remote| remote.session.as_ref())
+                else {
+                    return BTreeMap::new();
+                };
+                (
+                    connection,
+                    session.agents.as_slice(),
+                    Some(remote_pane_id_prefix(target_id)),
+                )
+            }
+        };
+        let names = |server: &Option<String>| server.as_deref() == Some(connection.mark.as_str());
+        let ui_state = &self.snapshot.ui_state;
+        agents
+            .iter()
+            .filter(|agent| {
+                ui_state
+                    .pane_read_records
+                    .get(&agent.pane_id)
+                    .is_some_and(|record| names(&record.server))
+                    || ui_state
+                        .pane_completions
+                        .get(&agent.pane_id)
+                        .is_some_and(|completion| names(&completion.server))
+            })
+            .filter_map(|agent| {
+                let pane_id = match &prefix {
+                    None => agent.pane_id.as_str(),
+                    Some(prefix) => agent.pane_id.strip_prefix(prefix.as_str())?,
+                };
+                Some((pane_id.to_owned(), connection.mark.clone()))
+            })
+            .collect()
+    }
+
+    /// Shows each finished pane's completion through a server that no
+    /// longer reports it, before the lineage hands completions up, and saves
+    /// the completions when they moved (`agent_state::apply_completions`).
+    pub(super) fn apply_pane_completions(
+        &mut self,
+        agents: &mut [SidebarAgentSnapshot],
+        target_id: Option<&str>,
+        scope: ReadRecordScope<'_>,
+        live_pane_ids: Option<&HashSet<String>>,
+    ) {
+        let mut completions = std::mem::take(&mut self.snapshot.ui_state.pane_completions);
+        let mut changed = crate::agent_state::apply_completions(
+            agents,
+            &mut completions,
+            self.read_connection(target_id),
+        );
+        if let Some(live_pane_ids) = live_pane_ids {
+            changed |=
+                crate::agent_state::prune_completions(&mut completions, live_pane_ids, scope);
+        }
+        self.snapshot.ui_state.pane_completions = completions;
+        if changed {
+            self.persist_ui_state();
+        }
     }
 
     /// Raises the operator-focused pane's read record and sets the read axis
@@ -953,31 +1189,25 @@ impl Runtime {
         live_pane_ids: Option<&HashSet<String>>,
     ) -> bool {
         let focused = self.operator_focused_pane_id.clone();
-        let mut changes = if scope == ReadRecordScope::Local {
-            crate::agent_state::reconcile_read_records(
-                agents,
-                &mut self.snapshot.ui_state.pane_read_records,
-                &mut self.pending_read_record_reconciliation,
-            )
-        } else {
-            Vec::new()
-        };
+        let mut records = std::mem::take(&mut self.snapshot.ui_state.pane_read_records);
+        let mut changes = Vec::new();
         if let Some(live_pane_ids) = live_pane_ids {
             changes.extend(crate::agent_state::prune_read_records(
-                &mut self.snapshot.ui_state.pane_read_records,
+                &mut records,
                 live_pane_ids,
                 scope,
             ));
-            if scope == ReadRecordScope::Local {
-                self.pending_read_record_reconciliation
-                    .retain(|pane_id| live_pane_ids.contains(pane_id));
-            }
+            self.local_read_connection
+                .settled
+                .retain(|pane_id| live_pane_ids.contains(pane_id));
         }
         changes.extend(crate::agent_state::apply_read_state(
             agents,
-            &mut self.snapshot.ui_state.pane_read_records,
+            &mut records,
+            &mut self.local_read_connection,
             focused.as_deref(),
         ));
+        self.snapshot.ui_state.pane_read_records = records;
         let synced = self.sync_pane_status_from_agents(agents);
         let pruned = prune_pane_text_scales(
             &mut self.snapshot.ui_state.pane_text_scales,
@@ -1040,21 +1270,34 @@ impl Runtime {
             &session.agents,
             ReadRecordScope::Remote(&prefix),
         );
+        self.apply_pane_completions(
+            &mut session.agents,
+            Some(target_id),
+            ReadRecordScope::Remote(&prefix),
+            Some(&live_pane_ids),
+        );
         crate::agent_state::apply_lineage(
             &mut session.agents,
             &session.workspaces,
             &self.snapshot.ui_state.expanded_agent_pane_ids,
         );
+        let mut records = std::mem::take(&mut self.snapshot.ui_state.pane_read_records);
         let mut changes = crate::agent_state::prune_read_records(
-            &mut self.snapshot.ui_state.pane_read_records,
+            &mut records,
             &live_pane_ids,
             ReadRecordScope::Remote(&prefix),
         );
+        let connection = self.read_connection(Some(target_id));
+        connection
+            .settled
+            .retain(|pane_id| live_pane_ids.contains(pane_id));
         changes.extend(crate::agent_state::apply_read_state(
             &mut session.agents,
-            &mut self.snapshot.ui_state.pane_read_records,
+            &mut records,
+            connection,
             focused.as_deref(),
         ));
+        self.snapshot.ui_state.pane_read_records = records;
         if lineage_pruned {
             self.persist_ui_state();
         }
@@ -1099,6 +1342,8 @@ impl Runtime {
                 "state_change_seq": change.record.state_change_seq,
                 "demand": change.record.demand,
                 "activity": change.record.activity,
+                "server": change.record.server,
+                "unread": change.record.unread,
             }));
         }
         self.persist_ui_state();
@@ -1115,13 +1360,85 @@ impl Runtime {
         )
     }
 
+    /// A sleeping project the operator opened stays open only until one of
+    /// its agents wakes or starts; the next time it falls asleep it starts
+    /// folded again (PRD sidebar-titlebar-refresh D-19). Only an awake agent
+    /// row ends it: a key whose project is not listed, or is listed with no
+    /// agent row at all, is kept, as a reconnect can publish no rows for a
+    /// moment. Returns whether a key left, after asking for the save.
+    fn forget_woken_asleep_folds(&mut self) -> bool {
+        if !self
+            .snapshot
+            .ui_state
+            .session_open_folds
+            .iter()
+            .any(|key| key.starts_with("asleep/"))
+        {
+            return false;
+        }
+        let by_pane = self.agent_rows_by_pane();
+        let woken: HashSet<String> = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .chain(
+                self.snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .filter_map(|remote| remote.session.as_ref())
+                    .flat_map(|session| &session.workspaces),
+            )
+            .filter(|workspace| {
+                let (presence, has_rows) = crate::project_context::agent_presence(
+                    workspace,
+                    &by_pane,
+                    &self.snapshot.navigator.sleeping_sessions,
+                    &[],
+                );
+                // Rows and none asleep: an agent there is awake.
+                has_rows && presence.asleep.is_none()
+            })
+            .map(|workspace| crate::project_context::asleep_fold_key(&workspace.id))
+            .collect();
+        drop(by_pane);
+        let folds = &mut self.snapshot.ui_state.session_open_folds;
+        let before = folds.len();
+        folds.retain(|key| !woken.contains(key));
+        if folds.len() == before {
+            return false;
+        }
+        self.persist_ui_state();
+        true
+    }
+
+    /// Every agent row the core lists, here and on each device session, by pane.
+    fn agent_rows_by_pane(&self) -> HashMap<&str, &SidebarAgentSnapshot> {
+        self.snapshot
+            .navigator
+            .agents
+            .iter()
+            .chain(
+                self.snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .filter_map(|remote| remote.session.as_ref())
+                    .flat_map(|session| &session.agents),
+            )
+            .map(|agent| (agent.pane_id.as_str(), agent))
+            .collect()
+    }
+
     /// Recomputes the two inactive folds from current core facts. No row is
     /// moved or copied: the full collections stay authoritative for search,
     /// focus, and non-sidebar consumers.
     pub(super) fn refresh_inactive_groups(&mut self) -> bool {
         // A bootstrap or reconnect can temporarily publish no catalog rows.
         // Like recent checkouts, remembered folds leave only on explicit removal.
-        let mut changed = crate::project_context::refresh_inactive_groups(
+        let mut changed = self.forget_woken_asleep_folds();
+        changed |= crate::project_context::refresh_inactive_groups(
             &mut self.snapshot.navigator,
             &self.snapshot.ui_state,
             unix_milliseconds(),
@@ -1147,17 +1464,20 @@ impl Runtime {
                     let before = (
                         workspace.session_folds.clone(),
                         workspace.inactive_checkouts.clone(),
+                        workspace.agent_presence.clone(),
                     );
                     crate::project_context::refresh_device_folds(
                         workspace,
                         &agents,
+                        &self.snapshot.navigator.sleeping_sessions,
                         &self.snapshot.ui_state,
                         focused.as_deref(),
                         node,
                         now,
                     );
                     changed |= workspace.session_folds != before.0
-                        || workspace.inactive_checkouts != before.1;
+                        || workspace.inactive_checkouts != before.1
+                        || workspace.agent_presence != before.2;
                 }
             }
         }
@@ -1279,6 +1599,15 @@ impl Runtime {
                 None => {}
             }
             let lineage_path = crate::sidebar::project_lineage_path(&agents, &pane.id);
+            // The fork's source is named once the lineage pass has read it.
+            let forked_from = agents
+                .iter()
+                .find(|agent| agent.pane_id == pane.id)
+                .and_then(|agent| agent.forked_from.clone());
+            if pane.fork.forked_from != forked_from {
+                pane.fork.forked_from = forked_from;
+                changed = true;
+            }
             if pane.children != children {
                 pane.children = children;
                 changed = true;
@@ -1482,6 +1811,12 @@ impl Runtime {
         if let Some(on) = payload.agent_summary {
             next.agent_summary = on;
         }
+        if let Some(on) = payload.pr_summary {
+            next.pr_summary = on;
+        }
+        if let Some(limit) = payload.usage_limit {
+            next.usage_limit = limit;
+        }
         if let Some(id) = payload.provider.as_deref() {
             let Some(provider) = self.ai_provider_named(id) else {
                 return true;
@@ -1548,6 +1883,12 @@ impl Runtime {
         }
 
         if changed {
+            if !self.ai_settings.as_ref().is_some_and(|settings| {
+                settings.enabled && settings.chosen && settings.agent_summary
+            }) {
+                self.cancel_session_issue_draft();
+            }
+            self.drop_pr_summaries_if_inactive();
             self.refresh_background_ai();
         }
         true
@@ -1561,6 +1902,10 @@ impl Runtime {
         self.ai_settings
             .as_ref()
             .is_some_and(|settings| settings.agent_summary && self.ai_active())
+            // The pause as the last refresh found it: this runs every
+            // coordinator tick, and the refresh runs on each usage read,
+            // settings change and wake that can move it.
+            && !self.usage_pause_announced
     }
 
     /// Whether the label worker asks a provider now: agent summaries are on
@@ -1803,7 +2148,6 @@ impl Runtime {
                     .unwrap_or_else(|| settings.model(provider).to_owned());
             }
         }
-        let refusal = self.ai_refusal(&settings);
         let snapshot = &mut self.snapshot.status.background_ai;
         snapshot.enabled = settings.enabled;
         snapshot.chosen = settings.chosen;
@@ -1811,6 +2155,7 @@ impl Runtime {
             .chosen
             .then(|| settings.provider.as_str().to_owned());
         snapshot.agent_summary = settings.agent_summary;
+        snapshot.pr_summary = settings.pr_summary;
         snapshot.fallback = settings
             .fallback
             .iter()
@@ -1820,7 +2165,10 @@ impl Runtime {
             })
             .collect();
         snapshot.providers = providers;
-        snapshot.refusal = refusal;
+        // The figures and the refusal read the rows just stored.
+        self.refresh_usage_limit();
+        let refusal = self.ai_refusal(&settings);
+        self.snapshot.status.background_ai.refusal = refusal;
     }
 
     /// What the label analyzer last found about Runs on (B41, B42): shown
@@ -1832,17 +2180,37 @@ impl Runtime {
         if !settings.chosen || !settings.enabled {
             return None;
         }
+        // Every agent past the limit is what the screen must say, whatever the
+        // analyzer last recorded: labels are not asked while it holds, so that
+        // record is not refreshed.
+        if self.usage_pause_announced
+            && let Some(refusal) = self.usage_refusal(settings)
+        {
+            return Some(refusal);
+        }
         let standing = self
             .label_services
             .as_ref()
-            .and_then(|services| services.standing.current())?;
-        (standing.selected == settings.provider).then(|| {
-            crate::model::BackgroundAiRefusalSnapshot {
-                provider: standing.selected.as_str().to_owned(),
-                reason: standing.reason.to_owned(),
-                retry_at_ms: standing.retry_at_ms,
-                using: standing.using.map(|using| using.as_str().to_owned()),
-            }
+            .and_then(|services| services.standing.current())
+            .filter(|standing| standing.selected == settings.provider);
+        let Some(standing) = standing else {
+            // Nothing is wrong with Runs on except, maybe, the usage limit.
+            return self.usage_refusal(settings);
+        };
+        // The analyzer's record is as old as its last job: an agent it named
+        // as answering that is past the limit now does not answer.
+        let using = standing.using.filter(|using| {
+            self.usage_gate()
+                .past_limit(*using, unix_milliseconds())
+                .is_none()
+        });
+        Some(crate::model::BackgroundAiRefusalSnapshot {
+            provider: standing.selected.as_str().to_owned(),
+            reason: standing.reason.to_owned(),
+            retry_at_ms: standing.retry_at_ms,
+            using: using.map(|using| using.as_str().to_owned()),
+            used_percent: None,
+            limit: None,
         })
     }
 
@@ -1850,9 +2218,12 @@ impl Runtime {
     /// snapshot last said. One mutex read per coordinator wake, no provider.
     pub(crate) fn refresh_ai_standing(&mut self) -> bool {
         let settings = self.ai_settings.clone().unwrap_or_default();
+        // A window that reset or a figure that crossed the limit moves these
+        // with the clock, not with a usage read.
+        let figures = self.refresh_usage_limit();
         let next = self.ai_refusal(&settings);
         if self.snapshot.status.background_ai.refusal == next {
-            return false;
+            return figures;
         }
         self.snapshot.status.background_ai.refusal = next;
         true
@@ -1923,6 +2294,7 @@ impl Runtime {
             );
             self.acknowledge_session_save(&state, result.is_ok());
             self.ingest_dormant_saved(&state.agent_sleep, result.is_ok());
+            self.acknowledge_project_settings_save(&state, result.is_ok());
             return result;
         };
         self.state_save_pending = true;
@@ -1966,8 +2338,15 @@ impl Runtime {
                             guard.acknowledge_session_save(&state, result.is_ok());
                         let dormant_changed =
                             guard.ingest_dormant_saved(&state.agent_sleep, result.is_ok());
+                        let settings_changed =
+                            guard.acknowledge_project_settings_save(&state, result.is_ok());
                         if let Err(message) = &result {
-                            if resolving && !dormant_changed {
+                            if settings_changed {
+                                guard.push_diagnostic(
+                                    "project_settings.save_failed",
+                                    message.clone(),
+                                );
+                            } else if resolving && !dormant_changed {
                                 guard.push_diagnostic(
                                     "session.resolve.save_failed",
                                     message.clone(),
@@ -1976,7 +2355,7 @@ impl Runtime {
                                 guard.set_error("ui_state.save_failed", message.clone(), true);
                             }
                         }
-                        resolved_changed || dormant_changed || result.is_err()
+                        resolved_changed || dormant_changed || settings_changed || result.is_err()
                     };
                     if changed {
                         context.notifier.notify();
@@ -2042,13 +2421,150 @@ impl Runtime {
                 })
     }
 
+    /// Herdr made the fork's pane, in its own tab (`Fork agent`) or beside
+    /// the source (`Fork agent to the side`). The keyboard goes to it now, as
+    /// to a starting agent tab, unless the operator chose a view after the
+    /// press: that is where they are, and the fork waits where it was put
+    /// (B5, D-10). Keys typed meanwhile wait for the agent's start either way.
+    pub fn ingest_fork_pane(
+        &mut self,
+        source_pane_id: &str,
+        tab_id: Option<&str>,
+        pane_id: &str,
+    ) -> bool {
+        let Some(pending) = self.forks_in_flight.get_mut(source_pane_id) else {
+            return false;
+        };
+        // A pane the replaced Herdr made is not one this connection can place
+        // or focus; the worker's own checks end that fork.
+        if pending.generation != self.live_generation {
+            self.push_diagnostic(
+                "pane.fork.connection_changed",
+                format!("Herdr was replaced while {source_pane_id} was being forked"),
+            );
+            return false;
+        }
+        pending.tab_id = tab_id.map(str::to_owned);
+        let (issued_serial, press) = (pending.issued_serial, pending.press);
+        // Another fork's own focus is not the operator choosing a view: it
+        // supersedes this one only when it was pressed later, or when the
+        // operator chose a view after this press and before that focus.
+        let chosen_since = match self
+            .fork_focus
+            .filter(|focus| focus.intent_serial == self.last_view_intent_serial)
+        {
+            Some(focus) => focus.press > press || focus.prior_intent_serial > issued_serial,
+            None => self.last_view_intent_serial > issued_serial,
+        };
+        let checkout_path = tab_id.and_then(|tab_id| self.place_fork_tab(source_pane_id, tab_id));
+        // A tab the Agent area has no room for waits in the strip, as a new
+        // tab does, and is not where the operator's keys go.
+        let waiting = tab_id
+            .zip(checkout_path.as_deref())
+            .is_some_and(|(tab_id, path)| !self.agent_can_show_created(path, tab_id));
+        let origin = super::terminal_input::InputOrigin::Fork(source_pane_id.to_owned());
+        if chosen_since || waiting {
+            self.push_diagnostic(
+                "pane.fork.focus_superseded",
+                if waiting {
+                    format!("The Agent area has no room to show the fork of {source_pane_id}; it waits in the strip")
+                } else {
+                    format!("A view was chosen after {source_pane_id} was forked; the fork waits where it was put")
+                },
+            );
+            self.discard_input_request(&origin, "not_shown");
+            return true;
+        }
+        let prior_intent_serial = self.last_view_intent_serial;
+        self.focus_pane(pane_id.to_owned(), PaneFocusOrigin::Operator, None);
+        // A focus the core refused (a waiting tab, a closing pane) moved
+        // nothing: the fork does not hold the keys or count as a move.
+        if self.snapshot.focused.pane_id.as_deref() != Some(pane_id) {
+            self.discard_input_request(&origin, "not_shown");
+            return true;
+        }
+        if let Some(pending) = self.forks_in_flight.get_mut(source_pane_id) {
+            pending.focused = Some(pane_id.to_owned());
+        }
+        // The shell keeps typing against the request while the fork's pane
+        // has the keyboard, so nothing reaches its shell first.
+        self.hold_input_request_for(&origin, pane_id);
+        self.fork_focus = Some(ForkFocus {
+            intent_serial: self.last_view_intent_serial,
+            prior_intent_serial,
+            press,
+        });
+        true
+    }
+
+    /// `Fork agent`'s tab goes right of the source's tab in the source's Agent
+    /// area. A source tab that has closed meanwhile leaves the new tab where a
+    /// new tab goes (PRD fork-operator-root B2). Returns the checkout the tab
+    /// belongs to, unknown once the source's tab has closed.
+    fn place_fork_tab(&mut self, source_pane_id: &str, tab_id: &str) -> Option<String> {
+        let (checkout_path, source_tab) = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .find_map(|checkout| {
+                let tab = checkout
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.panes.iter().any(|pane| pane.id == source_pane_id))?;
+                Some((checkout.path.clone(), tab.id.clone()?))
+            })?;
+        // The pane is born in the source's folder, which can sit below the
+        // checkout; the tab is the checkout's (`record_created_tab_checkout`).
+        self.record_created_tab_checkout(tab_id, &checkout_path);
+        let Some(store) = self.workspace_views.as_mut() else {
+            return Some(checkout_path);
+        };
+        let key = (self.node.as_str().to_owned(), checkout_path.clone());
+        let Some((area, index)) = store.views.get(&key.0, &key.1).and_then(|view| {
+            let area = view.agent_layout.tree.area_of(&source_tab)?;
+            let index = area.displays.iter().position(|tab| tab.id == source_tab)?;
+            Some((area.id.clone(), index + 1))
+        }) else {
+            return Some(checkout_path);
+        };
+        let layout = &mut store.views.entry(&key.0, &key.1).agent_layout;
+        // Herdr's session can carry the tab before this answer does; the
+        // reconcile appended it then, and it moves next to its source now.
+        if layout.tree.display(tab_id).is_some() {
+            let stamp = layout.tree.next_stamp(unix_milliseconds());
+            match layout.tree.move_display(tab_id, &area, index, stamp) {
+                Ok(true) => self.persist_workspace_views(),
+                Ok(false) => {}
+                Err(error) => self.push_diagnostic(
+                    "agent_layout.reconcile_refused",
+                    format!("Forked tab {tab_id}: {error:?}"),
+                ),
+            }
+            return Some(checkout_path);
+        }
+        if store.agent_placements.len() >= 64 && !store.agent_placements.contains_key(tab_id) {
+            self.push_diagnostic(
+                "agent_layout.placement_limit",
+                "Too many pending Agent tab placements",
+            );
+            return Some(checkout_path);
+        }
+        store
+            .agent_placements
+            .insert(tab_id.to_owned(), (key, area, Some(index)));
+        Some(checkout_path)
+    }
+
     pub fn ingest_fork_result(
         &mut self,
         parent_pane_id: &str,
         result: Result<String, String>,
         elapsed_ms: u128,
     ) -> bool {
-        self.forks_in_flight.remove(parent_pane_id);
+        let pending = self.forks_in_flight.remove(parent_pane_id);
+        let origin = super::terminal_input::InputOrigin::Fork(parent_pane_id.to_owned());
         // Either outcome leaves the process, because a fork that produced no
         // pane and no message is the report the operator brought: a modal
         // appeared and nothing else happened.
@@ -2065,9 +2581,38 @@ impl Runtime {
                     "forked_pane_id": forked_pane_id,
                     "duration_ms": elapsed_ms,
                 }));
+                // Keys typed since the press reach the fork's agent now that
+                // it has started, never its launch command; a fork that did
+                // not take the keyboard was not where they were going.
+                if pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.focused.is_some())
+                {
+                    self.resolve_input_request(&origin, &forked_pane_id);
+                } else {
+                    self.discard_input_request(&origin, "not_shown");
+                }
                 true
             }
             Err(message) => {
+                self.discard_input_request(&origin, "failed");
+                let (tab_id, focused, generation) = pending
+                    .map(|pending| (pending.tab_id, pending.focused, Some(pending.generation)))
+                    .unwrap_or_default();
+                if let Some(tab_id) = tab_id
+                    && let Some(store) = self.workspace_views.as_mut()
+                {
+                    store.agent_placements.remove(&tab_id);
+                }
+                // The worker closed the pane the keyboard went to; it goes
+                // back to the source the operator forked, unless they have
+                // moved on since.
+                if let Some(pane) = focused
+                    && generation == Some(self.live_generation)
+                    && self.snapshot.focused.pane_id.as_deref() == Some(pane.as_str())
+                {
+                    self.focus_pane(parent_pane_id.to_owned(), PaneFocusOrigin::Operator, None);
+                }
                 self.set_error(
                     "pane.fork_failed",
                     format!("Pane {parent_pane_id} could not be forked: {message}"),
@@ -2254,6 +2799,7 @@ impl Runtime {
                 {
                     self.record_created_device_tab(target_id, tab_id, cwd);
                 }
+                self.acknowledge_memory_navigation(target_id, request_id);
                 let mut receipt = String::new();
                 if let Some(tab_id) = created_tab_id.as_deref() {
                     receipt.push_str(&format!("; created tab {tab_id}"));
@@ -2280,6 +2826,7 @@ impl Runtime {
             }
             // A tab move is settled above; no other action reports an order.
             Ok(RemoteControlOutcome::TabsOrdered { .. }) => {
+                self.drop_pending_choice(target_id, request_id);
                 if tracked_remote_operation {
                     self.fail_remote_operation(
                         target_id,
@@ -2400,6 +2947,70 @@ impl Runtime {
         }
     }
 
+    /// Marks the rows Hide itself started. The ledger is the only source of
+    /// that fact, so it is laid here with the other ledger facts, and never
+    /// from a branch or worktree name (PRD hide-ai-origin-mark D-07). A row
+    /// matches while its registration is live and its session is the one the
+    /// registration holds, so a later agent in a reused pane is not marked.
+    /// A device's pane is registered under the id the core names it by
+    /// (`remote:<device>:pane:<pane>`), so one comparison serves both.
+    fn lay_hide_ai(&self, agents: &mut [SidebarAgentSnapshot]) {
+        for agent in agents {
+            agent.hide_ai = self
+                .hide_started
+                .agents
+                .iter()
+                .find(|started| {
+                    started.pane_id == agent.pane_id
+                        && started.session.is_some()
+                        && started.session == agent.lineage_session
+                })
+                .map(|started| {
+                    let home = started.task.as_ref().and_then(|task| task.kind.home());
+                    // Only a kind with a home has an attempt to read; a kind
+                    // this build does not know stays an operator row (D-19).
+                    let attempt = home.and_then(|_| {
+                        self.project_memory
+                            .promotions
+                            .home_attempt(&started.agent_id)
+                    });
+                    crate::model::HideAiSnapshot {
+                        task: started.task.clone(),
+                        home,
+                        workspace_id: attempt.and_then(|attempt| {
+                            self.catalog_workspaces()
+                                .find(|workspace| {
+                                    workspace.device_id == attempt.node.as_str()
+                                        && workspace.path == attempt.root
+                                })
+                                .map(|workspace| workspace.id.clone())
+                        }),
+                        turn: attempt.and_then(|attempt| {
+                            super::memory_promotion::home_turn(
+                                attempt.pull,
+                                agent.activity == "working",
+                            )
+                        }),
+                    }
+                });
+        }
+    }
+
+    /// The checkouts Hide made for the agents it started. A spawn's machine
+    /// is the id of the device the shell names its Projects by (this node's
+    /// own id for a local one), so it is the checkout's device as it stands.
+    fn hide_ai_checkouts(&self) -> Vec<crate::model::HideAiCheckoutSnapshot> {
+        self.hide_started
+            .checkouts
+            .iter()
+            .map(|started| crate::model::HideAiCheckoutSnapshot {
+                device_id: started.machine.clone(),
+                path: started.path.clone(),
+                task: started.task.clone(),
+            })
+            .collect()
+    }
+
     pub(super) fn refresh_agent_lineage(&mut self) -> bool {
         let before_local = self.snapshot.navigator.agents.clone();
         let before_remote = self
@@ -2471,6 +3082,7 @@ impl Runtime {
         }
         self.unresolved_machine_lineage = unresolved;
         self.lay_reply_waits(&mut agents);
+        self.lay_hide_ai(&mut agents);
         crate::agent_state::apply_lineage(
             &mut agents,
             &workspaces,
@@ -2524,6 +3136,9 @@ impl Runtime {
                     .map(|session| &session.agents)
                     != before.as_ref()
             });
+        let hide_ai_checkouts = self.hide_ai_checkouts();
+        let changed = changed | (self.snapshot.navigator.hide_ai_checkouts != hide_ai_checkouts);
+        self.snapshot.navigator.hide_ai_checkouts = hide_ai_checkouts;
         // Machine identity, remote arrival and local arrival all publish the
         // same ownership transition, including normal tab placement.
         let changed = changed | self.sync_pane_lineage();
@@ -2618,6 +3233,16 @@ fn sync_remote_pane_relations(session: &mut RemoteSessionSnapshot) -> bool {
             &|_| None,
         );
         let lineage_path = crate::sidebar::project_lineage_path(agents, &pane.id);
+        // A device's pane offers no fork, but a fork there still names its
+        // source, as its rows do.
+        let forked_from = agents
+            .iter()
+            .find(|agent| agent.pane_id == pane.id)
+            .and_then(|agent| agent.forked_from.clone());
+        if pane.fork.forked_from != forked_from {
+            pane.fork.forked_from = forked_from;
+            changed = true;
+        }
         if pane.children != children {
             pane.children = children;
             changed = true;
@@ -2628,4 +3253,34 @@ fn sync_remote_pane_relations(session: &mut RemoteSessionSnapshot) -> bool {
         }
     }
     changed
+}
+
+/// The keyboard move the core made for a fork, so a fork still starting can
+/// tell it from a view the operator chose.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ForkFocus {
+    /// `last_view_intent_serial` right after the move.
+    pub(super) intent_serial: u64,
+    /// `last_view_intent_serial` just before it: the operator's last choice.
+    pub(super) prior_intent_serial: u64,
+    /// The press that fork answered (`PendingFork::press`).
+    pub(super) press: u64,
+}
+
+/// A fork the operator asked for, until its worker answers.
+#[derive(Debug)]
+pub(super) struct PendingFork {
+    /// The order of the press among forks, so a later press keeps the
+    /// keyboard from an earlier one that is still starting.
+    pub(super) press: u64,
+    /// The Herdr connection the press was made on.
+    pub(super) generation: u64,
+    /// The control lane's last serial at the press. A view chosen after it is
+    /// the operator's, and the fork does not take the keyboard from it.
+    pub(super) issued_serial: u64,
+    /// The fork's tab once Herdr named it, so a fork that fails leaves no
+    /// placement waiting for a tab that was closed.
+    pub(super) tab_id: Option<String>,
+    /// The fork's pane, once Herdr made it and it took the keyboard.
+    pub(super) focused: Option<String>,
 }

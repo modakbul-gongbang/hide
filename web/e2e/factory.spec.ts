@@ -7,7 +7,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { chord } from "./chords";
 import { openFactory, seedDag, startFactoryStack, type FactoryStack } from "./factory-fixture";
+import { FACTORY_OPEN } from "../src/factory/launch";
 
+test.skip(!FACTORY_OPEN, "the Factory screen is closed until it launches (src/factory/launch.ts)");
 test.describe.configure({ timeout: 150_000 });
 
 async function withStack(page: Page, label: string, run: (stack: FactoryStack) => Promise<void>) {
@@ -116,7 +118,8 @@ test("결정 필요 holds every item open; a pick sent on Enter takes it off, an
     await expect(rows.first()).toHaveAttribute("data-factory-row-turn", "true");
 
     // Factory remains directly reachable from the shared sidebar.
-    await page.locator("[data-home-destination]").click();
+    await page.locator("[data-sidebar-overview]").click();
+    await expect(page.locator("[data-main-screen]")).toBeVisible();
     await expect(page.locator("[data-factory-badge]")).toHaveText("1");
     await openFactory(page);
     await expect(page.locator('[data-factory-screen="ready"]')).toBeVisible();

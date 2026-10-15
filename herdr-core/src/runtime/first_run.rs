@@ -1,6 +1,6 @@
 //! The first-run wizard's progress (PRD first-run-onboarding D-07, B6): the
 //! step it opens on, when its first step's apply has settled, the desktop
-//! notification switch it and Settings > General share (D-21), and the
+//! notification switch it and Settings > Notifications share (D-21), and the
 //! one-time introduction of the Factory screen (B43). The shell
 //! draws the steps; each move is one event here, saved with the UI state.
 
@@ -91,7 +91,7 @@ impl Runtime {
             return false;
         }
         if let (Some(enabled), FirstRunStep::Notifications) = (notifications, from) {
-            self.set_desktop_notifications(enabled);
+            self.set_desktop_notification_preferences(Some(enabled), (!enabled).then_some(false));
         }
         self.move_first_run(from, to)
     }
@@ -192,19 +192,28 @@ impl Runtime {
         self.move_first_run(FirstRunStep::Agents, to)
     }
 
-    /// The desktop notification switch (Settings > General, the wizard's
-    /// second step). Whether the system lets Hide show one is the desktop
-    /// host's to read; this is only the operator's choice.
-    pub(super) fn set_desktop_notifications(&mut self, enabled: bool) -> bool {
-        if self.snapshot.ui_state.desktop_notifications == enabled {
+    /// One user intent changes either choice, or turns both off in the
+    /// wizard. Permission is the desktop host's to read. Saves use the
+    /// existing coalesced UI-state writer, and unchanged choices publish nothing.
+    pub(super) fn set_desktop_notification_preferences(
+        &mut self,
+        needs_you: Option<bool>,
+        done: Option<bool>,
+    ) -> bool {
+        let state = &mut self.snapshot.ui_state;
+        let needs_you = needs_you.unwrap_or(state.desktop_notifications);
+        let done = done.unwrap_or(state.desktop_notifications_done);
+        if state.desktop_notifications == needs_you && state.desktop_notifications_done == done {
             return false;
         }
-        self.snapshot.ui_state.desktop_notifications = enabled;
+        state.desktop_notifications = needs_you;
+        state.desktop_notifications_done = done;
         self.persist_ui_state();
         crate::diagnostic!(serde_json::json!({
             "component": "first_run",
             "kind": "desktop_notifications.set",
-            "enabled": enabled,
+            "needs_you": needs_you,
+            "done": done,
         }));
         true
     }

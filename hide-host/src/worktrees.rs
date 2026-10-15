@@ -13,7 +13,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime};
+
+use hide_node_link::worktrees::{GIT_WATCH_LIMIT, WORKTREES_READ_TIME};
 
 use hide_platform::process::OwnedChild;
 
@@ -25,14 +28,24 @@ use crate::error::{ErrorCode, HostError, HostResult};
 /// minutes before this bound existed.
 pub const GIT_DEADLINE: Duration = Duration::from_secs(15);
 
+/// The most of a repository read one worktree's measurement may take, its
+/// ignored-folder scan included, so one slow worktree leaves the others of
+/// [`WORKTREES_READ_TIME`] to the rest.
+pub const WORKTREE_MEASURE_TIME: Duration = Duration::from_secs(30);
+
 /// Reads the repository that holds `path`: its main worktree, default
 /// branch, local branches and every listed worktree. `bases` names a branch's
-/// pull request base; `base_override` is the operator's chosen base.
+/// pull request base; `base_override` is the operator's chosen base. With
+/// `reuse_unchanged`, a worktree whose inputs did not move since `measured`
+/// last saw it keeps that measurement.
 pub fn read(
     path: &Path,
     bases: &BTreeMap<String, String>,
     base_override: Option<&str>,
+    measured: &Measured,
+    reuse_unchanged: bool,
 ) -> Option<RepositoryWorktrees> {
+    let until = Instant::now() + WORKTREES_READ_TIME;
     if !path.exists() {
         return Some(RepositoryWorktrees {
             root_path: path.to_string_lossy().into_owned(),
@@ -42,78 +55,55 @@ pub fn read(
     }
     // A folder that is not a repository has no worktrees and is not a
     // failure; the card and the tree both present it as a plain folder.
-    let root = main_worktree(path)?;
+    let root = main_worktree(path, until)?;
     let root_path = root.to_string_lossy().into_owned();
-    Some(read_project(&root, root_path, bases, base_override))
+    Some(read_project_until(
+        &root,
+        root_path,
+        bases,
+        base_override,
+        measured,
+        reuse_unchanged,
+        until,
+    ))
 }
 
-/// The `url` of the `[remote "origin"]` section of a Git configuration file,
-/// read as Git reads it: the section name and the key in any case, any
-/// spacing inside the header, and comment lines skipped.
-pub fn origin_url(config: &str) -> Option<String> {
-    let mut in_origin = false;
-    for line in config.lines() {
-        let line = line.trim();
-        if line.starts_with('#') || line.starts_with(';') {
-            continue;
-        }
-        if let Some(header) = line.strip_prefix('[') {
-            in_origin = is_origin_header(header);
-            continue;
-        }
-        if in_origin
-            && let Some((key, value)) = line.split_once('=')
-            && key.trim().eq_ignore_ascii_case("url")
-        {
-            return Some(value.trim().to_owned()).filter(|value| !value.is_empty());
-        }
-    }
-    None
-}
-
-/// Whether a section header (after its `[`) is `remote "origin"`: the
-/// section name in any case, the subsection exactly.
-fn is_origin_header(header: &str) -> bool {
-    let Some((inside, _)) = header.split_once(']') else {
-        return false;
-    };
-    let mut parts = inside.trim().splitn(2, char::is_whitespace);
-    let section = parts.next().unwrap_or_default();
-    let subsection = parts.next().unwrap_or_default().trim();
-    section.eq_ignore_ascii_case("remote") && subsection == "\"origin\""
-}
-
-/// The largest Git configuration file read for its origin.
-const CONFIG_CAP: u64 = 256 * 1024;
-
-/// A repository's configuration file, read only when it is a regular file
-/// of at most [`CONFIG_CAP`] bytes: a link to something large, or a pipe,
-/// is not read on every worktree read.
-fn read_config(path: &Path) -> Option<String> {
-    use std::io::Read;
-    let metadata = std::fs::symlink_metadata(path).ok()?;
-    if !metadata.is_file() || metadata.len() > CONFIG_CAP {
-        return None;
-    }
-    let mut text = String::new();
-    std::fs::File::open(path)
-        .ok()?
-        .take(CONFIG_CAP)
-        .read_to_string(&mut text)
-        .ok()?;
-    Some(text)
-}
-
-/// Reads `root`, already known to be a main worktree.
+/// Reads `root`, already known to be a main worktree, within
+/// [`WORKTREES_READ_TIME`].
 pub fn read_project(
     root: &Path,
     root_path: String,
     bases: &BTreeMap<String, String>,
     base_override: Option<&str>,
+    measured: &Measured,
+    reuse_unchanged: bool,
 ) -> RepositoryWorktrees {
-    let default_branch = default_branch(root);
-    let branches = local_branches(root);
-    let valid_override = base_override.filter(|base| resolvable_base(root, base).is_some());
+    read_project_until(
+        root,
+        root_path,
+        bases,
+        base_override,
+        measured,
+        reuse_unchanged,
+        Instant::now() + WORKTREES_READ_TIME,
+    )
+}
+
+/// The read's discovery and metadata share its measurement's absolute end;
+/// entering with a known main worktree does not renew that time.
+fn read_project_until(
+    root: &Path,
+    root_path: String,
+    bases: &BTreeMap<String, String>,
+    base_override: Option<&str>,
+    measured: &Measured,
+    reuse_unchanged: bool,
+    until: Instant,
+) -> RepositoryWorktrees {
+    let default_branch = default_branch(root, until);
+    let refs = Refs::read(root, until);
+    let branches = refs.as_ref().map(Refs::branches).unwrap_or_default();
+    let valid_override = base_override.filter(|base| resolvable_base(root, base, until).is_some());
     let base_branch = valid_override
         .map(str::to_owned)
         .or_else(|| default_branch.clone());
@@ -134,8 +124,8 @@ pub fn read_project(
         "unknown"
     }
     .to_owned();
-    let listed = match registered(root) {
-        Ok(rows) => rows,
+    let listed = match listed_worktrees(root, until) {
+        Ok(listed) => listed,
         Err(reason) => {
             return RepositoryWorktrees {
                 root_path,
@@ -145,35 +135,45 @@ pub fn read_project(
             };
         }
     };
-    let mut worktrees: Vec<WorktreeFacts> = listed
-        .into_iter()
-        .enumerate()
-        .map(|(index, row)| ListedWorktree {
-            path: row.path.into(),
-            branch: row.branch,
-            head_sha: row
-                .head
-                .filter(|sha| sha.chars().any(|character| character != '0')),
-            is_main: index == 0,
-            bare: row.bare,
-            lock_reason: row.lock_reason,
-        })
-        .filter(|listed| !listed.bare)
-        .map(|listed| {
-            describe(
-                listed,
-                bases,
-                base_branch.as_deref(),
-                if base_override.is_some() {
-                    base_branch.as_deref()
-                } else {
-                    None
-                },
-            )
-        })
-        .collect();
+    let shared_git_path = git_until(
+        root,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        until,
+    )
+    .ok()
+    .map(|value| value.trim().to_owned());
+    // Read from the repository's own configuration, not another git process.
+    let origin_url = hide_project::git::discover(root)
+        .and_then(|repository| repository.config().ok())
+        .and_then(|config| config.origin_url().map(str::to_owned));
+    // Every worktree shares the repository's last fetch.
+    let last_fetch_at_unix_ms = shared_git_path
+        .as_deref()
+        .and_then(|shared| std::fs::metadata(Path::new(shared).join("FETCH_HEAD")).ok())
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|elapsed| elapsed.as_millis() as u64);
+    let bases = Bases {
+        by_branch: bases,
+        default_branch: base_branch.as_deref(),
+        chosen: if base_override.is_some() {
+            base_branch.as_deref()
+        } else {
+            None
+        },
+    };
+    let mut worktrees = measure(
+        measured,
+        root,
+        listed,
+        &bases,
+        refs.as_ref(),
+        reuse_unchanged,
+        (until, WORKTREE_MEASURE_TIME),
+    );
     let paths: Vec<PathBuf> = worktrees.iter().map(|w| PathBuf::from(&w.path)).collect();
     for worktree in &mut worktrees {
+        worktree.last_fetch_at_unix_ms = last_fetch_at_unix_ms;
         worktree.nested = paths
             .iter()
             .any(|p| p != Path::new(&worktree.path) && p.starts_with(&worktree.path));
@@ -185,17 +185,6 @@ pub fn read_project(
         let main = worktrees.remove(index);
         worktrees.insert(0, main);
     }
-    let shared_git_path = git(
-        root,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )
-    .ok()
-    .map(|value| value.trim().to_owned());
-    // Read from the repository's own configuration, not another git process.
-    let origin_url = shared_git_path
-        .as_deref()
-        .and_then(|shared| read_config(&Path::new(shared).join("config")))
-        .and_then(|config| origin_url(&config));
     RepositoryWorktrees {
         shared_git_path,
         origin_url,
@@ -210,27 +199,486 @@ pub fn read_project(
     }
 }
 
-fn local_branches(root: &Path) -> Vec<String> {
-    git(
-        root,
-        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
-    )
-    .map(|output| {
-        let mut branches = output
-            .lines()
-            .map(str::trim)
-            .filter(|branch| !branch.is_empty())
+/// The worktrees Git lists for the repository at `root`, its main worktree
+/// first; a bare repository is no worktree.
+fn listed_worktrees(root: &Path, until: Instant) -> Result<Vec<ListedWorktree>, String> {
+    Ok(registered_until(root, until)?
+        .into_iter()
+        .enumerate()
+        .map(|(index, row)| ListedWorktree {
+            path: row.path.into(),
+            branch: row.branch,
+            head_sha: row
+                .head
+                .filter(|sha| sha.chars().any(|character| character != '0')),
+            is_main: index == 0,
+            bare: row.bare,
+            lock_reason: row.lock_reason,
+        })
+        .filter(|listed| !listed.bare)
+        .collect())
+}
+
+/// What a worktree's base is chosen from: its branch's pull request base,
+/// the repository's base, and the base the operator chose for every branch.
+struct Bases<'a> {
+    by_branch: &'a BTreeMap<String, String>,
+    default_branch: Option<&'a str>,
+    chosen: Option<&'a str>,
+}
+
+impl Bases<'_> {
+    fn of(&self, branch: Option<&str>) -> Option<String> {
+        self.chosen
             .map(str::to_owned)
-            .collect::<Vec<_>>();
+            .or_else(|| resolve_base(branch, self.by_branch, self.default_branch))
+    }
+}
+
+/// Measures the listed worktrees, answering in their listed order. A
+/// worktree whose inputs did not move keeps its last measurement when the
+/// caller accepts that, one its own time cut short included; the others are
+/// measured, the longest unmeasured first, while the read has time, so the
+/// worktrees one read had no time for are the next read's first. A worktree
+/// the read had no time for answers its last measurement only if its inputs
+/// did not move, and is otherwise named unmeasured. `time` is when the read
+/// ends and how long one worktree may take of it.
+fn measure(
+    measured: &Measured,
+    root: &Path,
+    listed: Vec<ListedWorktree>,
+    bases: &Bases<'_>,
+    refs: Option<&Refs>,
+    reuse_unchanged: bool,
+    (until, worktree_time): (Instant, Duration),
+) -> Vec<WorktreeFacts> {
+    let inputs: Vec<Option<Inputs>> = listed
+        .iter()
+        .map(|worktree| refs.map(|refs| Inputs::of(worktree, bases, refs)))
+        .collect();
+    let earlier = measured.earlier(root);
+    let unchanged = |index: usize| {
+        earlier
+            .get(&listed[index].path)
+            .filter(|(seen, _)| inputs[index].as_ref() == Some(seen))
+            .map(|(_, facts)| facts.clone())
+    };
+    let mut answers: Vec<Option<WorktreeFacts>> = (0..listed.len())
+        .map(|index| unchanged(index).filter(|_| reuse_unchanged))
+        .collect();
+    let mut due: Vec<usize> = (0..listed.len())
+        .filter(|index| answers[*index].is_none())
+        .collect();
+    due.sort_by_key(|index| {
+        earlier
+            .get(&listed[*index].path)
+            .and_then(|(_, facts)| facts.measured_at_unix_ms)
+    });
+    let mut kept = Kept::new();
+    for index in due {
+        let now = Instant::now();
+        if now >= until {
+            break;
+        }
+        let own = now + worktree_time;
+        let facts = describe_within(listed[index].clone(), bases, own.min(until));
+        // Cut short by the read's end rather than its own time, a worktree
+        // is measured first by the next read, and until then answers its
+        // last full measurement if nothing moved.
+        if own > until && Instant::now() >= until {
+            answers[index] = Some(unchanged(index).unwrap_or(facts));
+            continue;
+        }
+        if let Some(inputs) = inputs[index].clone() {
+            kept.insert(listed[index].path.clone(), (inputs, facts.clone()));
+        }
+        answers[index] = Some(facts);
+    }
+    let answers = answers
+        .into_iter()
+        .enumerate()
+        .map(|(index, answer)| {
+            answer
+                .or_else(|| unchanged(index))
+                .unwrap_or_else(|| unmeasured(&listed[index]))
+        })
+        .collect();
+    for worktree in &listed {
+        if !kept.contains_key(&worktree.path)
+            && let Some(entry) = earlier.get(&worktree.path)
+        {
+            kept.insert(worktree.path.clone(), entry.clone());
+        }
+    }
+    measured.keep(root, kept);
+    answers
+}
+
+/// A worktree the read ran out of time for before it began.
+fn unmeasured(listed: &ListedWorktree) -> WorktreeFacts {
+    WorktreeFacts {
+        path: listed.path.to_string_lossy().into_owned(),
+        branch: listed.branch.clone(),
+        is_main: listed.is_main,
+        head_sha: listed.head_sha.clone(),
+        lock_reason: listed.lock_reason.clone(),
+        upstream_state: "unavailable".to_owned(),
+        ignored_scan_unavailable: (!listed.is_main)
+            .then(|| ignored_scan_failure("the repository read ran out of time before it")),
+        unavailable_reason: Some(format!(
+            "Worktree {} was not measured within the repository's {} s; refresh to measure it",
+            worktree_name(listed),
+            WORKTREES_READ_TIME.as_secs()
+        )),
+        ..WorktreeFacts::default()
+    }
+}
+
+/// The name a worktree is shown by: its branch, else its folder.
+fn worktree_name(listed: &ListedWorktree) -> String {
+    listed.branch.clone().unwrap_or_else(|| {
+        listed.path.file_name().map_or_else(
+            || listed.path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        )
+    })
+}
+
+/// What earlier reads measured of each repository's worktrees, kept by the
+/// node that measured them, with the inputs each measurement was taken
+/// from. It holds the repositories of the last [`GIT_WATCH_LIMIT`] reads,
+/// the most the core watches; a repository it let go of is measured whole on
+/// its next read, unless its file still holds it.
+///
+/// A memo with a folder ([`Measured::kept_in`]) also keeps each repository's
+/// measurements there, one file a repository, written whole when they
+/// change and read for a repository the memo has not held since it started,
+/// so a restarted node measures again only the worktrees whose inputs moved.
+/// The folder keeps the files of the last [`GIT_WATCH_LIMIT`] repositories
+/// written.
+#[derive(Debug, Default)]
+pub struct Measured {
+    repositories: Mutex<BTreeMap<PathBuf, (Instant, Kept)>>,
+    folder: Option<PathBuf>,
+}
+
+type Kept = BTreeMap<PathBuf, (Inputs, WorktreeFacts)>;
+
+/// The shape of a repository's file; a file of another version, or one that
+/// does not read, is taken as nothing kept.
+const KEPT_FILE_VERSION: u32 = 1;
+/// The largest repository file read back: some thousands of worktrees' facts.
+const KEPT_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// One repository's file: the root it was written for, and each kept
+/// worktree with the inputs its facts were measured from.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct KeptFile {
+    version: u32,
+    root: PathBuf,
+    worktrees: Vec<(PathBuf, Inputs, WorktreeFacts)>,
+}
+
+impl Measured {
+    /// A memo that also keeps its measurements in `folder`
+    /// (`hide_kit::layout::worktree_facts`).
+    pub fn kept_in(folder: PathBuf) -> Self {
+        Self {
+            repositories: Mutex::default(),
+            folder: Some(folder),
+        }
+    }
+
+    fn earlier(&self, root: &Path) -> Kept {
+        if let Some((_, kept)) = self
+            .repositories
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(root)
+        {
+            return kept.clone();
+        }
+        self.folder
+            .as_deref()
+            .map(|folder| read_kept(folder, root))
+            .unwrap_or_default()
+    }
+
+    fn keep(&self, root: &Path, kept: Kept) {
+        let mut repositories = self
+            .repositories
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let changed = repositories
+            .get(root)
+            .is_none_or(|(_, earlier)| *earlier != kept);
+        let written = (changed && self.folder.is_some()).then(|| kept.clone());
+        repositories.insert(root.to_path_buf(), (Instant::now(), kept));
+        while repositories.len() > GIT_WATCH_LIMIT {
+            let Some(oldest) = repositories
+                .iter()
+                .min_by_key(|(_, (at, _))| *at)
+                .map(|(root, _)| root.clone())
+            else {
+                break;
+            };
+            repositories.remove(&oldest);
+        }
+        drop(repositories);
+        if let (Some(folder), Some(kept)) = (self.folder.as_deref(), written) {
+            write_kept(folder, root, kept);
+        }
+    }
+}
+
+/// The file in `folder` that keeps `root`'s measurements.
+fn kept_file(folder: &Path, root: &Path) -> PathBuf {
+    use sha2::Digest as _;
+    let digest = sha2::Sha256::digest(root.as_os_str().as_encoded_bytes());
+    let name: String = digest[..16]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    folder.join(format!("{name}.json"))
+}
+
+/// One record of the memo's file for `root` on the node's error stream.
+fn kept_record(kind: &str, root: &Path, reason: &str) {
+    eprintln!(
+        "{}",
+        serde_json::json!({
+            "component": "worktrees",
+            "kind": kind,
+            "root": root,
+            "reason": reason,
+        })
+    );
+}
+
+/// What `root`'s file keeps: nothing when there is none, and nothing with
+/// one record when it cannot be used.
+fn read_kept(folder: &Path, root: &Path) -> Kept {
+    use std::io::Read as _;
+    let path = kept_file(folder, root);
+    let file = match hide_platform::fs::open_regular(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Kept::new(),
+        Err(error) => {
+            kept_record("worktrees.facts_unread", root, &error.to_string());
+            return Kept::new();
+        }
+    };
+    let mut bytes = Vec::new();
+    if let Err(error) = file.take(KEPT_FILE_BYTES + 1).read_to_end(&mut bytes) {
+        kept_record("worktrees.facts_unread", root, &error.to_string());
+        return Kept::new();
+    }
+    if bytes.len() as u64 > KEPT_FILE_BYTES {
+        kept_record(
+            "worktrees.facts_unread",
+            root,
+            "the file is past its size bound",
+        );
+        return Kept::new();
+    }
+    #[derive(serde::Deserialize)]
+    struct Version {
+        version: u32,
+    }
+    match serde_json::from_slice::<Version>(&bytes) {
+        Ok(Version { version }) if version == KEPT_FILE_VERSION => {}
+        Ok(Version { version }) => {
+            kept_record(
+                "worktrees.facts_unread",
+                root,
+                &format!("version {version}, not {KEPT_FILE_VERSION}"),
+            );
+            return Kept::new();
+        }
+        Err(error) => {
+            kept_record("worktrees.facts_unread", root, &error.to_string());
+            return Kept::new();
+        }
+    }
+    match serde_json::from_slice::<KeptFile>(&bytes) {
+        Ok(file) if file.root == root => file
+            .worktrees
+            .into_iter()
+            .map(|(path, inputs, facts)| (path, (inputs, facts)))
+            .collect(),
+        Ok(_) => {
+            kept_record(
+                "worktrees.facts_unread",
+                root,
+                "the file names another root",
+            );
+            Kept::new()
+        }
+        Err(error) => {
+            kept_record("worktrees.facts_unread", root, &error.to_string());
+            Kept::new()
+        }
+    }
+}
+
+/// Replaces `root`'s file with `kept`, then lets go of the files of the
+/// repositories written longest ago past [`GIT_WATCH_LIMIT`].
+fn write_kept(folder: &Path, root: &Path, kept: Kept) {
+    let file = KeptFile {
+        version: KEPT_FILE_VERSION,
+        root: root.to_path_buf(),
+        worktrees: kept
+            .into_iter()
+            .map(|(path, (inputs, facts))| (path, inputs, facts))
+            .collect(),
+    };
+    let written = serde_json::to_vec(&file)
+        .map_err(|error| error.to_string())
+        .and_then(|bytes| {
+            hide_platform::fs::private::create_dir_all(folder)
+                .and_then(|()| {
+                    hide_platform::fs::atomic::write_file(
+                        &kept_file(folder, root),
+                        &bytes,
+                        hide_platform::fs::Access::Private,
+                    )
+                })
+                .map_err(|error| error.to_string())
+        });
+    if let Err(reason) = written {
+        kept_record("worktrees.facts_unsaved", root, &reason);
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return;
+    };
+    let mut files: Vec<(SystemTime, PathBuf)> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.len() == 37 && name.ends_with(".json"))
+        })
+        .filter_map(|entry| Some((entry.metadata().ok()?.modified().ok()?, entry.path())))
+        .collect();
+    if files.len() <= GIT_WATCH_LIMIT {
+        return;
+    }
+    files.sort();
+    let written = kept_file(folder, root);
+    for (_, path) in files
+        .iter()
+        .filter(|(_, path)| *path != written)
+        .take(files.len() - GIT_WATCH_LIMIT)
+    {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// What one worktree's facts are measured from, short of its working tree's
+/// contents: the listed record (HEAD, branch and lock), the worktree's
+/// index, its base, its branch's upstream, and the commits the base, the
+/// base's remote-tracking copy and the upstream name. An edit that moves
+/// none of these is read when the caller asks for every worktree again.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+struct Inputs {
+    listed: ListedWorktree,
+    index: Option<(u64, SystemTime)>,
+    base: Option<String>,
+    upstream: Option<String>,
+    commits: [Option<String>; 3],
+}
+
+impl Inputs {
+    fn of(listed: &ListedWorktree, bases: &Bases<'_>, refs: &Refs) -> Self {
+        let index = hide_project::git::discover(&listed.path)
+            .and_then(|repository| std::fs::metadata(repository.git_dir.join("index")).ok())
+            .and_then(|metadata| Some((metadata.len(), metadata.modified().ok()?)));
+        let base = bases.of(listed.branch.as_deref());
+        let upstream = listed
+            .branch
+            .as_deref()
+            .and_then(|branch| refs.upstream(&format!("refs/heads/{branch}")));
+        let commits = [
+            base.as_deref()
+                .and_then(|base| refs.commit(&format!("refs/heads/{base}"))),
+            base.as_deref()
+                .and_then(|base| refs.commit(&format!("refs/remotes/origin/{base}"))),
+            upstream
+                .as_deref()
+                .and_then(|upstream| refs.commit(upstream)),
+        ];
+        Self {
+            listed: listed.clone(),
+            index,
+            base,
+            upstream,
+            commits,
+        }
+    }
+}
+
+/// The repository's branches and remote-tracking refs, each with its short
+/// name, the commit it names and its upstream, from one `git for-each-ref`.
+struct Refs(BTreeMap<String, (String, String, String)>);
+
+impl Refs {
+    fn read(root: &Path, until: Instant) -> Option<Self> {
+        let output = git_until(
+            root,
+            &[
+                "for-each-ref",
+                "--format=%(refname)%00%(refname:short)%00%(objectname)%00%(upstream)",
+                "refs/heads",
+                "refs/remotes",
+            ],
+            until,
+        )
+        .ok()?;
+        Some(Self(
+            output
+                .lines()
+                .filter_map(|line| {
+                    let mut fields = line.split('\0');
+                    let name = fields.next()?.to_owned();
+                    let short = fields.next()?.to_owned();
+                    let commit = fields.next()?.to_owned();
+                    let upstream = fields.next()?.to_owned();
+                    Some((name, (short, commit, upstream)))
+                })
+                .collect(),
+        ))
+    }
+
+    /// The local branches by their short names, sorted.
+    fn branches(&self) -> Vec<String> {
+        let mut branches: Vec<String> = self
+            .0
+            .iter()
+            .filter(|(name, _)| name.starts_with("refs/heads/"))
+            .map(|(_, (short, _, _))| short.trim().to_owned())
+            .filter(|short| !short.is_empty())
+            .collect();
         branches.sort();
         branches.dedup();
         branches
-    })
-    .unwrap_or_default()
+    }
+
+    fn commit(&self, name: &str) -> Option<String> {
+        self.0.get(name).map(|(_, commit, _)| commit.clone())
+    }
+
+    fn upstream(&self, name: &str) -> Option<String> {
+        self.0
+            .get(name)
+            .map(|(_, _, upstream)| upstream.clone())
+            .filter(|upstream| !upstream.is_empty())
+    }
 }
 
 /// One record of `git worktree list --porcelain`, before any counting.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ListedWorktree {
     pub path: PathBuf,
     pub branch: Option<String>,
@@ -277,13 +725,11 @@ pub fn parse_worktree_list(output: &str) -> Vec<ListedWorktree> {
         .collect()
 }
 
-/// The facts of one listed worktree.
-pub fn describe(
-    listed: ListedWorktree,
-    bases: &BTreeMap<String, String>,
-    default_branch: Option<&str>,
-    base_override: Option<&str>,
-) -> WorktreeFacts {
+/// The facts of one listed worktree, measured until `until`: no `git`
+/// starts after it and one still running then is stopped, the ignored-folder
+/// scan included. A worktree measured only in part names itself in its
+/// unavailable reason, and what was not measured stays unknown.
+fn describe_within(listed: ListedWorktree, bases: &Bases<'_>, until: Instant) -> WorktreeFacts {
     let path = listed.path.to_string_lossy().into_owned();
     if !listed.path.exists() {
         // Nothing can be counted against a path that is not there, and
@@ -302,29 +748,27 @@ pub fn describe(
 
     let mut unavailable_reason = None;
     let (dirty, changed_file_count) = record_failure(
-        working_tree_state(&listed.path),
+        working_tree_state(&listed.path, until),
         &mut unavailable_reason,
         (false, 0),
     );
-    let base_branch = base_override
-        .map(str::to_owned)
-        .or_else(|| resolve_base(listed.branch.as_deref(), bases, default_branch));
+    let base_branch = bases.of(listed.branch.as_deref());
     let (ahead, behind) = base_branch
         .as_deref()
-        .map(|base| ahead_behind(&listed.path, base))
+        .map(|base| ahead_behind(&listed.path, base, until))
         .map(|result| record_failure(result, &mut unavailable_reason, (0, 0)))
         .unwrap_or((0, 0));
     let (added_lines, removed_lines) = base_branch
         .as_deref()
-        .map(|base| committed_line_delta(&listed.path, base))
+        .map(|base| committed_line_delta(&listed.path, base, until))
         .map(|result| record_failure(result, &mut unavailable_reason, (0, 0)))
         .unwrap_or((0, 0));
 
     let merged = base_branch
         .as_deref()
-        .and_then(|base| merged_into(&listed.path, base));
+        .and_then(|base| merged_into(&listed.path, base, until));
     let (upstream_state, unpushed, behind_upstream) = record_failure(
-        upstream(&listed.path, listed.branch.as_deref()),
+        upstream(&listed.path, listed.branch.as_deref(), until),
         &mut unavailable_reason,
         ("unavailable".into(), None, None),
     );
@@ -341,29 +785,30 @@ pub fn describe(
             .and_then(|created| created.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|elapsed| elapsed.as_millis() as u64)
     };
-    let last_commit = git(&listed.path, &["log", "-1", "--format=%ct%x00%s"]).ok();
+    let last_commit = git_until(&listed.path, &["log", "-1", "--format=%ct%x00%s"], until).ok();
     let commit_fields = last_commit
         .as_deref()
         .and_then(|value| value.trim_end().split_once('\0'));
     let last_commit_unix_seconds = commit_fields.and_then(|(time, _)| time.parse().ok());
     let last_commit_subject = commit_fields.map(|(_, subject)| subject.to_owned());
-    let last_fetch_at_unix_ms = git(
-        &listed.path,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )
-    .ok()
-    .and_then(|s| std::fs::metadata(Path::new(s.trim()).join("FETCH_HEAD")).ok())
-    .and_then(|m| m.modified().ok())
-    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-    .map(|d| d.as_millis() as u64);
     let (ignored_repositories, ignored_scan_unavailable) = if listed.is_main {
         (Vec::new(), None)
     } else {
-        match ignored_repositories(&listed.path) {
+        let left = until.saturating_duration_since(Instant::now());
+        match scan_ignored_repositories(
+            &listed.path,
+            &mut WalkBudget::allowing(IGNORED_WALK_ENTRIES, left.min(IGNORED_WALK_TIME)),
+        ) {
             Ok(names) => (names, None),
             Err(reason) => (Vec::new(), Some(reason)),
         }
     };
+    if Instant::now() >= until {
+        unavailable_reason = Some(format!(
+            "Worktree {} was not fully measured in the time it had; refresh to measure it again",
+            worktree_name(&listed)
+        ));
+    }
     WorktreeFacts {
         path,
         branch: listed.branch,
@@ -388,7 +833,7 @@ pub fn describe(
         head_sha: listed.head_sha,
         last_commit_unix_seconds,
         last_commit_subject,
-        last_fetch_at_unix_ms,
+        last_fetch_at_unix_ms: None,
         measured_at_unix_ms: Some(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -431,8 +876,8 @@ pub fn resolve_base(
 }
 
 /// Whether anything is uncommitted, and how many files that is.
-fn working_tree_state(path: &Path) -> Result<(bool, u32), String> {
-    let output = git(
+fn working_tree_state(path: &Path, until: Instant) -> Result<(bool, u32), String> {
+    let output = git_until(
         path,
         &[
             "status",
@@ -441,6 +886,7 @@ fn working_tree_state(path: &Path) -> Result<(bool, u32), String> {
             "--no-renames",
             "--untracked-files=all",
         ],
+        until,
     )?;
     let count = output
         .split('\0')
@@ -454,10 +900,10 @@ fn working_tree_state(path: &Path) -> Result<(bool, u32), String> {
 /// Commits on this branch since the base, and commits on the base this branch
 /// does not have. `base...HEAD` is the merge-base comparison the card's
 /// `↑A ↓B` states, not a raw two-dot range.
-fn ahead_behind(path: &Path, base: &str) -> Result<(u32, u32), String> {
-    let base_ref =
-        resolvable_base(path, base).ok_or_else(|| format!("Base branch {base} is unavailable"))?;
-    let output = git(
+fn ahead_behind(path: &Path, base: &str, until: Instant) -> Result<(u32, u32), String> {
+    let base_ref = resolvable_base(path, base, until)
+        .ok_or_else(|| format!("Base branch {base} is unavailable"))?;
+    let output = git_until(
         path,
         &[
             "rev-list",
@@ -465,6 +911,7 @@ fn ahead_behind(path: &Path, base: &str) -> Result<(u32, u32), String> {
             "--count",
             &format!("{base_ref}...HEAD"),
         ],
+        until,
     )?;
     Ok(parse_ahead_behind(&output))
 }
@@ -484,12 +931,13 @@ pub fn parse_ahead_behind(output: &str) -> (u32, u32) {
     (ahead, behind)
 }
 
-fn committed_line_delta(path: &Path, base: &str) -> Result<(u32, u32), String> {
-    let base_ref =
-        resolvable_base(path, base).ok_or_else(|| format!("Base branch {base} is unavailable"))?;
-    let output = git(
+fn committed_line_delta(path: &Path, base: &str, until: Instant) -> Result<(u32, u32), String> {
+    let base_ref = resolvable_base(path, base, until)
+        .ok_or_else(|| format!("Base branch {base} is unavailable"))?;
+    let output = git_until(
         path,
         &["diff", "--shortstat", &format!("{base_ref}...HEAD")],
+        until,
     )?;
     Ok(parse_shortstat(&output))
 }
@@ -524,8 +972,8 @@ pub fn parse_shortstat(output: &str) -> (u32, u32) {
 /// may exist only as a remote-tracking ref in this clone. The local branch is
 /// preferred, the remote-tracking ref is the fallback, and a base that
 /// resolves as neither yields no comparison rather than a silent zero.
-fn resolvable_base(path: &Path, base: &str) -> Option<String> {
-    base_candidates(base).find(|candidate| resolves(path, candidate))
+fn resolvable_base(path: &Path, base: &str, until: Instant) -> Option<String> {
+    base_candidates(base).find(|candidate| resolves(path, candidate, until))
 }
 
 /// The refs that name `base`: the local branch, then its remote-tracking copy
@@ -534,8 +982,8 @@ fn base_candidates(base: &str) -> impl Iterator<Item = String> {
     [base.to_owned(), format!("origin/{base}")].into_iter()
 }
 
-fn resolves(path: &Path, candidate: &str) -> bool {
-    git(
+fn resolves(path: &Path, candidate: &str, until: Instant) -> bool {
+    git_until(
         path,
         &[
             "rev-parse",
@@ -543,6 +991,7 @@ fn resolves(path: &Path, candidate: &str) -> bool {
             "--quiet",
             &format!("{candidate}^{{commit}}"),
         ],
+        until,
     )
     .is_ok()
 }
@@ -551,9 +1000,13 @@ fn resolves(path: &Path, candidate: &str) -> bool {
 /// remote-tracking copy, whichever has it; a local base that stopped following
 /// its remote is one of two answers, never the only one. `None` when no ref names the base or
 /// Git could not answer, which is never read as "not merged".
-fn merged_into(path: &Path, base: &str) -> Option<bool> {
+fn merged_into(path: &Path, base: &str, until: Instant) -> Option<bool> {
     let mut answered = false;
-    for candidate in base_candidates(base).filter(|candidate| resolves(path, candidate)) {
+    for candidate in base_candidates(base).filter(|candidate| resolves(path, candidate, until)) {
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return None;
+        }
         let output = output_within(
             Command::new("git").arg("-C").arg(path).args([
                 "merge-base",
@@ -561,7 +1014,7 @@ fn merged_into(path: &Path, base: &str) -> Option<bool> {
                 "HEAD",
                 &candidate,
             ]),
-            GIT_DEADLINE,
+            left.min(GIT_DEADLINE),
         )
         .ok()??;
         match output.status.code() {
@@ -584,27 +1037,33 @@ fn merged_into(path: &Path, base: &str) -> Option<bool> {
 /// second number costs no second process.
 type UpstreamFacts = (String, Option<Unpushed>, Option<u32>);
 
-fn upstream(path: &Path, branch: Option<&str>) -> Result<UpstreamFacts, String> {
+fn upstream(path: &Path, branch: Option<&str>, until: Instant) -> Result<UpstreamFacts, String> {
     let Some(branch) = branch else {
         return Ok(("no_upstream".into(), None, None));
     };
-    let configured = git(
+    let configured = git_until(
         path,
         &[
             "for-each-ref",
             "--format=%(upstream)",
             &format!("refs/heads/{branch}"),
         ],
+        until,
     )?;
     if configured.trim().is_empty() {
         return Ok(("no_upstream".into(), None, None));
     }
-    if git(path, &["rev-parse", "--verify", "@{u}"]).is_err() {
+    if let Err(reason) = git_until(path, &["rev-parse", "--verify", "@{u}"], until) {
+        // A read out of time knows nothing of the upstream.
+        if Instant::now() >= until {
+            return Err(reason);
+        }
         return Ok(("gone".into(), None, None));
     }
-    let counts = git(
+    let counts = git_until(
         path,
         &["rev-list", "--left-right", "--count", "@{u}...HEAD"],
+        until,
     )
     .ok()
     .and_then(|output| parse_left_right(&output));
@@ -639,10 +1098,11 @@ fn parse_left_right(output: &str) -> Option<(u32, u32)> {
 /// The main worktree's current branch is deliberately excluded: using it as
 /// a base would make a feature branch look like project policy and hide the
 /// very mismatch the migration action exists to explain.
-fn default_branch(root: &Path) -> Option<String> {
-    if let Ok(output) = git(
+fn default_branch(root: &Path, until: Instant) -> Option<String> {
+    if let Ok(output) = git_until(
         root,
         &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        until,
     ) {
         let branch = output.trim().trim_start_matches("origin/").to_owned();
         if !branch.is_empty() {
@@ -653,10 +1113,11 @@ fn default_branch(root: &Path) -> Option<String> {
 }
 
 /// The repository's main working tree, which is what identifies a project.
-fn main_worktree(path: &Path) -> Option<PathBuf> {
-    let common = git(
+fn main_worktree(path: &Path, until: Instant) -> Option<PathBuf> {
+    let common = git_until(
         path,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        until,
     )
     .ok()?
     .trim()
@@ -705,6 +1166,18 @@ pub fn git(cwd: &Path, arguments: &[&str]) -> Result<String, String> {
     git_within(cwd, arguments, GIT_DEADLINE)
 }
 
+/// [`git`] that also ends by `until`, and does not start once it has passed.
+fn git_until(cwd: &Path, arguments: &[&str], until: Instant) -> Result<String, String> {
+    let left = until.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+        return Err(format!(
+            "git {} was not run: the measurement's time was spent",
+            arguments[0]
+        ));
+    }
+    git_within(cwd, arguments, left.min(GIT_DEADLINE))
+}
+
 /// [`git`] with its own bound, for the one command that may legitimately
 /// outlast a read: a removal that deletes the folder in place.
 fn git_within(cwd: &Path, arguments: &[&str], deadline: Duration) -> Result<String, String> {
@@ -745,8 +1218,8 @@ fn git_within(cwd: &Path, arguments: &[&str], deadline: Duration) -> Result<Stri
 /// The first ignored folder of the worktree that holds a Git repository of
 /// its own, relative to the worktree.
 pub fn ignored_repository(worktree: &Path) -> Result<Option<String>, String> {
-    let listed = ignored_folders(worktree)?;
     let mut budget = WalkBudget::worktree();
+    let listed = ignored_folders(worktree, &budget)?;
     for folder in listed.split('\0').filter(|entry| entry.ends_with('/')) {
         if holds_repository(&worktree.join(folder), &mut budget)? {
             return Ok(Some(folder.trim_end_matches('/').to_owned()));
@@ -755,8 +1228,8 @@ pub fn ignored_repository(worktree: &Path) -> Result<Option<String>, String> {
     Ok(None)
 }
 
-fn ignored_folders(worktree: &Path) -> Result<String, String> {
-    git(
+fn ignored_folders(worktree: &Path, budget: &WalkBudget) -> Result<String, String> {
+    git_until(
         worktree,
         &[
             "ls-files",
@@ -766,6 +1239,7 @@ fn ignored_folders(worktree: &Path) -> Result<String, String> {
             "--directory",
             "-z",
         ],
+        budget.until,
     )
 }
 
@@ -781,7 +1255,12 @@ fn scan_ignored_repositories(
     worktree: &Path,
     budget: &mut WalkBudget,
 ) -> Result<Vec<String>, String> {
-    let listed = ignored_folders(worktree)
+    if Instant::now() >= budget.until {
+        return Err(ignored_scan_failure(
+            "the ignored-folder scan deadline was reached",
+        ));
+    }
+    let listed = ignored_folders(worktree, budget)
         .map_err(|_| ignored_scan_failure("Git could not list its ignored folders"))?;
     let mut names = std::collections::BTreeSet::new();
     for folder in listed.split('\0').filter(|entry| entry.ends_with('/')) {
@@ -1166,7 +1645,11 @@ pub use hide_node_link::worktrees::Registered;
 
 /// Every worktree Git registers for `root`, the main worktree first.
 pub fn registered(root: &Path) -> Result<Vec<Registered>, String> {
-    let text = git(root, &["worktree", "list", "--porcelain", "-z"])?;
+    registered_until(root, Instant::now() + GIT_DEADLINE)
+}
+
+fn registered_until(root: &Path, until: Instant) -> Result<Vec<Registered>, String> {
+    let text = git_until(root, &["worktree", "list", "--porcelain", "-z"], until)?;
     let mut rows = Vec::new();
     for record in text.split("\0\0").filter(|v| !v.is_empty()) {
         let fields: Vec<_> = record.split('\0').collect();
@@ -1991,34 +2474,277 @@ mod holder_scan_tests {
 }
 
 #[cfg(test)]
-mod tests {
+mod measure_tests {
     use super::*;
 
+    /// A worktree git lists but disk does not have reports `missing` and no
+    /// counts, so an absent checkout never reads as a clean one.
     #[test]
-    fn the_origin_url_is_read_from_its_own_section() {
-        let config = "[core]\n\turl = not-this\n[remote \"upstream\"]\n\turl = git@github.com:other/app.git\n[remote \"origin\"]\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n\turl = git@github.com:acme/app.git\n";
-        assert_eq!(
-            origin_url(config).as_deref(),
-            Some("git@github.com:acme/app.git")
+    fn a_missing_worktree_reports_no_counts() {
+        let described = describe_within(
+            ListedWorktree {
+                path: PathBuf::from("/definitely/not/here/hide-test"),
+                branch: Some("gone".to_owned()),
+                is_main: false,
+                bare: false,
+                head_sha: None,
+                lock_reason: None,
+            },
+            &Bases {
+                by_branch: &BTreeMap::new(),
+                default_branch: Some("main"),
+                chosen: None,
+            },
+            Instant::now() + WORKTREE_MEASURE_TIME,
         );
-        assert_eq!(origin_url("[remote \"upstream\"]\n\turl = x\n"), None);
+        assert!(described.missing);
+        assert!(!described.dirty);
+        assert_eq!(described.ahead, 0);
+        assert_eq!(described.behind, 0);
+        assert_eq!(described.unpushed, None);
     }
 
-    /// L16: the origin is found however Git lets its header and key be
-    /// spelled, and a configuration that is not a small regular file is not
-    /// read.
+    fn run(cwd: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args([
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+            ])
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+
+    /// A repository with a commit on `main` and a linked worktree for each
+    /// of `linked`, all inside one folder removed with the fixture.
+    struct Fixture {
+        folder: tempfile::TempDir,
+        root: PathBuf,
+    }
+
+    impl Fixture {
+        fn new(linked: &[&str]) -> Self {
+            let folder = tempfile::tempdir().unwrap();
+            let root = std::fs::canonicalize(folder.path()).unwrap().join("repo");
+            std::fs::create_dir_all(&root).unwrap();
+            run(&root, &["init", "-q", "-b", "main"]);
+            run(&root, &["commit", "-q", "--allow-empty", "-m", "initial"]);
+            for name in linked {
+                let path = root.with_file_name(name);
+                run(
+                    &root,
+                    &["worktree", "add", "-q", "-b", name, path.to_str().unwrap()],
+                );
+            }
+            Self { folder, root }
+        }
+
+        fn linked(&self, name: &str) -> PathBuf {
+            self.root.with_file_name(name)
+        }
+
+        /// One read of every listed worktree measured against `main`.
+        fn measure(
+            &self,
+            measured: &Measured,
+            reuse_unchanged: bool,
+            time: (Instant, Duration),
+        ) -> BTreeMap<String, WorktreeFacts> {
+            let bases = BTreeMap::new();
+            let bases = Bases {
+                by_branch: &bases,
+                default_branch: Some("main"),
+                chosen: None,
+            };
+            measure(
+                measured,
+                &self.root,
+                listed_worktrees(&self.root, Instant::now() + GIT_DEADLINE).unwrap(),
+                &bases,
+                Refs::read(&self.root, Instant::now() + GIT_DEADLINE).as_ref(),
+                reuse_unchanged,
+                time,
+            )
+            .into_iter()
+            .map(|facts| (facts.branch.clone().unwrap(), facts))
+            .collect()
+        }
+    }
+
+    /// One worktree that does not answer is stopped at its own limit and
+    /// named, and the read still measures the worktree after it: before the
+    /// limit, a slow worktree spent the whole repository's time and the core
+    /// gave up on every worktree's answer.
     #[test]
-    fn the_origin_is_read_as_git_spells_it_and_only_from_a_small_file() {
-        assert_eq!(
-            origin_url("[Remote  \"origin\"]\n# a note\n\tURL = git@github.com:acme/app.git\n")
-                .as_deref(),
-            Some("git@github.com:acme/app.git")
+    fn a_worktree_that_does_not_answer_is_named_and_the_next_is_still_measured() {
+        let fixture = Fixture::new(&["stuck", "after"]);
+        // The subject of the test: a file system monitor that never answers
+        // holds `git status` in the stuck worktree until it is stopped.
+        let hook = fixture.folder.path().join("never-answers");
+        std::fs::write(&hook, "#!/bin/sh\nexec sleep 600\n").unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        run(
+            &fixture.root,
+            &["config", "extensions.worktreeConfig", "true"],
         );
-        assert_eq!(origin_url("[remote \"Origin\"]\n\turl = x\n"), None);
-        let dir = tempfile::tempdir().unwrap();
-        let big = dir.path().join("config");
-        std::fs::write(&big, vec![b'#'; CONFIG_CAP as usize + 1]).unwrap();
-        assert_eq!(read_config(&big), None);
-        assert_eq!(read_config(dir.path()), None, "a folder is not read");
+        run(
+            &fixture.linked("stuck"),
+            &[
+                "config",
+                "--worktree",
+                "core.fsmonitor",
+                hook.to_str().unwrap(),
+            ],
+        );
+        let facts = fixture.measure(
+            &Measured::default(),
+            false,
+            (
+                Instant::now() + Duration::from_secs(120),
+                Duration::from_secs(3),
+            ),
+        );
+        let stuck = &facts["stuck"];
+        assert!(
+            stuck
+                .unavailable_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("Worktree stuck was not fully measured")),
+            "{stuck:?}"
+        );
+        assert!(
+            stuck.ignored_scan_unavailable.is_some(),
+            "an unscanned worktree never claims it holds no repository"
+        );
+        for name in ["main", "after"] {
+            assert_eq!(facts[name].unavailable_reason, None, "{name}");
+        }
+        assert_eq!(facts["after"].ignored_scan_unavailable, None);
+    }
+
+    /// A read with no time left measures nothing: a worktree whose inputs
+    /// did not move answers its last measurement, and one that moved is
+    /// named, never shown with the facts of its old commit.
+    #[test]
+    fn a_read_out_of_time_keeps_what_did_not_move_and_names_what_did() {
+        let fixture = Fixture::new(&["moved", "quiet"]);
+        let measured = Measured::default();
+        let ample = || {
+            (
+                Instant::now() + Duration::from_secs(120),
+                WORKTREE_MEASURE_TIME,
+            )
+        };
+        let first = fixture.measure(&measured, false, ample());
+        run(
+            &fixture.linked("moved"),
+            &["commit", "-q", "--allow-empty", "-m", "moved"],
+        );
+        let spent = fixture.measure(&measured, true, (Instant::now(), WORKTREE_MEASURE_TIME));
+        assert_eq!(spent["quiet"], first["quiet"]);
+        assert_eq!(spent["main"], first["main"]);
+        let moved = &spent["moved"];
+        assert!(
+            moved
+                .unavailable_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("Worktree moved was not measured")),
+            "{moved:?}"
+        );
+        assert_eq!(moved.ahead, 0);
+        // The next read with time measures it, and only it.
+        let next = fixture.measure(&measured, true, ample());
+        assert_eq!(next["moved"].unavailable_reason, None);
+        assert_eq!(next["moved"].ahead, 1);
+        assert_eq!(next["quiet"], first["quiet"]);
+    }
+
+    fn ample() -> (Instant, Duration) {
+        (
+            Instant::now() + Duration::from_secs(120),
+            WORKTREE_MEASURE_TIME,
+        )
+    }
+
+    fn spent() -> (Instant, Duration) {
+        (Instant::now(), WORKTREE_MEASURE_TIME)
+    }
+
+    /// A node that started again reads what it measured before from its
+    /// folder: a worktree whose inputs did not move answers its last
+    /// measurement with no time to measure it, and one that moved is not
+    /// answered from it. Without the folder the same read has nothing.
+    #[test]
+    fn a_restarted_node_reuses_from_its_folder_only_what_did_not_move() {
+        let fixture = Fixture::new(&["moved", "quiet"]);
+        let folder = fixture.folder.path().join("worktree-facts");
+        let first = fixture.measure(&Measured::kept_in(folder.clone()), false, ample());
+        run(
+            &fixture.linked("moved"),
+            &["commit", "-q", "--allow-empty", "-m", "moved"],
+        );
+
+        let restarted = fixture.measure(&Measured::kept_in(folder), true, spent());
+        assert_eq!(restarted["quiet"], first["quiet"]);
+        assert_eq!(restarted["main"], first["main"]);
+        assert!(
+            restarted["moved"]
+                .unavailable_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("Worktree moved was not measured")),
+            "{:?}",
+            restarted["moved"]
+        );
+        let forgotten = fixture.measure(&Measured::default(), true, spent());
+        assert!(forgotten["quiet"].unavailable_reason.is_some());
+    }
+
+    /// A file of another version, or one that does not read, keeps nothing
+    /// and fails no read; the next read with time writes it again.
+    #[test]
+    fn a_file_of_another_version_or_that_does_not_read_keeps_nothing() {
+        let fixture = Fixture::new(&["quiet"]);
+        let folder = fixture.folder.path().join("worktree-facts");
+        fixture.measure(&Measured::kept_in(folder.clone()), false, ample());
+        let file = kept_file(&folder, &fixture.root);
+        let kept: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        let mut older = kept.clone();
+        older["version"] = serde_json::json!(KEPT_FILE_VERSION + 1);
+        for broken in [older.to_string(), "{\"version\":".to_owned()] {
+            std::fs::write(&file, broken).unwrap();
+            let read = fixture.measure(&Measured::kept_in(folder.clone()), true, spent());
+            assert!(
+                read["quiet"].unavailable_reason.is_some(),
+                "nothing was kept"
+            );
+        }
+        fixture.measure(&Measured::kept_in(folder.clone()), true, ample());
+        let read = fixture.measure(&Measured::kept_in(folder), true, spent());
+        assert_eq!(read["quiet"].unavailable_reason, None);
+    }
+
+    /// The folder holds the files of the last [`GIT_WATCH_LIMIT`]
+    /// repositories written, the one just written always among them.
+    #[test]
+    fn the_folder_keeps_the_files_of_the_last_repositories_written() {
+        let folder = tempfile::tempdir().unwrap();
+        let measured = Measured::kept_in(folder.path().to_path_buf());
+        for n in 0..=GIT_WATCH_LIMIT {
+            measured.keep(&PathBuf::from(format!("/repository-{n}")), Kept::new());
+        }
+        let files = std::fs::read_dir(folder.path()).unwrap().count();
+        assert_eq!(files, GIT_WATCH_LIMIT);
+        let last = PathBuf::from(format!("/repository-{GIT_WATCH_LIMIT}"));
+        assert!(kept_file(folder.path(), &last).is_file());
     }
 }

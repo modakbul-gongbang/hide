@@ -63,6 +63,7 @@ pub enum CommandKind {
         session: String,
     },
     WorkspaceInfo,
+    WorkspaceHookInfo,
     ViewList,
     ViewStatus {
         view_id: String,
@@ -73,14 +74,14 @@ pub enum CommandKind {
     },
     /// `hide links`: a read of the link record (PRD link-graph D-19).
     Links(herdr_core::links::query::LinksQuery),
-    /// `hide memory show|search|add|forget|undo|placed|outdated` (PRD project-memory-v2 D-03,
+    /// `hide memory show|search|add|forget|undo|placed|building|unbuilt|outdated|skipped` (PRD project-memory-v2 D-03,
     /// D-11).
     Memory(herdr_core::memory_command::MemoryCommand),
 }
 
 const LINKS_USAGE: &str = "usage: hide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]";
 
-const MEMORY_USAGE: &str = "usage: hide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | outdated <card> <reason>";
+const MEMORY_USAGE: &str = "usage: hide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | building <card> <branch> <path> | unbuilt <card> <reason> | outdated <card> <reason> | skipped <card> <reason>";
 
 const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>] | connect [--display <id>] | help | <command> <display> ... (see hide browser help)";
 
@@ -166,7 +167,11 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
                 parse_workspace_memory(&words)
             }
             Some("bootstrap") if iter.next().is_none() => Ok(CommandKind::WorkspaceBootstrap),
-            Some("info") if iter.next().is_none() => Ok(CommandKind::WorkspaceInfo),
+            Some("info") => match (iter.next().map(String::as_str), iter.next()) {
+                (None, None) => Ok(CommandKind::WorkspaceInfo),
+                (Some("--hook"), None) => Ok(CommandKind::WorkspaceHookInfo),
+                _ => Err("usage: hide workspace info [--hook]".to_owned()),
+            },
             _ => Err("usage: hide workspace info".to_owned()),
         },
         Some("file") => parse_open(iter, true),
@@ -236,10 +241,22 @@ fn parse_memory<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Comman
                 path: (*path).to_owned(),
             })
         }
-        (Some("outdated"), [card, reason @ ..]) if !reason.is_empty() => {
-            herdr_core::memory_command::parse_card(card).map(|number| MemoryCommand::Outdated {
+        (Some("building"), [card, branch, path]) => herdr_core::memory_command::parse_card(card)
+            .map(|number| MemoryCommand::Building {
                 number,
-                reason: reason.join(" "),
+                branch: (*branch).to_owned(),
+                path: (*path).to_owned(),
+            }),
+        (Some(verb @ ("outdated" | "skipped" | "unbuilt")), [card, reason @ ..])
+            if !reason.is_empty() =>
+        {
+            herdr_core::memory_command::parse_card(card).map(|number| {
+                let reason = reason.join(" ");
+                match verb {
+                    "skipped" => MemoryCommand::Skipped { number, reason },
+                    "unbuilt" => MemoryCommand::Unbuilt { number, reason },
+                    _ => MemoryCommand::Outdated { number, reason },
+                }
             })
         }
         (Some("search"), [_, ..]) if !rest.trim().is_empty() => {
@@ -472,7 +489,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         println!("{}", crate::agent_cli::USAGE);
         println!("{}", hide_factory::command::USAGE);
         println!(
-            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | outdated <card> <reason>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads, adds to and forgets from the caller's Project Memory, which the core keeps for the Projects of its own machine and of a node that dials in."
+            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | building <card> <branch> <path> | unbuilt <card> <reason> | outdated <card> <reason> | skipped <card> <reason>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads, adds to and forgets from the caller's Project Memory, which the core keeps in one store for the Projects of its own machine and every registered linked device with a Memory reader."
         );
         return Ok(());
     }
@@ -492,6 +509,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                     | CommandKind::Delivery(_)
                     | CommandKind::Factory(_)
                     | CommandKind::WorkspaceInfo
+                    | CommandKind::WorkspaceHookInfo
                     | CommandKind::ViewList
                     | CommandKind::ViewStatus { .. }
                     | CommandKind::BrowserOpen { .. }
@@ -555,6 +573,14 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
             Ok(())
         }
         CommandKind::WorkspaceInfo => workspace_query(&env, "info"),
+        CommandKind::WorkspaceHookInfo => {
+            let answer = crate::workspace_cli::request_hook(
+                &env,
+                hide_node_link::panes::HookCommand::WorkspaceInfo {},
+            )?;
+            println!("{answer}");
+            Ok(())
+        }
         CommandKind::FactoryQuestionGuard { session, runtime } => {
             let credential = crate::workspace_cli::Credential::acquire(&env)?;
             let answer = crate::workspace_cli::request_factory_question_guard(
@@ -573,10 +599,8 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
             const NEXT: &str = "Continue without Project Memory";
             let prompt = crate::workspace_cli::read_memory_prompt(std::io::stdin().lock())
                 .or_else(|reason| workspace_refusal(&reason, NEXT))?;
-            let credential = crate::workspace_cli::Credential::acquire(&env)
-                .or_else(|reason| workspace_refusal(&reason, NEXT))?;
             let answer = crate::workspace_cli::request_memory_hook(
-                &credential,
+                &env,
                 json_memory_hook_ask(&event, &runtime, &session, &prompt),
             )
             .or_else(|reason| workspace_refusal(&reason, NEXT))?;
@@ -608,7 +632,15 @@ fn memory(env: &Env, command: &herdr_core::memory_command::MemoryCommand) -> Res
         let reason = match command {
             MemoryCommand::Add { .. } => "memory_text_too_long",
             MemoryCommand::Placed { .. } => "memory_path_not_found",
-            MemoryCommand::Outdated { .. } => "memory_reason_invalid",
+            MemoryCommand::Building { branch, .. }
+                if !herdr_core::memory_command::branch_name(branch) =>
+            {
+                "memory_branch_not_found"
+            }
+            MemoryCommand::Building { .. } => "memory_building_path_not_found",
+            MemoryCommand::Outdated { .. }
+            | MemoryCommand::Skipped { .. }
+            | MemoryCommand::Unbuilt { .. } => "memory_reason_invalid",
             _ => "invalid_request",
         };
         return workspace_refusal(reason, next_action(reason));
@@ -689,6 +721,33 @@ fn memory_text(
                         .to_owned(),
                 );
             }
+            let comparison = &result["document_comparison"];
+            if comparison.is_object() {
+                let document = text(&comparison["document"]);
+                lines.push(match comparison["authority"].as_str() {
+                    Some("card_newer") => {
+                        format!("Document comparison: the operator's words are newer than {document}.")
+                    }
+                    Some("outdated") => format!(
+                        "Document comparison: {document} is newer than the operator's words, so this card is outdated."
+                    ),
+                    _ => format!(
+                        "Document comparison: {document} disagrees with the operator's words, and which is newer is not known."
+                    ),
+                });
+                lines.push(format!(
+                    "Document says: {}",
+                    text(&comparison["document_text"])
+                ));
+                let session = comparison["source_session"]
+                    .as_str()
+                    .map(|session| format!(" (session {session})"))
+                    .unwrap_or_default();
+                lines.push(format!(
+                    "Operator said{session}: {}",
+                    text(&comparison["operator_text"])
+                ));
+            }
             lines.join("\n") + "\n"
         }
         MemoryCommand::Forget { .. } => {
@@ -707,8 +766,22 @@ fn memory_text(
             text(&result["card"]),
             text(&result["path"])
         ),
+        MemoryCommand::Building { .. } => format!(
+            "{} goes into {} with the pull request of {}; this attempt ends without one.\n",
+            text(&result["card"]),
+            text(&result["path"]),
+            text(&result["branch"])
+        ),
+        MemoryCommand::Unbuilt { .. } => format!(
+            "{} returns to To ask as not built yet, with its reason; this attempt ends without a pull request.\n",
+            text(&result["card"])
+        ),
         MemoryCommand::Outdated { .. } => format!(
             "{} is marked outdated; Hide checks it again and this attempt ends without a pull request.\n",
+            text(&result["card"])
+        ),
+        MemoryCommand::Skipped { .. } => format!(
+            "{} returns to To ask with its reason. Other cards stay in the shared pull request; retry continues the same branch.\n",
             text(&result["card"])
         ),
         MemoryCommand::Search { .. } => {
@@ -1289,6 +1362,11 @@ impl ConnectError {
 /// so a dev or e2e daemon elsewhere is never replaced, and stopping it
 /// leaves Herdr, its panes and their agents running.
 ///
+/// The app's own `hide` first moves a Herdr server another Hide app
+/// started onto this app's Herdr, its panes kept
+/// ([`crate::herdr_handoff`]), so the daemon follows a server of the same
+/// app.
+///
 /// The whole look-and-replace holds this state folder's connect lock, so
 /// two connects never both stop a daemon and start their own.
 ///
@@ -1410,21 +1488,28 @@ fn find_or_start(env: &Env) -> Result<Healthy, ConnectError> {
     move_legacy_state(env).map_err(ConnectError::StartFailed)?;
     let _serialized = state_file::lock_connect(&env.state_dir)
         .map_err(|error| ConnectError::StartFailed(format!("the connect lock: {error}")))?;
+    // Judged by the file this `hide` is, not the link it was invoked
+    // through: the kit's command resolves into its package, and a link that
+    // only looks like a package path has no authority.
+    let package = std::env::current_exe()
+        .and_then(|path| path.canonicalize())
+        .ok()
+        .as_deref()
+        .and_then(hide_kit::bundled_kit_dir);
+    // Before the daemon, so a daemon this connect starts or keeps finds the
+    // server it will follow already running this app's Herdr.
+    if let Some(herdr) = package.as_deref().and_then(|kit| given_herdr(env, kit))
+        && let Some(socket) = &env.herdr_socket_path
+        && let Some(record) = crate::herdr_handoff::hand_off(&herdr, Path::new(socket)).record()
+    {
+        eprintln!("{record}");
+    }
     if let Some((state, health)) = healthy_daemon(env) {
         let running = health.get("build").and_then(serde_json::Value::as_str);
         if running == Some(build.as_str()) {
             return Ok((state, health));
         }
-        // Judged by the file this `hide` is, not the link it was invoked
-        // through: the kit's command resolves into its package, and a
-        // link that only looks like a package path has no authority.
-        let from_package = std::env::current_exe()
-            .and_then(|path| path.canonicalize())
-            .ok()
-            .as_deref()
-            .and_then(hide_kit::bundled_kit_dir)
-            .is_some();
-        if !from_package {
+        if package.is_none() {
             eprintln!(
                 "{}",
                 serde_json::json!({
@@ -1463,6 +1548,16 @@ fn find_or_start(env: &Env) -> Result<Healthy, ConnectError> {
     // The daemon outlives this command; nothing waits for it.
     std::mem::forget(daemon);
     started
+}
+
+/// The Herdr the app in `kit` ships, when it is the one this connect was
+/// given (`HERDR_BIN_PATH`): the host hands its own unless the operator
+/// named another, whose server is theirs to keep.
+fn given_herdr(env: &Env, kit: &Path) -> Option<std::path::PathBuf> {
+    let shipped = kit.join(format!("herdr{}", std::env::consts::EXE_SUFFIX));
+    let given = env.herdr_bin_path.as_deref()?;
+    let same = hide_platform::fs::identity::same_file(given, &shipped).ok()?;
+    same.then_some(shipped)
 }
 
 /// How long an updated core has to answer `/health` once its update said
@@ -2656,6 +2751,30 @@ mod tests {
                 path: "docs/TESTING.md".into()
             }))
         );
+        assert_eq!(
+            parse(&[
+                "hide",
+                "memory",
+                "building",
+                "m5",
+                "feat/overview",
+                "docs/UI_BEHAVIOR.md"
+            ]),
+            Ok(CommandKind::Memory(MemoryCommand::Building {
+                number: 5,
+                branch: "feat/overview".into(),
+                path: "docs/UI_BEHAVIOR.md".into()
+            }))
+        );
+        assert_eq!(
+            parse(&[
+                "hide", "memory", "unbuilt", "m5", "no", "branch", "builds", "it"
+            ]),
+            Ok(CommandKind::Memory(MemoryCommand::Unbuilt {
+                number: 5,
+                reason: "no branch builds it".into()
+            }))
+        );
         for bad in [
             &["hide", "memory", "forget"][..],
             &["hide", "memory", "undo", "5x"],
@@ -2666,6 +2785,8 @@ mod tests {
             &["hide", "memory", "add", " "],
             &["hide", "memory", "edit", "m1"],
             &["hide", "memory", "placed", "m1"],
+            &["hide", "memory", "building", "m1", "feat/overview"],
+            &["hide", "memory", "unbuilt", "m1"],
         ] {
             assert_eq!(parse(bad), Err(MEMORY_USAGE.to_owned()), "{bad:?}");
         }
@@ -2687,7 +2808,46 @@ mod tests {
             shown,
             "m3 · rule · active · 2 sources, 1 from the operator\nTests run with nextest\n\nRun tests with nextest.\nFiles: docs/TESTING.md\n"
         );
+        let compared = memory_text(
+            &MemoryCommand::Show { number: 9 },
+            &serde_json::json!({
+                "card": "m9", "title": "Backlog follows one source", "kind": "decision",
+                "state": "active", "body": "Missed work offers 백로그로.",
+                "sources": 2, "operator_sources": 2,
+                "document_comparison": {
+                    "authority": "card_newer", "document": "docs/AI_PROVIDERS.md",
+                    "document_text": "An explicit `이슈로` press drafts an issue.",
+                    "document_at_unix_ms": 1, "operator_text": "좋아",
+                    "operator_at_unix_ms": 2, "source_session": "s-1",
+                },
+            }),
+        );
+        assert_eq!(
+            compared,
+            "m9 · decision · active · 2 sources, 2 from the operator\nBacklog follows one source\n\nMissed work offers 백로그로.\nDocument comparison: the operator's words are newer than docs/AI_PROVIDERS.md.\nDocument says: An explicit `이슈로` press drafts an issue.\nOperator said (session s-1): 좋아\n"
+        );
         let search = MemoryCommand::Search { words: "x".into() };
+        assert_eq!(
+            memory_text(
+                &MemoryCommand::Skipped {
+                    number: 6,
+                    reason: "Guide unavailable".into()
+                },
+                &serde_json::json!({"card":"m6","outcome":"skipped"})
+            ),
+            "m6 returns to To ask with its reason. Other cards stay in the shared pull request; retry continues the same branch.\n"
+        );
+        assert_eq!(
+            memory_text(
+                &MemoryCommand::Building {
+                    number: 6,
+                    branch: "feat/overview".into(),
+                    path: "docs/UI_BEHAVIOR.md".into()
+                },
+                &serde_json::json!({"card":"m6","outcome":"building","branch":"feat/overview","path":"docs/UI_BEHAVIOR.md"})
+            ),
+            "m6 goes into docs/UI_BEHAVIOR.md with the pull request of feat/overview; this attempt ends without one.\n"
+        );
         assert_eq!(
             memory_text(&search, &serde_json::json!({"cards": []})),
             "No card matches.\n"

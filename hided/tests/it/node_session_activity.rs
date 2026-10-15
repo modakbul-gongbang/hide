@@ -186,7 +186,16 @@ fn serve_preserves_kit_protocol_alongside_activity() {
     let build = home_path.join("fixture-helper/0123456789abcdef");
     fs::create_dir_all(&build).unwrap();
     let helper = build.join(Path::new(HELPER).file_name().unwrap());
-    fs::copy(HELPER, &helper).unwrap();
+    // Materialize independent bytes: an APFS clone of a debug executable can
+    // stall before main on its first execution. This
+    // fixture tests the helper protocol, not cloned-file launch latency.
+    let mut source = fs::File::open(HELPER).unwrap();
+    let mut destination = fs::File::create(&helper).unwrap();
+    std::io::copy(&mut source, &mut destination).unwrap();
+    destination
+        .set_permissions(source.metadata().unwrap().permissions())
+        .unwrap();
+    drop(destination);
     let reinstall = json!({"op":"kit", "action":{
         "kind":"reinstall", "components":["cli"], "agents_on":["pi"], "agents_off":["cursor"]
     }, "cli_dir":"relative-refused", "herdr_socket":null});

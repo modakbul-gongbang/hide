@@ -2,7 +2,7 @@
 import importlib.util
 import json
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 import tempfile
 import unittest
@@ -53,6 +53,12 @@ class Selection(unittest.TestCase):
         self.assertIn("herdr-core", plan("hided/src/core.rs")["rust_packages"])
         self.assertTrue({"web-e2e", "windows-e2e"} <= set(plan("desktop/src/main/wirePath.ts")["lanes"]))
         self.assertTrue({"checks", "web-e2e"} <= set(plan("design/tokens.json")["lanes"]))
+        # A guide a test reads is more than documentation.
+        self.assertEqual(plan("docs/UI_BEHAVIOR.md")["lanes"], ["policy", "checks"])
+        guide = plan("docs/AI_PROVIDERS.md")
+        self.assertEqual(guide["lanes"], ["policy", "rust"])
+        self.assertEqual(guide["rust_packages"], ["hide-agent-adapter"])
+        self.assertEqual(plan("web/src/assets/agents/manifest.json")["rust_packages"], ["herdr-core", "hide-agent-adapter"])
 
     def test_a_web_display_change_skips_windows_and_desktop(self):
         result = plan("web/src/components/ui/button.tsx", "web/src/Overview.tsx")
@@ -218,7 +224,7 @@ class Selection(unittest.TestCase):
             [("M", "Cargo.lock")],
             [("M", "pnpm-lock.yaml")],
             [("M", "scripts/check-runtime-gates.sh")],
-            [("M", "contracts/hided-ws.schema.json")],
+            [("M", "contracts/delivery-envelope.json")],
             [("M", "web/package.json")],
             [("M", "scripts/design-scratch.mjs")],
             [("M", "mystery/file.txt")],
@@ -315,10 +321,13 @@ class NamedPaths(unittest.TestCase):
     def test_paths_no_lane_reads_plan_policy_alone(self):
         for path in (
             "site/index.html", "tools/t1-preflight/README.md", "spikes/web-shell/measure/summarize.py", "agents/prd/x/prd.md",
-            ".gitignore", "web/.gitignore", ".github/pull_request_template.md", ".github/dependabot.yml",
-            ".github/workflows/nightly.yml", ".github/workflows/herdr-update.yml",
+            ".gitignore", "web/.gitignore", "LICENSE", "NOTICE", ".github/pull_request_template.md", ".github/dependabot.yml",
+            ".github/workflows/nightly.yml", ".github/workflows/herdr-update.yml", ".github/workflows/perf.yml",
             "scripts/tests/test_ci_plan.py", "scripts/check-harness-ignore-anchor.sh",
             "scripts/pen-system.mjs", "scripts/design-review.mjs", "scripts/web-shell-measure/run.sh",
+            # The design contract's generators and checks, which `design-contract.yml` runs.
+            "scripts/gen-tokens.mjs", "scripts/gen-screens.mjs", "scripts/gen-pen.mjs", "scripts/pen-token-map.json",
+            "scripts/check-design-contract.mjs", "scripts/check-web-tokens.mjs", "scripts/check-agent-logos.mjs",
             "scripts/premerge-check.py", "contracts/README.md", "site/README.md",
         ):
             with self.subTest(path=path):
@@ -345,6 +354,8 @@ class NamedPaths(unittest.TestCase):
             "web/eslint-rules/hide-e2e.mjs": {"checks"},
             "web/scripts/check-e2e-test-size.mjs": {"checks"},
             "web/scripts/gen-types.mjs": {"checks", "web-e2e"},
+            # Every lane that builds the shell or runs its unit suite, and none that only builds Rust.
+            "web/vite.config.ts": {"checks", "web-e2e", "windows-e2e", "desktop-e2e", "windows-desktop", "windows-check"},
             "desktop/eslint.config.mjs": {"checks"},
             "desktop/eslint.globals.mjs": {"checks"},
             "desktop/scripts/build.mjs": {"checks", "desktop-e2e", "windows-desktop", "package"},
@@ -355,13 +366,54 @@ class NamedPaths(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(self.lanes(path), lanes | {"policy"})
 
+    def test_a_contract_plans_the_tests_and_the_shell_that_read_it(self):
+        expected = {
+            "contracts/hided-ws.schema.json": ({"policy", "rust"}, ["herdr-core", "hide-agent-adapter"]),
+            "contracts/snapshot-wire-enums.json": ({"policy", "rust", "checks"}, ["herdr-core"]),
+            "contracts/agent-adapters.json": ({"policy", "rust", "checks", "web-e2e"}, ["hide-agent-adapter"]),
+            "contracts/hide-cli.json": ({"policy", "rust"}, ["hided"]),
+            "contracts/usage-coverage.json": ({"policy", "rust"}, ["hide-agent-adapter"]),
+        }
+        sources = code_sources()
+        for path, (lanes, packages) in expected.items():
+            with self.subTest(path=path):
+                result = plan(path)
+                self.assertFalse(result["full"])
+                self.assertEqual(set(result["lanes"]), lanes)
+                self.assertEqual(result["rust_packages"], packages)
+                # The claim behind it, from the sources rather than READERS:
+                # the crates whose code names the file are the ones planned, a
+                # web unit test that reads it brings `checks`, and web shell
+                # code brings `checks` and `web-e2e`. A reader anywhere else
+                # names a lane this rule does not plan.
+                read = set()
+                for source, (crate, text) in sources.items():
+                    if PurePosixPath(path).name not in text:
+                        continue
+                    if crate:
+                        read |= {"rust", f"crate:{crate}"}
+                    elif source.startswith("web/src/") and re.search(r"\.test\.tsx?$", source):
+                        read.add("checks")
+                    elif source.startswith("web/src/"):
+                        read |= {"checks", "web-e2e"}
+                    else:
+                        read.add(f"unplanned reader: {source}")
+                self.assertEqual(read, (lanes - {"policy"}) | {f"crate:{name}" for name in packages})
+
+    def test_a_contract_no_reader_is_named_for_still_plans_every_lane(self):
+        for path in ("contracts/delivery-envelope.json", "contracts/some-new-contract.json"):
+            with self.subTest(path=path):
+                self.assertEqual(plan(path)["lanes"], FULL)
+
     def test_everything_else_still_plans_every_lane(self):
         for path in (
-            ".github/workflows/pr.yml", ".github/workflows/web-e2e.yml", ".github/workflows/os-contract.yml",
+            ".github/workflows/pr.yml",
             "scripts/ci-plan.py", "scripts/verify-cargo.sh", "scripts/verify-web.sh", "scripts/ci-flaky-report.py",
             "scripts/fetch-herdr-runtime.sh", "scripts/install-nextest.sh", "scripts/toolchain-env.sh",
+            # Every member but two depends on `workspace-hack`, which holds
+            # nearly every third-party crate: a lock change reaches them all.
             "pnpm-lock.yaml", "web/package.json", "desktop/package.json", "Cargo.lock", ".config/nextest.toml", "clippy.toml",
-            "contracts/herdr-bundle.json", "contracts/herdr-api.schema.json", "contracts/hided-ws.schema.json",
+            "contracts/herdr-bundle.json", "contracts/herdr-api.schema.json",
             "mystery/file.txt", "scripts/some-new-script.sh", "web/some-new-config.json",
         ):
             with self.subTest(path=path):
@@ -384,7 +436,8 @@ class NamedPaths(unittest.TestCase):
         pr = (workflows / "pr.yml").read_text()
         policy = pr[pr.index("\n  policy:\n"):pr.index("\n  rust:\n")]
         callers = pr.replace(policy, "") + "".join(
-            (workflows / name).read_text() for name in ("web-e2e.yml", "os-contract.yml", "package.yml")
+            (workflows / name).read_text()
+            for name in ("web-e2e.yml", "desktop-e2e.yml", "os-contract.yml", "remote-mailbox.yml", "package.yml")
         )
         for helper in ("verify-cargo.sh", "verify-web.sh", "toolchain-env.sh", "install-nextest.sh", "fetch-herdr-runtime.sh",
                        "fetch-herdr-runtime.ps1", "ci-flaky-report.py", "check-herdr-schema.py"):
@@ -398,6 +451,20 @@ class NamedPaths(unittest.TestCase):
                 with self.subTest(script=found.name):
                     self.assertNotIn(found.name, callers)
         self.assertGreater(checked, 8)
+
+
+def code_sources():
+    """Each Rust, web and desktop source's code with comment lines left out, by path, with its crate."""
+    crate_of = {directory: crate["name"] for directory, crate in CRATES.items()}
+    sources = {}
+    for folder in [*crate_of, "web/src", "web/e2e", "desktop/src", "desktop/e2e"]:
+        for source in (ROOT / folder).rglob("*"):
+            if source.suffix not in (".rs", ".ts", ".tsx", ".mjs", ".js") or "node_modules" in source.parts:
+                continue
+            lines = source.read_text(encoding="utf-8").splitlines()
+            code = "\n".join(line for line in lines if not line.lstrip().startswith(("//", "/*", "*")))
+            sources[source.relative_to(ROOT).as_posix()] = (crate_of.get(folder), code)
+    return sources
 
 
 def pr_jobs():
@@ -424,6 +491,20 @@ def runner_jobs(block):
 
 class Workflows(unittest.TestCase):
     """`pr.yml` has the jobs the plan names, and the job count TESTING.md states."""
+
+    def test_a_workflow_a_lane_calls_plans_the_lanes_that_call_it(self):
+        callers = {}
+        for lane, block in pr_jobs().items():
+            for called in re.findall(r"uses: \./(\.github/workflows/[a-z0-9-]+\.yml)", block):
+                callers.setdefault(called, set()).add(lane)
+        self.assertEqual(len(callers), 5)
+        for workflow, lanes in callers.items():
+            with self.subTest(workflow=workflow):
+                result = plan(workflow)
+                self.assertFalse(result["full"])
+                # `package.yml` reaches `package` through PACKAGE_PATHS, like every package input.
+                self.assertEqual(set(result["lanes"]), lanes | {"policy"})
+                self.assertEqual(result["rust_packages"], [])
 
     def test_the_package_lane_is_the_only_way_a_pull_request_reaches_package_yml(self):
         # One list of package paths: `package.yml` has no trigger to keep in step with PACKAGE_PATHS.

@@ -51,6 +51,8 @@ fn session(right: Option<f32>, zoomed: bool) -> SessionSnapshotPayload {
             rect: rect(0, 80),
         }];
         payload.panes.push(SessionPanePayload {
+            terminal_id: None,
+            failed_terminal_id: None,
             foreground_process: None,
             pane_id: RIGHT.to_owned(),
             tokens: Default::default(),

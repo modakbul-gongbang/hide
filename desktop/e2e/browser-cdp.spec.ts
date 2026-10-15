@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 import { WebSocket } from "ws";
 import type { BrowserSync } from "../../web/src/host";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
-import { enterWorkspace } from "../../web/e2e/wire";
+import { enterWorkspace, showTool } from "../../web/e2e/wire";
 import { BROWSER_SYNC_CHANNEL } from "../src/channel";
 import { fitWindow, HIDE_CLI, hostLog, isolate, launch, REPO, test, type Isolated } from "./fixture";
 
@@ -151,12 +151,12 @@ async function targets(capability: Capability): Promise<Target[]> {
   expect(response.status).toBe(200);
   return await response.json() as Target[];
 }
+/** The files tool expanded over the whole body, so its areas have room to split (PRD right-lane B8). */
 async function expandViews(shell: Page): Promise<void> {
   await fitWindow(app!, { width: 1024, height: 640 });
-  const views = shell.locator('[data-column="views"]');
-  if ((await views.count()) === 0) await shell.locator('[data-column-toggle="views"]').click();
-  await expect(views).toBeVisible();
-  await expect(shell.locator('[data-column="tools"]')).toHaveCount(0);
+  await showTool(shell, "files");
+  await shell.locator("[data-lane-expand]").click();
+  await expect(shell.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "expanded");
 }
 /** Attest the real Chromium IDs through each candidate WebContents itself. */
 async function excludedRendererIds(foreignUrl: string): Promise<string[]> {

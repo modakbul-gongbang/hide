@@ -401,6 +401,7 @@ fn reconciling_with_a_precomputed_catalog_runs_no_git() {
         &workspace::paths_here(Runtime::session_cwds(&payload)),
     );
     let catalog = session_sync::PrecomputedCatalog {
+        worktrees: no_worktrees(),
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
             &crate::node::test_node(),
@@ -501,6 +502,7 @@ fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
         &workspace::paths_here(Runtime::session_cwds(&payload())),
     );
     let fresh = session_sync::PrecomputedCatalog {
+        worktrees: no_worktrees(),
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
             &crate::node::test_node(),
@@ -522,6 +524,7 @@ fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
     assert!(!accepted.is_empty(), "the first catalog was accepted");
 
     let stale = session_sync::PrecomputedCatalog {
+        worktrees: runtime.worktree_catalog(),
         registrations: vec![WorkspaceRegistration {
             primary_checkout_id: None,
             id: "workspace:stale".to_owned(),
@@ -549,6 +552,25 @@ fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
         runtime.snapshot().navigator.workspaces,
         accepted,
         "the last accepted catalog stands until the next publish"
+    );
+    let mut old_worktrees = runtime.worktree_catalog();
+    old_worktrees.projects.push(Default::default());
+    let stale = session_sync::PrecomputedCatalog {
+        registrations: runtime.snapshot().ui_state.workspace_registrations.clone(),
+        worktrees: old_worktrees,
+        workspaces: Vec::new(),
+        paths: Default::default(),
+    };
+    runtime.ingest_session_with_catalog(Ok(payload()), Some(stale));
+    assert_eq!(
+        runtime.snapshot().navigator.workspaces,
+        accepted,
+        "a worktree change between preparation and apply fences the old catalog too"
+    );
+    assert_eq!(
+        node.calls(),
+        after,
+        "a stale worktree answer does not read under the lock"
     );
     assert!(
         runtime
@@ -1007,9 +1029,11 @@ fn a_failed_lookup_keeps_the_pull_requests_it_could_not_refresh() {
         closed_at_unix_ms: None,
         head_oid: None,
         cross_repository: false,
+        work: Default::default(),
     };
     runtime.ingest_github(GithubSnapshot {
         projects: vec![GithubProjectSnapshot {
+            viewer: None,
             issues: Default::default(),
             root_path: "/tmp/hide".to_owned(),
             status: GithubStatusSnapshot {
@@ -1025,6 +1049,7 @@ fn a_failed_lookup_keeps_the_pull_requests_it_could_not_refresh() {
 
     runtime.ingest_github(GithubSnapshot {
         projects: vec![GithubProjectSnapshot {
+            viewer: None,
             root_path: "/tmp/hide".to_owned(),
             status: GithubStatusSnapshot {
                 available: true,
@@ -1045,6 +1070,7 @@ fn a_failed_lookup_keeps_the_pull_requests_it_could_not_refresh() {
     assert_eq!(project.status.last_success_at_unix_ms, Some(1_000));
     runtime.ingest_github(GithubSnapshot {
         projects: vec![GithubProjectSnapshot {
+            viewer: None,
             root_path: "/tmp/hide".to_owned(),
             status: GithubStatusSnapshot {
                 available: false,
@@ -1063,6 +1089,7 @@ fn a_failed_lookup_keeps_the_pull_requests_it_could_not_refresh() {
     fresh_pr.number = 8;
     runtime.ingest_github(GithubSnapshot {
         projects: vec![GithubProjectSnapshot {
+            viewer: None,
             root_path: "/tmp/hide".into(),
             pull_requests: vec![fresh_pr.clone()],
             pull_requests_read: true,
@@ -2032,6 +2059,7 @@ fn branch_migration_receipt_preserves_core_focus() {
             purpose_error: None,
             unconfirmed_purpose_token: None,
             issue_error: None,
+            shell: crate::agent_start::ShellStart::Plain,
         })
     ));
     assert_eq!(
@@ -2096,6 +2124,7 @@ fn created_worktree_starts_collapsed_and_keeps_purpose_failure_non_blocking() {
             purpose_error: Some("injected purpose mirror failure".to_owned()),
             unconfirmed_purpose_token: Some("Unconfirmed creation purpose".to_owned()),
             issue_error: None,
+            shell: crate::agent_start::ShellStart::Plain,
         })
     ));
 
@@ -2324,6 +2353,7 @@ fn a_pane_in_a_second_directory_projects_into_its_own_project() {
     }))
     .expect("second directory pane payload");
     let catalog = session_sync::PrecomputedCatalog {
+        worktrees: runtime.worktree_catalog(),
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
             &crate::node::test_node(),
@@ -2440,6 +2470,7 @@ fn another_workspace_layout_does_not_steal_the_selected_checkout_projection() {
     }))
     .expect("two workspace layout payload");
     let catalog = session_sync::PrecomputedCatalog {
+        worktrees: runtime.worktree_catalog(),
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
             &crate::node::test_node(),
@@ -2452,7 +2483,9 @@ fn another_workspace_layout_does_not_steal_the_selected_checkout_projection() {
                 &crate::model::WorktreeCatalogSnapshot::default(),
             ),
         ),
-        paths: Default::default(),
+        // Both layouts have the same answered checkout path, so the selected
+        // pane decides the projection rather than an unresolved-path gate.
+        paths: workspace::paths_here([checkout_path]).into(),
     };
     assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
 
@@ -2554,6 +2587,7 @@ fn closing_the_last_pane_keeps_an_unregistered_project_listed() {
     }))
     .expect("occupied payload");
     let catalog = session_sync::PrecomputedCatalog {
+        worktrees: runtime.worktree_catalog(),
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
             &crate::node::test_node(),
@@ -2682,6 +2716,7 @@ fn closing_the_last_projected_pane_leaves_an_empty_checkout_without_an_error() {
     assert!(runtime.ingest_session_with_catalog(
         Ok(payload),
         Some(session_sync::PrecomputedCatalog {
+            worktrees: runtime.worktree_catalog(),
             registrations: vec![registration],
             workspaces: vec![current_workspace],
             paths: Default::default(),
@@ -2774,6 +2809,7 @@ fn a_foreign_stale_projection_is_not_mistaken_for_checkout_pane_retirement() {
     assert!(runtime.ingest_session_with_catalog(
         Ok(payload),
         Some(session_sync::PrecomputedCatalog {
+            worktrees: runtime.worktree_catalog(),
             registrations: vec![registration],
             workspaces: vec![current_workspace],
             paths: Default::default(),
@@ -2802,12 +2838,15 @@ fn an_explicit_checkout_waits_without_rendering_stale_projection_when_catalog_is
     runtime.snapshot.navigator.focused_checkout_id = Some(stale_checkout_id.to_owned());
     runtime.snapshot.ui_state.focused_checkout_id = Some(stale_checkout_id.to_owned());
     runtime.snapshot.terminal.pane_id = Some("w3P:p1".to_owned());
-    runtime.snapshot.terminal.panes = vec![TerminalPaneSnapshot {
+    let retained_pane = TerminalPaneSnapshot {
         pane_id: "w3P:p1".to_owned(),
         closed: false,
         exit_code: None,
+        transport_state: "controlling".to_owned(),
+        transport_generation: 7,
         ..TerminalPaneSnapshot::default()
-    }];
+    };
+    runtime.snapshot.terminal.panes = vec![retained_pane.clone()];
     runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
         workspace_id: "w3P".to_owned(),
         tab_id: "w3P:t1".to_owned(),
@@ -2849,24 +2888,58 @@ fn an_explicit_checkout_waits_without_rendering_stale_projection_when_catalog_is
     .expect("stale projection payload");
 
     assert!(runtime.ingest_session_with_catalog(
-        Ok(payload),
+        Ok(payload.clone()),
         Some(session_sync::PrecomputedCatalog {
+            worktrees: runtime.worktree_catalog(),
             registrations: Vec::new(),
             workspaces: Vec::new(),
             paths: Default::default(),
         }),
     ));
-    // The layout stays in the snapshot because it is Herdr's and it
-    // describes a tab that exists. What must not happen is drawing it,
-    // and that is settled by the tab projection going empty and the
-    // projection-unavailable error being raised, both asserted here. The
-    // shell has no checkout to look a tab up in, so it has no layout to
-    // draw either.
+    // Layout and transport metadata belong to Herdr's live pane, not to
+    // the missing checkout selection. The shell cannot draw this pane:
+    // it has neither the selected checkout nor a tab to look a layout up
+    // for. Clearing retained metadata here would discard its warm terminal.
     assert_eq!(runtime.snapshot().pane_layouts.len(), 1);
-    assert!(runtime.snapshot().terminal.panes.is_empty());
+    assert_eq!(runtime.snapshot().terminal.panes, vec![retained_pane]);
+    assert!(runtime.snapshot().navigator.workspaces.is_empty());
+    assert_eq!(
+        runtime.snapshot().navigator.focused_checkout_id.as_deref(),
+        Some(stale_checkout_id)
+    );
     assert!(runtime.snapshot().tab.empty);
+    assert_eq!(runtime.snapshot().tab.id, None);
     assert!(runtime.snapshot().tab.panes.is_empty());
     assert_eq!(runtime.snapshot().tab.checkout_id, None);
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("pane.projection_unavailable")
+    );
+
+    // Losing the catalog must not disable cleanup: Herdr subsequently
+    // removes the pane while that same checkout is still unavailable.
+    let mut closed = payload;
+    closed.panes.clear();
+    closed.tabs.clear();
+    closed.layouts.clear();
+    assert!(runtime.ingest_session_with_catalog(
+        Ok(closed),
+        Some(session_sync::PrecomputedCatalog {
+            worktrees: runtime.worktree_catalog(),
+            registrations: Vec::new(),
+            workspaces: Vec::new(),
+            paths: Default::default(),
+        }),
+    ));
+    assert!(runtime.snapshot().terminal.panes.is_empty());
+    assert!(runtime.snapshot().pane_layouts.is_empty());
+    assert!(runtime.snapshot().tab.empty);
+    assert_eq!(runtime.snapshot().tab.id, None);
     assert_eq!(
         runtime
             .snapshot()
@@ -3139,11 +3212,16 @@ fn a_task_agent_start_reports_apart_from_the_creation_it_follows() {
             purpose_error: None,
             unconfirmed_purpose_token: None,
             issue_error: None,
+            shell: crate::agent_start::ShellStart::Integrated {
+                program: "zsh".into(),
+            },
         }),
     ));
     let operation = runtime.snapshot().task_operation.clone().unwrap();
     assert_eq!(operation.phase, "ready");
     assert_eq!(operation.agent_phase.as_deref(), Some("starting"));
+    // The pane was made with the shell integration, so its start waits for
+    // the first prompt's mark.
     assert_eq!(
         runtime.pending_task_agent_start(id),
         Some(live::PendingAgentStart {
@@ -3154,6 +3232,9 @@ fn a_task_agent_start_reports_apart_from_the_creation_it_follows() {
             kind: "claude".to_owned(),
             prompt: None,
             args: Vec::new(),
+            shell: crate::agent_start::ShellStart::Integrated {
+                program: "zsh".into(),
+            },
         })
     );
     // An acknowledgement while the agent is still starting keeps the slot.
@@ -3838,4 +3919,155 @@ fn primary_checkout_refuses_missing_plain_folder_and_remote_targets() {
         &checkout_id,
         "workspace.primary_remote_read_only",
     );
+}
+
+/// A tab holding one pane, for an agent row to stand in.
+fn tab_with_pane(pane_id: &str) -> TabSnapshot {
+    TabSnapshot {
+        agent: None,
+        naming: Default::default(),
+        id: None,
+        workspace_id: None,
+        checkout_id: None,
+        label: None,
+        empty: false,
+        delegated: false,
+        panes: vec![crate::model::PaneSnapshot {
+            terminal_id: None,
+            failed_terminal_id: None,
+            id: pane_id.to_owned(),
+            herdr_label: None,
+            terminal_title: None,
+            cwd: "/tmp/hide-runtime-asleep".to_owned(),
+            status_code: crate::model::AgentStatusCode::Unknown,
+            requires_close_confirmation: false,
+            requires_close_status_check: false,
+            identity_label: None,
+            activity_at_unix_ms: None,
+            fork: Default::default(),
+            ports: vec![],
+            servers: vec![],
+            children: None,
+            lineage_path: Vec::new(),
+            sleep: None,
+            sleep_action: None,
+        }],
+    }
+}
+
+/// PRD sidebar-titlebar-refresh B2, B5 (D-19). Opening a sleeping project
+/// holds it open until an agent wakes, without touching the project's own
+/// fold; once it wakes the key is forgotten, so the next sleep starts folded.
+/// The No agents fold opens through the shared fold event and its own key.
+#[test]
+fn a_sleeping_project_stays_open_until_it_wakes() {
+    let mut runtime = runtime();
+    let path = "/tmp/hide-runtime-asleep";
+    runtime.snapshot.navigator.workspaces = vec![
+        workspace(
+            "workspace-asleep",
+            "Asleep",
+            path,
+            vec![CheckoutSnapshot {
+                id: "asleep".to_owned(),
+                workspace_id: "workspace-asleep".to_owned(),
+                path: path.to_owned(),
+                is_primary: true,
+                exists: true,
+                ..CheckoutSnapshot::default()
+            }],
+        ),
+        workspace(
+            "workspace-empty",
+            "Empty",
+            "/tmp/hide-runtime-empty",
+            vec![CheckoutSnapshot {
+                id: "empty".to_owned(),
+                workspace_id: "workspace-empty".to_owned(),
+                path: "/tmp/hide-runtime-empty".to_owned(),
+                is_primary: true,
+                exists: true,
+                ..CheckoutSnapshot::default()
+            }],
+        ),
+    ];
+    let sleeper = crate::agent_sleep::SleepingSessionSnapshot {
+        sleep_id: crate::agent_sleep::SleepId::new().unwrap(),
+        node_id: crate::node::TEST_NODE.to_owned(),
+        checkout_path: path.to_owned(),
+        kind: "claude".to_owned(),
+        identity_label: "asleep".to_owned(),
+        phase: crate::agent_sleep::DormantPhase::Sleeping,
+        since_unix_ms: 4_000,
+        reason: None,
+        group: "idle",
+        wake_available: true,
+        checking: false,
+    };
+    runtime.snapshot.navigator.sleeping_sessions = vec![sleeper.clone()];
+    runtime.refresh_inactive_groups();
+    let asleep = |runtime: &Runtime| {
+        runtime.snapshot.navigator.workspaces[0]
+            .agent_presence
+            .asleep
+            .clone()
+    };
+    assert_eq!(asleep(&runtime).map(|asleep| asleep.expanded), Some(false));
+
+    let open = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "project_checkouts_fold",
+        "payload": { "workspace_id": "workspace-asleep", "expanded": true }
+    }))
+    .unwrap();
+    assert!(runtime.dispatch_json(&open));
+    assert_eq!(asleep(&runtime).map(|asleep| asleep.expanded), Some(true));
+    assert!(runtime.snapshot.ui_state.collapsed_workspace_ids.is_empty());
+    assert!(
+        !runtime.dispatch_json(&open),
+        "the same intent lands on the same state"
+    );
+
+    // A reconnect that publishes the project with no agent row at all is no
+    // wake: the open key stays (D-19).
+    runtime.snapshot.navigator.sleeping_sessions.clear();
+    runtime.refresh_inactive_groups();
+    assert_eq!(
+        runtime.snapshot.ui_state.session_open_folds,
+        ["asleep/workspace-asleep"]
+    );
+
+    // It wakes, an awake agent in its checkout: the open key leaves, and the
+    // next sleep starts folded.
+    runtime.snapshot.navigator.workspaces[0].checkouts[0].tabs = vec![tab_with_pane("woken")];
+    runtime.snapshot.navigator.agents = crate::sidebar::project_agents(
+        crate::sidebar::owned_label_fixture(serde_json::json!({ "agents": [
+            {"pane_id": "woken", "agent_status": "idle", "state_change_seq": 1}
+        ] }))
+        .expect("valid fixture"),
+    )
+    .agents;
+    runtime.refresh_inactive_groups();
+    assert!(runtime.snapshot.ui_state.session_open_folds.is_empty());
+    runtime.snapshot.navigator.workspaces[0].checkouts[0]
+        .tabs
+        .clear();
+    runtime.snapshot.navigator.agents.clear();
+    runtime.snapshot.navigator.sleeping_sessions = vec![sleeper];
+    runtime.refresh_inactive_groups();
+    assert_eq!(asleep(&runtime).map(|asleep| asleep.expanded), Some(false));
+
+    let no_agents = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "session_fold_toggle",
+        "payload": { "key": format!("no_agents/{}", crate::node::TEST_NODE) }
+    }))
+    .unwrap();
+    assert_eq!(
+        runtime.snapshot.navigator.no_agent_projects[0].project_ids,
+        ["workspace-empty"]
+    );
+    assert!(!runtime.snapshot.navigator.no_agent_projects[0].expanded);
+    assert!(runtime.dispatch_json(&no_agents));
+    assert!(runtime.snapshot.navigator.no_agent_projects[0].expanded);
 }

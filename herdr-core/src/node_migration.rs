@@ -63,6 +63,7 @@ pub const MOVES_WITH_CORE: &[&str] = &[
     LABELS,
     DELIVERY_LEDGER,
     LINKS,
+    hide_kit::layout::USAGE_STORE,
     LOCAL_ISSUES,
     PROJECT_MEMORY,
     FACTORY,
@@ -131,6 +132,12 @@ pub enum Moves {
 /// owner's, a linked node's, a dialed device's), so a store that gains a
 /// machine-bound key must be added here.
 pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
+    (
+        hide_kit::layout::USAGE_STORE,
+        "native node ids in devices, events, daily, cursors and backfills; qualified paths",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
     (
         CORE_STATE,
         "/workspace_registrations/*/device_id",
@@ -230,6 +237,12 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
     (
         CORE_STATE,
         "/pane_read_records/*/descendant_signals/*/pane_id",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        CORE_STATE,
+        "/pane_completions/{key}",
         Mechanism::Owned,
         Moves::Pane,
     ),
@@ -362,6 +375,12 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
     ),
     (
         CORE_STATE,
+        "/project_settings/{key}",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
+    (
+        CORE_STATE,
         "/expanded_inactive_checkout_project_paths/*",
         Mechanism::Owned,
         Moves::Stays,
@@ -387,6 +406,18 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
     (
         WORKSPACE_VIEWS,
         "/workspaces/*/view_bookmarks/{key}",
+        Mechanism::Owned,
+        Moves::Tab,
+    ),
+    (
+        WORKSPACE_VIEWS,
+        "/workspaces/*/view_owner",
+        Mechanism::Owned,
+        Moves::Tab,
+    ),
+    (
+        WORKSPACE_VIEWS,
+        "/workspaces/*/view_presentations/{key}",
         Mechanism::Owned,
         Moves::Tab,
     ),
@@ -864,7 +895,7 @@ const JSON_STORES: &[(&str, &str, &[u64], JsonConverter)] = &[
     (
         WORKSPACE_VIEWS,
         "schema_version",
-        &[1, 2],
+        &[1, 2, 3],
         convert_workspace_views,
     ),
     (LABELS, "version", &[1], convert_labels),
@@ -1023,9 +1054,11 @@ fn convert_core_state(value: &mut Value, node: &str, _projects: &BTreeMap<String
     }
     changed |= rename_key(value.get_mut("device_expanded_paths"), node);
     for fold in each(value, "session_open_folds") {
-        if fold.as_str() == Some(&format!("cleanup/{LEGACY}")) {
-            *fold = Value::String(format!("cleanup/{node}"));
-            changed = true;
+        for prefix in ["cleanup", "no_agents"] {
+            if fold.as_str() == Some(&format!("{prefix}/{LEGACY}")) {
+                *fold = Value::String(format!("{prefix}/{node}"));
+                changed = true;
+            }
         }
     }
     if let Some(dormant) = value
@@ -1090,7 +1123,7 @@ fn convert_memory(
     node: &NodeId,
     backup: &Backup,
 ) -> Result<usize, String> {
-    let Ok(store) = hide_memory::MemoryStore::open(path) else {
+    let Ok(store) = crate::runtime::memory::open_memory_store(path) else {
         return Ok(0);
     };
     let pending: bool = store
@@ -1113,7 +1146,7 @@ fn convert_memory(
 /// The roots of the node's Projects in a Memory store; none when the store
 /// does not open, which Project Memory reports on its own.
 fn memory_roots(path: &Path, node: &NodeId) -> Result<Vec<String>, String> {
-    let Ok(store) = hide_memory::MemoryStore::open(path) else {
+    let Ok(store) = crate::runtime::memory::open_memory_store(path) else {
         return Ok(Vec::new());
     };
     store
@@ -1257,6 +1290,7 @@ mod tests {
                 "recent_pane_ids": ["w1:p1", "remote:mini:pane:w2:p1"],
                 "pane_text_scales": {"w1:p1": 1.2},
                 "pane_read_records": {"w1:p1": {"seen_at_unix_ms": 1, "descendant_signals": [{"pane_id": "w1:p4"}]}},
+                "pane_completions": {"w1:p1": {"session": "s", "server": "m", "state_change_seq": 4}},
                 "request_verbs": {"w1:p1": "review"},
                 "pane_terminal_sizes": {"w1:p1": {"cols": 80, "rows": 24}},
                 "agent_sleep": {
@@ -1267,6 +1301,12 @@ mod tests {
                 "expanded_paths": [root],
                 "project_base_branches": {root.clone(): "main"},
                 "project_issue_sources": {root.clone(): "github"},
+                "project_settings": {
+                    crate::project_settings::key(NODE, &root): {
+                        "version": 1, "device_id": NODE, "root": root,
+                        "repository": {"mode": "auto"}, "new_work": "worktree"
+                    }
+                },
                 "expanded_inactive_checkout_project_paths": [root],
                 "selected_path": root,
                 "focused_checkout_id": "workspace:a",
@@ -1278,7 +1318,7 @@ mod tests {
         write(
             WORKSPACE_VIEWS,
             json!({"schema_version": 2, "workspaces": [
-                {"device_id": "local", "path": root, "agent_layout": {"tabs": ["w1:t1"]}, "view_bookmarks": {"w1:t1": {"area-1": "display-1"}}, "layout": {"root": {}}},
+                {"device_id": "local", "path": root, "agent_layout": {"tabs": ["w1:t1"]}, "view_bookmarks": {"w1:t1": {"area-1": "display-1"}}, "view_owner": "w1:t1", "view_presentations": {"w1:t1": {"views": false, "layout": {"root": {}}}}, "layout": {"root": {}}},
                 {"device_id": "mini", "path": "/srv/p"},
             ]}),
         );
@@ -1351,7 +1391,7 @@ mod tests {
                      VALUES('local','claude','s1','/f','b',1,1);
                  INSERT INTO session_prs(device,agent,id,file,repo_name,number,at)
                      VALUES('local','claude','s1','/f','acme/p',7,1);
-                 INSERT INTO session_parents VALUES('local','claude','s2','claude','s1','p');
+                 INSERT INTO session_parents VALUES('local','claude','s2','claude','s1','p','local');
                  INSERT INTO cursors(device,path,agent,stamp) VALUES('local','/f','claude','1');
                  INSERT INTO meta VALUES('listed_at','1');",
                 old = old_project,
@@ -1511,6 +1551,16 @@ mod tests {
                 "{table} still names `local`"
             );
         }
+        assert_eq!(
+            count("SELECT COUNT(*) FROM session_parents WHERE parent_device='local'"),
+            0
+        );
+        assert_eq!(
+            count(
+                "SELECT COUNT(*) FROM session_parents WHERE parent_device='8f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5'"
+            ),
+            1
+        );
         let moved: (String, String, String, String) = links
             .query_row(
                 "SELECT (SELECT device FROM projects WHERE key=?1), \
@@ -1772,7 +1822,7 @@ mod tests {
     #[test]
     fn a_store_of_a_version_this_build_does_not_read_is_left_to_its_loader() {
         let dir = tempfile::tempdir().unwrap();
-        let unknown = br#"{"schema_version": 3, "workspaces": [{"device_id": "local"}]}"#;
+        let unknown = br#"{"schema_version": 99, "workspaces": [{"device_id": "local"}]}"#;
         std::fs::write(dir.path().join(WORKSPACE_VIEWS), unknown).unwrap();
         let outcome = convert(dir.path(), &node()).unwrap();
         assert!(outcome.files.is_empty(), "{outcome:?}");

@@ -13,6 +13,12 @@ use std::collections::HashSet;
 /// listing walks at most `hide_session::SESSION_DISCOVERY_LIMIT` files.
 pub(super) const SESSION_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// Writer opens run on Memory workers, never under the runtime lock.
+/// A failed one-time backup restore is retained by the existing log sink.
+pub(crate) fn open_memory_store(path: &Path) -> Result<MemoryStore, hide_memory::MemoryError> {
+    MemoryStore::open_with_diagnostic(path, &mut |record| crate::diagnostic!(record))
+}
+
 /// The checkout in front for Sessions, and the node that reads its files
 /// (`Runtime::linked_node`).
 struct MemoryFocus {
@@ -54,8 +60,7 @@ impl Runtime {
     }
 
     /// The checkout in front whose Sessions the panel shows, with the node
-    /// that reads its files: this machine's or a linked node's that dials
-    /// in, never a device the core dials (B14, Q20).
+    /// that reads its files, on this machine or any linked device.
     fn focused_memory_context(&self) -> Option<MemoryFocus> {
         let (workspace_id, checkout_id) = self.front_checkout()?;
         let (workspace, checkout) = self.catalog_checkout(workspace_id, checkout_id)?;
@@ -78,7 +83,7 @@ impl Runtime {
         }) = self.focused_memory_context()
         else {
             self.snapshot.sessions = SessionsSnapshot {
-                unavailable_reason: Some("Choose a local Project to view sessions".to_owned()),
+                unavailable_reason: Some("Choose a connected Project to view sessions".to_owned()),
                 ..SessionsSnapshot::default()
             };
             return true;

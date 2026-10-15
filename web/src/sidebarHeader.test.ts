@@ -1,36 +1,27 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { SidebarHeader } from "./components/sidebar-header";
+import { DeviceTitle, SidebarHeader } from "./components/sidebar-header";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { useUiStore } from "./ui";
 
-function header({
-  rail = true,
-  title = { name: "This Mac", note: null as string | null },
-} = {}) {
-  return renderToStaticMarkup(
-    createElement(
-      TooltipProvider,
-      null,
-      createElement(SidebarHeader, {
-        rail,
-        title,
-        deviceMenu: {
-          devices: [
-            { id: "local", label: "This Mac", remote: false, connected: true },
-            { id: "mini", label: "mini", remote: true, connected: true },
-          ],
-          frontId: "local",
-          onSelect: () => undefined,
-          onAddDevice: () => undefined,
-          onShowRail: () => undefined,
-        },
-        searchChord: "⌘K",
-        onSearch: () => undefined,
-      }),
-    ),
-  );
+const MENU = {
+  devices: [
+    { id: "local", label: "This Mac", remote: false, connected: true },
+    { id: "mini", label: "mini", remote: true, connected: true },
+  ],
+  frontId: "local",
+  onSelect: () => undefined,
+  onAddDevice: () => undefined,
+  onShowRail: () => undefined,
+};
+
+function title({ rail = true, name = { name: "This Mac", note: null as string | null } } = {}) {
+  return renderToStaticMarkup(createElement(TooltipProvider, null, createElement(DeviceTitle, { rail, title: name, deviceMenu: MENU })));
+}
+
+function header(searchChord: string | null = "⌘K") {
+  return renderToStaticMarkup(createElement(TooltipProvider, null, createElement(SidebarHeader, { searchChord, onSearch: () => undefined })));
 }
 
 /** The opening tag of the first element carrying `attribute`. */
@@ -43,30 +34,42 @@ function texts(html: string, attribute: string): string[] {
   return [...html.matchAll(new RegExp(`<([a-z]+)[^>]*\\s${attribute}(?=[\\s=>])[^>]*>(.*?)</\\1>`, "g"))].map((match) => match[2]!.replace(/<[^>]+>/g, ""));
 }
 
-describe("sidebar header (PRD sidebar-shell)", () => {
-  it("keeps the device heading and opens directly into the project tree (session-first-ui B8)", () => {
+describe("the device title in the window's top row (PRD sidebar-titlebar-refresh B17, B21)", () => {
+  it("names the device in front with its note", () => {
     expect(useUiStore.getState().sidebarMode).toBe("projects");
-    const html = header({ title: { name: "mini", note: "Remote" } });
+    const html = title({ name: { name: "mini", note: "Remote" } });
     expect(texts(html, "data-sidebar-title-name")).toEqual(["mini"]);
     expect(html).toContain("Remote");
-    expect(html).not.toContain("data-sidebar-mode");
-    expect(html).not.toContain("data-sidebar-strip");
   });
 
-  it("turns the name into the device menu while the rail is hidden (B6)", () => {
-    const html = header({ rail: false });
+  it("turns the name into the device menu while the rail is hidden", () => {
+    const html = title({ rail: false });
     expect(tag(html, "data-sidebar-device-menu")).toContain('aria-label="This Mac, switch device"');
     expect(texts(html, "data-sidebar-title-name")).toEqual(["This Mac"]);
-    expect(header({ rail: true })).not.toContain("data-sidebar-device-menu");
+    expect(title({ rail: true })).not.toContain("data-sidebar-device-menu");
   });
+});
 
-  it("ends the line with Search alone: Add project sits on the Projects title (B4, first-run-onboarding B52)", () => {
-    const html = header();
-    expect(tag(html, "data-sidebar-search")).toContain('aria-label="Search"');
-    expect(html).not.toContain("data-sidebar-new-workspace");
-    // No Search field: the chord is the hint's, never typed in the strip, and nothing takes text.
-    expect(html).not.toContain("⌘K");
+describe("the sidebar's Search row (B12)", () => {
+  it("is a visible row with the word Search and the chord as bound, and takes no text", () => {
+    const html = header("⌃⇧K");
+    expect(texts(html, "data-sidebar-search")).toEqual(["Search⌃⇧K"]);
+    expect(tag(html, "data-sidebar-search-chord")).toContain('data-sidebar-search-chord="⌃⇧K"');
     expect(html).not.toContain("<input");
+    expect(html).not.toContain("data-sidebar-new-workspace");
   });
 
+  it("draws no chord when Search has none bound", () => {
+    expect(header(null)).not.toContain("data-sidebar-search-chord");
+  });
+});
+
+describe("the Factory row before the Factory opens (factory/launch.ts)", () => {
+  it("is its name with a Soon chip, and nothing in it can be pressed", () => {
+    const html = renderToStaticMarkup(createElement(TooltipProvider, null, createElement(SidebarHeader, { factory: "soon", searchChord: null, onSearch: () => undefined })));
+    expect(texts(html, "data-sidebar-factory-soon")).toEqual(["FactorySoon"]);
+    expect(tag(html, "data-sidebar-factory-soon")).toMatch(/^<div /);
+    expect(html.match(/<button/g)).toHaveLength(1);
+    expect(html).not.toContain("data-sidebar-factory=");
+  });
 });

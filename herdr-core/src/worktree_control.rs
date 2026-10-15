@@ -380,6 +380,9 @@ pub struct WorktreeTaskOutcome {
     /// Why the requested issue link could not be written; the worktree
     /// exists either way.
     pub issue_error: Option<String>,
+    /// How the created pane's shell says it has finished starting, which
+    /// the task's agent start waits for.
+    pub(crate) shell: crate::agent_start::ShellStart,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -928,6 +931,7 @@ pub struct PendingAgentStart {
     pub resume_scope: Option<hide_session::SessionReadScope>,
     pub(crate) resume_reference: Option<crate::sidebar::SessionAgentSessionPayload>,
     pub(crate) codex_daemon: crate::codex_launch::CodexDaemon,
+    pub(crate) shell: crate::agent_start::ShellStart,
 }
 
 /// How starting the chosen agent in a task's created pane ended.
@@ -1068,6 +1072,7 @@ fn launch_with_prompt_checked(
         codex_daemon,
         resume_scope,
         resume_reference,
+        shell,
     } = start;
     if hide_agent_adapter::adapter(&kind)
         .filter(|adapter| {
@@ -1098,6 +1103,7 @@ fn launch_with_prompt_checked(
         pane_node,
         id,
         &pane_id,
+        shell,
         &kind,
         args,
         codex_daemon,
@@ -1207,6 +1213,7 @@ fn launch_agent(
     pane_node: Option<&dyn crate::node_access::NodeLink>,
     id: u64,
     pane_id: &str,
+    shell: crate::agent_start::ShellStart,
     kind: &str,
     args: Vec<String>,
     codex_daemon: crate::codex_launch::CodexDaemon,
@@ -1249,6 +1256,7 @@ fn launch_agent(
         pane_node,
         &format!("herdr-core:task:{id}:agent"),
         pane_id,
+        shell,
         params,
         Duration::from_millis(AGENT_START_TIMEOUT_MS + 5_000),
         check,
@@ -1260,6 +1268,9 @@ fn launch_agent(
             )),
         },
         Err(StartError::NotStarted(message)) => Launch::Failed(message),
+        Err(StartError::ShellStarting(screen)) => Launch::Failed(
+            crate::agent_start::shell_starting_message(screen.as_deref()),
+        ),
         Err(StartError::Herdr(ApiError::Remote { code, message })) => {
             Launch::Refused { code, message }
         }
@@ -1281,7 +1292,17 @@ pub fn spawn_checkout_tab_create(
 }
 
 /// Opens the task's tab, publishes it, then starts the task's agent in it.
+/// The tab's shell is started with Hide's shell integration, written by the
+/// node of the machine that runs it (`agent_start::shell_environment`).
 fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
+    let node = target
+        .runtime
+        .upgrade()
+        .and_then(|runtime| task_pane_node(&runtime, request.id).ok());
+    let launch = crate::agent_start::shell_launch(
+        node.as_deref(),
+        &format!("herdr-core:task:{}:tab", request.id),
+    );
     let result = (|| {
         if let Some(scope) = request.resume_scope.as_ref() {
             target.check_current(request.id)?;
@@ -1315,9 +1336,10 @@ fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
                     current: &current,
                 },
                 request,
+                launch.as_ref(),
             );
         }
-        create_checkout_tab(target.connector.as_ref(), request)
+        create_checkout_tab(target.connector.as_ref(), request, launch.as_ref())
     })();
     let Some(runtime) = target.runtime.upgrade() else {
         return;
@@ -1354,6 +1376,28 @@ fn task_session_node(
     if operation.agent_kind.as_deref() != Some(kind) {
         return Err("session_resume_intent_changed".into());
     }
+    task_node(&mut runtime, id)
+}
+
+/// The node of the machine that runs task `id`'s pane.
+fn task_pane_node(
+    runtime: &Arc<Mutex<Runtime>>,
+    id: u64,
+) -> Result<Arc<dyn crate::node_access::NodeLink>, String> {
+    let mut runtime = runtime.lock().map_err(|_| "runtime unavailable")?;
+    task_node(&mut runtime, id)
+}
+
+fn task_node(
+    runtime: &mut Runtime,
+    id: u64,
+) -> Result<Arc<dyn crate::node_access::NodeLink>, String> {
+    let operation = runtime
+        .snapshot()
+        .task_operation
+        .as_ref()
+        .filter(|operation| operation.id == id)
+        .ok_or("task superseded")?;
     let device = operation
         .device_id
         .clone()
@@ -1444,7 +1488,10 @@ fn sync_home(
 fn create_checkout_tab(
     connector: &dyn ApiConnector,
     request: &CheckoutTabRequest,
+    launch: Option<&hide_node_link::protocol::ShellLaunch>,
 ) -> Result<WorktreeTaskOutcome, String> {
+    let env = launch.map(|launch| launch.env.clone()).unwrap_or_default();
+    let command = launch.map(|launch| launch.command.as_slice());
     let tab = match &request.host {
         crate::checkout_owner::TabHost::Workspace(workspace_id) => super::create_tab_in(
             connector,
@@ -1452,7 +1499,8 @@ fn create_checkout_tab(
             &request.checkout_path,
             &request.label,
             true,
-            Default::default(),
+            env,
+            command,
         ),
         crate::checkout_owner::TabHost::Open(owner) => super::open_owner_tab(
             connector,
@@ -1460,10 +1508,14 @@ fn create_checkout_tab(
             &request.checkout_path,
             &request.label,
             true,
-            Default::default(),
+            env,
+            command,
         ),
     }
     .map_err(|failure| failure.message().to_owned())?;
+    // A tab that does not run the launch (Herdr's own shell, or no launch
+    // for this shell) gives no mark.
+    let shell = crate::agent_start::ShellStart::of_tab(tab.launched, launch);
     Ok(WorktreeTaskOutcome {
         path: request.checkout_path.clone(),
         pane_id: tab.pane_id,
@@ -1471,6 +1523,7 @@ fn create_checkout_tab(
         purpose_error: None,
         unconfirmed_purpose_token: None,
         issue_error: None,
+        shell,
     })
 }
 
@@ -1595,6 +1648,8 @@ fn create_worktree_observing_purpose(
                 .map(|failure| failure.detail.clone()),
             unconfirmed_purpose_token: purpose_failure
                 .and_then(|failure| failure.unconfirmed_token),
+            // `worktree.create` takes no environment (a follow-up).
+            shell: crate::agent_start::ShellStart::Plain,
         });
     }
 
@@ -2378,6 +2433,7 @@ mod tests {
     fn issue_cleanup_distinguishes_branch_switch_detach_removal_and_unregister() {
         let (mut mirror, receiver) = PurposeMirror::recording();
         let mut project = WorkspaceSnapshot {
+            agent_presence: Default::default(),
             agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
@@ -2598,6 +2654,7 @@ mod tests {
             purpose: Some("Initial purpose".to_owned()),
         };
         let checkout = WorkspaceSnapshot {
+            agent_presence: Default::default(),
             agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
@@ -2720,6 +2777,7 @@ mod tests {
             },
         ];
         let project = WorkspaceSnapshot {
+            agent_presence: Default::default(),
             agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
@@ -2783,6 +2841,7 @@ mod tests {
             purpose: None,
         };
         let mut project = WorkspaceSnapshot {
+            agent_presence: Default::default(),
             agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
@@ -3592,6 +3651,7 @@ mod tests {
                 cwd: cwd.display().to_string(),
             }),
             codex_daemon: Default::default(),
+            shell: crate::agent_start::ShellStart::Plain,
         };
         let server = server(vec![]);
         assert_eq!(
@@ -3670,6 +3730,7 @@ mod tests {
                     prompt: Some("fix the tests".into()),
                     args,
                     codex_daemon: crate::codex_launch::CodexDaemon::Unsupported,
+                    shell: crate::agent_start::ShellStart::Plain,
                 },
             );
             assert!(
@@ -3709,6 +3770,7 @@ mod tests {
                 prompt: Some("fix the tests".into()),
                 args: Vec::new(),
                 codex_daemon: crate::codex_launch::CodexDaemon::Unknown,
+                shell: crate::agent_start::ShellStart::Plain,
             },
         );
         let TaskAgentOutcome::Failed(reason) = outcome else {
@@ -3747,6 +3809,7 @@ mod tests {
                 prompt: None,
                 args: Vec::new(),
                 codex_daemon: Default::default(),
+                shell: crate::agent_start::ShellStart::Plain,
             },
         );
         assert_eq!(
@@ -3782,6 +3845,7 @@ mod tests {
                 prompt: Some("fix the tests".into()),
                 args: Vec::new(),
                 codex_daemon: crate::codex_launch::CodexDaemon::Present,
+                shell: crate::agent_start::ShellStart::Plain,
             },
         );
         assert!(matches!(outcome, TaskAgentOutcome::Started), "{outcome:?}");
@@ -3813,6 +3877,7 @@ mod tests {
                 prompt: Some("1\nfix the tests\r\n\tthen push".into()),
                 args: vec!["--model".into(), "opus".into()],
                 codex_daemon: Default::default(),
+                shell: crate::agent_start::ShellStart::Plain,
             },
         );
         assert!(matches!(outcome, TaskAgentOutcome::Started), "{outcome:?}");
@@ -3846,6 +3911,7 @@ mod tests {
                 prompt: Some("fix\u{7}the bell".into()),
                 args: Vec::new(),
                 codex_daemon: Default::default(),
+                shell: crate::agent_start::ShellStart::Plain,
             },
         );
         let TaskAgentOutcome::Failed(message) = outcome else {
@@ -3874,6 +3940,7 @@ mod tests {
                 prompt: Some(format!("{at_cap}a\n")),
                 args: Vec::new(),
                 codex_daemon: Default::default(),
+                shell: crate::agent_start::ShellStart::Plain,
             },
         );
         let TaskAgentOutcome::Failed(message) = outcome else {
@@ -3903,6 +3970,7 @@ mod tests {
                 prompt: Some("fix the tests".into()),
                 args: Vec::new(),
                 codex_daemon: Default::default(),
+                shell: crate::agent_start::ShellStart::Plain,
             },
         );
         let TaskAgentOutcome::Failed(message) = outcome else {

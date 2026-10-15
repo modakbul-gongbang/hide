@@ -1,6 +1,25 @@
 {
+  "session-record": {
+    "description": "The approved Sessions work record, summaries off, missed-work issue preview and search states.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-session-record",
+    "scene": "session-record",
+    "selector": "[data-gallery-scene=session-record]",
+    "measurement": "web/e2e/session-record-geometry.mjs",
+    "frames": [
+      { "node": "swr-record-l", "theme": "light", "width": 420, "scale": 1, "content": "reference", "state": "rest" },
+      { "node": "swr-record-d", "theme": "dark", "width": 420, "scale": 1, "content": "reference", "state": "rest" },
+      { "node": "swr-off-l", "theme": "light", "width": 360, "scale": 1, "content": "reference", "state": "off" },
+      { "node": "swr-off-d", "theme": "dark", "width": 360, "scale": 1, "content": "reference", "state": "off" }
+    ],
+    "conditions": { "themes": ["light", "dark"], "widths": [420, 300], "contents": ["reference", "long"], "scales": [1, 1.3076923076923077] },
+    "states": { "rest": "Approved record at rest", "off": "Native title and raw requests only", "loading": "First read skeleton", "failed": "Read failure and retry", "draft": "Editable issue draft", "ended": "Folded missed-work group", "search": "Separate session search group" },
+    "urlStates": ["off", "loading", "failed", "draft", "ended", "search"],
+    "rules": { "noOverlap": true, "noSidewaysOverflow": true },
+    "judgment": ["Does the actual record preserve the approved order and compact hierarchy in both themes?", "Do long Korean requests and missed rows remain legible in a narrow lane? Native behavior is verified separately."]
+  },
   "session-panel": {
-    "description": "The approved Pen round 2 Sessions panel (agent-hierarchy-screens D-44): Needs You, Working, Done, Idle and Resolved, one tree level, own PR chips and the folded descendant mark.",
+    "description": "The Sessions A selection: separate progress and branch metadata, a parent's complete PR count, own child PR marks, and the existing session groups and tree.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-main",
     "scene": "session-panel",
@@ -9,7 +28,6 @@
     "frames": [
       {
         "node": "sfu-panel-l",
-        "referenceNode": "zepvC",
         "theme": "light",
         "width": 420,
         "scale": 1,
@@ -18,7 +36,6 @@
       },
       {
         "node": "sfu-panel-d",
-        "referenceNode": "xPrJs",
         "theme": "dark",
         "width": 420,
         "scale": 1,
@@ -33,7 +50,7 @@
       ],
       "widths": [
         420,
-        360
+        320
       ],
       "contents": [
         "reference",
@@ -50,13 +67,14 @@
       "noSidewaysOverflow": true
     },
     "judgment": [
-      "The approved reference is the Pen round 2 Sessions board (Light); Dark must keep its hierarchy with the theme tokens.",
-      "Do the group order, the Needs You verb line, the PR chips, the ◐ unfinished mark and the one-level tree match round 2?",
+      "The A selection separates the title, progress and branch metadata; both themes keep that hierarchy with the existing tokens.",
+      "Does a parent's PR count include folded descendants while child marks still name their own PRs?",
+      "Are the existing group order, Needs You ask, unfinished mark and tree rails preserved?",
       "Are long Korean titles recognizable at the narrow width without hiding the PR chip or the age?"
     ]
   },
   "pane-header": {
-    "description": "The approved Pen round 2 pane header (agent-hierarchy-screens D-14, D-43): ancestor path, own PR chip and tree button after the title, and the ask band.",
+    "description": "The approved B2 pane header: identity and own PR on the first row, core state counts without a separate total or internal divider on the second-row overlay, compact counts beside an ask band.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-workspace",
     "scene": "pane-header",
@@ -65,7 +83,6 @@
     "frames": [
       {
         "node": "sfu-ph-board-l",
-        "referenceNode": "S2Cn0e",
         "theme": "light",
         "width": 761,
         "scale": 1,
@@ -74,7 +91,6 @@
       },
       {
         "node": "sfu-ph-board-d",
-        "referenceNode": "Ef3CX",
         "theme": "dark",
         "width": 761,
         "scale": 1,
@@ -96,7 +112,7 @@
       ]
     },
     "states": {
-      "rest": "Bands and header identities.",
+      "rest": "Core bands, child counts and representative lines, unknown and zero-child header identities.",
       "children": "The tree button popover."
     },
     "rules": {
@@ -104,9 +120,10 @@
       "noSidewaysOverflow": true
     },
     "judgment": [
-      "The approved reference is the Pen round 2 pane header board (Light); Dark must keep its hierarchy with the theme tokens.",
-      "Does the ask band read verb, what, who, wait, 외 N건 and 열기 on a quiet fill with the warning rail?",
-      "Do the ancestor path, the own PR chip and the tree button sit after the title, with only menu, zoom and close at the end?"
+      "B2 was approved from the interactive HTML comparison; this board records its layout in both themes using the existing tokens. Compare each state's production and native captures with the approved arrangement.",
+      "Does the ask band retain its request and Open action beside the compact ! count, with no separate total, internal divider or duplicate 외 N건 trigger? Does the request keep readable space at narrow widths and enlarged text?",
+      "Do the ancestor path, fork and own PR remain on the first row, with child counts on the second row and a core-ranked child line only when no core band takes that slot?",
+      "Are ordinary child requests distinct from operator-raised requests, unknown distinct from resting, and reported results distinct from verified task delivery? Does an empty parent lose the child row without changing the terminal grid?"
     ]
   },
   "projects-sidebar": {
@@ -123,7 +140,7 @@
         "scale": 1,
         "content": "reference",
         "state": "rest",
-        "referenceNode": "rnIl8"
+      "referenceNode": "psb-sidebar-l"
       },
       {
         "node": "psb-sidebar-d",
@@ -132,7 +149,7 @@
         "scale": 1,
         "content": "reference",
         "state": "rest",
-        "referenceNode": "rPB4Q"
+      "referenceNode": "psb-sidebar-d"
       }
     ],
     "conditions": {
@@ -171,7 +188,7 @@
     ]
   },
   "workspace-servers": {
-    "description": "Open server remains in the shared Workspace toolbar with File Views and Tools off; the picker distinguishes reachable IPv4/IPv6 endpoints without a redundant footer.",
+    "description": "Open server remains in the shared Workspace toolbar with the right lane closed; the picker distinguishes reachable IPv4/IPv6 endpoints without a redundant footer.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-workspace",
     "scene": "workspace-servers",
@@ -214,14 +231,14 @@
     },
     "states": {
       "rest": "Initial screen.",
-      "server-picker": "Open server remains in the shared Workspace toolbar with File Views and Tools off; the picker distinguishes reachable IPv4/IPv6 endpoints without a redundant footer."
+      "server-picker": "Open server remains in the shared Workspace toolbar with the right lane closed; the picker distinguishes reachable IPv4/IPv6 endpoints without a redundant footer."
     },
     "rules": {
       "noOverlap": true,
       "noSidewaysOverflow": true
     },
     "judgment": [
-      "Open server remains in the shared Workspace toolbar with File Views and Tools off; the picker distinguishes reachable IPv4/IPv6 endpoints without a redundant footer."
+      "Open server remains in the shared Workspace toolbar with the right lane closed; the picker distinguishes reachable IPv4/IPv6 endpoints without a redundant footer."
     ]
   },
   "session-search": {
@@ -1049,7 +1066,7 @@
     ]
   },
   "first-run-onboarding": {
-    "description": "The first run (PRD first-run-onboarding D-20, D-27): the three-step wizard over the dimmed shell in every state its steps carry, the start panel it closes into, the empty Home with Add project on the Projects label, and Settings > General Notifications on each system.",
+    "description": "The first run (PRD first-run-onboarding D-20, D-27): the three-step wizard over the dimmed shell in every state its steps carry, the start panel it closes into, the empty Home with Add project on the Projects label, and Settings > Notifications on each system.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-onboarding",
     "scene": "onboarding",
@@ -1156,7 +1173,7 @@
       {
         "node": "b07-settings-notifications-dark",
         "theme": "dark",
-        "width": 1512,
+        "width": 1832,
         "scale": 1,
         "content": "reference",
         "state": "rest"
@@ -1164,7 +1181,7 @@
       {
         "node": "b07-settings-notifications-light",
         "theme": "light",
-        "width": 1512,
+        "width": 1832,
         "scale": 1,
         "content": "reference",
         "state": "rest"
@@ -1244,7 +1261,7 @@
       {
         "node": "b13-settings-notifications-pc-dark",
         "theme": "dark",
-        "width": 1512,
+        "width": 1832,
         "scale": 1,
         "content": "reference",
         "state": "rest"
@@ -1252,7 +1269,7 @@
       {
         "node": "b13-settings-notifications-pc-light",
         "theme": "light",
-        "width": 1512,
+        "width": 1832,
         "scale": 1,
         "content": "reference",
         "state": "rest"
@@ -1411,10 +1428,10 @@
       "home-no-project": "Empty Home with no project, and the + on the Projects label (boards 06, 17).",
       "home-no-agent": "Empty Home with a project and no agent (board 06).",
       "home-no-project-windows": "Empty Home on Windows, with its shortcut labels (board 14).",
-      "settings-on": "Settings > General with notifications on and allowed (board 07).",
-      "settings-off": "Settings > General with notifications off (board 07).",
-      "settings-blocked": "Settings > General while macOS blocks Hide (board 07).",
-      "settings-on-windows": "Settings > General on Windows with the Test notification row (board 13)."
+      "settings-on": "Settings > Notifications with notifications on and allowed (board 07).",
+      "settings-off": "Settings > Notifications with notifications off (board 07).",
+      "settings-blocked": "Settings > Notifications while macOS blocks Hide (board 07).",
+      "settings-on-windows": "Settings > Notifications on Windows with the Test notification row (board 13)."
     },
     "rules": {
       "noOverlap": true,
@@ -1424,5 +1441,248 @@
       "Each board draws several states at once and the bundle pairs it with the scene at rest; the state sheets hold every state the scene draws. Do the built steps, the start panel, the empty Home and the Settings rows carry the spacing, weight, color and alignment of their boards in both themes?",
       "The startup and failure screen (board 09) and the Factory line (board 08) are not on this scene; they are checked against their boards from the desktop app and the Factory scene."
     ]
+  },
+  "usage-history": {
+    "description": "Compact A direction: cost-first summary, thirty contribution squares and date/agent records. Values are invented; native accounting is tested separately.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-usage",
+    "scene": "usage-history",
+    "selector": "[data-usage-history=\"year\"]",
+    "measurement": "web/e2e/usage-history-geometry.mjs",
+    "frames": [
+      {
+        "node": "screen-usage-year-l",
+        "theme": "light",
+        "width": 800,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "screen-usage-year-d",
+        "theme": "dark",
+        "width": 800,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      }
+    ],
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        800,
+        360
+      ],
+      "contents": [
+        "reference",
+        "long"
+      ],
+      "scales": [
+        1,
+        1.3076923076923077
+      ]
+    },
+    "states": {
+      "rest": "Cost and new tokens above expandable date/agent records.",
+      "backfill": "Partial totals and reading progress.",
+      "sparse": "Only recorded dates, within the selected period.",
+      "unpriced": "Unpriced amounts remain unavailable; known subtotals are lower bounds."
+    },
+    "urlStates": {
+      "backfill": {
+        "history": "backfill"
+      },
+      "sparse": {
+        "history": "sparse"
+      },
+      "unpriced": {
+        "history": "unpriced"
+      }
+    },
+    "rules": {
+      "noOverlap": true,
+      "noSidewaysOverflow": true
+    },
+    "judgment": [
+      "Cost is visible before token categories; agent details expand beneath each date.",
+      "Filters and summary wrap at narrow widths; horizontal scrolling stays within the table.",
+      "The popover switches between seven daily bars and thirty small contribution squares, with matching totals, daily hover, keyboard preview and click-to-pin."
+    ]
+  },
+  "sidebar-status-axis": {
+    "description": "Approved sidebar tab segments: one root status axis right of the checkout glyph, a guide under the glyph per tab, a tab line inside the guide for each tab of two or more agents, and neutral selection.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-projects-sidebar",
+    "scene": "sidebar-status-axis",
+    "capturePadding": 8,
+    "viewportWidth": 900,
+    "viewportHeight": 900,
+    "selector": "[data-checkout-row=\"hide:main\"]",
+    "frames": [
+      {
+        "node": "psb-axis-l",
+        "referenceNode": "RHvaO",
+        "theme": "light",
+        "width": 240,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "psb-axis-d",
+        "referenceNode": "MPgre",
+        "theme": "dark",
+        "width": 240,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      }
+    ],
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        240,
+        292
+      ],
+      "contents": [
+        "reference",
+        "long"
+      ]
+    },
+    "states": {
+      "rest": "Expanded 2-1-2 tab segments (a named tab, a one-agent tab, an unnamed tab) and a selected row."
+    },
+    "rules": {
+      "noOverlap": true,
+      "noSidewaysOverflow": true
+    },
+    "judgment": [
+      "Do all root status marks share one axis right of the checkout glyph, with each tab's guide centered under that glyph?",
+      "Do the tab lines (the manual name, and Tab 3 for the unnamed tab) read as quiet heads inside the guide, their glyph on the status-mark column and their name on the title column, and do neutral selection, Korean titles and trailing metadata match the approved Pen in both themes?"
+    ]
+  },
+  "project-settings": {
+    "description": "Approved separate Project Settings dialog and its pages.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-project-settings",
+    "scene": "project-settings",
+    "selector": "[data-gallery-scene=\"project-settings\"]",
+    "frames": [
+      {
+        "node": "ps-settings-dark",
+        "referenceNode": "QdXlV",
+        "theme": "dark",
+        "width": 1000,
+        "scale": 1,
+        "content": "reference",
+        "state": "connections"
+      },
+      {
+        "node": "ps-settings-light",
+        "referenceNode": "UTLMs",
+        "theme": "light",
+        "width": 1000,
+        "scale": 1,
+        "content": "reference",
+        "state": "connections"
+      },
+      {
+        "node": "ps-settings-work",
+        "referenceNode": "C6dPm",
+        "theme": "dark",
+        "width": 1000,
+        "scale": 1,
+        "content": "reference",
+        "state": "work"
+      },
+      {
+        "node": "ps-settings-memory",
+        "referenceNode": "WfAuD",
+        "theme": "dark",
+        "width": 1000,
+        "scale": 1,
+        "content": "reference",
+        "state": "memory"
+      }
+    ],
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        1000,
+        720
+      ],
+      "contents": [
+        "reference",
+        "long"
+      ],
+      "scales": [
+        1,
+        1.3076923076923077
+      ]
+    },
+    "states": {
+      "connections": "Repository and issue source.",
+      "work": "Defaults and honest unsupported protection rows.",
+      "memory": "Confirmed memory and navigation."
+    },
+    "rules": {
+      "noSidewaysOverflow": true,
+      "noOverlap": true
+    },
+    "judgment": [
+      "880 by 640 dialog, 200 navigation and independent body scrolling follow the approved layout.",
+      "Future Linear and protection examples become disabled unsupported rows under sealed PRD D-08 and D-12.",
+      "Actual Korean, long mixed paths and large type remain readable."
+    ],
+    "readySelector": "[data-gallery-scene=\"project-settings\"][data-scene-ready]",
+    "measurement": "web/e2e/project-settings-geometry.mjs",
+    "urlStates": [
+      "connections",
+      "work",
+      "memory",
+      "memory-off",
+      "pending",
+      "failed",
+      "unavailable"
+    ]
+  },
+  "right-lane": {
+    "description": "The right lane (PRD right-lane): Agent Views fill the body and one lane of four tools (Work, Memory, Files, Changes) opens from the rail, over the agents or pinned beside them, with the file tree as its own column.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-workspace",
+    "scene": "right-lane",
+    "selector": "[data-gallery-scene=\"right-lane\"]",
+    "frames": [
+      { "node": "rl-closed-l-win", "theme": "light", "width": 1456, "scale": 1, "content": "reference", "state": "rest" },
+      { "node": "rl-closed-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "rest" },
+      { "node": "rl-overlay-l-win", "theme": "light", "width": 1456, "scale": 1, "content": "reference", "state": "overlay" },
+      { "node": "rl-overlay-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "overlay" },
+      { "node": "rl-pinned-l-win", "theme": "light", "width": 1456, "scale": 1, "content": "reference", "state": "pinned" },
+      { "node": "rl-pinned-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "pinned" },
+      { "node": "rl-tree-overlay-l-win", "theme": "light", "width": 1456, "scale": 1, "content": "reference", "state": "tree-overlay" },
+      { "node": "rl-tree-overlay-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "tree-overlay" },
+      { "node": "rl-tree-only-l-win", "theme": "light", "width": 1456, "scale": 1, "content": "reference", "state": "tree-only" },
+      { "node": "rl-tree-only-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "tree-only" },
+      { "node": "rl-expanded-l-win", "theme": "light", "width": 1456, "scale": 1, "content": "reference", "state": "expanded" },
+      { "node": "rl-expanded-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "expanded" },
+      { "node": "rl-work-l-win", "theme": "light", "width": 1456, "scale": 1, "content": "reference", "state": "work" },
+      { "node": "rl-work-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "work" },
+      { "node": "rl-narrow-l-win", "theme": "light", "width": 1040, "scale": 1, "content": "reference", "state": "narrow" },
+      { "node": "rl-narrow-d-win", "theme": "dark", "width": 1040, "scale": 1, "content": "reference", "state": "narrow" }
+    ],
+    "conditions": { "themes": ["light", "dark"], "widths": [1456], "contents": ["reference"], "scales": [1] },
+    "states": { "rest": "Lane closed: the rail alone at the window edge.", "overlay": "Files over the agents, unpinned; the terminals keep their width.", "pinned": "Files pinned and docked beside the agents behind the divider.", "tree-overlay": "The tree on beside the document, over the agents; the lane widens by the tree.", "tree-only": "No document open: the tree fills the pinned lane.", "expanded": "The lane expanded over the whole body, tree on.", "work": "Work pinned on its Sessions basis, its header naming the project scope and the rail carrying the count that needs the operator.", "narrow": "A 1040 px window: the pinned lane opens over the agents, the pin still on." },
+    "urlStates": ["overlay", "pinned", "tree-overlay", "tree-only", "expanded", "work", "narrow"],
+    "rules": { "noOverlap": true, "noSidewaysOverflow": true },
+    "judgment": ["Does the lane read as one surface over or beside the agents, its rail, header, pin, tree button and divider matching the boards?", "Does opening over the agents keep the terminals at their width, with only pinning narrowing them, once?"]
   }
 }

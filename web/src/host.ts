@@ -119,8 +119,36 @@ export type HostBridge = {
   notificationPermission(): Promise<NotificationPermission>;
   /** Opens Hide's page of the system's notification settings (macOS). */
   openNotificationSettings(): void;
+  /**
+   * Hands the host how many root agents need the operator, for the app icon
+   * (the Dock badge, the Windows taskbar overlay); zero clears it. Reported
+   * once the page holds a live snapshot, which is also when the host hands
+   * over a notification click that started the app, and then on each change.
+   */
+  reportBadge(count: number): void;
+  /**
+   * The window frame the shell draws its top row inside (PRD
+   * sidebar-titlebar-refresh D-15, D-17): delivered once at once and again on
+   * every change; returns the unsubscribe.
+   */
+  onWindowChrome(listener: (chrome: WindowChrome) => void): () => void;
+  /** Whether VS Code is installed on this computer, as the host found it once per launch (D-14). */
+  editorAvailable(): Promise<boolean>;
+  /**
+   * Opens a folder of this computer, named in the wire spelling, as a VS Code
+   * window; the host logs the outcome without the path and shows nothing (B16).
+   */
+  openInEditor(path: string): void;
   browser: BrowserBridge;
 };
+
+/**
+ * What the window's own frame takes of the shell's top row: `trafficLights`
+ * while macOS draws its window buttons over the row's left end (the title
+ * bar is hidden only there), and `fullscreen` while the window fills the
+ * screen, where macOS takes those buttons away.
+ */
+export type WindowChrome = { trafficLights: boolean; fullscreen: boolean };
 
 /**
  * The app-menu commands the desktop host alone has, outside the shortcut
@@ -176,6 +204,31 @@ export function holdsCommandKey(event: { metaKey: boolean; ctrlKey: boolean }): 
 export function revealHost(): RevealHost {
   const bridge = hostBridge();
   return bridge ? { label: revealLabel(bridge.platform) } : null;
+}
+
+let editorFound = false;
+
+/**
+ * Asks the desktop host once per page whether VS Code is on this computer
+ * (D-14); the row menus read the answer through `editorHost`. A browser tab
+ * has no host to ask, and a refused question leaves the item out.
+ */
+export function readEditorAvailability(): void {
+  const bridge = hostBridge();
+  if (!bridge) return;
+  bridge.editorAvailable().then(
+    (found) => {
+      editorFound = found;
+    },
+    () => {
+      editorFound = false;
+    },
+  );
+}
+
+/** Whether the desktop host found VS Code on this computer. */
+export function editorHost(): boolean {
+  return editorFound;
 }
 
 export function hostKind(): HostKind {

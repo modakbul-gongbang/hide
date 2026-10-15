@@ -28,13 +28,14 @@ It sets the document language and subscribes React surfaces through react-i18nex
 Language selection is disabled while disconnected, and displays only the confirmed core value while connected.
 A client never translates conversations, terminal bytes, file contents, paths, branch names, device labels, task labels or other user-owned text.
 Such values are interpolation data, rendered as text.
+Numeric identifiers, including Memory's PR numbers, are passed to translation as digit strings so locale grouping never changes their spelling; quantities retain locale number formatting.
 Diagnostic payloads and copied diagnostic records remain technical source data.
 Missing keys and missing interpolation values fail explicitly; English is a locale-resolution fallback, never a missing-key fallback.
 
 ## Current integration coverage
 
 The web shell renders every product-owned sentence of its main screens from the catalogs.
-That covers Settings (every tab), the sidebar rows, menus and close sheets, the shared Overview and its request view, Agents graph, Issues board and PRs view, the Workspace toolbar, tab bars and pane chrome, the editor and file views, the Explorer and History, browser displays, the palettes, the start panel, the add-project and workspace dialogs, Project Sessions, disk cleanup and the device rail.
+That covers Settings (every tab), the sidebar rows, menus and close sheets, the shared Overview and its request view, Agents graph, Issues board, the Work tool's PRs lens and PR card, the window's top row, tab bars and pane chrome, the editor and file views, the Explorer and History, browser displays, the palettes, the start panel, the add-project and workspace dialogs, Project Sessions, disk cleanup and the device rail.
 Shortcut keycaps retain their host-specific chord glyphs in every language.
 Text that a helper composes outside a render uses the `translate` function of `client.tsx`, which reads the confirmed language at call time; a helper that renders inside React takes the component's `t`.
 A module the desktop host imports (`host.ts` and everything it reaches) stays free of the translator and names a label by key, as `revealExternal.ts` does.

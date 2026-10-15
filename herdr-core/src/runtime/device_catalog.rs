@@ -71,6 +71,13 @@ impl Runtime {
                             &project.checkouts,
                             unix_milliseconds(),
                         );
+                        super::links::associate_pr_sessions(
+                            &mut project.pull_requests,
+                            self.snapshot
+                                .link_summaries
+                                .as_ref()
+                                .and_then(|summaries| summaries.projects.get(&project.id)),
+                        );
                     }
                 }
             }
@@ -105,6 +112,7 @@ impl Runtime {
             crate::project_context::refresh_device_folds(
                 workspace,
                 &agents,
+                &self.snapshot.navigator.sleeping_sessions,
                 &self.snapshot.ui_state,
                 focused.as_deref(),
                 reports_own_facts,
@@ -200,9 +208,21 @@ impl Runtime {
     }
 
     /// A device tab Herdr no longer lists loses its View bookmark (D-11).
-    /// A checkout the device lists with no tab at all is left alone, like an
-    /// answer that has not arrived.
-    fn prune_device_view_bookmarks(&mut self, target: &str) {
+    pub(super) fn device_catalog_ready(&self, target: &str) -> bool {
+        self.snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == target)
+            .is_some_and(|status| {
+                status.catalog.state == "ready" && status.catalog.refused.is_empty()
+            })
+    }
+
+    /// Only an answered catalog can prove that an empty registered checkout
+    /// has no tabs: while grouping is unresolved it is a placeholder.
+    pub(super) fn prune_device_view_bookmarks(&mut self, target: &str) {
+        let empty_authoritative = self.device_catalog_ready(target);
         let Some(session) = self
             .snapshot
             .status
@@ -228,7 +248,7 @@ impl Runtime {
                     )
                 })
             })
-            .filter(|(_, tabs)| !tabs.is_empty())
+            .filter(|(_, tabs)| !tabs.is_empty() || empty_authoritative)
             .collect();
         let mut pruned = false;
         for (key, tabs) in &listed {
@@ -546,6 +566,21 @@ impl Runtime {
         if wanted.is_empty() {
             return false;
         }
+        let bases: BTreeMap<_, _> = wanted
+            .iter()
+            .map(|root| {
+                (
+                    root.clone(),
+                    crate::project_settings::base_choice(
+                        &self.snapshot.ui_state.project_settings,
+                        &self.snapshot.ui_state.project_base_branches,
+                        target,
+                        root,
+                    )
+                    .map(str::to_owned),
+                )
+            })
+            .collect();
         let Ok(channel) = self.node_link(target) else {
             return false;
         };
@@ -560,14 +595,14 @@ impl Runtime {
         entry.again = false;
         entry.reread = false;
         let Some(context) = self.worker_context.clone() else {
-            let answer = ask_worktrees(channel.as_ref(), target, &wanted, notes);
+            let answer = ask_worktrees(channel.as_ref(), target, &wanted, &bases, notes);
             return self.ingest_device_worktrees(target, generation, answer);
         };
         let device = target.to_owned();
         let spawned = thread::Builder::new()
             .name("herdr-core-device-worktrees".to_owned())
             .spawn(move || {
-                let answer = ask_worktrees(channel.as_ref(), &device, &wanted, notes);
+                let answer = ask_worktrees(channel.as_ref(), &device, &wanted, &bases, notes);
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
@@ -609,6 +644,10 @@ impl Runtime {
             return false;
         }
         entry.in_flight = None;
+        if std::mem::take(&mut entry.discard_answer) {
+            entry.again = false;
+            return self.request_device_worktrees(target, true);
+        }
         for (root, project) in answers {
             match project {
                 Some(project) => {
@@ -698,7 +737,7 @@ impl Runtime {
     }
 }
 
-const WORKTREES_TIMEOUT: Duration = Duration::from_secs(60);
+use hide_node_link::worktrees::WORKTREES_TIMEOUT;
 
 /// What one read of a device's repositories answered.
 pub(super) struct WorktreesAnswer {
@@ -720,9 +759,10 @@ fn ask_worktrees(
     channel: &dyn crate::node_access::NodeLink,
     target: &str,
     roots: &[String],
+    bases: &BTreeMap<String, Option<String>>,
     notes: bool,
 ) -> WorktreesAnswer {
-    let (answers, failure) = ask_repositories(channel, roots);
+    let (answers, failure) = ask_repositories(channel, roots, bases);
     if !notes || failure.is_some() {
         return WorktreesAnswer {
             answers,
@@ -758,6 +798,7 @@ fn ask_worktrees(
 fn ask_repositories(
     channel: &dyn crate::node_access::NodeLink,
     roots: &[String],
+    bases: &BTreeMap<String, Option<String>>,
 ) -> (
     Vec<(String, Option<crate::model::ProjectWorktreesSnapshot>)>,
     Option<String>,
@@ -769,7 +810,8 @@ fn ask_repositories(
             hide_node_link::protocol::Call::Worktrees {
                 path: root.clone(),
                 bases: Default::default(),
-                base_override: None,
+                base_override: bases.get(root).cloned().flatten(),
+                reuse_unchanged: false,
             },
             WORKTREES_TIMEOUT,
         ) {

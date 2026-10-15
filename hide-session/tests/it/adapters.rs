@@ -1002,6 +1002,41 @@ fn every_agent_reads_to_the_same_facts() {
     }
 }
 
+/// A conversation page reaches the core as JSON over the node link
+/// (`Call::SessionConversation`), and the core reads every event back. Codex
+/// writes the instructions it adds to a turn as `developer` records, and a
+/// page holding one was refused as `conversation_role_invalid`, so Project
+/// Memory failed every Codex session again each time its file grew.
+#[test]
+fn every_agents_conversation_page_reads_back_from_the_node_link() {
+    let file = |agent: Agent, home: &Path| {
+        match agent {
+        Agent::Claude => home.join(".claude/projects/-work-app/a1b2c3d4-0000-4000-8000-000000000001.jsonl"),
+        Agent::Codex => home.join(".codex/sessions/2026/10/03/rollout-2026-10-03T01-00-00-0199a000-0000-7000-8000-000000000002.jsonl"),
+        _ => unreachable!("the file fixtures above"),
+    }
+    };
+    for agent in [Agent::Claude, Agent::Codex] {
+        let home = home(agent);
+        let scope = hide_session::SessionReadScope {
+            id: request(agent).reference_value,
+            cwd: "/work/app".to_owned(),
+        };
+        let page = hide_session::read_conversation(
+            home.path(),
+            agent,
+            &file(agent, home.path()),
+            &scope,
+            None,
+        )
+        .unwrap();
+        let wire = serde_json::to_vec(&page).unwrap();
+        let read: hide_session::ConversationRead = serde_json::from_slice(&wire)
+            .unwrap_or_else(|error| panic!("{agent:?}: the core refused the page: {error}"));
+        assert_eq!(read.events, page.events, "{agent:?}");
+    }
+}
+
 mod omp {
     use super::*;
     use serde_json::json;
@@ -1139,6 +1174,33 @@ mod omp {
             assert_eq!(answered.title.as_deref(), Some("同時の名前"));
             native.resume(&answered);
         }
+    }
+
+    /// Herdr reports an omp session as its file. The proof that names the
+    /// pane's session from that file and the link reader name the same
+    /// session, by the id in the header, so the core can key the link
+    /// record's lineage by either.
+    #[test]
+    fn the_file_herdr_reports_and_the_link_reader_name_one_session() {
+        let mut native = Native::new();
+        native.request.reference_kind = "path".to_owned();
+        native.request.reference_value = native.path.display().to_string();
+        let pane = native.read().unwrap();
+        let linked = hide_session::links::read(
+            native.home.path(),
+            &[hide_session::links::ReadRequest {
+                agent: Agent::Omp,
+                path: native.path.display().to_string(),
+                checkpoint: None,
+            }],
+        )
+        .remove(0);
+        assert_eq!(linked.error, None);
+        assert_eq!(
+            pane.confirmed.native_session_id.as_deref(),
+            Some("omp-native-a")
+        );
+        assert_eq!(linked.facts.session_id.as_deref(), Some("omp-native-a"));
     }
 
     #[test]
@@ -1929,6 +1991,10 @@ mod grok {
     fn current_titles_come_from_the_summary_and_a_cleared_rename_revokes_them() {
         let mut native = Native::new();
         let first = native.read().unwrap();
+        assert_eq!(
+            (first.title.as_deref(), first.custom_title.as_deref()),
+            (Some("요청 보기 만들기"), Some(""))
+        );
         native.resume(&first);
         native.summary(|summary| {
             summary["generated_title"] = json!("새 이름");
@@ -1948,6 +2014,20 @@ mod grok {
         assert_eq!(
             (cleared.title.as_deref(), cleared.custom_title.as_deref()),
             (Some(""), Some(""))
+        );
+        native.resume(&cleared);
+        native.summary(|summary| {
+            summary["generated_title"] = json!("자동 이름");
+            summary["title_is_manual"] = json!(false);
+        });
+        let automatic = native.read().unwrap();
+        assert!(automatic.events.is_empty());
+        assert_eq!(
+            (
+                automatic.title.as_deref(),
+                automatic.custom_title.as_deref()
+            ),
+            (Some("자동 이름"), Some(""))
         );
     }
 
@@ -2255,7 +2335,11 @@ mod pi {
     fn native_history_has_the_shared_conversation_facts_and_only_recorded_capabilities() {
         let native = Native::new();
         let transcript = native.read().unwrap();
-        assert_eq!(transcript.custom_title.as_deref(), Some("요청 보기 만들기"));
+        assert_eq!(transcript.title.as_deref(), Some("요청 보기 만들기"));
+        assert!(
+            transcript.custom_title.is_none(),
+            "Pi records no title source"
+        );
         let people: Vec<_> = transcript
             .events
             .iter()
@@ -2350,12 +2434,13 @@ mod pi {
         native.resume(&first);
         native.append(json!({"type":"session_info","id":"renamed","parentId":"a000000b","timestamp":"2026-10-03T01:03:00Z","name":"새 이름"}));
         let renamed = native.read().unwrap();
-        assert_eq!(renamed.custom_title.as_deref(), Some("새 이름"));
+        assert_eq!(renamed.title.as_deref(), Some("새 이름"));
+        assert!(renamed.custom_title.is_none());
         assert!(renamed.events.is_empty());
         native.resume(&renamed);
         native.append(json!({"type":"session_info","id":"cleared","parentId":"renamed","timestamp":"2026-10-03T01:03:01Z","name":""}));
         let cleared = native.read().unwrap();
-        assert_eq!(cleared.custom_title.as_deref(), Some(""));
+        assert_eq!(cleared.title.as_deref(), Some(""));
         native.resume(&cleared);
         assert!(native.read().unwrap().events.is_empty());
         let body = fs::read_to_string(&native.path).unwrap();
@@ -2376,6 +2461,33 @@ mod pi {
         let fork = native.read().unwrap();
         assert_eq!(fork.events.len(), 4);
         assert!(fork.subagents.is_empty());
+    }
+
+    /// Herdr reports a Pi session as its file. The proof that names the
+    /// pane's session from that file and the link reader name the same
+    /// session, by the id in the header, so the core can key the link
+    /// record's lineage by either.
+    #[test]
+    fn the_file_herdr_reports_and_the_link_reader_name_one_session() {
+        let mut native = Native::new();
+        native.request.reference_kind = "path".to_owned();
+        native.request.reference_value = native.path.display().to_string();
+        let pane = native.read().unwrap();
+        let linked = hide_session::links::read(
+            native.home.path(),
+            &[hide_session::links::ReadRequest {
+                agent: Agent::Pi,
+                path: native.path.display().to_string(),
+                checkpoint: None,
+            }],
+        )
+        .remove(0);
+        assert_eq!(linked.error, None);
+        assert_eq!(
+            pane.confirmed.native_session_id.as_deref(),
+            Some("pi-native-a")
+        );
+        assert_eq!(linked.facts.session_id.as_deref(), Some("pi-native-a"));
     }
 
     #[test]
@@ -2830,6 +2942,76 @@ fn what_only_one_agent_records_is_read_from_it() {
     let codex_home = home(Agent::Codex);
     let codex = read_whole(codex_home.path(), Agent::Codex);
     assert_eq!(sighted(&codex, 14).unwrap().at_unix_ms, START + 40_000);
+}
+
+/// Task identity: only a native record with manual provenance gets step one.
+#[test]
+fn claude_titles_keep_the_manual_rename_separate_from_the_automatic_name() {
+    let native = home(Agent::Claude);
+    let transcript = read_whole(native.path(), Agent::Claude);
+    assert_eq!(transcript.title.as_deref(), Some("요청 보기 만들기"));
+    assert_eq!(transcript.custom_title.as_deref(), Some("운영자 이름"));
+    let id = request(Agent::Claude).reference_value;
+    let file = native
+        .path()
+        .join(".claude/projects/-work-app")
+        .join(format!("{id}.jsonl"));
+    append(
+        &file,
+        &[serde_json::json!({"type":"custom-title", "customTitle":"", "sessionId":id})],
+    );
+    let cleared = read_whole(native.path(), Agent::Claude);
+    assert_eq!(cleared.title.as_deref(), Some("요청 보기 만들기"));
+    assert_eq!(cleared.custom_title.as_deref(), Some(""));
+    append(
+        &file,
+        &[serde_json::json!({"type":"ai-title", "aiTitle":"", "sessionId":id})],
+    );
+    assert_eq!(
+        read_whole(native.path(), Agent::Claude).title.as_deref(),
+        Some("")
+    );
+}
+
+#[test]
+fn codex_thread_names_without_source_are_automatic_even_after_a_rename() {
+    let native = home(Agent::Codex);
+    let transcript = read_whole(native.path(), Agent::Codex);
+    assert_eq!(transcript.title.as_deref(), Some("요청 보기 만들기"));
+    assert!(transcript.custom_title.is_none());
+    use std::io::Write;
+    writeln!(
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(native.path().join(".codex/session_index.jsonl"))
+            .unwrap(),
+        "{}",
+        serde_json::json!({"id":request(Agent::Codex).reference_value,
+        "thread_name":"운영자 이름", "updated_at":"2026-10-03T01:03:00.000Z"})
+    )
+    .unwrap();
+    let renamed = read_whole(native.path(), Agent::Codex);
+    assert_eq!(renamed.title.as_deref(), Some("운영자 이름"));
+    assert!(renamed.custom_title.is_none());
+}
+
+#[test]
+fn opencode_root_titles_without_source_are_automatic_even_after_a_rename() {
+    let native = home(Agent::OpenCode);
+    let first = read_whole(native.path(), Agent::OpenCode);
+    assert_eq!(first.title.as_deref(), Some("요청 보기 만들기"));
+    assert!(first.custom_title.is_none());
+    let db = rusqlite::Connection::open(native.path().join(".local/share/opencode/opencode.db"))
+        .unwrap();
+    db.execute(
+        "UPDATE session SET title = ?1 WHERE id = ?2",
+        rusqlite::params!["운영자 이름", request(Agent::OpenCode).reference_value],
+    )
+    .unwrap();
+    drop(db);
+    let renamed = read_whole(native.path(), Agent::OpenCode);
+    assert_eq!(renamed.title.as_deref(), Some("운영자 이름"));
+    assert!(renamed.custom_title.is_none());
 }
 
 #[test]
@@ -4119,4 +4301,81 @@ fn opencode_catalog_and_search_hold_only_its_root_sessions_in_the_project() {
         .unwrap();
     assert_eq!(fresh.hits.len(), 1, "{fresh:?}");
     assert!(!fresh.stale);
+}
+
+#[test]
+fn original_issue_turn_is_scoped_and_bound_to_the_end_witness_for_native_adapters() {
+    use hide_session::label_transcript::{WorkTurnRequest, read_work_turn, work_turn};
+    for agent in [Agent::Claude, Agent::Codex, Agent::OpenCode] {
+        let home = home(agent);
+        let transcript = read_whole(home.path(), agent);
+        let first = transcript
+            .events
+            .iter()
+            .find(|event| event.kind == LabelEventKind::Human)
+            .unwrap();
+        let original = work_turn(&transcript.events, first.offset).unwrap();
+        let request = WorkTurnRequest {
+            agent,
+            session_id: request(agent).reference_value,
+            path: (agent == Agent::OpenCode).then(|| "opencode/catalog-locator".into()),
+            cwd: "/work/app".into(),
+            offset: first.offset,
+            witness: original.witness(),
+        };
+        assert_eq!(
+            read_work_turn(home.path(), &request).unwrap(),
+            original,
+            "{agent:?}"
+        );
+        let mut changed = request;
+        changed.witness = hide_session::label_transcript::WorkTurn {
+            request: "another turn".into(),
+            assistant: original.assistant,
+        }
+        .witness();
+        assert_eq!(
+            read_work_turn(home.path(), &changed).unwrap_err(),
+            "work_turn_changed",
+            "{agent:?}"
+        );
+    }
+}
+
+#[test]
+fn original_turn_rejects_a_same_id_file_replacement_before_preview_and_accepts_append() {
+    use hide_session::label_transcript::{WorkTurnRequest, read_work_turn, work_turn};
+    let home = home(Agent::Codex);
+    let transcript = read_whole(home.path(), Agent::Codex);
+    let first = transcript
+        .events
+        .iter()
+        .find(|event| event.kind == LabelEventKind::Human)
+        .unwrap();
+    let original = work_turn(&transcript.events, first.offset).unwrap();
+    let path = home.path().join(".codex/sessions/2026/10/03/rollout-2026-10-03T01-00-00-0199a000-0000-7000-8000-000000000002.jsonl");
+    let request = WorkTurnRequest {
+        agent: Agent::Codex,
+        session_id: request(Agent::Codex).reference_value,
+        path: Some(path.to_string_lossy().into_owned()),
+        cwd: "/work/app".into(),
+        offset: first.offset,
+        witness: original.witness(),
+    };
+    use std::io::Write;
+    std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b"\n{\"type\":\"event_msg\",\"timestamp\":\"2026-10-03T01:01:00Z\",\"payload\":{\"type\":\"user_message\",\"message\":\"Later turn\"}}\n").unwrap();
+    assert_eq!(read_work_turn(home.path(), &request).unwrap(), original);
+    let content = std::fs::read_to_string(&path).unwrap();
+    let changed = content.replacen("요청 보기를", "요청 요기를", 1);
+    assert_ne!(
+        changed, content,
+        "fixture must replace the original request at unchanged byte boundaries"
+    );
+    let replacement = path.with_extension("replacement");
+    std::fs::write(&replacement, changed).unwrap();
+    std::fs::rename(replacement, &path).unwrap();
+    assert_eq!(
+        read_work_turn(home.path(), &request).unwrap_err(),
+        "work_turn_changed"
+    );
 }

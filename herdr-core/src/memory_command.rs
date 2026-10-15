@@ -5,15 +5,15 @@
 //! caller under its lock and hands back a [`PreparedMemory`] holding what the
 //! command needs, and the command itself (store reads, the Project's identity,
 //! an `add`'s provider call) runs on hided's blocking task, off the lock.
-//! A connected device's Memory is its own (D-22), so only a caller on this
-//! machine is answered.
+//! A caller on any linked device is answered from the core's one store;
+//! the caller's node reads its Project and session files.
 
 use crate::node::NodeId;
 use crate::node_access::NodeLink;
 use crate::runtime::RuntimeWorkerContext;
 use crate::runtime::memory_analysis::{
-    AnalysisFailure, BatchSource, MemoryChange, WeeklyUsage, admit_call, batch_identity,
-    report_memory_change, write_cards,
+    AnalysisFailure, BatchSource, MemoryChange, admit_call, batch_identity, report_memory_change,
+    write_cards,
 };
 use hide_ai::{AiError, AiRouter, AiSettings, CancelToken};
 use hide_memory::{CandidateOutcome, MemoryItem, MemoryLifecycle, MemoryStore, card_name};
@@ -80,6 +80,25 @@ pub enum MemoryCommand {
         number: u64,
         reason: String,
     },
+    /// One card was not processed; peers can still reach the shared PR.
+    Skipped {
+        number: u64,
+        reason: String,
+    },
+    /// The agent promoting card `number` found its decision not built in the
+    /// code yet and `branch` building it, with `path` there already carrying
+    /// the card: that branch's pull request settles the card.
+    Building {
+        number: u64,
+        branch: String,
+        path: String,
+    },
+    /// The agent promoting card `number` found its decision not built and no
+    /// branch building it; the reason is what it saw, shown to the operator.
+    Unbuilt {
+        number: u64,
+        reason: String,
+    },
 }
 
 impl MemoryCommand {
@@ -93,7 +112,9 @@ impl MemoryCommand {
             }
             // Never Git's own folder: the path is shown to every agent once
             // the card's pull request merges.
-            Self::Outdated { number, reason } => {
+            Self::Outdated { number, reason }
+            | Self::Skipped { number, reason }
+            | Self::Unbuilt { number, reason } => {
                 *number > 0
                     && !reason.trim().is_empty()
                     && reason.chars().count() <= hide_memory::OUTDATED_REASON_LIMIT_CHARS
@@ -105,8 +126,26 @@ impl MemoryCommand {
                         .split('/')
                         .any(|part| part.eq_ignore_ascii_case(".git"))
             }
+            Self::Building {
+                number,
+                branch,
+                path,
+            } => {
+                *number > 0
+                    && hide_memory::branch_name(branch)
+                    && hide_memory::repository_path(path)
+                    && !path
+                        .split('/')
+                        .any(|part| part.eq_ignore_ascii_case(".git"))
+            }
         }
     }
+}
+
+/// Whether `branch` is a name `hide memory building` takes: one git would
+/// accept for a branch.
+pub fn branch_name(branch: &str) -> bool {
+    hide_memory::branch_name(branch)
 }
 
 /// The number a card name such as `m12` (or a bare `12`) gives.
@@ -123,6 +162,8 @@ pub struct PreparedMemory {
     pub(crate) sessions_node: Arc<dyn NodeLink>,
     /// The core's own node, which asks the provider for an `add`.
     pub(crate) ai_node: Arc<dyn NodeLink>,
+    /// Where the provider boundary tells what an `add` spent.
+    pub(crate) ai_usage: Arc<dyn hide_ai::AiUsageSink>,
     pub(crate) database: PathBuf,
     pub(crate) checkout_path: String,
     /// The calling agent's Memory provider and session, when the caller is
@@ -133,6 +174,11 @@ pub struct PreparedMemory {
     /// The coordination ids of the live agents in the caller's pane, so only
     /// the agent a promotion started names its file (`placed`).
     pub(crate) caller_agents: Vec<String>,
+    /// The caller's repository as the worktree catalog last read it: its
+    /// branches, `None` while unread, and the checkout of each branch that
+    /// has one, which a `building` branch and its file are checked against.
+    pub(crate) branches: Option<Vec<String>>,
+    pub(crate) branch_checkouts: Vec<(String, String)>,
     /// Where a change is reported, so the screen reads Memory again.
     pub(crate) context: Option<RuntimeWorkerContext>,
 }
@@ -142,7 +188,8 @@ impl PreparedMemory {
     /// [`next_action`] explains.
     pub fn run(self) -> Result<Value, String> {
         let node = Arc::clone(&self.ai_node);
-        self.run_with(|settings| crate::ai::memory_add_router(&node, settings))
+        let usage = Arc::clone(&self.ai_usage);
+        self.run_with(|settings| crate::ai::memory_add_router(&node, settings, &usage))
     }
 
     fn run_with(self, router: impl FnOnce(&AiSettings) -> AiRouter) -> Result<Value, String> {
@@ -164,14 +211,15 @@ impl PreparedMemory {
             "memory_project_unavailable".to_owned()
         })?;
         let root = identity.root.to_string_lossy().into_owned();
-        let mut store = MemoryStore::open(&self.database).map_err(|error| {
-            crate::diagnostic!(json!({
-                "component": "memory",
-                "kind": "command.store_unavailable",
-                "message": error.to_string(),
-            }));
-            "memory_unavailable".to_owned()
-        })?;
+        let mut store =
+            crate::runtime::memory::open_memory_store(&self.database).map_err(|error| {
+                crate::diagnostic!(json!({
+                    "component": "memory",
+                    "kind": "command.store_unavailable",
+                    "message": error.to_string(),
+                }));
+                "memory_unavailable".to_owned()
+            })?;
         let enabled = match store.project_state(&identity.id) {
             Ok(state) => state.enabled,
             Err(hide_memory::MemoryError::ProjectMissing) => false,
@@ -201,6 +249,11 @@ impl PreparedMemory {
                     .evidence;
                 let mut answer = card(&item);
                 answer["evidence"] = json!(evidence);
+                answer["document_comparison"] = json!(
+                    store
+                        .document_comparison(&identity.id, number)
+                        .map_err(|error| store_failure(&identity.id, &error))?
+                );
                 Ok(answer)
             }
             MemoryCommand::Forget { number } => {
@@ -233,32 +286,7 @@ impl PreparedMemory {
                 }))
             }
             MemoryCommand::Placed { number, path } => {
-                let promotions = store
-                    .promotions(&identity.id)
-                    .map_err(|error| store_failure(&identity.id, &error))?;
-                // An attempt whose agent Hide has not seen yet records it on
-                // a later check: its agent asks again then.
-                if promotions.iter().any(|(card, promotion)| {
-                    *card == number
-                        && promotion.state == hide_memory::PromotionState::Running
-                        && promotion.agent_id.is_none()
-                }) {
-                    return Err("memory_promotion_agent_pending".into());
-                }
-                let (_, promotion) = promotions
-                    .into_iter()
-                    .find(|(card, _)| *card == number)
-                    .filter(|(_, promotion)| {
-                        matches!(
-                            promotion.state,
-                            hide_memory::PromotionState::Running
-                                | hide_memory::PromotionState::PrOpen
-                        ) && promotion
-                            .agent_id
-                            .as_ref()
-                            .is_some_and(|id| self.caller_agents.contains(id))
-                    })
-                    .ok_or("memory_card_not_promoting")?;
+                let promotion = self.own_promotion(&store, &identity.id, number)?;
                 // The file must be in the caller's checkout, the worktree the
                 // promotion's agent changed it in.
                 let inside = crate::runtime::memory_analysis::paths_inside(
@@ -281,47 +309,87 @@ impl PreparedMemory {
                 self.report(&identity.id, MemoryChange::Other);
                 Ok(json!({"card": card_name(number), "path": path}))
             }
-            MemoryCommand::Outdated { number, reason } => {
-                let promotions = store
-                    .promotions(&identity.id)
-                    .map_err(|error| store_failure(&identity.id, &error))?;
-                if promotions.iter().any(|(card, promotion)| {
-                    *card == number
-                        && promotion.state == hide_memory::PromotionState::Running
-                        && promotion.agent_id.is_none()
-                }) {
-                    return Err("memory_promotion_agent_pending".into());
-                }
-                let (_, promotion) = promotions
-                    .into_iter()
-                    .find(|(card, _)| *card == number)
-                    .filter(|(_, promotion)| {
-                        matches!(
-                            promotion.state,
-                            hide_memory::PromotionState::Running
-                                | hide_memory::PromotionState::PrOpen
-                        ) && promotion
-                            .agent_id
-                            .as_ref()
-                            .is_some_and(|id| self.caller_agents.contains(id))
-                    })
-                    .ok_or("memory_card_not_promoting")?;
+            command @ (MemoryCommand::Outdated { .. }
+            | MemoryCommand::Skipped { .. }
+            | MemoryCommand::Unbuilt { .. }) => {
+                let (outcome, number, reason) = match command {
+                    MemoryCommand::Outdated { number, reason } => ("outdated", number, reason),
+                    MemoryCommand::Skipped { number, reason } => ("skipped", number, reason),
+                    MemoryCommand::Unbuilt { number, reason } => ("unbuilt", number, reason),
+                    _ => unreachable!(),
+                };
+                let promotion = self.own_promotion(&store, &identity.id, number)?;
                 // Only while this attempt and agent still hold the card.
+                let moved = match outcome {
+                    "skipped" => {
+                        store.skip_promotion(&identity.id, number, &promotion, &reason, now, None)
+                    }
+                    "unbuilt" => {
+                        store.leave_unbuilt(&identity.id, number, &promotion, &reason, now)
+                    }
+                    _ => store.mark_outdated(&identity.id, number, &promotion, &reason, now),
+                };
+                if !moved.map_err(|error| store_failure(&identity.id, &error))? {
+                    return Err("memory_card_not_promoting".into());
+                }
+                crate::diagnostic!(json!({
+                    "component": "memory",
+                    "kind": format!("promotion.{outcome}"),
+                    "project_id": identity.id,
+                    "card": number,
+                    "reason_chars": reason.chars().count(),
+                }));
+                self.report(&identity.id, MemoryChange::Other);
+                Ok(json!({"card": card_name(number), "outcome": outcome}))
+            }
+            MemoryCommand::Building {
+                number,
+                branch,
+                path,
+            } => {
+                let promotion = self.own_promotion(&store, &identity.id, number)?;
+                // The attempt's own branch is where the card would be placed,
+                // never the work that builds it.
+                if promotion.branch.as_deref() == Some(branch.as_str()) {
+                    return Err("memory_branch_is_the_attempts".into());
+                }
+                if self
+                    .branches
+                    .as_ref()
+                    .is_some_and(|branches| !branches.contains(&branch))
+                {
+                    return Err("memory_branch_not_found".into());
+                }
+                // The file must be on that branch, where its checkout shows it.
+                if let Some((_, checkout)) = self
+                    .branch_checkouts
+                    .iter()
+                    .find(|(name, _)| *name == branch)
+                    && !crate::runtime::memory_analysis::paths_inside(
+                        self.sessions_node.as_ref(),
+                        checkout,
+                        std::slice::from_ref(&path),
+                    )
+                    .contains(&path)
+                {
+                    return Err("memory_building_path_not_found".into());
+                }
                 if !store
-                    .mark_outdated(&identity.id, number, &promotion, &reason, now)
+                    .build_promotion(&identity.id, number, &promotion, &branch, &path, now)
                     .map_err(|error| store_failure(&identity.id, &error))?
                 {
                     return Err("memory_card_not_promoting".into());
                 }
                 crate::diagnostic!(json!({
                     "component": "memory",
-                    "kind": "promotion.outdated",
+                    "kind": "promotion.building",
                     "project_id": identity.id,
                     "card": number,
-                    "reason_chars": reason.chars().count(),
                 }));
                 self.report(&identity.id, MemoryChange::Other);
-                Ok(json!({"card": card_name(number), "outcome": "outdated"}))
+                Ok(
+                    json!({"card": card_name(number), "outcome": "building", "branch": branch, "path": path}),
+                )
             }
             MemoryCommand::Search { words } => {
                 let items = store
@@ -390,7 +458,7 @@ impl PreparedMemory {
                     &self.add_source(&identity.id, &root, &session_id, deadline),
                     &group,
                     &CancelToken::new(),
-                    &mut |store| admit_call(store, WeeklyUsage::Unknown, false),
+                    &mut |store| admit_call(store),
                 )
                 .map_err(|failure| add_failure(&identity.id, failure))?;
                 self.report(&identity.id, MemoryChange::Other);
@@ -418,6 +486,42 @@ impl PreparedMemory {
             new_card_limit: None,
             deadline: Some(deadline),
         }
+    }
+
+    /// The promotion of card `number` that the caller's own agent holds:
+    /// running or with its pull request open. An attempt whose agent Hide
+    /// has not seen yet records it on a later check, and its agent asks
+    /// again then.
+    fn own_promotion(
+        &self,
+        store: &MemoryStore,
+        project_id: &str,
+        number: u64,
+    ) -> Result<hide_memory::Promotion, String> {
+        let promotions = store
+            .promotions(project_id)
+            .map_err(|error| store_failure(project_id, &error))?;
+        if promotions.iter().any(|(card, promotion)| {
+            *card == number
+                && promotion.state == hide_memory::PromotionState::Running
+                && promotion.agent_id.is_none()
+        }) {
+            return Err("memory_promotion_agent_pending".into());
+        }
+        promotions
+            .into_iter()
+            .find(|(card, _)| *card == number)
+            .filter(|(_, promotion)| {
+                matches!(
+                    promotion.state,
+                    hide_memory::PromotionState::Running | hide_memory::PromotionState::PrOpen
+                ) && promotion
+                    .agent_id
+                    .as_ref()
+                    .is_some_and(|id| self.caller_agents.contains(id))
+            })
+            .map(|(_, promotion)| promotion)
+            .ok_or_else(|| "memory_card_not_promoting".to_owned())
     }
 
     fn report(&self, project_id: &str, change: MemoryChange) {
@@ -526,8 +630,10 @@ fn add_failure(project_id: &str, failure: AnalysisFailure) -> String {
 /// What the caller can do about a refusal.
 pub fn next_action(code: &str) -> &'static str {
     match code {
-        "memory_device_unsupported" => {
-            "Run hide memory on the machine that runs Hide or on a computer that connects to it; a device Hide connects to has no Project Memory"
+        "link_down" => "Reconnect this device in Hide, then retry",
+        "unregistered" => "Register this device in Hide, then retry",
+        "session_reader_support_unavailable" | "session_reader_memory_unsupported" => {
+            "Update this device's Hide helper to one that supports Project Memory, then reconnect"
         }
         "memory_off" => "Memory is off for this Project; only the operator can turn it on in Hide",
         "memory_ai_off" => "Turn Hide AI on and choose an agent in Hide's Settings",
@@ -541,7 +647,7 @@ pub fn next_action(code: &str) -> &'static str {
         }
         "memory_text_too_long" => "Shorten the text to 4,000 characters and retry",
         "memory_card_not_promoting" => {
-            "Only the agent Hide started to put this card in the repository names its file or calls it outdated"
+            "Only the agent Hide started to put this card in the repository names its file or says where it stands"
         }
         "memory_promotion_agent_pending" => {
             "Hide has not confirmed this agent yet; run the same command again in a minute"
@@ -551,6 +657,15 @@ pub fn next_action(code: &str) -> &'static str {
         }
         "memory_path_not_found" => {
             "Name a file that exists in this checkout, relative to its root, and retry"
+        }
+        "memory_branch_not_found" => {
+            "Name a branch of this repository that builds the card, as git branch lists it, and retry"
+        }
+        "memory_branch_is_the_attempts" => {
+            "Name the branch that builds the card, not this checkout's own, and retry"
+        }
+        "memory_building_path_not_found" => {
+            "Name the file on that branch's checkout that carries the card, relative to its root, and retry"
         }
         "agent_pane_required" | "caller_context_changed" => {
             "Run the command from the agent's own pane and retry"
@@ -671,17 +786,32 @@ mod tests {
         }
 
         fn run(&self, command: MemoryCommand, ai: bool) -> Result<Value, String> {
+            self.run_in_repository(command, ai, None, Vec::new())
+        }
+
+        /// Runs `command` with the caller's repository read as having
+        /// `branches` and the checkouts `branch_checkouts`.
+        fn run_in_repository(
+            &self,
+            command: MemoryCommand,
+            ai: bool,
+            branches: Option<Vec<String>>,
+            branch_checkouts: Vec<(String, String)>,
+        ) -> Result<Value, String> {
             let backend: Arc<dyn AiBackend> = self.backend.clone();
             PreparedMemory {
                 command,
                 node: crate::node::test_node(),
                 sessions_node: Arc::clone(&self.node),
                 ai_node: Arc::clone(&self.node),
+                ai_usage: crate::usage_ledger::ai_usage::AiUsageQueue::new(),
                 database: self.database.clone(),
                 checkout_path: self.root.clone(),
                 reader: Some(("claude".to_owned(), "caller-session".to_owned())),
                 settings: ai.then(AiSettings::default),
                 caller_agents: vec!["agent-9".to_owned()],
+                branches,
+                branch_checkouts,
                 context: None,
             }
             .run_with(|_| {
@@ -734,9 +864,12 @@ mod tests {
             agent_id: Some("agent-1".into()),
             branch: Some("hide-memory-m1".into()),
             pr_number: None,
+            repository: None,
             target_path: None,
             started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
+            failure: None,
+            building_branch: None,
         };
         fixture
             .store()
@@ -771,9 +904,12 @@ mod tests {
             agent_id: Some("agent-9".into()),
             branch: Some("hide-memory-m1".into()),
             pr_number: None,
+            repository: None,
             target_path: None,
             started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
+            failure: None,
+            building_branch: None,
         };
         fixture
             .store()
@@ -812,9 +948,12 @@ mod tests {
             agent_id: Some("agent-1".into()),
             branch: Some("hide-memory-m1".into()),
             pr_number: None,
+            repository: None,
             target_path: None,
             started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
+            failure: None,
+            building_branch: None,
         };
         fixture
             .store()
@@ -851,6 +990,157 @@ mod tests {
             }
             .valid()
         );
+    }
+
+    #[test]
+    fn the_agent_placing_an_unbuilt_card_names_the_branch_that_builds_it_or_says_none_does() {
+        // A card whose decision the code does not have yet is not a document
+        // to correct: the attempt ends building, on the branch that builds
+        // it and the file there that carries it, or unbuilt with the reason.
+        let fixture = Fixture::new();
+        let builder = format!("{}/builder", fixture._temp.path().display());
+        std::fs::create_dir_all(format!("{builder}/docs")).unwrap();
+        std::fs::write(format!("{builder}/docs/UI.md"), "").unwrap();
+        let attempt = hide_memory::Promotion {
+            state: hide_memory::PromotionState::Running,
+            revision: 1,
+            attempt: 1,
+            agent_id: Some("agent-9".into()),
+            branch: Some("hide-memory-m1".into()),
+            pr_number: None,
+            repository: None,
+            target_path: None,
+            started_at_unix_ms: 1,
+            updated_at_unix_ms: 1,
+            failure: None,
+            building_branch: None,
+        };
+        fixture
+            .store()
+            .set_promotion(&fixture.project_id, 1, &attempt)
+            .unwrap();
+        let building = |branch: &str, path: &str| {
+            fixture.run_in_repository(
+                MemoryCommand::Building {
+                    number: 1,
+                    branch: branch.to_owned(),
+                    path: path.to_owned(),
+                },
+                false,
+                Some(vec![
+                    "main".to_owned(),
+                    "hide-memory-m1".to_owned(),
+                    "feat/build".to_owned(),
+                ]),
+                vec![("feat/build".to_owned(), builder.clone())],
+            )
+        };
+        assert_eq!(
+            building("hide-memory-m1", "docs/UI.md"),
+            Err("memory_branch_is_the_attempts".into())
+        );
+        assert_eq!(
+            building("feat/gone", "docs/UI.md"),
+            Err("memory_branch_not_found".into())
+        );
+        assert_eq!(
+            building("feat/build", "docs/missing.md"),
+            Err("memory_building_path_not_found".into())
+        );
+        assert_eq!(
+            building("feat/build", "docs/UI.md").unwrap(),
+            json!({"card": "m1", "outcome": "building", "branch": "feat/build", "path": "docs/UI.md"})
+        );
+        let (_, stored) = fixture.store().promotions(&fixture.project_id).unwrap()[0].clone();
+        assert_eq!(stored.state, hide_memory::PromotionState::Building);
+        assert_eq!(stored.building_branch.as_deref(), Some("feat/build"));
+        assert_eq!(stored.target_path.as_deref(), Some("docs/UI.md"));
+        assert_eq!(
+            stored.branch.as_deref(),
+            Some("hide-memory-m1"),
+            "the attempt keeps its own branch"
+        );
+        assert_eq!(
+            building("feat/build", "docs/UI.md"),
+            Err("memory_card_not_promoting".into()),
+            "a building card is no longer the agent's to move"
+        );
+
+        // A branch without a checkout here is taken by name alone.
+        fixture
+            .store()
+            .set_promotion(
+                &fixture.project_id,
+                1,
+                &hide_memory::Promotion {
+                    attempt: 2,
+                    ..attempt.clone()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            fixture
+                .run_in_repository(
+                    MemoryCommand::Building {
+                        number: 1,
+                        branch: "feat/elsewhere".to_owned(),
+                        path: "docs/UI.md".to_owned(),
+                    },
+                    false,
+                    Some(vec!["feat/elsewhere".to_owned()]),
+                    Vec::new(),
+                )
+                .unwrap()["outcome"],
+            "building"
+        );
+
+        fixture
+            .store()
+            .set_promotion(
+                &fixture.project_id,
+                1,
+                &hide_memory::Promotion {
+                    attempt: 3,
+                    ..attempt.clone()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            fixture
+                .run(
+                    MemoryCommand::Unbuilt {
+                        number: 1,
+                        reason: "백로그 출처 선택이 아직 없음".to_owned(),
+                    },
+                    false,
+                )
+                .unwrap(),
+            json!({"card": "m1", "outcome": "unbuilt"})
+        );
+        let (_, stored) = fixture.store().promotions(&fixture.project_id).unwrap()[0].clone();
+        assert_eq!(stored.state, hide_memory::PromotionState::Unbuilt);
+        assert_eq!(
+            stored.failure.as_deref(),
+            Some("백로그 출처 선택이 아직 없음")
+        );
+        for command in [
+            MemoryCommand::Unbuilt {
+                number: 1,
+                reason: " ".into(),
+            },
+            MemoryCommand::Building {
+                number: 1,
+                branch: "-x".into(),
+                path: "docs/UI.md".into(),
+            },
+            MemoryCommand::Building {
+                number: 1,
+                branch: "feat/build".into(),
+                path: ".git/config".into(),
+            },
+        ] {
+            assert!(!command.valid(), "{command:?}");
+        }
     }
 
     #[test]

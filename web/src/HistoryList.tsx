@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { fileIcon } from "./fileIcons";
 import { EntryContextMenu, type MenuEntry } from "./components/entry-menu";
+import { FileMark } from "./components/file-mark";
 import { Hint } from "./components/ui/tooltip";
 import { screenDeviceId } from "./screenMachine";
 import { changesFor, explorerContext, frontCheckout, type ChangedFileSnapshot, type ChangedFileStatus } from "./snapshot";
@@ -74,7 +75,7 @@ function ChangeRow({ entry, committed, selected, actions }: {
         onClick={() => actions.selectChange(entry.path, committed, true)}
         onDoubleClick={() => actions.selectChange(entry.path, committed, false)}
       >
-        <span aria-hidden="true" className={`shrink-0 ${icon.color}`} style={{ fontFamily: "seti" }}>{icon.glyph}</span>
+        <FileMark icon={icon} />
         <span className="flex min-w-0 flex-1 items-baseline gap-xs overflow-hidden">
           <span className="shrink-0 truncate">{name}</span>
           {parent ? <span className="min-w-0 truncate text-muted-foreground">{parent}</span> : null}

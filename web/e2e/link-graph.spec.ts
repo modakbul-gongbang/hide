@@ -1,4 +1,3 @@
-import { openProjectOverview } from "./overview-entry";
 // The link record on an isolated pinned Herdr and hided (PRD link-graph D-34):
 // Claude Code session files under the daemon's HOME, one that printed the
 // pull request's address when GitHub made it and two that worked on its
@@ -11,7 +10,7 @@ import { openProjectOverview } from "./overview-entry";
 // whose Resume says why (B15). Light and Dark captures land in
 // HIDE_E2E_SCREENSHOT_DIR.
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -19,9 +18,10 @@ import { agentsIn, claudeProjects, startHerdr } from "./herdr-fixture";
 import { OMP_ID, PI_ID, prepareNativeWriter } from "./session-reader-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
-import { countSent, screenshot } from "./wire";
+import { countSent, screenshot, showProjectRow, showTool } from "./wire";
 import { chord } from "./chords";
 import { animationsFinished } from "./wait";
+import { initGithubRepository } from "./github-remote";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -63,6 +63,9 @@ function fakeGh(root: string): string {
 const out = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 const [a, b] = args;
 if (a === "auth" && b === "status") process.exit(0);
+if (a === "api" && b === "user") { process.stdout.write("example-user\\n"); process.exit(0); }
+if (process.argv.slice(2).join(" ").includes("review-requested:@me")) { process.stdout.write("[]\\n"); process.exit(0); }
+if (process.argv.slice(2).join(" ").includes("HidePrFacts")) { process.stdout.write('{"data":{"repository":{"pullRequests":{"nodes":[]}}}}\\n'); process.exit(0); }
 if (a === "repo" && b === "view") { out({ nameWithOwner: "acme/repo", id: "R_fixture" }); process.exit(0); }
 if (a === "pr" && b === "list") { out(args.includes("merged") ? [] : ${JSON.stringify(pulls)}); process.exit(0); }
 if (a === "issue" && b === "list") { out([]); process.exit(0); }
@@ -105,6 +108,23 @@ function writeSessions(projects: string, cwd: string): Record<string, string> {
   return { "s-maker": file("s-maker"), "s-review": file("s-review"), "s-gone": file("s-gone") };
 }
 
+/** The pull request's card, opened from the Work tool's PRs lens (PRD work-tab-pr-lens B17). */
+async function openCard(page: Page, number: number, fresh = true): Promise<Locator> {
+  if (fresh) {
+    await (await showProjectRow(page, page.locator("[data-project]", { hasText: "repo" }).locator("[data-checkout]").first())).click();
+    await showTool(page, "work");
+  } else if (!(await page.locator("[data-work-panel]").isVisible())) {
+    // The card opened in the files tool; the rail's Work icon brings the list back.
+    await showTool(page, "work");
+  }
+  await page.locator('[data-work-lens="prs"]').click();
+  // Waiting starts folded (B7); a group opens from its header.
+  await page.locator('[data-pr-group] [data-pr-focus="group"]').first().waitFor({ timeout: 30_000 });
+  for (const header of await page.locator('[data-pr-group][data-folded="true"] [data-pr-focus="group"]').all()) await header.click();
+  await page.locator(`[data-pr-row="${number}"]`).click({ timeout: 30_000 });
+  return page.locator(`[data-pr-card="${number}"]`);
+}
+
 async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await page.keyboard.press(chord("settings"));
   await page.locator('[data-settings-tab="general"]').click();
@@ -124,7 +144,7 @@ test("a pull request's panel shows the sessions that made it and worked on it af
     const repo = path.join(fs.realpathSync(herdr.root), "repo");
     const tree = path.join(fs.realpathSync(herdr.root), "repo-link");
     fs.mkdirSync(repo);
-    git(repo, ["init"]);
+    initGithubRepository(repo);
     fs.writeFileSync(path.join(repo, "README.md"), "# repo\n");
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "initial"]);
@@ -139,15 +159,12 @@ test("a pull request's panel shows the sessions that made it and worked on it af
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
     await chooseTheme(page, "light");
-    await openProjectOverview(page, "repo");
     const overview = page.locator("[data-overview-screen]");
-    await overview.locator('[data-lens-tile-button="prs"]').click();
 
-    // The panel: the maker first among the ended lines is the newest-first
+    // The card: the maker first among the ended lines is the newest-first
     // order the record keeps, each with its request; the maker's line names
     // the request just before the address and carries `Created PR` (B6, B7).
-    await overview.locator('[data-pr-row="31"]').click({ timeout: 30_000 });
-    const panel = overview.locator('[data-pr-panel="31"]');
+    const panel = await openCard(page, 31);
     await expect(panel).toBeVisible();
     const lines = panel.locator("[data-link-session]");
     await expect(lines).toHaveCount(3, { timeout: 60_000 });
@@ -179,15 +196,15 @@ test("a pull request's panel shows the sessions that made it and worked on it af
     await expect(page.locator('[data-session-header="s-maker"] [data-session-pr="31"]')).toBeVisible();
     await expect(page.locator('[data-session="s-review"] [data-session-pr="31"]')).not.toHaveAttribute("data-session-pr-created", "true");
     await chip.click();
-    await expect(overview).toHaveAttribute("data-overview-view", "prs");
+    await expect(overview).toHaveCount(0);
     await expect(panel).toBeVisible();
 
     // A session whose file is gone stays as a dim line, and Resume says why (B15);
-    // the panel reads the record again when it opens.
+    // the card reads the record again when it opens.
     fs.rmSync(files["s-gone"]);
-    await page.keyboard.press("Escape");
+    await page.locator('[data-view-tab-bar] [role="tab"]', { hasText: "#31" }).getByRole("button", { name: /^Close/ }).click();
     await expect(panel).toHaveCount(0);
-    await overview.locator('[data-pr-row="31"]').click();
+    await openCard(page, 31, false);
     const gone = panel.locator('[data-link-session="s-gone"]');
     await expect(gone).toHaveAttribute("data-link-file", "missing", { timeout: 30_000 });
     await expect(gone.locator('[data-link-missing="s-gone"]')).toBeVisible();
@@ -221,7 +238,7 @@ test(`a ${kind} archive resume keeps its selected source and uses the current co
     const repo = path.join(fs.realpathSync(herdr.root), "repo");
     const tree = path.join(fs.realpathSync(herdr.root), "repo-link");
     fs.mkdirSync(repo);
-    git(repo, ["init"]);
+    initGithubRepository(repo);
     fs.writeFileSync(path.join(repo, "README.md"), "# repo\n");
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "initial"]);
@@ -237,11 +254,8 @@ test(`a ${kind} archive resume keeps its selected source and uses the current co
     const gh = fakeGh(herdr.root);
     daemon = await startHided(herdr, `${kind}-archive`, herdr.env.HOME, { PATH: `${gh}${path.delimiter}${herdr.fixturePath}` });
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await openProjectOverview(page, "repo");
     const overview = page.locator("[data-overview-screen]");
-    await overview.locator('[data-lens-tile-button="prs"]').click();
-    await overview.locator('[data-pr-row="31"]').click({ timeout: 30_000 });
-    const panel = overview.locator('[data-pr-panel="31"]');
+    const panel = await openCard(page, 31);
     const archived = panel.locator(`[data-link-session="${id}"]`);
     await expect(archived).toBeVisible({ timeout: 60_000 });
     // The line can show before the panel has its worktree, and a line's
@@ -259,9 +273,11 @@ test(`a ${kind} archive resume keeps its selected source and uses the current co
     await expect(page.locator("[data-session-turns]")).toContainText("요청 보기를 만들어줘");
     await screenshot(page, `${kind}-archive-conversation`);
     await detail.locator('[data-session-pr="31"]').click();
-    await expect(overview).toHaveAttribute("data-overview-view", "prs");
+    await expect(overview).toHaveCount(0);
     await expect(panel.locator(`[data-pr-panel-worktree="${tree}"]`)).not.toHaveAttribute("data-removed", "true");
     await expect(panel.locator("[data-link-loading]")).toHaveCount(0, { timeout: 60_000 });
+    // The card's own parts settle first: a failed part draws a line that moves the row under the pointer.
+    await expect(panel.locator('[data-pr-card-part-state="pending"]')).toHaveCount(0, { timeout: 60_000 });
     await expect(resume).toBeEnabled();
     await archived.hover();
     await resume.click();

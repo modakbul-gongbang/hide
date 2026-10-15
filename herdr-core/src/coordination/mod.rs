@@ -4,6 +4,8 @@
 mod executor;
 pub(crate) mod hook_tokens;
 pub(crate) mod lineage;
+pub(crate) mod naming;
+pub(crate) mod started;
 
 use crate::delivery::answer::{AgentView, Connection, RegisterCheck, Runtime};
 use crate::delivery::{Actor, ledger::Ledger, watch};
@@ -15,7 +17,8 @@ use serde_json::{Value, json};
 const DETAIL: char = '\u{1f}';
 
 /// A refusal code with the detail its next action names (the device ids a
-/// caller could have used); the daemon splits them again with
+/// caller could have used, or the last line of a shell that had not finished
+/// starting); the daemon splits them again with
 /// [`split_refusal`] and answers the code alone.
 pub(crate) fn refusal(code: &str, detail: &str) -> String {
     format!("{code}{DETAIL}{detail}")
@@ -26,7 +29,10 @@ pub fn split_refusal(refusal: &str) -> (&str, Option<&str>) {
     // Only the refusals that build a detail carry one, so text from a device
     // that happens to hold the separator is never read as a next action.
     match refusal.split_once(DETAIL) {
-        Some((code @ "machine_unknown", detail)) => (code, Some(detail)),
+        Some((
+            code @ ("machine_unknown" | crate::agent_start::SHELL_STARTING | "card_not_processed"),
+            detail,
+        )) => (code, Some(detail)),
         _ => (refusal, None),
     }
 }
@@ -70,13 +76,105 @@ pub enum Command {
         branch: String,
         path: Option<String>,
         args: Vec<String>,
+        /// What Hide asked the child to do, for the screen to name it. Only
+        /// Hide's own identity may give one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task: Option<SpawnTask>,
     },
 }
 
+/// The serialized value of a Memory card's promotion into the repository.
+pub const MEMORY_PROMOTE_TASK: &str = "memory_promote";
+
+/// What Hide started an agent for. Every kind Hide knows names the screen that
+/// owns its progress, its home, in one exhaustive match, so a kind added
+/// without a home does not compile (PRD hide-ai-work-home D-10, B22).
+///
+/// The ledger outlives a build: a kind another build wrote reads as
+/// `Unknown` and never fails the ledger's load (D-19). The serialized value
+/// of a known kind is its code, unchanged.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TaskKind {
+    /// A Memory card's promotion into the repository.
+    MemoryPromote,
+    /// A kind this build has no home for, with the value as written.
+    Unknown(String),
+}
+
+/// The screen that owns what a Hide-started agent does: it shows the
+/// progress, opens the agent's pane and cleans up after the work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskHome {
+    /// The Memory tab's To ask rows.
+    Memory,
+}
+
+impl TaskKind {
+    pub fn from_code(code: &str) -> Self {
+        match code {
+            MEMORY_PROMOTE_TASK => Self::MemoryPromote,
+            // A code this build does not know is shown and logged, never
+            // acted on, so only a short printable form of it is kept.
+            other => Self::Unknown(
+                other
+                    .chars()
+                    .filter(|character| !character.is_control())
+                    .take(64)
+                    .collect(),
+            ),
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::MemoryPromote => MEMORY_PROMOTE_TASK,
+            Self::Unknown(code) => code,
+        }
+    }
+
+    /// The kind's home; none for a kind this build does not know, whose
+    /// agent is then an operator's row (D-19).
+    pub fn home(&self) -> Option<TaskHome> {
+        match self {
+            Self::MemoryPromote => Some(TaskHome::Memory),
+            Self::Unknown(_) => None,
+        }
+    }
+}
+
+impl Serialize for TaskKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for TaskKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(|code| Self::from_code(&code))
+    }
+}
+
+/// The work Hide started an agent for, as codes the screen words in the
+/// operator's language (`memory_promote` and the card `m72`), never as a
+/// sentence. `target` is the thing the work is about, when it has one.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpawnTask {
+    pub kind: TaskKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "AgentRecordOnDisk", into = "AgentRecordOnDisk")]
 pub struct AgentRecord {
     pub id: String,
-    pub name: String,
+    /// The name the agent registered under; none when it never had one of its
+    /// own. A pane id is never a name (`AgentRecord::forget_pane_name`). On
+    /// disk the field is always a string, so a build before this one reads the
+    /// ledger: an unnamed record is written under its registration id.
+    pub name: Option<String>,
     pub machine: String,
     pub host_scope: String,
     pub native_machine: String,
@@ -84,7 +182,9 @@ pub struct AgentRecord {
     pub instance: String,
     pub pane: String,
     pub parent: Option<String>,
-    /// Provenance only for handoffs; delegated provenance is the parent.
+    /// Provenance only for handoffs and forks; delegated provenance is the
+    /// parent. A fork's origin is the source it was forked from, which its
+    /// pane's fork mark names (`lineage::FORK_KEYS`).
     #[serde(default)]
     pub origin: Option<String>,
     pub project: Option<String>,
@@ -92,9 +192,78 @@ pub struct AgentRecord {
     pub ended: bool,
     /// Made by Fork agent: the conversation is another execution's, resumed
     /// as a new session. The registration owns the fact, so it follows the
-    /// registration to the pane that wakes it.
+    /// registration to the pane that wakes it. A fork made before forks were
+    /// the operator's roots has a parent and carries no mark.
     #[serde(default)]
     pub forked: bool,
+}
+
+/// `AgentRecord` as the ledger file spells it, with the wire name in `name`.
+#[derive(Serialize, Deserialize)]
+struct AgentRecordOnDisk {
+    id: String,
+    name: String,
+    machine: String,
+    host_scope: String,
+    native_machine: String,
+    session: String,
+    instance: String,
+    pane: String,
+    parent: Option<String>,
+    #[serde(default)]
+    origin: Option<String>,
+    project: Option<String>,
+    actor: Actor,
+    ended: bool,
+    #[serde(default)]
+    forked: bool,
+}
+
+impl From<AgentRecord> for AgentRecordOnDisk {
+    fn from(record: AgentRecord) -> Self {
+        Self {
+            name: record.wire_name().to_owned(),
+            id: record.id,
+            machine: record.machine,
+            host_scope: record.host_scope,
+            native_machine: record.native_machine,
+            session: record.session,
+            instance: record.instance,
+            pane: record.pane,
+            parent: record.parent,
+            origin: record.origin,
+            project: record.project,
+            actor: record.actor,
+            ended: record.ended,
+            forked: record.forked,
+        }
+    }
+}
+
+/// A name equal to the record's own id or to its pane is no name: the first is
+/// how an unnamed record is written, the second how an earlier build wrote a
+/// parent Herdr never named.
+impl From<AgentRecordOnDisk> for AgentRecord {
+    fn from(disk: AgentRecordOnDisk) -> Self {
+        let mut record = Self {
+            name: Some(disk.name),
+            id: disk.id,
+            machine: disk.machine,
+            host_scope: disk.host_scope,
+            native_machine: disk.native_machine,
+            session: disk.session,
+            instance: disk.instance,
+            pane: disk.pane,
+            parent: disk.parent,
+            origin: disk.origin,
+            project: disk.project,
+            actor: disk.actor,
+            ended: disk.ended,
+            forked: disk.forked,
+        };
+        record.forget_pane_name();
+        record
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,6 +286,10 @@ impl SpawnMode {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpawnRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed_tab: Option<naming::SeedTab>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub names: Option<naming::Names>,
     pub id: String,
     /// The caller authorizes the receipt, including a parentless handoff.
     pub parent: String,
@@ -140,6 +313,16 @@ pub struct SpawnRecord {
     /// spawn's own; a record written before it existed has none.
     #[serde(default)]
     pub terminal: Option<String>,
+    /// How many starts Herdr took for this spawn's agent in `pane`: the first
+    /// one, and at most one more when the first ended at the shell with no
+    /// agent (`executor::spawn`).
+    #[serde(default)]
+    pub typed: u32,
+    /// The shell `pane` was launched with Hide's integration in, by program
+    /// name, so every start in it waits for that shell's first prompt; none
+    /// when the pane runs Herdr's own shell.
+    #[serde(default)]
+    pub shell: Option<String>,
     pub child: Option<String>,
     // Completion and the initial watch are one durable store transaction.
     // Later report/end/watch-stop events never invalidate this receipt.
@@ -147,6 +330,9 @@ pub struct SpawnRecord {
     pub completed: bool,
     #[serde(default)]
     pub auto_watch_id: Option<String>,
+    /// What Hide started the child for; absent for every other spawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<SpawnTask>,
 }
 
 pub(crate) enum Mutation {
@@ -163,12 +349,19 @@ pub(crate) enum Mutation {
         command: Command,
     },
     Advance {
+        seed_tab: Option<naming::SeedTab>,
         id: String,
         path: Option<String>,
         pane: Option<String>,
         /// The terminal `pane` runs, recorded with it.
         terminal: Option<String>,
+        /// The integrated shell `pane` runs, recorded with it.
+        shell: Option<String>,
         child: Option<String>,
+    },
+    /// Herdr took a start of the spawn's agent in its pane.
+    Typed {
+        id: String,
     },
     BindChild {
         id: String,
@@ -179,11 +372,65 @@ pub(crate) enum Mutation {
     },
 }
 
+impl AgentRecord {
+    /// The name this agent has on the wire and in the ledger: the name it
+    /// registered under, else its registration id, which is stable and which
+    /// `hide request send` and `--parent` already resolve. Never a pane id and
+    /// never a title, so a letter's envelope names its sender the way the
+    /// label worker later names that sender's work (`wire_name`).
+    pub fn wire_name(&self) -> &str {
+        self.name.as_deref().unwrap_or(&self.id)
+    }
+
+    /// A record written while a pane id was taken for a name, or under its own
+    /// registration id, reads as having none. Reading does it, so no migration
+    /// is needed: the next save writes the record in its current shape.
+    fn forget_pane_name(&mut self) {
+        // A Factory's or Hide's own identity is named by its code-owned name,
+        // which is also its pane.
+        if !self.actor.code_owned()
+            && self.name.as_deref().is_some_and(|name| {
+                name == self.pane
+                    || name == self.actor.pane_id
+                    || (!self.id.is_empty() && name == self.id)
+            })
+        {
+            self.name = None;
+        }
+    }
+}
+
+/// The one name `actor` goes by in the ledger and on the wire: its live
+/// registration's `wire_name`, else, for a pane that never registered, the
+/// only identifier Herdr gave it. The writing side (a letter's or a watch's
+/// endpoints) and the reading side (`parent_name` in the lineage facts) both
+/// take it from here, so the envelope header and the name it is later matched
+/// against cannot drift.
+pub(crate) fn wire_name(ledger: &Ledger, actor: &Actor) -> String {
+    ledger
+        .agents
+        .iter()
+        .rev()
+        .find(|record| !record.ended && record.actor.same_identity(actor))
+        .map_or_else(
+            || actor.name.clone(),
+            |record| record.wire_name().to_owned(),
+        )
+}
+
+/// `actor` as the ledger stores it: under its `wire_name`.
+pub(crate) fn named(ledger: &Ledger, actor: &Actor) -> Actor {
+    Actor {
+        name: wire_name(ledger, actor),
+        ..actor.clone()
+    }
+}
+
 pub fn resolve_actor<'a>(ledger: &'a Ledger, key: &str) -> Option<&'a Actor> {
     let mut found = ledger.agents.iter().filter(|record| {
         !record.ended
             && (record.id == key
-                || record.name == key
+                || record.name.as_deref() == Some(key)
                 || record.actor.pane_id == key
                 || record.pane == key)
     });
@@ -245,8 +492,13 @@ pub(crate) fn view(record: &AgentRecord, ledger: &Ledger) -> Value {
 
 pub(crate) fn agent_view(record: &AgentRecord, ledger: &Ledger) -> AgentView {
     AgentView {
+        names: ledger
+            .spawns
+            .iter()
+            .find(|spawn| spawn.child.as_deref() == Some(&record.id))
+            .and_then(|spawn| spawn.names.clone()),
         id: record.id.clone(),
-        name: record.name.clone(),
+        name: record.wire_name().to_owned(),
         machine: record.machine.clone(),
         host_scope: record.host_scope.clone(),
         session: record.session.clone(),
@@ -287,8 +539,8 @@ pub(crate) fn validate_records(ledger: &Ledger) -> Result<(), String> {
         if !ids.insert(record.id.as_str())
             || !key(&record.id)
             || !record.id.starts_with("agent-")
+            || record.name.as_deref().is_some_and(|name| !key(name))
             || ![
-                &record.name,
                 &record.machine,
                 &record.host_scope,
                 &record.native_machine,
@@ -354,6 +606,10 @@ pub(crate) fn validate_records(ledger: &Ledger) -> Result<(), String> {
             })
             || record.args.len() > 128
             || record.args.iter().map(String::len).sum::<usize>() > 8192
+            || record.task.as_ref().is_some_and(|task| {
+                record.mode != SpawnMode::Handoff
+                    || task.target.as_deref().is_some_and(|target| !key(target))
+            })
         {
             return Err("ledger_unavailable".into());
         }
@@ -370,18 +626,29 @@ pub(crate) fn apply(
     match mutation {
         Mutation::Register { record, check } => {
             validate_registration_name(caller, record)?;
-            if record.parent.as_ref().is_some_and(|id| {
-                !ledger
+            let callers_own = |id: &String| {
+                ledger
                     .agents
                     .iter()
                     .any(|p| &p.id == id && !p.ended && p.actor.same_identity(caller))
-            }) || (record.parent.is_none() && !record.actor.same_identity(caller))
+            };
+            // A fork is the operator's root, so it has no parent; the source
+            // that asked for it registers it and is named as its origin.
+            let forked_by_caller = record.forked
+                && record.parent.is_none()
+                && record.origin.as_ref().is_some_and(callers_own);
+            if record.parent.as_ref().is_some_and(|id| !callers_own(id))
+                || (record.parent.is_none()
+                    && !record.actor.same_identity(caller)
+                    && !forked_by_caller)
             {
                 return Err("parent_authority_required".into());
             }
-            // Registration has no provenance input. A handoff's own retry
-            // keeps its stored origin; binding a spawn still compares the
-            // complete immutable identity through the strict insertion path.
+            // Registration has no provenance input but a fork's, which only
+            // the core's own Fork agent sets (`executor::link_fork`). A
+            // handoff's own retry keeps its stored origin; binding a spawn
+            // still compares the complete immutable identity through the
+            // strict insertion path.
             let mut registration = record.clone();
             if registration.origin.is_none()
                 && let Some(existing) = ledger
@@ -433,6 +700,7 @@ pub(crate) fn apply(
                 branch,
                 path,
                 args,
+                task,
                 ..
             } = command
             else {
@@ -452,11 +720,30 @@ pub(crate) fn apply(
             if !resolve_actor(ledger, parent).is_some_and(|parent| parent.same_identity(caller)) {
                 return Err("parent_authority_required".into());
             }
+            // The screen names a task as Hide's own work, so only Hide's own
+            // identity may give one, and only on a handoff.
+            if task.as_ref().is_some_and(|task| {
+                mode != SpawnMode::Handoff
+                    || !caller.hide_owned()
+                    || task.target.as_deref().is_some_and(|target| !key(target))
+            }) {
+                return Err("task_reserved".into());
+            }
+            // A new start needs a home to show its progress in; only an
+            // old record may carry a kind this build does not know (D-19).
+            if task.as_ref().is_some_and(|task| task.kind.home().is_none()) {
+                return Err("task_kind_unknown".into());
+            }
             if let Some(record) = ledger
                 .spawns
-                .iter()
+                .iter_mut()
                 .find(|record| &record.parent == parent && &record.intent == intent)
             {
+                // A spawn reserved before tasks existed carries none, and the
+                // same intent asked again with one is the same spawn: it
+                // takes the task up, so a start in flight across an upgrade
+                // converges instead of failing (engineering #11).
+                let task_agrees = record.task == *task || record.task.is_none();
                 if record.machine != *machine
                     || record.name != *name
                     || hide_agent_adapter::canonical_kind(&record.kind)
@@ -466,8 +753,12 @@ pub(crate) fn apply(
                     || record.requested_path != *path
                     || record.mode != mode
                     || record.args != *args
+                    || !task_agrees
                 {
                     return Err("intent_conflict".into());
+                }
+                if record.task.is_none() {
+                    record.task.clone_from(task);
                 }
                 return Ok(json!(record));
             }
@@ -475,6 +766,8 @@ pub(crate) fn apply(
                 return Err("capacity".into());
             }
             let record = SpawnRecord {
+                seed_tab: None,
+                names: Some(naming::Names::default()),
                 id: allocate(ledger, "spawn")?,
                 parent: parent.clone(),
                 mode,
@@ -489,18 +782,23 @@ pub(crate) fn apply(
                 path: None,
                 pane: None,
                 terminal: None,
+                typed: 0,
+                shell: None,
                 child: None,
                 completed: false,
                 auto_watch_id: None,
+                task: task.clone(),
             };
             ledger.spawns.push(record.clone());
             Ok(json!(record))
         }
         Mutation::Advance {
+            seed_tab,
             id,
             path,
             pane,
             terminal,
+            shell,
             child,
         } => {
             let parent = ledger
@@ -532,6 +830,25 @@ pub(crate) fn apply(
             }) {
                 return Err("intent_conflict".into());
             }
+            if [
+                (record.path.as_ref(), path.as_ref()),
+                (record.pane.as_ref(), pane.as_ref()),
+                (record.terminal.as_ref(), terminal.as_ref()),
+            ]
+            .into_iter()
+            .any(|(previous, next)| next.is_some() && previous != next)
+            {
+                ledger.spawn_placement_revision = ledger
+                    .spawn_placement_revision
+                    .checked_add(1)
+                    .ok_or("capacity")?;
+            }
+            if let Some(seed) = seed_tab {
+                if record.seed_tab.as_ref().is_some_and(|old| old != seed) {
+                    return Err("intent_conflict".into());
+                }
+                record.seed_tab = Some(seed.clone());
+            }
             if path.is_some() {
                 record.path = path.clone()
             };
@@ -541,9 +858,34 @@ pub(crate) fn apply(
             if terminal.is_some() {
                 record.terminal = terminal.clone()
             };
+            if shell.is_some() {
+                record.shell = shell.clone()
+            };
             if child.is_some() {
                 record.child = child.clone()
             };
+            Ok(json!(record))
+        }
+        Mutation::Typed { id } => {
+            let parent = ledger
+                .spawns
+                .iter()
+                .find(|record| &record.id == id)
+                .ok_or("spawn_unavailable")?
+                .parent
+                .clone();
+            if !resolve_actor(ledger, &parent).is_some_and(|parent| parent.same_identity(caller)) {
+                return Err("parent_authority_required".into());
+            }
+            let record = ledger
+                .spawns
+                .iter_mut()
+                .find(|record| &record.id == id)
+                .ok_or("spawn_unavailable")?;
+            if record.pane.is_none() || record.child.is_some() {
+                return Err("spawn_incomplete".into());
+            }
+            record.typed = record.typed.saturating_add(1);
             Ok(json!(record))
         }
         Mutation::BindChild { id, record } => {
@@ -562,7 +904,7 @@ pub(crate) fn apply(
                 || record.origin != spawn.mode.origin(&spawn.parent)
                 || Some(record.machine.as_str()) != spawn_machine(ledger, &spawn)
                 || spawn.pane.as_ref() != Some(&record.pane)
-                || record.name != spawn.name
+                || record.name.as_deref() != Some(spawn.name.as_str())
                 || hide_agent_adapter::canonical_kind(&record.actor.kind)
                     != hide_agent_adapter::canonical_kind(&spawn.kind)
                 || record.project != spawn.path
@@ -679,7 +1021,10 @@ fn validate_registration_name(caller: &Actor, record: &AgentRecord) -> Result<()
     // Only a Factory registers under its own reserved name (D-14).
     if (record.actor.code_owned() && !record.actor.same_identity(caller))
         || (!record.actor.code_owned()
-            && (crate::delivery::reserved_name(&record.name)
+            && (record
+                .name
+                .as_deref()
+                .is_some_and(crate::delivery::reserved_name)
                 || crate::delivery::reserved_name(&record.pane)))
     {
         return Err("reserved_name".into());
@@ -706,6 +1051,7 @@ fn insert_record(ledger: &mut Ledger, record: &AgentRecord, check: bool) -> Resu
         !existing.ended
             && existing.machine == record.machine
             && existing.host_scope == record.host_scope
+            && record.name.is_some()
             && existing.name == record.name
     }) {
         return Err("name_in_use".into());
@@ -713,7 +1059,7 @@ fn insert_record(ledger: &mut Ledger, record: &AgentRecord, check: bool) -> Resu
     if check {
         return Ok(json!(RegisterCheck {
             registered: false,
-            name: record.name.clone(),
+            name: record.name.clone().ok_or("invalid_registration")?,
             pane: record.pane.clone(),
         }));
     }
@@ -931,7 +1277,8 @@ mod tests {
     fn record(pane: &str, session: &str, parent: Option<String>) -> AgentRecord {
         AgentRecord {
             id: String::new(),
-            name: pane.into(),
+            // A pane id is no name, so a fixture's agent has its own.
+            name: Some(format!("{pane}-agent")),
             machine: "local".into(),
             host_scope: "fixture-scope".into(),
             native_machine: "fixture-machine".into(),
@@ -967,6 +1314,95 @@ mod tests {
             .unwrap()
             .into()
     }
+    /// A registration an earlier build made for a parent Herdr never named
+    /// holds its pane id as its name. Reading the ledger gives it none, so
+    /// it is called by its registration id and by its screen title, never by
+    /// the pane, and a name that is not a pane id is left alone.
+    #[test]
+    fn a_legacy_record_holding_a_pane_id_as_its_name_reads_as_unnamed() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("delivery-ledger.json");
+        let mut ledger = Ledger::default();
+        let (legacy, named) = (
+            {
+                let mut legacy = record("w9J:p9R", "legacy-native", None);
+                legacy.name = Some("w9J:p9R".into());
+                legacy
+            },
+            {
+                let mut named = record("w9J:p9S", "named-native", None);
+                named.name = Some("lead".into());
+                named
+            },
+        );
+        let caller = legacy.actor.clone();
+        let legacy_id = register_as(&mut ledger, legacy, &caller).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        // The shape an earlier build wrote.
+        assert_eq!(ledger.agents[0].name.as_deref(), Some("w9J:p9R"));
+        let caller = named.actor.clone();
+        let named_id = register_as(&mut ledger, named, &caller).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        crate::delivery::ledger::save(&path, &ledger).unwrap();
+        let loaded = crate::delivery::ledger::load(&path).unwrap();
+        let by_id = |id: &str| loaded.agents.iter().find(|record| record.id == id).unwrap();
+        assert_eq!(by_id(&legacy_id).name, None);
+        assert_eq!(by_id(&legacy_id).wire_name(), legacy_id);
+        assert_eq!(by_id(&named_id).wire_name(), "lead");
+        assert_eq!(
+            wire_name(&loaded, &by_id(&legacy_id).actor),
+            legacy_id,
+            "the writing side names it the same way"
+        );
+        assert!(
+            resolve_actor(&loaded, "w9J:p9R").is_some(),
+            "its pane still addresses it"
+        );
+    }
+
+    /// A build before this one reads the ledger this one writes: `name` is a
+    /// string on every record, the registration id for one with no name.
+    #[test]
+    fn an_unnamed_record_is_written_in_the_shape_an_older_build_reads() {
+        #[derive(Deserialize)]
+        #[allow(dead_code)]
+        struct PreviousRecord {
+            id: String,
+            name: String,
+            machine: String,
+            host_scope: String,
+            native_machine: String,
+            session: String,
+            instance: String,
+            pane: String,
+            parent: Option<String>,
+            #[serde(default)]
+            origin: Option<String>,
+            project: Option<String>,
+            actor: Actor,
+            ended: bool,
+            #[serde(default)]
+            forked: bool,
+        }
+        let mut unnamed = record("lead", "lead-native", None);
+        unnamed.id = "agent-7".into();
+        unnamed.name = None;
+        let mut named = record("worker", "worker-native", None);
+        named.id = "agent-8".into();
+        named.name = Some("worker-agent".into());
+        for (record, written) in [(unnamed, "agent-7"), (named, "worker-agent")] {
+            let json = serde_json::to_value(&record).unwrap();
+            assert_eq!(json["name"], written);
+            let previous: PreviousRecord = serde_json::from_value(json.clone()).unwrap();
+            assert_eq!(previous.name, written);
+            assert_eq!(serde_json::from_value::<AgentRecord>(json).unwrap(), record);
+        }
+    }
+
     fn command(intent: &str) -> Command {
         Command::Spawn {
             parent: Some("here".into()),
@@ -978,6 +1414,7 @@ mod tests {
             branch: "topic".into(),
             path: None,
             args: vec!["--model".into(), "fixture model".into()],
+            task: None,
         }
     }
     fn register_as(
@@ -994,6 +1431,42 @@ mod tests {
             },
             1,
         )
+    }
+
+    // PRD fork-operator-root B1, B19: the source registers its fork as the
+    // operator's root, and `hide agent show` names the source as its origin.
+    #[test]
+    fn a_fork_registers_as_a_root_whose_origin_is_its_source() {
+        let mut ledger = Ledger::default();
+        let source = record("pane-a", "session-a", None);
+        let other = record("pane-b", "session-b", None);
+        let source_id = register(&mut ledger, source.clone(), &source.actor);
+        register(&mut ledger, other.clone(), &other.actor);
+        let fork = || {
+            let mut fork = record("pane-c", "session-c", None);
+            fork.origin = Some(source_id.clone());
+            fork.forked = true;
+            fork
+        };
+        // Only the source itself vouches for its fork.
+        let before = ledger.clone();
+        assert_eq!(
+            register_as(&mut ledger, fork(), &other.actor).unwrap_err(),
+            "parent_authority_required"
+        );
+        assert_eq!(ledger, before);
+        let id = register(&mut ledger, fork(), &source.actor);
+        let fork = ledger.agents.iter().find(|record| record.id == id).unwrap();
+        let shown = view(fork, &ledger);
+        assert!(shown["parent"].is_null());
+        assert_eq!(shown["origin"], source_id);
+        // Without the fork's provenance, the source is not the new pane.
+        let mut stranger = record("pane-d", "session-d", None);
+        stranger.origin = Some(source_id.clone());
+        assert_eq!(
+            register_as(&mut ledger, stranger, &source.actor).unwrap_err(),
+            "parent_authority_required"
+        );
     }
 
     /// Both ways a registration ends, `hide agent end` and the core finding
@@ -1133,7 +1606,10 @@ mod tests {
         let child_actor = child.actor.clone();
         register(&mut ledger, child, &caller);
         assert_eq!(here(&ledger, &caller).unwrap().id, id);
-        assert_eq!(here(&ledger, &child_actor).unwrap().name, "child");
+        assert_eq!(
+            here(&ledger, &child_actor).unwrap().name.as_deref(),
+            Some("child-agent")
+        );
         // A remote participant on a pane of the same name is not this caller.
         let mut remote = caller.clone();
         remote.device_id = "mini".into();
@@ -1175,7 +1651,7 @@ mod tests {
             "reserved_name"
         );
         let mut placed = record("pane-1", "native-pane", None);
-        placed.name = "factory:f-1".into();
+        placed.name = Some("factory:f-1".into());
         let caller = placed.actor.clone();
         assert_eq!(
             register_as(&mut ledger, placed, &caller).unwrap_err(),
@@ -1273,10 +1749,12 @@ mod tests {
             &mut restored,
             &caller_one,
             &Mutation::Advance {
+                seed_tab: None,
                 id: id.clone(),
                 path: Some("/fixture/topic".into()),
                 pane: Some("child-pane".into()),
                 terminal: None,
+                shell: None,
                 child: None,
             },
             4,
@@ -1291,10 +1769,12 @@ mod tests {
                 &mut restored,
                 &caller_two,
                 &Mutation::Advance {
+                    seed_tab: None,
                     id,
                     path: None,
                     pane: Some("wrong".into()),
                     terminal: None,
+                    shell: None,
                     child: None
                 },
                 5
@@ -1418,16 +1898,23 @@ mod tests {
             &mut ledger,
             &actor,
             &Mutation::Advance {
+                seed_tab: None,
                 id: id.clone(),
                 path: Some("/fixture/topic".into()),
-                pane: Some("worker".into()),
+                pane: Some("worker-pane".into()),
                 terminal: None,
+                shell: None,
                 child: None,
             },
             2,
         )
         .unwrap();
-        let mut child = record("worker", "native-child", mode.responsibility(&parent_id));
+        let mut child = record(
+            "worker-pane",
+            "native-child",
+            mode.responsibility(&parent_id),
+        );
+        child.name = Some("worker".into());
         child.origin = mode.origin(&parent_id);
         child.machine = device.into();
         child.actor.device_id = device.into();
@@ -1488,6 +1975,22 @@ mod tests {
                 assert_eq!(ledger.spawns.len(), 1);
             }
         }
+    }
+
+    /// A kind this build does not know keeps only a short printable form.
+    #[test]
+    fn an_unknown_task_kind_is_kept_short_and_printable() {
+        let long = format!("future\u{7}_kind\n{}", "x".repeat(200));
+        let TaskKind::Unknown(kept) = TaskKind::from_code(&long) else {
+            panic!("a kind with no home is unknown");
+        };
+        assert_eq!(kept.chars().count(), 64);
+        assert!(kept.starts_with("future_kind"));
+        assert!(!kept.chars().any(char::is_control));
+        assert_eq!(
+            TaskKind::from_code("memory_promote"),
+            TaskKind::MemoryPromote
+        );
     }
 
     #[test]
@@ -1759,7 +2262,7 @@ mod tests {
             assert_eq!(ledger, before);
             for changed in [
                 AgentRecord {
-                    name: "changed".into(),
+                    name: Some("changed".into()),
                     ..registration.clone()
                 },
                 AgentRecord {
@@ -1844,10 +2347,12 @@ mod tests {
                 command: command("once"),
             },
             Mutation::Advance {
+                seed_tab: None,
                 id: spawn.clone(),
                 path: Some("/fixture/topic".into()),
                 pane: None,
                 terminal: None,
+                shell: None,
                 child: None,
             },
             Mutation::BindChild {
@@ -2193,10 +2698,14 @@ mod tests {
         );
         let to = &moved.actor;
         let ledger_watch = ledger.watches.iter().find(|w| w.id == watch.id).unwrap();
-        assert_eq!((&ledger_watch.target, &ledger_watch.parent), (to, &parent));
+        // They follow the registration by identity; the names they carry are
+        // the wire names they were written with.
+        assert!(
+            ledger_watch.target.same_identity(to) && ledger_watch.parent.same_identity(&parent)
+        );
         let letter = |id: &str| ledger.letters.iter().find(|l| l.id == id).unwrap();
-        assert_eq!(&letter(&ask.id).recipient, to);
-        assert_eq!(&letter(&report.id).sender, to);
+        assert!(letter(&ask.id).recipient.same_identity(to));
+        assert!(letter(&report.id).sender.same_identity(to));
         assert_eq!(
             ledger
                 .spawns

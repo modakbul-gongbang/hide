@@ -1,11 +1,12 @@
 import type { AgentScope } from "./agentScope";
+import type { ProjectSettings, ProjectSettingsWrite } from "./projectSettings";
 // The parts of the core's `rest` section the web shell reads, typed as the
 // core serializes them (herdr-core/src/model.rs), plus the pure selectors that
 // resolve the operator's focused checkout, its visible tab and that tab's
 // layout. Every selector is a lookup: the snapshot carries every tab's layout,
 // so a tab switch never draws a waiting state (PRD S2 B3).
 
-import type { ProviderUsage } from "./generated/hided-ws";
+import type { AgentLogoMode, UsagePreferences } from "./generated/hided-ws";
 
 /** The status codes the core sends in `status_code`; the catalogs name one word for each (agents.status.*). */
 export type AgentStatusCode = "error" | "question" | "approval" | "working" | "done" | "idle" | "unknown" | "waiting" | "stopped" | "attached" | "sleeping" | "waking" | "sleep_failed";
@@ -62,7 +63,28 @@ export type RaisedAsk = {
   human_notice: boolean;
 };
 
+/** What Hide AI started an agent for, as codes the screen words (`memory_promote`, the card `m72`). */
+export type HideAiTask = { kind: string; target?: string };
+
+/** The screen that owns what a Hide AI task does (PRD hide-ai-work-home D-10); a kind the core has no home for carries none. */
+export type HideAiHome = "memory";
+
+/** What the home waits for the operator to do, beyond what the agent itself asks (D-14); the core decides it. */
+export type HomeTurn = { kind: "pr_review" | "ci_failed"; pr_number: number };
+
+/**
+ * Hide AI started this agent (PRD hide-ai-origin-mark D-01); `task` is absent for a start that named none.
+ * With a `home` the row belongs to that screen: it is listed only while the operator has something to do,
+ * `workspace_id` names the catalog Project whose home shows it and `turn` what that home waits for.
+ */
+export type HideAi = { task?: HideAiTask; home?: HideAiHome; workspace_id?: string; turn?: HomeTurn };
+
+/** A checkout Hide AI made for an agent it started, joined to a checkout by device and path. */
+export type HideAiCheckout = { device_id: string; path: string; task?: HideAiTask };
+
 export type AgentRow = {
+  /** Set by the core from the coordination record of the spawn, never from a branch name. */
+  hide_ai?: HideAi;
   resolved?: { at_unix_ms: number; source: "operator" | "automatic" } | null;
   /** Resolved within the last 24 hours, so Sessions still lists it. */
   resolved_recent?: boolean;
@@ -105,6 +127,8 @@ export type AgentRow = {
   /** Work another agent delegated; ordinary children are Working or Seen, with core escalation as the exception (docs/status-model.md). */
   delegated?: boolean;
   lineage_parent_pane_id?: string | null;
+  /** Present on a fork the operator made with Fork agent: where it came from (PRD fork-operator-root). */
+  forked_from?: ForkSource | null;
   /** The ancestors from the lineage root down to the parent, root first. */
   lineage_path_pane_ids?: string[];
   lineage_child_pane_ids?: string[];
@@ -198,11 +222,21 @@ export type AgentSleep = {
 };
 
 /**
- * What the pane menu and header know about forking this pane (`PaneForkSnapshot`):
- * `available` offers Fork agent, `reason` says why a forkable agent cannot fork yet,
- * and `forked_from_pane_id` names the pane this one was forked from.
+ * Where a fork came from (`ForkSourceSnapshot`): the source's pane and title while
+ * the source runs the conversation it was forked from; both absent once it closed
+ * or moved on, and the mark then names no pane and opens nothing.
  */
-export type PaneFork = { available: boolean; reason?: string | null; forked_from_pane_id?: string | null };
+export type ForkSource = { pane_id?: string | null; label?: string | null };
+
+/**
+ * What the pane menu and header know about forking this pane (`PaneForkSnapshot`):
+ * `available` offers Fork agent and Fork agent to the side, `reason` says why a
+ * forkable agent cannot fork yet, and `forked_from` is present on a fork.
+ */
+export type PaneFork = { available: boolean; reason?: string | null; forked_from?: ForkSource | null };
+
+/** Where the pane menu's fork puts the fork: its own tab, or beside the source. */
+export type ForkPlacement = "tab" | "side";
 
 /** The pane menu's Sleep agent item (`AgentSleepActionSnapshot`); absent where it does not apply. */
 export type AgentSleepAction = { available: boolean; reason?: string | null };
@@ -279,6 +313,56 @@ export type PullRequest = {
   closing_issues?: IssueReference[];
   /** The one state its mark draws, decided by the core (`PrState::of`). */
   state: PrState;
+  /** The branch it merges into. */
+  base_branch?: string;
+  /** The GitHub values the Work tab's PRs list and the card read (`PullRequestWork`). */
+  work?: PullRequestWork;
+};
+
+export type MergeState = "unknown" | "clean" | "has_hooks" | "unstable" | "dirty" | "behind" | "blocked" | "draft";
+
+/** The values `gh` gave beyond badge, checks and review (`PullRequestWork`). */
+export type PullRequestWork = {
+  author: string | null;
+  author_is_bot: boolean;
+  /** The signed-in account wrote it. */
+  mine: boolean;
+  merge_state: MergeState;
+  review_requests: { kind: "user" | "team"; name: string }[];
+  asked_of_me: "none" | "direct" | "team";
+  failed_checks: { name: string; url: string | null }[];
+  pending_checks: number;
+  queue_position: number | null;
+  review_requested_at_unix_ms: number | null;
+};
+
+/** What a pull request's card reads beyond the list, per head commit (`PrCardSnapshot`). */
+export type PrCard = {
+  workspace_id: string;
+  number: number;
+  reading: boolean;
+  head: string | null;
+  body: string | null;
+  files: { path: string; additions: number; deletions: number; generated: boolean }[] | null;
+  files_total: number;
+  threads: { reviewer: string | null; path: string; line: number | null; text: string }[] | null;
+  merge: { methods: PrMergeMethod[]; queue: boolean; can_merge: boolean } | null;
+  /** Parts the last read could not get. */
+  failed: ("body" | "files" | "threads")[];
+  /** hide-ai's summary at `head`; absent while off, paused, failed or not made. */
+  summary?: string;
+  write: PrWrite | null;
+};
+
+export type PrMergeMethod = "merge" | "squash" | "rebase";
+
+/** The Merge or branch update asked for from a card, and how it went (`PrWriteSnapshot`). */
+export type PrWrite = {
+  action: "merge" | "update_branch";
+  head: string;
+  method: PrMergeMethod | null;
+  phase: "working" | "done" | "failed";
+  reason: "head_moved" | "denied" | "conflict" | "not_mergeable" | "unreachable" | "failed" | null;
 };
 
 /** Why a `gh` lookup failed, as the core names it; the catalogs word each (issueSettings.gh*). */
@@ -413,6 +497,7 @@ export type IssueDetail = {
 
 /** The Overview's issue work in flight (`IssueWorkSnapshot`), one slot each. */
 export type IssueWork = {
+  draft?: SessionIssueDraft | null;
   create: { id: number; workspace_id: string; phase: "working" | "ready" | "failed"; task_key: string | null; message: string | null } | null;
   detail: IssueDetail | null;
   name: { request_id: string; phase: "working" | "ready" | "failed"; name: string | null; message: string | null } | null;
@@ -421,6 +506,8 @@ export type IssueWork = {
   /** ⌘K's explicit GitHub search, by the web's request id (`github_search`). */
   search?: GithubSearch | null;
 };
+
+export type SessionIssueDraft = { source: { session: WorkSession; id: string }; phase: "working" | "ready" | "failed"; workspace_id: string | null; repository: string | null; title: string; body: string; message: string | null };
 
 /** One pull request or issue the core found on GitHub for ⌘K's search (`GithubSearchResultSnapshot`). */
 export type GithubSearchResult = {
@@ -472,7 +559,7 @@ export type PrFeedback = {
 };
 
 /** The Overview's pull-request work in flight (`PrWorkSnapshot`), one slot each. */
-export type PrWork = { link: PrLink | null; feedback: PrFeedback | null };
+export type PrWork = { link: PrLink | null; feedback: PrFeedback | null; cards?: PrCard[] };
 
 export type Purpose = { text: string; origin: string };
 
@@ -492,6 +579,7 @@ export type CheckoutAgentSummary = {
 export type MarkCounts = { error: number; approval: number; question: number; working: number; stopped: number; done: number; idle: number };
 
 export type PaneRow = {
+  failed_terminal_id?: string;
   ports?: number[];
   servers?: { host: string; port: number }[];
   id: string;
@@ -512,6 +600,7 @@ export type PaneRow = {
 export type TabAgent = Pick<AgentRow, "agent_kind" | "symbol" | "demand" | "activity" | "emphasized" | "wait" | "status_code"> & { state: Pick<AgentState, "mark_tone"> };
 
 export type Tab = {
+  sidebar?: { manual_name: string | null; number: number };
   agent?: TabAgent | null;
   id: string | null;
   workspace_id: string | null;
@@ -649,12 +738,14 @@ export type Workspace = {
   checkouts: Checkout[];
   inactive_checkouts: { expanded: boolean; checkout_ids: string[] };
   session_folds?: { empty: string[]; child_only: string[]; cleanup: string[]; empty_open: boolean; cleanup_open: boolean; open_prs: number };
+  /** What the project's agents are doing, as the core decided it (`ProjectAgentPresenceSnapshot`, PRD sidebar-titlebar-refresh D-20). */
+  agent_presence?: ProjectAgentPresence;
   /** The repository's open issues, in the shape older readers read. */
   home_issues?: ProjectIssues;
   /** The project's tasks, the Overview's Tasks and Agents views read these. */
   tasks?: ProjectTasks;
   /**
-   * The project's pull requests for the Overview's PRs tab, one per branch:
+   * The project's pull requests for the Work tool's PRs lens, one per branch:
    * every open one, and a merged one while its worktree is recorded here or
    * for 14 days after it merged (PRD overview-lenses-prs D-52). A local Git
    * project's only; absent while it has none.
@@ -763,6 +854,13 @@ export type ProjectDiskLayers = { build_cache: number; dependencies: number; sou
 
 export type InactiveProjectGroup = { device_id: string; expanded: boolean; project_ids: string[] };
 
+/**
+ * `working` while an awake agent shows ▲ ! ? ● ◐ or ✓ (the row's name is
+ * heavy); `asleep` while every agent sleeps, with the newest sleep's time and
+ * whether the operator opened the fold since (D-02, D-03, D-19).
+ */
+export type ProjectAgentPresence = { working: boolean; asleep?: { since_unix_ms: number; expanded: boolean } };
+
 export type LayoutNode =
   | { type: "pane"; pane_id: string }
   | { type: "split"; direction: "right" | "down"; ratio: number; first: LayoutNode; second: LayoutNode };
@@ -798,6 +896,8 @@ export type TerminalPane = {
 export type InputRequest = {
   request_id: string;
   state: "pending" | "ready" | "discarded";
+  /** The pane a pending request's keys wait for while it has the keyboard: a fork's pane until its agent starts. */
+  held_for?: string | null;
 };
 
 export type AsyncOperation = {
@@ -959,7 +1059,9 @@ export type ViewDisplaySnapshot = {
   path: string;
   /** The document's name, or a browser page's title (its host until it has one). */
   label: string;
-  kind: "file" | "diff" | "browser";
+  kind: "file" | "diff" | "browser" | "pull_request";
+  /** The pull request a `pull_request` display is the card of. */
+  pr?: number | null;
   /** Which History group a diff shows; null for a file. */
   committed: boolean | null;
   preview: boolean;
@@ -1280,7 +1382,14 @@ export type AiProvider = {
   cli_default: boolean;
   /** Why the list is empty: a code (`not_asked`, `not_observed`, or the provider's own). */
   models_unavailable_reason: string | null;
+  /** The weekly usage the toolbar read for this agent; null when it gave no figure. Absent from an older daemon. */
+  weekly?: AiWeekly | null;
+  /** The figure is at or past the usage limit, so Hide AI does not ask this agent (the core decides). Absent from an older daemon. */
+  past_limit?: boolean;
 };
+
+/** One agent's weekly usage: a percent and when the week resets (unix ms), when the agent said. */
+export type AiWeekly = { used_percent: number; resets_at_ms: number | null };
 
 /** The agents tried, in this order, when Runs on cannot answer. */
 export type AiFallback = { provider: string; model: string };
@@ -1288,11 +1397,15 @@ export type AiFallback = { provider: string; model: string };
 /** Why Runs on is not answering, and who answers instead; absent while it answers. */
 export type AiRefusal = {
   provider: string;
-  /** `usage_limited`, `needs_login`, `not_installed`, `unavailable` or `unsupported`. */
+  /** `usage_limited`, `past_limit`, `needs_login`, `not_installed`, `unavailable` or `unsupported`. */
   reason: string;
+  /** When a usage limit or the week ends (unix ms), when the agent said. */
   retry_at_ms: number | null;
   /** The listed agent answering instead; null when none can. */
   using: string | null;
+  /** With `past_limit`: the agent's weekly percent and the limit it is past. */
+  used_percent?: number | null;
+  limit?: number | null;
 };
 
 /** One concrete Host of `~/.ssh/config`: where `ssh -G` says it leads and the device that already uses it. */
@@ -1321,6 +1434,10 @@ export type BackgroundAi = {
   chosen: boolean;
   /** The `에이전트 요약` switch; absent from an older daemon, which always summarizes. */
   agent_summary?: boolean;
+  /** The `PR 요약` switch; absent from an older daemon, which has none. */
+  pr_summary?: boolean;
+  /** The share of an agent's week Hide AI may use (Settings › Hide AI › Usage limit); null is No limit. Absent from an older daemon, which has none. */
+  usage_limit?: number | null;
   providers: AiProvider[];
   fallback?: AiFallback[];
   refusal?: AiRefusal | null;
@@ -1427,19 +1544,25 @@ export type ArchiveDetail = {
 };
 
 /** A card's kind (`contracts/snapshot-wire-enums.json`: `memory_card_kind`). */
-export type MemoryCardKind = "rule" | "decision" | "lesson" | "fact";
+export type MemoryCardKind = "rule" | "decision" | "lesson" | "fact" | "preference";
 
 /** Where a card's promotion into the repository stands (`memory_promotion_state`). */
-export type MemoryPromotionState = "running" | "pr_open" | "merged" | "failed" | "unconfirmed";
+/**
+ * `building`: the card's decision is not built yet and another branch builds it; that branch's pull request carries the card in.
+ * `unbuilt`: nothing builds it, and `물어볼 것` asks once.
+ */
+export type MemoryPromotionState = "running" | "pr_open" | "merged" | "failed" | "unconfirmed" | "building" | "unbuilt";
 
 /** What the Memory tab's operator asks for (`memory_action`). */
-export type MemoryAction = "enable" | "disable" | "delete" | "forget" | "undo" | "promote" | "dismiss";
+export type MemoryAction = "enable" | "disable" | "delete" | "forget" | "undo" | "promote" | "dismiss" | "card_right" | "doc_right";
 
 /** One card of the opened Project, as its two-line row shows it. */
 export type MemoryRow = {
   number: number;
   title: string;
   kind: MemoryCardKind;
+  /** At most 512 characters, only for cards in an active promotion. */
+  body_preview?: string;
   human_source_count: number;
   /** Sessions the card was given to in full. */
   provided_session_count: number;
@@ -1449,11 +1572,16 @@ export type MemoryRow = {
   /** Waiting to be checked against the repository again; agents are not given it meanwhile (`확인 중`). */
   verifying: boolean;
   /** Null for an ordinary card, a dismissed one, or one whose pull request closed unmerged. */
+  document_comparison?: MemoryDocument | null;
   promotion: {
     state: MemoryPromotionState;
-    /** The agent putting it in the repository, while it runs; `pane_id` is null once the agent ended. */
+    /** The durable promotion attempt's start; absent on older daemons. */
+    started_at_unix_ms?: number;
+    /** The agent putting it in the repository, while it runs, or the one at work on the branch that builds a `building` card; `pane_id` is null once the agent ended. */
     agent: { name: string; pane_id: string | null } | null;
     pr_number: number | null;
+    /** Original repository-qualified target; unknown on legacy attempts. */
+    pr_url?: string | null;
     target_path: string | null;
     /** Why GitHub could not say whether an `unconfirmed` attempt's pull request came, when it said. */
     github_failure: GithubFailureCategory | null;
@@ -1463,10 +1591,23 @@ export type MemoryRow = {
 /** What `물어볼 것` asks: a card to promote (with its reasons) or a promotion that ended with no pull request. */
 export type MemoryQuestion =
   | { kind: "promote"; number: number; title: string; human_session_count: number; pulled_session_count: number }
-  | { kind: "failed"; number: number; title: string };
+  | { kind: "docs_disagree"; number: number; title: string; document: MemoryDocument }
+  | { kind: "failed"; number: number; title: string; start_failure: MemoryStartFailure | null }
+  /** The card's decision is not built and nothing builds it; `reason` is what the agent placing it saw. */
+  | { kind: "unbuilt"; number: number; title: string; reason: string | null };
+
+/**
+ * Why a failed promotion's agent never started (`memory_start_failure_code`):
+ * `detail` is the line its new pane's shell stopped at, for `shell_starting`.
+ */
+export type MemoryStartFailure = { code: "shell_starting" | "agent_not_started" | "card_not_processed" | "other"; detail: string | null };
+
+export type MemoryDocument = { authority: "outdated" | "card_newer" | "ask"; document: string; document_at_unix_ms: number | null; operator_at_unix_ms: number | null };
+export type MemoryDocumentComparison = MemoryDocument & { document_text: string; operator_text: string; source_session: string | null };
 
 /** The card shown in full (`memory_expand`). */
 export type MemoryCard = {
+  document_comparison?: MemoryDocumentComparison | null;
   number: number;
   body: string;
   cited_paths: string[];
@@ -1479,17 +1620,23 @@ export type MemoryCard = {
 export type ProjectMemory = {
   workspace_id: string;
   /** Why this Project has no Memory here; null when it has. */
-  unavailable: { reason: "remote_device"; device_name: string } | { reason: "unregistered" } | { reason: "unreadable" } | null;
+  unavailable: { reason: "unregistered" } | { reason: "unreadable" } | null;
   loading: boolean;
   enabled: boolean;
   capacity_reached: boolean;
   rows: MemoryRow[];
   questions: MemoryQuestion[];
   /** `memory_analysis_state`. */
-  analysis: "idle" | "analyzing" | "ai_not_ready";
+  analysis: "idle" | "analyzing" | "ai_not_ready" | "checking" | "check_budget_exhausted";
+  consent_required: boolean;
+  usable_cards: number;
+  checking_card: number | null;
+  check_resume_at_unix_ms: number | null;
   /** The card just forgotten, offered back with Undo. */
   forgotten: number | null;
   pending_action: MemoryAction | null;
+  preparing_hooks?: boolean;
+  action_failure?: MemoryAction | null;
   expanded: MemoryCard | null;
   search: { query: string; numbers: number[] } | null;
 };
@@ -1588,10 +1735,28 @@ export type LinkSummaries = {
     prs?: Record<string, number>;
     issues?: Record<string, number>;
     sessions?: Record<string, { number: number; created: boolean }[]>;
+    work?: SessionWorkSummary[];
+    creators?: { source: WorkSession; kind: string; repository: string; number: number }[];
   }>;
   /** Session files are still being read for the first time. */
   filling: boolean;
 };
+
+/** Native identity retained by the link record, including ended sessions. */
+export type WorkSession = { device_id: string; agent: string; session_id: string };
+export type WorkRequest = { offset: number; at_unix_ms: number; text: string; author: "operator" | "parent"; task_ids: string[]; chapter_id: string | null; judged: boolean };
+export type WorkEnd = "working" | "question" | "blocked" | "done" | "waiting" | "unfinished";
+export type WorkTask = { id: string; chapter_id: string; name: string; at_unix_ms: number; last_at_unix_ms: number; end: WorkEnd; done: boolean };
+export type MissedWork = { id: string; kind: "leftover" | "problem" | "follow_up"; text: string; status: "open" | "resolved" | "issue" | "dismissed"; at_unix_ms: number; turn_offset: number; issue_repository: string | null; issue_number: number | null; creating: boolean };
+export type WorkOutput = { kind: "pr" | "issue"; repository: string; number: number; title: string; url: string; state: string; stale: boolean; last_read_at_unix_ms: number | null; created_at_unix_ms: number; task_id: string | null; source: WorkSession; source_name: string };
+export type SessionRecord = {
+  session: WorkSession; title: string; fallback_title: string; native_title: string | null; manual_title: string | null; state: string | null; last_end: WorkEnd | null;
+  cwd: string | null; path: string | null; started_at_unix_ms: number | null; ended_at_unix_ms: number | null;
+  chapters: { id: string; goal: string; at_unix_ms: number }[]; tasks: WorkTask[]; requests: WorkRequest[]; missed: MissedWork[]; outputs: WorkOutput[]; children: SessionRecord[];
+};
+export type SessionWorkSummary = { session: WorkSession; title: string; fallback_title: string; native_title: string | null; manual_title: string | null; cwd: string | null; ended_at_unix_ms: number | null; open_missed: number; subtree_open_missed: number; missed: MissedWork[] };
+export type SessionRecordSection = { session: WorkSession | null; loading: boolean; failure: string | null; record: SessionRecord | null };
+export type SessionWorkSearch = { query: string; loading: boolean; failure: string | null; results: { session: WorkSession; title: string; matched: string; at_unix_ms: number; cwd: string | null }[] };
 
 /** A durable conversation intent, never a current pane or delivery target. */
 export type SleepingSession = {
@@ -1620,12 +1785,13 @@ export type SnapshotRest = {
     changes_root_path?: string | null;
     workspaces?: Workspace[];
     inactive_projects?: InactiveProjectGroup[];
+    /** Each device's projects with no agent and no sleeping conversation (D-01); opened by the `no_agents/<device>` fold key. */
+    no_agent_projects?: InactiveProjectGroup[];
     agents?: AgentRow[];
+    hide_ai_checkouts?: HideAiCheckout[];
     sleeping_sessions?: SleepingSession[];
     devices?: Device[];
     focused_device_id?: string | null;
-    /** Each provider's weekly window, typed by the contract (`providerUsage`). */
-    provider_usage?: ProviderUsage[];
   };
   connection?: { kind: string; state: string; target_id: string | null };
   task_operation?: TaskOperation | null;
@@ -1667,6 +1833,10 @@ export type SnapshotRest = {
     accent_hex?: string;
     /** `system`, `light` or `dark`; the page reads anything else as Dark. */
     theme?: string;
+    /** Whether list rows and tabs draw the agent's logo (`contracts/snapshot-wire-enums.json`: `agent_logo_mode`); absent reads as hidden. */
+    agent_logo_mode?: AgentLogoMode;
+    /** `hide` or `neutral` (`contracts/snapshot-wire-enums.json`: `color_theme`); the page reads anything else as Hide. */
+    color_theme?: string;
     /** Core-confirmed explicit choice; null follows this client's system language. */
     interface_language?: "en" | "ko" | "zh-CN" | "ja" | null;
     /** The first-run agent choice (`contracts/snapshot-wire-enums.json`: `agent_onboarding`): absent until this Mac's kit answered, `pending` while its kit record waits for the operator's answer. */
@@ -1675,8 +1845,10 @@ export type SnapshotRest = {
     agent_onboarding_agents?: string[];
     /** The first-run wizard's progress (PRD first-run-onboarding D-07): absent on a Mac that never had one; another flow `version` is not this build's to show. */
     first_run?: FirstRun | null;
-    /** Settings > General's Notify me when an agent needs me (D-21); the desktop app shows agent notifications only while it is on. */
+    /** Settings > Notifications' Notify me when an agent needs me (D-21); the desktop app shows agent notifications only while it is on. */
     desktop_notifications?: boolean;
+    desktop_notifications_done?: boolean;
+    usage?: UsagePreferences;
     /** The screens whose one-line introduction was shown (B43). */
     screen_intros_seen?: ScreenIntro[];
     font_size?: number;
@@ -1689,6 +1861,9 @@ export type SnapshotRest = {
     agent_sleep_after_hours?: number | null;
     /** Each local project's chosen issue source (`github` or `local`) by path; absent is the default. */
     project_issue_sources?: Record<string, string>;
+    project_base_branches?: Record<string, string>;
+    project_settings?: Record<string, ProjectSettings>;
+    project_settings_writes?: Record<string, ProjectSettingsWrite & { device_id: string; root: string }>;
     issue_settings?: IssueSettings;
     agent_start?: AgentStartChoice;
     /** The checkouts last brought to the front, newest first, up to ten (PRD cmdk-recent). */
@@ -1718,7 +1893,7 @@ export type SnapshotRest = {
   recent_closed?: RecentClosed;
   explorer_operation?: ExplorerOperation | null;
   /** The front Workspace's layout and tools (S6 D-10); absent when no Workspace is in front. */
-  workspace_view?: import("./workspace").WorkspaceView;
+  workspace_view?: import("./workspace").WorkspaceView | null;
   /** All retained Browser Views, including those outside the front Workspace. */
   browser_views?: { device_id: string; path: string; view_id: string; area_id: string }[];
   /** Positive connected Workspace area authority from the core, including empty areas; incarnation changes on revoke/regrant. */

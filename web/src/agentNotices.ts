@@ -4,14 +4,17 @@
 // `agent_notice` frame while it asks for them; this window words each one in
 // the interface language and hands it to the desktop host, which drops it
 // while a Hide window has the keyboard. A click opens that agent's pane, and
-// an agent the operator has seen takes its notification back.
+// an agent the operator has seen takes its notification back. The app icon
+// counts the root agents that need the operator under the Needs You switch.
 
 import { useEffect } from "react";
 import type { Actions } from "./actions";
+import { statusText } from "./agentStatus";
 import { AGENT_NOTICE_PREFIX } from "./firstRun";
 import type { AgentNotice } from "./generated/hided-ws";
 import { hostBridge } from "./host";
 import { useInterfaceTranslation } from "./i18n/client";
+import type { SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 
 type Listener = (notice: AgentNotice) => void;
@@ -30,13 +33,39 @@ function cut(text: string, limit: number): string {
   return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
 }
 
-/** Shows agent notifications through the desktop host while the switch is on, and opens what a click names. */
+/**
+ * The agents the app icon counts: the sidebar's Needs You group of every
+ * device the window shows, the root agents the notifications announce.
+ * Each device's scope carries that group as its `raised` `needs_you` entry
+ * (unresolved, not delegated, in a pane the device draws), so adding the
+ * devices up counts the whole desktop whichever device the sidebar shows;
+ * the navigator's own scope has no such group. Done is not counted.
+ */
+export function needsYouCount(rest: SnapshotRest | null): number {
+  let count = 0;
+  for (const device of rest?.navigator?.devices ?? []) {
+    const group = device.agent_scope.raised.find((raised) => raised.group === "needs_you");
+    if (group) count += group.shown.length + group.more.length;
+  }
+  return count;
+}
+
+/**
+ * Shows each group through the desktop host while its own switch is on,
+ * opens what a click names, and keeps the Needs You app icon count.
+ */
 export function useAgentNotifications(actions: Actions) {
   const { t } = useInterfaceTranslation();
   const bridge = hostBridge();
   const live = useShellStore((s) => s.connection === "live");
-  const enabled = useShellStore((s) => s.rest?.ui_state?.desktop_notifications === true);
-  const wanted = bridge !== null && live && enabled;
+  const needsYouEnabled = useShellStore((s) => s.rest?.ui_state?.desktop_notifications === true);
+  const doneEnabled = useShellStore((s) => (s.rest?.ui_state?.desktop_notifications_done ?? s.rest?.ui_state?.desktop_notifications) === true);
+  const wanted = bridge !== null && live && (needsYouEnabled || doneEnabled);
+  // Null until the page is live: the first count is also the host's sign that a click can be opened here.
+  const badge = useShellStore((s) => (s.connection !== "live" ? null : s.rest?.ui_state?.desktop_notifications === true ? needsYouCount(s.rest) : 0));
+  useEffect(() => {
+    if (bridge && badge !== null) bridge.reportBadge(badge);
+  }, [bridge, badge]);
   // A reconnect is a new connection whose demand starts empty, so it is said again each time the page is live.
   useEffect(() => {
     if (!wanted) return;
@@ -48,7 +77,9 @@ export function useAgentNotifications(actions: Actions) {
     const listener: Listener = ({ notices, clear }) => {
       if (clear.length > 0) bridge.withdrawNotifications(clear.map((tag) => `${AGENT_NOTICE_PREFIX}${tag}`));
       for (const notice of notices) {
-        const state = notice.state === "needs_you" ? t("firstRun.notice.needsYou") : t("firstRun.notice.done");
+        if (!(notice.state === "needs_you" ? needsYouEnabled : doneEnabled)) continue;
+        const fallback = notice.state === "needs_you" ? t("firstRun.notice.needsYou") : t("firstRun.notice.done");
+        const state = notice.detail ? [notice.status_code ? statusText(t, notice.status_code) : fallback, notice.detail].join(" · ") : fallback;
         const body = notice.place ? t("firstRun.notice.body", { state, project: notice.place }) : state;
         bridge.notify(`${AGENT_NOTICE_PREFIX}${notice.tag}`, cut(notice.title, TITLE_LIMIT), cut(body, BODY_LIMIT), { unlessFocused: true });
       }
@@ -57,7 +88,7 @@ export function useAgentNotifications(actions: Actions) {
     return () => {
       listeners.delete(listener);
     };
-  }, [bridge, wanted, t]);
+  }, [bridge, wanted, needsYouEnabled, doneEnabled, t]);
   useEffect(() => {
     if (!bridge) return undefined;
     return bridge.onNotificationOpen((id) => {
@@ -65,7 +96,7 @@ export function useAgentNotifications(actions: Actions) {
       // The tag is `<device id>|<pane id>`; the pane id names the agent wherever it runs.
       const tag = id.slice(AGENT_NOTICE_PREFIX.length);
       const paneId = tag.slice(tag.indexOf("|") + 1);
-      if (paneId) actions.openAgent(paneId);
+      if (paneId) actions.openListedAgent(paneId);
     });
   }, [bridge, actions]);
 }

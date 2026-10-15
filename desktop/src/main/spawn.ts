@@ -1,8 +1,9 @@
 // The one way this host starts a child process (process practice 1).
 //
-// Every child is short-lived: a `hide` CLI verb or the login shell asked for
-// its PATH. At most one runs at a time, each has a hard timeout, and quitting
-// the host kills the one in flight. Only the child's own pid is signalled:
+// Every child is short-lived: a `hide` CLI verb, the login shell asked for
+// its PATH, or VS Code being found or handed a folder (`editor.ts`). At most
+// one runs at a time per runner, each has a hard timeout, and quitting the
+// host kills the one in flight. Only the child's own pid is signalled:
 // a daemon `hide connect` just started leads its own process group and is
 // not the host's to end (desktop PRD D-03).
 
@@ -77,11 +78,13 @@ export class ChildRunner {
 }
 
 /**
- * The one child this host starts and does not own: a Herdr server. Its panes
+ * The children this host starts and does not own. A Herdr server: its panes
  * are the operator's work and outlive the app, exactly as a server `herdr`
  * starts from a terminal does, so it leads its own session, keeps no pipe to
- * this process, and only `herdr server stop` ends it. The caller starts it at
- * most once per discovery, and only after Herdr said none was running.
+ * this process, and only `herdr server stop` ends it; the caller starts it at
+ * most once per discovery, and only after Herdr said none was running. And
+ * on Windows VS Code's `Code.exe` handed a folder (`editor.ts`): the
+ * operator's editor window, which the operator closes.
  */
 export function startDetached(file: string, args: readonly string[], env: Record<string, string | undefined>): Promise<{ pid: number } | { spawnError: string }> {
   return new Promise((resolve) => {

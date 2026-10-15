@@ -23,7 +23,7 @@ fn session_resolution_survives_restart_and_new_input_restores_the_live_pane() {
         ResolveSource::Operator
     );
     let at = loaded.resolved_sessions["session"].at_unix_ms;
-    runtime.note_delivery_key("session");
+    runtime.note_delivery_key("session", "phone");
     assert!(runtime.snapshot.navigator.agents[0].resolved.is_none());
     assert!(
         persistence::load(&runtime.state_path)
@@ -79,7 +79,7 @@ fn session_resolve_waits_for_save_and_ignores_an_ack_after_new_input() {
     assert!(runtime.snapshot.navigator.agents[0].resolved.is_none());
     let pending = runtime.ui_state_to_save();
     persistence::save(&runtime.state_path, &pending, &BTreeMap::new()).unwrap();
-    runtime.note_delivery_key("session");
+    runtime.note_delivery_key("session", "phone");
     assert!(!runtime.acknowledge_session_save(&pending, true));
     assert!(runtime.snapshot.navigator.agents[0].resolved.is_none());
 
@@ -192,6 +192,24 @@ fn pane_bands_prioritize_connection_then_own_demand_then_raised_descendants() {
             .kind,
         "answer",
         "the native question holds for a reply even after it is read"
+    );
+    // Its band says what is asked, as the row's ask does, not the label's
+    // line about the work around it.
+    agent.user_turn = Some(hide_session::turns::UserTurnFact {
+        kind: hide_session::turns::UserTurnKind::Question,
+        content: Some(hide_session::turns::UserTurnContent::new(
+            "어디에 배포할까요?",
+            ["미리보기", "운영"],
+        )),
+    });
+    agent.detail = crate::agent_state::native_question_line(agent.user_turn.as_ref());
+    assert_eq!(
+        header::of(&pane, Some(&agent), None, &project, None)
+            .band
+            .unwrap()
+            .reason
+            .as_deref(),
+        Some("어디에 배포할까요?")
     );
     agent.user_turn.as_mut().unwrap().kind = hide_session::turns::UserTurnKind::PlanApproval;
     assert_eq!(

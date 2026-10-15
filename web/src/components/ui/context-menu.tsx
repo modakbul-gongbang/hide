@@ -1,7 +1,7 @@
 import { DropdownMenu as MenuPrimitive, Slot } from "radix-ui";
 import { createContext, useContext, useRef, useState, type ComponentProps, type KeyboardEvent, type MouseEvent, type RefObject } from "react";
 import { cn } from "../../lib/utils";
-import { useEscapeLayer } from "./layer";
+import { useEscapeLayer, useReturnFocus } from "./layer";
 import { menuContent, menuItem, menuLabel, menuSeparator, menuShortcut } from "./menu-styles";
 
 // shadcn's Context Menu API over Radix's menu with a point anchor. Radix's own
@@ -91,7 +91,12 @@ function ContextMenuTrigger({ asChild = false, className, onContextMenu, onKeyDo
 }
 
 function ContextMenuContent({ className, onCloseAutoFocus, ...props }: ComponentProps<typeof MenuPrimitive.Content>) {
-  const { host } = useContextMenu();
+  const { point, host } = useContextMenu();
+  // Return to the real context target rather than the invisible anchor, unless
+  // a newer control or layer already took the keyboard before Radix's timer.
+  const returnFocus = useReturnFocus(point !== null, {
+    target: () => host.current?.matches("[tabindex], button, a[href]") ? host.current : host.current?.querySelector<HTMLElement>("[tabindex], button, a[href]") ?? null,
+  });
   return (
     <MenuPrimitive.Portal>
       <MenuPrimitive.Content
@@ -103,11 +108,7 @@ function ContextMenuContent({ className, onCloseAutoFocus, ...props }: Component
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event);
           if (event.defaultPrevented) return;
-          // Closing hands the keyboard back to the target the menu was opened on,
-          // not to the invisible anchor.
-          event.preventDefault();
-          const target = host.current?.matches("[tabindex], button, a[href]") ? host.current : host.current?.querySelector<HTMLElement>("[tabindex], button, a[href]");
-          target?.focus({ preventScroll: true });
+          returnFocus(event);
         }}
         {...props}
       />

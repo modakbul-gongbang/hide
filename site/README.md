@@ -52,34 +52,55 @@ Browser QA should simulate GitHub responses at that external boundary for ready,
 
 The brand line, approved owl mark, palette and voice come from [BRAND.md](../docs/BRAND.md).
 `assets/hide-mark.png` is an unchanged copy of `design/brand/hide-mark.png`; keep its full square and proportions.
-The page presents hide as an agent development environment in four pillars: multi-agent, multi-device, Hide AI and Software Factory, followed by the Herdr relationship.
-Each pillar's claims follow the owning guide: the supported agents and their tiers [agent-hooks.md](../docs/agent-hooks.md), the four groups and status marks [status-model.md](../docs/status-model.md), devices and the phone [ARCHITECTURE.md](../docs/ARCHITECTURE.md) and [INSTALL.md](../docs/INSTALL.md), Hide AI [AI_PROVIDERS.md](../docs/AI_PROVIDERS.md), the Factory [factory.md](../docs/factory.md), and adopting an existing Herdr server [INSTALL.md](../docs/INSTALL.md).
-The Factory is marked Coming soon until a public release carries it.
-The first three pillars' panels are small HTML drawings of the app's own surfaces (the sidebar's four groups, Settings › Devices, an agent title) with invented example tasks; they are illustrations, not captures, and use the app's status marks and colors.
-The Factory pillar has an animated Line drawing above the Factory render described below.
+`assets/hide-icon-blinking.svg` is an unchanged copy of `design/brand/hide-icon-blinking.svg`, the animated app icon, and `assets/hide-icon.svg` is the same file with its `<animateTransform>` elements removed, which leaves the resting pose.
+The page leads with the person's attention: "Run more agents. Hold less." Its sections, in order, are the hero, three pillars, the terminal band, the Software Factory (Soon), pricing, the FAQ, and a closing that carries the download chooser.
+Each section's claims follow the owning guide: the supported agents and their tiers [agent-hooks.md](../docs/agent-hooks.md), the four groups and status marks [status-model.md](../docs/status-model.md), agents handing work to each other [delivery.md](../docs/delivery.md), the core, devices and the phone [ARCHITECTURE.md](../docs/ARCHITECTURE.md) and [INSTALL.md](../docs/INSTALL.md), Hide AI [AI_PROVIDERS.md](../docs/AI_PROVIDERS.md), the Factory [factory.md](../docs/factory.md), and adopting an existing Herdr server [INSTALL.md](../docs/INSTALL.md), which the FAQ answers.
+The three pillars show the app itself: `assets/shots/` holds captures of the shell's own Sidebar, pane header, Settings > Devices and Settings > Mobile over invented example work (a Claude Code lead, Codex workers and an OpenCode helper), each in Dark and Light at 2x, and the page picks one with `prefers-color-scheme`.
+They are produced by the gallery's `landing` scene (`web/src/gallery/LandingScene.tsx`, with its text in `landingSceneData.ts`, the frozen sidebar fixture reworded), so they match the shipped UI and carry no personal data; `/gallery?scene=landing&shot=attention|agents|core&theme=dark|light` opens one.
+Regenerate all of them with one command from the repository root, after `bash scripts/verify-web.sh install` and with `cwebp` installed (`brew install webp`, `apt install webp`):
+
+```sh
+node scripts/capture-site-shots.mjs            # every shot, both themes
+node scripts/capture-site-shots.mjs agents     # one shot
+```
+
+The agents and core shots also have phone variants, `<name>-narrow-<theme>.webp` (`&narrow=1` on the scene): the sidebar tree alone and Settings alone, at a width a phone shows without sideways scrolling.
+Each `<picture>` serves them through `<source media="(max-width: 600px)">` with the variant's own `width` and `height`, so the page reserves the right box at every width.
+
+The script starts this checkout's web dev server and a headless Chromium, fails on any Korean text or page error, and writes `attention`, `agents` and `core` as `<name>-dark.webp` and `<name>-light.webp`.
+Set each image's `width` and `height` in `index.html` to the size the script prints, so the page does not shift while it loads.
+`assets/shots/pane-header.webp` is the one illustration drawn in Pen: the lead's pane header and child row enlarged, with three callouts; `pane-header-narrow.webp` is the phone layout of the same frame, with numbered markers and the callout text below it.
+It was built in a scratch copy (`node scripts/design-scratch.mjs`) and exported at 2x through the Pen CLI; the committed `.pen` files are unchanged, and a change to the header's look means redrawing it.
+The night timeline sits in `#night-stage` as a static, complete fallback that reads without script; the visible words avoid developer jargon on purpose ("a test broke", "ready for review").
+Every section owl is an `<img class="owl" data-owl="...">` whose `src` is the pose's still frame and whose `data-motion` is its loop, so a pose is replaced by changing those two files.
 Supported agents are named in text; third-party agent marks stay inside the app, where `web/src/assets/agents/manifest.json` records their terms.
-`site.js` runs the one-time scroll reveals and the sidebar panel's group changes.
-`factory.js` plays a scripted Factory line: Tasks move from Intake to Merged, and each question goes where the mode table in [factory.md](../docs/factory.md#factory-ai-the-observer) sends it (Direct, Together, Delegate), so a permission always reaches the desk and a risky-path merge goes to Factory AI only in Delegate.
-The two repeating animations sit in different sections, each runs only while it is on screen and the tab is visible, and under `prefers-reduced-motion` both show one still frame.
+`site.js` runs the one-time scroll reveals and swaps each owl, the hero peek and the section owls, between its still frame and its loop: the loop plays only while that owl is on screen and the tab is visible, and under `prefers-reduced-motion` the reveals show at once and no loop is ever loaded.
+An owl's loop is CSS keyframes inside its own SVG, so it plays as a plain `<img>` with no player script; the in-file reduced-motion rule is a second guard, because an SVG inside `<img>` does not see the page's media queries in every browser.
+The header icon's blink is the page's other repeating image: it is SMIL inside an `<img>`, which a hidden tab does not paint, and under `prefers-reduced-motion` a `<picture>` source shows `hide-icon.svg` instead.
+The Factory is marked Soon and has no sign-up form, because the site has no backend to receive one: its action is to watch the repository's releases on GitHub.
+Pro and Team carry no price, because none is decided; free covers everything a person runs themselves.
 The workflow and feature descriptions follow [UI_BEHAVIOR.md](../docs/UI_BEHAVIOR.md), with current main's agent launcher, project overview and Workspace components as implementation references.
 Supported platforms, signing limitations, prerequisites and installation links follow [INSTALL.md](../docs/INSTALL.md).
-Performance copy quotes only the dated candidate measurements in [PERFORMANCE_RESULTS.md](../docs/PERFORMANCE_RESULTS.md), with sample counts and boundaries beside the figures.
-Refresh that report and both the site and repository README together when changing a performance figure; internal buffer/frame endpoints must not be described as physical display latency.
+The FAQ's speed answer quotes no figure and links the dated candidate measurements in [PERFORMANCE_RESULTS.md](../docs/PERFORMANCE_RESULTS.md); if a figure is ever quoted on the page again, give its sample count and boundary beside it, and never describe internal buffer/frame endpoints as physical display latency.
 The recorded comparison attempt did not complete a matching Orca workload, so the site makes no relative performance claim.
 The site has its own small CSS scale and brand palette; it does not consume or replace the product's generated UI tokens.
-`assets/hide-workspace.webp` and `assets/hide-factory.webp` are renders of the design library, not captures of a running app.
-The workspace render is assembled from `design/hide-screens.pen` parts (the Projects sidebar, the Workspace toolbar and Agent column, the Sessions panel) with two terminal panes and example session titles written for the page; the Factory render is the Line sheet of that file with its text switched to the app's English catalog (`web/src/i18n/resources/`) and the example Tasks translated.
-Both were built in a scratch copy through the Pen CLI and exported at 2x; the committed `.pen` files are unchanged.
-`assets/owls/` holds the owl character's poses, generated with the approved mark as the style reference and keyed to transparency; [BRAND.md](../docs/BRAND.md#the-owl-character) owns what the character may and may not do, and the mark stays the unchanged `hide-mark.png` in the header and favicon.
+`assets/hide-workspace.webp` is a render of the design library, not a capture of a running app.
+The workspace render is assembled from `design/hide-screens.pen` parts (the Projects sidebar, the Workspace toolbar and Agent column, the Sessions panel) with two terminal panes and example session titles written for the page.
+It was built in a scratch copy through the Pen CLI and exported at 2x; the committed `.pen` files are unchanged.
+`assets/owls/` holds the owl character's poses, generated with the approved mark as the style reference, keyed to transparency and traced to SVG; [BRAND.md](../docs/BRAND.md#the-owl-character) owns what the character may and may not do, the header shows the blinking app icon and the favicon stays the unchanged `hide-mark.png`.
+`owl-peek.svg` is the `owl-agents` owl traced into vector parts (ears, body, wings, face) and animated by CSS keyframes inside the file, so it plays as a plain `<img>` with no player script.
+Its field spans the window's width with the screenshot's top edge 200 units down, and the owl hides behind straight edges measured on `hide-workspace.webp`: it pops up over the window's top edge, leans out from behind the Sessions panel and rises from behind the sidebar's project box, looks at one place each time, and ducks back.
+A new screenshot moves those edges, so the edge positions in the file are measured again with it.
+`owl-peek-still.svg` is its first stop held still, which the page shows while the hero is off screen, in a hidden tab and under `prefers-reduced-motion`, because an SVG inside `<img>` does not see the page's media queries in every browser.
 The page is dark by default, on the Owl Field palette: the mark's blue-gray field taken down to night, lime as the one primary accent and the field color as the secondary on kickers, numbers and markers.
 It follows `prefers-color-scheme` for a light variant that keeps the same primary and secondary.
 
 ## Remaining publication work
 
 Source preparation does not complete issue #338's publication acceptance criteria.
-The workspace and Factory renders show invented example work and should be compared with the shipped app before publication; a recorded demo is pending the related product fixes and capture review.
+The workspace render and the drawings show invented example work and should be compared with the shipped app before publication; a recorded demo is pending the related product fixes and capture review.
 No video or placeholder demo link is included here.
 DNS ownership, hosting, HTTPS and live `withhide.dev` behavior have not been verified or changed by this source work.
 A complete public stable release must exist before real archive downloads can be verified end to end.
 Before publication, refresh feature and platform copy against current main, independently review the site and any media, test the live release links and checksums, and authorize deployment separately.
-The pillar copy describes current main, which is ahead of the latest public release (v0.3.0 names Claude Code and Codex only and carries no Factory); publish it with or after the release that ships those features.
+The page copy describes current main, which is ahead of the latest public release (v0.3.0 names Claude Code and Codex only and carries no Factory); publish it with or after the release that ships those features.

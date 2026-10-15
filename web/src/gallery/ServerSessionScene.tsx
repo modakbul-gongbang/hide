@@ -6,6 +6,7 @@ import { ProjectOverview } from "../ProjectOverview";
 import { Sidebar } from "../sidebar";
 import type { ProjectSessionDetail, SessionSearch } from "../snapshot";
 import { useShellStore } from "../store";
+import { TitleRow } from "../TitleRow";
 import { entryLens, useUiStore } from "../ui";
 import { WorkspaceScreen } from "../WorkspaceScreen";
 import { REFERENCE_FOLDS, sidebarScene } from "./sceneData";
@@ -24,7 +25,7 @@ export function ServerSessionScene({ scene: kind, theme, scale, content }: Scene
     scene.agents = scene.agents.filter((row) => row.pane_id === pane.id);
     scene.rest.navigator!.focused_workspace_id = workspace.id;
     scene.rest.navigator!.focused_checkout_id = checkout.id;
-    scene.rest.workspace_view = {device_id:"local",path:checkout.path,views:false,tools:false,tool:"explorer",views_width:null,tools_width:null,views_called:0,views_calls:0};
+    scene.rest.workspace_view = {device_id:"local",path:checkout.path,tool:null,last_tool:null,work:{lens:"sessions",only_checkout:false},pinned:false,tree:false,lane_width:null,tree_width:null,lane_called:0,lane_calls:0};
     scene.rest.status = {...scene.rest.status,server_discovery:{loading:false,failure:null}};
     const row = {id:"conversation",provider:"codex",provider_label:"Codex",locator:"/work/history/conversation.jsonl",checkout_path:checkout.path,first_human_request:"배포 스크립트 정리",started_at_unix_ms:Date.now(),updated_at_unix_ms:Date.now(),title:"로그인 연결 확인",unavailable_reason:null};
     const detail:ProjectSessionDetail = {session_id:row.id,locator:row.locator,loading:false,failure:null,archive:{id:row.id,kind:"session",title:row.title,provider:"codex",unavailable_reason:null,events:[{source_offset:0,kind:"human",role:"user",at_unix_ms:Date.now(),text:"지난 작업에서 로그인 연결을 확인해 줘."},{source_offset:100,kind:"assistant",role:"assistant",at_unix_ms:Date.now(),text:"대화검색으로 로그인 연결을 확인했습니다."}]}};
@@ -47,5 +48,6 @@ export function ServerSessionScene({ scene: kind, theme, scale, content }: Scene
     document.documentElement.classList.toggle("light",theme === "light");
     document.documentElement.style.setProperty("--interface-scale",String(scale));
   }, [fixture,kind,theme,scale]);
-  return <TooltipProvider><div className="flex h-full bg-background text-foreground" data-gallery-scene={kind}><Sidebar actions={actions}/>{kind === "workspace-servers" ? <WorkspaceScreen actions={actions}/> : <ProjectOverview projectId={fixture.workspace.id} lens={{...entryLens(null,"board"),tab:"sessions"}} actions={actions}/>}</div></TooltipProvider>;
+  // The Workspace's path and icons are the window's top row (PRD sidebar-titlebar-refresh B17).
+  return <TooltipProvider><div className="flex h-full flex-col bg-background text-foreground" data-gallery-scene={kind}><TitleRow actions={actions}/><div className="flex min-h-0 flex-1"><Sidebar actions={actions}/>{kind === "workspace-servers" ? <WorkspaceScreen actions={actions}/> : <ProjectOverview projectId={fixture.workspace.id} lens={{...entryLens(null,"board"),tab:"sessions"}} actions={actions}/>}</div></div></TooltipProvider>;
 }

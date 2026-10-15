@@ -59,6 +59,8 @@ export type HerdrFixture = {
   /** Runs a pinned-herdr CLI command against the private server and parses its JSON. */
   run: (args: string[]) => unknown;
   stop: () => void;
+  /** Cold restart this private server, changing its files only while it is stopped. */
+  restart: (beforeStart?: () => void) => Promise<void>;
   /**
    * Runs `cleanup` once the server has stopped and its panes' processes are
    * gone, or now when that is already so. A folder a pane's shell started in
@@ -164,18 +166,18 @@ function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
   };
 }
 
-function paneRead(env: NodeJS.ProcessEnv, bin: string, pane: string): { text: string; failure: string | null } {
+function paneRead(env: NodeJS.ProcessEnv, bin: string, pane: string, timeout = 10_000): { text: string; failure: string | null } {
   const result = spawnSync(bin, ["pane", "read", pane, "--source", "visible", "--format", "text"], {
     env,
     encoding: "utf8",
-    timeout: 10_000,
+    timeout,
   });
   if (result.status === 0) return { text: result.stdout, failure: null };
   return { text: "", failure: `pane read exited ${result.status}: ${result.stderr.trim()}` };
 }
 
-function paneText(env: NodeJS.ProcessEnv, bin: string, pane: string): string {
-  return paneRead(env, bin, pane).text;
+function paneText(env: NodeJS.ProcessEnv, bin: string, pane: string, timeout?: number): string {
+  return paneRead(env, bin, pane, timeout).text;
 }
 
 /**
@@ -235,6 +237,11 @@ function cmdQuote(value: string): string {
   return `"${value}"`;
 }
 
+/** Clears the pane and prints a fixture file through the shell it really runs. */
+export function printFileCommand(shell: PaneShell, file: string): string {
+  return shell === "cmd" ? `cls & type ${cmdQuote(file)}` : `clear; cat ${posixQuote(file)}`;
+}
+
 /** The text that runs `program` in a pane's shell, ready for `pane run`. */
 export function paneProgramLine(shell: PaneShell, program: PaneProgram): string {
   const env = Object.entries(program.env ?? {});
@@ -282,6 +289,12 @@ export type FixtureLabel = {
    * `question`, else done. A turn start's answer carries none: the provider shim
    * leaves `end` out when the request's schema asks for none. */
   end?: "question" | "blocked" | "done" | "waiting" | "unfinished";
+  work?: { task: {kind:"new";name:string} | {kind:"continue";ids:string[]} | {kind:"none"}; missed:{kind:"leftover"|"problem"|"follow_up";text:string}[]; resolved:{id:string;issue_number:number|null}[]; output_task_id:string|null };
+  at?: number;
+  /** Native cwd witness, when repository provenance is part of the journey. */
+  cwd?: string;
+  /** Addresses printed by a real native tool-result record in this turn. */
+  toolOutputs?: string[];
 };
 
 /** Where the fixture's Claude transcripts live: the fixture HOME's, which
@@ -318,6 +331,7 @@ export function labelMarker(label: FixtureLabel): string {
     // One line: the reply asked for when there is one, else the progress.
     line: label.reply ?? label.progress ?? "",
     end: label.end ?? (label.question ? "question" : "done"),
+    work: label.work ?? {task:{kind:"none"},missed:[],resolved:[],output_task_id:null},
   };
   const delay = label.delayMs ? `HIDE_E2E_DELAY_MS ${label.delayMs}\n` : "";
   return `${delay}HIDE_E2E_LABEL ${JSON.stringify(answer)}`;
@@ -325,8 +339,9 @@ export function labelMarker(label: FixtureLabel): string {
 
 export function writeFixtureTranscript(projects: string, sessionId: string, label: FixtureLabel): string {
   const records = [
-    { type: "user", sessionId, timestamp: "2026-10-01T09:00:00Z", origin: { kind: "human" }, message: { role: "user", content: `${label.task} 진행해줘` } },
-    { type: "assistant", sessionId, timestamp: "2026-10-01T09:00:01Z", message: { role: "assistant", content: [{ type: "text", text: labelMarker(label) }] } },
+    { type: "user", sessionId, ...(label.cwd ? { cwd: label.cwd } : {}), timestamp: label.at ? new Date(label.at).toISOString() : "2026-10-01T09:00:00Z", origin: { kind: "human" }, message: { role: "user", content: `${label.task} 진행해줘` } },
+    ...fixtureToolResults(sessionId, label),
+    { type: "assistant", sessionId, timestamp: label.at ? new Date(label.at+1000).toISOString() : "2026-10-01T09:00:01Z", message: { role: "assistant", content: [{ type: "text", text: labelMarker(label) }] } },
   ];
   const dir = path.join(projects, "e2e");
   fs.mkdirSync(dir, { recursive: true });
@@ -343,10 +358,18 @@ export function writeFixtureTranscript(projects: string, sessionId: string, labe
  */
 export function continueFixtureTranscript(fixture: Pick<HerdrFixture, "root">, sessionId: string, label: FixtureLabel): void {
   const records = [
-    { type: "user", sessionId, timestamp: "2026-10-01T09:01:00Z", origin: { kind: "human" }, message: { role: "user", content: `${label.task} 이어서 진행해줘\n${labelMarker(label)}` } },
-    { type: "assistant", sessionId, timestamp: "2026-10-01T09:01:01Z", message: { role: "assistant", content: [{ type: "text", text: labelMarker(label) }] } },
+    { type: "user", sessionId, timestamp: label.at ? new Date(label.at).toISOString() : "2026-10-01T09:01:00Z", origin: { kind: "human" }, message: { role: "user", content: `${label.task} 이어서 진행해줘\n${labelMarker(label)}` } },
+    ...fixtureToolResults(sessionId, label),
+    { type: "assistant", sessionId, timestamp: label.at ? new Date(label.at+1000).toISOString() : "2026-10-01T09:01:01Z", message: { role: "assistant", content: [{ type: "text", text: labelMarker(label) }] } },
   ];
   fs.appendFileSync(path.join(claudeProjects(fixture), "e2e", `${sessionId}.jsonl`), records.map((record) => `${JSON.stringify(record)}\n`).join(""));
+}
+
+function fixtureToolResults(sessionId: string, label: FixtureLabel) {
+  return label.toolOutputs?.length ? [
+    { type: "assistant", sessionId, timestamp: new Date((label.at ?? Date.parse("2026-10-01T09:00:00Z")) + 400).toISOString(), message: { role: "assistant", content: [{ type: "tool_use", id: "fixture-gh", name: "Bash", input: { command: "gh pr create" } }] } },
+    { type: "user", sessionId, timestamp: new Date((label.at ?? Date.parse("2026-10-01T09:00:00Z")) + 500).toISOString(), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "fixture-gh", content: label.toolOutputs.join("\n") }] } },
+  ] : [];
 }
 
 /**
@@ -520,16 +543,23 @@ function startAgentAtShell(env: NodeJS.ProcessEnv, bin: string, root: string, ar
   const deadline = Date.now() + ms;
   let seen = "";
   for (;;) {
-    const { available, info } = shellAvailability(env, bin, root, pane);
+    const promptRead = paneRead(env, bin, pane, Math.max(1, deadline - Date.now()));
+    const { available, info } = shellAvailability(env, bin, root, pane, Math.max(1, deadline - Date.now()));
     const shell = info.shell_pid;
-    seen = JSON.stringify(info);
-    if (available) {
+    const prompt = promptRead.text.includes("fixture %");
+    seen = JSON.stringify({ prompt, promptFailure: promptRead.failure, processInfo: info });
+    // Foreground ownership can precede shell startup. Later split and resumed
+    // panes need the same prompt barrier as the initial fixture panes.
+    if (available && prompt) {
       try {
         return herdr(env, bin, args);
       } catch (error) {
         // Herdr prints a refusal on stderr; stdout is empty.
         const refusal = String((error as { stderr?: unknown }).stderr ?? error);
-        if (!refusal.includes("agent_pane_busy")) throw error;
+        if (!refusal.includes("agent_pane_busy")) {
+          const failed = error as { status?: number; signal?: string; stdout?: string; stderr?: string };
+          throw new Error(`fixture agent start failed: ${JSON.stringify({ pane, readiness: seen, status: failed.status ?? null, signal: failed.signal ?? null, stdout: failed.stdout ?? null, stderr: failed.stderr ?? null })}; ${String(error)}`, { cause: error });
+        }
         seen = `${seen}; busy answer: ${refusal.trim()}`;
       }
     }
@@ -649,11 +679,19 @@ export async function startHerdr({ agents = true, shortRoot = false }: { agents?
   // Keep every pane on the same fake agent binary, including new workspaces.
   env.PATH = fixturePath;
 
-  const log = fs.openSync(path.join(root, "herdr-server.log"), "w");
-  const server: ChildProcess = spawn(bin, ["server"], { env, stdio: ["ignore", log, log] });
-  fs.closeSync(log);
   let spawnFailed: Error | null = null;
-  server.once("error", (error) => { spawnFailed = error; });
+  const launchServer = (): ChildProcess => {
+    spawnFailed = null;
+    const log = fs.openSync(path.join(root, "herdr-server.log"), "a");
+    try {
+      const child = spawn(bin, ["server"], { env, stdio: ["ignore", log, log] });
+      child.once("error", (error) => { spawnFailed = error; });
+      return child;
+    } finally {
+      fs.closeSync(log);
+    }
+  };
+  let server = launchServer();
   let stopped = false;
   const afterStop: (() => void)[] = [];
   const stopServer = () => {
@@ -814,6 +852,19 @@ export async function startHerdr({ agents = true, shortRoot = false }: { agents?
         return result;
       },
       stop,
+      restart: async (beforeStart) => {
+        const owned = process.platform === "win32" && server.pid ? windowsProcessTree(server.pid) : [];
+        const result = spawnSync(bin, ["server", "stop"], { env, timeout: 10_000 });
+        if (result.status !== 0) throw new Error(`private server stop failed: ${result.stderr}`);
+        await waitFor(() => server.exitCode !== null || server.signalCode !== null, "private server exit before cold restore");
+        if (process.platform === "win32") endWindowsProcesses(owned, root);
+        beforeStart?.();
+        server = launchServer();
+        await waitFor(() => {
+          if (spawnFailed) throw spawnFailed;
+          return fs.existsSync(socket);
+        }, "private cold-restored server socket");
+      },
       afterStop: (cleanup) => {
         if (stopped) cleanup();
         else afterStop.push(cleanup);

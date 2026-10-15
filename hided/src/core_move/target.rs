@@ -699,7 +699,7 @@ fn wait_until_gone(running: &crate::state_file::DaemonState) -> Result<(), StepA
 
 /// The folder's instance lock, which no core holds once this has it; a
 /// core that still holds it is busy.
-fn acquire_instance(state_dir: &Path) -> Result<std::fs::File, StepAnswer> {
+fn acquire_instance(state_dir: &Path) -> Result<hide_platform::fs::lock::Lock, StepAnswer> {
     crate::state_file::acquire_lock(state_dir).map_err(|error| {
         busy(format!(
             "a core of this folder is still starting or running: {error}"

@@ -90,15 +90,11 @@ test("Command T and Command W from a native page act on its View area, and after
     await page.locator('[data-explorer-row$="/page.html"]').click({ button: "right" });
     await page.locator('[data-explorer-menu] [data-menu-item="open-browser"]').click();
     await expect(page.locator("[data-browser-slot]")).toBeVisible();
-    const body = page.locator("[data-column-row]");
-    const bounds = await body.boundingBox();
-    expect(bounds).not.toBeNull();
-    expect(bounds!.width).toBeGreaterThanOrEqual(848);
-    expect(bounds!.width).toBeLessThan(1116);
-    await expect(page.locator("[data-workspace-body]")).toHaveAttribute("data-workspace-body", "mid");
-    await expect(page.locator('[data-column="agents"]')).toBeVisible();
-    await expect(page.locator('[data-column="views"]')).toBeVisible();
-    await expect(page.locator('[data-column="tools"]')).toHaveCount(0);
+    // Too narrow to dock, the pinned lane opens over the agents and stays
+    // through a terminal click (PRD right-lane B19).
+    await page.locator('[data-lane-pin="off"]').click();
+    await expect(page.locator("[data-lane-pin]")).toHaveAttribute("data-lane-pin", "narrow");
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "overlay");
 
     // Command T: the page's area gets the View strip's New tab.
     await terminal(herdr.panes[0]);
@@ -121,9 +117,9 @@ test("Command T and Command W from a native page act on its View area, and after
     await expect(viewTabs.filter({ hasText: TITLE })).toHaveCount(0);
     await expect(panes).toHaveCount(2);
 
-    // Command E from the page calls Tools into File Views' place at this
-    // width (B26) and hands the keyboard to the terminal. A second Command E
-    // turns Tools off again; Command W must still close the pane, not the page.
+    // Command E from the page closes the pinned lane and leaves the keyboard
+    // with the terminal; the next Command E brings it back on Files, and one
+    // more closes it. Command W must still close the pane, not the page (B20, B23).
     await showExplorer(page);
     await page.locator('[data-explorer-row$="/page.html"]').click({ button: "right" });
     await page.locator('[data-explorer-menu] [data-menu-item="open-browser"]').click();
@@ -131,14 +127,17 @@ test("Command T and Command W from a native page act on its View area, and after
     await terminal(herdr.panes[0]);
     await enterPage(app, page);
     await handBack(page);
-    await menuClick(app, "toggle_explorer");
-    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
+    await menuClick(app, "toggle_lane");
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
     await expect(page.locator(`[data-terminal-host="${herdr.panes[0]}"] textarea`)).toBeFocused();
-    await menuClick(app, "toggle_explorer");
-    await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
+    await menuClick(app, "toggle_lane");
+    await expect(page.locator('[data-lane="files"]')).toBeVisible();
+    await menuClick(app, "toggle_lane");
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
     await menuClick(app, "close_tab");
     await expect(page.locator(`[data-pane-view="${herdr.panes[0]}"]`)).toHaveCount(0, { timeout: 15_000 });
     await expect(panes).toHaveCount(1);
+    await page.locator('[data-lane-tool="files"]').click();
     await expect(viewTabs.filter({ hasText: TITLE })).toHaveCount(1);
 
     // A click back into a terminal is the operator's move: Command T is an agent tab again.

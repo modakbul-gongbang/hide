@@ -77,9 +77,27 @@ test("the wizard walks agents, notifications and the first project, never return
   await expect(page.locator("[data-main-screen], [data-workspace-screen]").first()).toBeVisible({ timeout: 30_000 });
   await expect(wizard).toHaveCount(0);
 
-  // B30: Settings > General keeps the switch the step turned on.
+  // The fresh wizard enables Needs You only; either setting enables the test.
   await page.locator("[data-open-settings]").click();
+  await page.locator('[data-settings-tab="notifications"]').click();
   await expect(page.locator('[data-settings-group="notifications"] [data-notification-switch]')).toHaveAttribute("aria-checked", "true");
+  const needsYou = page.locator("[data-notification-switch]");
+  const done = page.locator("[data-notification-done-switch]");
+  await expect(done).toHaveAttribute("aria-checked", "false");
+  await done.click();
+  await needsYou.click();
+  await expect(needsYou).toHaveAttribute("aria-checked", "false");
+  await expect(done).toHaveAttribute("aria-checked", "true");
+  await page.locator("[data-notification-test]").click();
+  await expect.poll(() => hostLog(run.env).filter((line) => line.event === "notify.shown").length).toBe(3);
+  await page.reload();
+  await page.locator("[data-open-settings]").click();
+  await page.locator('[data-settings-tab="notifications"]').click();
+  await expect(needsYou).toHaveAttribute("aria-checked", "false");
+  await expect(done).toHaveAttribute("aria-checked", "true");
+  await page.setViewportSize({ width: 720, height: 480 });
+  expect(await page.locator("[data-settings-page]").evaluate((node) => node.scrollWidth - node.clientWidth)).toBe(0);
+  await screenshot(page, "first-run-settings-notifications");
   await page.keyboard.press("Escape");
 
   // B45, B46: Help > Set up Hide opens the steps from the first, and Escape closes them.

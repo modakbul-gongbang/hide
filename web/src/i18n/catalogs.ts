@@ -1,3 +1,5 @@
+import { projectSettingsCatalogs, projectSettingsEnglish } from "./resources/projectSettings";
+import { usageCatalogs, usageEnglish } from "./resources/usage";
 import { commandsCatalogs, commandsEnglish } from "./resources/commands";
 import { agentSessionsCatalogs, agentSessionsEnglish } from "./resources/agentSessions";
 import { boardCatalogs, boardEnglish } from "./resources/board";
@@ -27,13 +29,16 @@ import { firstRunCatalogs, firstRunEnglish } from "./resources/firstRun";
 import { memoryCatalogs, memoryEnglish } from "./resources/memory";
 import { prWorkCatalogs, prWorkEnglish } from "./resources/prWork";
 import { prListCatalogs, prListEnglish } from "./resources/prList";
+import { workCatalogs, workEnglish } from "./resources/work";
 import { linksCatalogs, linksEnglish } from "./resources/links";
 import { requestsCatalogs, requestsEnglish } from "./resources/requests";
 import { settingsCatalogs, settingsEnglish } from "./resources/settings";
 import { workspaceCatalogs, workspaceEnglish } from "./resources/workspace";
 import type { Catalogs } from "./schema";
+import { sessionWorkCatalogs, sessionWorkEnglish } from "./resources/sessionWork";
 
 export const english = {
+  ...sessionWorkEnglish,
   ...agentSessionsEnglish,
   ...shellEnglish,
   ...editorSearchEnglish,
@@ -49,6 +54,7 @@ export const english = {
   ...nativeEnglish,
   ...mobileEnglish,
   ...settingsEnglish,
+  ...usageEnglish,
   ...cleanupEnglish,
   ...devicesEnglish,
   ...mobileSetupEnglish,
@@ -62,11 +68,13 @@ export const english = {
   ...prWorkEnglish,
   ...boardEnglish,
   ...prListEnglish,
+  ...workEnglish,
   ...linksEnglish,
   ...overviewEnglish,
   ...factoryEnglish,
   ...firstRunEnglish,
   ...memoryEnglish,
+  ...projectSettingsEnglish,
 } as const;
 
 export type MessageKey = keyof typeof english;
@@ -74,6 +82,7 @@ export type MessageKey = keyof typeof english;
 export const catalogs = {
   en: english,
   ko: {
+    ...sessionWorkCatalogs.ko,
     ...agentSessionsCatalogs.ko,
     ...shellCatalogs.ko,
     ...editorSearchCatalogs.ko,
@@ -89,6 +98,7 @@ export const catalogs = {
     ...nativeCatalogs.ko,
     ...mobileCatalogs.ko,
     ...settingsCatalogs.ko,
+    ...usageCatalogs.ko,
     ...cleanupCatalogs.ko,
     ...devicesCatalogs.ko,
     ...mobileSetupCatalogs.ko,
@@ -102,13 +112,16 @@ export const catalogs = {
     ...prWorkCatalogs.ko,
     ...boardCatalogs.ko,
     ...prListCatalogs.ko,
+    ...workCatalogs.ko,
     ...linksCatalogs.ko,
     ...overviewCatalogs.ko,
     ...factoryCatalogs.ko,
     ...firstRunCatalogs.ko,
     ...memoryCatalogs.ko,
+    ...projectSettingsCatalogs.ko,
   },
   "zh-CN": {
+    ...sessionWorkCatalogs["zh-CN"],
     ...agentSessionsCatalogs["zh-CN"],
     ...shellCatalogs["zh-CN"],
     ...editorSearchCatalogs["zh-CN"],
@@ -124,6 +137,7 @@ export const catalogs = {
     ...nativeCatalogs["zh-CN"],
     ...mobileCatalogs["zh-CN"],
     ...settingsCatalogs["zh-CN"],
+    ...usageCatalogs["zh-CN"],
     ...cleanupCatalogs["zh-CN"],
     ...devicesCatalogs["zh-CN"],
     ...mobileSetupCatalogs["zh-CN"],
@@ -137,13 +151,16 @@ export const catalogs = {
     ...prWorkCatalogs["zh-CN"],
     ...boardCatalogs["zh-CN"],
     ...prListCatalogs["zh-CN"],
+    ...workCatalogs["zh-CN"],
     ...linksCatalogs["zh-CN"],
     ...overviewCatalogs["zh-CN"],
     ...factoryCatalogs["zh-CN"],
     ...firstRunCatalogs["zh-CN"],
     ...memoryCatalogs["zh-CN"],
+    ...projectSettingsCatalogs["zh-CN"],
   },
   ja: {
+    ...sessionWorkCatalogs.ja,
     ...agentSessionsCatalogs.ja,
     ...shellCatalogs.ja,
     ...editorSearchCatalogs.ja,
@@ -159,6 +176,7 @@ export const catalogs = {
     ...nativeCatalogs.ja,
     ...mobileCatalogs.ja,
     ...settingsCatalogs.ja,
+    ...usageCatalogs.ja,
     ...cleanupCatalogs.ja,
     ...devicesCatalogs.ja,
     ...mobileSetupCatalogs.ja,
@@ -172,10 +190,12 @@ export const catalogs = {
     ...prWorkCatalogs.ja,
     ...boardCatalogs.ja,
     ...prListCatalogs.ja,
+    ...workCatalogs.ja,
     ...linksCatalogs.ja,
     ...overviewCatalogs.ja,
     ...factoryCatalogs.ja,
     ...firstRunCatalogs.ja,
     ...memoryCatalogs.ja,
+    ...projectSettingsCatalogs.ja,
   },
 } satisfies Catalogs<typeof english>;

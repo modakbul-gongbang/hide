@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 
 use super::answer::{Confirmed, InboxEntry};
 use super::ledger::{Ledger, Letter, State};
-use super::{Actor, BODY_LIMIT, HOOK_LETTERS, HOOK_LIMIT, LETTER_LIMIT, OPEN_LIMIT, RETENTION_MS};
+use super::{Actor, BODY_LIMIT, HOOK_LETTERS, HOOK_LIMIT, LETTER_LIMIT, OPEN_LIMIT};
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
@@ -95,10 +95,27 @@ pub(crate) fn existing_intent<'a>(
     now: u64,
 ) -> Option<&'a Letter> {
     ledger.letters.iter().find(|letter| {
-        letter.sender.same_identity(sender)
-            && letter.intent == intent
-            && (letter.open() || now.saturating_sub(letter.created_at_unix_ms) < RETENTION_MS)
+        letter.sender.same_identity(sender) && letter.intent == intent && letter.retained(now)
     })
+}
+
+/// Where the finished letter that finished first stands: the one a full
+/// ledger drops to make room. An open letter is never a candidate.
+fn oldest_finished(ledger: &Ledger) -> Option<usize> {
+    ledger
+        .letters
+        .iter()
+        .enumerate()
+        .filter(|(_, letter)| !letter.open())
+        .min_by_key(|(index, letter)| {
+            (
+                letter
+                    .finished_at_unix_ms
+                    .unwrap_or(letter.created_at_unix_ms),
+                *index,
+            )
+        })
+        .map(|(index, _)| index)
 }
 
 #[expect(
@@ -129,10 +146,27 @@ pub(crate) fn send(
     if let Some(letter) = existing_intent(ledger, sender, intent, now) {
         return Ok(letter.clone());
     }
-    if body.len() > BODY_LIMIT
-        || ledger.letters.len() >= LETTER_LIMIT
-        || ledger.letters.iter().filter(|letter| letter.open()).count() >= OPEN_LIMIT
-    {
+    let open = ledger.letters.iter().filter(|letter| letter.open()).count();
+    // A full total makes room by dropping the oldest finished letter; it is
+    // refused only when every letter is still open.
+    let full = ledger.letters.len() >= LETTER_LIMIT;
+    let oldest_finished = full.then(|| oldest_finished(ledger)).flatten();
+    let refused = if body.len() > BODY_LIMIT {
+        Some("body")
+    } else if full && oldest_finished.is_none() {
+        Some("total")
+    } else if open >= OPEN_LIMIT {
+        Some("open")
+    } else {
+        None
+    };
+    if let Some(cap) = refused {
+        // The caller sees only `capacity`; the log says which cap fired.
+        crate::diagnostic!(
+            json!({"component":"delivery","kind":"letter.capacity_refused",
+            "cap":cap,"sender_pane":sender.pane_id,"recipient_pane":recipient.pane_id,
+            "body_bytes":body.len(),"letters":ledger.letters.len(),"open":open})
+        );
         return Err("capacity".into());
     }
     if body.trim().is_empty() {
@@ -140,11 +174,14 @@ pub(crate) fn send(
     }
     let sequence = ledger.next_id;
     ledger.next_id = sequence.checked_add(1).ok_or("capacity")?;
+    if let Some(index) = oldest_finished {
+        ledger.letters.remove(index);
+    }
     let letter = Letter {
         id: format!("letter-{sequence}"),
         intent: intent.to_owned(),
-        sender: sender.clone(),
-        recipient: recipient.clone(),
+        sender: crate::coordination::named(ledger, sender),
+        recipient: crate::coordination::named(ledger, recipient),
         kind: kind.to_owned(),
         body: body.to_owned(),
         state: State::Pending,
@@ -479,6 +516,7 @@ pub fn pull(ledger: &Ledger, actor: &Actor) -> Result<Intake, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::RETENTION_MS;
     use super::super::ledger::AnswerWaitEnd;
     use super::*;
     fn actor(id: &str) -> Actor {
@@ -1696,7 +1734,7 @@ mod tests {
     }
 
     #[test]
-    fn open_and_retained_limits_reject_without_removing_existing_letters() {
+    fn the_open_limit_rejects_without_removing_existing_letters() {
         let mut ledger = Ledger::default();
         let a = actor("a");
         let b = actor("b");
@@ -1724,39 +1762,200 @@ mod tests {
             letter.waiting_answer = false;
             letter.finished_at_unix_ms = Some(1);
         }
-        for index in OPEN_LIMIT..LETTER_LIMIT {
-            let letter = send(
-                &mut ledger,
-                &a,
-                &b,
-                &format!("closed-{index}"),
-                "body",
-                "reply",
-                None,
-                1,
-            )
-            .unwrap();
-            apply(&mut ledger, &a, None, &Command::Cancel { id: letter.id }, 1).unwrap();
-        }
-        assert_eq!(
-            send(
-                &mut ledger,
-                &a,
-                &b,
-                "retained-overflow",
-                "body",
-                "reply",
-                None,
-                1
-            )
-            .unwrap_err(),
-            "capacity"
-        );
-        assert_eq!(ledger.letters.len(), LETTER_LIMIT);
         assert!(!ledger.cleanup(RETENTION_MS));
         assert!(ledger.cleanup(RETENTION_MS + 1));
         assert!(ledger.letters.is_empty());
     }
+
+    /// A report the recipient took in, finished at `finished`.
+    fn finished_report(ledger: &mut Ledger, intent: &str, finished: u64) -> String {
+        let (a, b) = (actor("a"), actor("b"));
+        let letter = send(ledger, &a, &b, intent, "body", "report", None, 1).unwrap();
+        let stored = ledger
+            .letters
+            .iter_mut()
+            .find(|stored| stored.id == letter.id)
+            .unwrap();
+        stored.state = State::Acknowledged;
+        stored.hook_confirmed = Some(true);
+        stored.finished_at_unix_ms = Some(finished);
+        letter.id
+    }
+
+    #[test]
+    fn a_finished_letters_intent_is_kept_for_a_day_from_its_finish() {
+        let (a, b) = (actor("a"), actor("b"));
+        let mut ledger = Ledger::default();
+        let first = send(&mut ledger, &a, &b, "retry", "body", "request", None, 1).unwrap();
+        // A request that waited most of a day is open until it is answered.
+        let answered = RETENTION_MS - 1;
+        apply(
+            &mut ledger,
+            &b,
+            None,
+            &Command::Confirm {
+                ids: vec![first.id.clone()],
+            },
+            answered,
+        )
+        .unwrap();
+        apply(
+            &mut ledger,
+            &b,
+            None,
+            &Command::Reply {
+                id: first.id.clone(),
+                intent: "answer".into(),
+                body: "done".into(),
+            },
+            answered,
+        )
+        .unwrap();
+        let finished = ledger.letters[0].finished_at_unix_ms.unwrap();
+        let again = |ledger: &mut Ledger, now: u64| {
+            send(ledger, &a, &b, "retry", "body", "request", None, now)
+                .unwrap()
+                .id
+        };
+        assert_eq!(again(&mut ledger, finished + RETENTION_MS - 1), first.id);
+        assert_ne!(again(&mut ledger, finished + RETENTION_MS), first.id);
+    }
+
+    #[test]
+    fn a_full_total_drops_the_oldest_finished_letter_and_keeps_every_open_one() {
+        let (a, b) = (actor("a"), actor("b"));
+        let mut ledger = Ledger::default();
+        let open: Vec<String> = (0..100)
+            .map(|index| {
+                send(
+                    &mut ledger,
+                    &a,
+                    &b,
+                    &format!("open-{index}"),
+                    "body",
+                    "request",
+                    None,
+                    1,
+                )
+                .unwrap()
+                .id
+            })
+            .collect();
+        // Later letters finished earlier, so the order is the finish time's,
+        // not the position's.
+        let finished: Vec<String> = (0..LETTER_LIMIT - open.len())
+            .map(|index| {
+                finished_report(
+                    &mut ledger,
+                    &format!("done-{index}"),
+                    100_000 - index as u64,
+                )
+            })
+            .collect();
+        assert_eq!(ledger.letters.len(), LETTER_LIMIT);
+        let sequence = ledger.next_id;
+        let sent = send(
+            &mut ledger,
+            &a,
+            &b,
+            "fresh",
+            "body",
+            "request",
+            None,
+            200_000,
+        )
+        .unwrap();
+        assert_eq!(ledger.letters.len(), LETTER_LIMIT);
+        assert_eq!(ledger.next_id, sequence + 1);
+        assert_eq!(ledger.letters.last().unwrap().id, sent.id);
+        let kept: Vec<&str> = ledger
+            .letters
+            .iter()
+            .map(|letter| letter.id.as_str())
+            .collect();
+        assert!(open.iter().all(|id| kept.contains(&id.as_str())));
+        assert!(!kept.contains(&finished.last().unwrap().as_str()));
+        assert!(kept.contains(&finished[0].as_str()));
+        ledger.validate().unwrap();
+        // The next one takes the next oldest.
+        send(
+            &mut ledger,
+            &a,
+            &b,
+            "second",
+            "body",
+            "request",
+            None,
+            200_001,
+        )
+        .unwrap();
+        let kept: Vec<&str> = ledger
+            .letters
+            .iter()
+            .map(|letter| letter.id.as_str())
+            .collect();
+        assert!(!kept.contains(&finished[finished.len() - 2].as_str()));
+    }
+
+    #[test]
+    fn a_capacity_refusal_is_logged_with_the_cap_that_fired_and_never_the_body() {
+        let (a, b) = (actor("a"), actor("b"));
+        let secret = "secret-body-text";
+        let refuse = |ledger: &mut Ledger, body: &str| {
+            let (result, records) = crate::diagnostics::capture(|| {
+                send(ledger, &a, &b, "refused", body, "request", None, 2)
+            });
+            assert_eq!(result.unwrap_err(), "capacity");
+            assert_eq!(records.len(), 1);
+            assert!(!records[0].to_string().contains(secret));
+            records[0].clone()
+        };
+
+        // The open cap holds although finished letters could be dropped.
+        let mut ledger = Ledger::default();
+        for index in OPEN_LIMIT..LETTER_LIMIT {
+            finished_report(&mut ledger, &format!("done-{index}"), 1);
+        }
+        for index in 0..OPEN_LIMIT {
+            send(
+                &mut ledger,
+                &a,
+                &b,
+                &format!("open-{index}"),
+                "body",
+                "request",
+                None,
+                1,
+            )
+            .unwrap();
+        }
+        let before = ledger.clone();
+        let record = refuse(&mut ledger, secret);
+        assert_eq!(record["kind"], "letter.capacity_refused");
+        assert_eq!(record["cap"], "open");
+        assert_eq!(record["sender_pane"], "a");
+        assert_eq!(record["recipient_pane"], "b");
+        assert_eq!(record["letters"], LETTER_LIMIT);
+        assert_eq!(record["open"], OPEN_LIMIT);
+        assert_eq!(ledger, before);
+
+        // A full total with nothing finished to drop.
+        let mut ledger = Ledger::default();
+        let open = send(&mut ledger, &a, &b, "open", "body", "request", None, 1).unwrap();
+        ledger.letters = vec![open; LETTER_LIMIT];
+        let before = ledger.clone();
+        assert_eq!(refuse(&mut ledger, secret)["cap"], "total");
+        assert_eq!(ledger, before);
+
+        // A body over the limit.
+        let mut ledger = Ledger::default();
+        let long = format!("{secret}{}", "x".repeat(BODY_LIMIT));
+        let record = refuse(&mut ledger, &long);
+        assert_eq!(record["cap"], "body");
+        assert_eq!(record["body_bytes"], long.len());
+        assert!(ledger.letters.is_empty());
+    }
+
     /// A request the recipient took in and has not answered.
     fn awaiting_reply(
         ledger: &mut Ledger,
@@ -1862,7 +2061,8 @@ mod tests {
             1,
         )
         .unwrap();
-        let late = 1 + 2 * super::super::ANSWER_WAIT_MS;
+        // The deadline itself, while the letters finished at 2 are still kept.
+        let late = 1 + super::super::ANSWER_WAIT_MS;
         assert!(ledger.expire(late));
         assert!(!ledger.end_overdue_answer_waits(late));
         for (id, state) in [

@@ -102,7 +102,33 @@ use crate::error::HostError;
 /// only because no peer of another build reads it: a node that dials its
 /// core links only on the core's exact build (PRD core-host-node-move B10,
 /// option C), and Factory runs never go to a device the core dials.
-pub const PROTOCOL_VERSION: u32 = 28;
+/// An event may gain an optional field within 28 for the same reason:
+/// [`crate::panes::NodeEvent::StreamOpen`]'s `caller` is absent when the node
+/// proved nothing, and the core then checks the command with `pane_inspect`;
+/// a core uploads its own build to a device it dials, so no peer lacks it.
+/// 29: `shell_integration` writes the startup files that mark a pane shell's
+/// first prompt and answers the command and environment an agent's pane
+/// starts its shell with, so a start types only once the shell has finished
+/// starting. A node on 28 would refuse it as unknown, and a start on that
+/// device could be typed into a startup question, so it is refused at Hello
+/// and reinstalled.
+/// 30: subscription sources use one credential-free `usage_limit_fetch`
+/// call. Old helpers must not be asked for credentials by a newer core.
+/// 31: pane proofs may carry one typed hook read and answer it directly.
+/// Older peers cannot decode the hook answer and are refused at Hello.
+/// 32: link reads carry bounded raw requests and tool-output issue sightings.
+/// Older helpers cannot supply a session work record and are upgraded at Hello.
+pub const PROTOCOL_VERSION: u32 = 32;
+
+/// How a pane's shell is started so that it marks its first prompt
+/// ([`Call::ShellIntegration`]): the command the pane runs, the shell and
+/// its integration arguments, and the environment it is given.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShellLaunch {
+    pub command: Vec<String>,
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
+}
 
 /// What a link stream the core opens on a node that dialed it reaches on
 /// the node's machine ([`Call::LinkOpen`]).
@@ -238,11 +264,15 @@ pub enum Call {
     /// The worktrees of the repository that holds `path`
     /// (`hide_host::worktrees::read`), measured against `bases` or the
     /// operator's `base_override`. `null` for a folder that is not a
-    /// repository.
+    /// repository. With `reuse_unchanged`, a worktree whose HEAD, index and
+    /// base refs did not move since the node last measured it keeps that
+    /// measurement; without it every worktree is measured again.
     Worktrees {
         path: String,
         bases: std::collections::BTreeMap<String, String>,
         base_override: Option<String>,
+        #[serde(default)]
+        reuse_unchanged: bool,
     },
     /// Whether `branch` may be created in the repository at `path`
     /// (`hide_host::worktrees::check_new_branch`); nothing is created.
@@ -395,22 +425,16 @@ pub enum Call {
     AiRelease {
         instance: u64,
     },
-    /// The Codex login in `<codex_home>/auth.json`
-    /// (`usage::CredentialsAnswer`).
-    CodexCredentials {
-        codex_home: String,
+    /// A declared subscription source, fetched on the core's own node.
+    /// `root` is the Claude working directory or Codex home for that source.
+    /// Devices refuse it; credentials never cross the link (`usage::LimitFetch`).
+    UsageLimitFetch {
+        source: crate::usage::LimitSource,
+        root: String,
     },
-    /// The weekly window the newest Codex session under `codex_home`
-    /// recorded (`usage::CodexWeeklyUsage`), or `null`.
-    CodexSessionUsage {
-        codex_home: String,
-    },
-    /// `claude -p /usage` run in `cwd` with the operator's login
-    /// (`usage::UsageText`), reporting at least once a second; a report
-    /// answered with false cancels it.
-    ClaudeUsageText {
-        cwd: String,
-    },
+    /// One bounded public price-table read (`usage::PriceFetch`).
+    /// No caller-selected URL or payload; devices refuse it.
+    UsagePriceFetch,
     /// Reads files the operator picked to attach to a terminal
     /// (`attachments::ReadFile`, in order), reporting before each file; a
     /// report answered with false ends the read as cancelled.
@@ -434,6 +458,12 @@ pub enum Call {
     AgentInstalled {
         name: String,
     },
+    /// Writes Hide's shell integration under the node's home once and
+    /// answers how a pane Hide makes for an agent starts the account's
+    /// shell so it marks its first prompt (`hide_host::shell_integration`),
+    /// a [`ShellLaunch`], or `null` for a shell the integration does not
+    /// reach.
+    ShellIntegration,
     /// The start time and program of each pid, in order
     /// (`process::ProcessStart`).
     ProcessStarts {
@@ -484,6 +514,12 @@ pub enum Call {
     LabelTranscript {
         request: hide_session::label_transcript::LabelTranscriptRequest,
     },
+    /// The one original turn and bounded checkout issue templates used by
+    /// the operator's editable issue preview. No other turn is returned.
+    SessionWorkContext {
+        request: hide_session::label_transcript::WorkTurnRequest,
+        checkout_path: String,
+    },
     /// Metadata-only activity using the same native ownership proof as labels.
     SessionActivity {
         request: hide_session::session_activity::SessionActivityRequest,
@@ -502,6 +538,20 @@ pub enum Call {
     /// conversation; a path outside the agent roots is refused.
     LinkRead {
         requests: Vec<hide_session::links::ReadRequest>,
+    },
+    /// Content-free usage candidates from this node's native agent roots.
+    /// Requires the independently advertised `Usage` reader feature.
+    UsageFiles {
+        agent: hide_session::Agent,
+        since_unix_ms: u64,
+    },
+    /// One bounded usage step; the core owns the durable checkpoint and
+    /// ledger. This never returns conversation records.
+    UsageRead {
+        agent: hide_session::Agent,
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checkpoint: Option<hide_session::usage::Checkpoint>,
     },
     /// One bounded read of a session file for the core's search index, on
     /// from what the index saved (`hide_session::search_read::read_step`);
@@ -731,6 +781,7 @@ impl Call {
             | Self::Git { .. }
             | Self::TerminateGroup { .. }
             | Self::AgentInstalled { .. }
+            | Self::ShellIntegration
             | Self::ProcessStarts { .. }
             | Self::ProcessDescendants { .. }
             | Self::LineInput { .. }
@@ -738,9 +789,12 @@ impl Call {
             | Self::ListeningPorts
             | Self::VolumeFree { .. }
             | Self::LabelTranscript { .. }
+            | Self::SessionWorkContext { .. }
             | Self::SessionActivity { .. }
             | Self::LinkFiles { .. }
             | Self::LinkRead { .. }
+            | Self::UsageFiles { .. }
+            | Self::UsageRead { .. }
             | Self::SessionIndexRead { .. }
             | Self::SessionStamps { .. }
             | Self::ProjectSessions { .. }
@@ -767,9 +821,8 @@ impl Call {
             | Self::AiMeasurement { .. }
             | Self::AiRestart { .. }
             | Self::AiRelease { .. }
-            | Self::CodexCredentials { .. }
-            | Self::CodexSessionUsage { .. }
-            | Self::ClaudeUsageText { .. }
+            | Self::UsageLimitFetch { .. }
+            | Self::UsagePriceFetch
             | Self::Gh { .. }
             | Self::ReadAttachments { .. }
             | Self::RemoveClipboard { .. }

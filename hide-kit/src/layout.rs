@@ -94,6 +94,13 @@ pub fn delivery_ledger(state_dir: &Path) -> PathBuf {
     state_dir.join("delivery-ledger.json")
 }
 
+/// The panes the doorbell holds as an unsent draft, restored when the daemon
+/// starts so a restart does not forget what the operator typed; its owner is
+/// the core's composer store.
+pub fn composer_marks(state_dir: &Path) -> PathBuf {
+    state_dir.join("composer-marks.json")
+}
+
 /// The last GitHub answer per project, restored when the daemon starts; its
 /// owner is the core's GitHub store.
 pub fn github_snapshot(state_dir: &Path) -> PathBuf {
@@ -106,6 +113,13 @@ pub fn links_store(state_dir: &Path) -> PathBuf {
     state_dir.join("links.sqlite3")
 }
 
+/// Usage events and retained daily totals, owned by the core's usage worker.
+pub const USAGE_STORE: &str = "usage.sqlite3";
+
+pub fn usage_store(state_dir: &Path) -> PathBuf {
+    state_dir.join(USAGE_STORE)
+}
+
 /// The Software Factory store: Factories, Tasks, questions, records and
 /// events; its owner is the core's Factory engine thread.
 pub fn factory_store(state_dir: &Path) -> PathBuf {
@@ -116,6 +130,22 @@ pub fn factory_store(state_dir: &Path) -> PathBuf {
 /// verify log tails.
 pub fn factory_files(state_dir: &Path) -> PathBuf {
     state_dir.join("factory-files")
+}
+
+/// The startup files Hide gives a pane's shell so it can tell when the shell
+/// has finished starting (`hide_host::shell_integration`): one folder per
+/// version of those files, so a newer build never rewrites a file a starting
+/// shell may be reading.
+pub fn shell_integration(home: &Path) -> PathBuf {
+    hide_home(home).join("shell-integration")
+}
+
+/// What a node last measured of each repository's worktrees, one file a
+/// repository, so a restarted node reuses the facts of a worktree whose
+/// inputs did not move; its owner is the node's worktree reader
+/// (`hide_host::worktrees::Measured`).
+pub fn worktree_facts(state_dir: &Path) -> PathBuf {
+    state_dir.join("worktree-facts")
 }
 
 /// Where this machine's core runs when it is not here: present only on a

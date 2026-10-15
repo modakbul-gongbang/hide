@@ -24,6 +24,9 @@ pub fn serialize_snapshot_delta(
 pub(super) struct DeltaState {
     revision: u64,
     rest_revision: u64,
+    usage_revision: u64,
+    usage_edit: u64,
+    last_usage: Option<Arc<crate::usage::model::UsageSnapshot>>,
     editor_revision: u64,
     changes_revision: u64,
     project_sessions_revision: u64,
@@ -37,6 +40,10 @@ pub(super) struct DeltaState {
     last_link_summaries: Option<Arc<crate::links::LinkSummariesSnapshot>>,
     link_panel_revision: u64,
     last_link_panel: Option<Arc<crate::links::LinkPanelSnapshot>>,
+    session_record_revision: u64,
+    last_session_record: Option<Arc<crate::links::ledger::SessionRecordSnapshot>>,
+    session_work_search_revision: u64,
+    last_session_work_search: Option<Arc<crate::links::ledger::SessionSearchSnapshot>>,
     /// The Factory sections are stamped by edit number: the summary can hold
     /// thousands of cards, so a read compares two numbers, never the values.
     factory_revision: u64,
@@ -97,15 +104,21 @@ impl Runtime {
         // the nodes compare its next key with.
         self.sync_terminal_focus();
         self.note_snapshot_sent();
-        if !self
-            .delta
-            .last_rest
-            .as_ref()
-            .is_some_and(|rest| rest.matches(&self.snapshot))
-        {
+        if self.delta.usage_edit != self.usage_edit {
             self.delta.revision += 1;
+            self.delta.usage_revision = self.delta.revision;
+            self.delta.usage_edit = self.usage_edit;
+            self.delta.last_usage = Some(Arc::new(self.snapshot.usage.clone()));
+        }
+        let rest = RestSections::capture(
+            &self.snapshot,
+            self.delta.last_rest.as_deref(),
+            self.delta.revision + 1,
+        );
+        if rest.revision() > self.delta.rest_revision {
+            self.delta.revision = rest.revision();
             self.delta.rest_revision = self.delta.revision;
-            self.delta.last_rest = Some(Arc::new(RestSections::capture(&self.snapshot)));
+            self.delta.last_rest = Some(Arc::new(rest));
         }
         if self.delta.last_editor.as_deref() != Some(&self.snapshot.editor) {
             self.delta.revision += 1;
@@ -160,6 +173,30 @@ impl Runtime {
             self.delta.link_panel_revision = self.delta.revision;
             self.delta.last_link_panel = Some(Arc::new(panel.clone()));
         }
+        // Worker answers are immutable Arcs; comparing identity costs no
+        // request-body walk on a terminal notification.
+        if let Some(record) = &self.snapshot.session_record
+            && self
+                .delta
+                .last_session_record
+                .as_ref()
+                .is_none_or(|last| !Arc::ptr_eq(last, record))
+        {
+            self.delta.revision += 1;
+            self.delta.session_record_revision = self.delta.revision;
+            self.delta.last_session_record = Some(Arc::clone(record));
+        }
+        if let Some(search) = &self.snapshot.session_work_search
+            && self
+                .delta
+                .last_session_work_search
+                .as_ref()
+                .is_none_or(|last| !Arc::ptr_eq(last, search))
+        {
+            self.delta.revision += 1;
+            self.delta.session_work_search_revision = self.delta.revision;
+            self.delta.last_session_work_search = Some(Arc::clone(search));
+        }
         if let Some(factory) = &self.snapshot.factory
             && factory.edit_number() != self.delta.factory_edit
         {
@@ -186,8 +223,16 @@ impl Runtime {
         };
 
         SnapshotDeltaPayload {
+            have_revision,
+            current_rest: Arc::clone(self.delta.last_rest.as_ref().expect("rest is stamped")),
             schema_version: self.snapshot.schema_version,
             revision: self.delta.revision,
+            usage: self
+                .delta
+                .last_usage
+                .as_ref()
+                .filter(|_| self.delta.usage_revision > have_revision)
+                .map(Arc::clone),
             // The retained copies were compared against the live snapshot
             // above and rebuilt where they differed, so each is the live
             // section and costs a refcount instead of a copy. All three are
@@ -251,6 +296,18 @@ impl Runtime {
                 .last_link_panel
                 .as_ref()
                 .filter(|_| self.delta.link_panel_revision > have_revision)
+                .map(Arc::clone),
+            session_record: self
+                .delta
+                .last_session_record
+                .as_ref()
+                .filter(|_| self.delta.session_record_revision > have_revision)
+                .map(Arc::clone),
+            session_work_search: self
+                .delta
+                .last_session_work_search
+                .as_ref()
+                .filter(|_| self.delta.session_work_search_revision > have_revision)
                 .map(Arc::clone),
             // Cloning a section clones the summary's `Arc` and at most the
             // capped answers, never the cards.

@@ -7,8 +7,7 @@
 // B18, B20); the tab menu and the caps say what cannot be done (B11, B19); a
 // narrow window changes only what is drawn (B12, B13); a restart brings the
 // layout back and a broken or older file is handled (B14-B17); and the
-// column toggles and tools keep working beside several areas (B22; PRD
-// three-column-panel).
+// rail and tools keep working beside several areas (B22; PRD right-lane).
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
@@ -17,9 +16,9 @@ import path from "node:path";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { bindChordlessCommand, countSent, enterWorkspace, screenshot, showExplorer, showTool } from "./wire";
+import { bindChordlessCommand, countSent, enterWorkspace, screenshot, showExplorer, showProjectRow, showTool } from "./wire";
 import { chord } from "./chords";
-import { onDisk, quietFor } from "./wait";
+import { onDisk, quietFor, unchangedForFrames } from "./wait";
 
 /** `--size-rail`: the always-shown device rail takes this much of a window that measured its areas without one. */
 const RAIL = 48;
@@ -77,38 +76,47 @@ async function open(page: Page, daemon: Daemon): Promise<void> {
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
 }
 
-/** Drags File Views' divider to the right edge, where its minimum width stops it. */
-async function narrowFileViews(page: Page): Promise<void> {
-  const divider = page.locator('[data-column-divider="views"]');
+/** Pins the lane, so it docks beside Agent Views with a divider (PRD right-lane B5, B6). */
+async function pinLane(page: Page): Promise<void> {
+  const pin = page.locator("[data-lane-pin]");
+  if ((await pin.getAttribute("data-lane-pin")) === "off") await pin.click();
+  await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "docked");
+}
+
+/** Drags the docked lane's divider to `x`, where a minimum stops it, and waits for the release to land. */
+async function dragLaneTo(page: Page, x: (body: Box) => number): Promise<void> {
+  await pinLane(page);
+  const divider = page.locator('[data-lane-divider="lane"]');
   const box = await boxOf(divider);
-  const body = await boxOf(page.locator('[data-column-row="true"]'));
+  const body = await boxOf(page.locator("[data-lane-row]"));
   await page.mouse.move(box.x + box.width / 2, box.y + 200);
   await page.mouse.down();
-  await page.mouse.move(body.x + body.width - 10, box.y + 200, { steps: 6 });
+  await page.mouse.move(x(body), box.y + 200, { steps: 6 });
+  const guide = await boxOf(page.locator("[data-lane-guide]"));
   await page.mouse.up();
-  await expect(page.locator("[data-column-guide]")).toHaveCount(0);
+  await expect(page.locator("[data-lane-guide]")).toHaveCount(0);
+  // The divider lands where its guide was once the core has the width, so
+  // nothing measured after this moves under a drag still landing.
+  await expect.poll(async () => Math.abs((await boxOf(divider)).x - guide.x)).toBeLessThanOrEqual(1);
+}
+
+/** Narrows the pinned lane to its minimum width. */
+async function narrowLane(page: Page): Promise<void> {
+  await dragLaneTo(page, (body) => body.x + body.width - 10);
 }
 
 /**
- * Gives File Views all the width Agent Views can spare by dragging its
- * divider to the left edge, where the PRD's minimum stops it, so several
- * View areas fit side by side (PRD three-column-panel D-12).
+ * Gives the pinned lane all the width Agent Views can spare, where their
+ * minimum stops it, so several View areas fit side by side.
  */
-async function widenFileViews(page: Page): Promise<void> {
-  const divider = page.locator('[data-column-divider="views"]');
-  const box = await boxOf(divider);
-  const body = await boxOf(page.locator('[data-column-row="true"]'));
-  await page.mouse.move(box.x + box.width / 2, box.y + 200);
-  await page.mouse.down();
-  await page.mouse.move(body.x + 10, box.y + 200, { steps: 6 });
-  await page.mouse.up();
-  await expect(page.locator("[data-column-guide]")).toHaveCount(0);
+async function widenLane(page: Page): Promise<void> {
+  await dragLaneTo(page, (body) => body.x + 10);
 }
 
 /**
  * The isolated stack with `files` written into the fixture checkout, and the
  * page on that Workspace (a first run goes through Main and the Overview)
- * with the Explorer shown in the Tools column.
+ * with the files tool and its tree shown in the lane.
  */
 async function startStack(
   page: Page,
@@ -224,7 +232,7 @@ test("a click previews in the last used area, a pin keeps a view, and a shown fi
     // A single click previews in the one area, italic, and the next single
     // click replaces that preview in place (B1).
     await row("a.txt").click();
-    await expect(workspace).toHaveAttribute("data-file-views", "shown");
+    await expect(workspace).toHaveAttribute("data-lane-shows", "files");
     await expect.poll(() => shape(page)).toBe("@(>a.txt*)");
     await expect(tab(page, "a.txt").getByText("a.txt")).toHaveCSS("font-style", "italic");
     await expect(tab(page, "a.txt")).toHaveAttribute("aria-label", /· Preview$/);
@@ -411,9 +419,8 @@ test("Open to the side shows one document twice: edits and Korean input reach bo
     // saved; once it can, the save lands and the view closes (B5).
     await tab(page, "shared.txt").hover();
     await tab(page, "shared.txt").getByRole("button", { name: /Close view/ }).click();
-    await expect.poll(() => (stack.last.get("view_layout.close")?.pending_save as { contents_utf8?: string } | undefined)?.contents_utf8?.split("\n")[0]).toBe(
-      "line 001-B 한글안녕-C-D",
-    );
+    const pending = () => (stack.last.get("view_layout.close")?.pending_save as { contents_utf8?: string } | undefined)?.contents_utf8?.split("\n")[0];
+    await expect.poll(pending).toBe("line 001-B 한글안녕-C-D");
     await quietFor(page, 1500, "the unsaved close stays pending while the save cannot land");
     await expect.poll(() => shape(page)).toBe("@(>shared.txt)");
     await expect(editor(page, 0)).toContainText("-C-D");
@@ -442,6 +449,7 @@ test("Open to the side shows one document twice: edits and Korean input reach bo
     await page.goto("about:blank");
     await open(page, stack.daemon);
     await expect.poll(() => shape(page), { timeout: 20_000 }).toBe("@(keep.txt >other.txt)");
+    await showTool(page, "files");
     await tab(page, "keep.txt").hover();
     await tab(page, "keep.txt").getByRole("button", { name: /Close view/ }).click();
     const dontSave = page.locator("[data-notice-dont-save]");
@@ -471,7 +479,7 @@ test("Open to the side from the only area is refused with its reason until that 
     const row = explorerRow(page, stack, "a.txt");
     await row.click();
     await expect.poll(() => shape(page)).toBe("@(>a.txt*)");
-    await narrowFileViews(page);
+    await narrowLane(page);
     await expect.poll(async () => (await boxOf(area(page, 0))).width).toBeLessThan(450);
 
     // The one area cannot be halved, so Open to the side stays listed,
@@ -514,7 +522,7 @@ test("Open to the side from the only area is refused with its reason until that 
     expect(stack.events.filter((event) => event.kind === "changes_select" && event.payload.beside === true)).toHaveLength(0);
 
     // With room (File Views widened), the same item opens the second view to the right.
-    await widenFileViews(page);
+    await widenLane(page);
     await expect.poll(async () => (await boxOf(area(page, 0))).width).toBeGreaterThan(450);
     await showExplorer(page);
     await row.click({ button: "right" });
@@ -567,9 +575,11 @@ test("dragging a tab reorders, moves or splits once on a valid drop and leaves e
   await page.setViewportSize({ width: 1920 + RAIL, height: 1080 });
   const stack = await startStack(page, "s7-drag", { "a.txt": "a\n", "b.txt": "b\n", "c.txt": "c\n" });
   try {
-    // The drop points below are measured in the open panel.
+    // The drop points below are measured in a docked lane wide enough for
+    // two areas that can each split again.
     await keepOpenInTurn(page, ["a.txt", "b.txt", "c.txt"], (name) => explorerRow(page, stack, name));
     await expect.poll(() => shape(page)).toBe("@(a.txt b.txt >c.txt)");
+    await widenLane(page);
     const moves = () => stack.sent.get("view_layout.move") ?? 0;
     const splits = () => stack.sent.get("view_layout.split") ?? 0;
     const resizes = () => stack.sent.get("terminal_resize") ?? 0;
@@ -579,6 +589,8 @@ test("dragging a tab reorders, moves or splits once on a valid drop and leaves e
     // Within its own tab bar: an insertion line, the floating tab, nothing
     // resized while it lasts, then the order changes once with no copy (B6).
     const before = await areaBoxes(page);
+    // The widened lane's terminal resizes go out after its divider lands.
+    await unchangedForFrames(page, resizes);
     const terminalResizes = resizes();
     const [bTab, cTab] = [await boxOf(tab(page, "b.txt")), await boxOf(tab(page, "c.txt"))];
     await dragTab(page, tab(page, "a.txt"), { x: (bTab.x + bTab.width / 2 + cTab.x + cTab.width / 2) / 2, y: bTab.y + bTab.height / 2 }, async () => {
@@ -637,13 +649,13 @@ test("dragging a tab reorders, moves or splits once on a valid drop and leaves e
     );
     await page.mouse.up();
     // A release outside the window lands nothing (B8).
-    await dragTab(page, tab(area(page, 1), "c.txt"), { x: 1960, y: 500 }, async () => {
+    await dragTab(page, tab(area(page, 1), "c.txt"), { x: 1920 + RAIL + 40, y: 500 }, async () => {
       await expect(floating).toBeVisible();
     });
     await expect(drop).toHaveCount(0);
     await expect(floating).toHaveCount(0);
-    // A drop on something that is not a View area (the Explorer) lands nothing (B8).
-    const explorer = await boxOf(page.locator('[data-tool="explorer"]'));
+    // A drop on something that is not a View area (the file tree) lands nothing (B8).
+    const explorer = await boxOf(page.locator("[data-lane-tree]"));
     await dragTab(page, tab(area(page, 1), "c.txt"), { x: explorer.x + explorer.width / 2, y: explorer.y + explorer.height / 2 }, async () => {
       await expect(drop).toHaveCount(0);
       await expect(floating).toBeVisible();
@@ -683,19 +695,20 @@ test("a drag or a tab menu begun on one Workspace ends when another client moves
   try {
     const betaRoot = `${path.posix.dirname(stack.root)}/beta`;
     const choose = async (target: Page, project: string) => {
-      await target.locator("[data-project]", { hasText: project }).locator("[data-checkout]").first().click();
+      await (await showProjectRow(target, target.locator("[data-project]", { hasText: project }).locator("[data-checkout]").first())).click();
     };
     // Each Workspace numbers its own views, so both hold a1 with d2 and d3.
     await keepOpenInTurn(page, ["a.txt", "c.txt"], (name) => explorerRow(page, stack, name));
     await expect.poll(() => shape(page)).toBe("@(a.txt >c.txt)");
     await choose(page, "beta");
-    // A Workspace chosen for the first time starts with File Views off.
-    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-file-views", "off");
+    // A Workspace chosen for the first time starts with its lane closed.
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
     await showExplorer(page);
     await keepOpenInTurn(page, ["b1.txt", "b2.txt"], (name) => page.locator(`[data-explorer-row="${betaRoot}/${name}"]`));
     await expect.poll(() => shape(page)).toBe("@(b1.txt >b2.txt)");
     await choose(page, "fixture");
     await expect.poll(() => shape(page)).toBe("@(a.txt >c.txt)");
+    await showTool(page, "files");
     const betaLayout = () => JSON.stringify(storedWorkspace(stack.daemon, betaRoot)?.layout ?? null);
     await expect.poll(betaLayout).toContain("b2.txt");
     const stored = betaLayout();
@@ -721,6 +734,7 @@ test("a drag or a tab menu begun on one Workspace ends when another client moves
     // A tab menu open on fixture's c.txt closes when the front moves the same way.
     await choose(other, "fixture");
     await expect.poll(() => shape(page)).toBe("@(a.txt >c.txt)");
+    await showTool(page, "files");
     await tab(page, "c.txt").click({ button: "right" });
     await expect(page.locator('[role="menu"]')).toBeVisible();
     await choose(other, "beta");
@@ -786,9 +800,9 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
   const stack = await startStack(page, "s7-keys", { "a.txt": "a\n", "b.txt": "b\n", "c.txt": "c\n", "d.txt": "d\n" }, { beforeOpen: duplicateFirstSplit });
   try {
     await keepOpenInTurn(page, ["a.txt", "b.txt", "c.txt", "d.txt"], (name) => explorerRow(page, stack, name));
-    await widenFileViews(page);
+    await widenLane(page);
     const workspace = page.locator("[data-workspace-screen]");
-    await expect(workspace).toHaveAttribute("data-file-views", "shown");
+    await expect(workspace).toHaveAttribute("data-lane-shows", "files");
     await expect.poll(() => shape(page)).toBe("@(a.txt b.txt c.txt >d.txt)");
     const count = (key: string) => stack.sent.get(key) ?? 0;
     // The area commands have no default chord (PRD cmdk-navigation D-05): the
@@ -799,8 +813,10 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
     await expect.poll(() => shape(page)).toBe("@(a.txt b.txt c.txt >d.txt)");
 
     // Split right from the active tab's menu: one event, delivered twice, one new area;
-    // the keyboard follows the view into it (B9, B18, B20).
-    await tabTo(page, tab(page, "d.txt"), "Shift+Tab");
+    // the keyboard follows the view into it (B9, B18, B20). The tabs come after the pin
+    // `widenLane` pressed; before it are Agent Views, whose terminals keep Tab.
+    await expect(page.locator("[data-lane-pin]")).toBeFocused();
+    await tabTo(page, tab(page, "d.txt"), "Tab");
     await menuByKeyboard(page, "split_right");
     await expect.poll(() => shape(page)).toBe("(a.txt b.txt >c.txt) | @(>d.txt)");
     // The page sent one split; the wire carried it to the core twice.
@@ -854,10 +870,10 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
     expect(count("view_layout.resize")).toBe(1);
 
     // The focused divider moves one step per arrow key, one event each (B9, B20).
-    // The walk starts at File Views' own divider, the stop before its areas;
-    // an agent terminal ahead of it keeps Tab for its program.
+    // The walk starts at the lane's divider, before its areas; an agent
+    // terminal ahead of it keeps Tab for its program.
     const dragged = Number(await divider.getAttribute("aria-valuenow"));
-    await page.locator('[data-column-divider="views"]').focus();
+    await page.locator('[data-lane-divider="lane"]').focus();
     await tabTo(page, divider, "Tab");
     await page.keyboard.press("ArrowLeft");
     await expect.poll(async () => Number(await divider.getAttribute("aria-valuenow"))).toBe(dragged - 5);
@@ -882,24 +898,22 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
     await expect(divider).toHaveCount(0);
     await expect.poll(async () => Math.round((await boxOf(area(page, 0))).width)).toBe(Math.round(views.width));
 
-    // Closing the last view turns File Views off (PRD three-column-panel B17).
-    await page.keyboard.press(chord("toggle_explorer"));
-    await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
-    const panelsBefore = stack.events.filter((event) => event.kind === "workspace_view" && "views" in event.payload).length;
-    await page.locator('[data-column-divider="views"]').focus();
+    // Closing the last view keeps the lane on the files tool with the tree
+    // filling it, as part of the close (PRD right-lane B12).
+    const laneEvents = () => stack.events.filter((event) => event.kind === "workspace_view").length;
+    const laneBefore = laneEvents();
+    await page.locator('[data-lane-divider="lane"]').focus();
     await tabTo(page, tab(page, "c.txt"), "Tab");
     await menuByKeyboard(page, "close_view");
     await expect.poll(() => shape(page)).toBe("@(>a.txt)");
-    await page.locator('[data-column-divider="views"]').focus();
+    await page.locator('[data-lane-divider="lane"]').focus();
     await tabTo(page, tab(page, "a.txt"), "Tab");
     await menuByKeyboard(page, "close_view");
     await expect(page.locator("[data-view-area]")).toHaveCount(0);
-    await expect(workspace).toHaveAttribute("data-file-views", "off");
-    // The core turns File Views off as part of closing the view, without another dispatch.
-    expect(stack.events.filter((event) => event.kind === "workspace_view" && "views" in event.payload).length).toBe(panelsBefore);
+    await expect(page.locator('[data-lane-tree="only"] [data-explorer]')).toBeVisible();
+    await expect(workspace).toHaveAttribute("data-lane-mode", "docked");
+    expect(laneEvents()).toBe(laneBefore);
     await screenshot(page, "s7-keys-closed");
-    await page.keyboard.press(chord("toggle_explorer"));
-    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
     stopStack(stack);
@@ -945,7 +959,7 @@ async function startCaps(page: Page, name: string) {
   try {
     await explorerRow(page, stack, "f01.txt").click();
     await expect.poll(() => shape(page)).toBe("@(>f01.txt*)");
-    await widenFileViews(page);
+    await widenLane(page);
     return stack;
   } catch (error) {
     stopStack(stack);
@@ -1068,12 +1082,14 @@ test("at six view areas every split is refused with its reason, in the menu and 
   } finally { stopStack(stack); }
 });
 
-test("a Workspace holds at most sixty-four views: opening one more is refused with the reason, and opening a shown file still moves to it", async ({ page }) => {
+test("a tab holds at most sixteen views: opening one more closes its view looked at longest ago, and opening a shown file still moves to it", async ({ page }) => {
   await page.setViewportSize({ width: 2560 + RAIL, height: 1080 });
-  const files = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`f${String(index + 1).padStart(2, "0")}.txt`, `file ${index + 1}\n`]));
+  const files = Object.fromEntries(Array.from({ length: 17 }, (_, index) => [`f${String(index + 1).padStart(2, "0")}.txt`, `file ${index + 1}\n`]));
   const stack = await startStack(page, "s7-caps-views", files);
   try {
-    // B19, contract 2
+    // B19, contract 2. Seeded as a schema 2 file, the File Views column
+    // on with the Explorer: the core reads it through the lane migration,
+    // so the cap holds across that path too.
     const seeded = {
       schema_version: 2,
       workspaces: [
@@ -1088,19 +1104,20 @@ test("a Workspace holds at most sixty-four views: opening one more is refused wi
             root: {
               area: {
                 id: "a1",
-                active: "d64",
-                displays: Array.from({ length: 64 }, (_, index) => ({
+                active: "d16",
+                displays: Array.from({ length: 16 }, (_, index) => ({
                   id: `d${index + 1}`,
                   path: `${stack.root}/f${String(index + 1).padStart(2, "0")}.txt`,
                   kind: "file",
                   committed: null,
                   preview: false,
-                  last_focused_unix_ms: 0,
+                  // f10 was looked at longest ago.
+                  last_focused_unix_ms: index === 9 ? 1 : 1000 + index,
                 })),
               },
             },
             active_area: "a1",
-            next_id: 65,
+            next_id: 17,
           },
         },
       ],
@@ -1108,27 +1125,28 @@ test("a Workspace holds at most sixty-four views: opening one more is refused wi
     stack.daemon = await stack.daemon.restart((dir) => fs.writeFileSync(path.join(dir, "workspace-views.json"), JSON.stringify(seeded)));
     await page.goto("about:blank");
     await open(page, stack.daemon);
-    await expect(page.locator('[data-view-area-id] [role="tab"][data-view-state="open"]')).toHaveCount(64, { timeout: 30_000 });
+    await expect(page.locator('[data-view-area-id] [role="tab"][data-view-state="open"]')).toHaveCount(16, { timeout: 30_000 });
+    await showTool(page, "files");
     // Explorer virtualizes this long list: reveal its last rows before clicking one.
     await page.getByRole("tree", { name: "Checkout files" }).hover();
     await page.mouse.wheel(0, 2000);
-    await explorerRow(page, stack, "f65.txt").click();
-    await expect(page.locator("[data-notice]")).toContainText("This Workspace has 64 views open. Close a view to open another.");
-    await expect(page.locator('[data-view-area-id] [role="tab"]')).toHaveCount(64);
-    await expect(tab(page, "f65.txt")).toHaveCount(0);
-    await screenshot(page, "s7-caps-display-limit");
-    await page.locator('[data-notice] button[aria-label="Dismiss"]').click();
-    await explorerRow(page, stack, "f60.txt").click();
-    await expect(tab(page, "f60.txt")).toHaveAttribute("aria-selected", "true");
+    await explorerRow(page, stack, "f17.txt").click();
+    await expect(tab(page, "f17.txt")).toHaveAttribute("aria-selected", "true");
+    await expect(tab(page, "f10.txt")).toHaveCount(0);
+    await expect(page.locator('[data-view-area-id] [role="tab"]')).toHaveCount(16);
     await expect(page.locator("[data-notice]")).toHaveCount(0);
-    await expect(page.locator('[data-view-area-id] [role="tab"]')).toHaveCount(64);
+    await screenshot(page, "s7-caps-display-limit");
+    await explorerRow(page, stack, "f12.txt").click();
+    await expect(tab(page, "f12.txt")).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator("[data-notice]")).toHaveCount(0);
+    await expect(page.locator('[data-view-area-id] [role="tab"]')).toHaveCount(16);
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
     stopStack(stack);
   }
 });
 
-type StoredWorkspace = { device_id: string; path: string; views: boolean; tools: boolean; tool: string; views_width?: number; tools_width?: number; layout: unknown };
+type StoredWorkspace = { device_id: string; path: string; tool: string | null; pinned: boolean; tree: boolean; lane_width?: number; tree_width?: number; layout: unknown };
 
 /** This Workspace's entry in `workspace-views.json`, without the clock stamps a focus writes. */
 function storedWorkspace(daemon: Daemon, root: string): StoredWorkspace | null {
@@ -1144,13 +1162,13 @@ function storedWorkspace(daemon: Daemon, root: string): StoredWorkspace | null {
   return stored.workspaces.find((entry) => entry.device_id === daemon.node && entry.path === root) ?? null;
 }
 
-test("a narrow body shows one column, File Views with one area and a way to the others, and stores none of it", async ({ page }) => {
+test("a window too narrow to dock opens the pinned lane over the agents with one area and a way to the others, and stores none of it", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const stack = await startStack(page, "s7-narrow", { "a.txt": "a\n", "b.txt": "b\n" });
   try {
-    // Two areas in File Views beside the agents and Tools.
+    // Two areas in the pinned lane beside the agents.
     await keepOpenInTurn(page, ["a.txt", "b.txt"], (name) => explorerRow(page, stack, name));
-    await widenFileViews(page);
+    await widenLane(page);
     await tabMenu(page, page, "b.txt", "split_right");
     await expect.poll(() => shape(page)).toBe("(>a.txt) | @(>b.txt)");
     const divider = page.locator("[data-view-divider]");
@@ -1158,24 +1176,17 @@ test("a narrow body shows one column, File Views with one area and a way to the 
     await page.keyboard.press("ArrowLeft");
     await expect(divider).toHaveAttribute("aria-valuenow", "45");
     const workspace = page.locator("[data-workspace-screen]");
-    await expect(workspace).toHaveAttribute("data-file-views", "shown");
-    await expect(workspace).toHaveAttribute("data-tools", "shown");
+    await expect(workspace).toHaveAttribute("data-lane-shows", "files");
     await expect.poll(() => (storedWorkspace(stack.daemon, stack.root)?.layout as { root?: { split?: { ratio?: number } } } | undefined)?.root?.split?.ratio).toBeCloseTo(0.45);
-    const stored = storedWorkspace(stack.daemon, stack.root);
     const sentBefore = stack.events.filter((event) => event.kind === "workspace_view").length;
-    const body = page.locator('[data-column-row="true"]');
-    const sidebar = (await boxOf(body)).x;
+    const sidebar = (await boxOf(page.locator("[data-lane-row]"))).x;
 
-    // Below the narrow step one column shows, Agent Views first; File Views
-    // called by its icon takes the body, and its View areas that cannot all
-    // fit show the active one with a switcher to the others (PRD
-    // three-column-panel B25, B27; S7 B13).
+    // A window with no room to dock opens the pinned lane over the agents;
+    // View areas that cannot all fit show the active one with a switcher to
+    // the others (PRD right-lane B19; S7 B13).
     await page.setViewportSize({ width: Math.round(sidebar + 440), height: 1080 });
-    await expect(workspace).toHaveAttribute("data-workspace-body", "narrow");
-    await expect(workspace).toHaveAttribute("data-file-views", "hidden");
-    await expect(workspace).toHaveAttribute("data-tools", "hidden");
-    await page.locator('[data-column-toggle="views"]').click();
-    await expect(workspace).toHaveAttribute("data-file-views", "shown");
+    await expect(workspace).toHaveAttribute("data-lane-mode", "overlay");
+    await expect(page.locator("[data-lane-pin]")).toHaveAttribute("data-lane-pin", "narrow");
     await expect(page.locator('[data-view-areas="single"]')).toBeVisible();
     await expect(page.locator("[data-view-area-id]")).toHaveCount(1);
     await expect.poll(() => shape(page)).toBe("@(>b.txt)");
@@ -1193,7 +1204,7 @@ test("a narrow body shows one column, File Views with one area and a way to the 
     await expect.poll(() => shape(page)).toBe("@(>b.txt)");
 
     // The close chord with the keyboard in the View area closes that view and
-    // leaves the agents out of sight alone.
+    // leaves the agents under the lane alone.
     await editor(page, 0).click();
     const herdrBefore = herdrIds(stack.herdr);
     const closes = () => viewEvents(stack).filter((event) => event.payload.action === "close").length;
@@ -1204,25 +1215,22 @@ test("a narrow body shows one column, File Views with one area and a way to the 
     expect(stack.events.filter((event) => event.kind === "close_tab" || event.kind === "close_pane")).toHaveLength(0);
     expect(herdrIds(stack.herdr)).toEqual(herdrBefore);
 
-    // An agent chosen from the sidebar gives the body back to Agent Views,
-    // and nothing narrow was sent or stored (B27, B28).
+    // An agent chosen from the sidebar keeps the pinned lane up, and nothing
+    // narrow was sent or stored (B19).
     const agent = page.locator("nav[data-sidebar] [data-agent-open]").first();
     const pane = await agent.getAttribute("data-agent-open");
     await agent.click();
-    await expect(workspace).toHaveAttribute("data-file-views", "hidden");
     await expect(page.locator(`[data-pane-view="${pane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
-    const sentNarrow = stack.events.filter((event) => event.kind === "workspace_view").length;
-    expect(sentNarrow).toBe(sentBefore);
+    await expect(workspace).toHaveAttribute("data-lane-mode", "overlay");
+    expect(stack.events.filter((event) => event.kind === "workspace_view").length).toBe(sentBefore);
 
-    // Widening brings back what the core stores: both columns, the areas at
-    // their ratio (B28).
+    // Widening docks the lane again with what the core stores (B19, B22).
     await page.setViewportSize({ width: 1920, height: 1080 });
-    await expect(workspace).toHaveAttribute("data-workspace-body", "wide");
-    await expect(workspace).toHaveAttribute("data-file-views", "shown");
-    await expect(workspace).toHaveAttribute("data-tools", "shown");
-    await expect(page.locator('[data-workspace-tools="explorer"]')).toBeVisible();
-    await expect.poll(() => storedWorkspace(stack.daemon, stack.root)?.views).toBe(true);
-    expect(stored?.tools).toBe(true);
+    await expect(workspace).toHaveAttribute("data-lane-mode", "docked");
+    await expect(workspace).toHaveAttribute("data-lane-shows", "files");
+    await expect(page.locator("[data-lane-tree] [data-explorer]")).toBeVisible();
+    const stored = storedWorkspace(stack.daemon, stack.root);
+    expect([stored?.tool, stored?.pinned, stored?.tree]).toEqual(["files", true, true]);
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
     stopStack(stack);
@@ -1246,8 +1254,9 @@ test("a restart brings the View areas back as they were, and a file gone meanwhi
   const stack = await startStack(page, "s7-restore", { "a.txt": "a text\n", "b.txt": "b text\n", "c.txt": "c text\n", "d.txt": "d text\n", "e.txt": "e text\n" });
   try {
     const row = (name: string) => explorerRow(page, stack, name);
-    // Three areas, a preview, two ratios, the panel expanded, History without the Explorer.
+    // Three areas, a preview, two ratios, in the pinned lane beside its tree.
     await keepOpenInTurn(page, ["a.txt", "b.txt"], row);
+    await widenLane(page);
     await row("c.txt").click();
     await tabMenu(page, page, "b.txt", "split_right");
     await expect.poll(() => shape(page)).toBe("(a.txt >c.txt*) | @(>b.txt)");
@@ -1264,12 +1273,9 @@ test("a restart brings the View areas back as they were, and a file gone meanwhi
     await expect(dividers.nth(0)).toHaveAttribute("aria-valuenow", "45");
     await expect(dividers.nth(1)).toHaveAttribute("aria-valuenow", "55");
     await tab(area(page, 2), "e.txt").click();
-    await showTool(page, "changes");
-    await expect(page.locator('[data-tool="changes"]')).toBeVisible();
-    await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     const before = await shape(page);
     expect(before).toBe("(a.txt >c.txt*) | (>b.txt) | @(d.txt >e.txt)");
-    await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ views: true, tool: "changes", tools: true });
+    await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ tool: "files", pinned: true, tree: true });
     await expect
       .poll(() => JSON.stringify(storedWorkspace(stack.daemon, stack.root)?.layout))
       .toMatch(/"ratio":0\.45.*"ratio":0\.55/);
@@ -1281,15 +1287,16 @@ test("a restart brings the View areas back as they were, and a file gone meanwhi
     await reopen(page, stack.daemon);
 
     // The same Workspace, not Main: the tree, ratios, order, preview, each
-    // area's view, the area in use, the columns and the tools (B14).
+    // area's view, the area in use, and the pinned lane with its file tree
+    // (B14; PRD right-lane B22).
     const workspace = page.locator("[data-workspace-screen]");
-    await expect(workspace).toHaveAttribute("data-file-views", "shown", { timeout: 20_000 });
+    await expect(workspace).toHaveAttribute("data-lane-mode", "docked", { timeout: 20_000 });
+    await expect(workspace).toHaveAttribute("data-lane-shows", "files");
     await expect(page.locator("[data-main-screen]")).toHaveCount(0);
     await expect.poll(() => shape(page), { timeout: 15_000 }).toBe(before);
     await expect(dividers.nth(0)).toHaveAttribute("aria-valuenow", "45");
     await expect(dividers.nth(1)).toHaveAttribute("aria-valuenow", "55");
-    await expect(page.locator('[data-tool="changes"]')).toBeVisible();
-    await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
+    await expect(page.locator("[data-lane-tree] [data-explorer]")).toBeVisible();
     await expect(tab(page, "c.txt").getByText("c.txt")).toHaveCSS("font-style", "italic");
     await expect(editor(page, 0)).toContainText("c text");
     await expect(editor(page, 1)).toContainText("b text");
@@ -1333,7 +1340,7 @@ test("a broken or unknown Views file is kept aside for Main and a fresh layout, 
     // Unparseable, then a version this build does not know: each is moved
     // aside byte for byte, the app starts on Main, and a Workspace chosen
     // there starts a new layout (B17).
-    for (const [index, broken] of ["{ not json", '{"schema_version": 3, "workspaces": [{"device_id": "local"}]}\n'].entries()) {
+    for (const [index, broken] of ["{ not json", '{"schema_version": 4, "workspaces": [{"device_id": "local"}]}\n'].entries()) {
       stack.diagnostics.clear();
       stack.daemon = await stack.daemon.restart((dir) => fs.writeFileSync(path.join(dir, "workspace-views.json"), broken));
       await reopen(page, stack.daemon);
@@ -1345,19 +1352,19 @@ test("a broken or unknown Views file is kept aside for Main and a fresh layout, 
       await expect.poll(() => stack.diagnostics.has("workspace_views.unreadable")).toBe(true);
       if (index === 0) await screenshot(page, "s7-recover-main");
       await enterWorkspace(page, "fixture");
-      await expect(workspace).toHaveAttribute("data-file-views", "off");
+      await expect(workspace).toHaveAttribute("data-lane-mode", "closed");
       await showExplorer(page);
       await explorerRow(page, stack, "b.txt").click();
       await expect.poll(() => shape(page)).toBe("@(>b.txt*)");
-      await expect.poll(() => JSON.parse(fs.readFileSync(viewsFile(stack.daemon), "utf8")).schema_version as number).toBe(2);
+      await expect.poll(() => JSON.parse(fs.readFileSync(viewsFile(stack.daemon), "utf8")).schema_version as number).toBe(3);
     }
 
     // An S6 (schema 1) file: its tabs become one area in their order, with
-    // its active tab, preview and tools, and its Views only layout restarts
-    // with File Views on; the next save writes schema 2 (B17, contract 1,
-    // PRD three-column-panel D-09). It names this machine `local`, as a build
-    // of that time did, and the start converts that to the node id
-    // (core-host-node D-21).
+    // its active tab and preview, and its Views layout restarts on the files
+    // tool, unpinned and so hidden until asked; the next save writes schema 3
+    // (B17, contract 1, PRD right-lane B22). It names this machine `local`,
+    // as a build of that time did, and the start converts that to the node
+    // id (core-host-node D-21).
     const v1 = {
       schema_version: 1,
       workspaces: [
@@ -1377,20 +1384,19 @@ test("a broken or unknown Views file is kept aside for Main and a fresh layout, 
     stack.diagnostics.clear();
     stack.daemon = await stack.daemon.restart((dir) => fs.writeFileSync(path.join(dir, "workspace-views.json"), JSON.stringify(v1)));
     await reopen(page, stack.daemon);
-    await expect(workspace).toHaveAttribute("data-file-views", "shown", { timeout: 20_000 });
+    await expect(workspace).toHaveAttribute("data-lane-shows", "files", { timeout: 20_000 });
+    await expect(workspace).toHaveAttribute("data-lane-mode", "overlay");
+    await showTool(page, "files");
     await expect.poll(() => shape(page), { timeout: 15_000 }).toBe("@(a.txt >b.txt c.txt*)");
-    await expect(page.locator('[data-tool="changes"]')).toBeVisible();
-    await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     await expect(editor(page, 0)).toContainText("b text");
     await expect.poll(() => stack.diagnostics.has("workspace_views.migrated")).toBe(true);
-    await expect.poll(() => stack.diagnostics.has("workspace_views.columns_migrated")).toBe(true);
     await screenshot(page, "s7-recover-migrated");
     await tab(page, "a.txt").click();
     await expect.poll(() => {
       const stored = JSON.parse(fs.readFileSync(viewsFile(stack.daemon), "utf8")) as { schema_version: number; workspaces: { path: string; layout?: { root?: { area?: { displays?: { path: string; preview: boolean }[] } } } }[] };
       const entry = stored.workspaces.find((candidate) => candidate.path === stack.root);
       return { version: stored.schema_version, displays: entry?.layout?.root?.area?.displays?.map((display) => `${path.basename(display.path)}${display.preview ? "*" : ""}`) };
-    }).toEqual({ version: 2, displays: ["a.txt", "b.txt", "c.txt*"] });
+    }).toEqual({ version: 3, displays: ["a.txt", "b.txt", "c.txt*"] });
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
     stopStack(stack);
@@ -1406,40 +1412,37 @@ function gitCheckout(checkout: string): void {
   fs.appendFileSync(path.join(checkout, "a.txt"), "changed\n");
 }
 
-test("the column toggles, tools, kind marks and an open while File Views is off keep working beside several View areas", async ({ page }) => {
+test("the rail, tools, kind marks and an open while the lane is closed keep working beside several View areas", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const stack = await startStack(page, "s7-s6", { "a.txt": "a text\n", "b.txt": "b text\n", "c.txt": "c text\n" }, { prepare: gitCheckout });
   try {
     const workspace = page.locator("[data-workspace-screen]");
-    const viewsSent = () => stack.events.filter((event) => event.kind === "workspace_view" && "views" in event.payload).length;
-    const tools = () => stack.events.filter((event) => event.kind === "workspace_view" && ("tool" in event.payload || "tools" in event.payload)).length;
+    const laneSent = () => stack.events.filter((event) => event.kind === "workspace_view").length;
 
-    // The toolbar carries the column toggles and no tool tab and no layout
-    // switch; the tool tabs are the Tools column's first row (PRD
-    // three-column-panel B6, D-04).
-    await expect(page.locator("[data-workspace-toolbar] [data-column-toggle]")).toHaveCount(2);
-    await expect(page.locator("[data-workspace-toolbar] [data-tool-tab]")).toHaveCount(0);
-    await expect(page.locator("[data-layout-choice]")).toHaveCount(0);
-    await expect(page.locator('[data-column-row="tools"] [data-tool-tab]')).toHaveCount(4);
+    // The rail carries the four tools and the top row none of them (PRD
+    // right-lane B1).
+    await expect(page.locator("[data-tool-rail] [data-lane-tool]")).toHaveCount(4);
+    await expect(page.locator("[data-workspace-toolbar] [data-lane-tool]")).toHaveCount(0);
 
-    // The first file turns File Views on with one View area (B2).
-    await expect(workspace).toHaveAttribute("data-file-views", "off");
+    // The first file opens one View area beside the tree (B2, B12).
+    await expect(workspace).toHaveAttribute("data-lane-shows", "files");
+    await expect(page.locator("[data-view-area]")).toHaveCount(0);
     await explorerRow(page, stack, "a.txt").dblclick();
     await expect(page.locator("[data-view-area]")).toBeVisible();
-    await expect(workspace).toHaveAttribute("data-file-views", "shown");
     await expect.poll(() => shape(page)).toBe("@(>a.txt)");
     await expect(page.locator("[data-view-divider]")).toHaveCount(0);
     expect(viewEvents(stack)).toHaveLength(0);
 
     // Kind marks, never colour alone: a file's type mark, a diff's comparison
-    // mark, and each agent tab's provider mark (S6 D-15).
+    // mark, and each agent tab's status mark (S6 D-15; the provider logo is on the pane header only).
     await showTool(page, "changes");
     await page.locator('[data-history-group="working"][data-history-path="a.txt"]').click();
     await expect.poll(() => shape(page)).toBe("@(a.txt >a.txt*)");
     await expect(page.locator('[data-view-area-id] [data-tab-kind="file"] [data-view-mark="file"]')).toHaveCount(1);
     await expect(page.locator('[data-view-area-id] [data-tab-kind="diff"] [data-view-mark="diff"]')).toHaveCount(1);
     await expect(page.locator('[data-tab-kind="diff"]')).toHaveAttribute("aria-label", /^Working diff: /);
-    await expect(page.locator("[data-agent-tab-bar] [data-agent-mark]").first()).toBeVisible();
+    await expect(page.locator("[data-agent-tab-bar] [data-tab-status]").first()).toBeVisible();
+    await expect(page.locator("[data-agent-tab-bar] img")).toHaveCount(0);
     await screenshot(page, "s7-s6-kind-marks");
 
     // Two areas, the right one used last. The diff is pinned first, since
@@ -1448,38 +1451,33 @@ test("the column toggles, tools, kind marks and an open while File Views is off 
     await expect.poll(() => shape(page)).toBe("@(a.txt >a.txt)");
     await showExplorer(page);
     await explorerRow(page, stack, "b.txt").dblclick();
-    await widenFileViews(page);
+    await widenLane(page);
     await tabMenu(page, page, "b.txt", "split_right");
     await expect.poll(() => shape(page)).toBe("(a.txt >a.txt) | @(>b.txt)");
 
-    // The column's tabs swap its one tool and the toolbar's Tools icon turns
-    // it off and on beside several areas, one event each, and the areas stay
-    // as they are (B4, S6 B10).
-    const toolsBefore = tools();
+    // The rail swaps the lane's one tool, closes it and opens it again beside
+    // several areas, one event each, and the areas stay as they are (B2, B7).
+    const toolsBefore = laneSent();
     const viewsBefore = viewEvents(stack).length;
-    await page.locator('[data-tool-tab="changes"]').click();
-    await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
-    await expect(page.locator('[data-tool="changes"]')).toBeVisible();
-    await page.locator('[data-column-toggle="tools"]').click();
-    await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
-    await expect(workspace).toHaveAttribute("data-tools", "off");
-    await page.locator('[data-column-toggle="tools"]').click();
-    await expect(page.locator('[data-tool="changes"]')).toBeVisible();
-    await page.locator('[data-tool-tab="explorer"]').click();
-    await expect(page.locator('[data-tool="changes"]')).toHaveCount(0);
-    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
-    expect(tools()).toBe(toolsBefore + 4);
+    await page.locator('[data-lane-tool="changes"]').click();
+    await expect(page.locator("[data-explorer]")).toHaveCount(0);
+    await expect(page.locator('[data-lane="changes"]')).toBeVisible();
+    await page.locator('[data-lane-tool="changes"]').click();
+    await expect(workspace).toHaveAttribute("data-lane-mode", "closed");
+    await page.locator('[data-lane-tool="files"]').click();
+    await expect(page.locator('[data-lane="files"]')).toBeVisible();
+    expect(laneSent()).toBe(toolsBefore + 3);
     expect(viewEvents(stack).length).toBe(viewsBefore);
     await expect.poll(() => shape(page)).toBe("(a.txt >a.txt) | @(>b.txt)");
 
-    // File Views turned off keeps its views and counts them on its icon; a
-    // file opened then turns it back on through the open itself, the areas
-    // whole, and lands in the area used last (B3, B12).
-    await page.locator('[data-column-toggle="views"]').click();
-    await expect(workspace).toHaveAttribute("data-file-views", "off");
+    // The closed lane keeps its views and the Files icon counts them; a file
+    // opened then opens the lane through the open itself, the areas whole,
+    // and lands in the area used last (B16, B17).
+    await page.locator('[data-lane-tool="files"]').click();
+    await expect(workspace).toHaveAttribute("data-lane-mode", "closed");
     await expect(page.locator("[data-view-area-id]")).toHaveCount(0);
-    await expect(page.locator("[data-column-badge]")).toHaveText("3");
-    const sentBefore = viewsSent();
+    await expect(page.locator('[data-lane-tool="files"] [data-lane-badge]')).toHaveText("3");
+    const sentBefore = laneSent();
     await page.keyboard.press(chord("open_file"));
     const input = page.locator('[data-palette="Open file"] [data-palette-input]');
     await expect(input).toBeVisible();
@@ -1487,12 +1485,12 @@ test("the column toggles, tools, kind marks and an open while File Views is off 
     const row = page.locator(`[data-palette-row="${stack.root}/c.txt"]`);
     await expect(row).toBeVisible({ timeout: 20_000 });
     await row.click();
-    await expect(workspace).toHaveAttribute("data-file-views", "shown");
+    await expect(workspace).toHaveAttribute("data-lane-mode", "docked");
     await expect.poll(() => shape(page)).toBe("(a.txt >a.txt) | @(b.txt >c.txt*)");
     await expect(area(page, 1)).toHaveAttribute("data-active-area", "true");
-    expect(viewsSent()).toBe(sentBefore);
-    // The diff in File Views is read like any diff on screen.
-    await expect(page.locator('[data-column="views"] .cm-content', { hasText: "+changed" })).toBeVisible({ timeout: 10_000 });
+    expect(laneSent()).toBe(sentBefore);
+    // The diff in the lane is read like any diff on screen.
+    await expect(page.locator('[data-lane-frame] .cm-content', { hasText: "+changed" })).toBeVisible({ timeout: 10_000 });
     await screenshot(page, "s7-s6-open-from-off");
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {

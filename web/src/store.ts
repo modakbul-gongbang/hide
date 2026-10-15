@@ -1,5 +1,5 @@
 import type { StoredBuffer } from "./buffers";
-import type { TerminalFrame } from "./generated/hided-ws";
+import type { TerminalFrame, UsageSnapshot } from "./generated/hided-ws";
 import { create } from "zustand";
 import type { ConnectionState } from "./connection";
 import type { CoreLink, MoveView } from "./coreMove";
@@ -86,6 +86,8 @@ export type Frame = {
     terminal_sequence?: number;
     terminal_epoch?: string;
     rest?: SnapshotRest;
+    rest_format?: "semantic-rest-v1";
+    usage?: UsageSnapshot;
     editor?: EditorSnapshot | null;
     changes?: ChangesSnapshot | null;
     documents?: DocumentsSection | null;
@@ -94,6 +96,8 @@ export type Frame = {
     session_search?: import("./snapshot").SessionSearch;
     link_panel?: import("./snapshot").LinkPanel;
     link_summaries?: import("./snapshot").LinkSummaries;
+    session_record?: import("./snapshot").SessionRecordSection | null;
+    session_work_search?: import("./snapshot").SessionWorkSearch | null;
     factory?: import("./factory/model").FactorySection;
     /** Null when the open Task page closed. */
     factory_task?: import("./factory/model").FactoryTaskSection | null;
@@ -143,6 +147,8 @@ type Store = {
   terminalEpoch: string | null;
   /** The core's rest section, structurally shared across frames (`share.ts`). */
   rest: SnapshotRest | null;
+  /** Independently revisioned usage; history changes leave navigation untouched. */
+  usage: UsageSnapshot | null;
   /**
    * The core's editor section, one of the three sections the core revisions on
    * its own. A delta carries it only when it changed, so a null in a delta
@@ -174,6 +180,8 @@ type Store = {
   linkPanel: import("./snapshot").LinkPanel | null;
   /** Each Project's link counts and chips (`link_summaries`). */
   linkSummaries: import("./snapshot").LinkSummaries | null;
+  sessionRecord: import("./snapshot").SessionRecordSection | null;
+  sessionWorkSearch: import("./snapshot").SessionWorkSearch | null;
   /**
    * The Factory screens' section (`factory`): the engine's summary and the
    * answers to this screen's requests. The core sends it only when the engine
@@ -312,6 +320,7 @@ export const useShellStore = create<Store>((set, get) => ({
   terminalSequence: null,
   terminalEpoch: null,
   rest: null,
+  usage: null,
   editor: null,
   changes: null,
   documents: NO_DOCUMENTS,
@@ -320,6 +329,8 @@ export const useShellStore = create<Store>((set, get) => ({
   sessionSearch: null,
   linkPanel: null,
   linkSummaries: null,
+  sessionRecord: null,
+  sessionWorkSearch: null,
   factory: null,
   factoryTask: null,
   agents: [],
@@ -416,6 +427,8 @@ export const useShellStore = create<Store>((set, get) => ({
         sessionSearch: payload.session_search ?? null,
         linkPanel: payload.link_panel ?? null,
         linkSummaries: payload.link_summaries ?? null,
+        sessionRecord: payload.session_record ?? null,
+        sessionWorkSearch: payload.session_work_search ?? null,
         factory: payload.factory ?? null,
         factoryTask: payload.factory_task ?? null,
       });
@@ -425,6 +438,7 @@ export const useShellStore = create<Store>((set, get) => ({
       payload.documents !== undefined ||
       payload.project_sessions !== undefined || payload.session_search !== undefined || payload.memory !== undefined ||
       payload.link_panel !== undefined || payload.link_summaries !== undefined ||
+      payload.session_record !== undefined || payload.session_work_search !== undefined ||
       payload.factory !== undefined || payload.factory_task !== undefined
     ) {
       set({
@@ -436,6 +450,8 @@ export const useShellStore = create<Store>((set, get) => ({
         sessionSearch: payload.session_search && (payload.revision ?? get().revision) >= get().revision ? share(get().sessionSearch, payload.session_search) : get().sessionSearch,
         linkPanel: payload.link_panel ? share(get().linkPanel, payload.link_panel) : get().linkPanel,
         linkSummaries: payload.link_summaries ? share(get().linkSummaries, payload.link_summaries) : get().linkSummaries,
+        sessionRecord: payload.session_record !== undefined ? payload.session_record && share(get().sessionRecord, payload.session_record) : get().sessionRecord,
+        sessionWorkSearch: payload.session_work_search !== undefined ? payload.session_work_search && share(get().sessionWorkSearch, payload.session_work_search) : get().sessionWorkSearch,
         factory: payload.factory ? share(get().factory, payload.factory) : get().factory,
         factoryTask: payload.factory_task !== undefined ? payload.factory_task && share(get().factoryTask, payload.factory_task) : get().factoryTask,
       });
@@ -569,6 +585,9 @@ export const useShellStore = create<Store>((set, get) => ({
       return payload.chunks ?? [];
     }
     const cursors = {
+      usage: frame.type === "snapshot"
+        ? payload.usage ?? null
+        : payload.usage && (payload.revision ?? get().revision) >= get().revision ? share(get().usage, payload.usage) : get().usage,
       revision: frame.type === "snapshot" ? (payload.revision ?? get().revision) : Math.max(payload.revision ?? 0, get().revision),
       // A whole snapshot resets every terminal, so the old cursor names
       // output those terminals no longer hold.
@@ -578,12 +597,21 @@ export const useShellStore = create<Store>((set, get) => ({
     };
     if (frame.type === "snapshot" || payload.rest) {
       const previous = get().rest;
-      // The core leaves `workspace_view` out of the frame when no Workspace
-      // is in front, so a delta that carries rest without it clears it.
+      // Negotiated semantic frames retain omitted nested fields. Legacy
+      // schema-2 frames carry complete nested sections and omitted Workspace
+      // still clears it, including when connecting to an older daemon.
       const incoming =
         frame.type === "snapshot"
           ? payload.rest ?? {}
-          : { ...previous, ...payload.rest, workspace_view: payload.rest?.workspace_view };
+          : payload.rest_format === "semantic-rest-v1"
+            ? {
+                ...previous,
+                ...payload.rest,
+                ...(payload.rest?.navigator ? { navigator: { ...previous?.navigator, ...payload.rest.navigator } } : {}),
+                ...(payload.rest?.terminal ? { terminal: { ...previous?.terminal, ...payload.rest.terminal } } : {}),
+                ...(payload.rest?.status ? { status: { ...previous?.status, ...payload.rest.status } } : {}),
+              }
+            : { ...previous, ...payload.rest, workspace_view: payload.rest?.workspace_view };
       const rest = share(previous, incoming);
       const diagnostics: string[] = [];
       const agents =

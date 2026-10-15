@@ -7,8 +7,8 @@
 // Everything that moves a page goes through one sync: the front Workspace's
 // browser displays, each with the rect its slot occupies now or null. A
 // shell overlay (the palette, a menu, a dialog, a popover, the Recent Panels
-// or Recent Projects list, the Tools overlay of a narrow window) that meets a
-// page's rect cannot draw over a native view, so the page is hidden in the
+// or Recent Projects list) that meets a page's rect cannot draw over a
+// native view, so the page is hidden in the
 // same sync that first sees the overlay, the still taken while the page was
 // idle is drawn in its place, and a fresh capture, asked for before that sync
 // hides the page, replaces it when it arrives. A shell drag (`shellDrag.ts`)
@@ -55,8 +55,9 @@ const LOOPBACK = /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1\])(?::\d+)?(?
  * daemon writes back after it checks the path.
  */
 export function fileUrl(path: string): string {
+  const slash = path.startsWith("/") ? "" : "/";
   // eslint-disable-next-line no-control-regex
-  return `file://${path.replace(/[\u0000-\u0020"#%<>?`{}\u007f]|[^\u0000-\u007f]+/gu, encodeURIComponent)}`;
+  return `file://${slash}${path.replace(/[\u0000-\u0020"#%<>?`{}\u007f]|[^\u0000-\u007f]+/gu, encodeURIComponent)}`;
 }
 
 /**
@@ -152,16 +153,15 @@ export function stillWanted(cached: CachedStill | undefined, url: string, rect: 
 
 // --- the sync loop -------------------------------------------------------------
 
-/** A shell layer that stays where it opened; the others can move with their anchor and are followed every frame. */
-const STILL_LAYER_SELECTOR = "[data-tools-overlay]";
+/** The lane, or the files tool under another tool, out of sight. */
+const HIDDEN_LANE_SELECTOR = "[data-lane-hidden]";
 
-/** Where a shell layer is drawn; a tooltip is only read and stays under a page. */
+/** Where a shell layer is drawn; a tooltip is only read and stays under a page. Every layer can move with its anchor, so each is followed every frame. */
 const OVERLAY_SELECTOR = [
   "[data-radix-popper-content-wrapper]",
   '[role="dialog"]',
   '[role="alertdialog"]',
   '[data-slot$="-overlay"]',
-  STILL_LAYER_SELECTOR,
 ].join(",");
 
 function overlayRects(): { rects: BrowserRect[]; moving: boolean } {
@@ -172,7 +172,7 @@ function overlayRects(): { rects: BrowserRect[]; moving: boolean } {
     const box = element.getBoundingClientRect();
     if (box.width <= 0 || box.height <= 0) continue;
     rects.push({ x: box.left, y: box.top, width: box.width, height: box.height });
-    if (!element.matches(STILL_LAYER_SELECTOR)) moving = true;
+    moving = true;
   }
   return { rects, moving };
 }
@@ -321,7 +321,7 @@ class BrowserSyncLoop {
     if (this.watching) return;
     this.watching = true;
     // Radix layers and the Recent cycle mount as children of the body; a
-    // shell drag marks the root; the Tools overlay says so itself.
+    // shell drag marks the root; the lane says so itself (`noteShellLayer`).
     new MutationObserver(() => this.schedule()).observe(document.body, { childList: true });
     new MutationObserver(() => this.schedule()).observe(document.documentElement, { attributes: true, attributeFilter: [...SHELL_DRAG_ATTRIBUTES] });
     window.addEventListener("resize", () => this.schedule());
@@ -337,7 +337,10 @@ class BrowserSyncLoop {
     const shown = new Map<string, boolean>();
     for (const row of front?.rows ?? []) {
       const element = this.slots.get(row.id);
-      if (!front || !element?.isConnected) continue;
+      // A slot in a lane put away, or under another of its tools, keeps its
+      // layout for its scroll and is drawn by nobody: its page is hidden (PRD
+      // right-lane B21).
+      if (!front || !element?.isConnected || element.closest(HIDDEN_LANE_SELECTOR)) continue;
       const box = element.getBoundingClientRect();
       if (box.width <= 0 || box.height <= 0) continue;
       const rect = { x: box.left, y: box.top, width: box.width, height: box.height };

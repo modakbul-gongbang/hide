@@ -53,6 +53,9 @@ describe("osc8Target", () => {
   it("reads http(s), file and the vscode://file links Codex writes", () => {
     expect(osc8Target("https://example.com")).toEqual({ kind: "url", url: "https://example.com/" });
     expect(osc8Target("file:///tmp/a%20b.txt")).toEqual({ kind: "path", path: "/tmp/a b.txt", line: null, column: null });
+    expect(osc8Target("file:///C:/repo/report.HTML#L2")).toEqual({ kind: "path", path: "C:/repo/report.HTML", line: 2, column: null });
+    expect(osc8Target("vscode://file/C:/repo/report.HTML:2")).toEqual({ kind: "path", path: "C:/repo/report.HTML", line: 2, column: null });
+    expect(parseToken("C:/repo/report.HTML:2")?.target).toEqual({ kind: "path", path: "C:/repo/report.HTML", line: 2, column: null });
     expect(osc8Target("vscode://file/Users/example/p/src/a.ts:12:4")).toEqual({ kind: "path", path: "/Users/example/p/src/a.ts", line: 12, column: 4 });
   });
 
@@ -129,17 +132,24 @@ describe("linkCandidates", () => {
 
 
 describe("bounded Korean interpretations", () => {
-  it("uses a finite particle boundary and keeps the original spelling", () => {
-    const particles = ["에", "에서", "에게", "께", "으로", "로", "와", "과", "을", "를", "은", "는", "이", "가", "의", "도", "만", "부터", "까지"];
-    for (const closer of [")", "]", "}", '"', "'", "`"]) {
-      for (const particle of particles.flatMap((base) => [base, ...["도", "만", "는", "은"].map((extra) => base + extra)])) {
-        const token = "docs/한글.md" + closer + particle;
-        const [group] = linkCandidates([row(token, 40)], 0);
-        expect(group!.length).toBeLessThanOrEqual(6);
-        expect(group![0]!.target).toMatchObject({ path: token, line: null });
-        expect(group!.at(-1)!.target).toMatchObject({ path: "docs/한글.md" });
-        expect(group!.at(-1)!.spans).toEqual([{ row: 0, start: 0, end: 12 }]);
-      }
+  it("cuts prose attached where the script changes and keeps the original spelling first", () => {
+    for (const [token, path, end] of [
+      // Claude Code draws `path`에 without its backticks.
+      ["agents/runs/view-mode.html에", "agents/runs/view-mode.html", 26],
+      ["docs/한글.md을", "docs/한글.md", 12],
+      ["docs/한글.md)에서도", "docs/한글.md", 12],
+      ["docs/한글.md`에서라도", "docs/한글.md", 12],
+      ["docs/a.md)한국어", "docs/a.md", 9],
+      ["docs/a.md에서도", "docs/a.md", 9],
+      ["view-mode.htmlに", "view-mode.html", 14],
+      ["view-mode.html中", "view-mode.html", 14],
+      ["view-mode.html。", "view-mode.html", 14],
+    ] as const) {
+      const [group] = linkCandidates([row(token, 40)], 0);
+      expect(group!.length).toBeLessThanOrEqual(6);
+      expect(group![0]!.target).toMatchObject({ path: token, line: null });
+      expect(group!.at(-1)!.target).toMatchObject({ path });
+      expect(group!.at(-1)!.spans).toEqual([{ row: 0, start: 0, end }]);
     }
   });
 
@@ -165,8 +175,8 @@ describe("bounded Korean interpretations", () => {
     expect(parseToken("https://ko.wikipedia.org/wiki/서울이")?.target).toEqual({ kind: "url", url: new URL("https://ko.wikipedia.org/wiki/서울이").href });
   });
 
-  it("does not truncate unsupported words or unbounded particle chains", () => {
-    for (const token of ["docs/a.md)한국어", "docs/a.md)에서라도", "docs/a.md)에도만", "docs/a.md에서도"]) {
+  it("never cuts a name written in those scripts or a word in another script", () => {
+    for (const token of ["docs/회의록에", "~/메모", "docs/a.md)foo", "docs/a.mdは-x"]) {
       const [group] = linkCandidates([row(token, 40)], 0);
       expect(group!.map((candidate) => candidate.target)).toEqual([{ kind: "path", path: token, line: null, column: null }]);
     }

@@ -19,7 +19,10 @@ pub const INPUT_QUIET_MS: u64 = 30_000;
 pub const TICK_MS: u64 = 60_000;
 pub const INACTIVITY_MS: u64 = 20 * 60_000;
 pub const SECOND_WARNING_MS: u64 = 60 * 60_000;
-pub const RETENTION_MS: u64 = 30 * 24 * 60 * 60_000;
+/// How long a finished letter stays after it finished. It exists so a retried
+/// send with the same intent returns the first letter, which happens within
+/// minutes; a full ledger drops finished letters sooner (`mailbox::send`).
+pub const RETENTION_MS: u64 = 24 * 60 * 60_000;
 pub const OPEN_LIMIT: usize = 1_024;
 pub const LETTER_LIMIT: usize = 5_000;
 pub const WATCH_LIMIT: usize = 32;
@@ -86,6 +89,12 @@ impl Actor {
     pub fn code_owned(&self) -> bool {
         (self.kind == FACTORY_KIND && self.pane_id.starts_with(FACTORY_PREFIX))
             || (self.kind == HIDE_KIND && self.pane_id.starts_with(HIDE_PREFIX))
+    }
+
+    /// Whether this is Hide's own code-owned identity, the origin of the work
+    /// Hide starts itself, as opposed to a Factory's or a pane's.
+    pub fn hide_owned(&self) -> bool {
+        self.kind == HIDE_KIND && self.pane_id.starts_with(HIDE_PREFIX)
     }
 
     /// Mailbox authority requires a positively observed native session. Watch

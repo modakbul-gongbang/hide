@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
-import { countSent, registerFolder, screenshot, showExplorer, showTool } from "./wire";
+import { countSent, registerFolder, screenshot, showExplorer, showProjectRow, showTool } from "./wire";
 import { chord } from "./chords";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { onDisk } from "./wait";
@@ -42,12 +42,12 @@ test("History opens a scoped patch, then updates after editing the original file
     const lastSent = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, lastSent);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await page.locator("[data-project]", { hasText: "history-repo" }).locator("[data-checkout]").first().click();
-    // The Tools column holds one tool; History's tab swaps the Explorer out
-    // (S6 B10).
+    await (await showProjectRow(page, page.locator("[data-project]", { hasText: "history-repo" }).locator("[data-checkout]").first())).click();
+    // The lane holds one tool; Changes swaps the files tool and its tree out
+    // (PRD right-lane D-01).
     await showExplorer(page);
     await showTool(page, "changes");
-    await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
+    await expect(page.locator("[data-explorer]")).toHaveCount(0);
     await expect(page.locator('[data-history-group-section="working"]')).toBeVisible();
     await expect(page.locator('[data-history-group-section="committed"]')).toBeVisible();
     const row = page.locator('[data-history-group="working"][data-history-path="한글 notes.txt"]');
@@ -57,20 +57,28 @@ test("History opens a scoped patch, then updates after editing the original file
     await expect(page.locator('[data-patch-view] .cm-content')).toContainText("second <script>window.__executed = true</script>");
     expect(await page.evaluate(() => (window as Window & { __executed?: boolean }).__executed ?? false)).toBe(false);
     await expect(page.locator('[data-tab-kind="diff"]')).toHaveAttribute("data-preview", "true");
+    // The click hands the keyboard to the diff it opened, out of History.
+    await expect(page.locator('[data-patch-view] .cm-content')).toBeFocused();
     expect(sent.get("file_draft") ?? 0).toBe(0);
     expect(sent.get("file_save") ?? 0).toBe(0);
     await screenshot(page, "s4-working-diff");
 
+    // An opened diff shows in the files tool, so Changes is pressed again
+    // for the next row (PRD right-lane B16).
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-shows", "files");
+    await showTool(page, "changes");
     await page.locator('[data-history-group="committed"][data-history-path="branch.txt"]').click();
     await expect(page.locator('[data-diff-group="committed"] [data-patch-view] .cm-content')).toContainText("+branch");
+    await showTool(page, "changes");
     await row.click();
     await expect(page.locator('[data-diff-group="working"]')).toBeVisible();
-    // ⌘E turns the Tools column off and brings it back on the same tool
-    // (PRD three-column-panel B4).
-    await page.keyboard.press(chord("toggle_explorer"));
-    await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
-    await page.keyboard.press(chord("toggle_explorer"));
-    await expect(page.locator('[data-tool="changes"]')).toBeVisible();
+    // ⌘E closes the lane that shows, and again brings it back on Files, the tool it last showed (B20).
+    await page.keyboard.press(chord("toggle_lane"));
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
+    await page.keyboard.press(chord("toggle_lane"));
+    await expect(page.locator('[data-lane="files"]')).toBeVisible();
+    await page.keyboard.press(chord("toggle_lane"));
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
     await showExplorer(page);
 
     const fileRow = page.locator(`[data-explorer-row="${toPage(file)}"]`);
@@ -129,8 +137,7 @@ test("registered subfolder History opens inside patches and hides sibling change
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await registerFolder(page, daemon, registered);
     await expect.poll(() => sent.get("create_workspace") ?? 0).toBe(1);
-    const project = page.locator("[data-project]", { hasText: "registered" });
-    await expect(project).toBeVisible({ timeout: 20_000 });
+    const project = await showProjectRow(page, page.locator("[data-project]", { hasText: "registered" }));
     await project.locator("[data-checkout]").first().click();
     await showTool(page, "changes");
     const history = page.locator('[data-history-root]');
@@ -142,6 +149,7 @@ test("registered subfolder History opens inside patches and hides sibling change
 
     await page.locator('[data-history-group="working"][data-history-path="inside.txt"]').click();
     await expect(page.locator('[data-patch-view] .cm-content')).toContainText("+inside working");
+    await showTool(page, "changes");
     await page.locator('[data-history-group="committed"][data-history-path="branch.txt"]').click();
     await expect(page.locator('[data-patch-view] .cm-content')).toContainText("+inside committed");
 

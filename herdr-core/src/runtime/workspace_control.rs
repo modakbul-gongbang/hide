@@ -24,10 +24,25 @@ pub(super) struct RecordedAction {
     request_id: String,
     at: u64,
     action: Action,
-    result: Result<ActionResult, Refusal>,
+    caller_identity: (Option<String>, Option<String>),
+    result: Option<Result<ActionResult, Refusal>>,
 }
 
 impl Runtime {
+    fn view_caller_identity(
+        &self,
+        context: &Context,
+        caller: &str,
+    ) -> (Option<String>, Option<String>) {
+        let key = (context.device_id.clone(), context.checkout_path.clone());
+        let session = self
+            .machine_agents(&context.device_id)
+            .iter()
+            .find(|agent| agent.pane_id == caller)
+            .and_then(|agent| agent.session_id.clone());
+        (self.control_caller_tab(&key, caller), session)
+    }
+
     fn check_browser_scope(&self, key: &(String, String), action: &Action) -> Result<(), Refusal> {
         let (view_id, expected_area) = match action {
             Action::Select {
@@ -42,8 +57,8 @@ impl Runtime {
             _ => return Ok(()),
         };
         let in_scope = self
-            .view_layout_of(key)
-            .and_then(|layout| layout.area(expected_area))
+            .all_view_layouts(key)
+            .find_map(|layout| layout.area(expected_area))
             .is_some_and(|area| {
                 area.displays
                     .iter()
@@ -65,8 +80,11 @@ impl Runtime {
     ) -> Result<(), Refusal> {
         if let Some(area_id) = area_id {
             let empty = crate::view_layout::Layout::default();
-            let layout = self.view_layout_of(key).unwrap_or(&empty);
-            if layout.area(area_id).is_none() {
+            let known = self
+                .all_view_layouts(key)
+                .any(|layout| layout.area(area_id).is_some())
+                || (self.view_layout_of(key).is_none() && empty.area(area_id).is_some());
+            if !known {
                 return Err(layout_refusal(
                     crate::view_layout::LayoutError::UnknownArea(area_id.to_owned()),
                 ));
@@ -75,28 +93,56 @@ impl Runtime {
         Ok(())
     }
 
-    fn reveal_workspace_control(
+    pub(super) fn reveal_workspace_control(
         &mut self,
         context: &Context,
         key: &(String, String),
         request_id: &str,
+        caller_id: &str,
+        bound_browser: bool,
     ) {
+        let tab = self.control_caller_tab(key, caller_id).or_else(|| {
+            if bound_browser {
+                self.workspace_views
+                    .as_ref()?
+                    .views
+                    .get(&key.0, &key.1)?
+                    .view_owner
+                    .clone()
+            } else {
+                None
+            }
+        });
         if context.device_id == self.node.as_str() {
-            self.bring_device_forward(context.device_id.clone());
-            self.focus_checkout(&context.workspace_id, &context.checkout_id);
+            if let Some(tab_id) = tab {
+                self.apply(super::Event::FocusTab(super::FocusTabPayload {
+                    workspace_id: context.workspace_id.clone(),
+                    checkout_id: context.checkout_id.clone(),
+                    tab_id,
+                    focus_device: true,
+                }));
+            } else {
+                self.bring_device_forward(context.device_id.clone());
+                self.focus_checkout(&context.workspace_id, &context.checkout_id);
+            }
         } else {
+            if let Some(tab) = &tab {
+                self.choose_remote_view_presentation(&context.device_id, tab);
+            }
             self.request_remote_control(super::RemoteControlPayload {
                 target_id: context.device_id.clone(),
                 request_id: format!("{request_id}-reveal"),
                 report_pane_focus_outcome: false,
                 focus_device: true,
-                request: super::RemoteControlRequest::FocusWorkspace {
-                    workspace_id: context.workspace_id.clone(),
-                    checkout_id: Some(context.checkout_id.clone()),
+                request: match tab {
+                    Some(tab_id) => super::RemoteControlRequest::FocusTab { tab_id },
+                    None => super::RemoteControlRequest::FocusWorkspace {
+                        workspace_id: context.workspace_id.clone(),
+                        checkout_id: Some(context.checkout_id.clone()),
+                    },
                 },
             });
         }
-        self.apply_area_intent_to(key, AreaIntent::Views);
     }
 
     pub fn browser_route_source(
@@ -130,9 +176,8 @@ impl Runtime {
         }
         let key = (device_id.to_owned(), checkout_path.to_owned());
         let display = self
-            .view_layout_of(&key)?
-            .areas()
-            .into_iter()
+            .all_view_layouts(&key)
+            .flat_map(|layout| layout.areas())
             .flat_map(|area| area.displays.iter())
             .find(|display| {
                 display.id == view_id
@@ -191,17 +236,19 @@ impl Runtime {
                 && record.pane_id == pane_id
                 && record.request_id == request_id
         }) {
-            let cached = if record.context != context {
-                Err(changed)
+            let cached = if record.context != context
+                || record.caller_identity != self.view_caller_identity(&context, pane_id)
+            {
+                Some(Err(changed))
             } else if &record.action == action {
                 record.result.clone()
             } else {
-                Err(Refusal {
+                Some(Err(Refusal {
                     reason: "request_id_reused",
                     next_action: "Use a new request ID for a different action",
-                })
+                }))
             };
-            return Ok((context, Some(cached)));
+            return Ok((context, cached));
         }
         if self.workspace_actions.len() >= ACTION_RESULTS_KEPT {
             return Err(Refusal {
@@ -213,6 +260,35 @@ impl Runtime {
     }
 
     pub fn workspace_control_prepare_action(
+        &mut self,
+        device_id: &str,
+        pane_id: &str,
+        expected: &Context,
+        request_id: &str,
+        action: &Action,
+    ) -> Result<ActionPreparation, Refusal> {
+        let preparation =
+            self.prepare_view_action(device_id, pane_id, expected, request_id, action)?;
+        if !self.workspace_actions.iter().any(|record| {
+            record.device_id == device_id
+                && record.pane_id == pane_id
+                && record.request_id == request_id
+        }) {
+            self.workspace_actions.push_back(RecordedAction {
+                device_id: device_id.to_owned(),
+                pane_id: pane_id.to_owned(),
+                context: expected.clone(),
+                request_id: request_id.to_owned(),
+                at: super::unix_milliseconds(),
+                action: action.clone(),
+                caller_identity: self.view_caller_identity(expected, pane_id),
+                result: None,
+            });
+        }
+        Ok(preparation)
+    }
+
+    fn prepare_view_action(
         &mut self,
         device_id: &str,
         pane_id: &str,
@@ -304,40 +380,94 @@ impl Runtime {
         // gone since prepare. A browser capability may also name a display
         // moved since its query. Check both under this commit's owner lock,
         // after receipt lookup and before any state mutation.
-        let material = material.and_then(|material| {
+        let browser_load = self
+            .workspace_views
+            .as_ref()
+            .map(|store| store.browser_load);
+        let result = (|| {
+            let material = material?;
             self.check_browser_scope(&key, &action)?;
             if let Action::OpenBrowser { area_id, .. } = &action {
                 self.check_browser_area(&key, area_id.as_deref())?;
             }
-            Ok(material)
-        });
-        let result = match material {
-            Ok(material) => {
-                self.reconcile_view_displays();
-                // A pane of a tab the operator is not looking at keeps the
-                // operator's fronts and only bookmarks its own tab (D-05).
-                let parked = self.parked_caller(&key, pane_id, &action);
-                let applied =
-                    self.apply_workspace_action(&key, &context, request_id, &action, material);
-                match &applied {
-                    Ok(done) => {
-                        self.note_control_view(&key, pane_id, &action, &done.view_id, parked);
-                    }
-                    Err(_) => self.put_back_parked(&key, parked),
-                }
-                applied
+            self.reconcile_view_displays();
+            if self.open_adds_view(
+                &key,
+                pane_id,
+                &action,
+                material.as_ref().map(|material| material.path.as_str()),
+            ) {
+                let tab = self.caller_parked_tab(&key, pane_id);
+                self.make_view_room(&key, tab.as_deref());
             }
-            Err(refusal) => Err(refusal),
-        };
-        self.workspace_actions.push_back(RecordedAction {
-            device_id: device_id.to_owned(),
-            pane_id: pane_id.to_owned(),
-            context,
-            request_id: request_id.to_owned(),
-            at: super::unix_milliseconds(),
-            action,
-            result: result.clone(),
-        });
+            // A pane of a tab the operator is not looking at keeps the
+            // operator's fronts and only bookmarks its own tab (D-05).
+            let parked = self.parked_caller(&key, pane_id, &action)?;
+            // An open the operator is looking at calls the lane as a click
+            // does: from the front tab of the front Workspace, or revealed
+            // (PRD right-lane B17), and keeps a tree that showed alone.
+            let calls_lane = lane_call(&action).is_some_and(|reveal| {
+                reveal || parked.is_none() && self.front_workspace_key().as_ref() == Some(&key)
+            });
+            let lone_tree = calls_lane && self.front_lone_tree().as_ref() == Some(&key);
+            let projected_action = parked
+                .as_ref()
+                .map_or_else(|| action.clone(), |parked| parked.action(action.clone()));
+            let mut applied = (|| {
+                self.check_browser_scope(&key, &projected_action)?;
+                if let Action::OpenBrowser { area_id, .. } = &projected_action {
+                    self.check_browser_area(&key, area_id.as_deref())?;
+                }
+                self.apply_workspace_action(
+                    &key,
+                    &context,
+                    request_id,
+                    pane_id,
+                    &projected_action,
+                    material,
+                )
+            })();
+            match &mut applied {
+                Ok(done) => {
+                    self.note_control_view(&key, pane_id, &action, &done.view_id, parked)?;
+                    if calls_lane {
+                        self.apply_area_intent_to(&key, AreaIntent::Files);
+                        if lone_tree {
+                            self.keep_lone_tree(&key);
+                        }
+                        // A view already in front still calls the lane, which
+                        // the page sees only if the change is announced.
+                        done.changed = true;
+                    }
+                }
+                Err(_) => self.put_back_parked(&key, parked),
+            }
+            applied
+        })();
+        if result.is_err()
+            && let (Some(before), Some(store)) = (browser_load, self.workspace_views.as_mut())
+        {
+            store.browser_load = before;
+        }
+        if let Some(record) = self.workspace_actions.iter_mut().find(|record| {
+            record.device_id == device_id
+                && record.pane_id == pane_id
+                && record.request_id == request_id
+        }) {
+            record.result = Some(result.clone());
+        } else {
+            let caller_identity = self.view_caller_identity(&context, pane_id);
+            self.workspace_actions.push_back(RecordedAction {
+                device_id: device_id.to_owned(),
+                pane_id: pane_id.to_owned(),
+                context,
+                request_id: request_id.to_owned(),
+                at: super::unix_milliseconds(),
+                action,
+                caller_identity,
+                result: Some(result.clone()),
+            });
+        }
         result
     }
 
@@ -346,6 +476,7 @@ impl Runtime {
         key: &(String, String),
         context: &Context,
         request_id: &str,
+        caller_id: &str,
         action: &Action,
         material: Option<ActionMaterial>,
     ) -> Result<ActionResult, Refusal> {
@@ -404,7 +535,13 @@ impl Runtime {
                 .and_then(|layout| layout.area_of(&view_id))
                 .map(|area| area.id.clone());
             if *reveal {
-                self.reveal_workspace_control(context, key, request_id);
+                self.reveal_workspace_control(
+                    context,
+                    key,
+                    request_id,
+                    caller_id,
+                    area_id.is_some(),
+                );
             }
             return Ok(ActionResult {
                 context: context.clone(),
@@ -535,7 +672,7 @@ impl Runtime {
                 .view_layout_of(key)
                 .map(|layout| layout.active_area().id.clone());
             if *reveal {
-                self.reveal_workspace_control(context, key, request_id);
+                self.reveal_workspace_control(context, key, request_id, caller_id, false);
             }
             return Ok(ActionResult {
                 context: context.clone(),
@@ -568,7 +705,19 @@ impl Runtime {
                     .and_then(|layout| layout.area_of(view_id))
                     .map(|area| area.id.clone());
                 if *reveal {
-                    self.reveal_workspace_control(context, key, request_id);
+                    self.reveal_workspace_control(
+                        context,
+                        key,
+                        request_id,
+                        caller_id,
+                        matches!(
+                            action,
+                            Action::Select {
+                                expected_browser_area: Some(_),
+                                ..
+                            }
+                        ),
+                    );
                 }
                 (view_id.clone(), selected || *reveal, area)
             }
@@ -615,15 +764,16 @@ impl Runtime {
                         load: None,
                     });
                 };
-                let shared = self.view_layout_of(key).is_some_and(|layout| {
-                    layout.displays().any(|other| {
+                let shared = self
+                    .all_view_layouts(key)
+                    .flat_map(|layout| layout.displays())
+                    .any(|other| {
                         other.id != *view_id
                             && match &display.tab_id {
                                 Some(tab) => other.tab_id.as_ref() == Some(tab),
                                 None => other.shows(&display.path, display.kind, display.committed),
                             }
-                    })
-                });
+                    });
                 if !shared
                     && display
                         .tab_id
@@ -774,7 +924,7 @@ impl Runtime {
         // An untouched Workspace has no stored row yet. Its View tree is the
         // default one-empty-area layout, even when it is not the front one.
         let empty = crate::view_layout::Layout::default();
-        let layout = self.view_layout_of(&key).unwrap_or(&empty);
+        let layout = self.caller_view_layout(&key, pane_id).unwrap_or(&empty);
         let views = (query == Query::ViewList).then(|| {
             layout
                 .areas()
@@ -787,8 +937,12 @@ impl Runtime {
                             DisplayKind::File => "file",
                             DisplayKind::Diff => "diff",
                             DisplayKind::Browser => "browser",
+                            DisplayKind::PullRequest => "pull_request",
                         },
-                        target: display.url.as_ref().unwrap_or(&display.path).clone(),
+                        target: match display.pr {
+                            Some(number) => format!("#{number}"),
+                            None => display.url.as_ref().unwrap_or(&display.path).clone(),
+                        },
                         selected: area.active.as_deref() == Some(display.id.as_str()),
                         active_area: layout.active_area().id == area.id,
                         page: (display.kind == DisplayKind::Browser).then(|| {
@@ -885,5 +1039,23 @@ fn layout_refusal(error: crate::view_layout::LayoutError) -> Refusal {
     Refusal {
         reason: error.kind(),
         next_action: "Run hide view list, choose an available View or area, and retry",
+    }
+}
+
+/// Whether an action opens or selects a view the operator asked for, and
+/// with `--reveal`. A browser page's own target, bound to its area, calls
+/// the lane only when revealed: the page is where it already was.
+fn lane_call(action: &Action) -> Option<bool> {
+    match action {
+        Action::OpenFile { reveal, .. } | Action::OpenDiff { reveal, .. } => Some(*reveal),
+        Action::OpenBrowser {
+            reveal, area_id, ..
+        } => (area_id.is_none() || *reveal).then_some(*reveal),
+        Action::Select {
+            reveal,
+            expected_browser_area,
+            ..
+        } => (expected_browser_area.is_none() || *reveal).then_some(*reveal),
+        Action::Split { .. } | Action::Move { .. } | Action::Close { .. } => None,
     }
 }
