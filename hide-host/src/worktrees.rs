@@ -700,25 +700,6 @@ pub fn parse_worktree_list(output: &str) -> Vec<ListedWorktree> {
         .collect()
 }
 
-/// The facts of one listed worktree, measured within
-/// [`WORKTREE_MEASURE_TIME`].
-pub fn describe(
-    listed: ListedWorktree,
-    bases: &BTreeMap<String, String>,
-    default_branch: Option<&str>,
-    base_override: Option<&str>,
-) -> WorktreeFacts {
-    describe_within(
-        listed,
-        &Bases {
-            by_branch: bases,
-            default_branch,
-            chosen: base_override,
-        },
-        Instant::now() + WORKTREE_MEASURE_TIME,
-    )
-}
-
 /// The facts of one listed worktree, measured until `until`: no `git`
 /// starts after it and one still running then is stopped, the ignored-folder
 /// scan included. A worktree measured only in part names itself in its
@@ -2464,6 +2445,33 @@ mod holder_scan_tests {
 #[cfg(test)]
 mod measure_tests {
     use super::*;
+
+    /// A worktree git lists but disk does not have reports `missing` and no
+    /// counts, so an absent checkout never reads as a clean one.
+    #[test]
+    fn a_missing_worktree_reports_no_counts() {
+        let described = describe_within(
+            ListedWorktree {
+                path: PathBuf::from("/definitely/not/here/hide-test"),
+                branch: Some("gone".to_owned()),
+                is_main: false,
+                bare: false,
+                head_sha: None,
+                lock_reason: None,
+            },
+            &Bases {
+                by_branch: &BTreeMap::new(),
+                default_branch: Some("main"),
+                chosen: None,
+            },
+            Instant::now() + WORKTREE_MEASURE_TIME,
+        );
+        assert!(described.missing);
+        assert!(!described.dirty);
+        assert_eq!(described.ahead, 0);
+        assert_eq!(described.behind, 0);
+        assert_eq!(described.unpushed, None);
+    }
 
     fn run(cwd: &Path, args: &[&str]) {
         let status = Command::new("git")
