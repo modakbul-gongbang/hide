@@ -488,6 +488,8 @@ impl Runtime {
         );
         self.worktree_catalog = catalog;
         self.snapshot.git_worktrees_loading = loading;
+        // A project the Projects tab watched before Git listed it is measured now.
+        self.advance_disk_sweep(None);
         self.refresh_worktree_projection();
         // A HEAD the reader moved decides again which pull request a checkout
         // holds, and what hangs off that (its issues, its request rows).

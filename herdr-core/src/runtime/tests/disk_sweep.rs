@@ -118,3 +118,37 @@ fn the_cleanup_sheet_s_project_is_measured_first_even_with_the_tab_hidden() {
     runtime.ingest_swept_disk(None, measured("/c", Some(1), None), true);
     assert!(measuring(&runtime).is_empty());
 }
+
+#[test]
+fn a_git_project_watched_before_its_worktrees_are_listed_is_measured_once_they_are() {
+    let mut runtime = runtime();
+    let mut repo = workspace(
+        "r",
+        "repo",
+        "/repo",
+        vec![checkout("r", "repo", "/repo", None)],
+    );
+    repo.is_git = true;
+    runtime.snapshot.navigator.workspaces = vec![repo];
+    watch(&mut runtime, &["r"]);
+    assert!(
+        measuring(&runtime).is_empty(),
+        "nothing names its paths yet"
+    );
+    runtime.ingest_worktrees(
+        crate::model::WorktreeCatalogSnapshot {
+            projects: vec![crate::model::ProjectWorktreesSnapshot {
+                root_path: "/repo".to_owned(),
+                worktrees: vec![crate::model::WorktreeSnapshot {
+                    path: "/repo".to_owned(),
+                    is_main: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+        },
+        0,
+    );
+    assert_eq!(measuring(&runtime), ["/repo"]);
+    assert!(disk(&runtime, "r").measuring);
+}

@@ -694,6 +694,7 @@ impl Runtime {
         }
         entry.unavailable = failure;
         let again = std::mem::take(&mut entry.again);
+        self.advance_disk_sweep(Some(target));
         let mut changed = self.refresh_device_catalog(target);
         if again {
             changed |= self.request_device_worktrees(target, true);

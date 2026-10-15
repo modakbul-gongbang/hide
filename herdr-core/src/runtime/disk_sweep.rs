@@ -229,8 +229,10 @@ impl Runtime {
     }
 
     /// Starts the next project when none is being measured: the cleanup
-    /// sheet's first, then the tab's first that is not fresh.
-    fn advance_disk_sweep(&mut self, node: Option<&str>) {
+    /// sheet's first, then the tab's first that is not fresh. A project the
+    /// worktree catalog has not listed yet is passed over, so a catalog that
+    /// arrives calls this again.
+    pub(super) fn advance_disk_sweep(&mut self, node: Option<&str>) {
         let now = unix_milliseconds();
         let Some(sweep) = self.disk_sweeps.get(&node.map(str::to_owned)) else {
             return;
