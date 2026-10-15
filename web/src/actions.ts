@@ -2246,11 +2246,19 @@ export function createActions(send: DispatchFn) {
 
     startSecretary,
 
-    /** A record shows on Work's Sessions lens, so a lane left on PRs turns to Sessions in the same event that brings Work up. */
-    openSessionRecord(session: import("./snapshot").WorkSession) {
+    /**
+     * A record shows on Work's Sessions lens, so a lane left on PRs turns to
+     * Sessions in the same event that brings Work up. `switching` is set when
+     * a checkout change was just sent: the view read here is still the old
+     * checkout's, and the core applies the event to the new front one.
+     */
+    openSessionRecord(session: import("./snapshot").WorkSession, switching = false) {
       ui().setSessionWorkTarget(session);
       const view = workspaceViewOf(rest());
-      if (!view) diagnostic("workspace_view: no Workspace in front");
+      if (switching) {
+        ui().showLane();
+        dispatch({ schema_version: 2, kind: "workspace_view", payload: { tool: "work", work_lens: "sessions" } });
+      } else if (!view) diagnostic("workspace_view: no Workspace in front");
       else {
         ui().showLane();
         if (view.tool !== "work" || view.work?.lens !== "sessions") setWorkspaceView({ tool: "work", work_lens: "sessions" });
@@ -2331,7 +2339,7 @@ export function createActions(send: DispatchFn) {
     viewRecordInLane(deviceId: string, workspaceId: string, checkoutId: string, session: import("./snapshot").WorkSession) {
       this.closeOverview();
       this.openWorkspace(deviceId, workspaceId, checkoutId);
-      this.openSessionRecord(session);
+      this.openSessionRecord(session, true);
     },
     openRecordedIssue(session: import("./snapshot").WorkSession, repository: string, number: number) {
       const project = catalogWorkspaces(rest()).find((row) => row.device_id === session.device_id && row.tasks?.source?.name?.toLowerCase() === repository.toLowerCase());

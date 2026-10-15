@@ -12,7 +12,7 @@ const session = { device_id: "local", agent: "claude", session_id: "s-1" };
 
 function frontWorkspace(tool: "files" | "work" | null, lens: "sessions" | "prs") {
   useShellStore.setState({
-    rest: { workspace_view: { device_id: "local", path: "/p", tool, work: { lens, only_checkout: false }, pinned: true, tree: true, lane_width: null, tree_width: null } } as never,
+    rest: { navigator: { devices: [{ id: "local", kind: "local" }] }, workspace_view: { device_id: "local", path: "/p", tool, work: { lens, only_checkout: false }, pinned: true, tree: true, lane_width: null, tree_width: null } } as never,
   });
 }
 
@@ -57,4 +57,16 @@ it("a second press on the record shown goes back to the list, but not while Work
   const hidden = recorder();
   hidden.actions.togglePaneRecord(session);
   expect(hidden.sent.map((event) => event.kind)).toEqual(["workspace_view", "session_record_open"]);
+});
+
+it("`lane에서 보기` sends the lane event even when the checkout left behind already showed Sessions", () => {
+  // The view read before the switch is the old checkout's; the core applies the event to the new front one (B18).
+  frontWorkspace("work", "sessions");
+  const { sent, actions } = recorder();
+  actions.viewRecordInLane("local", "w2", "c2", session);
+  const kinds = sent.map((event) => event.kind);
+  expect(sent.filter((event) => event.kind === "workspace_view").map((event) => event.payload)).toEqual([{ tool: "work", work_lens: "sessions" }]);
+  expect(kinds.indexOf("focus_checkout")).toBeGreaterThan(-1);
+  expect(kinds.indexOf("workspace_view")).toBeGreaterThan(kinds.indexOf("focus_checkout"));
+  expect(kinds.at(-1)).toBe("session_record_open");
 });
