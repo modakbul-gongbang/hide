@@ -117,9 +117,12 @@ test("@platform 백로그로 makes one title-only issue, a lost create response 
     await showTool(page, "work");
     const first = Date.now();
     github.clock(first, first);
-    seedFirstWork(herdr, first);
+    const { session } = seedFirstWork(herdr, first);
     const root = page.locator(`[data-session-row="${herdr.panes[0]}"]`);
     await expect(root).toContainText(FIRST_GOAL, { timeout: 45_000 });
+    // 백로그로 creates only in the repository the ledger proved the session
+    // started in, so wait for that proof as an operator's later press would.
+    await expect.poll(() => originalRepository(daemon!.stateDir, session), { timeout: 30_000 }).toBe("acme/repo");
     await root.hover();
     await page.locator(`[data-session-record-button="${herdr.panes[0]}"]`).click();
     const missed = page.locator("[data-session-record] [data-missed-work]", { hasText: MISSED });
