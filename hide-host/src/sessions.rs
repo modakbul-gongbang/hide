@@ -1,5 +1,5 @@
 //! A node's agent session files, read for the core's Project Memory and
-//! Sessions screen (`hide_node_link::sessions`).
+//! right panel (`hide_node_link::sessions`).
 
 use std::path::Path;
 use std::time::UNIX_EPOCH;

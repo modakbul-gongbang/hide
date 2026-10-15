@@ -278,7 +278,8 @@ impl LinkClient {
 #[derive(Clone, Debug)]
 pub struct Paths {
     pub store: PathBuf,
-    /// The search index, whose `policy` holds each project's Copied history.
+    /// The old session search file, only read: its `policy` holds each
+    /// project's Copied history days, which set record retention.
     pub search: PathBuf,
     /// The core's own node, whose session files are read here.
     pub local_device: String,

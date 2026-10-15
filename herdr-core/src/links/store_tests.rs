@@ -936,23 +936,39 @@ fn the_store_file_is_private() {
     assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o077, 0);
 }
 
+/// The old session search file keeps setting record retention (D-20): its
+/// saved days are read, never written, and a file that is missing or holds
+/// no `policy` table is the default for every project.
 #[test]
-fn copied_history_days_are_read_from_the_search_index() {
+fn copied_history_days_are_read_from_the_old_search_file_and_never_written() {
     let state = tempfile::tempdir().unwrap();
     let search = state.path().join("session search.sqlite3");
-    let mut index = hide_session::search::SearchIndex::open(&search).unwrap();
-    index.set_days(PROJECT, 30).unwrap();
-    drop(index);
+    let written = rusqlite::Connection::open(&search).unwrap();
+    written
+        .execute_batch("CREATE TABLE policy(project TEXT PRIMARY KEY, days INTEGER NOT NULL);")
+        .unwrap();
+    written
+        .execute("INSERT INTO policy VALUES(?1, 30)", [PROJECT])
+        .unwrap();
+    drop(written);
+    let before = fs::read(&search).unwrap();
     let store = open(state.path());
 
     let policies = store.policies(&search).unwrap();
     assert_eq!(policies.get(PROJECT), Some(&30));
+    assert_eq!(fs::read(&search).unwrap(), before, "the file is only read");
     assert!(
         store
             .policies(&state.path().join("absent.sqlite3"))
             .unwrap()
             .is_empty()
     );
+    let tableless = state.path().join("tableless.sqlite3");
+    rusqlite::Connection::open(&tableless)
+        .unwrap()
+        .execute_batch("CREATE TABLE messages(id INTEGER PRIMARY KEY);")
+        .unwrap();
+    assert!(store.policies(&tableless).unwrap().is_empty());
 }
 
 #[test]

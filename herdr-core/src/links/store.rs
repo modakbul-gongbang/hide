@@ -348,9 +348,10 @@ impl LinkStore {
         Ok(projects.len())
     }
 
-    /// Each project's Copied history days, read from the search index's
-    /// `policy` through a read-only ATTACH (D-22); a project with no row
-    /// keeps the default. No index yet is no policy.
+    /// Each project's Copied history days, read from the old session search
+    /// file's `policy` through a read-only ATTACH (D-22, D-20); a project
+    /// with no row keeps the default. The file is only ever read: no file,
+    /// or a file without the table, is no policy.
     pub fn policies(&self, search: &Path) -> Result<HashMap<String, u16>, String> {
         if !search.is_file() {
             return Ok(HashMap::new());
@@ -360,6 +361,15 @@ impl LinkStore {
             .execute("ATTACH DATABASE ?1 AS search", [uri])
             .map_err(|_| "links_policy_unreadable".to_owned())?;
         let read = (|| {
+            let has_table: bool = self.connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM search.sqlite_master \
+                 WHERE type='table' AND name='policy')",
+                [],
+                |row| row.get(0),
+            )?;
+            if !has_table {
+                return Ok(Vec::new());
+            }
             let mut statement = self
                 .connection
                 .prepare("SELECT project, days FROM search.policy")?;

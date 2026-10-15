@@ -38,11 +38,10 @@ pub mod label_transcript;
 pub mod links;
 mod native_file;
 pub mod opencode;
-pub mod search;
-pub mod search_read;
 pub mod session_activity;
 mod sightings;
 mod sqlite;
+pub mod stamp;
 pub mod turns;
 pub mod usage;
 
@@ -342,9 +341,6 @@ impl Agent {
     }
     pub const fn reports_activity(self) -> bool {
         self.format().reports_activity()
-    }
-    pub const fn searchable(self) -> bool {
-        self.format().searchable()
     }
     pub const fn is_jsonl(self) -> bool {
         self.format().is_jsonl()

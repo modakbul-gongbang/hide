@@ -121,13 +121,6 @@ pub struct Snapshot {
     pub browser_scopes: Vec<BrowserAreaScopeRow>,
     #[serde(skip)]
     pub browser_views_revision: Option<u64>,
-    /// The Sessions of the Project a shell screen named, absent until one
-    /// does; a client that names none keeps exactly its snapshot keys.
-    /// It rides its own revisioned section of the delta wire.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub project_sessions: Option<ProjectSessionsSnapshot>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_search: Option<SessionSearchSnapshot>,
     /// Project Memory (PRD project-memory-v2): the Project a shell opened
     /// Memory for, and the cards each live agent session on this Mac was
     /// given. Its own revisioned section, absent until there is either.
@@ -2555,32 +2548,6 @@ pub struct SessionRowSnapshot {
     pub unavailable_reason: Option<String>,
 }
 
-/// The Sessions of the Project a shell screen named with `sessions_refresh`
-/// and a `workspace_id` (the web shell's Project Sessions, PRD S8): the
-/// Project's session history and the one session read beside it.
-///
-/// It is kept apart from [`SessionsSnapshot`], which follows the focused
-/// checkout for the right panel, so the operator's focus never moves it. A
-/// Project stays named until a shell names another.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct ProjectSessionsSnapshot {
-    pub device_id: String,
-    /// The catalog Project the screen named.
-    pub workspace_id: String,
-    /// Why this Project's sessions are not read here at all: it is on another
-    /// device, or it left the catalog. Nothing is read and retrying cannot
-    /// help, so no local session ever stands in for it.
-    pub unavailable_reason: Option<String>,
-    pub loading: bool,
-    /// Why reading the history failed; `sessions_refresh` reads it again.
-    pub failure: Option<String>,
-    /// Every session of every worktree of the Project, newest first, with
-    /// an unavailable row's reason in words. A shell narrows them itself.
-    #[serde(serialize_with = "serialize_session_rows")]
-    pub rows: Arc<Vec<SessionRowSnapshot>>,
-    pub detail: Option<ProjectSessionDetailSnapshot>,
-}
-
 /// Project Memory on the wire: the Project a shell opened Memory for in its
 /// lane's Memory tool.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -2909,56 +2876,6 @@ fn serialize_memory_rows<S: serde::Serializer>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     rows.as_ref().serialize(serializer)
-}
-
-fn serialize_session_rows<S: serde::Serializer>(
-    rows: &Arc<Vec<SessionRowSnapshot>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    rows.as_ref().serialize(serializer)
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
-pub struct SessionSearchSnapshot {
-    pub workspace_id: String,
-    pub device_id: String,
-    pub provider: String,
-    pub query: String,
-    pub loading: bool,
-    pub indexing: bool,
-    pub indexed: usize,
-    pub total: usize,
-    pub days: u16,
-    pub policy_loaded: bool,
-    pub control_failure: Option<String>,
-    pub failure: Option<String>,
-    pub page: hide_session::search::SearchPage,
-}
-/// One session opened beside a Project's Sessions with `archive_open` and a
-/// `workspace_id`: read-only, and never an editor tab or a Workspace's.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct ProjectSessionDetailSnapshot {
-    pub session_id: String,
-    /// The provider file the session was listed from, empty when the history
-    /// no longer lists it.
-    pub locator: String,
-    pub loading: bool,
-    /// Why the session cannot be opened; `sessions_refresh` reads the history
-    /// and then this session again.
-    pub failure: Option<String>,
-    /// The conversation once read. It is shared rather than copied: a
-    /// transcript can run to megabytes and the delta compares this section
-    /// under the runtime lock on every read, which an unchanged `Arc` of an
-    /// `Eq` value answers by identity (`Arc`'s documented `PartialEq`).
-    #[serde(serialize_with = "serialize_shared_archive")]
-    pub archive: Option<Arc<ArchiveDetailSnapshot>>,
-}
-
-fn serialize_shared_archive<S: serde::Serializer>(
-    archive: &Option<Arc<ArchiveDetailSnapshot>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    archive.as_deref().serialize(serializer)
 }
 
 /// What kind of document an open file is, decided once by the host that
@@ -5521,8 +5438,6 @@ impl Snapshot {
             browser_views: Vec::new(),
             browser_scopes: Vec::new(),
             browser_views_revision: None,
-            project_sessions: None,
-            session_search: None,
             memory: None,
             link_summaries: None,
             link_panel: None,
@@ -5582,8 +5497,6 @@ pub struct SnapshotDeltaPayload {
     /// The visible View documents (PRD S7 contract 3.1); always `None` in a
     /// shell without View areas.
     pub documents: Option<DocumentsDelta>,
-    pub project_sessions: Option<Arc<ProjectSessionsSnapshot>>,
-    pub session_search: Option<Arc<SessionSearchSnapshot>>,
     pub memory: Option<Arc<MemorySnapshot>>,
     pub link_summaries: Option<Arc<crate::links::LinkSummariesSnapshot>>,
     pub link_panel: Option<Arc<crate::links::LinkPanelSnapshot>>,
@@ -5629,14 +5542,6 @@ pub struct SnapshotDeltaWire<'a> {
     /// exactly its keys.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub documents: Option<DocumentsWire<'a>>,
-    /// A named Project's session history and the transcript open beside it:
-    /// hundreds of rows and megabytes of conversation, so off `rest` like the
-    /// changes view. Omitted while no shell has named a Project, which keeps
-    /// such a snapshot exactly its keys.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub project_sessions: Option<&'a ProjectSessionsSnapshot>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_search: Option<&'a SessionSearchSnapshot>,
     /// Omitted until Memory has a Project open or a live session given a
     /// card.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -5696,8 +5601,6 @@ impl<'a> SnapshotDeltaWire<'a> {
                     .map(|(tab_id, document)| ChangedDocumentWire { tab_id, document })
                     .collect(),
             }),
-            project_sessions: payload.project_sessions.as_deref(),
-            session_search: payload.session_search.as_deref(),
             memory: payload.memory.as_deref(),
             link_summaries: payload.link_summaries.as_deref(),
             link_panel: payload.link_panel.as_deref(),

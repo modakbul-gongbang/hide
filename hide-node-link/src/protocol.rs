@@ -120,7 +120,9 @@ use crate::error::HostError;
 /// Older helpers cannot supply a session work record and are upgraded at Hello.
 /// 33: `session_work_turn` answers the one turn a backlog item came from and
 /// replaces `session_work_context`, whose issue templates fed the removed AI
-/// issue draft, and a disk row carries its volume's size. A helper on 32
+/// issue draft, and a disk row carries its volume's size. The session search
+/// index reads (`session_index_read`, `session_stamps`) and the `search`
+/// reader feature left with the Conversation history screen. A helper on 32
 /// does not know the new call and is upgraded.
 pub const PROTOCOL_VERSION: u32 = 33;
 
@@ -556,24 +558,6 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         checkpoint: Option<hide_session::usage::Checkpoint>,
     },
-    /// One bounded read of a session file for the core's search index, on
-    /// from what the index saved (`hide_session::search_read::read_step`);
-    /// the answer is a `hide_session::search::IndexStep`.
-    SessionIndexRead {
-        agent: hide_session::Agent,
-        path: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        scope: Option<hide_session::SessionReadScope>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        saved: Option<hide_session::search::SavedFile>,
-    },
-    /// Each session file's current stamp, `null` for one gone or
-    /// unreadable, at most `hide_session::search::STAMP_LIMIT` paths.
-    SessionStamps {
-        paths: Vec<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        scopes: Option<Vec<Option<hide_session::SessionReadScope>>>,
-    },
     /// The agent sessions the node holds for `project`, newest first, at most
     /// `hide_session::SESSION_DISCOVERY_LIMIT` files visited
     /// (`hide_session::ProjectSession`).
@@ -798,8 +782,6 @@ impl Call {
             | Self::LinkRead { .. }
             | Self::UsageFiles { .. }
             | Self::UsageRead { .. }
-            | Self::SessionIndexRead { .. }
-            | Self::SessionStamps { .. }
             | Self::ProjectSessions { .. }
             | Self::GitWatch { .. }
             | Self::SessionStat { .. }

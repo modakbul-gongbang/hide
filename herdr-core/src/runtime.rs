@@ -40,7 +40,6 @@ mod operations;
 mod pane_prediction;
 mod pane_reopen;
 pub(crate) mod project_memory;
-mod project_sessions;
 mod projects;
 mod pull_requests;
 mod recent_checkouts;
@@ -48,7 +47,6 @@ mod recent_panes;
 mod rename;
 mod request_view;
 mod session;
-pub(crate) mod session_search;
 mod session_state;
 mod snapshot_delta;
 mod ssh_hosts;
@@ -1417,10 +1415,6 @@ pub struct Runtime {
     memory_sessions_load_pending: bool,
     memory_sessions_load_generation: u64,
     archive_detail_load_generation: u64,
-    /// The reads behind `snapshot.project_sessions`.
-    project_sessions_work: project_sessions::ProjectSessionsWork,
-    search_client: Option<session_search::SearchClient>,
-    search_generation: u64,
     /// What the link worker was last handed, and its panel reads.
     links_work: links::LinksWork,
     backlog_work: backlog::BacklogWork,
@@ -2101,9 +2095,6 @@ impl Runtime {
             memory_sessions_load_pending: false,
             memory_sessions_load_generation: 0,
             archive_detail_load_generation: 0,
-            project_sessions_work: project_sessions::ProjectSessionsWork::default(),
-            search_client: None,
-            search_generation: 0,
             links_work: links::LinksWork::default(),
             backlog_work: backlog::BacklogWork::default(),
             work_clock_minute: 0,

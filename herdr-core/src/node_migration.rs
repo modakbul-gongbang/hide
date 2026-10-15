@@ -74,8 +74,10 @@ pub const MOVES_WITH_CORE: &[&str] = &[
     MARKER_FILE,
 ];
 
-/// Stores the new core rebuilds from what its nodes report rather than
-/// copies: the session search index and the GitHub snapshot.
+/// Stores a core move does not copy: the GitHub snapshot, which the new core
+/// rebuilds from what its nodes report, and the old session search file,
+/// whose Copied history days stay behind, so the new core keeps records for
+/// the default period.
 pub const REBUILT_AFTER_MOVE: &[&str] = &[SESSION_SEARCH, "github-snapshot.json"];
 
 /// How one machine-bound key is kept pointing at the right machine.
@@ -589,7 +591,7 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
     ),
     (
         SESSION_SEARCH,
-        "policy, control_outcomes, files, messages: project",
+        "policy.project",
         Mechanism::Rewritten,
         Moves::Stays,
     ),
@@ -699,9 +701,62 @@ impl fmt::Display for Refusal {
 pub struct Outcome {
     pub files: Vec<String>,
     pub projects: usize,
-    pub search_rows: usize,
-    /// Search rows whose new key was already taken, dropped as stale.
-    pub search_rows_dropped: usize,
+    pub retention_rows: usize,
+    /// Retention rows whose new key was already taken, dropped as stale.
+    pub retention_rows_dropped: usize,
+}
+
+/// Moves each `(old, new)` Project's Copied history days in the old session
+/// search file to its new id: the one table anything still reads (record
+/// retention, `links::store::policies`). A new id that already has a row
+/// keeps it and the old row is dropped as stale. A file without the table,
+/// or with nothing under an old id, is only read, so a converted install
+/// never takes its write lock again. Answers the rows moved and dropped.
+fn rekey_retention(path: &Path, pairs: &[(String, String)]) -> Result<(usize, usize), String> {
+    let failed = |error: rusqlite::Error| error.to_string();
+    let mut db =
+        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
+            .map_err(failed)?;
+    db.busy_timeout(std::time::Duration::from_millis(100))
+        .map_err(failed)?;
+    let has_table: bool = db
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='policy')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(failed)?;
+    if !has_table {
+        return Ok((0, 0));
+    }
+    let mut pending = false;
+    for (old, _) in pairs {
+        pending |= db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM policy WHERE project=?1)",
+                [old],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(failed)?;
+    }
+    if !pending {
+        return Ok((0, 0));
+    }
+    let tx = db.transaction().map_err(failed)?;
+    let (mut moved, mut dropped) = (0, 0);
+    for (old, new) in pairs {
+        moved += tx
+            .execute(
+                "UPDATE OR IGNORE policy SET project=?1 WHERE project=?2",
+                [new, old],
+            )
+            .map_err(failed)?;
+        dropped += tx
+            .execute("DELETE FROM policy WHERE project=?1", [old])
+            .map_err(failed)?;
+    }
+    tx.commit().map_err(failed)?;
+    Ok((moved, dropped))
 }
 
 /// Converts the state folder at `state_dir` for `node`, with its Project
@@ -838,15 +893,11 @@ pub fn convert(state_dir: &Path, node: &NodeId) -> Result<Outcome, Refusal> {
 
     let search = state_dir.join(SESSION_SEARCH);
     if search.is_file() && !project_pairs.is_empty() {
-        // Not copied first: it is the largest store, and its one transaction
-        // either moves every row or none.
-        let mut index = hide_session::search::SearchIndex::open(&search)
-            .map_err(|reason| refuse(&search, reason))?;
-        (outcome.search_rows, outcome.search_rows_dropped) =
-            index
-                .rekey_projects(&project_pairs)
-                .map_err(|reason| refuse(&search, reason))?;
-        if outcome.search_rows + outcome.search_rows_dropped > 0 {
+        // Not copied first: its one transaction either moves every row or
+        // none.
+        (outcome.retention_rows, outcome.retention_rows_dropped) =
+            rekey_retention(&search, &project_pairs).map_err(|reason| refuse(&search, reason))?;
+        if outcome.retention_rows + outcome.retention_rows_dropped > 0 {
             outcome.files.push(search.display().to_string());
         }
     }
@@ -1351,17 +1402,14 @@ mod tests {
             .unwrap();
         drop(connection);
 
-        let search = hide_session::search::SearchIndex::open(&state.join(SESSION_SEARCH)).unwrap();
-        drop(search);
+        // The session search file an earlier build wrote: only its Copied
+        // history days are still read.
         let connection = rusqlite::Connection::open(state.join(SESSION_SEARCH)).unwrap();
         connection
-            .execute("INSERT INTO policy VALUES(?1, 30)", [&old_project])
+            .execute_batch("CREATE TABLE policy(project TEXT PRIMARY KEY, days INTEGER NOT NULL);")
             .unwrap();
         connection
-            .execute(
-                "INSERT INTO messages(project,session,offset,role,at,body,folded) VALUES(?1,'s1',0,'user',1,'b','b')",
-                [&old_project],
-            )
+            .execute("INSERT INTO policy VALUES(?1, 30)", [&old_project])
             .unwrap();
         let (links, _) = crate::links::store::LinkStore::open(&state.join(LINKS)).unwrap();
         drop(links);
@@ -1508,17 +1556,10 @@ mod tests {
             .unwrap();
         assert_eq!(cursor, new_project);
         let search = rusqlite::Connection::open(legacy.state.join(SESSION_SEARCH)).unwrap();
-        let (policy, messages): (String, String) = search
-            .query_row(
-                "SELECT (SELECT project FROM policy), (SELECT project FROM messages)",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
+        let policy: String = search
+            .query_row("SELECT project FROM policy", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(
-            (policy.as_str(), messages.as_str()),
-            (new_project.as_str(), new_project.as_str())
-        );
+        assert_eq!(policy, new_project);
         assert_ne!(legacy.old_project, new_project);
 
         let links = rusqlite::Connection::open(legacy.state.join(LINKS)).unwrap();
@@ -1708,7 +1749,7 @@ mod tests {
             .unwrap();
         drop(search);
 
-        // The search index fails after Memory has moved its Projects.
+        // The session search file fails after Memory has moved its Projects.
         let index = std::fs::read(&search_path).unwrap();
         std::fs::write(&search_path, b"not a database").unwrap();
         let refusal = convert(&legacy.state, &node()).unwrap_err();

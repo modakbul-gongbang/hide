@@ -8,6 +8,5 @@ mod conversation_cursor;
 mod cursor;
 mod environment;
 mod links;
-mod search;
 mod usage;
 mod user_turns;

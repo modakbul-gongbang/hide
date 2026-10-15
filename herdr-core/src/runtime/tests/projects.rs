@@ -712,7 +712,10 @@ fn the_projects_tab_measures_a_git_project_whole() {
             .disk
             .clone()
     };
-    assert!(runtime.disk_sweep_request(None).paths.is_empty(), "nothing asked yet");
+    assert!(
+        runtime.disk_sweep_request(None).paths.is_empty(),
+        "nothing asked yet"
+    );
 
     assert!(runtime.dispatch_json(&watch(&["workspace-2", "workspace-1"])));
     let request = runtime.disk_sweep_request(None);
@@ -780,7 +783,10 @@ fn the_projects_tab_measures_a_git_project_whole() {
         }),
         "the layers are the checkouts' sums and add up to the total"
     );
-    assert!(runtime.disk_sweep_request(None).paths.is_empty(), "the sweep is done");
+    assert!(
+        runtime.disk_sweep_request(None).paths.is_empty(),
+        "the sweep is done"
+    );
 
     // The lane card's read of one checkout that cannot be measured keeps the
     // project's last size beside the reason.
@@ -796,12 +802,14 @@ fn the_projects_tab_measures_a_git_project_whole() {
     );
 
     let generation = runtime.disk_request().generation;
-    assert!(runtime.dispatch_json(
-        &serde_json::to_vec(&serde_json::json!({
-            "schema_version": SCHEMA_VERSION, "kind": "card_measure_disk", "payload": null
-        }))
-        .unwrap()
-    ));
+    assert!(
+        runtime.dispatch_json(
+            &serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION, "kind": "card_measure_disk", "payload": null
+            }))
+            .unwrap()
+        )
+    );
     assert_eq!(runtime.disk_request().generation, generation + 1);
 }
 

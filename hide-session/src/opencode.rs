@@ -352,19 +352,6 @@ fn newest_write(connection: &Connection, id: &str, proven: &Proven) -> Result<u6
     Ok(proven.updated.max(newest))
 }
 
-/// A proven root session's stamp for the search index: its creation, its
-/// message count and its newest write, read in one transaction.
-pub(crate) fn stamp(home: &Path, id: &str, cwd: &str) -> Result<String, String> {
-    with_read(home, |connection| {
-        let proven = prove(connection, id, Owner::Root { cwd: Some(cwd) })?;
-        let newest = newest_write(connection, id, &proven)?;
-        Ok(format!(
-            "opencode:{}:{}:{newest}",
-            proven.created, proven.messages
-        ))
-    })?
-}
-
 /// The project's root OpenCode sessions, as the session catalog lists them:
 /// each one's checkout is the `directory` its own row records, resolved to
 /// the project like a file reader's `cwd`. At most `limit` session rows

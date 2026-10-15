@@ -29,9 +29,6 @@ pub(super) struct DeltaState {
     last_usage: Option<Arc<crate::usage::model::UsageSnapshot>>,
     editor_revision: u64,
     changes_revision: u64,
-    project_sessions_revision: u64,
-    session_search_revision: u64,
-    last_session_search: Option<Arc<crate::model::SessionSearchSnapshot>>,
     memory_revision: u64,
     /// `None` until Memory has a Project open or a pane's received cards; the
     /// section is never unset after that.
@@ -66,9 +63,6 @@ pub(super) struct DeltaState {
     documents: HashMap<String, StampedDocument>,
     documents_visible: Vec<String>,
     documents_visible_revision: u64,
-    /// `None` until a shell names a Project; a named Project is never
-    /// unnamed, so the section never has to be sent as cleared.
-    last_project_sessions: Option<Arc<crate::model::ProjectSessionsSnapshot>>,
 }
 
 struct StampedDocument {
@@ -137,20 +131,6 @@ impl Runtime {
         let views = self.separate_view_areas();
         if views {
             self.stamp_view_documents();
-        }
-        if let Some(project_sessions) = &self.snapshot.project_sessions
-            && self.delta.last_project_sessions.as_deref() != Some(project_sessions)
-        {
-            self.delta.revision += 1;
-            self.delta.project_sessions_revision = self.delta.revision;
-            self.delta.last_project_sessions = Some(Arc::new(project_sessions.clone()));
-        }
-        if let Some(search) = &self.snapshot.session_search
-            && self.delta.last_session_search.as_deref() != Some(search)
-        {
-            self.delta.revision += 1;
-            self.delta.session_search_revision = self.delta.revision;
-            self.delta.last_session_search = Some(Arc::new(search.clone()));
         }
         if let Some(memory) = &self.snapshot.memory
             && self.delta.last_memory.as_deref() != Some(memory)
@@ -265,20 +245,6 @@ impl Runtime {
             documents: views
                 .then(|| self.view_documents_delta(have_revision))
                 .flatten(),
-            // Absent until a shell names a Project: an unnamed section has no
-            // revision and nothing to send.
-            project_sessions: self
-                .delta
-                .last_project_sessions
-                .as_ref()
-                .filter(|_| self.delta.project_sessions_revision > have_revision)
-                .map(Arc::clone),
-            session_search: self
-                .delta
-                .last_session_search
-                .as_ref()
-                .filter(|_| self.delta.session_search_revision > have_revision)
-                .map(Arc::clone),
             memory: self
                 .delta
                 .last_memory

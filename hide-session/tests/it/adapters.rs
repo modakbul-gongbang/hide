@@ -2501,7 +2501,7 @@ mod pi {
     }
 
     #[test]
-    fn catalog_search_and_link_reads_share_pi_identity_and_tool_provenance() {
+    fn catalog_and_link_reads_share_pi_identity_and_tool_provenance() {
         let native = Native::new();
         let project = hide_project::resolve(&native.cwd, "local").unwrap();
         let sessions = SessionCatalog::new(native.home.path(), "local")
@@ -2512,32 +2512,6 @@ mod pi {
         assert_eq!(sessions[0].id, "pi-native-a");
         assert_eq!(sessions[0].agent, Agent::Pi);
         assert_eq!(sessions[0].title.as_deref(), Some("요청 보기 만들기"));
-        let mut index =
-            hide_session::search::SearchIndex::open(&native.home.path().join("index.sqlite3"))
-                .unwrap();
-        hide_session::read_session_file(
-            native.home.path(),
-            Agent::Pi,
-            &native.path,
-            Some(&hide_session::SessionReadScope {
-                id: "pi-native-a".into(),
-                cwd: native.cwd.display().to_string(),
-            }),
-            || {
-                hide_session::search_read::update(
-                    &mut index,
-                    &project.id,
-                    "pi-native-a",
-                    Agent::Pi,
-                    &native.path,
-                    0,
-                )
-            },
-        )
-        .unwrap();
-        let results = hide_session::search_read::search(&index, &project.id, "긴 요청", 0).unwrap();
-        assert_eq!(results.hits.len(), 1);
-        assert_eq!(results.hits[0].session_id, "pi-native-a");
         let answer = hide_session::links::read(
             native.home.path(),
             &[hide_session::links::ReadRequest {
@@ -4200,9 +4174,8 @@ fn opencode_activity_answers_its_newest_write_and_count_only_for_its_proven_owne
 }
 
 #[test]
-fn opencode_catalog_and_search_hold_only_its_root_sessions_in_the_project() {
-    use hide_session::search::SearchIndex;
-    use hide_session::{SessionCatalog, SessionReadScope, search_read};
+fn opencode_catalog_holds_only_its_root_sessions_in_the_project() {
+    use hide_session::SessionCatalog;
     let home = home(Agent::OpenCode);
     let checkout = home.path().join("checkout");
     std::fs::create_dir(&checkout).unwrap();
@@ -4245,72 +4218,6 @@ fn opencode_catalog_and_search_hold_only_its_root_sessions_in_the_project() {
             .is_some_and(|text| text.starts_with("요청 보기를 만들어줘")),
         "{session:?}"
     );
-
-    let mut index = SearchIndex::open(&home.path().join("index.sqlite3")).unwrap();
-    let scope = SessionReadScope {
-        id: OPENCODE_ROOT.to_owned(),
-        cwd: checkout.display().to_string(),
-    };
-    let locator = session.locator.display().to_string();
-    let index_all = |index: &mut SearchIndex| loop {
-        let saved = index.saved(&project.id, OPENCODE_ROOT).unwrap();
-        let step = search_read::read_opencode_step(home.path(), saved.as_ref(), &scope).unwrap();
-        if !index
-            .apply(&project.id, OPENCODE_ROOT, &locator, 0, step)
-            .unwrap()
-        {
-            break;
-        }
-    };
-    index_all(&mut index);
-    let saved = index.saved(&project.id, OPENCODE_ROOT).unwrap();
-    assert!(matches!(
-        search_read::read_opencode_step(home.path(), saved.as_ref(), &scope).unwrap(),
-        hide_session::search::IndexStep::Done
-    ));
-    let mut stamps = |paths: &[String]| {
-        Ok(paths
-            .iter()
-            .map(|_| search_read::opencode_stamp(home.path(), &scope).ok())
-            .collect())
-    };
-    let page = index
-        .search_scoped(&project.id, "pull/12", 0, None, &mut stamps)
-        .unwrap();
-    assert_eq!(page.hits.len(), 1, "{page:?}");
-    assert_eq!(page.hits[0].session_id, OPENCODE_ROOT);
-    assert!(!page.stale);
-    // The child session's answer is its own conversation, never the root's.
-    let child = index
-        .search_scoped(&project.id, "subagent", 0, None, &mut stamps)
-        .unwrap();
-    assert!(child.hits.is_empty(), "{child:?}");
-
-    // A new message moves the stamp: the copy is stale until it is read on.
-    writer
-        .execute(
-            "INSERT INTO message VALUES ('msg_07', ?1, 1790989400000, 1790989400000, \
-             '{\"role\":\"user\",\"time\":{\"created\":1790989400000}}')",
-            [OPENCODE_ROOT],
-        )
-        .unwrap();
-    writer
-        .execute(
-            "INSERT INTO part VALUES ('prt_09', 'msg_07', ?1, 1790989400000, 1790989400000, \
-             '{\"type\":\"text\",\"text\":\"배포 노트도 붙여줘\"}')",
-            [OPENCODE_ROOT],
-        )
-        .unwrap();
-    let stale = index
-        .search_scoped(&project.id, "pull/12", 0, None, &mut stamps)
-        .unwrap();
-    assert!(stale.stale && stale.hits.is_empty(), "{stale:?}");
-    index_all(&mut index);
-    let fresh = index
-        .search_scoped(&project.id, "배포 노트", 0, None, &mut stamps)
-        .unwrap();
-    assert_eq!(fresh.hits.len(), 1, "{fresh:?}");
-    assert!(!fresh.stale);
 }
 
 #[test]

@@ -365,7 +365,7 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
         request.cwd.as_deref(),
     )?;
     let reported_id = (request.reference_kind == "id").then_some(request.reference_value.as_str());
-    let stamp = crate::search_read::stamp_at(&path);
+    let stamp = crate::stamp::stamp_at(&path);
     let mut cursor = request
         .checkpoint
         .clone()

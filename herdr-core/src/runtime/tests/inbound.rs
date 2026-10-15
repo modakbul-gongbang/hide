@@ -769,10 +769,8 @@ fn a_dialed_helper_without_a_memory_reader_refuses_and_keeps_closed_sessions() {
 }
 
 /// A linked node's sessions are its own session files, read through its
-/// link: the right panel's Sessions for its checkout in front and a named
-/// Project's Sessions list what that machine holds, never this machine's,
-/// and say the node is not connected once its link is down (PRD
-/// core-host-node-move B14).
+/// link: the right panel's Sessions for its checkout in front list what
+/// that machine holds, never this machine's (PRD core-host-node-move B14).
 #[test]
 fn a_linked_node_s_sessions_are_read_through_its_link() {
     for dialed in [false, true] {
@@ -862,7 +860,6 @@ fn a_linked_node_s_sessions_are_read_through_its_link() {
             .find(|workspace| workspace.device_id == NODE && workspace.path == path)
             .map(|workspace| workspace.id.clone())
             .expect("the node's Project in the catalog");
-        let named = serde_json::json!({"workspace_id": project_id, "device_id": NODE});
         shared
             .lock()
             .unwrap()
@@ -891,34 +888,7 @@ fn a_linked_node_s_sessions_are_read_through_its_link() {
                 "a new device Project starts with Memory off"
             );
         }
-        refresh(named.clone());
-        wait(&shared, "the named Project's sessions read", |runtime| {
-            runtime
-                .snapshot
-                .project_sessions
-                .as_ref()
-                .is_some_and(|sessions| !sessions.loading)
-        });
-        {
-            let runtime = shared.lock().unwrap();
-            let sessions = runtime.snapshot.project_sessions.as_ref().unwrap();
-            assert_eq!(sessions.unavailable_reason, None);
-            assert_eq!(sessions.failure, None);
-            assert_eq!(ids(&sessions.rows), ["on-the-node"]);
-        }
-
         drop(release);
-        wait(&shared, "the link ended", |runtime| {
-            runtime.linked_node(NODE).err() == Some("link_down")
-        });
-        refresh(named);
-        let runtime = shared.lock().unwrap();
-        let sessions = runtime.snapshot.project_sessions.as_ref().unwrap();
-        assert_eq!(
-            sessions.unavailable_reason.as_deref(),
-            Some("MacBook is not connected.")
-        );
-        assert!(sessions.rows.is_empty());
     }
 }
 

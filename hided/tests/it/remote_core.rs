@@ -1293,8 +1293,7 @@ fn an_agent_on_either_machine_reads_the_one_memory_the_core_owns() -> Result<()>
 
             // Sessions are each machine's own session files: the node's
             // Project lists what the node holds, read through its link, in the
-            // right panel with its checkout in front and on its Project's
-            // Sessions screen.
+            // right panel with its checkout in front.
             for (home, project, id) in [
                 (fixture.screen_home(), &node_project, "node-session"),
                 (fixture.core_home(), &core_project, "core-session"),
@@ -1312,30 +1311,6 @@ fn an_agent_on_either_machine_reads_the_one_memory_the_core_owns() -> Result<()>
                 })
             })?;
             ensure!(rows == ["node-session"], "the right panel listed {rows:?}");
-            let (project_id, _) =
-                tokio::task::block_in_place(|| listed_checkout(fixture, &node_project))?;
-            send(
-                &mut socket,
-                "sessions_refresh",
-                json!({"workspace_id": project_id, "device_id": node}),
-            )
-            .await?;
-            // The named Project rides its own section of a snapshot frame,
-            // beside the rest the renderer reads.
-            let deadline = Instant::now() + Duration::from_secs(20);
-            let named = loop {
-                let frame = next_frame(&mut socket, deadline)
-                    .await?
-                    .context("the node's Project's sessions never settled")?;
-                let sessions = &frame["payload"]["project_sessions"];
-                if sessions["workspace_id"] == project_id.as_str() && sessions["loading"] == false {
-                    break sessions.clone();
-                }
-            };
-            ensure!(
-                session_ids(&named) == ["node-session"] && named["unavailable_reason"].is_null(),
-                "the node's Project's Sessions: {named}"
-            );
 
             tokio::task::block_in_place(|| fixture.ssh.online(false))?;
             node_link(port, "waiting", LINK_BOUND).await?;
