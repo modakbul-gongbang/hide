@@ -115,7 +115,7 @@ Agent Views is always live: clicking a pane or a tab focuses it and typing goes 
 A lane going out of sight with the keyboard inside it, or a files tool another tool replaces while the keyboard is in its documents, hands the keyboard to the focused pane.
 Tab never walks into a lane out of sight: a lane put away is inert and holds no Escape layer or focus return, and a native page in it is hidden before it goes inert.
 
-An Agent tab shows the focused pane's status mark, then title, with no provider logo, using the sidebar row's title and mark rules; a tab with no agent keeps the neutral `>_`.
+An Agent tab shows the focused pane's status mark, then title, using the sidebar row's title and mark rules; the agent's logo stands between them only while the agent logo view mode shows it ([Agent logo view mode](#agent-logo-view-mode)); a tab with no agent keeps the neutral `>_` in both modes.
 A custom Herdr label wins; an empty, numeric, or `Tab N` label instead follows the focused pane's chosen agent title (manual name, Hide AI goal, automatic name, then provider, as [Task identity](status-model.md#task-identity) defines), foreground process name, then `Tab N` using Herdr's stable number; a Herdr workspace label is never a tab or agent name.
 A plain terminal tab shows the terminal icon and that name; terminal titles are never used to guess a process.
 Local and remote process names are read only for focused panes of attached tabs, outside the runtime lock, on focus or agent-state changes and a 30-second recheck.
@@ -379,7 +379,7 @@ The browser display's toolbar and its loading, load failed, and plain browser ta
 A pane header is a quiet identity row: the ancestor path, the status mark, the agent's logo, title, the fork mark, the PR mark, the Not connected chip, and the retained overflow, zoom and close controls at the right end.
 A plain shell keeps its terminal mark.
 The provider logo is drawn on a pane's own header, and in the heads and places that are about the agent or its provider itself: the start picker, Settings, the footer's usage chips and the Usage pages, the session record's head, a Project conversation's detail head, the tree popover's head, the last-words popover's head, the phone's detail head, the Memory tab's Hide AI chip, the Factory card and the first-run tiles.
-No list row draws it: the sidebar and Sessions rows, the Agent tabs, ⌘K and the recent-pane list, the link sessions, the Agents graph, the Issue card, list and panel rows, a session record's children, a Project's conversation list and the phone's list lead with the status mark alone (PRD agent-mark-quiet).
+The sidebar and Sessions rows and the Agent tabs draw it only by the operator's choice or while ⌥ is held ([Agent logo view mode](#agent-logo-view-mode)); ⌘K and the recent-pane list, the link sessions, the Agents graph, the Issue card, list and panel rows, a session record's children, a Project's conversation list and the phone's list lead with the status mark alone in both modes (PRD agent-mark-quiet).
 A pane header draws exactly one logo, the pane's own agent, for each of the seven supported agents: Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, the same logo Settings and the first-run choice draw.
 A row without a logo names its agent by product name (`Claude Code`, `Codex`, the adapter's label, never the raw kind) in its hover hint and its accessible name, and the pane header's logo and title say it the same way.
 Only a plain shell and an agent Hide does not support draw the neutral `>_`.
@@ -484,11 +484,30 @@ In a project's tree the checkouts Hide AI made gather behind the operator's unde
 An opened checkout in the group shows a second line under its agent row with the task (`Memory 올리기 · m43`), and a folded one puts the task in the purpose line's place ahead of the purpose (`Memory 올리기 · m72 · PR 없이 끝남`); a start the core named no task for says `Hide AI` alone, and nothing else is invented.
 A checkout in one of the folds (`에이전트 없는 워크트리`, `정리할 것`, inactive) stays in that fold and names its task there.
 The group is by who made the checkout and the task line and badge are by who started the agent, so an agent the operator started in a Hide AI worktree has neither, and a Hide AI agent has both wherever it is listed.
-Where a row stands alone, in the sidebar's Needs You and Done and in Sessions, the Hide owl mark stands beside the status mark in the place of a provider logo, and a place line names the task where the branch would stand (`herdr-ide › Memory 올리기 · m72`); a row the operator started and a delegated child have neither.
+Where a row stands alone, in the sidebar's Needs You and Done and in Sessions, the Hide owl mark stands beside the status mark in the place of a provider logo while logos are hidden, and wears the provider's logo's lower-right corner as an 11-pixel badge while they are shown, and a place line names the task where the branch would stand (`herdr-ide › Memory 올리기 · m72`); a row the operator started and a delegated child have neither.
 The row's accessible name carries `Hide AI` and the task (`Hide AI · Memory 올리기 · m72`), and the head's list is named `Hide AI, N`.
 A connected device's projects get the same group and badges, and they hold across a restart of hided because the ledger is persisted.
 The digits that number agent rows follow the drawn order, so the checkouts Hide AI made are numbered after the operator's.
-Web owners: `web/src/hideAiOrigin.ts` (the words, the place line and the split of a project's checkouts), `web/src/AgentMark.tsx` (the owl and the pane header's mark), `web/src/sidebar.tsx` (the head and the group) and `web/src/components/sidebar-agent-row.tsx` (the task line); core owner: `herdr-core/src/coordination/started.rs`.
+Web owners: `web/src/hideAiOrigin.ts` (the words, the place line and the split of a project's checkouts), `web/src/AgentMark.tsx` (the owl, the badge and the pane header's mark), `web/src/AgentRowMark.tsx` (the row's mark by view mode), `web/src/sidebar.tsx` (the head and the group) and `web/src/components/sidebar-agent-row.tsx` (the task line); core owner: `herdr-core/src/coordination/started.rs`.
+
+### Agent logo view mode
+
+The sidebar footer carries a View menu between the usage chips and Help: an eye button whose hint and accessible name are `보기` (`View`).
+It opens above the footer with the label `에이전트 로고`, two choices, `행 왼쪽에 표시` and `숨기기`, with a check on the current one, a separator, and a muted line that is not a choice: `⌥ 누르고 있으면 잠깐 보기` (`Alt` on Windows and Linux).
+Arrow keys move through the choices, Enter chooses, and Escape or a click outside closes the menu without changing anything and returns focus to the button.
+Choosing the checked choice only closes the menu.
+While the daemon is not connected both choices are disabled and the check stays on the last value received.
+A browser has no Agents hold, so its menu has no key line and no peek.
+The choice is a core preference, `ui_state.agent_logo_mode` (`shown` or `hidden`, `hidden` when never chosen), changed only by `agent_logo_mode_set`; `ui_state_update` never changes it, the check always reads the core's value, every window of one daemon changes at once, and it survives a restart.
+A refused or unsaved change leaves the check and the screens as they were and records a diagnostic, with no alert.
+Hidden is the default and draws the screens as before.
+Shown draws the agent's 16-pixel logo after the status mark and before the title in the sidebar's agent rows (a sleeping row after its moon), in Sessions rows and child rows, and in the Agent tabs; a row's second and branch lines indent past it in Sessions, and a kind with no logo draws the neutral `>_`.
+A row Hide AI started that stands alone wears the owl as a badge on the logo; inside a project's Hide AI group it draws the logo alone.
+Search, overlays, Overview, a Project's conversation list, the graph, Task boards and the phone never follow the mode, and the pane header, the usage chips and the Usage pages draw their logos in both modes.
+While hidden, holding the Agents key (⌥, or Alt) draws the same logos for as long as the number keycaps show: the peek is the existing hold state, with its 0.15 second delay, its end on any other key, on a window that loses focus and while a layer is open, and it adds no key listener.
+Shown, the same hold shows only the keycaps.
+Changing the mode or peeking never changes a row's height, the scroll position or the selection.
+Web owners: `web/src/components/view-menu.tsx`, `web/src/agentLogoMode.ts` (the one rule), `web/src/AgentRowMark.tsx`, `web/src/TabBar.tsx`, `web/src/AgentSessions.tsx`, `web/src/components/sidebar-agent-row.tsx` and `web/src/components/sleeping-session-row.tsx`; core owner: `herdr-core/src/runtime/events.rs`.
 
 ### Subagent count
 
@@ -1712,7 +1731,7 @@ Web owner: `web/src/components/usage.tsx`, `web/src/components/usage-history.tsx
 The core owns account windows and shared preferences (`usage`, `ui_state.usage`); all limits refer to the core's own node, even with a remote device in front.
 The declaration lists all seven agents; only agents with a declared limit source appear in the footer and popover.
 
-The footer draws up to three pinned account windows, followed by Help and Settings.
+The footer draws up to three pinned account windows, followed by the View menu, Help and Settings.
 Defaults pin each supported agent's weekly window.
 Each chip shows the agent mark and its rounded percent, naming the window when the agent has multiple visible chips.
 A numberless not-started or expired chip always names its window.

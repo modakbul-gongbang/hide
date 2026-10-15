@@ -4,12 +4,13 @@ import type { Actions } from "./actions";
 import { StatusMark } from "./components/status-mark";
 import { markTone } from "./agentRow";
 import { AgentMark } from "./AgentMark";
+import { useAgentLogosShown } from "./agentLogoMode";
 import { agentProductName } from "./agentAdapters";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Keycap } from "./components/ui/keycap";
 import { Hint, Tooltip, TooltipTrigger, TooltipContent } from "./components/ui/tooltip";
-import type { AsyncOperation, Checkout, StripTab } from "./snapshot";
+import type { AsyncOperation, Checkout, StripTab, TabAgent } from "./snapshot";
 import { useShellStore } from "./store";
 import { tabFit, type AreaTabInteraction } from "./AreaTree";
 import { useInterfaceTranslation } from "./i18n/client";
@@ -36,7 +37,19 @@ export function AgentTab({ number, entry, checkout, interaction, actions, renami
   // Native subagents live inside that pane and are not additional panes.
   const agentPaneCount = tab?.panes.reduce((count, pane) => count + Number(pane.identity_label !== null), 0) ?? 0;
   const identity = `${agent ? t("panes.agent.tabIdentityAgent", { kind: agentProductName(agent.agent_kind), label: entry.label }) : t("panes.agent.tabIdentityTerminal", { label: entry.label })}${agent ? ` · ${statusText(t, agent.status_code)}` : ""}${agentPaneCount > 0 ? ` · ${t("panes.agent.tabPaneCount", { count: agentPaneCount })}` : ""}`;
-  return <TabButton entry={entry} editor={renaming ? <TabRenameInput key={entry.source_id} entry={entry} actions={actions} onCancel={onCancelRename} /> : null} identity={identity} agentPaneCount={agentPaneCount} mark={agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-tab-status={agent.status_code} /> : <AgentMark kind={null} />} number={number} active={interaction.selected} areaActive={interaction.areaActive} closing={closingSuffix(entry.source_id, "tab.close", operations)} closeLabel={t("shell.closeTab", { title: entry.label })} fit={interaction.fit} dragging={interaction.dragging} onSelect={interaction.select} onClose={() => actions.closeTab(entry.source_id)} onPointerDown={interaction.press} />;
+  return <TabButton entry={entry} editor={renaming ? <TabRenameInput key={entry.source_id} entry={entry} actions={actions} onCancel={onCancelRename} /> : null} identity={identity} agentPaneCount={agentPaneCount} mark={<TabMark agent={agent} />} number={number} active={interaction.selected} areaActive={interaction.areaActive} closing={closingSuffix(entry.source_id, "tab.close", operations)} closeLabel={t("shell.closeTab", { title: entry.label })} fit={interaction.fit} dragging={interaction.dragging} onSelect={interaction.select} onClose={() => actions.closeTab(entry.source_id)} onPointerDown={interaction.press} />;
+}
+
+/**
+ * An agent tab's mark: its status, then its logo while logos are shown or an
+ * ⌥ hold peeks at them (PRD agent-logo-view-mode B7, B13); a tab with no agent
+ * is the neutral `>_` in both modes.
+ */
+function TabMark({ agent }: { agent: TabAgent | null | undefined }) {
+  const shown = useAgentLogosShown();
+  const status = agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-tab-status={agent.status_code} /> : null;
+  if (agent && !shown) return status;
+  return <>{status}<AgentMark kind={agent?.agent_kind} /></>;
 }
 
 function TabRenameInput({ entry, actions, onCancel }: { entry: StripTab; actions: Actions; onCancel: () => void }) {

@@ -6,8 +6,10 @@ import { hostKind, keySystem } from "./host";
 import {
   displayChord,
   displayCommand,
+  familyModifiers,
   fieldChord,
   hostRegistry,
+  modifierLabel,
   numberedCommand,
   type BindingProblem,
   type Chord,
@@ -75,4 +77,16 @@ export function chordLabel(chord: Chord): string {
 /** The system's command key with `code` inside a text field or palette: "⌘↵" on macOS, "Ctrl+Enter" elsewhere. */
 export function fieldLabel(code: string): string {
   return chordLabel(fieldChord(code, keySystem()));
+}
+
+/**
+ * The key an Agents hold presses (⌥, or Alt on Windows and Linux), which also
+ * peeks at the agent logos; null where the host has no such family, a browser
+ * (PRD agent-logo-view-mode D-11, B16).
+ */
+export function agentPeekKey(uiState: StoredShortcutSets = useShellStore.getState().rest?.ui_state): string | null {
+  const host = hostKind();
+  const system = keySystem();
+  const modifiers = familyModifiers("agents", hostRegistry(uiState, host, system).registry, host);
+  return modifiers ? modifierLabel(modifiers, system) : null;
 }
