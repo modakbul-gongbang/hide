@@ -804,7 +804,7 @@ Missing, locked, corrupt, stale, unresolved, unreachable or over-deadline inputs
 `SessionStart` reads the Project's index under the same read-only and fail-open ownership and the same Memory read budget: at most 20 one-line rule, decision, lesson and preference cards and no body.
 Its separate Workspace probe has a two-second CLI timeout and runs beside Memory when its thread starts; later count-report calls also have their own two-second timeouts.
 The installed SessionStart entry has an eight-second runtime timeout, so the Memory budget is not a whole-session-hook deadline.
-`hide memory show|search|forget|undo|outdated|placed|skipped` is one store read or write on hided's blocking task; `add` is one provider call bounded at 50 s.
+`hide memory show|search|forget|undo|outdated|placed|building|unbuilt|skipped` is one store read or write on hided's blocking task; `add` is one provider call bounded at 50 s.
 
 Regression owners are the `hide-project` identity tests, `hide-session` provider-neutral catalog and cursor tests, `hide-memory` Project-isolation, lifecycle, convergence, FTS transaction, redaction, ranking and budget tests, `hide-agent-hooks` fixture/config/fail-open tests, and core atomic-event and editor-preview tests.
 Manual acceptance in the desktop app uses one exact worktree-local `hided` PID and window against a private Herdr server and private app state.

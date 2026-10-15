@@ -10,7 +10,7 @@ import { useShellStore } from "../store";
 import { Lane } from "../Tools";
 import type { LaneFrame, LaneSizes, WorkspaceView } from "../workspace";
 
-export const MEMORY_SCENE_STATES = ["workspace", "off", "ai_not_ready", "analyzing", "empty", "unreadable", "promote", "failed", "start_failed", "forgotten", "verifying", "reconsent", "checking", "check_budget_exhausted"] as const;
+export const MEMORY_SCENE_STATES = ["workspace", "off", "ai_not_ready", "analyzing", "empty", "unreadable", "promote", "failed", "start_failed", "not_processed", "building", "unbuilt", "forgotten", "verifying", "reconsent", "checking", "check_budget_exhausted"] as const;
 export type MemorySceneState = (typeof MEMORY_SCENE_STATES)[number];
 export type MemorySceneLanguage = "en" | "ko" | "zh-CN" | "ja";
 export type MemorySceneParams = { theme: "light" | "dark"; state: MemorySceneState; width: number; language: MemorySceneLanguage };
@@ -40,6 +40,8 @@ const ROWS: MemoryRow[] = [
   row(5, "커밋 메시지에 도구 이름을 넣지 않는다", "rule", 6, 4, 2, 4 * 1440 * MINUTE),
   ...Array.from({ length: 17 }, (_, index) => row(20 + index, `예시 카드 ${index + 1}`, "fact", 1, 0, 0, (7 + index) * 1440 * MINUTE)),
 ];
+/** A decision the main app does not have yet, which another branch builds. */
+const UNBUILT = row(14, "백로그는 프로젝트 이슈 출처 하나만 따른다", "decision", 2, 1, 1, 3 * 60 * MINUTE);
 const EXPANDED: ProjectMemory["expanded"] = {
   number: 12,
   body: "0.9.145 미만 nextest는 macOS에서 가짜 LEAK를 내므로, 그 버전 이상을 쓰고 LEAK는 먼저 버전을 의심한다.",
@@ -70,6 +72,9 @@ export function memorySceneProject(state: MemorySceneState): ProjectMemory {
     case "promote": return { ...base, rows: ROWS.slice(1, 4) };
     case "failed": return { ...base, rows: [ROWS[3]!], questions: [{ kind: "failed", number: 8, title: ROWS[3]!.title, start_failure: null }] };
     case "start_failed": return { ...base, rows: [ROWS[3]!], questions: [{ kind: "failed", number: 8, title: ROWS[3]!.title, start_failure: { code: "shell_starting", detail: "[oh-my-zsh] Would you like to update? [Y/n]" } }] };
+    case "not_processed": return { ...base, rows: [UNBUILT, ROWS[6]!], expanded: { number: 14, body: UNBUILT.title, cited_paths: [], sources: [], previous: null }, questions: [{ kind: "failed", number: 14, title: UNBUILT.title, start_failure: { code: "card_not_processed", detail: "백로그와 메모가 아직 main 앱에 없어 문서를 고치지 않았습니다." } }] };
+    case "building": return { ...base, rows: [{ ...UNBUILT, promotion: { state: "building", agent: { name: "impl-overview-tasks", pane_id: "w2:p1" }, pr_number: null, target_path: "docs/UI_BEHAVIOR.md", github_failure: null } }, ROWS[6]!, ROWS[7]!] };
+    case "unbuilt": return { ...base, rows: [UNBUILT, ROWS[6]!, ROWS[7]!], questions: [{ kind: "unbuilt", number: 14, title: UNBUILT.title, reason: "백로그 출처를 고르는 화면이 아직 없고, 만드는 브랜치도 없습니다." }] };
     case "reconsent": return { ...base, enabled: false, usable_cards: 0, consent_required: true };
     case "checking": return { ...base, usable_cards: 0, analysis: "checking", checking_card: 17, rows: [{ ...ROWS[0]!, verifying: true }, { ...ROWS[5]!, verifying: true }] };
     case "check_budget_exhausted": return { ...base, usable_cards: 0, analysis: "check_budget_exhausted", check_resume_at_unix_ms: (Math.floor(Date.now() / 86_400_000) + 1) * 86_400_000, rows: [{ ...ROWS[0]!, verifying: true }, { ...ROWS[5]!, verifying: true }] };

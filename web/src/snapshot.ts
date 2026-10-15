@@ -1552,7 +1552,11 @@ export type WorktreeRemoval = {
 export type MemoryCardKind = "rule" | "decision" | "lesson" | "fact" | "preference";
 
 /** Where a card's promotion into the repository stands (`memory_promotion_state`). */
-export type MemoryPromotionState = "running" | "pr_open" | "merged" | "failed" | "unconfirmed";
+/**
+ * `building`: the card's decision is not built yet and another branch builds it; that branch's pull request carries the card in.
+ * `unbuilt`: nothing builds it, and `물어볼 것` asks once.
+ */
+export type MemoryPromotionState = "running" | "pr_open" | "merged" | "failed" | "unconfirmed" | "building" | "unbuilt";
 
 /** What the Memory tab's operator asks for (`memory_action`). */
 export type MemoryAction = "enable" | "disable" | "delete" | "forget" | "undo" | "promote" | "dismiss" | "card_right" | "doc_right";
@@ -1578,7 +1582,7 @@ export type MemoryRow = {
     state: MemoryPromotionState;
     /** The durable promotion attempt's start; absent on older daemons. */
     started_at_unix_ms?: number;
-    /** The agent putting it in the repository, while it runs; `pane_id` is null once the agent ended. */
+    /** The agent putting it in the repository, while it runs, or the one at work on the branch that builds a `building` card; `pane_id` is null once the agent ended. */
     agent: { name: string; pane_id: string | null } | null;
     pr_number: number | null;
     /** Original repository-qualified target; unknown on legacy attempts. */
@@ -1593,7 +1597,9 @@ export type MemoryRow = {
 export type MemoryQuestion =
   | { kind: "promote"; number: number; title: string; human_session_count: number; pulled_session_count: number }
   | { kind: "docs_disagree"; number: number; title: string; document: MemoryDocument }
-  | { kind: "failed"; number: number; title: string; start_failure: MemoryStartFailure | null };
+  | { kind: "failed"; number: number; title: string; start_failure: MemoryStartFailure | null }
+  /** The card's decision is not built and nothing builds it; `reason` is what the agent placing it saw. */
+  | { kind: "unbuilt"; number: number; title: string; reason: string | null };
 
 /**
  * Why a failed promotion's agent never started (`memory_start_failure_code`):

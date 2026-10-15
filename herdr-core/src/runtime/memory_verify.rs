@@ -582,6 +582,7 @@ fn point_at(
             started_at_unix_ms: now,
             updated_at_unix_ms: now,
             failure: None,
+            building_branch: None,
         },
     )
 }

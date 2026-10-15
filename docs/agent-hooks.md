@@ -34,7 +34,9 @@ Entries belonging to other tools are counted before and after, and a regression 
 
 Six events are registered: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `SubagentStart`, `SubagentStop`, and `Stop`.
 `SessionEnd` is not registered by either, so the `Stop` sweep is what closes a turn out.
-`PreToolUse` selects `Bash|AskUserQuestion|ExitPlanMode` in Claude Code and `Bash|request_user_input` in Codex (`install::hook_matcher`, the one function the writer and Codex's trust check both read), so a file edit or a search never starts the helper.
+`PreToolUse` selects `Bash|AskUserQuestion|ExitPlanMode` in Claude Code and `Bash|request_user_input|request_user_input_async` in Codex (`install::hook_matcher`, the one function the writer and Codex's trust check both read), so a file edit or a search never starts the helper.
+Codex matches a tool by its whole name: with a hook on `request_user_input` alone, the async question tool of 0.162.1 never reached the helper (measured 2026-10-15 in an isolated `CODEX_HOME`), so each question tool is named.
+An entry of Hide's whose matcher differs from the one written today reads Outdated at its own version, so the next kit pass rewrites it and records its Codex trust, with no version bump for the other agents.
 The version-seven marker makes earlier entries Outdated until the normal kit pass at launch, connection or Reinstall replaces Hide's entries and records their exact Codex trust.
 Already-running sessions pick up the changed hooks when restarted.
 
@@ -217,10 +219,11 @@ Shutdown stops admission, closes the fixed node to end its current call and join
 
 ## Native questions from Factory workers
 
-The same `PreToolUse` helper refuses Claude Code's `AskUserQuestion` and `ExitPlanMode`, and Codex's `request_user_input`, only after the core proves the caller is the current Task-held Factory worker.
+The same `PreToolUse` helper refuses Claude Code's `AskUserQuestion` and `ExitPlanMode`, and Codex's `request_user_input` and `request_user_input_async`, only after the core proves the caller is the current Task-held Factory worker.
 The model receives a deny reason directing it to `hide factory ask`; an operator-started session and every other pane retain their native question UI.
 OpenCode's `question` tool and omp's `ask` are refused the same way through Hide's plugin and extension ([OpenCode: Hide's plugin](#opencode-hides-plugin), [Pi and omp: Hide's extension](#pi-and-omp-hides-extension)).
 Pinned Codex 0.160.1 was exercised with a trusted Bash positive control and a genuine plan-mode `request_user_input`: both reached PreToolUse and the question's native tool result and model reply carried the denial.
+Codex 0.162.1's `request_user_input_async` was exercised the same way in an isolated `CODEX_HOME`: a hook that denied it reached the model as the tool result "Tool call blocked by PreToolUse hook", so the redirect holds for the async tool too.
 The ordinary launch mode remains unchanged.
 
 `hide workspace factory-question-guard --session <native-id> --runtime <runtime>` uses the authenticated pane-scoped route, a bounded fresh native identity read and the already-open Factory's current Task worker.

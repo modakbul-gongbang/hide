@@ -64,7 +64,7 @@
   "strip_tab_kind": ["herdr", "file", "diff", "session"],
   "memory_card_kind": ["rule", "decision", "lesson", "fact", "preference"],
   "memory_analysis_state": ["idle", "analyzing", "ai_not_ready", "checking", "check_budget_exhausted"],
-  "memory_promotion_state": ["running", "pr_open", "merged", "failed", "unconfirmed"],
+  "memory_promotion_state": ["running", "pr_open", "merged", "failed", "unconfirmed", "building", "unbuilt"],
   "memory_start_failure_code": ["shell_starting", "agent_not_started", "card_not_processed", "other"],
   "memory_action": ["enable", "disable", "delete", "forget", "undo", "promote", "dismiss", "card_right", "doc_right"]
 }
