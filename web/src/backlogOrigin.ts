@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import type { Actions } from "./actions";
 import type { BacklogOrigin, SnapshotRest } from "./snapshot";
+import { useShellStore } from "./store";
 
 // Where a backlog item came from carries its session's request and answer
 // (PRD overview-device-tasks B31, B33), so the core keeps it only while a
@@ -31,13 +32,21 @@ export function releaseOrigin(taskKey: string): boolean {
   return true;
 }
 
-/** Reads an item's origin while the caller is shown, and closes it when no screen shows it any more. */
+/**
+ * Reads an item's origin while the caller is shown, and closes it when no
+ * screen shows it any more. A reconnect is a new connection, whose holds the
+ * daemon starts empty and whose old ones it has let go, so the read is said
+ * again each time the page is live.
+ */
 export function useBacklogOrigin(actions: Actions, workspaceId: string, taskKey: string): void {
+  const live = useShellStore((state) => state.connection === "live");
   useEffect(() => {
     holdOrigin(taskKey);
-    actions.readBacklogOrigin(workspaceId, taskKey);
     return () => {
       if (releaseOrigin(taskKey)) actions.closeBacklogOrigin(taskKey);
     };
-  }, [actions, workspaceId, taskKey]);
+  }, [actions, taskKey]);
+  useEffect(() => {
+    if (live) actions.readBacklogOrigin(workspaceId, taskKey);
+  }, [actions, workspaceId, taskKey, live]);
 }
