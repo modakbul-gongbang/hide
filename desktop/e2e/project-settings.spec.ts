@@ -218,6 +218,9 @@ test("Project and Overview menus return Settings focus to their own trigger", as
     await page.locator('[data-menu-item="project_settings"]').focus();
     await page.keyboard.press("Enter");
     await expect(page.locator('[data-project-settings]')).toBeVisible();
+    // A repository with no GitHub remote reads Local under Auto.
+    await expect(page.locator('[data-project-settings]')).toContainText("No GitHub repository detected");
+    await expect(page.locator('[data-project-settings]')).toContainText("Automatic (Local)");
     await page.keyboard.press("Escape");
     await expect(more).toBeFocused();
     await openProjectOverview(page, "sample");
