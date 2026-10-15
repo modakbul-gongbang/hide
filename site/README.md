@@ -27,7 +27,7 @@ Run evidence belongs under ignored `agents/runs/public-readiness/site-338/`, nev
 
 ## Download policy
 
-The browser reads the unauthenticated GitHub `releases/latest` API for `modakbul-gongbang/hide`.
+The browser reads the unauthenticated GitHub `releases/latest` API for `with-hide/hide`.
 It requests no credentials, permits one request at a time, and cancels a request after ten seconds or when leaving the page.
 There is no polling or persistent release cache.
 Only a release with explicit `draft: false`, `prerelease: false`, a stable `v<major>.<minor>.<patch>` tag and that tag's exact repository release URL is eligible.

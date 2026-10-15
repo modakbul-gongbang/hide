@@ -1,5 +1,5 @@
-const RELEASES_URL = "https://github.com/modakbul-gongbang/hide/releases";
-const LATEST_API = "https://api.github.com/repos/modakbul-gongbang/hide/releases/latest";
+const RELEASES_URL = "https://github.com/with-hide/hide/releases";
+const LATEST_API = "https://api.github.com/repos/with-hide/hide/releases/latest";
 const PLATFORMS = Object.freeze({
   "macos-arm64": { suffix: "macos-arm64.zip", label: "macOS · Apple Silicon (ARM64)" },
   "windows-x64": { suffix: "windows-x64.zip", label: "Windows · Intel or AMD (x64)" },

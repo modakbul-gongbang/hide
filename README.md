@@ -64,11 +64,11 @@ The web shell renders that state and sends typed user events back, so the UI doe
 ## Install
 
 The packaging targets are Apple Silicon Macs running macOS 14 or later, Windows x64 and Linux x64 ([Windows and Linux](docs/INSTALL.md#windows-and-linux)).
-Published builds are listed on [GitHub Releases](https://github.com/modakbul-gongbang/hide/releases); a draft or a successful package build is not a public download.
+Published builds are listed on [GitHub Releases](https://github.com/with-hide/hide/releases); a draft or a successful package build is not a public download.
 To build locally, install a Rust toolchain with Rust 2024 support, Node.js 22.12.0 or later and pnpm 10, then:
 
 ```sh
-git clone https://github.com/modakbul-gongbang/hide.git
+git clone https://github.com/with-hide/hide.git
 cd hide
 pnpm install --frozen-lockfile
 HIDE_VERSION=0.0.0-local pnpm --dir desktop package
@@ -133,7 +133,7 @@ Repository map:
 - `hide-agent-hooks/`, `hide-ai/`, `hide-herdr-client/`, `hide-host/`, `hide-memory/`, `hide-project/`, `hide-session/` - supporting Rust crates.
 - `plugins/` - Herdr plugins shipped from this repository.
 - `contracts/` - the pinned Herdr protocol contract.
-- `assets/pet-theme/` - artwork kept for a future Electron feature ([issue #184](https://github.com/modakbul-gongbang/hide/issues/184)); the current app does not use it.
+- `assets/pet-theme/` - artwork kept for a future Electron feature ([issue #184](https://github.com/with-hide/hide/issues/184)); the current app does not use it.
 - `docs/` - [current documentation map](docs/README.md), with runtime guides separated from historical and visual references.
 
 Before visual verification, read [Which app is actually running](docs/dev-runtime.md) and [Verification](docs/VERIFICATION.md).
