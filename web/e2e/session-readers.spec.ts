@@ -279,7 +279,8 @@ test("OpenCode's root session titles its row, waits on its question and wakes by
     await reportOpenCodeState(herdr, sourcePane, "idle");
     await expect.poll(question, { message: "the answer cleared the question", timeout: 30_000 }).toBeUndefined();
 
-    await row.click();
+    // The answered turn is an unread completion, so the row is raised under Done as well.
+    await row.first().click();
     await page.locator(`[data-pane-menu="${sourcePane}"]`).click();
     await dumpOnFailure("OpenCode sleep native proof", nativeReadState, () =>
       expect(page.locator('[data-menu-item="sleep_agent"]')).toBeEnabled({ timeout: 20_000 }));
