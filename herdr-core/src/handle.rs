@@ -261,6 +261,8 @@ impl Core {
         )));
         let notifier = ChangeNotifier::new();
         lock_recover(&runtime).install_worker_context(Arc::downgrade(&runtime), notifier.clone());
+        lock_recover(&runtime).set_guardrails_own_file(options.account_state_folder);
+        lock_recover(&runtime).publish_own_guardrail_policy();
         lock_recover(&runtime).set_terminals(terminals);
         // Started before anything can attach, so no report waits on it.
         let terminal_reports = match crate::terminal_reports::ReportPump::spawn(
@@ -612,7 +614,15 @@ impl Core {
         if !check_owner_thread(self, "effects.release") {
             return false;
         }
-        let released = lock_recover(&self.runtime).release_effects();
+        let released = {
+            let mut runtime = lock_recover(&self.runtime);
+            let released = runtime.release_effects();
+            if released {
+                // A held core wrote no policy at its start.
+                runtime.publish_own_guardrail_policy();
+            }
+            released
+        };
         if released {
             notify_change(self);
         }

@@ -22,6 +22,7 @@ mod editor;
 mod events;
 mod factory;
 mod first_run;
+mod guardrails;
 mod home;
 mod hosts;
 mod inbound;
@@ -1132,6 +1133,7 @@ pub struct Runtime {
     state_save_active: bool,
     state_save_worker: Option<thread::JoinHandle<()>>,
     project_settings_pending: BTreeMap<String, project_settings::Pending>,
+    guardrails: guardrails::GuardrailsWork,
     /// Where the SSH config that names each registered device's host lives;
     /// `None` when the process has no usable HOME, which every connect then
     /// reports rather than guessing a path.
@@ -2171,6 +2173,7 @@ impl Runtime {
             state_save_active: false,
             state_save_worker: None,
             project_settings_pending: BTreeMap::new(),
+            guardrails: guardrails::GuardrailsWork::default(),
             pet_active_at_unix_ms: unix_milliseconds(),
             agent_worked_at_unix_ms: 0,
             pet_waking_until_unix_ms: 0,

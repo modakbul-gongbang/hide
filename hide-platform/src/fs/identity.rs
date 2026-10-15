@@ -117,18 +117,29 @@ pub fn path_of(handle: &impl Handle) -> io::Result<PathBuf> {
 /// answered by making a file in it and looking it up under a swapped name,
 /// which needs the folder to be writable.
 pub fn case_sensitive(folder: &Path) -> io::Result<bool> {
+    match case_sensitive_by_entries(folder)? {
+        Some(sensitive) => Ok(sensitive),
+        None => probe_case(folder),
+    }
+}
+
+/// [`case_sensitive`] from what `folder` already holds, writing nothing:
+/// `None` when none of its first entries has a cased letter in its name, so
+/// only a written probe could tell. For a reader that must not touch the
+/// folder, such as an agent hook in the operator's checkout.
+pub fn case_sensitive_by_entries(folder: &Path) -> io::Result<Option<bool>> {
     for entry in fs::read_dir(folder)?.take(PROBE_ENTRIES) {
         let name = entry?.file_name();
         let Some(swapped) = name.to_str().and_then(swap_case) else {
             continue;
         };
         return match file_id_nofollow(&folder.join(&swapped)) {
-            Ok(found) => Ok(found != file_id_nofollow(&folder.join(&name))?),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+            Ok(found) => Ok(Some(found != file_id_nofollow(&folder.join(&name))?)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Some(true)),
             Err(error) => Err(error),
         };
     }
-    probe_case(folder)
+    Ok(None)
 }
 
 /// How many entries are looked at for one with a cased name before the folder

@@ -412,6 +412,7 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
         local_issues_path: None,
         effects_held: false,
         machine_name: None,
+        account_state_folder: false,
     };
     let restarted = Runtime::new(
         options,

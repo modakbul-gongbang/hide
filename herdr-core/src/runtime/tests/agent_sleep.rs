@@ -1463,6 +1463,7 @@ fn the_sleep_setting_survives_a_restart_and_a_ui_state_update() {
             local_issues_path: None,
             effects_held: false,
             machine_name: None,
+            account_state_folder: false,
         },
         environment::EnvironmentReport {
             statuses: Vec::new(),

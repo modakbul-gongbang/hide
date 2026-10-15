@@ -3764,6 +3764,7 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
                 local_issues_path: None,
                 effects_held: false,
                 machine_name: None,
+                account_state_folder: false,
             },
             environment::EnvironmentReport {
                 statuses: vec![],

@@ -289,6 +289,30 @@ pub fn is_wire_absolute(path: &str) -> bool {
     path.starts_with('/') || windows::drive_rest(path).is_some()
 }
 
+/// The Windows path a POSIX shell word names on Windows, where Git Bash
+/// (MSYS2) and Cygwin mount each drive at `/c` and `/cygdrive/c`:
+/// `/c/work/x` is `C:\work\x`. `None` for a word that names no drive mount.
+/// It reads the spelling only, so every system checks it; a Windows caller
+/// applies it to the words a shell line names.
+pub fn shell_drive_path(word: &str) -> Option<String> {
+    let mounted = word
+        .strip_prefix("/cygdrive")
+        .filter(|rest| rest.starts_with('/'))
+        .unwrap_or(word);
+    let rest = mounted.strip_prefix('/')?;
+    let mut letters = rest.chars();
+    let drive = letters.next().filter(char::is_ascii_alphabetic)?;
+    let below = letters.as_str();
+    if !(below.is_empty() || below.starts_with('/')) {
+        return None;
+    }
+    Some(format!(
+        "{}:\\{}",
+        drive.to_ascii_uppercase(),
+        below.trim_start_matches('/').replace('/', "\\")
+    ))
+}
+
 /// The last name of a wire spelling, absolute or relative, by names alone;
 /// the whole spelling when it has no `/` after its first letter.
 pub fn wire_name(path: &str) -> &str {

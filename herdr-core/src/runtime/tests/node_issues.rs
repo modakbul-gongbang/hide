@@ -78,6 +78,11 @@ impl Recording {
 
 impl NodeLink for Recording {
     fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
+        // Each machine's guardrails policy is written when the core starts
+        // and a device connects; that is not a project's work.
+        if matches!(call, Call::GuardrailPolicy { .. }) {
+            return Ok(LinkAnswer::Parsed(serde_json::Value::Null));
+        }
         self.calls.lock().unwrap().push(call.clone());
         if let Some((kind, answered)) = self.lost.lock().unwrap().as_mut()
             && format!("{call:?}").starts_with(*kind)

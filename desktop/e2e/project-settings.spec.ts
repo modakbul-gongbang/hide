@@ -16,16 +16,14 @@ import { fitWindow, isolate, launch, screenshot, test } from "./fixture";
 test("Project settings keep confirmed values through a failed save and restart", async () => {
   const herdr = await startHerdr({ agents: false });
   const run = isolate(herdr, "project-settings");
+  fs.mkdirSync(run.env.XDG_STATE_HOME!, { recursive: true }); run.env.HIDE_STATE_DIR = path.join(run.env.XDG_STATE_HOME!, "hide"); // The account's own folder: only a core there writes the guardrails policy.
   let app: ElectronApplication | null = null;
   try {
     const repo = path.join(run.env.HOME!, "projects", "sample");
     fs.mkdirSync(repo);
     initGithubRepository(repo);
     // gh as a logged-out account answers it: exit 4 and its sign-in hint.
-    fixtureProgram(path.join(herdr.root, "bin"), "gh", `
-console.error("To get started with GitHub CLI, please run:  gh auth login");
-process.exit(4);
-`);
+    fixtureProgram(path.join(herdr.root, "bin"), "gh", `console.error("To get started with GitHub CLI, please run:  gh auth login"); process.exit(4);`);
     fs.writeFileSync(path.join(repo, "README.md"), "Fixture\n");
     execFileSync("git", ["add", "README.md"], { cwd: repo });
     execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "Initial"], { cwd: repo });
@@ -70,7 +68,15 @@ process.exit(4);
     await sheet.getByRole("button", { name: "Try again" }).click();
     await expect(connection).toContainText("Detect automatically");
     await sheet.getByRole("tab", { name: "Working style" }).click();
-    await expect(sheet).toContainText("Unsupported");
+    // A protection is Saved once this machine's hooks can read it (PRD agent-guardrails B3, B31).
+    const guarded = () => (JSON.parse(fs.readFileSync(path.join(run.env.HOME!, ".hide", "agent-hooks", "guardrails.json"), "utf8")) as { projects: { root: string; rules: { files: boolean; paths: string[] } }[] }).projects;
+    await expect.poll(() => guarded()).toEqual([]);
+    await sheet.getByRole("switch", { name: "Guard files", exact: true }).click();
+    await expect(sheet.locator('[data-project-guard="files"]')).toContainText("Saved");
+    expect(guarded().map((project) => [project.root, project.rules.files, project.rules.paths])).toEqual([[repo, true, [".env", ".env.*", "*.pem", "*.key", "~/.ssh/"]]]);
+    // Escape leaves the path field and keeps the sheet.
+    await sheet.getByRole("button", { name: "Add path" }).click(); await page.keyboard.press("Escape");
+    await expect(sheet.getByRole("button", { name: "Add path" })).toBeFocused();
     const location = sheet.getByRole("combobox", { name: "Start new work in" });
     await expect(location).toContainText("Existing checkout");
     // A real atomic-replacement failure, confined to this fixture's state file.
