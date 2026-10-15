@@ -88,6 +88,13 @@ impl Local {
         self
     }
 
+    /// The node keeps View feedback screenshots and letter attachments under
+    /// `state`, the daemon's state folder (`hide_host::feedback`).
+    pub fn keeping_feedback_in(mut self, state: std::path::PathBuf) -> Self {
+        self.env.state = Some(state);
+        self
+    }
+
     /// The node answers for an account whose panes start `shell`, rather
     /// than the one this process's environment names.
     pub fn with_shell(mut self, shell: hide_host::shell_integration::UserShell) -> Self {

@@ -98,6 +98,10 @@ pub(super) struct BrowserOpenPayload {
     workspace: Option<ViewWorkspace>,
     #[serde(default)]
     pane_id: Option<String>,
+    /// The agent pane whose terminal link the operator clicked: the page is
+    /// that agent's (PRD view-opener-feedback D-02).
+    #[serde(default)]
+    opener_pane: Option<String>,
     /// Names the receipt in `status.browser_opens` the sender waits for.
     #[serde(default)]
     request_id: Option<String>,
@@ -180,6 +184,8 @@ struct DisplayFacts<'a> {
     tabs: HashMap<&'a str, &'a EditorTabSnapshot>,
     /// Why the Workspace's root cannot be read yet.
     wait: Option<String>,
+    /// The checkout's comments, which each display counts its own of.
+    feedback: Option<&'a crate::view_feedback::Feedback>,
 }
 
 /// Where a document being read shows once it lands: the Workspace and the
@@ -1224,6 +1230,7 @@ impl Runtime {
             }
             Ok(((), changed))
         })?;
+        self.claim_view_opener(key, path, kind, committed);
         Ok(true)
     }
 
@@ -1259,6 +1266,35 @@ impl Runtime {
     }
 
     fn try_place_document(
+        &mut self,
+        key: &WorkspaceKey,
+        tab_id: &str,
+        preview: bool,
+        beside: bool,
+        area: Option<&str>,
+        replace: Option<&str>,
+    ) -> Result<bool, LayoutError> {
+        let placed = self.try_place_document_at(key, tab_id, preview, beside, area, replace)?;
+        let shown = self
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .and_then(|tab| {
+                Some((
+                    tab.path.clone(),
+                    display_kind(tab.kind)?,
+                    tab.diff_committed,
+                ))
+            });
+        let claimed = shown.is_some_and(|(path, kind, committed)| {
+            self.claim_view_opener(key, &path, kind, committed)
+        });
+        Ok(placed || claimed)
+    }
+
+    fn try_place_document_at(
         &mut self,
         key: &WorkspaceKey,
         tab_id: &str,
@@ -1336,6 +1372,7 @@ impl Runtime {
                 display.title = None;
                 display.load = 0;
                 display.preview = false;
+                display.opener = None;
                 layout.focus(id, stamp)?;
                 Ok(((), true))
             });
@@ -1377,6 +1414,9 @@ impl Runtime {
                     display.kind = kind;
                     display.committed =
                         (kind == DisplayKind::Diff).then_some(committed.unwrap_or(false));
+                    // The preview shows another document now, opened by
+                    // whoever opens it.
+                    display.opener = None;
                     layout.focus(slot_id, stamp)?;
                 }
                 // A document with unsaved work keeps its display, opened for
@@ -1743,10 +1783,14 @@ impl Runtime {
             reveal,
             workspace,
             pane_id,
+            opener_pane,
             request_id,
             area_id,
             beside_display,
         } = payload;
+        let opener = opener_pane
+            .as_deref()
+            .and_then(|pane| self.opener_of_pane(pane));
         let outcome = self.place_browser(
             &url,
             workspace,
@@ -1754,6 +1798,7 @@ impl Runtime {
             area_id.as_deref(),
             beside_display.as_deref(),
             reveal,
+            opener,
         );
         if let Err(refusal) = &outcome {
             self.set_error(refusal.kind, refusal.message.clone(), false);
@@ -1786,6 +1831,7 @@ impl Runtime {
         true
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn place_browser(
         &mut self,
         url: &str,
@@ -1794,6 +1840,7 @@ impl Runtime {
         area_id: Option<&str>,
         beside_display: Option<&str>,
         reveal: bool,
+        opener: Option<crate::view_feedback::Opener>,
     ) -> Result<(WorkspaceKey, String), LayoutRefusal> {
         if !self.separate_view_areas() {
             return Err(browser_refusal("This shell does not draw View areas"));
@@ -1879,10 +1926,14 @@ impl Runtime {
                     layout.focus(&display_id, stamp)?;
                     if let Some(display) = layout.display_mut(&display_id) {
                         display.load = load;
+                        if opener.is_some() {
+                            display.opener = opener;
+                        }
                     }
                     return Ok((display_id, true));
                 }
-                let display = layout.new_browser_display(url, load);
+                let mut display = layout.new_browser_display(url, load);
+                display.opener = opener;
                 let display_id = display.id.clone();
                 // A page's own new tab stands beside that page (Open to the
                 // side's order): in the area next to it, else, its area being
@@ -1940,7 +1991,12 @@ impl Runtime {
 
     /// `view_layout` navigate: the operator's own address in a browser
     /// display's toolbar, which its page loads.
-    fn navigate_browser(&mut self, key: &WorkspaceKey, display_id: &str, url: String) -> bool {
+    pub(super) fn navigate_browser(
+        &mut self,
+        key: &WorkspaceKey,
+        display_id: &str,
+        url: String,
+    ) -> bool {
         if !browser_address(&url) {
             self.set_error("browser.navigate_refused", UNLOADABLE_ADDRESS, false);
             return true;
@@ -1955,6 +2011,9 @@ impl Runtime {
             if changed {
                 display.url = Some(url);
                 display.title = None;
+                // The operator's own address makes the page the operator's
+                // (D-03, B4).
+                display.opener = None;
             }
             display.load = load;
             Ok(((), changed))
@@ -2779,6 +2838,12 @@ impl Runtime {
                 .map(|tab| (tab.id.as_str(), tab))
                 .collect(),
             wait: self.view_root_wait(key),
+            feedback: self
+                .workspace_views
+                .as_ref()
+                .and_then(|store| store.views.get(&key.0, &key.1))
+                .map(|view| &view.feedback)
+                .filter(|feedback| !feedback.comments.is_empty()),
         }
     }
 
@@ -2868,6 +2933,19 @@ impl Runtime {
                             .tab_id
                             .as_deref()
                             .and_then(|id| facts.tabs.get(id).copied());
+                        let (comments, not_delivered) =
+                            facts.feedback.map_or((0, 0), |feedback| {
+                                feedback.on(display).fold((0, 0), |(all, expired), comment| {
+                                    (
+                                        all + 1,
+                                        expired
+                                            + usize::from(matches!(
+                                                comment.state,
+                                                crate::view_feedback::CommentState::NotDelivered { .. }
+                                            )),
+                                    )
+                                })
+                            });
                         ViewDisplaySnapshot {
                             id: display.id.clone(),
                             tab_id: tab.map(|tab| tab.id.clone()),
@@ -2889,6 +2967,12 @@ impl Runtime {
                             url: display.url.clone(),
                             title: display.title.clone(),
                             load: display.load,
+                            opener: display
+                                .opener
+                                .as_ref()
+                                .map(|opener| self.view_opener_snapshot(opener)),
+                            comments,
+                            not_delivered,
                         }
                     })
                     .collect(),

@@ -137,6 +137,10 @@ pub struct WorkspaceView {
     pub view_presentations: BTreeMap<String, Presentation>,
     /// Checkout-wide identity high water mark, including retired layouts.
     pub view_next_id: u64,
+    /// The operator's comments on this checkout's Views (PRD
+    /// view-opener-feedback D-13). Left out of the file while empty.
+    #[serde(skip_serializing_if = "crate::view_feedback::Feedback::is_empty")]
+    pub feedback: crate::view_feedback::Feedback,
 }
 
 /// One Agent tab's View list, layout and selection (PRD tab-view-bookmark).
@@ -181,6 +185,8 @@ struct StoredLane {
     view_presentations: BTreeMap<String, Presentation>,
     #[serde(default)]
     view_next_id: u64,
+    #[serde(default)]
+    feedback: crate::view_feedback::Feedback,
 }
 
 impl StoredLane {
@@ -200,6 +206,7 @@ impl StoredLane {
             view_owner: self.view_owner,
             view_presentations: self.view_presentations,
             view_next_id: self.view_next_id,
+            feedback: self.feedback,
         }
     }
 }
@@ -280,6 +287,7 @@ impl StoredColumns {
             view_owner: self.view_owner,
             view_presentations: self.view_presentations,
             view_next_id: self.view_next_id,
+            feedback: Default::default(),
         }
     }
 }
@@ -530,6 +538,7 @@ impl WorkspaceView {
             view_owner: None,
             view_presentations: BTreeMap::new(),
             view_next_id: 2,
+            feedback: Default::default(),
         }
     }
 
@@ -838,6 +847,9 @@ fn settle(
         }
         if view.view_owner.is_some() || !view.view_presentations.is_empty() {
             view.view_next_id = view.next_view_identity();
+        }
+        for note in view.feedback.repair() {
+            repairs.push(format!("{} on {}: {note}", view.path, view.device_id));
         }
         // A bookmark names the areas the repaired layout still has.
         let layout = &view.layout;

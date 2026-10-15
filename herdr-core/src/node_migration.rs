@@ -424,8 +424,30 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
     (
         WORKSPACE_VIEWS,
         "/workspaces/*/layout",
-        Mechanism::Owned,
-        Moves::Stays,
+        Mechanism::Rewritten,
+        Moves::Whole,
+    ),
+    // A View's opener names its agent's machine at any depth of a layout
+    // tree, the current one's or a parked presentation's (`reown`, openers);
+    // the comments name their recipient's and their screenshot's machine
+    // (PRD view-opener-feedback D-23).
+    (
+        WORKSPACE_VIEWS,
+        "/workspaces/*/feedback/comments/*/recipient/device_id",
+        Mechanism::Rewritten,
+        Moves::Device,
+    ),
+    (
+        WORKSPACE_VIEWS,
+        "/workspaces/*/feedback/comments/*/shot/node",
+        Mechanism::Rewritten,
+        Moves::Device,
+    ),
+    (
+        WORKSPACE_VIEWS,
+        "/workspaces/*/feedback/waiting/*/to/device_id",
+        Mechanism::Rewritten,
+        Moves::Device,
     ),
     (
         LABELS,
@@ -1077,6 +1099,69 @@ fn convert_workspace_views(value: &mut Value, node: &str, _: &BTreeMap<String, S
     let mut changed = false;
     for row in each(value, "workspaces") {
         changed |= rewrite(row.get_mut("device_id"), node);
+        changed |= each_opener(row, &mut |device| rewrite(Some(device), node));
+        if let Some(feedback) = row.get_mut("feedback") {
+            for comment in each(feedback, "comments") {
+                changed |= rewrite(
+                    comment
+                        .get_mut("recipient")
+                        .and_then(|recipient| recipient.get_mut("device_id")),
+                    node,
+                );
+                changed |= rewrite(
+                    comment
+                        .get_mut("shot")
+                        .and_then(|shot| shot.get_mut("node")),
+                    node,
+                );
+            }
+            for send in each(feedback, "waiting") {
+                changed |= rewrite(
+                    send.get_mut("to").and_then(|to| to.get_mut("device_id")),
+                    node,
+                );
+            }
+        }
+    }
+    changed
+}
+
+/// Calls `change` with every View opener's machine in one Workspace's
+/// layouts, the current one and each parked presentation, at any depth.
+pub(crate) fn each_opener(view: &mut Value, change: &mut dyn FnMut(&mut Value) -> bool) -> bool {
+    fn walk(value: &mut Value, change: &mut dyn FnMut(&mut Value) -> bool) -> bool {
+        match value {
+            Value::Object(map) => {
+                let mut changed = false;
+                for (key, entry) in map.iter_mut() {
+                    if key == "opener" {
+                        if let Some(device) = entry.get_mut("device_id") {
+                            changed |= change(device);
+                        }
+                    } else {
+                        changed |= walk(entry, change);
+                    }
+                }
+                changed
+            }
+            Value::Array(items) => items
+                .iter_mut()
+                .fold(false, |changed, item| walk(item, change) | changed),
+            _ => false,
+        }
+    }
+    let mut changed = view
+        .get_mut("layout")
+        .is_some_and(|layout| walk(layout, change));
+    if let Some(presentations) = view
+        .get_mut("view_presentations")
+        .and_then(Value::as_object_mut)
+    {
+        for presentation in presentations.values_mut() {
+            if let Some(layout) = presentation.get_mut("layout") {
+                changed |= walk(layout, change);
+            }
+        }
     }
     changed
 }
@@ -1318,7 +1403,8 @@ mod tests {
         write(
             WORKSPACE_VIEWS,
             json!({"schema_version": 2, "workspaces": [
-                {"device_id": "local", "path": root, "agent_layout": {"tabs": ["w1:t1"]}, "view_bookmarks": {"w1:t1": {"area-1": "display-1"}}, "view_owner": "w1:t1", "view_presentations": {"w1:t1": {"views": false, "layout": {"root": {}}}}, "layout": {"root": {}}},
+                {"device_id": "local", "path": root, "agent_layout": {"tabs": ["w1:t1"]}, "view_bookmarks": {"w1:t1": {"area-1": "display-1"}}, "view_owner": "w1:t1", "view_presentations": {"w1:t1": {"views": false, "layout": {"root": {"area": {"displays": [{"id": "d2", "opener": {"device_id": "local", "terminal_id": "t2"}}]}}}}}, "layout": {"root": {"area": {"displays": [{"id": "d1", "opener": {"device_id": "local", "terminal_id": "t1"}}]}}},
+                 "feedback": {"comments": [{"id": "c2", "recipient": {"device_id": "local"}, "shot": {"node": "local", "name": "shot.png"}}], "waiting": [{"to": {"device_id": "local"}}]}},
                 {"device_id": "mini", "path": "/srv/p"},
             ]}),
         );

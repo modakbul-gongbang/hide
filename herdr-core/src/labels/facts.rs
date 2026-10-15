@@ -262,6 +262,10 @@ impl SessionFacts {
     /// Work is given by the operator for roots, and by the parent for
     /// delegated sessions. Reuse the kept input verdict and canonical letter.
     pub(crate) fn feeds_work(&self, event: &LabelEvent, parent: Option<&str>) -> bool {
+        // The operator's View feedback is the operator's own prompt (D-12).
+        if hide_session::envelope_from_operator(&event.text) {
+            return parent.is_none();
+        }
         if let Some((sender, kind)) = hide_session::envelope_header(&event.text) {
             return parent == Some(sender.as_str()) && kind == "request";
         }
@@ -363,6 +367,11 @@ pub(crate) struct LogTarget<'a> {
 }
 
 fn judge(event: &LabelEvent, input: &mut InputView<'_>, log: &LogTarget<'_>) -> Requester {
+    // A letter the operator's Send made reads as the operator's request
+    // (PRD view-opener-feedback D-11).
+    if event.sender.is_some() && hide_session::envelope_from_operator(&event.text) {
+        return Requester::Operator;
+    }
     if let Some(sender) = event.sender.as_ref() {
         return Requester::Named(sender.clone());
     }

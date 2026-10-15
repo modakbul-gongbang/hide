@@ -46,7 +46,7 @@ mod sqlite;
 pub mod turns;
 pub mod usage;
 
-pub use envelope::{envelope_header, envelope_sender};
+pub use envelope::{envelope_from_operator, envelope_header, envelope_sender};
 pub use sightings::{
     MAX_SIGHTINGS_PER_OUTPUT, PrSighting, issue_addresses, pull_request_addresses,
 };

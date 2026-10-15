@@ -379,6 +379,16 @@ impl Mapper<'_> {
                     if let Some(layout) = view.get_mut("agent_layout") {
                         self.agent_layout(layout);
                     }
+                    super::each_opener(view, &mut |device| match device
+                        .as_str()
+                        .map(|id| self.map(Moves::Device, id))
+                    {
+                        Some(Mapped::To(id)) => {
+                            *device = Value::String(id);
+                            true
+                        }
+                        _ => false,
+                    });
                 }
                 Ok(())
             }
@@ -1087,6 +1097,14 @@ mod tests {
             }),
         );
         let tabs = before("tab");
+        let feedback_comments: Vec<Value> = [M, ALIAS, X]
+            .iter()
+            .map(|device| json!({"id": "c2", "recipient": {"device_id": device}, "shot": {"node": device, "name": "shot.png"}}))
+            .collect();
+        let feedback_waiting: Vec<Value> = [M, ALIAS, X]
+            .iter()
+            .map(|device| json!({"to": {"device_id": device}}))
+            .collect();
         let layout = |tab: &str| {
             json!({
                 "root": {"split": {"id": "s1", "axis": "horizontal", "ratio": 0.5,
@@ -1099,7 +1117,10 @@ mod tests {
             WORKSPACE_VIEWS,
             json!({"schema_version": 2, "workspaces": [
                 {"device_id": M, "path": M_ROOT, "agent_layout": layout(&tabs[0]),
-                 "view_bookmarks": {tabs[0].clone(): {"a1": "d1"}}, "view_owner": tabs[0], "view_presentations": {tabs[0].clone(): {"views": false, "layout": {"root": {"area": {"id": "a3"}}}}}, "layout": {"root": {"area": {"id": "a1"}}}},
+                 "view_bookmarks": {tabs[0].clone(): {"a1": "d1"}}, "view_owner": tabs[0], "view_presentations": {tabs[0].clone(): {"views": false, "layout": {"root": {"area": {"id": "a3", "displays": [{"id": "d5", "opener": {"device_id": ALIAS, "terminal_id": "t5"}}]}}}}},
+                 "layout": {"root": {"split": {"id": "s1", "first": {"area": {"id": "a1", "displays": [{"id": "d1", "opener": {"device_id": M, "terminal_id": "t1"}}]}},
+                     "second": {"area": {"id": "a2", "displays": [{"id": "d2", "opener": {"device_id": ALIAS, "terminal_id": "t2"}}, {"id": "d3", "opener": {"device_id": X, "terminal_id": "t3"}}]}}}}},
+                 "feedback": {"comments": feedback_comments, "waiting": feedback_waiting}},
                 {"device_id": ALIAS, "path": C_ROOT, "agent_layout": layout(&tabs[1]),
                  "view_bookmarks": {tabs[1].clone(): {"a1": "d2"}}, "view_owner": tabs[1], "view_presentations": {tabs[1].clone(): {"views": true, "layout": {}}}, "layout": {}},
                 {"device_id": X, "path": X_ROOT, "agent_layout": layout(&tabs[2]),
@@ -1277,6 +1298,27 @@ mod tests {
             )
         );
         let views = read(&state.join(WORKSPACE_VIEWS));
+        // A View's opener on the mini names it by the new owner's node id,
+        // wherever in a layout it sits (PRD view-opener-feedback B41).
+        let mac_views = &views["workspaces"][0];
+        let split = &mac_views["layout"]["root"]["split"];
+        assert_eq!(
+            split["first"]["area"]["displays"][0]["opener"]["device_id"],
+            json!(M)
+        );
+        assert_eq!(
+            split["second"]["area"]["displays"][0]["opener"]["device_id"],
+            json!(C)
+        );
+        assert_eq!(
+            split["second"]["area"]["displays"][1]["opener"]["device_id"],
+            json!(X)
+        );
+        assert_eq!(
+            mac_views["view_presentations"][&shapes("tab")[0].1]["layout"]["root"]["area"]["displays"]
+                [0]["opener"]["device_id"],
+            json!(C)
+        );
         let mac = &views["workspaces"][0]["agent_layout"];
         let tab = format!("remote:{M}:tab:w1:t1");
         assert_eq!(mac["root"]["split"]["first"]["area"]["active"], json!(tab));

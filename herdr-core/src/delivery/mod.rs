@@ -55,6 +55,14 @@ pub const HIDE_KIND: &str = "hide";
 pub const HIDE_PREFIX: &str = "hide:";
 /// The one role Hide starts agents as today.
 pub const HIDE_MEMORY_ROLE: &str = "memory";
+/// The kind of the operator's own code-owned identity: the sender of the
+/// feedback letters the desktop app's Send makes from the operator's View
+/// comments (PRD view-opener-feedback D-17). It has no pane, reads no
+/// letters and is constructed only by the core, for the shell's own Send.
+pub const OPERATOR_KIND: &str = "operator";
+pub const OPERATOR_PREFIX: &str = "operator:";
+/// The one operator identity: the person at the screen.
+pub const OPERATOR_NAME: &str = "operator";
 /// A watch whose observer is a Factory warns after this long (PRD
 /// software-factory, Technical structure: the window is per watch).
 pub const FACTORY_INACTIVITY_MS: u64 = 30 * 60_000;
@@ -84,11 +92,30 @@ impl Actor {
         }
     }
 
-    /// Whether this is a code-owned identity (a Factory's or Hide's own)
-    /// rather than a pane's.
+    /// The operator's own code-owned identity on `node`, the core's own:
+    /// the sender of a feedback letter (PRD view-opener-feedback D-17).
+    pub fn operator(node: &str) -> Self {
+        let pane_id = format!("{OPERATOR_PREFIX}screen");
+        Self {
+            pane_id: pane_id.clone(),
+            name: OPERATOR_NAME.into(),
+            kind: OPERATOR_KIND.into(),
+            device_id: node.into(),
+            session: crate::wire::session_digest(&pane_id),
+        }
+    }
+
+    /// Whether this is a code-owned identity (a Factory's, Hide's own or the
+    /// operator's) rather than a pane's.
     pub fn code_owned(&self) -> bool {
         (self.kind == FACTORY_KIND && self.pane_id.starts_with(FACTORY_PREFIX))
             || (self.kind == HIDE_KIND && self.pane_id.starts_with(HIDE_PREFIX))
+            || self.operator_owned()
+    }
+
+    /// Whether this is the operator's own identity.
+    pub fn operator_owned(&self) -> bool {
+        self.kind == OPERATOR_KIND && self.pane_id.starts_with(OPERATOR_PREFIX)
     }
 
     /// Whether this is Hide's own code-owned identity, the origin of the work
@@ -122,10 +149,13 @@ impl Actor {
     }
 }
 
-/// A name or pane a pane may never claim: it would read as a Factory or as
-/// Hide itself.
+/// A name or pane a pane may never claim: it would read as a Factory, as
+/// Hide itself or as the operator.
 pub(crate) fn reserved_name(value: &str) -> bool {
-    value.starts_with(FACTORY_PREFIX) || value.starts_with(HIDE_PREFIX)
+    value.starts_with(FACTORY_PREFIX)
+        || value.starts_with(HIDE_PREFIX)
+        || value.starts_with(OPERATOR_PREFIX)
+        || value == OPERATOR_NAME
 }
 
 /// A pane's native session as a letter pull or a Factory question guard names

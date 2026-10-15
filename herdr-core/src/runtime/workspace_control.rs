@@ -428,6 +428,9 @@ impl Runtime {
             })();
             match &mut applied {
                 Ok(done) => {
+                    // Marked before the presentation is parked back, so the
+                    // mark lands in the layout the View is in (D-02).
+                    self.stamp_control_opener(&key, pane_id, &projected_action, &done.view_id);
                     self.note_control_view(&key, pane_id, &action, &done.view_id, parked)?;
                     if calls_lane {
                         self.apply_area_intent_to(&key, AreaIntent::Files);

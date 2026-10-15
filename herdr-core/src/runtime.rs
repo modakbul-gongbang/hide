@@ -60,6 +60,7 @@ pub(crate) mod usage_ledger;
 mod usage_limit;
 mod view_areas;
 mod view_bookmarks;
+mod view_feedback;
 mod workspace_control;
 mod workspace_view;
 
@@ -1067,6 +1068,9 @@ pub struct Runtime {
     hide_started: crate::coordination::started::HideStarted,
     delivery_client: Option<crate::delivery::worker::Client>,
     delivery_observations: HashMap<String, delivery::Observation>,
+    /// View openers waiting for their document, Sends under way, and the
+    /// feedback worker (PRD view-opener-feedback).
+    view_feedback: view_feedback::FeedbackRuntime,
     /// Open Factories' code-owned recipients (`factory:<id>`), set by the
     /// Factory host; a letter to any other `factory:` name has no recipient.
     /// Each open Factory's id with its stall window (D-30, B24).
@@ -1971,6 +1975,7 @@ impl Runtime {
             delivery_ledger,
             delivery_client: None,
             delivery_observations: HashMap::new(),
+            view_feedback: view_feedback::FeedbackRuntime::default(),
             factory_recipients: std::collections::BTreeMap::new(),
             factory_screen: None,
             delivery_overflow: HashSet::new(),
