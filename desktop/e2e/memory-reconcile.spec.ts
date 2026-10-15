@@ -7,10 +7,12 @@ import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { countSent, showProjectRow, showTool } from "../../web/e2e/wire";
 import { isolate, launch, fitWindow, screenshot, test } from "./fixture";
 import { seedReconciliation } from "./memory-reconcile-fixture";
+import { progressGithub } from "./memory-progress-fixture";
 
 test("Memory compares sources, limits a batch and groups a confirmed PR", async () => {
   const herdr = await startHerdr({ agents: false });
   const run = isolate(herdr, "memory-docs");
+  progressGithub(herdr);
   let app: ElectronApplication | null = null;
   try {
     const repo = path.join(run.env.HOME!, "projects", "sample");
@@ -19,6 +21,7 @@ test("Memory compares sources, limits a batch and groups a confirmed PR", async 
     fs.writeFileSync(path.join(repo, "AGENTS.md"), "Use one unpooled connection per write.\n");
     execFileSync("git", ["add", "AGENTS.md"], { cwd: repo });
     execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "Initial guide"], { cwd: repo });
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/memory-fixture.git"], { cwd: repo });
     herdr.run(["workspace", "create", "--cwd", repo, "--label", "sample", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
     const launched = await launch(run.env);
     app = launched.app;
@@ -30,8 +33,10 @@ test("Memory compares sources, limits a batch and groups a confirmed PR", async 
     await expect(page.locator('[data-memory="off"]')).toBeVisible();
     await page.locator('[data-memory-switch="off"]').click();
     await expect(page.locator('[data-memory="on"]')).toBeVisible({ timeout: 30000 });
-    seedReconciliation(run);
+    seedReconciliation(run, "acme/memory-fixture");
     await page.reload();
+    await expect(page.locator('[data-workspace-screen]')).toBeVisible();
+    await expect(page.locator('[data-connection]')).toHaveCount(0);
     await showTool(page, "memory");
     const tab = page.locator('[data-lane="memory"]');
     await expect(tab.locator('[data-memory="on"]')).toBeVisible();
@@ -39,7 +44,7 @@ test("Memory compares sources, limits a batch and groups a confirmed PR", async 
     await expect(tab).toContainText("Personal");
     await expect(tab).toContainText("Outdated");
     await expect(tab.locator('[data-memory-select="3"]')).toBeDisabled();
-    const facts = { home: run.env.HOME, state: run.env.HIDE_STATE_DIR, socket: herdr.socket, fixture: "invented cards, no public remote", daemonPid: run.daemonPid(), capture: "candidate-window renderer via its own CDP; no OS capture" };
+    const facts = { home: run.env.HOME, state: run.env.HIDE_STATE_DIR, socket: herdr.socket, fixture: "invented cards and scripted GitHub facts; no network", daemonPid: run.daemonPid(), capture: "candidate-window renderer via its own CDP; no OS capture" };
     const candidate = await app.evaluate(({ BrowserWindow }) => ({ pid: process.pid, executable: process.execPath, windows: BrowserWindow.getAllWindows().length, visible: BrowserWindow.getAllWindows()[0]?.isVisible() }));
     expect(candidate.windows).toBe(1);
     if (process.env.HIDE_E2E_SCREENSHOT_DIR) fs.writeFileSync(path.join(process.env.HIDE_E2E_SCREENSHOT_DIR, "candidate.json"), JSON.stringify({ candidate, ...facts }, null, 2));
@@ -66,6 +71,11 @@ test("Memory compares sources, limits a batch and groups a confirmed PR", async 
     await expect(tab.locator('[data-memory-progress-detail="9"] [data-memory-preview]')).toHaveCount(2);
     await tab.locator('[data-memory-progress-detail="9"] [data-memory-open-pr="72"]').click();
     await expect(page.locator("[data-overview-screen]")).toBeVisible();
+    await expect(page.locator('[data-pr-panel="72"]')).toBeVisible();
+    // The existing Overview contract closes its inner PR panel first.
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[data-pr-panel="72"]')).toHaveCount(0);
+    await expect(page.locator('[data-overview-modal]')).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.locator('[role="dialog"]')).toHaveCount(0);
     // Return to this Memory after the existing PR navigation, then the light/narrow state.

@@ -25,6 +25,7 @@ pub(super) struct ActiveSearch {
     /// Which worker this is, so only its answer is taken as the running
     /// search's (`GithubSearchWork::runs`).
     pub(super) run: u64,
+    pub(super) invalidated: bool,
     /// The latest request the worker answers: a request for the same query
     /// joins it rather than starting another.
     pub(super) request: SearchRequest,
@@ -78,6 +79,7 @@ impl Runtime {
             &self.invalid_links,
         );
         let sources = self.snapshot.ui_state.project_issue_sources.clone();
+        let settings = self.snapshot.ui_state.project_settings.clone();
         let mut local_links = BTreeMap::new();
         for workspace in &mut self.snapshot.navigator.workspaces {
             if workspace.remote_target_id.is_some() || !workspace.is_git {
@@ -89,7 +91,12 @@ impl Runtime {
                 .map(|checkout| checkout.github.clone())
                 .unwrap_or_default();
             let local_source = crate::tasks::source_kind(
-                sources.get(&workspace.path).map(String::as_str),
+                crate::project_settings::issue_choice(
+                    &settings,
+                    &sources,
+                    self.node.as_str(),
+                    &workspace.path,
+                ),
                 workspace.is_git,
                 &workspace.home_issues,
                 &status,
@@ -107,9 +114,11 @@ impl Runtime {
                     continue;
                 }
                 let repository = workspace.home_issues.repository.as_deref();
+                let scope =
+                    crate::project_settings::get(&settings, self.node.as_str(), &workspace.path);
                 let session = sessions.get(&checkout.id).map(String::as_str);
                 let candidate =
-                    match links.checkout_link(session, checkout, local_source, repository) {
+                    match links.checkout_link(session, checkout, local_source, repository, scope) {
                         // A Local project's link is the same chain read as a
                         // local id; it names no GitHub issue.
                         Some(ChainLink::Local(number)) => {
@@ -174,6 +183,7 @@ impl Runtime {
     pub(super) fn sync_tasks(&mut self) -> bool {
         let mut changed = false;
         let sources = &self.snapshot.ui_state.project_issue_sources;
+        let settings = &self.snapshot.ui_state.project_settings;
         let store = &self.local_issues;
         for workspace in &mut self.snapshot.navigator.workspaces {
             if workspace.remote_target_id.is_some() {
@@ -181,7 +191,12 @@ impl Runtime {
                 // projected with its session (`project_node_issues`).
                 continue;
             }
-            let choice = sources.get(&workspace.path).map(String::as_str);
+            let choice = crate::project_settings::issue_choice(
+                settings,
+                sources,
+                self.node.as_str(),
+                &workspace.path,
+            );
             changed |= project_tasks(
                 workspace,
                 None,
@@ -639,11 +654,12 @@ impl Runtime {
             .map(|checkout| checkout.github.clone())
             .unwrap_or_default();
         crate::tasks::source_kind(
-            self.snapshot
-                .ui_state
-                .project_issue_sources
-                .get(&workspace.path)
-                .map(String::as_str),
+            crate::project_settings::issue_choice(
+                &self.snapshot.ui_state.project_settings,
+                &self.snapshot.ui_state.project_issue_sources,
+                &workspace.device_id,
+                &workspace.path,
+            ),
             workspace.is_git,
             &workspace.home_issues,
             &status,
@@ -687,6 +703,16 @@ impl Runtime {
         node: Option<&str>,
         root: &str,
     ) -> Result<crate::github::Where, String> {
+        if let Some(crate::project_settings::RepositoryConnection::Repository { repository }) =
+            crate::project_settings::get(
+                &self.snapshot.ui_state.project_settings,
+                node.unwrap_or(self.node.as_str()),
+                root,
+            )
+            .and_then(|record| record.repository.as_ref())
+        {
+            return Ok(crate::github::Where::Repository(repository.clone()));
+        }
         let Some(node) = node else {
             return Ok(crate::github::Where::Checkout(PathBuf::from(root)));
         };
@@ -972,10 +998,11 @@ impl Runtime {
             Some(node) => self.device_github.get_mut(node),
         };
         if let Some(project) = github.and_then(|github| {
-            github
-                .projects
-                .iter_mut()
-                .find(|project| project.root_path == project_path)
+            github.projects.iter_mut().find(|project| {
+                project.root_path == project_path
+                    && project.issues.repository.as_deref()
+                        == Some(issue.reference.repository.as_str())
+            })
         }) {
             project
                 .issues
@@ -1094,12 +1121,16 @@ impl Runtime {
             {
                 continue;
             }
-            let repository = workspace
-                .home_issues
-                .repository
-                .as_deref()
-                .filter(|repository| crate::issues::is_repository(repository))
-                .map(str::to_owned);
+            let node = on_node.then_some(workspace.device_id.as_str());
+            let repository = match self.github_place(node, &workspace.path) {
+                Ok(
+                    crate::github::Where::Repository(repository)
+                    | crate::github::Where::DeviceRepository { repository, .. },
+                ) => Some(repository),
+                Ok(crate::github::Where::Checkout(_)) => workspace.home_issues.repository.clone(),
+                Err(_) => None,
+            }
+            .filter(|repository| crate::issues::is_repository(repository));
             if on_node && repository.is_none() {
                 continue;
             }
@@ -1175,8 +1206,9 @@ impl Runtime {
         };
         match self.github_search.active.as_mut() {
             Some(active)
-                if active.request.request_id == request.request_id
-                    || active.request.query == request.query =>
+                if !active.invalidated
+                    && (active.request.request_id == request.request_id
+                        || active.request.query == request.query) =>
             {
                 active.request.request_id = request.request_id.clone();
                 self.github_search.pending = None;
@@ -1225,7 +1257,12 @@ impl Runtime {
             request.query.clone(),
         ));
         let query = request.query.clone();
-        self.github_search.active = Some(ActiveSearch { run, request, note });
+        self.github_search.active = Some(ActiveSearch {
+            run,
+            request,
+            note,
+            invalidated: false,
+        });
         let node = self.own_node();
         let spawned = self.spawn_issue_worker(
             "github-search",
@@ -1282,7 +1319,9 @@ impl Runtime {
         }
         let mut changed = false;
         if let Some(slot) = self.snapshot.issue_work.search.as_mut().filter(|slot| {
-            slot.request_id == finished.request.request_id && slot.phase == "working"
+            !finished.invalidated
+                && slot.request_id == finished.request.request_id
+                && slot.phase == "working"
         }) {
             let answered = match result {
                 Ok(results) => crate::model::GithubSearchSnapshot {
@@ -1577,13 +1616,29 @@ impl Runtime {
         let (read, _) = self.node_github_repositories(target);
         let unread = crate::issues::ProjectIssuesSnapshot::default();
         for workspace in &mut session.workspaces {
-            let found = github.and_then(|github| github.project(&workspace.path));
+            let effective_repository = match self.github_place(Some(target), &workspace.path) {
+                Ok(crate::github::Where::Repository(repository)) => Some(repository),
+                _ => None,
+            };
+            let asked_repository = effective_repository.as_ref();
+            let found = github
+                .and_then(|github| github.project(&workspace.path))
+                .filter(|found| {
+                    asked_repository.is_none_or(|repository| {
+                        found
+                            .issues
+                            .repository
+                            .as_ref()
+                            .is_none_or(|read| read.eq_ignore_ascii_case(repository))
+                    })
+                });
             let asked = read.iter().any(|(root, _)| *root == workspace.path);
             let status = node_github_status(
                 workspace.is_git,
                 listed.and_then(|listed| listed.projects.get(&workspace.path)),
                 found,
                 asked,
+                asked_repository.is_some(),
             );
             // The rows carry the issues as tasks; `home_issues` names only the
             // repository, which is all the shell reads of a node's. Before a
@@ -1591,17 +1646,25 @@ impl Runtime {
             // the repository the node named is it, as a local project's is
             // the one its worktree read named.
             let issues = found.map_or(&unread, |found| &found.issues);
-            let repository = issues.repository.clone().or_else(|| {
-                listed
-                    .and_then(|listed| listed.projects.get(&workspace.path))
-                    .and_then(|project| project.repository.clone())
-            });
+            let repository = asked_repository
+                .cloned()
+                .or_else(|| issues.repository.clone())
+                .or_else(|| {
+                    listed
+                        .and_then(|listed| listed.projects.get(&workspace.path))
+                        .and_then(|project| project.repository.clone())
+                });
             workspace.home_issues = crate::issues::ProjectIssuesSnapshot {
                 repository,
                 ..Default::default()
             };
             let notes = listed.and_then(|listed| listed.notes.get(&workspace.path));
-            let choice = sources.get(&workspace.path).map(String::as_str);
+            let choice = crate::project_settings::issue_choice(
+                &self.snapshot.ui_state.project_settings,
+                sources,
+                target,
+                &workspace.path,
+            );
             let local = crate::tasks::source_kind(
                 choice,
                 workspace.is_git,
@@ -1618,24 +1681,30 @@ impl Runtime {
                     .as_ref()
                     .and_then(|branch| notes?.get(branch)?.issue.clone());
                 let owner = checkout.owner_workspace_id.as_deref();
-                checkout.issue = match links.checkout_link(owner, checkout, local, repository) {
-                    Some(ChainLink::Local(number)) => {
-                        local_links.insert(checkout.id.clone(), number);
-                        None
-                    }
-                    Some(ChainLink::Github(candidate)) => {
-                        linked.insert(candidate.reference.clone());
-                        issues
-                            .issues
-                            .iter()
-                            .find(|issue| issue.reference == candidate.reference)
-                            .map(|issue| IssueLinkSnapshot {
-                                issue: issue.clone(),
-                                source: candidate.source,
-                            })
-                    }
-                    None => None,
-                };
+                let scope = crate::project_settings::get(
+                    &self.snapshot.ui_state.project_settings,
+                    target,
+                    &workspace.path,
+                );
+                checkout.issue =
+                    match links.checkout_link(owner, checkout, local, repository, scope) {
+                        Some(ChainLink::Local(number)) => {
+                            local_links.insert(checkout.id.clone(), number);
+                            None
+                        }
+                        Some(ChainLink::Github(candidate)) => {
+                            linked.insert(candidate.reference.clone());
+                            issues
+                                .issues
+                                .iter()
+                                .find(|issue| issue.reference == candidate.reference)
+                                .map(|issue| IssueLinkSnapshot {
+                                    issue: issue.clone(),
+                                    source: candidate.source,
+                                })
+                        }
+                        None => None,
+                    };
             }
             // What the node's GitHub read brings beside the open list: the
             // linked issues it leaves out, closed or in another repository.
@@ -1701,6 +1770,7 @@ impl<'a> LinkTokens<'a> {
         checkout: &crate::model::CheckoutSnapshot,
         local: bool,
         repository: Option<&str>,
+        scope: Option<&crate::project_settings::ProjectSettings>,
     ) -> Option<ChainLink> {
         let manual = session.and_then(|id| {
             self.workspaces.get(id).filter(|value| {
@@ -1716,6 +1786,28 @@ impl<'a> LinkTokens<'a> {
             .flat_map(|tab| tab.panes.iter().map(|pane| pane.id.clone()))
             .collect();
         let pane = pane_token(&self.family, &physical);
+        let bare_number = match manual.or(pane).or(checkout.branch_issue.as_ref()) {
+            Some(value) => value
+                .strip_prefix('#')
+                .and_then(|number| number.parse::<u32>().ok()),
+            None if checkout
+                .pull_request
+                .as_ref()
+                .is_none_or(|pr| pr.closing_issues.is_empty()) =>
+            {
+                checkout
+                    .branch
+                    .as_deref()
+                    .and_then(crate::issues::branch_number)
+            }
+            None => None,
+        };
+        let repository = scope
+            .and_then(|record| {
+                record.link_scope(&checkout.path, checkout.branch.as_deref(), bare_number?)
+            })
+            .map(|scope| scope.reference.repository.as_str())
+            .or(repository);
         chain_link(local, manual, pane, checkout, repository, self.invalid)
     }
 }
@@ -1947,6 +2039,7 @@ fn node_github_status(
     listed: Option<&crate::model::ProjectWorktreesSnapshot>,
     found: Option<&crate::model::GithubProjectSnapshot>,
     asked: bool,
+    has_repository: bool,
 ) -> crate::model::GithubStatusSnapshot {
     if let Some(found) = found {
         return found.status.clone();
@@ -1959,7 +2052,7 @@ fn node_github_status(
                 ..Default::default()
             }
         }
-        Some(listed) if is_git && listed.repository.is_none() => {
+        Some(listed) if is_git && listed.repository.is_none() && !has_repository => {
             // The answer a local project gets (`github::no_github_remote`):
             // nothing to draw, so no reason.
             crate::model::GithubStatusSnapshot {

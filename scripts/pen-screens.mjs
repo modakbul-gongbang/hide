@@ -40,6 +40,7 @@ import {factoryRows} from './pen-screens-factory.mjs';
 import {laneBoards} from './pen-screens-lane.mjs';
 import {onboardingBoards} from './pen-screens-onboarding.mjs';
 import {settingsBoards, settingsParts} from './pen-screens-settings.mjs';
+import {projectSettingsScreens} from './pen-screens-project-settings.mjs';
 import {sessionScreens} from './pen-screens-sessions.mjs';
 import {sessionWorkScreens} from './pen-screens-session-work.mjs';
 import {AGENT_TREE_MASTERS, PR_STATES} from './pen-agent-tree.mjs';
@@ -2218,9 +2219,14 @@ function buildWorkspace(tokens) {
     const toolbar = named(window, 'Shared Workspace toolbar');
     const [light0, light1, light2, title] = chrome.children;
     Object.assign(chrome, {name: 'Window top row: device', width: sidebar.x + sidebar.width, height: TOP, fill: '$--sidebar', strokeWidth: {bottom: '$--size-hairline', right: '$--size-hairline'}});
+    // The sidebar's switch opens the row a step after the lights, and the device name follows it (TitleRow.tsx).
+    const switchX = num(tokens, '--size-traffic-light-inset') + num(tokens, '--spacing-xs');
+    const control = num(tokens, '--size-control-sm');
+    const glyph = num(tokens, '--size-icon');
     chrome.children = [
       {...light0, x: 13, y: 10}, {...light1, x: 33, y: 10}, {...light2, x: 53, y: 10},
-      {...title, name: 'Device', content: 'This Mac', x: num(tokens, '--size-traffic-light-inset') + num(tokens, '--spacing-sm'), y: 8, fill: '$--foreground', fontSize: '$--text-subhead'},
+      {...icon(`${chrome.id}-switch`, 'panel-left', {size: glyph, fill: '$--subtle-foreground'}), name: 'Sidebar switch', x: switchX + (control - glyph) / 2, y: (TOP - glyph) / 2},
+      {...title, name: 'Device', content: 'This Mac', x: switchX + control + num(tokens, '--spacing-xs'), y: 8, fill: '$--foreground', fontSize: '$--text-subhead'},
     ];
     for (const column of [rail, sidebar]) Object.assign(column, {y: TOP, height: column.height - (TOP - OLD_TOP)});
     const header = named(sidebar, 'This Mac header');
@@ -2968,12 +2974,13 @@ function buildProjectsSidebar(tokens) {
     return node;
   }
 
-  // A tab is a segment of its checkout's agent list, not a level: a 1px guide
-  // centered under the checkout's kind glyph spans the segment's rows, and the
-  // gap between two guides is the tab boundary. A tab of two or more agents opens
-  // with one quiet 22px line inside the guide, the tab glyph on the status-mark
-  // column and its name (the manual one, else `Tab N`) on the title column
-  // (sidebar.tsx's TabSegmentHead); `name` is set exactly for such a tab.
+  // A tab is a segment of its checkout's agent list, not a level. A tab of two
+  // or more agents draws a 1px guide centered under the checkout's kind glyph
+  // spanning the segment's rows, and opens with one quiet 22px line inside the
+  // guide, the tab glyph on the status-mark column and its name (the manual
+  // one, else `Tab N`) on the title column (sidebar.tsx's TabSegmentHead);
+  // `name` is set exactly for such a tab. A single-agent tab draws no guide;
+  // the gap between segments is the tab boundary.
   function segment(id, {name = null, rows}) {
     const tabLine = num(tokens, '--size-sidebar-line') + num(tokens, '--spacing-xxs');
     const glyphSize = num(tokens, '--size-icon-sm');
@@ -2985,8 +2992,8 @@ function buildProjectsSidebar(tokens) {
       text(`${id}-name`, name, {size: '$--text-caption', fill: '$--subtle-foreground', width: 'fill_container'}),
     ])];
     const total = (name === null ? 0 : tabLine) + rows.reduce((sum, node) => sum + treeHeights.get(node), 0);
-    const guide = frame(`${id}-guide`, 'Tab guide', {layoutPosition: 'absolute', x: guideX, y: xs, width: 1, height: total - 2 * xs, fill: '$--lineage-rail'}, []);
-    return frame(id, 'Tab segment', {width: row, layout: 'vertical'}, [...head, ...rows, guide]);
+    const guide = name === null ? [] : [frame(`${id}-guide`, 'Tab guide', {layoutPosition: 'absolute', x: guideX, y: xs, width: 1, height: total - 2 * xs, fill: '$--lineage-rail'}, [])];
+    return frame(id, 'Tab segment', {width: row, layout: 'vertical'}, [...head, ...rows, ...guide]);
   }
 
   // An opened checkout and its unboxed tab segments, 8px apart: the segments hang
@@ -3085,16 +3092,21 @@ function buildProjectsSidebar(tokens) {
   }
 
   // The window's top row over the rail and the sidebar (TitleRow.tsx, PRD
-  // sidebar-titlebar-refresh D-15): the traffic lights, then the device in front a
-  // step after their space; with the rail hidden the name carries a chevron and
-  // opens the device menu. Its right edge is the sidebar's, so the divider runs up.
+  // sidebar-titlebar-refresh D-15): the traffic lights, the sidebar's switch a
+  // step after their space, then the device in front; with the rail hidden the
+  // name carries a chevron and opens the device menu. Its right edge is the
+  // sidebar's, so the divider runs up.
   const TOP = num(tokens, '--size-tab-strip');
   function topRow(p, {name, tag, menu = false, rail = true}) {
     const total = (rail ? railWidth : 0) + width;
-    const nameX = num(tokens, '--size-traffic-light-inset') + sm;
+    const switchX = num(tokens, '--size-traffic-light-inset') + xs;
+    const control = num(tokens, '--size-control-sm');
+    const glyph = num(tokens, '--size-icon');
+    const nameX = switchX + control + xs;
     const light = (i, x) => ({type: 'ellipse', id: `${p}-tl${i}`, name: 'Traffic light', x, y: 10, width: 12, height: 12, fill: MUTED, opacity: 0.5});
     return frame(`${p}-top`, 'Window top row', {width: total, height: TOP, layout: 'none', fill: '$--sidebar', stroke: '$--border', strokeWidth: {bottom: 1, right: 1}, strokeAlignment: 'inner'}, [
       light(0, 13), light(1, 33), light(2, 53),
+      at({...icon(`${p}-sw`, 'panel-left', {size: glyph, fill: SUBTLE}), name: 'Sidebar switch'}, switchX + (control - glyph) / 2, (TOP - glyph) / 2),
       at(frame(`${p}-tn`, 'Device', {layout: 'horizontal', gap: sm, alignItems: 'center', height: TOP}, [
         text(`${p}-tn-t`, name, {size: '$--text-subhead', weight: '600'}),
         ...(tag ? [text(`${p}-tn-tag`, tag, {size: '$--text-caption', fill: MUTED})] : []),
@@ -4024,6 +4036,7 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Workspace', build: () => buildWorkspace(tokens)},
     {name: 'Screen / Project Sessions', build: () => buildSessions(tokens)},
     {name: 'Screen / Settings', build: () => buildSettings(tokens, root)},
+    {name: 'Screen / Project Settings', build: () => projectSettingsScreens(tokens, settingsParts(tokens, root, {themedXref, screenIconButton, screenSwatch}), {screenSheet, screenIconButton, screenInput})},
     {name: 'Screen / Usage', build: () => {
       const build = suffix => [themedXref(`screen-usage-popover-${suffix}`, 'usage-popover-light', 'Usage popover'),
         themedXref(`screen-usage-week-${suffix}`, 'usage-history-popover-week-light', 'Seven-day chart'),

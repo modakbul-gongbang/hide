@@ -39,6 +39,7 @@ mod pane_prediction;
 mod pane_reopen;
 pub(crate) mod project_memory;
 mod project_sessions;
+mod project_settings;
 mod projects;
 mod pull_requests;
 mod recent_checkouts;
@@ -1106,6 +1107,7 @@ pub struct Runtime {
     state_save_pending: bool,
     state_save_active: bool,
     state_save_worker: Option<thread::JoinHandle<()>>,
+    project_settings_pending: BTreeMap<String, project_settings::Pending>,
     /// Where the SSH config that names each registered device's host lives;
     /// `None` when the process has no usable HOME, which every connect then
     /// reports rather than guessing a path.
@@ -2106,6 +2108,7 @@ impl Runtime {
             state_save_pending: false,
             state_save_active: false,
             state_save_worker: None,
+            project_settings_pending: BTreeMap::new(),
             pet_active_at_unix_ms: unix_milliseconds(),
             agent_worked_at_unix_ms: 0,
             pet_waking_until_unix_ms: 0,
@@ -2496,10 +2499,14 @@ impl Runtime {
             event,
             Event::FocusCheckout(_) | Event::FocusPane(_) | Event::FocusTab(_)
         );
+        let supersedes_memory = matches!(event, Event::FocusDevice(_) | Event::FileFocus(_));
         let visible_tab_before = chooses_workspace
             .then(|| self.focused_visible_tab_id())
             .flatten();
         let mut changed = self.apply(event) || cleared_error;
+        if supersedes_memory && self.snapshot.status.last_error.is_none() {
+            self.supersede_memory_navigation();
+        }
         // A committed visit to another tab wakes what sleeps there (PRD
         // agent-sleep B12); a refused one moved nothing.
         if chooses_workspace && self.snapshot.status.last_error.is_none() {

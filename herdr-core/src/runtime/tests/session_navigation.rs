@@ -444,7 +444,10 @@ fn focusing_checkout_selects_only_the_target_checkout_pane() {
         runtime.snapshot().ui_state.selected_pane_id.as_deref(),
         Some("pane-b")
     );
-    assert!(runtime.snapshot().terminal.panes.is_empty());
+    // The selection moved; the entry of the pane left behind is the
+    // session's, and only the session drops it (ARCHITECTURE.md, Panes,
+    // tabs and the attach window).
+    assert_eq!(projected_pane_ids(&runtime), ["pane-a"]);
 
     let focus_empty = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION,
@@ -459,7 +462,7 @@ fn focusing_checkout_selects_only_the_target_checkout_pane() {
     );
     assert!(runtime.snapshot().terminal.pane_id.is_none());
     assert!(runtime.snapshot().active_pane_layout().is_none());
-    assert!(runtime.snapshot().terminal.panes.is_empty());
+    assert_eq!(projected_pane_ids(&runtime), ["pane-a"]);
 }
 
 /// Every tab in the session ships its own layout, keyed by its tab id.

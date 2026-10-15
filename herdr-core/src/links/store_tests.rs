@@ -113,6 +113,7 @@ fn project(prs: Vec<PrFact>) -> ProjectFacts {
         root: ROOT.into(),
         repository: Some("acme/app".into()),
         repository_id: Some("R_1".into()),
+        connection_epoch: 0,
         worktrees: vec![WorktreeFact {
             path: ROOT.into(),
             branch: Some("main".into()),
@@ -417,6 +418,7 @@ fn a_printer_in_a_folder_holding_another_project_does_not_widen_this_one() {
                 root: "/work/other".into(),
                 repository: Some("acme/other".into()),
                 repository_id: Some("R_2".into()),
+                connection_epoch: 0,
                 worktrees: Vec::new(),
                 ..project(Vec::new())
             },

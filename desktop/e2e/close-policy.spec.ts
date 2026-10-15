@@ -63,7 +63,7 @@ test("Command W closes the keyboard's display or pane, never its tab", async () 
     await page.locator('[data-explorer-row$="/notes.md"]').focus();
     await page.keyboard.press("Meta+KeyW");
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
-    await page.keyboard.press("Meta+Shift+KeyB");
+    await page.keyboard.press("Meta+KeyE");
     await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
     await page.locator(`[data-terminal-host="${herdr.panes[1]}"]`).click();
     await page.keyboard.press("Meta+KeyW");

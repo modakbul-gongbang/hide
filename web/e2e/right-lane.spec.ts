@@ -62,6 +62,25 @@ test("an opened file comes up over Agent Views without resizing a terminal, and 
     await expect(page.locator("[data-lane-header]")).toContainText("Files");
     await screenshot(page, "right-lane-overlay");
 
+    // The divider at the overlay's left edge widens the lane by what it is
+    // dragged, lands once on release, and resizes no terminal (B6).
+    const laneBox = (await page.locator('[data-lane-frame="overlay"]').boundingBox())!;
+    const grip = page.locator('[data-lane-frame="overlay"] [data-lane-divider="lane"]');
+    await expect(grip).toHaveAttribute("aria-valuenow", String(Math.round(laneBox.width)));
+    const gripBox = (await grip.boundingBox())!;
+    await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + 200);
+    await page.mouse.down();
+    await page.mouse.move(gripBox.x + gripBox.width / 2 - 120, gripBox.y + 200, { steps: 6 });
+    await expect(page.locator("[data-lane-guide]")).toHaveCount(1);
+    await page.mouse.up();
+    await expect(page.locator("[data-lane-guide]")).toHaveCount(0);
+    // The pointer lands on a whole pixel, so the width grows by the drag within a pixel.
+    const widened = () => page.locator('[data-lane-frame="overlay"]').boundingBox().then((box) => Math.round(box!.width));
+    await expect.poll(async () => Math.abs((await widened()) - (laneBox.width + 120))).toBeLessThanOrEqual(1);
+    await expect(grip).toHaveAttribute("aria-valuenow", String(await widened()));
+    await expect(pane(page, lane.herdr.panes[0]!)).toBeVisible();
+    expect(resizes(lane)).toBe(before);
+
     await pane(page, lane.herdr.panes[0]!).click();
     await expect(screen(page)).toHaveAttribute("data-lane-mode", "hidden");
     await expect(page.locator('[data-lane-badge="1"]')).toBeVisible();
@@ -214,30 +233,30 @@ test("expand takes the whole body and returns on Escape without resizing a termi
     await page.locator('[data-lane-frame] [data-view-area="true"] .cm-content').click();
     await page.keyboard.press("Escape");
     await expect(screen(page)).toHaveAttribute("data-lane-mode", "overlay");
+    // The pane zoom's chord, pressed in the document, expands the lane and back; no pane zooms.
+    await page.keyboard.press(chord("toggle_zoom"));
+    await expect(screen(page)).toHaveAttribute("data-lane-mode", "expanded");
+    await page.keyboard.press(chord("toggle_zoom"));
+    await expect(screen(page)).toHaveAttribute("data-lane-mode", "overlay");
     await quietFor(page, 500, "no terminal was fitted again while the lane expanded");
     expect(resizes(lane)).toBe(before);
+    expect(lane.sent.get("toggle_zoom") ?? 0).toBe(0);
   } finally {
     lane.daemon.stop();
     lane.herdr.stop();
   }
 });
 
-test("the rail's names stay whole in four languages and both themes, and Tab reaches each tool with its pressed state (B23)", async ({ page }) => {
+test("the rail shows icons alone and names each tool in its hint in four languages and both themes, and Tab reaches each tool with its pressed state (B23)", async ({ page }) => {
   test.setTimeout(120_000);
   const lane = await startLane(page, "lane-rail");
   try {
     await openFile(lane, lane.herdr.panes[0]!, "a.md");
     await expect(railTool(page, "files")).toHaveAttribute("aria-pressed", "true");
     const rail = page.locator("[data-tool-rail]");
-    // Every name sits inside the rail on one line: no ellipsis, no second line.
-    const spill = () =>
-      rail.evaluate((node) => {
-        const edge = node.getBoundingClientRect();
-        return [...node.querySelectorAll("[data-lane-tool-name]")].map((name) => {
-          const box = name.getBoundingClientRect();
-          return Math.max(edge.left + 1 - box.left, box.right - edge.right, box.height > 16 ? box.height : 0, name.scrollWidth - name.clientWidth);
-        });
-      });
+    // The rail draws no text of its own: a tool's name is its accessible name
+    // and the hint that opens on hover, with the tool's scope and chord.
+    await expect(rail).toHaveText("");
     for (const [language, theme] of [
       ["en", "light"],
       ["ko", "dark"],
@@ -252,8 +271,14 @@ test("the rail's names stay whole in four languages and both themes, and Tab rea
       await page.locator(`[data-theme-option="${theme}"]`).click();
       await page.keyboard.press("Escape");
       await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-      await expect.poll(async () => Math.max(...(await spill()))).toBeLessThanOrEqual(0);
+      // The hint reads `<name> · <scope>`, and the name is the button's accessible name.
+      await railTool(page, "changes").hover();
+      const hint = page.locator('[data-slot="tooltip-content"]');
+      await expect(hint).toContainText(" · ");
+      await expect(railTool(page, "changes")).toHaveAttribute("aria-label", (await hint.innerText()).split(" · ")[0]!.trim());
       await screenshot(page, `right-lane-rail-${language}-${theme}`);
+      await page.mouse.move(400, 400);
+      await expect(page.locator('[data-slot="tooltip-content"]')).toHaveCount(0);
     }
 
     // The keyboard reaches the rail; each tool says whether it shows.

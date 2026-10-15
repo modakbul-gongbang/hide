@@ -18,6 +18,9 @@ export function taskState(task: WorkTask, outputs: readonly WorkOutput[]) {
   return task.end === "done" ? "unfinished" : task.end === "waiting" ? "working" : task.end;
 }
 const OUTPUT_ORDER: Record<string, number> = { ci_failed: 0, review: 1, open: 2, merged: 3, closed: 4 };
+export function issueDraftFailureKey(message: string | null | undefined) {
+  return message === "issue_draft_repository_unknown" ? "sessionWork.issue_draft_repository_unknown" : message === "issue_draft_repository_changed" ? "sessionWork.issue_draft_repository_changed" : "sessionWork.issue_draft_unavailable";
+}
 export function orderedOutputs(outputs: readonly WorkOutput[]): WorkOutput[] {
   return [...outputs].sort((a, b) => (OUTPUT_ORDER[a.state] ?? 5) - (OUTPUT_ORDER[b.state] ?? 5) || b.created_at_unix_ms - a.created_at_unix_ms);
 }
