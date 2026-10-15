@@ -1,12 +1,13 @@
-const RELEASES_URL = "https://github.com/modakbul-gongbang/hide/releases";
-const LATEST_API = "https://api.github.com/repos/modakbul-gongbang/hide/releases/latest";
+const RELEASES_URL = "https://github.com/with-hide/hide/releases";
+const LATEST_API = "https://api.github.com/repos/with-hide/hide/releases/latest";
+// The installers a person downloads (PRD auto-update D-35); Linux offers both packages.
 const PLATFORMS = Object.freeze({
-  "macos-arm64": { suffix: "macos-arm64.zip", label: "macOS · Apple Silicon (ARM64)" },
-  "windows-x64": { suffix: "windows-x64.zip", label: "Windows · Intel or AMD (x64)" },
-  "linux-x64": { suffix: "linux-x64.tar.gz", label: "Linux · Intel or AMD (x64)" },
+  "macos-arm64": { label: "macOS · Apple Silicon (ARM64)", files: [{ suffix: "macos-arm64.dmg", format: "dmg" }] },
+  "windows-x64": { label: "Windows · Intel or AMD (x64)", files: [{ suffix: "windows-x64-setup.exe", format: "installer" }] },
+  "linux-x64": { label: "Linux · Intel or AMD (x64)", files: [{ suffix: "linux-x64.deb", format: "deb" }, { suffix: "linux-x64.rpm", format: "rpm" }] },
 });
 
-/** A public, stable, complete release is the only source of archive links. */
+/** A public, stable, complete release is the only source of installer links. */
 export function validateRelease(release) {
   if (!release || release.draft !== false || release.prerelease !== false
     || typeof release.tag_name !== "string"
@@ -20,21 +21,25 @@ export function validateRelease(release) {
     return { status: "unavailable", reason: "invalid-release" };
   }
   const downloads = {};
-  for (const [platform, { suffix, label }] of Object.entries(PLATFORMS)) {
-    const name = `hide-${tag}-${suffix}`;
-    const urls = [];
-    for (const assetName of [name, `${name}.sha256`]) {
-      const matches = release.assets.filter(asset => asset?.name === assetName);
-      const asset = matches[0];
-      const expectedUrl = `${RELEASES_URL}/download/${tag}/${assetName}`;
-      if (matches.length !== 1 || asset.state !== "uploaded"
-        || !Number.isSafeInteger(asset.size) || asset.size <= 0
-        || asset.browser_download_url !== expectedUrl) {
-        return { status: "unavailable", reason: "incomplete-assets" };
+  for (const [platform, { label, files }] of Object.entries(PLATFORMS)) {
+    const offered = [];
+    for (const { suffix, format } of files) {
+      const name = `hide-${tag}-${suffix}`;
+      const urls = [];
+      for (const assetName of [name, `${name}.sha256`]) {
+        const matches = release.assets.filter(asset => asset?.name === assetName);
+        const asset = matches[0];
+        const expectedUrl = `${RELEASES_URL}/download/${tag}/${assetName}`;
+        if (matches.length !== 1 || asset.state !== "uploaded"
+          || !Number.isSafeInteger(asset.size) || asset.size <= 0
+          || asset.browser_download_url !== expectedUrl) {
+          return { status: "unavailable", reason: "incomplete-assets" };
+        }
+        urls.push(expectedUrl);
       }
-      urls.push(expectedUrl);
+      offered.push({ format, url: urls[0], checksumUrl: urls[1] });
     }
-    downloads[platform] = { label, archiveUrl: urls[0], checksumUrl: urls[1] };
+    downloads[platform] = { label, files: offered };
   }
   return { status: "ready", tag, releaseUrl, downloads };
 }
@@ -50,6 +55,8 @@ function mountDownloads() {
   const version = document.getElementById("release-version");
   const archive = document.getElementById("archive-link");
   const checksum = document.getElementById("checksum-link");
+  const second = document.getElementById("second-link");
+  const secondChecksum = document.getElementById("second-checksum-link");
   const notes = document.getElementById("version-link");
   const retry = document.getElementById("retry-release");
   let state = { status: "loading" };
@@ -67,7 +74,9 @@ function mountDownloads() {
 
   function render() {
     validated.hidden = true;
-    for (const link of [archive, checksum, notes]) link.removeAttribute("href");
+    for (const link of [archive, checksum, second, secondChecksum, notes]) link.removeAttribute("href");
+    second.hidden = true;
+    secondChecksum.hidden = true;
     retry.hidden = state.status === "loading";
     retry.disabled = state.status === "loading";
     region.setAttribute("aria-busy", String(state.status === "loading"));
@@ -84,17 +93,29 @@ function mountDownloads() {
       const selected = state.downloads[`${os.value}-${cpu.value}`];
       if (!os.value || !cpu.value) {
         title.textContent = `Stable release ${state.tag} is available.`;
-        detail.textContent = "Choose your operating system and processor to see its archive and checksum.";
+        detail.textContent = "Choose your operating system and processor to see its installer and checksum.";
       } else if (!selected) {
         title.textContent = "No package for this setup.";
         detail.textContent = "Packages cover macOS Apple Silicon, Windows x64 and Linux x64. Check the installation guide for requirements.";
       } else {
+        const [first, other] = selected.files;
         title.textContent = "Your download is ready.";
-        detail.textContent = "Download the archive and its SHA-256 file from the same release. Follow the installation guide to verify the checksum.";
+        detail.textContent = other
+          ? "Choose the .deb for Debian or Ubuntu, or the .rpm for Fedora. hide updates itself from then on."
+          : "Download the installer and open it. hide updates itself from then on.";
         version.textContent = `${state.tag} · ${selected.label}`;
-        archive.href = selected.archiveUrl;
-        archive.firstChild.textContent = `Download for ${os.options[os.selectedIndex].text} `;
-        checksum.href = selected.checksumUrl;
+        archive.href = first.url;
+        archive.firstChild.textContent = `Download for ${os.options[os.selectedIndex].text}${other ? ` (.${first.format})` : ""} `;
+        checksum.href = first.checksumUrl;
+        checksum.textContent = other ? `.${first.format} SHA-256 checksum` : "SHA-256 checksum";
+        if (other) {
+          second.href = other.url;
+          second.firstChild.textContent = `Download .${other.format} `;
+          secondChecksum.href = other.checksumUrl;
+          secondChecksum.textContent = `.${other.format} SHA-256 checksum`;
+          second.hidden = false;
+          secondChecksum.hidden = false;
+        }
         notes.href = state.releaseUrl;
         notes.firstChild.textContent = `Release notes for ${state.tag} `;
         validated.hidden = false;
