@@ -37,6 +37,34 @@ test("@platform a folder's memo goes into its backlog from the input, opens in t
   } finally { daemon?.stop(); herdr.stop(); }
 });
 
+test("a record shown in the lane stays through pin, unpin and a window too narrow to dock the lane", async ({ page }) => {
+  const herdr = await startHerdr();
+  let daemon: Daemon | undefined;
+  try {
+    daemon = await startHided(herdr, "record-remount");
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    const pane = herdr.panes[0]!;
+    labelAgent(herdr, pane, { task: FIRST_GOAL, at: Date.now(), end: "done" });
+    await page.locator(`[data-pane-view="${pane}"] [data-pane-record]`).click({ timeout: 45_000 });
+    const record = page.locator('[data-session-record="lane"]');
+    await expect(record).toBeVisible({ timeout: 30_000 });
+    // Each change redraws the lane in another frame; the record it shows is not left by that.
+    const pin = page.locator("[data-lane-pin]");
+    for (const state of ["on", "off"]) {
+      await pin.click();
+      await expect(pin).toHaveAttribute("data-lane-pin", new RegExp(state === "on" ? "on|narrow" : "off"));
+      await expect(record).toBeVisible();
+    }
+    const size = page.viewportSize()!;
+    await page.setViewportSize({ width: 640, height: size.height });
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "overlay");
+    await expect(record).toBeVisible();
+    await page.setViewportSize(size);
+    await expect(record).toBeVisible();
+  } finally { daemon?.stop(); herdr.stop(); }
+});
+
 test("@platform an agent pane's head opens its session record in the lane and leaves the keyboard in the terminal", async ({ page }) => {
   const herdr = await startHerdr();
   let daemon: Daemon | undefined;
