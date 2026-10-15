@@ -62,6 +62,15 @@ fn wait_gone(pid: i32) -> bool {
     !alive(pid)
 }
 
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+fn wait_file(path: &Path) -> bool {
+    let until = Instant::now() + Duration::from_secs(10);
+    while !path.is_file() && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    path.is_file()
+}
+
 /// The first line of the daemon's log that names `kind`. The log is written
 /// on its own thread, after the daemon has answered.
 #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
@@ -392,10 +401,7 @@ fn a_relocated_state_folder_moves_nothing() {
     // agent hooks' policy, which the hooks read under ~/.hide wherever the
     // state lives (PRD agent-guardrails D-11); nothing else goes there.
     let policy = home.join(".hide/agent-hooks/guardrails.json");
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while !policy.is_file() && std::time::Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    assert!(wait_file(&policy), "the hooks' policy is written");
     let made: Vec<_> = walk(&home.join(".hide"));
     assert_eq!(made, vec![policy], "only the hooks' policy under ~/.hide");
     let _ = isolated(&cli, &home, &xdg_state).arg("stop").status();
