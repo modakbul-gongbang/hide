@@ -76,7 +76,7 @@ sudo /usr/bin/ditto --rsrc --extattr --qtn desktop/out/hide-darwin-arm64/hide.ap
 open /Applications/hide.app
 ```
 
-On macOS the source build creates an ad-hoc signed `hide.app`, a versioned zip archive, and a SHA-256 sidecar under `desktop/out/`.
+On macOS the source build creates an ad-hoc signed `hide.app` under `desktop/out/`, and the dmg, the zip the updater reads, their SHA-256 sidecars and the update file under `desktop/out/release/`.
 `0.0.0-local` identifies a local build; set the intended version explicitly when packaging another build.
 The app bundles the pinned upstream Herdr runtime, so a separate Herdr install is not required for a first launch.
 
