@@ -1,6 +1,6 @@
 import { Loader2Icon, MoonIcon } from "lucide-react";
-import { AgentMark } from "../AgentMark";
 import type { Actions } from "../actions";
+import { agentProductName } from "../agentAdapters";
 import { useInterfaceTranslation } from "../i18n/client";
 import type { SleepingSession } from "../snapshot";
 import { sleepingCaption } from "../sleeping-session";
@@ -20,15 +20,14 @@ export function SleepingSessionRow({ session, actions, inset = "var(--spacing-xs
   return (
     <li data-sleeping-session={session.sleep_id} className="flex min-w-0 items-center gap-xs rounded-sm py-xs pr-xs text-body" style={{ paddingLeft: inset }}>
       <Hint label={caption}>
-        <span className="flex min-h-(--size-sidebar-line) shrink-0 items-center text-muted-foreground">
+        <span className="flex min-h-(--size-sidebar-line) w-(--size-agent-mark) shrink-0 items-center justify-center text-muted-foreground">
           {session.checking || pending
             ? <Loader2Icon aria-hidden="true" className="size-(--size-status-mark) animate-spin" />
             : <MoonIcon aria-hidden="true" className="size-(--size-status-mark)" />}
         </span>
       </Hint>
-      <AgentMark kind={session.kind} />
-      <Hint label={[session.identity_label, session.reason, caption].filter(Boolean).join("\n")}>
-        <span className="min-w-0 flex-1 truncate text-subtle-foreground">{session.identity_label}</span>
+      <Hint label={[session.identity_label, agentProductName(session.kind), session.reason, caption].filter(Boolean).join("\n")}>
+        <span className="min-w-0 flex-1 truncate text-subtle-foreground">{session.identity_label}<span className="sr-only">, {agentProductName(session.kind)}</span></span>
       </Hint>
       {session.wake_available ? (
         <Button variant="ghost" size="sm" onClick={() => actions.wakeSleepingSession(session.sleep_id)}>{t("panes.sleep.wake")}</Button>

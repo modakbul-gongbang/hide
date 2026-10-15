@@ -16,7 +16,7 @@ import { useInterfaceTranslation } from "../i18n/translator";
 import { Button } from "../components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { renderMarkdown } from "./markdown";
-import { AgentHead, Place } from "./parts";
+import { AgentHead, DETAIL_INSET, Place } from "./parts";
 import { loadMore, loadOlder, onReplyResult, sendKey, sendReply, setView } from "./connection";
 import {
   MAX_MESSAGES,
@@ -97,7 +97,7 @@ export function Detail({ onBack }: { onBack: () => void }) {
         {agent ? (
           <div className="mt-xs flex flex-col gap-xs">
             <AgentHead agent={agent} large />
-            <Place agent={agent} />
+            <Place agent={agent} inset={DETAIL_INSET} />
           </div>
         ) : null}
       </header>

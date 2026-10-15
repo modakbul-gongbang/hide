@@ -100,7 +100,7 @@ test("the checkouts Hide AI made gather under one head with their task, and a br
     await expect(group.locator("[data-hide-ai-count]")).toHaveText("1");
     await expect(group.locator("[data-checkout-row]")).toHaveCount(1);
     await expect(group.locator("[data-agent-task]")).toHaveText("Promote Memory · m43");
-    await expect(group.locator("[data-hide-ai-badge]")).toHaveCount(0);
+    await expect(group.locator("[data-pane] [data-hide-mark], [data-pane] [data-agent-mark]")).toHaveCount(0);
     // The operator's checkouts, the lookalike branch included, stay above the head.
     await expect(project.locator("[data-checkout-row]", { hasText: "hide-memory-m9-by-hand" })).toHaveCount(1);
     await expect(group.locator("[data-checkout-row]", { hasText: "hide-memory-m9-by-hand" })).toHaveCount(0);

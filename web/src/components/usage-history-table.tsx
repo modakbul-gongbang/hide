@@ -2,7 +2,7 @@ import { Fragment, useMemo, useState } from "react";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import type { NodeUsage, UsageAmount } from "../generated/hided-ws";
 import { AgentMark } from "../AgentMark";
-import { agentAdapter } from "../agentAdapters";
+import { agentProductName } from "../agentAdapters";
 import { useInterfaceTranslation } from "../i18n/client";
 import { requireInterfaceLanguage } from "../i18n/locale";
 import { allTokens, compactTokens, selectedUsage, sumUsageDays, usageDate, usagePeriodDays } from "../usageHistory";
@@ -12,7 +12,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 
 const PAGE_DAYS = 30;
 const HEADINGS = ["usage.history.dateAgent", "usage.history.costHeading", "usage.history.newTokens", "usage.history.inputHeading", "usage.history.outputHeading", "usage.history.cacheWriteHeading", "usage.history.cacheReadHeading", "usage.history.totalTokens"] as const;
-const agentName = (name: string) => agentAdapter(name)?.label ?? name;
 
 export function UsageHistoryTable({ node }: { node: NodeUsage }) {
   const { t, i18n } = useInterfaceTranslation();
@@ -39,7 +38,7 @@ export function UsageHistoryTable({ node }: { node: NodeUsage }) {
   const cells = (amount: UsageAmount) => <><td className="usage-table-cost"><UsageCost amount={amount} /></td>{[amount.new_tokens, amount.tokens.input, amount.tokens.output, amount.tokens.cache_write, amount.tokens.cache_read, allTokens(amount)].map((value, index) => <td key={index} title={numbers.format(value)}>{fmt(value)}</td>)}</>;
   return <section className="usage-history usage-records flex min-w-0 flex-col gap-md" data-usage-history="year" data-surface="year">
     <div className="flex flex-wrap items-center justify-between gap-sm"><h2 className="text-subhead font-semibold">{t("usage.history.history")}</h2><div className="flex flex-wrap items-center gap-sm">
-      <Select value={agent} onValueChange={(next) => { setAgent(next); reset(); }}><SelectTrigger size="sm" className="w-auto" aria-label={t("usage.history.agent")} data-usage-agent-select="true"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{t("usage.history.allAgents")}</SelectItem>{byAgent.map((row) => <SelectItem key={row.agent} value={row.agent}><span className="inline-flex items-center gap-xs"><AgentMark kind={row.agent} />{agentName(row.agent)}</span></SelectItem>)}</SelectContent></Select>
+      <Select value={agent} onValueChange={(next) => { setAgent(next); reset(); }}><SelectTrigger size="sm" className="w-auto" aria-label={t("usage.history.agent")} data-usage-agent-select="true"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{t("usage.history.allAgents")}</SelectItem>{byAgent.map((row) => <SelectItem key={row.agent} value={row.agent}><span className="inline-flex items-center gap-xs"><AgentMark kind={row.agent} />{agentProductName(row.agent)}</span></SelectItem>)}</SelectContent></Select>
       <Select value={period} onValueChange={(next) => { setPeriod(next); reset(); }}><SelectTrigger size="sm" className="w-auto" aria-label={t("usage.history.period")} data-usage-period-select="true"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="7">{t("usage.history.last7")}</SelectItem><SelectItem value="30">{t("usage.history.last30")}</SelectItem><SelectItem value="year">{t("usage.history.lastYear")}</SelectItem></SelectContent></Select>
       <Button variant={exact ? "secondary" : "ghost"} size="sm" aria-pressed={exact} onClick={() => setExact((value) => !value)} data-usage-exact="true">{t("usage.history.exact")}</Button>
     </div></div>
@@ -51,7 +50,7 @@ export function UsageHistoryTable({ node }: { node: NodeUsage }) {
           const expanded = folds[day.date] ?? day.today;
           const rows = byAgent.flatMap((row) => { const detail = row.days.get(day.date); return detail?.amount.calls && (agent === "all" || agent === row.agent) ? [{ agent: row.agent, amount: detail.amount }] : []; });
           return <Fragment key={day.date}><tr data-usage-date-row={day.date}><th scope="row"><button type="button" className="usage-date-toggle" aria-expanded={expanded} aria-label={t("usage.history.expandDay", { date: usageDate(day.date, language, { year: "numeric", month: "short", day: "numeric" }) })} onClick={() => setFolds((before) => ({ ...Object.fromEntries(shown.filter((item) => item.date in before).map((item) => [item.date, before[item.date]!])), [day.date]: !expanded }))}>{expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}<span>{usageDate(day.date, language, { ...(period === "year" ? { year: "numeric" as const } : {}), month: "short", day: "numeric", weekday: "short" })}</span>{day.today ? <span className="text-micro text-muted-foreground">{t("usage.history.today")}</span> : null}</button></th>{cells(day.amount)}</tr>
-            {expanded ? rows.map((row) => <tr key={row.agent} data-usage-agent-row={row.agent} className="usage-agent-row"><th scope="row"><span className="inline-flex items-center gap-xs"><AgentMark kind={row.agent} />{agentName(row.agent)}</span></th>{cells(row.amount)}</tr>) : null}
+            {expanded ? rows.map((row) => <tr key={row.agent} data-usage-agent-row={row.agent} className="usage-agent-row"><th scope="row"><span className="inline-flex items-center gap-xs"><AgentMark kind={row.agent} />{agentProductName(row.agent)}</span></th>{cells(row.amount)}</tr>) : null}
           </Fragment>;
         })}
         {!shown.length ? <tr><td colSpan={8} className="usage-empty">{t(range?.reading ? "usage.history.pending" : "usage.history.noMatches")}</td></tr> : null}

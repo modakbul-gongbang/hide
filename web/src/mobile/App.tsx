@@ -8,11 +8,11 @@ import { useElapsed } from "../components/elapsed";
 import { useInterfaceTranslation } from "../i18n/translator";
 import { statusText } from "../agentStatus";
 import { Button } from "../components/ui/button";
-import { AgentMark } from "../AgentMark";
+import { agentProductName } from "../agentAdapters";
 import { sleepingCaption } from "../sleeping-session";
 import { actOnSleepingSession, closeDetail, openDetail, openStartSheet, pairNow } from "./connection";
 import { Detail } from "./Detail";
-import { AgentHead, Place } from "./parts";
+import { AgentHead, LIST_INSET, Place } from "./parts";
 import { StartSheet } from "./StartSheet";
 import {
   GROUP_TITLE,
@@ -190,11 +190,10 @@ function SleepingRow({ session }: { session: PhoneSleepingSession }) {
   return (
     <li className="flex min-h-(--size-touch-target) flex-col gap-xs py-md" data-phone-sleeping={session.sleep_id}>
       <div className="flex min-w-0 items-center gap-sm">
-        <MoonIcon aria-label={caption} className="size-(--size-status-mark) shrink-0 text-muted-foreground" />
-        <AgentMark kind={session.agent_kind} />
-        <span className="min-w-0 flex-1 truncate text-title text-subtle-foreground">{session.title}</span>
+        <span className="flex size-(--size-agent-mark) shrink-0 items-center justify-center"><MoonIcon aria-label={caption} className="size-(--size-status-mark) text-muted-foreground" /></span>
+        <span className="min-w-0 flex-1 truncate text-title text-subtle-foreground">{session.title}<span className="sr-only">, {agentProductName(session.agent_kind)}</span></span>
       </div>
-      <div className="flex min-w-0 items-center justify-between gap-sm pl-(--size-mobile-row-inset)">
+      <div className={`flex min-w-0 items-center justify-between gap-sm ${LIST_INSET}`}>
         <span className="min-w-0 break-words text-subhead text-muted-foreground" role={failed ? "status" : undefined}>
           {failed ? t("panes.sleep.requestFailed") : caption}
         </span>
@@ -219,7 +218,7 @@ const LINE_TONE = { error: "text-destructive", warning: "text-warning", news: "t
 function AgentRow({ agent }: { agent: PhoneAgent }) {
   const { t } = useInterfaceTranslation();
   const elapsed = useElapsed(agent.changed_at_unix_ms);
-  const label = [statusText(t, agent.status_code), agent.title, agent.place, agent.device_label, elapsed].filter(Boolean).join(", ");
+  const label = [statusText(t, agent.status_code), agent.title, agentProductName(agent.agent_kind), agent.place, agent.device_label, elapsed].filter(Boolean).join(", ");
   return (
     <li>
       <button
@@ -236,9 +235,9 @@ function AgentRow({ agent }: { agent: PhoneAgent }) {
           <span className="shrink-0 font-mono text-body text-muted-foreground">{elapsed}</span>
           <ChevronRightIcon aria-hidden="true" className="size-(--size-icon) shrink-0 text-muted-foreground" />
         </span>
-        <Place agent={agent} />
+        <Place agent={agent} inset={LIST_INSET} />
         {agent.line ? (
-          <span className={`line-clamp-2 pl-(--size-mobile-row-inset) text-body ${LINE_TONE[agent.line.tone]}`} data-phone-line={agent.line.tone}>
+          <span className={`line-clamp-2 ${LIST_INSET} text-body ${LINE_TONE[agent.line.tone]}`} data-phone-line={agent.line.tone}>
             {agent.line.text}
           </span>
         ) : null}

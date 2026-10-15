@@ -8,7 +8,7 @@ export async function measure(page) {
     if (!root) throw new Error('Sessions panel is missing');
     for (const row of root.querySelectorAll('[data-session-row], [data-session-child]')) {
       const edge = row.getBoundingClientRect();
-      const parts = [...row.querySelectorAll('button, [data-mark], [data-agent-mark], span')].filter(part => part.getClientRects().length && (part.matches('button, [data-mark], [data-agent-mark]') || [...part.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim())));
+      const parts = [...row.querySelectorAll('button, [data-mark], [data-hide-mark], span')].filter(part => part.getClientRects().length && (part.matches('button, [data-mark], [data-hide-mark]') || [...part.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim())));
       for (const part of parts) {
         const box = part.getBoundingClientRect();
         if (box.right > edge.right + 0.5 || box.left < edge.left - 0.5) overflow.push(`${row.dataset.sessionRow}: ${part.textContent} passes its row`);

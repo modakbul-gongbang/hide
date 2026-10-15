@@ -8,14 +8,10 @@ import { cn } from "./lib/utils";
 // carries the name alone; every caller also gives the full identity in its
 // tooltip and label.
 
-/** The panel a badge sits on, so its ring is that panel's colour (the sidebar's, or the lane's card). */
-export type BadgeGround = "sidebar" | "card";
-
-const GROUND: Record<BadgeGround, string> = { sidebar: "bg-sidebar", card: "bg-card" };
-
 /**
  * Hide's own mark, the owl face at a small size: the head of the Hide AI group
- * in a project's tree, and (as `HideAiBadge`) the badge a row wears. The full
+ * in a project's tree, and the mark a Hide AI-started row draws alone in the
+ * place of the provider logo (PRD agent-mark-quiet D-04). The full
  * square mark is used at every size (docs/BRAND.md); decorative, because the
  * words `Hide AI` stand beside it or in the row's name.
  */
@@ -23,35 +19,12 @@ export function HideMark({ className = "" }: { className?: string }) {
   return <img src={hideMark} alt="" aria-hidden="true" data-hide-mark="true" className={cn("shrink-0 rounded-xs object-contain", className)} />;
 }
 
-/** The 11 badge on a provider icon's lower-right corner: Hide AI started this agent (PRD hide-ai-origin-mark D-04). */
-function HideAiBadge({ ground }: { ground: BadgeGround }) {
-  return (
-    <span
-      aria-hidden="true"
-      data-hide-ai-badge="true"
-      className={cn("pointer-events-none absolute -right-(--size-hairline) -bottom-(--size-hairline) flex size-(--size-hide-badge) items-center justify-center rounded-xs", GROUND[ground])}
-    >
-      <HideMark className="size-(--size-hide-badge-mark)" />
-    </span>
-  );
-}
-
 /**
- * `hideAi` marks an agent Hide AI started: the provider's icon wears the
- * badge. The badge is part of the row's name through the caller's accessible
- * name, never carried here (D-09).
+ * The agent's mark. A list row does not draw it: the status mark leads and the
+ * logo stays on the pane's own header (PRD agent-mark-quiet), so a row names its
+ * agent in its tooltip and accessible name instead.
  */
-export function AgentMark({ kind, className = "", hideAi = null }: { kind: string | null | undefined; className?: string; hideAi?: BadgeGround | null }) {
-  if (!hideAi) return <PlainMark kind={kind} className={className} />;
-  return (
-    <span data-agent-mark-badged="true" className="relative inline-flex shrink-0">
-      <PlainMark kind={kind} className={className} />
-      <HideAiBadge ground={hideAi} />
-    </span>
-  );
-}
-
-function PlainMark({ kind, className }: { kind: string | null | undefined; className: string }) {
+export function AgentMark({ kind, className = "" }: { kind: string | null | undefined; className?: string }) {
   const mark = agentMarkOf(kind);
   if (mark) {
     return (

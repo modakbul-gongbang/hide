@@ -65,7 +65,9 @@ test("an agent slept from the pane menu keeps its row and wakes in the same pane
     const row = page.locator(`nav[data-sidebar] [data-pane="${sleeper}"]`);
     await expect(row.locator('[data-mark="☾"]')).toBeVisible({ timeout: 20_000 });
     await expect(row).toContainText("Agent two");
-    await expect(row.locator('[data-agent-mark="claude"]')).toBeVisible();
+    // The row names its agent by product and draws no provider logo (agent-mark-quiet B1, B7).
+    await expect(row.locator("[data-agent-mark]")).toHaveCount(0);
+    await expect(row.locator("[data-agent-open]")).toHaveAttribute("aria-label", /Claude Code/);
     await screenshot(page, "agent-sleep-sleeping");
 
     // B2, B3: Settings > Performance counts it and keeps the choice.

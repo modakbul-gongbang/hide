@@ -396,7 +396,6 @@ function SessionRowItem({
         onKeyDown={onKeyDown}
       >
         <span className="flex items-center gap-xs text-micro">
-          <AgentMark kind={row.provider} />
           <span className={unavailable ? "text-muted-foreground" : "text-subtle-foreground"}>{row.provider_label}</span>
           {time ? <span className="text-muted-foreground">{time}</span> : null}
           {unavailable ? <span className="ml-auto shrink-0 text-warning">{t("sessions.rowUnavailable")}</span> : null}
