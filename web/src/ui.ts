@@ -237,6 +237,8 @@ type UiStore = {
   laneCallsSeen: CallsSeen;
   /** What the Workspace screen draws of the lane now. */
   drawnLane: DrawnLane;
+  /** The session record the lane's Work tool draws now, set by that record itself; null when it draws none. */
+  drawnRecord: import("./snapshot").WorkSession | null;
   /** The Explorer's inline name field, or null. */
   explorerDraft: ExplorerDraft | null;
   /** The trash confirmation the Explorer is showing, or null. */
@@ -315,6 +317,7 @@ type UiStore = {
   putLaneAway: () => void;
   setLaneExpanded: (expanded: boolean) => void;
   setDrawnLane: (drawn: DrawnLane) => void;
+  setDrawnRecord: (record: import("./snapshot").WorkSession | null) => void;
   setExplorerDraft: (draft: ExplorerDraft | null) => void;
   setPendingTrash: (trash: PendingTrash | null) => void;
   openOverlay: (overlay: Overlay) => void;
@@ -374,6 +377,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   laneExpanded: false,
   laneCallsSeen: NO_CALLS_SEEN,
   drawnLane: { mode: "closed", tool: null },
+  drawnRecord: null,
   explorerDraft: null,
   pendingTrash: null,
   overlay: "none",
@@ -425,6 +429,9 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setDrawnLane: (drawn) => {
     const current = get().drawnLane;
     if (current.mode !== drawn.mode || current.tool !== drawn.tool) set({ drawnLane: drawn });
+  },
+  setDrawnRecord: (drawnRecord) => {
+    if (get().drawnRecord !== drawnRecord) set({ drawnRecord });
   },
   setExplorerDraft: (explorerDraft) => set({ explorerDraft }),
   setPendingTrash: (pendingTrash) => set({ pendingTrash }),

@@ -73,9 +73,12 @@ test("@platform an agent pane's head opens its session record in the lane and le
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     const pane = herdr.panes[0]!;
-    const button = page.locator(`[data-pane-view="${pane}"] [data-pane-record]`);
-    // An agent pane whose session is known has the button.
-    labelAgent(herdr, pane, { task: FIRST_GOAL, at: Date.now(), end: "done" });
+    // An agent pane whose session is known has the button. The fixture's
+    // pane starts on its own session and the label moves it to another, so
+    // the presses wait for the button to carry the labelled one; a press
+    // before the move lands would open one record and the next the other.
+    const labelled = labelAgent(herdr, pane, { task: FIRST_GOAL, at: Date.now(), end: "done" });
+    const button = page.locator(`[data-pane-view="${pane}"] [data-pane-record="${labelled}"]`);
     await expect(button).toBeVisible({ timeout: 45_000 });
     const terminal = page.locator(`[data-pane-view="${pane}"] .xterm-helper-textarea`);
     await terminal.focus();
