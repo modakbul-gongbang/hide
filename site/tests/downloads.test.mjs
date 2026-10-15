@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { validateRelease } from "../downloads.js";
 
 // The release workflow and issue #338 require these exact three archive pairs.
-const base = "https://github.com/modakbul-gongbang/hide/releases";
+const base = "https://github.com/with-hide/hide/releases";
 const filenames = [
   "hide-v1.2.3-macos-arm64.zip",
   "hide-v1.2.3-windows-x64.zip",
@@ -98,9 +98,9 @@ test("release and asset URLs must name this repository, exact tag and filename",
   }
   for (const url of [
     `${base}/download/v1.2.2/${filenames[0]}`, `${base}/download/v1.2.3/wrong.zip`,
-    `http://github.com/modakbul-gongbang/hide/releases/download/v1.2.3/${filenames[0]}`,
-    `https://github.com.example.com/modakbul-gongbang/hide/releases/download/v1.2.3/${filenames[0]}`,
-    `https://github.com@evil.example/modakbul-gongbang/hide/releases/download/v1.2.3/${filenames[0]}`,
+    `http://github.com/with-hide/hide/releases/download/v1.2.3/${filenames[0]}`,
+    `https://github.com.example.com/with-hide/hide/releases/download/v1.2.3/${filenames[0]}`,
+    `https://github.com@evil.example/with-hide/hide/releases/download/v1.2.3/${filenames[0]}`,
     `javascript:alert(1)`, `${base}/download/v1.2.3/${filenames[0]}?token=other`,
   ]) {
     const release = publicRelease();

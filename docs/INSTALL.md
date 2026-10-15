@@ -25,7 +25,7 @@ pnpm --version
 
 ## Install a release
 
-Open the [hide Releases page](https://github.com/modakbul-gongbang/hide/releases).
+Open the [hide Releases page](https://github.com/with-hide/hide/releases).
 If it says there are no releases, continue with [Build and install from source](#build-and-install-from-source).
 
 Download both files for the same version:
@@ -164,7 +164,7 @@ You can also call the command by its full path without changing PATH.
 Clone the repository and build the release bundle:
 
 ```sh
-git clone https://github.com/modakbul-gongbang/hide.git
+git clone https://github.com/with-hide/hide.git
 cd hide
 pnpm install --frozen-lockfile
 HIDE_VERSION=<version> pnpm --dir desktop package

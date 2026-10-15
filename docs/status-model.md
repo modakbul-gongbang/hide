@@ -55,7 +55,7 @@ That is a presentation signal supplied by Herdr, not a verified task outcome, su
 The current upstream documentation also distinguishes semantic state waits from arbitrary command completion; its display/attention descriptions must not replace Hide's pinned wire mapping without checking the bundled schema and adapter.
 Use a command's own exit/result or an explicit coordination receipt when a workflow needs completion evidence, rather than treating a quiet pane or Done group as that evidence.
 
-[Issue #348](https://github.com/modakbul-gongbang/hide/issues/348) records one actual run in which an agent waiting for a background command was read as `done`.
+[Issue #348](https://github.com/with-hide/hide/issues/348) records one actual run in which an agent waiting for a background command was read as `done`.
 This is a known screen-inference limitation: a prompt-like quiet screen can cease to look working while background work is still outstanding.
 It is one observed case, not a guarantee that every background wait produces `done` or that Hide detects outstanding commands independently.
 The corresponding behavior for Monitor and for Codex's background terminal has not been verified by that observation.
