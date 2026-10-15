@@ -24,6 +24,7 @@ mod cli;
 mod codex_trust;
 mod coordination_retirement;
 mod device;
+pub mod device_herdr;
 mod herdr_integration;
 mod hooks;
 mod labels;
@@ -200,6 +201,11 @@ pub struct KitReport {
     /// empty when there was nothing (PRD hide-home-layout D-13, D-14).
     #[serde(default, skip_serializing_if = "Retirement::is_empty")]
     pub legacy_retirement: Retirement,
+    /// What a device's node did about the Herdr server on its registered
+    /// socket after this pass (PRD device-herdr-update); only a device's
+    /// apply carries it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub herdr: Option<device_herdr::HerdrUpdate>,
 }
 
 impl KitReport {
@@ -229,6 +235,7 @@ impl KitReport {
             held_for_onboarding: false,
             labels_retirement: Retirement::default(),
             legacy_retirement: Retirement::default(),
+            herdr: None,
         }
     }
 }
@@ -593,6 +600,7 @@ pub fn status(target: &KitTarget) -> KitReport {
         held_for_onboarding: held,
         labels_retirement: Retirement::default(),
         legacy_retirement: Retirement::default(),
+        herdr: None,
     }
 }
 
@@ -909,6 +917,7 @@ fn apply_scope(target: &KitTarget, scope: &Scope) -> KitReport {
         held_for_onboarding,
         labels_retirement,
         legacy_retirement,
+        herdr: None,
     }
 }
 

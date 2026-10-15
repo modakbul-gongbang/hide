@@ -117,6 +117,10 @@ const CLI_NAME: &str = "hide";
 /// The rest of the install kit (`hide_kit`), under the names the kit reads
 /// in its folder: the hook helper.
 const HOOKS_NAME: &str = "hide-agent-hooks";
+/// The pinned Herdr the package carries beside the helper, which a device
+/// of the same system gets in a folder of its own (PRD device-herdr-update
+/// D-08, `hide_kit::device_herdr`).
+const HERDR_NAME: &str = "herdr";
 /// Bounds on a kit folder read into memory for upload (engineering rule
 /// 15); a folder past them is left out and the kit names the missing part.
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
@@ -163,6 +167,7 @@ impl HelperPackages {
         let helper = read_package(HELPER_NAME, &helper).map_err(EstablishError::Install)?;
         let mut payload = Payload {
             files: vec![helper],
+            herdr: None,
             missing: Vec::new(),
         };
         for name in [CLI_NAME, HOOKS_NAME] {
@@ -175,6 +180,24 @@ impl HelperPackages {
                     "This Hide build does not include {name} for {} {arch}",
                     platform_label(os)
                 )),
+            }
+        }
+        // A build without Herdr for this system brings none, and the device
+        // keeps its own (D-08); the build folder names the copy it brings,
+        // so a new pin is a new build folder.
+        if let Ok(path) = self.find_named(HERDR_NAME, os, arch) {
+            match read_package(hide_kit::device_herdr::HERDR_PROGRAM, &path) {
+                Ok(herdr) => {
+                    let pin = format!("{}\n", herdr_copy_name(&herdr));
+                    payload.files.push(Package {
+                        relative: hide_kit::device_herdr::HERDR_PIN.to_owned(),
+                        digest: hex_digest(pin.as_bytes()),
+                        bytes: pin.into_bytes(),
+                        executable: false,
+                    });
+                    payload.herdr = Some(herdr);
+                }
+                Err(reason) => payload.missing.push(reason),
             }
         }
         Ok(payload)
@@ -204,10 +227,20 @@ struct Package {
     executable: bool,
 }
 
+/// The folder name of a pinned Herdr copy on a device: a prefix of its
+/// digest, so each pin has its own folder and builds share it.
+fn herdr_copy_name(herdr: &Package) -> &str {
+    &herdr.digest[..16]
+}
+
 /// What a build puts on one device.
 pub(super) struct Payload {
     /// The helper first, then the kit's parts.
     files: Vec<Package>,
+    /// The pinned Herdr, which goes into `<root>/herdr/<copy>/` rather than
+    /// the build folder, so a build that changes only the helper finds it
+    /// there (D-08).
+    herdr: Option<Package>,
     /// Why a kit part is not among them.
     missing: Vec<String>,
 }
@@ -1434,13 +1467,16 @@ pub(super) async fn install_build(
     arch: &str,
     helper_root: &str,
 ) -> Result<Installed, EstablishError> {
-    let payload = packages.payload(os, arch)?;
+    let mut payload = packages.payload(os, arch)?;
     if !payload.missing.is_empty() {
         return Err(EstablishError::Install(format!(
             "This build cannot update a core without all of its parts: {}",
             payload.missing.join("; ")
         )));
     }
+    // The core's machine runs its own app's Herdr; a device's copy is not
+    // its to carry.
+    payload.herdr = None;
     let (home, owner, root) = private_root_spelling(raw, helper_root).await?;
     place_payload(raw, &home, owner, &root, &payload).await
 }
@@ -1614,11 +1650,44 @@ async fn place_payload(
             Err(error) => upload.missing.push(error.to_string()),
         }
     }
+    if let Some(herdr) = &payload.herdr {
+        match place_herdr(raw, &root, herdr, owner).await {
+            Ok(true) => upload.sent += 1,
+            Ok(false) => upload.reused += 1,
+            Err(error) => upload.missing.push(error.to_string()),
+        }
+    }
     Ok(Installed {
         helper_path,
         fresh,
         upload,
     })
+}
+
+/// Puts the pinned Herdr in `<root>/herdr/<copy>/herdr`, by the kit parts'
+/// rule: a private file of its size already there is the verified upload
+/// an earlier connection renamed into place. Answers whether it was sent.
+async fn place_herdr(
+    raw: &RawSftpSession,
+    root: &str,
+    herdr: &Package,
+    owner: u32,
+) -> Result<bool, EstablishError> {
+    let folder = format!("{root}/{}", hide_kit::device_herdr::HERDR_DIR);
+    ensure_private_dir(raw, &folder, owner).await?;
+    let copy = format!("{folder}/{}", herdr_copy_name(herdr));
+    ensure_private_dir(raw, &copy, owner).await?;
+    match raw.lstat(&format!("{copy}/{}", herdr.relative)).await {
+        Ok(existing)
+            if private_file(&existing.attrs, owner)
+                && existing.attrs.size == Some(herdr.bytes.len() as u64) =>
+        {
+            Ok(false)
+        }
+        _ => place_file(raw, &copy, herdr, owner, "pinned Herdr")
+            .await
+            .map(|_| true),
+    }
 }
 
 /// Numbers each upload this process stages, so two connections to one
@@ -3161,6 +3230,61 @@ mod tests {
         let other = packages.payload(os, other_arch).unwrap();
         assert_eq!(relative(&other), vec![("hided".to_owned(), true),]);
         assert_eq!(other.missing.len(), 2, "{:?}", other.missing);
+    }
+
+    /// The pinned Herdr goes to a device of the package's own system only,
+    /// in a folder of its own that the build folder names, so a new pin is
+    /// a new build and a helper-only change finds the copy in place.
+    #[cfg(unix)]
+    #[test]
+    fn a_device_of_the_packages_own_system_gets_the_pinned_herdr_beside_its_build() {
+        let directory = tempfile::tempdir().unwrap();
+        let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
+        write(&directory.path().join(HELPER_NAME), b"helper", 0o755);
+        let packages = HelperPackages::new(Some(directory.path().to_path_buf()));
+        let without = packages.payload(os, arch).unwrap();
+        assert!(without.herdr.is_none());
+
+        write(&directory.path().join(HERDR_NAME), b"pinned herdr", 0o755);
+        let with = packages.payload(os, arch).unwrap();
+        let herdr = with.herdr.as_ref().unwrap();
+        assert_eq!(herdr.relative, "herdr");
+        assert!(herdr.executable);
+        let pin = with
+            .files
+            .iter()
+            .find(|file| file.relative == "herdr.pin")
+            .unwrap();
+        assert_eq!(pin.bytes, format!("{}\n", &herdr.digest[..16]).into_bytes());
+        assert!(!with.files.iter().any(|file| file.relative == "herdr"));
+        assert_ne!(with.version(), without.version());
+
+        write(
+            &directory.path().join(HERDR_NAME),
+            b"next pinned herdr",
+            0o755,
+        );
+        assert_ne!(
+            packages.payload(os, arch).unwrap().version(),
+            with.version()
+        );
+
+        // A device of another processor gets its own helper and no Herdr.
+        let other_arch = if arch == "x86_64" {
+            "aarch64"
+        } else {
+            "x86_64"
+        };
+        write(
+            &directory
+                .path()
+                .join(format!("{HELPER_NAME}-{os}-{other_arch}")),
+            b"other",
+            0o755,
+        );
+        let other = packages.payload(os, other_arch).unwrap();
+        assert!(other.herdr.is_none());
+        assert!(!other.files.iter().any(|file| file.relative == "herdr.pin"));
     }
 
     /// Any change to any part is a new version folder on the device, so a
