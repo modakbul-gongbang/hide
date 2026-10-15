@@ -124,9 +124,11 @@
     form.style.top = `${top}px`;
   };
 
-  /* The note form: a new comment's, or an existing one's (edit and delete). */
-  const openForm = (what, rect, existing) => {
+  /* The note form: a new comment's on `target`, or an existing one's
+   * (edit and delete). */
+  const openForm = (what, rect, existing, target) => {
     closeForm();
+    state.target = target;
     const { root, strings } = state;
     const form = document.createElement('div');
     form.className = 'form';
@@ -145,17 +147,21 @@
       row.appendChild(element);
       return element;
     };
+    // The shortcut runs the primary action itself: a synthetic click is
+    // untrusted, and the button reads only the operator's own clicks.
     let submit;
+    let primary = () => {};
     if (existing) {
       note.value = existing.note;
       button(strings.remove, 'danger', () => { send({ type: 'delete', id: existing.id }); closeForm(); });
       button(strings.cancel, '', closeForm);
-      submit = button(strings.save, 'primary', () => {
+      primary = () => {
         const text = note.value.trim();
         if (!text) return;
         send({ type: 'edit', id: existing.id, note: text });
         closeForm();
-      });
+      };
+      submit = button(strings.save, 'primary', primary);
     } else if (state.full) {
       note.disabled = true;
       const full = document.createElement('div');
@@ -167,7 +173,8 @@
       submit.disabled = true;
     } else {
       button(strings.cancel, '', closeForm);
-      submit = button(strings.add, 'primary', () => add(note.value));
+      primary = () => add(note.value);
+      submit = button(strings.add, 'primary', primary);
     }
     const sync = () => { if (!state.full || existing) submit.disabled = !note.value.trim(); };
     note.addEventListener('input', sync);
@@ -175,7 +182,7 @@
     note.addEventListener('keydown', (event) => {
       if (!event.isTrusted) return;
       event.stopPropagation();
-      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); submit.click(); }
+      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); if (!submit.disabled) primary(); }
       if (event.key === 'Escape') { event.preventDefault(); closeForm(); }
     });
     for (const kind of ['mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup']) {
@@ -227,7 +234,7 @@
         if (!event.isTrusted) return;
         event.stopPropagation();
         event.preventDefault();
-        openForm(`${pin.number}`, pin.rect, pin);
+        openForm(`${pin.number}`, pin.rect, pin, null);
       });
       layer.appendChild(dot);
     }
@@ -274,8 +281,7 @@
       if (moved) {
         const rect = docRect({ left: Math.min(start.x, event.clientX), top: Math.min(start.y, event.clientY),
           width: Math.abs(event.clientX - start.x), height: Math.abs(event.clientY - start.y) });
-        state.target = { kind: 'area', rect };
-        openForm(`${Math.round(rect.width)} × ${Math.round(rect.height)}`, rect, null);
+        openForm(`${Math.round(rect.width)} × ${Math.round(rect.height)}`, rect, null, { kind: 'area', rect });
         return;
       }
       state.root.querySelector('.area').style.display = 'none';
@@ -285,8 +291,8 @@
       const selector = selectorOf(element);
       const text = textOf(element);
       const source = sourceOf(element);
-      state.target = { kind: 'element', selector, text, rect, ...(source ? { source } : {}) };
-      openForm(text ? `${selector}  “${text.slice(0, 60)}”` : selector, rect, null);
+      openForm(text ? `${selector}  “${text.slice(0, 60)}”` : selector, rect, null,
+        { kind: 'element', selector, text, rect, ...(source ? { source } : {}) });
     },
     click(event) { if (event.isTrusted) { event.preventDefault(); event.stopPropagation(); } },
     keydown(event) {
@@ -303,9 +309,11 @@
       if (state) { state.strings = strings; return true; }
       const { host, root } = build(strings);
       state = { host, root, strings, pins: [], form: null, target: null, drag: null, full: false };
+      // The pointer handlers listen as a press bubbles out of the overlay, so
+      // the form and the pins, which stop their own presses, keep them.
       for (const [kind, handler] of Object.entries(handlers)) {
-        const target = kind === 'scroll' ? window : host;
-        target.addEventListener(kind, handler, kind === 'scroll' ? { passive: true } : true);
+        if (kind === 'scroll') window.addEventListener(kind, handler, { passive: true });
+        else if (kind !== 'keydown') host.addEventListener(kind, handler);
       }
       window.addEventListener('keydown', handlers.keydown, true);
       return true;

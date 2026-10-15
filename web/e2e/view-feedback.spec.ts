@@ -1,11 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { fixtureExecutable } from "./platform-fixture";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { agentPane } from "./agent-pane";
+import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { copyFixtureShim } from "./shims/build";
 import { enterWorkspace, screenshot, showTool } from "./wire";
 
 // View openers and the operator's comments (PRD view-opener-feedback): an
@@ -14,50 +12,6 @@ import { enterWorkspace, screenshot, showTool } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 test.use({ actionTimeout: 15_000 });
-
-/**
- * Makes `pane` a Claude Code agent Herdr lists, whose `!` runs one `hide`
- * command from inside the agent's own process, as the agent would: the
- * fixture `claude` execs the spawn-provider shim, which reports the native
- * session and runs a small driver that reads the next command from a file.
- */
-async function agentPane(herdr: HerdrFixture, daemon: Daemon, pane: string): Promise<(args: string[]) => Promise<string>> {
-  const root = herdr.root;
-  const runner = path.join(root, "worker-bin", fixtureExecutable("claude"));
-  fs.mkdirSync(path.dirname(runner));
-  copyFixtureShim("spawn-provider", runner);
-  fs.writeFileSync(path.join(root, "factory-question-runner.config"), runner);
-  const command = path.join(root, "view-feedback-command.json");
-  const output = path.join(root, "view-feedback-output.txt");
-  const completed = path.join(root, "view-feedback-command.status");
-  const driver = path.join(root, "view-feedback-driver.cjs");
-  const hide = path.resolve("..", "target", "debug", fixtureExecutable("hide"));
-  fs.writeFileSync(driver, `
-const fs = require("node:fs");
-const { execFileSync } = require("node:child_process");
-const args = JSON.parse(fs.readFileSync(${JSON.stringify(command)}, "utf8"));
-const stdout = execFileSync(${JSON.stringify(hide)}, args, {
-  env: { ...process.env, HIDE_STATE_DIR: ${JSON.stringify(daemon.stateDir)} },
-  encoding: "utf8", timeout: 15000, maxBuffer: 1 << 20,
-});
-fs.writeFileSync(${JSON.stringify(output)}, stdout);
-`);
-  fs.writeFileSync(path.join(root, "provider.config"), [herdr.bin, completed, process.execPath, driver, ""].join("\n"));
-  herdr.run(["agent", "start", "viewer", "--kind", "claude", "--pane", pane]);
-  await expect.poll(() => {
-    const listed = herdr.run(["agent", "list"]) as { result: { agents: { pane_id: string; agent_session?: { value: string } }[] } };
-    return listed.result.agents.find((agent) => agent.pane_id === pane)?.agent_session?.value ?? null;
-  }, { message: `${pane} runs a listed Claude Code agent`, timeout: 20_000 }).toBeTruthy();
-  return async (args) => {
-    fs.writeFileSync(command, JSON.stringify(args));
-    fs.rmSync(completed, { force: true });
-    fs.rmSync(output, { force: true });
-    execFileSync(herdr.bin, ["pane", "send-text", pane, "!"], { env: herdr.env, timeout: 10_000 });
-    await expect.poll(() => (fs.existsSync(completed) ? fs.readFileSync(completed, "utf8").trim() : null),
-      { message: `hide ${args.join(" ")} ran in ${pane}`, timeout: 20_000 }).toBe("0");
-    return fs.readFileSync(output, "utf8");
-  };
-}
 
 const front = (page: Page) => page.locator('[data-view-tab-bar] [role="tab"][aria-selected="true"]');
 
@@ -81,7 +35,12 @@ test("an agent's View wears its mark, and the operator's line comment reaches th
     fs.writeFileSync(path.join(fixture, "notes.md"), ["# Notes", "", "The first line.", "The second line.", "The end."].join("\n") + "\n");
     const pane = herdr.panes[0]!;
     daemon = await startHided(herdr, "view-feedback");
-    const hide = await agentPane(herdr, daemon, pane);
+    const agent = await agentPane(herdr, daemon.stateDir, pane);
+    const hide = async (args: string[]) => {
+      const answer = await agent(args);
+      expect(answer.status, answer.out).toBe(0);
+      return answer.out;
+    };
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     await showTool(page, "files");

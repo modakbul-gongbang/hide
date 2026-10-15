@@ -2,7 +2,7 @@ import { ArrowLeftIcon, ArrowRightIcon, RotateCwIcon, XIcon } from "lucide-react
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AreaEmpty } from "./AreaEmpty";
-import { addressShown, addressUrl, clearBrowserAttachments, hostKey, mountBrowserAttachments, noteBrowserAttachment, notePageState, parseWorkspaceKey, registerBrowserSlot, syncBrowserFront, useBrowserStore } from "./browserViews";
+import { addressShown, addressUrl, clearBrowserAttachments, focusBrowserDisplay, hostKey, mountBrowserAttachments, noteBrowserAttachment, notePageState, parseWorkspaceKey, registerBrowserSlot, syncBrowserFront, useBrowserStore } from "./browserViews";
 import { NewTabBody } from "./components/new-tab-body";
 import { changedFiles } from "./newTab";
 import { useUiStore } from "./ui";
@@ -246,8 +246,9 @@ export function BrowserHost({ actions }: { actions: Actions }) {
  * hided holds the page and draws the overlay in it, so a click or a drag
  * there makes a comment rather than reaching the page. The pins are the
  * page's own comments, those left at the address it shows now; they are sent
- * again whenever the core's comments change. Comment again, or Esc in the
- * page, ends it; so does leaving the View.
+ * again whenever the core's comments change. Turning it on gives the page the
+ * keyboard, so Esc there ends it as the hint says; so do Comment again and
+ * leaving the View.
  */
 function BrowserCommentButton({ display, workspace, address, actions }: { display: ViewDisplaySnapshot; workspace: string; address: string; actions: Actions }) {
   const { t } = useInterfaceTranslation();
@@ -322,6 +323,7 @@ function BrowserCommentButton({ display, workspace, address, actions }: { displa
         onClick={() => {
           noteBrowserComment(display.id, { on: !on, reason: null });
           send(!on);
+          if (!on) focusBrowserDisplay(workspace, display.id);
         }}
       >
         <MessageSquarePlusIcon />
