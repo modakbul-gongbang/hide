@@ -159,6 +159,7 @@ impl Runtime {
                 session: None,
                 files: RemoteFileListSnapshot::idle(),
                 catalog: Default::default(),
+                unreachable_since_unix_ms: Some(unix_milliseconds()),
             });
         }
         let started = (|| {

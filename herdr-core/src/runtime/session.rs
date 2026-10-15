@@ -1983,9 +1983,13 @@ impl Runtime {
         let mut observed_session = None;
         match fetched {
             Ok(session) => {
-                if status.state != "connected" || status.message.is_some() {
+                if status.state != "connected"
+                    || status.message.is_some()
+                    || status.unreachable_since_unix_ms.is_some()
+                {
                     status.state = "connected".to_owned();
                     status.message = None;
+                    status.unreachable_since_unix_ms = None;
                     changed = true;
                 }
                 if status.files.root_path.as_deref().is_some_and(|root_path| {
@@ -2018,6 +2022,12 @@ impl Runtime {
                 {
                     status.state = error.state().to_owned();
                     status.message = Some(error.message().to_owned());
+                    changed = true;
+                }
+                // The first failure after an answer starts the clock; a
+                // failure that only changes its reason keeps it.
+                if status.unreachable_since_unix_ms.is_none() {
+                    status.unreachable_since_unix_ms = Some(unix_milliseconds());
                     changed = true;
                 }
             }

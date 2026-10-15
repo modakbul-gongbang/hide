@@ -204,6 +204,7 @@ fn node_runtime_with(
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     runtime.device_hosts.insert(
         NODE.to_owned(),

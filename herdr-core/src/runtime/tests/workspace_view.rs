@@ -311,6 +311,7 @@ fn browser_authority_records_remote_session_and_catalog_revocations_before_reads
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     let mut project = workspace(
         "remote-workspace",
@@ -366,6 +367,61 @@ fn browser_authority_records_remote_session_and_catalog_revocations_before_reads
         runtime.snapshot.browser_scopes[0].incarnation, recovered_incarnation,
         "a catalog loss/regrant also retires the old grant before a read"
     );
+}
+
+/// The Overview says since when a device has not answered (PRD
+/// overview-device-tasks B4): the clock starts at the first failure after
+/// an answer, a failure that only changes its reason keeps it, and an
+/// answer clears it from the wire.
+#[test]
+fn a_device_that_stops_answering_carries_since_when() {
+    let mut runtime = runtime();
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: "mini".into(),
+        state: "connecting".into(),
+        message: None,
+        herdr_version: None,
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+        unreachable_since_unix_ms: None,
+    });
+    let raw = RemoteSessionSnapshot {
+        workspaces: Vec::new(),
+        agents: Vec::new(),
+        active_tab_ids: Default::default(),
+        focused_workspace_id: None,
+        focused_checkout_id: None,
+        focused_tab_id: None,
+        focused_pane_id: None,
+        pane_layouts: Vec::new(),
+        pane_hook_tokens: Default::default(),
+        issue_tokens: Default::default(),
+        issue_links: Default::default(),
+    };
+    let since = |runtime: &Runtime| runtime.snapshot.status.remote[0].unreachable_since_unix_ms;
+    runtime.ingest_remote_session("mini", Ok(raw.clone()));
+    assert_eq!(since(&runtime), None);
+
+    let before = unix_milliseconds();
+    assert!(runtime.ingest_remote_session(
+        "mini",
+        Err(SessionFetchError::Unreachable("connection lost".into()))
+    ));
+    let lost = since(&runtime).expect("the clock starts at the failure");
+    assert!(lost >= before);
+    runtime.ingest_remote_session(
+        "mini",
+        Err(SessionFetchError::SocketMissing("no server".into())),
+    );
+    assert_eq!(since(&runtime), Some(lost), "a new reason keeps the clock");
+    let wire = serde_json::to_value(&runtime.snapshot.status.remote[0]).unwrap();
+    assert_eq!(wire["unreachable_since_unix_ms"], serde_json::json!(lost));
+
+    assert!(runtime.ingest_remote_session("mini", Ok(raw)));
+    assert_eq!(since(&runtime), None);
+    let wire = serde_json::to_value(&runtime.snapshot.status.remote[0]).unwrap();
+    assert!(wire.get("unreachable_since_unix_ms").is_none());
 }
 
 fn with_tabs(runtime: &mut Runtime, directory: &Path) {

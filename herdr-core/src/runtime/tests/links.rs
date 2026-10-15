@@ -70,6 +70,7 @@ fn native_lineage_reaches_the_ledger_on_remote_and_cross_device_sessions() {
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     }];
     let client = crate::links::worker::LinkClient::full_mailbox_for_test();
     runtime.links_work.client = Some(client.clone());

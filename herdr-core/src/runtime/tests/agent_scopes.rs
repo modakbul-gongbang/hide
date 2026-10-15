@@ -99,6 +99,7 @@ fn a_task_is_its_root_and_every_descendant_with_their_projects_and_devices() {
             issue_tokens: Default::default(),
             issue_links: Default::default(),
         }),
+        unreachable_since_unix_ms: None,
     }];
     assert!(runtime.refresh_agent_scopes());
     let root = &runtime.snapshot.navigator.workspaces[0]
@@ -479,6 +480,7 @@ fn disconnected_devices_zero_the_physical_tile_but_keep_overview_members_from_th
             issue_tokens: Default::default(),
             issue_links: Default::default(),
         }),
+        unreachable_since_unix_ms: None,
     }];
     assert!(runtime.refresh_agent_scopes());
     let scope = &runtime

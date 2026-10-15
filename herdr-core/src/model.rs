@@ -5189,6 +5189,12 @@ pub struct RemoteStatusSnapshot {
     /// Whether the session's projects are grouped from the device's own
     /// facts (`device_catalog`).
     pub catalog: DeviceCatalogSnapshot,
+    /// Since when the device has not answered (PRD overview-device-tasks
+    /// B4): set when its row stops being `connected`, or when it first
+    /// waits for its connection, and cleared when it answers; absent from
+    /// the wire while it is connected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unreachable_since_unix_ms: Option<u64>,
 }
 
 /// How far a device's projects are confirmed by its helper (PRD S5.5 B3,

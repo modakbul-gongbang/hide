@@ -40,6 +40,7 @@ fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
         hide_herdr_client::LocalSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
@@ -109,6 +110,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     runtime.snapshot.terminal.panes.push(TerminalPaneSnapshot {
         pane_id: "w-local:p1".to_owned(),
@@ -340,6 +342,7 @@ fn remote_file_results_are_scoped_and_generation_guarded() {
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
 
     let request = serde_json::to_vec(&serde_json::json!({
@@ -1101,6 +1104,7 @@ fn remote_pane_focus_uses_its_existing_request_outcome() {
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     let connector: Arc<dyn hide_herdr_client::ApiConnector> =
         Arc::new(hide_herdr_client::LocalSocketConnector::new(
@@ -1685,6 +1689,7 @@ fn a_device_pane_read_before_its_server_restarts_stays_read() {
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     let session = |status: &str, seq: u64, focused: Option<&str>| {
         let mut remote_checkout = checkout(
@@ -1872,6 +1877,7 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
             session: None,
             files: RemoteFileListSnapshot::idle(),
             catalog: Default::default(),
+            unreachable_since_unix_ms: None,
         });
     }
     let remote_session = |target_id: &str, pane_ids: &[&str], focused: Option<&str>| {
@@ -2230,6 +2236,7 @@ fn remote_purpose_runtime(version: &str) -> Runtime {
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     runtime
 }

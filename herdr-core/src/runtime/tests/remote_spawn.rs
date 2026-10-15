@@ -240,6 +240,7 @@ fn spawner() -> Spawner {
             session: None,
             files: RemoteFileListSnapshot::idle(),
             catalog: Default::default(),
+            unreachable_since_unix_ms: None,
         });
         guard
             .device_machine_ids

@@ -659,6 +659,7 @@ fn a_registered_device_project_keeps_its_memory_scope_while_the_link_is_down() {
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
 
     assert!(runtime.open_project_memory(Some("remote:mini:workspace:w".into())));

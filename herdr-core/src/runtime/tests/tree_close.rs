@@ -489,6 +489,7 @@ fn a_device_descendant_closes_through_the_device_and_fails_when_it_disconnects()
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     runtime.remote_controls.insert(
         "mini".to_owned(),

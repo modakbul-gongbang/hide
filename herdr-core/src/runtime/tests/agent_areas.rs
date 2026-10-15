@@ -848,6 +848,7 @@ fn cross_machine_lineage_updates_agent_tab_placement_in_every_arrival_order() {
                 session: None,
                 files: RemoteFileListSnapshot::idle(),
                 catalog: Default::default(),
+                unreachable_since_unix_ms: None,
             });
             for step in order {
                 match step {
