@@ -1,98 +1,155 @@
 <p align="center">
-  <img src="design/brand/hide-icon-blinking.svg" width="132" alt="hide owl app icon">
+  <img src="design/brand/hide-icon-blinking.svg" width="120" alt="hide owl app icon">
 </p>
 
 <h1 align="center">hide</h1>
 
-<p align="center"><strong>Run more agents. Hold less.</strong></p>
-
 <p align="center">
-  A calm IDE for coding with multiple agents, with each task in context and attention on what matters.
+  <strong>Run more agents. Hold less.</strong><br>
+  The agent development environment for Claude Code, Codex and whatever comes next.
 </p>
 
 <p align="center">
-  <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-black?logo=apple">
-  <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple%20Silicon-arm64-111111">
-  <img alt="Electron" src="https://img.shields.io/badge/Electron-desktop-9FEAF9?logo=electron&logoColor=black">
-  <img alt="Rust 2024" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white">
-  <img alt="Bundled Herdr runtime" src="https://img.shields.io/badge/Herdr-bundled-B9FF66">
+  <a href="https://github.com/with-hide/hide/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/with-hide/hide?label=release&color=B9FF66&labelColor=0D191B"></a>
   <a href="LICENSE"><img alt="Apache License 2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
+  <img alt="macOS, Windows and Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey">
+  <a href="https://herdr.dev"><img alt="Built on Herdr" src="https://img.shields.io/badge/built%20on-Herdr-B9FF66?labelColor=0D191B"></a>
 </p>
 
-hide is a multi-agent IDE built on [Herdr](https://github.com/herdrdev/herdr), with an Electron desktop host and a Rust daemon.
-It brings local and remote workspaces, checkouts, terminal panes, files, and coding agents into one keyboard-first window.
-It surfaces the questions, approvals, and results that need a person's attention while leaving session state and credentials with the tools that own them.
+<p align="center">
+  <a href="https://withhide.dev">Website</a> ·
+  <a href="#install">Install</a> ·
+  <a href="docs/README.md">Docs</a> ·
+  <a href="https://github.com/with-hide/hide/discussions">Discussions</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
 
-## Why hide
+<p align="center">
+  <img src="site/assets/hide-workspace.webp" alt="The hide window: two agents that need an answer raised above the project tree, Claude Code and Codex side by side, and every session listed by group on the right.">
+</p>
 
-- **One map of active work.** Navigate Herdr workspaces, checkouts, tabs, panes, and agent activity from a single sidebar.
-- **Terminals stay where the work is.** Attached Herdr panes render in place with their real layout, focus, zoom, scrollback, and terminal state.
-- **Agents start in the right checkout.** Launch Claude Code or Codex from the selected workspace without rebuilding its context by hand.
-- **Local and remote stay distinct.** Work on this Mac or an SSH-connected Mac while keeping remote file writes inside the attached terminal.
-- **Files remain understandable.** Browse and edit existing local files in the Explorer, with remote trees exposed as read-only context.
-- **A browser shows beside the work.** `hide browser open <url>` opens a browser as a View area display in the desktop app.
-- **Attention is visible.** Questions, approvals, completed turns, and failures make the next action easy to spot.
+Your team runs several coding agents at once, and someone has to watch them.
+hide keeps every agent in one view, lets them hand work to each other, and keeps them going after you close the laptop.
+You get the decisions; the rest stays out of the way.
 
-## How it works
+It works with the agent CLIs you already signed in to: **Claude Code, Codex, OpenCode, Cursor, Grok, Pi and omp**.
+No new API key, no hosted service.
 
-```text
-Herdr server and panes
-        │
-        │ versioned snapshots + terminal chunks
-        ▼
-herdr-core (Rust)
-        │
-        │ typed events in, snapshot deltas out
-        ▼
-hided (daemon: loopback HTTP + a token WebSocket)
-        │
-        │ serves the built web shell
-        ▼
-web shell (React)
-        │
-        ├─ workspace and checkout navigator
-        ├─ live pane layout and terminal surfaces
-        ├─ local Explorer and remote read-only tree
-        └─ agent launcher and settings
-```
+## Features
 
-shown by the Electron desktop app, or by a browser pointed at the daemon.
+### Only what needs you comes up
 
-The Rust core owns the authoritative runtime state behind one snapshot boundary.
-The web shell renders that state and sends typed user events back, so the UI does not maintain a competing model of the session.
+Hide AI reads what each agent did and gives it a title and a one-line summary.
+Agents sort themselves into four groups, **Needs You, Done, Working and Seen**, and the ones waiting on you sit on top of every screen.
+Hide AI runs on the agent CLI you already use.
+
+### Agents hand work to each other
+
+A lead starts workers, a worker starts a helper, and they write to each other in letters.
+Mix vendors freely: one agent writes, another checks.
+A child runs in its own tab and reports to its parent, not to you, and the tree shows who started whom on every machine.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="site/assets/shots/agents-light.webp">
+    <img src="site/assets/shots/agents-dark.webp" alt="A lead agent, Claude Code, open in a pane. Its header shows one child asking and its pull requests, and a popover lists the helpers it started. The sidebar tree beside it shows the lead with Codex workers and an OpenCode helper under them.">
+  </picture>
+</p>
+
+### One core, any screen
+
+Put hide's core on a machine that never sleeps.
+Projects, letters and titles live there; your laptop becomes a screen, so closing it stops nothing.
+Add any machine by its SSH alias and its agents join the same groups, and pair your phone by QR to answer the one that needs you.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="site/assets/shots/core-light.webp">
+    <img src="site/assets/shots/core-dark.webp" alt="Settings in hide. Devices lists the core machine, a laptop that dials in and a server, all connected. Mobile shows Tailscale ready and one paired phone.">
+  </picture>
+</p>
+
+### Still an IDE
+
+- **Real terminals.** Agents run in Herdr panes with their real layout, scrollback and focus, drawn in place.
+- **Files beside the work.** A path an agent names opens next to it, in an editor with a VS Code style Explorer.
+- **Diffs and pull requests.** Each checkout's changes are one click from its tab, with its pull requests in the Work tool.
+- **A browser your agents can drive.** `hide browser open <url>` shows a page beside the agent, which can click, fill and screenshot it.
+- **Keyboard first.** `⌘K` goes to any agent, session, issue or pull request, and `⌘P` opens any file.
+
+> [!NOTE]
+> **Software Factory is coming.** Queue issues with clear requirements; workers take them in order, verify and merge them, and bring back only what needs a person.
+> Email [hello@withhide.dev](mailto:hello@withhide.dev) to join the list, or watch this repository's releases.
 
 ## Install
 
-The packaging targets are Apple Silicon Macs running macOS 14 or later, Windows x64 and Linux x64 ([Windows and Linux](docs/INSTALL.md#windows-and-linux)).
-Published builds are listed on [GitHub Releases](https://github.com/with-hide/hide/releases); a draft or a successful package build is not a public download.
-To build locally, install a Rust toolchain with Rust 2024 support, Node.js 22.12.0 or later and pnpm 10, then:
+Download the package for your system from the [latest release](https://github.com/with-hide/hide/releases/latest):
+
+| System | Package | First launch |
+| --- | --- | --- |
+| macOS 14+, Apple Silicon | `hide-v<version>-macos-arm64.zip` | Opens like any app; v0.3.0 and earlier need Control-click, **Open** once |
+| Windows x64 | `hide-v<version>-windows-x64.zip` | Unsigned: SmartScreen asks once, **More info**, **Run anyway** |
+| Linux x64 | `hide-v<version>-linux-x64.tar.gz` | Unpack and run `hide-linux-x64/hide`; nothing installs system-wide |
+
+Check the archive against its `.sha256` file before you open it.
+Install and sign in to the agent CLIs you want hide to start; hide never asks for their credentials.
+hide brings its own [Herdr](https://herdr.dev), and when a Herdr server is already running it opens on top of it as it is.
+
+[Install hide](docs/INSTALL.md) covers checksums, Gatekeeper, each system's steps, updates, uninstalling and troubleshooting, and [What each system supports](docs/INSTALL.md#what-each-system-supports) records where each system stands.
+
+<details>
+<summary><strong>Build from source</strong></summary>
+
+<br>
+
+You need Rust with 2024 edition support, Node.js 22.12.0 or later and pnpm 10.
 
 ```sh
 git clone https://github.com/with-hide/hide.git
 cd hide
 pnpm install --frozen-lockfile
 HIDE_VERSION=0.0.0-local pnpm --dir desktop package
+```
+
+On macOS this writes an ad-hoc signed `hide.app`, a versioned zip and its SHA-256 file under `desktop/out/`; install it with:
+
+```sh
 sudo /usr/bin/ditto --rsrc --extattr --qtn desktop/out/hide-darwin-arm64/hide.app /Applications/hide.app
 open /Applications/hide.app
 ```
 
-On macOS the source build creates an ad-hoc signed `hide.app`, a versioned zip archive, and a SHA-256 sidecar under `desktop/out/`.
-`0.0.0-local` identifies a local build; set the intended version explicitly when packaging another build.
-The app bundles the pinned upstream Herdr runtime, so a separate Herdr install is not required for a first launch.
+`0.0.0-local` marks a local build; set the version you mean when packaging any other.
+Windows and Linux source builds are in [Build and install from source](docs/INSTALL.md#build-and-install-from-source).
 
-See [Install hide](docs/INSTALL.md) for prerequisites, release checksum verification, Gatekeeper steps, first-launch behavior, updates, and troubleshooting.
+</details>
 
-See [Browser displays](docs/BROWSER_DISPLAYS.md) for `hide browser open`, the pages the desktop app draws in View areas, and the `file:` address boundary.
+## Your machines, your sign-ins
 
-## Runtime boundaries
+- **Nothing hosted.** The app, the core and Hide AI run on machines you own, so your code goes only where your agent CLIs already send it.
+- **Credentials stay with their tools.** Agent CLIs, SSH and Herdr keep their own sign-in state.
+  The one thing hide reads is Codex's `auth.json` access token and account ID, which it sends to Codex's usage endpoint to show your usage.
+- **Your Herdr is left alone.** A Herdr server that answers is used as it is and never stopped or replaced; when none answers, hide starts its bundled one, which keeps running after the app quits.
+- **Your phone stays in your tailnet.** It reaches your machines over your own Tailscale.
 
-- The app ships the pinned Herdr binary and names it to the daemon as `HERDR_BIN_PATH`.
-  When no Herdr server answers on the socket the app uses, as after a reboot, the app starts its bundled Herdr there; a server that answers is used as it is and never stopped or replaced, and the server keeps running after the app quits.
-- Provider sign-in and SSH authentication use the operator's installed CLIs and SSH configuration.
-  For Codex usage status, hide reads the CLI's existing `auth.json` access token and account ID and sends them to the provider's usage endpoint.
-- Claude Code and Codex remain separate tools and must already be installed and signed in if you want to launch them from hide.
-- Remote Explorer trees are read-only.
-  Remote edits stay in the terminal attached to that remote Herdr session.
+## How it works
+
+```text
+Herdr server ─ panes, terminals and agent lifecycle
+     │  versioned snapshots + terminal output
+     ▼
+herdr-core (Rust) ─ the one owner of hide's state
+     │  typed events in, snapshot deltas out
+     ▼
+hided ─ the daemon and the `hide` CLI: loopback HTTP + a token WebSocket
+     │
+     ▼
+web shell (React) ─ in the Electron app, or a browser on the same machine
+```
+
+The core owns the state behind one snapshot boundary, and the shell only renders it and sends user events back, so the screen never keeps a competing model of the session.
+[ARCHITECTURE.md](docs/ARCHITECTURE.md) explains the boundaries and their reasons.
+
+### Built on Herdr
 
 <!-- herdr-provenance:start -->
 hide distributes the [upstream Herdr release v0.9.3](https://github.com/herdrdev/herdr/releases/tag/v0.9.3).
@@ -100,47 +157,70 @@ The bundled binary's code is not modified by hide; a macOS release replaces only
 The weekly `herdr-update.yml` workflow proposes upstream stable releases with `--repo herdrdev/herdr`; updates must pass contract and runtime checks.
 <!-- herdr-provenance:end -->
 
-## Measured performance
+## Performance
 
-On an M4 Pro Mac, a private native candidate measured **16.3 ms p95 from the first renderer keydown to a complete nine-character echo in the terminal buffer**, and **99.5 ms p95 from a wheel event to changed terminal text and the next animation frame**, with 50 samples each.
-The paired resource run measured total process-tree RSS p95 of **549.0 MiB idle** and **622.0 MiB with three driven terminal panes**.
-These are observations of the 2026-10-04 unpackaged candidate, with release daemon builds; the input endpoints do not measure physical pixel presentation.
-Read the [full results, startup measurements, sustained-output tails and limits](docs/PERFORMANCE_RESULTS.md) before comparing them with another workload or app.
-No matched Orca comparison completed, so these results support no claim of relative speed or memory use.
+On an M4 Pro Mac, the 2026-10-04 candidate measured **16.3 ms p95** from a renderer keydown to a complete nine-character echo in the terminal buffer, and its whole process tree held **549 MiB** idle and **622 MiB** with three busy terminals (RSS p95).
+These are one machine's numbers on macOS, taken without quiescing it: they leave out key-to-photon latency and Windows and Linux, and no other app ran the same workload, so they claim nothing about relative speed.
+[PERFORMANCE_RESULTS.md](docs/PERFORMANCE_RESULTS.md) has the method, the distributions and every limit.
 
-## Development
+## Documentation
 
-Report a bug you reproduced with the bug form and bring ideas to Discussions; pull requests are open only to maintainers and the people in `.github/APPROVED_CONTRIBUTORS`, and others are closed automatically.
-`CONTRIBUTING.md` owns that policy and lists the `verify` gates and how to run them locally, and `SECURITY.md` says how to report a vulnerability privately.
+| Guide | What it covers |
+| --- | --- |
+| [Install](docs/INSTALL.md) | Releases, source builds, devices, moving the core, updates and troubleshooting |
+| [UI behavior](docs/UI_BEHAVIOR.md) | What every screen does |
+| [Status model](docs/status-model.md) | How an agent's group and read state are decided |
+| [Agent hooks](docs/agent-hooks.md) | What hide writes for each agent, and where |
+| [Browser displays](docs/BROWSER_DISPLAYS.md) | `hide browser` and the pages drawn beside the work |
+| [Architecture](docs/ARCHITECTURE.md) | The core, the daemon, the desktop host and the Herdr boundary |
+| [All docs](docs/README.md) | Every current guide and what owns it |
 
-Prerequisites are a Rust toolchain with Rust 2024 edition support, Node.js 22.12.0 or later, and pnpm 10.
+## Contributing
+
+hide is built in the open.
+Report a bug you reproduced with the [bug form](https://github.com/with-hide/hide/issues/new?template=bug.yml) and bring ideas to [Discussions](https://github.com/with-hide/hide/discussions/categories/ideas).
+Pull requests are open only to maintainers and the people in [`.github/APPROVED_CONTRIBUTORS`](.github/APPROVED_CONTRIBUTORS); others are closed automatically.
+[CONTRIBUTING.md](CONTRIBUTING.md) owns that policy and lists the `verify` gates and their local commands, and [AGENTS.md](AGENTS.md) holds the rules every change follows.
 
 ```sh
-bash scripts/verify-cargo.sh test
-bash scripts/verify-web.sh
-pnpm --dir desktop dev
-HIDE_VERSION=0.0.0-local pnpm --dir desktop package
+pnpm install --frozen-lockfile
+bash scripts/verify-cargo.sh test   # Rust suites
+bash scripts/verify-web.sh          # web and desktop typecheck, lint, test and build
+pnpm --dir desktop dev              # the desktop app, unpackaged, against this checkout's build
 ```
 
-`pnpm --dir desktop dev` runs the desktop app unpackaged against this worktree's own `hide` build.
-`HIDE_VERSION=0.0.0-local pnpm --dir desktop package` produces a local-version bundle and archive under `desktop/out/`.
+<details>
+<summary><strong>Repository map</strong></summary>
 
-Repository map:
+<br>
 
-- `desktop/` - the Electron desktop host.
-- `web/` - the React web shell.
-- `hided/` - the daemon and `hide` CLI.
-- `herdr-core/` - the platform-neutral Rust runtime.
-- `hide-agent-hooks/`, `hide-ai/`, `hide-herdr-client/`, `hide-host/`, `hide-memory/`, `hide-project/`, `hide-session/` - supporting Rust crates.
-- `plugins/` - Herdr plugins shipped from this repository.
-- `contracts/` - the pinned Herdr protocol contract.
-- `assets/pet-theme/` - artwork kept for a future Electron feature ([issue #184](https://github.com/with-hide/hide/issues/184)); the current app does not use it.
-- `docs/` - [current documentation map](docs/README.md), with runtime guides separated from historical and visual references.
+| Path | What lives there |
+| --- | --- |
+| `desktop/` | The Electron desktop host, the app that ships |
+| `web/` | The React web shell |
+| `hided/` | The daemon and the `hide` CLI |
+| `herdr-core/` | The platform-neutral Rust runtime that owns hide's state |
+| `hide-platform/` | What differs between macOS, Windows and Linux, written once |
+| `hide-agent-hooks/` | The only code that writes an agent's configuration file |
+| `hide-ai/` | Background AI features on the operator's own agent CLIs |
+| `hide-kit/` | The install kit and every path under `~/.hide` |
+| `hide-*/` | The other supporting crates: sessions, memory, devices, projects, the Factory |
+| `plugins/` | Herdr plugins shipped from this repository |
+| `contracts/` | The pinned Herdr API contract |
+| `design/` | The Pen design library and `tokens.json` |
+| `site/` | [withhide.dev](https://withhide.dev) |
 
-Before visual verification, read [Which app is actually running](docs/dev-runtime.md) and [Verification](docs/VERIFICATION.md).
-Identify the candidate by its executable, build, PID and window; an isolated candidate can run beside the operator's app.
+</details>
 
-## Design and license
+## Community and support
 
-The interface follows the behavior contract in [docs/UI_BEHAVIOR.md](docs/UI_BEHAVIOR.md), styled from the Pen design-system library and `design/tokens.json`, and uses original React and TypeScript code.
-hide is available under the [Apache License 2.0](LICENSE); [NOTICE](NOTICE) carries its copyright notice.
+- **Questions:** [Discussions Q&A](https://github.com/with-hide/hide/discussions/categories/q-a)
+- **Ideas and feature requests:** [Discussions Ideas](https://github.com/with-hide/hide/discussions/categories/ideas)
+- **Bugs you reproduced:** [the bug form](https://github.com/with-hide/hide/issues/new?template=bug.yml); issues are only for reproduced bugs
+- **Security:** report privately as [SECURITY.md](SECURITY.md) describes, never in a public issue
+- **Teams and everything else:** [hello@withhide.dev](mailto:hello@withhide.dev)
+
+## License
+
+hide is licensed under the [Apache License 2.0](LICENSE); [NOTICE](NOTICE) carries its copyright notice.
+The bundled Herdr and other third-party components keep their own licenses, listed in [THIRD_PARTY_NOTICES](desktop/resources/THIRD_PARTY_NOTICES).
