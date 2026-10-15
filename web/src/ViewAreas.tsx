@@ -1,5 +1,5 @@
 import { GlobeIcon, Link2Icon, LoaderCircleIcon, XIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { createAreaTree, tabFit, type AreaAdapter, type AreaTabInteraction } from "./AreaTree";
 import { AreaEmpty } from "./AreaEmpty";
@@ -45,6 +45,16 @@ export function ViewAreas({ actions }: { actions: Actions }) {
 }
 
 const SharedViewTree = createAreaTree<ViewDisplaySnapshot>("view");
+/**
+ * An editor still on its way: a document or diff whose text is being read
+ * (`Notice` in `Editor.tsx`), or a host whose editor its effect has yet to build.
+ */
+const READING = [
+  '[data-editor-state="loading"]',
+  '[data-editor-state="diff-loading"]',
+  "[data-editor-codemirror]:not(:has(.cm-content))",
+  "[data-patch-view]:not(:has(.cm-content))",
+].join(", ");
 function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnapshot; deviceId: string; path: string; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const owner = useKeyboardOwner();
@@ -52,30 +62,51 @@ function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnaps
   const workspace = useMemo(() => ({ device_id: deviceId, path }), [deviceId, path]);
   const key = workspaceKey(workspace);
   const [body, setBody] = useState<HTMLDivElement | null>(null);
-  // A menu, the palette or a drop moved the keyboard's place; once the core
-  // shows it there, the keyboard follows, and this focus asks the core for
+  // A menu, the palette, a drop or an open moved the keyboard's place; once
+  // the core shows it there, the keyboard follows, and this focus asks the core for
   // nothing (B20). A move of the active view resolves on the frame that
   // lands it, never on the one it was asked from. The keyboard goes there
   // once that frame's editors have settled, since an editor that moved to
   // a new area is built as it mounts (twice, in a development build), and
   // not when something else took the keyboard in between.
+  // A file or diff still being read has no editor yet: its tab holds the
+  // keyboard, and the editor takes it as it mounts unless the operator has
+  // moved it by then. One watch per tree, ended when the read settles, by
+  // the next arrival, or with the tree.
   const request = useUiStore((s) => s.viewFocusRequest);
+  const contentWatch = useRef<MutationObserver | null>(null);
+  useEffect(() => () => contentWatch.current?.disconnect(), []);
   useEffect(() => {
     if (!request || !body || !focusRequestArrived(request, key, layout)) return;
     useUiStore.getState().setViewFocusRequest(null);
     const areaId = layout.active_area;
     const before = document.activeElement;
     requestAnimationFrame(() => {
+      contentWatch.current?.disconnect();
+      contentWatch.current = null;
       const now = document.activeElement;
       if (now !== before && now !== null && now !== document.body) return;
       const area = body.querySelector<HTMLElement>(`[data-view-area-id="${CSS.escape(areaId)}"]`);
-      const browserId = area?.querySelector<HTMLElement>("[data-browser-slot]")?.dataset.browserSlot;
+      if (!area) return;
+      const browserId = area.querySelector<HTMLElement>("[data-browser-slot]")?.dataset.browserSlot;
       if (browserId) {
         focusBrowserDisplay(key, browserId);
         return;
       }
-      const target = area?.querySelector<HTMLElement>(".cm-content") ?? area?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
-      target?.focus({ preventScroll: true });
+      const content = area.querySelector<HTMLElement>(".cm-content");
+      const tab = area.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+      (content ?? tab)?.focus({ preventScroll: true });
+      if (content || !tab || !area.querySelector(READING)) return;
+      const watch = new MutationObserver(() => {
+        const mounted = area.querySelector<HTMLElement>(".cm-content");
+        if (document.activeElement !== tab || (!mounted && !area.querySelector(READING))) watch.disconnect();
+        else if (mounted) {
+          watch.disconnect();
+          mounted.focus({ preventScroll: true });
+        }
+      });
+      watch.observe(area, { childList: true, subtree: true });
+      contentWatch.current = watch;
     });
   }, [request, key, layout, body]);
 

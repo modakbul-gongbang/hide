@@ -150,8 +150,8 @@ test("the lane comes and goes over the terminals without a resize, the pin and a
     const files = page.locator('[data-lane-tool="files"]');
     const pin = page.locator("[data-lane-pin]");
 
-    // Over the agents the lane opens, hides on a terminal click, comes back
-    // and closes without fitting a terminal again (B3, B4, B24).
+    // Over the agents the lane opens, stays through a terminal click, closes
+    // and comes back without fitting a terminal again (B3, B4, B24).
     const beforeOverlay = await stableCount(resizeCount);
     await showExplorer(page);
     await page.locator('[data-explorer-row$="/notes.md"]').click();
@@ -159,8 +159,8 @@ test("the lane comes and goes over the terminals without a resize, the pin and a
     await expect(workspace).toHaveAttribute("data-lane-mode", "overlay");
     await nativeCapture(app, page, "lane-overlay");
     await page.locator(`[data-terminal-host="${herdr.panes[0]}"]`).click({ position: { x: 20, y: 20 } });
-    await expect(workspace).toHaveAttribute("data-lane-mode", "hidden");
-    for (const mode of ["overlay", "closed", "overlay"]) {
+    await expect(workspace).toHaveAttribute("data-lane-mode", "overlay");
+    for (const mode of ["closed", "overlay"]) {
       await files.click();
       await expect(workspace).toHaveAttribute("data-lane-mode", mode);
     }

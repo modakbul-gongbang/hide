@@ -103,37 +103,30 @@ function deviceField(device: string, node: string): { device_id?: string } {
 export type Actions = ReturnType<typeof createActions>;
 
 /**
- * What an event does to the front Workspace's unpinned lane (PRD right-lane
- * B4, B15, B16): a tool, a reveal or a linked folder puts it up, and an
- * agent or tab chosen from anywhere puts it away. Read here, where every
- * operator event passes, so no path can forget it; it is page state and
- * never sent. An open, a History selection or a Recent Panels display calls
- * the lane through the core's call number instead (`laneCalls.ts`), the one
- * way a call from the CLI or another page arrives too.
+ * Whether an event puts the front Workspace's unpinned lane up (PRD
+ * right-lane B15, B16): a tool, a reveal or a linked folder. Read here,
+ * where every operator event passes, so no path can forget it; it is page
+ * state and never sent. Choosing an agent or a tab leaves the lane as it
+ * is: only the operator closes it. An open, a History selection or a Recent
+ * Panels display calls the lane through the core's call number instead
+ * (`laneCalls.ts`), the one way a call from the CLI or another page arrives too.
  */
-export function laneCalled(event: Parameters<DispatchFn>[0]): "lane" | "agents" | null {
+export function laneCalled(event: Parameters<DispatchFn>[0]): boolean {
   const payload = event.payload;
   switch (event.kind) {
     case "workspace_view":
-      return (typeof payload.tool === "string" || payload.reveal !== undefined) ? "lane" : null;
+      return typeof payload.tool === "string" || payload.reveal !== undefined;
     case "reveal_path":
       // A folder a terminal link names shows in the files tool's tree.
-      return payload.is_directory ? "lane" : null;
-    case "focus_pane":
-    case "focus_tab":
-      return "agents";
-    case "remote_control":
-      return payload.action === "focus_pane" || payload.action === "focus_tab" ? "agents" : null;
+      return payload.is_directory === true;
     default:
-      return null;
+      return false;
   }
 }
 
 export function createActions(send: DispatchFn) {
   const dispatch: DispatchFn = (event) => {
-    const called = laneCalled(event);
-    if (called === "lane") useUiStore.getState().showLane();
-    else if (called === "agents") useUiStore.getState().putLaneAway();
+    if (laneCalled(event)) useUiStore.getState().showLane();
     return send(event);
   };
   const rest = () => useShellStore.getState().rest;
@@ -440,7 +433,7 @@ export function createActions(send: DispatchFn) {
     setWorkspaceView({ tree: !view.tree });
   };
 
-  /** The pin (B5): pinned, the lane docks; unpinned, it stays up over Agent Views until it is put away. */
+  /** The pin (B5): pinned, the lane docks; unpinned, it stays up over Agent Views until the operator closes it or puts it away with Escape. */
   const setLanePinned = (pinned: boolean) => {
     if (!pinned) ui().showLane();
     setWorkspaceView({ pinned });
@@ -490,6 +483,7 @@ export function createActions(send: DispatchFn) {
     const here = explorerHere();
     if (!here) return diagnostic(`${what}: no focused checkout`);
     revealAncestors(path);
+    followOpen(path, "file");
     dispatch({
       schema_version: 2,
       kind: "file_open",
@@ -502,6 +496,16 @@ export function createActions(send: DispatchFn) {
         ...deviceField(here.device, localDeviceId(rest())),
       },
     });
+  };
+
+  /**
+   * The keyboard follows what the operator opened into the view that shows
+   * it once the core places it (B20), so ⌘W, ⌘S and typing act on that file
+   * rather than on the tree, row or palette it was opened from.
+   */
+  const followOpen = (path: string, kind: "file" | "diff", committed: boolean | null = null) => {
+    const front = frontViewWorkspace();
+    if (front) ui().setViewFocusRequest({ workspace: workspaceKey(front), opened: { path, kind, committed } });
   };
 
   /**
@@ -658,6 +662,7 @@ export function createActions(send: DispatchFn) {
     }
     const group = committed ? changes.committed : changes.entries;
     if (!group.some((entry) => entry.path === path)) return diagnostic("changes_select: row is no longer available");
+    followOpen(path, "diff", committed);
     dispatch({ schema_version: 2, kind: "changes_select", payload: { path, committed, preview, ...(beside ? { beside: true } : {}) } });
   };
 

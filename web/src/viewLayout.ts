@@ -60,7 +60,7 @@ export function displaysOfDocument(root: ViewNode, tabId: string): ViewDisplaySn
 }
 
 import {
-  areasOf, locateDisplay, neighbourArea,
+  activeDisplay, areasOf, locateDisplay, neighbourArea,
   splitEligibility as areaSplitEligibility, dropTarget as areaDropTarget,
   resizeTarget as areaResizeTarget, roomToSplit, areaSentence, splitLabel, moveLabel, type AreaWords,
   type LocatedItem, type Edge, type LayoutSizes,
@@ -268,23 +268,32 @@ export function viewAreaStepUnavailable(layout: ViewLayoutSnapshot, drawn: { geo
 
 /**
  * Where the keyboard goes once the core shows it (B20): a display a menu,
- * the palette or a drop moved or split, with where it stood when asked, or
- * an area a focus command chose; each in the Workspace it was asked in.
+ * the palette or a drop moved or split, with where it stood when asked; an
+ * area a focus command chose; or a file or diff the operator opened, which
+ * has no display id until the core places it; each in the Workspace it was
+ * asked in.
  */
 export type ViewFocusRequest =
   | { workspace: string; displayId: string; from: { areaId: string; index: number } | null }
-  | { workspace: string; areaId: string };
+  | { workspace: string; areaId: string }
+  | { workspace: string; opened: { path: string; kind: "file" | "diff"; committed: boolean | null } };
 
 /**
  * Whether the core now shows what a focus request asked for, so the keyboard
- * can follow: the named area active, or the display active in the active
- * area and no longer where it stood when asked. A move or split of the
- * active view therefore resolves once it has landed, never on the frame it
- * was asked from, and a refused one never resolves.
+ * can follow: the named area active, the display active in the active area
+ * and no longer where it stood when asked, or the opened file or diff (of
+ * its own History group) the active area's view once it is past opening. A move or split of the active
+ * view therefore resolves once it has landed, never on the frame it was
+ * asked from, and a refused one never resolves.
  */
 export function focusRequestArrived(request: ViewFocusRequest, workspace: string, layout: ViewLayoutSnapshot): boolean {
   if (request.workspace !== workspace) return false;
   if ("areaId" in request) return layout.active_area === request.areaId;
+  if ("opened" in request) {
+    const shown = activeDisplay(layout)?.display;
+    const { path, kind, committed } = request.opened;
+    return shown?.kind === kind && shown.path === path && shown.committed === committed && shown.state !== "opening";
+  }
   const located = locateDisplay(layout.root, request.displayId);
   if (!located || layout.active_area !== located.area.id || located.area.active !== request.displayId) return false;
   return !request.from || located.area.id !== request.from.areaId || located.index !== request.from.index;

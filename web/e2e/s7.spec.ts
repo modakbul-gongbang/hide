@@ -449,7 +449,7 @@ test("Open to the side shows one document twice: edits and Korean input reach bo
     await page.goto("about:blank");
     await open(page, stack.daemon);
     await expect.poll(() => shape(page), { timeout: 20_000 }).toBe("@(keep.txt >other.txt)");
-    await showTool(page, "files"); // an unpinned lane comes back put away (PRD right-lane B22)
+    await showTool(page, "files");
     await tab(page, "keep.txt").hover();
     await tab(page, "keep.txt").getByRole("button", { name: /Close view/ }).click();
     const dontSave = page.locator("[data-notice-dont-save]");
@@ -708,7 +708,6 @@ test("a drag or a tab menu begun on one Workspace ends when another client moves
     await expect.poll(() => shape(page)).toBe("@(b1.txt >b2.txt)");
     await choose(page, "fixture");
     await expect.poll(() => shape(page)).toBe("@(a.txt >c.txt)");
-    // Another Workspace in front starts with its unpinned lane put away (B15).
     await showTool(page, "files");
     const betaLayout = () => JSON.stringify(storedWorkspace(stack.daemon, betaRoot)?.layout ?? null);
     await expect.poll(betaLayout).toContain("b2.txt");
@@ -1386,7 +1385,7 @@ test("a broken or unknown Views file is kept aside for Main and a fresh layout, 
     stack.daemon = await stack.daemon.restart((dir) => fs.writeFileSync(path.join(dir, "workspace-views.json"), JSON.stringify(v1)));
     await reopen(page, stack.daemon);
     await expect(workspace).toHaveAttribute("data-lane-shows", "files", { timeout: 20_000 });
-    await expect(workspace).toHaveAttribute("data-lane-mode", "hidden");
+    await expect(workspace).toHaveAttribute("data-lane-mode", "overlay");
     await showTool(page, "files");
     await expect.poll(() => shape(page), { timeout: 15_000 }).toBe("@(a.txt >b.txt c.txt*)");
     await expect(editor(page, 0)).toContainText("b text");
