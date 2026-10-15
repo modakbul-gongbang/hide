@@ -46,6 +46,7 @@ pub fn update_inputs(
         kept["ui_state"]["agent_start"] = serde_json::to_value(&rest.ui_state.agent_start)?;
         kept["ui_state"]["interface_language"] =
             serde_json::to_value(&rest.ui_state.interface_language)?;
+        kept["ui_state"]["color_theme"] = serde_json::to_value(rest.ui_state.color_theme)?;
         changed = true;
     }
     Ok(changed)
@@ -326,5 +327,25 @@ mod tests {
             Some("zh-CN"),
             "the string is not validated here"
         );
+    }
+
+    #[test]
+    fn the_color_theme_reaches_the_phone_and_a_change_makes_the_projection_differ() {
+        let options: herdr_core::CoreOptions = serde_json::from_value(json!({
+            "schema_version": 2, "node_id": "test-node", "app_state_path": ""
+        }))
+        .unwrap();
+        let mut snapshot = herdr_core::Snapshot::initial(&options);
+        let first = herdr_core::RestSections::capture(&snapshot, None, 1);
+        let mut kept = Value::Null;
+        assert!(update_inputs(&mut kept, &first, 0).unwrap());
+        let hide = project(&kept, "local");
+        assert_eq!(hide.color_theme.as_deref(), Some("hide"), "the default");
+        snapshot.ui_state.color_theme = serde_json::from_value(json!("neutral")).unwrap();
+        let neutral = herdr_core::RestSections::capture(&snapshot, Some(&first), 2);
+        assert!(update_inputs(&mut kept, &neutral, 1).unwrap());
+        let projected = project(&kept, "local");
+        assert_eq!(projected.color_theme.as_deref(), Some("neutral"));
+        assert_ne!(projected, hide, "the watch channel must republish");
     }
 }

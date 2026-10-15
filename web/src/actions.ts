@@ -8,7 +8,7 @@ import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacen
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
-import type { FocusCheckoutPayload, InterfaceLanguageSetPayload, UiStateUsageHints, UsagePinSetPayload, UsageHiddenSetPayload } from "./generated/hided-ws";
+import type { ColorThemeSetPayload, FocusCheckoutPayload, InterfaceLanguageSetPayload, UiStateUsageHints, UsagePinSetPayload, UsageHiddenSetPayload } from "./generated/hided-ws";
 import type { MessageKey } from "./i18n/catalogs";
 import { translate } from "./i18n/client";
 import type { InterfaceLanguage } from "./i18n/locale";
@@ -954,6 +954,11 @@ export function createActions(send: DispatchFn) {
     /** One typed event; the core owns the choice and stores it (D-15). */
     setTheme(theme: ThemeChoice) {
       dispatch({ schema_version: 2, kind: "theme_set", payload: { theme } });
+    },
+    /** One typed event; the core owns the color theme and stores it (hide-color-theme D-08). */
+    setColorTheme(color_theme: ColorThemeSetPayload["color_theme"]) {
+      const payload = { color_theme } satisfies ColorThemeSetPayload;
+      dispatch({ schema_version: 2, kind: "color_theme_set", payload });
     },
 
     /** Sleep idle agents after `hours`; null is Never (PRD agent-sleep B2). */
