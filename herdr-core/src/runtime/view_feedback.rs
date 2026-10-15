@@ -708,16 +708,6 @@ impl Runtime {
             group = asked.group.clone();
             display_id = asked.display_id.clone();
             to = asked.to.clone();
-        } else {
-            self.view_feedback.asked.insert(
-                key.clone(),
-                AskedSend {
-                    request_id: request_id.clone(),
-                    group: group.clone(),
-                    display_id: display_id.clone(),
-                    to: to.clone(),
-                },
-            );
         }
         // A Send already under way is not started twice.
         if self.view_feedback.sends.get(key).is_some_and(|send| {
@@ -762,6 +752,16 @@ impl Runtime {
                 "There are no comments to send".into(),
             ));
         }
+        // Only a Send that names comments to send is one Retry can ask again.
+        self.view_feedback.asked.insert(
+            key.clone(),
+            AskedSend {
+                request_id: request_id.clone(),
+                group: group.clone(),
+                display_id: display_id.clone(),
+                to: to.clone(),
+            },
+        );
         let group_opener = comments
             .iter()
             .find_map(|comment| comment.recipient.clone());
@@ -2453,6 +2453,58 @@ mod tests {
             "the other View's comment stays"
         );
         drop(guard);
+        drop(worker);
+    }
+
+    #[test]
+    fn a_refused_send_leaves_the_last_send_to_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, worker, state) = send_fixture(root.path());
+        let shots = hide_kit::layout::view_feedback_shots(&state);
+        hide_platform::fs::private::create_dir_all(&shots).unwrap();
+        std::fs::write(shots.join(SHOT), vec![7u8; 1024]).unwrap();
+        let full = hide_kit::layout::letter_attachments(&state)
+            .join("view-feedback-1f8fad5b-d9cb-469f-a165-70867728950e");
+        hide_platform::fs::private::create_dir_all(&full).unwrap();
+        let file = std::fs::File::create(full.join(SHOT)).unwrap();
+        file.set_len(hide_node_link::feedback::MAX_PLACED_BYTES)
+            .unwrap();
+        let request = "5f8fad5b-d9cb-469f-a165-70867728950e";
+        let workspace = json!({"device_id": crate::node::TEST_NODE, "path": CHECKOUT});
+        {
+            let mut guard = runtime.lock().unwrap();
+            let here = opened_view_at(&mut guard, "src/login.ts");
+            let empty = opened_view_at(&mut guard, "src/signup.ts");
+            comment(&mut guard, &here, "Here.", true);
+            guard.apply_view_feedback_send(
+                serde_json::from_value(json!({
+                    "workspace": workspace, "request_id": request,
+                    "group": format!("{}/term-recipient", crate::node::TEST_NODE),
+                    "display_id": here, "to": {"kind": "pane", "pane_id": "recipient"},
+                }))
+                .unwrap(),
+            );
+            drop(guard);
+            assert_eq!(settled(&runtime).state, ViewFeedbackSendState::Failed);
+            // A Send from a View with nothing to send is refused, and asks nothing.
+            runtime.lock().unwrap().apply_view_feedback_send(
+                serde_json::from_value(json!({
+                    "workspace": workspace, "request_id": "6f8fad5b-d9cb-469f-a165-70867728950e",
+                    "group": "", "display_id": empty, "to": {"kind": "default"},
+                }))
+                .unwrap(),
+            );
+        }
+        std::fs::remove_dir_all(&full).unwrap();
+        runtime.lock().unwrap().apply_view_feedback_send(
+            serde_json::from_value(json!({
+                "workspace": workspace, "request_id": request, "group": "", "to": {"kind": "retry"},
+            }))
+            .unwrap(),
+        );
+        let sent = settled(&runtime);
+        assert_eq!(sent.state, ViewFeedbackSendState::Sent, "{sent:?}");
+        assert_eq!(sent.request_id, request);
         drop(worker);
     }
 
