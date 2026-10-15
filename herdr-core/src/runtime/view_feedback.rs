@@ -183,29 +183,45 @@ impl Runtime {
     /// terminal and its session. A pane with no agent, or one Hide holds no
     /// terminal for, opens Views as nobody (D-19).
     pub(super) fn opener_of_pane(&self, pane_id: &str) -> Option<Opener> {
+        self.pane_opener(pane_id)
+            .map_err(|reason| {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "view_feedback",
+                    "kind": "opener.none",
+                    "pane": pane_id,
+                    "reason": reason,
+                }));
+            })
+            .ok()
+    }
+
+    fn pane_opener(&self, pane_id: &str) -> Result<Opener, &'static str> {
         let device = super::agent_sleep::pane_device(pane_id)
             .unwrap_or(self.node.as_str())
             .to_owned();
         let agent = self
             .machine_agents(&device)
             .iter()
-            .find(|agent| agent.pane_id == pane_id)?;
-        hide_session::Agent::from_kind(&agent.agent_kind)?;
+            .find(|agent| agent.pane_id == pane_id)
+            .ok_or("no_agent")?;
+        hide_session::Agent::from_kind(&agent.agent_kind).ok_or("unknown_agent")?;
         let terminal_id = self
             .catalog_workspaces()
             .filter(|workspace| workspace.device_id == device)
             .flat_map(|workspace| &workspace.checkouts)
             .flat_map(|checkout| &checkout.tabs)
             .flat_map(|tab| &tab.panes)
-            .find(|pane| pane.id == pane_id)?
+            .find(|pane| pane.id == pane_id)
+            .ok_or("no_pane")?
             .terminal_id
-            .clone()?;
+            .clone()
+            .ok_or("no_terminal")?;
         let resume_path = agent
             .close_session
             .as_ref()
             .filter(|session| session.kind == "path")
             .map(|session| session.value.clone());
-        Some(Opener {
+        Ok(Opener {
             device_id: device,
             terminal_id,
             session: agent.lineage_session.clone(),
