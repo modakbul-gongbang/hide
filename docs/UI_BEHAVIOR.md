@@ -61,12 +61,12 @@ A Workspace seen for the first time shows Agent Views alone, its lane closed.
 The lane's header names its tool and scope, `Files · <checkout>`, `Changes · <checkout>`, `Sessions · all of <project>` and `Memory · <project>`, with Pin, Expand and Close at its right; a new checkout in front renames the Files and Changes scopes and leaves Sessions and Memory as they are.
 
 Unpinned, the lane opens over Agent Views at their right edge, set apart by a shadow and a left border in both themes; the terminals under it keep their grid and layout, are not dimmed, and keep their input and output.
-A click on a terminal pane, or Escape inside the lane or on its rail, puts the lane away and hands the keyboard to the focused pane; Escape first closes a menu, popover or search open in the lane, and Escape in a terminal is the program's.
-A lane put away keeps its documents, tabs, scroll, previews and searches, and its rail icon brings it back as it was.
-Another Workspace coming in front, from this window or another, starts with its unpinned lane put away unless an open or a reveal brought it there.
-Pinned (a filled pin; an empty one says `Pin · keep it beside the agents`), the lane docks beside Agent Views, which narrow by its width once, and it stays through a terminal click; unpinned (`Unpin · back over the agents`), Agent Views take their width back and the lane is over them again.
+An unpinned lane stays up until the operator takes it down: a click on a terminal pane, choosing an agent or a tab, another Workspace in front and a restart all leave it as it was.
+Close, ⌘E or its rail icon closes it, and Escape inside the lane or on its rail puts it away and hands the keyboard to the focused pane; Escape first closes a menu, popover or search open in the lane, and Escape in a terminal is the program's.
+A lane put away keeps its documents, tabs, scroll, previews and searches, and its rail icon, ⌘E, an open or a reveal brings it back as it was.
+Pinned (a filled pin; an empty one says `Pin · keep it beside the agents`), the lane docks beside Agent Views, which narrow by its width once; unpinned (`Unpin · back over the agents`), Agent Views take their width back and the lane is over them again.
 The pin is the lane's, whatever tool it shows, and a pinned lane closed and opened again comes back docked.
-A pinned lane docks in any window where its minimums (360px of documents, 180px of tree) fit beside 480px of Agent Views, giving up its own width first and taking its stored width back as the window widens; a window too narrow for even that opens the lane over them as if unpinned, though it stays through a terminal click, with the pin still filled and its tooltip saying `Pin · too narrow, drawn over`.
+A pinned lane docks in any window where its minimums (360px of documents, 180px of tree) fit beside 480px of Agent Views, giving up its own width first and taking its stored width back as the window widens; a window too narrow for even that opens the lane over them as if unpinned, with the pin still filled and its tooltip saying `Pin · too narrow, drawn over`.
 Expand gives the lane the whole body between the sidebar and the rail, with the file tree as a column beside the documents; Expand again or Escape returns to the pin, widths and terminal layout as they were, no terminal resizes meanwhile, and Agent Views under an expanded lane take no pointer or keyboard.
 While the keyboard is in the lane, a document, a page or the tool, the Zoom pane chord (⇧⌘↩, Alt+Shift+Enter on Windows and Linux) is Expand and Expand again, so one key fills the window with whatever the operator works in; anywhere else it zooms the focused pane, and the Expand tooltip shows the chord.
 Close (the header's ×, the pressed rail icon, or the tool's chord) closes the lane and leaves the file tree as it was; it closes no view, and the Files badge counts what stays open.
@@ -89,7 +89,7 @@ Choosing another Agent tab while it reads keeps that tab's presentation intact, 
 When several tabs request the same file during its read, they share the read and document buffer while each keeps its own display request.
 A buffer opened through another path before the read answers retains its draft and save state, and the pending GUI displays still open in their requesting tabs.
 Closing that buffer's last current display does not cancel another tab's pending GUI open.
-Choosing an agent or a tab from the sidebar, the palette, a tab cycle or the tab strip, or a terminal taking the keyboard, puts an unpinned lane away and leaves a pinned one; the lane keeps its tool, pin and tree, and the files tool shows the chosen tab's views (see File Views per Agent tab).
+Choosing an agent or a tab from the sidebar, the palette, a tab cycle or the tab strip, or a terminal taking the keyboard, leaves the lane where it is, pinned or not; the lane keeps its tool, pin and tree, and the files tool shows the chosen tab's views (see File Views per Agent tab).
 
 Sessions follows the project of the checkout in front, with All checkouts and a chip for that checkout alone.
 At Home it shows the selected device's projects together.
@@ -109,7 +109,7 @@ The documents are never narrower than 360px and start at 520px, the tree never n
 The pin turning on or off, a docked lane opening or closing, a docked divider landing, and the tree turning on or off beside a docked lane resize the agents' terminals once.
 A lane over the agents opening, going away, coming back, expanding or closing, its divider landing, a drag in progress, and anything inside the lane, an open, a close, a tab change, a split or a drag of a view, resize nothing.
 Changing Workspace or lane geometry during a divider drag cancels its guide without saving a width, and releasing the old pointer cannot change the new Workspace.
-The lane's tool, pin, tree, and both widths are stored per Workspace and survive a restart: a pinned lane comes back docked, an unpinned one put away until asked, and neither expanded.
+The lane's tool, pin, tree, and both widths are stored per Workspace and survive a restart: a pinned lane comes back docked, an unpinned one over the agents, and neither expanded.
 A Workspace stored with the earlier File Views and Tools columns comes back once on Files where File Views was on, else on the tool Tools showed, unpinned (see View states).
 
 Agent Views is always live: clicking a pane or a tab focuses it and typing goes to it, and chords such as ⌘F, ⌘T and ⌥W act where the keyboard is, a View area, the lane's tool or a pane.
@@ -290,6 +290,7 @@ A single click on an Explorer file or a History row opens it in the active area'
 Each area has at most one preview, and a click never touches another area or a pinned view.
 A double-click on the row or the tab, Keep open, or the first edit pins the preview where it is, including a double-click that lands while the file's first read is still running; because the first edit pins, a document that is dirty, saving, or whose save failed is never a preview in any area that shows it.
 Opening a file that is already shown moves to its view instead of adding a tab, choosing the one used last when several views show it.
+The keyboard goes with every open from the Explorer (a click, a double-click or Enter), a History row, ⌘P or Open to the side into the view that shows it once the core places it, so ⌘W, ⌘S and typing act on that file; the tree's arrow keys only move its selection, so the keyboard stays in the tree until something opens.
 Opening a file while the lane is closed, put away or on another tool opens it on Files first.
 Diffs are placed by the same rules.
 
@@ -330,12 +331,12 @@ A view whose file is being read shows `Opening…`.
 A restored view whose device or root is not ready says what it waits for (such as `Waiting for <device> to connect`) and reads its file by itself once that is ready.
 A view whose file cannot be read shows why, with Close view and Retry, and its tab title reads as struck through; either action acts on that view alone and leaves the active area where it was.
 Each state belongs to its view alone, so one missing file never blanks another view or area.
-After a restart the app reopens the last Workspace as it was left: its areas and their sizes, each area's tabs in order with its preview, pinned views, and active view, the active area, the lane's tool, pin, tree and both widths, a pinned lane docked and an unpinned one put away; unsaved text returns from the browser's drafts, and Herdr's current tabs and panes are used as they are.
+After a restart the app reopens the last Workspace as it was left: its areas and their sizes, each area's tabs in order with its preview, pinned views, and active view, the active area, the lane's tool, pin, tree and both widths, a pinned lane docked and an unpinned one over the agents; unsaved text returns from the browser's drafts, and Herdr's current tabs and panes are used as they are.
 A first run, or a last Workspace that no longer exists, starts on the Overview.
 Herdr connecting before the initial path catalog and saved View arrive does not mean the last Workspace is gone; the existing starting screen waits for that saved choice to settle.
 The unanswered-connection fallback does not settle a connected session's pending saved Workspace; a settled connection failure still opens All projects.
 A layout file that cannot be read is kept aside and the app starts on the Overview, where the operator picks a Workspace and continues with a new layout.
-A Workspace stored with the File Views and Tools columns, or with the side panel or layout before them, restarts once on Files where File Views was on (a panel open or expanded, a layout that did not show the agents alone), else on the tool Tools showed, the Explorer becoming Files with its tree, unpinned and put away, its views, tabs and areas as they were.
+A Workspace stored with the File Views and Tools columns, or with the side panel or layout before them, restarts once on Files where File Views was on (a panel open or expanded, a layout that did not show the agents alone), else on the tool Tools showed, the Explorer becoming Files with its tree, unpinned, its views, tabs and areas as they were.
 File Views' stored width becomes the lane's; a Workspace stored before the columns, and the tree, start at the default widths.
 
 ### Browser displays
@@ -364,7 +365,7 @@ In a plain browser tab the view keeps its address on the toolbar row, level with
 ### Narrow windows
 
 Whether a pinned lane docks depends on the Workspace body's width, not the window's, so hiding the sidebar with ⌘B can dock it again.
-A pinned lane docks while its minimums and Agent Views' 480px fit side by side with its divider, the lane narrowing first; in a body too narrow for even those it opens over Agent Views with its pin still filled and stays through a terminal click, and widening the body docks it again.
+A pinned lane docks while its minimums and Agent Views' 480px fit side by side with its divider, the lane narrowing first; in a body too narrow for even those it opens over Agent Views with its pin still filled, and widening the body docks it again.
 The lane opens at any width: in a body narrower than the lane it takes the whole body, giving up document width down to its 360px minimum first and tree width after.
 When the View areas cannot all have their minimum, only the active area shows, with an area switcher to the others.
 Widening the window brings back what the Workspace stores, the lane's tool, pin, tree, widths and the area sizes, because none of these narrow arrangements is stored, and another Workspace's lane never changes while one is narrow.
@@ -389,7 +390,7 @@ Only a plain shell and an agent Hide does not support draw the neutral `>_`.
 A logo drawn dark on a transparent ground (Grok, Cursor) sits on the light plate so it stays visible on the dark theme; the others are drawn as published ([BRAND.md](BRAND.md#third-party-agent-marks)).
 A child pane's ancestor path names each ancestor from the root to its parent, `›` between them, and each name opens that pane; a root has none.
 The names drop before current identity or actions when the pane narrows, leaving `›` with its accessible name.
-The PR mark is the one the Sessions row of the same agent draws (below): a pane without children shows its own PRs, and a parent shows the worst state's icon and the count of PRs over itself and every descendant (the `#number` when that is one PR), pressing which lists each PR with who holds it, so a child's pull request is seen from the pane that delegated it.
+The PR mark is the one the Sessions row of the same agent draws (below): a pane without children shows its own PRs, and a parent shows the PRs over itself and every descendant (the `#number` when that is one PR, each state's count when several), pressing which lists each PR with who holds it, so a child's pull request is seen from the pane that delegated it.
 The fork mark, a small fork icon after the title, is drawn only on a pane Fork agent made; its tooltip and accessible name read `Forked from <source name>` while the source still runs the conversation it was forked from, and the mark is then a button, reachable by keyboard, that opens the source; once the source closed or moved on to another conversation it reads `Forked from another pane` and opens nothing (`web/src/PaneHeaderBand.tsx`, `PaneForkMark`; the fact is the core's, `PaneForkSnapshot.forked_from`).
 A delegated child and a handed-off root have none, and neither does a fork made while forks were children (PRD fork-operator-root B20, B21).
 A device's pane header wears the mark too, as its rows do, although a device's pane offers no fork.
@@ -469,7 +470,7 @@ A tree row is one line with no branch line; a child on another device names that
 A worktree whose unresolved agents are all delegated children has no checkout line, no purpose line and no fold, because the children are reached from the root that owns them; the project badge still counts them.
 An agent counts as a root when the core marks it so (`agent.state.root`): an orphan whose parent ended is a root, and a Factory worker is one too, since its spawn parent is the Factory's own identity and no pane in the list, so its worktree keeps its line.
 The primary, the focused checkout, a dirty or unpushed worktree and an Inactive or Cleanup one keep the line or fold they had.
-Each row with its own PRs carries the PR mark (Purpose, pinning, and PR chrome) with the worst PR's state and `#number` and `+N` for the others, dimmed while GitHub cannot be read; its hover shows the PR card for one PR, and for several lists each PR with its state and title, any of which opens, with the last read time while GitHub cannot be read.
+Each row with its own PRs carries the PR mark (Purpose, pinning, and PR chrome): one PR's state and `#number`, or each state's count for several, dimmed while GitHub cannot be read; its hover shows the PR card for one PR, and for several lists each PR with its state and title, any of which opens, with the last read time while GitHub cannot be read.
 A tree row that asks draws its verb and what on a second line until answered, and an AI question leaves that line once read; a blocked tree row draws its cause there instead, read or not.
 A raised row outside the tree keeps its request line until answered, dimmed after reading an AI question; an unread result line stays bright until read.
 Quiet detail lives in the tooltip, and no progress value is invented.
@@ -775,8 +776,9 @@ A fork is a root row of its own, never a child under its source; ⌘K, the Agent
 Every row, a child and a resolved row included, ends in the Resolve button's slot, so the times of the panel stand in one column as in the sidebar.
 There is no checkout name, front-checkout bar or status word on a root row.
 Its second line is the ask on Needs You, the label line on Working (or the line of the most recently changed working descendant while it waits on them), the finished turn's line on Done, and on Idle only the remaining work of an unfinished turn after `◐`; with no label line there is no second line.
-The PR mark on a child or a root without descendants shows one own PR as its state's icon and `#number`, and several as the worst PR's (`#924 +1`).
-A root with descendants shows the worst state's icon and `#number` when itself and its descendants hold one PR, and otherwise only the count of distinct PR URLs they hold (`2`, no `PR` letters), including folded trees and siblings behind `N개 더`: `#` means a number, digits alone mean how many.
+The PR mark on a child or a root without descendants shows one own PR as its state's icon and `#number`, and several as each state's icon and count.
+A root with descendants does the same over the distinct PR URLs itself and its descendants hold, including folded trees and siblings behind `N개 더`.
+Several PRs read as one icon and count per state present, in that state's colour, worst first and no `PR` letters (a mergeable and a merged PR are green `1` and purple `1`, never green `2`): `#` means a number, digits alone mean how many.
 The core's own PR projection decides which PRs count; a closed PR is not counted.
 Each mark dims while a contributing GitHub read is stale, with that read's last time in the tooltip; a tree uses the oldest stale contributing read.
 Pressing the mark lists each PR with its mark and title, worst first; a tree's list also names the sessions that hold each PR, and repeated sightings of one URL share one entry.
@@ -1353,7 +1355,7 @@ Any project row can be pinned from its right-click menu: a row Herdr shows witho
 The pin lives on the project's registration and survives a relaunch; removing the registration takes the pin with it.
 A pinned project is exempt from its device's inactive fold whatever its activity; its own stale worktrees still fold behind their own `Inactive N` row.
 PR state colour is a semantic-colour exception to otherwise neutral chrome, one colour per state on every surface, including during hover and selection (docs/status-model.md, Pull request visual states; operator approval, 2026-10-10): failed red, pending amber, mergeable green, draft grey, merged purple with the merge icon, and closed dim.
-Every surface draws a pull request as the one PR mark (`web/src/components/pr-mark.tsx`): the state's icon in its colour and `#N` in the text colour, `+N` after it for an agent row's other PRs, or, for a root standing for several PRs, the bare count after the icon, with no border and no glyph; a pressable mark fills under the pointer, a mark whose GitHub read is stale dims with the last read time in its tooltip, and where the row already names the pull request (a checkout's glyph, a graph head, a search row) the mark drops the number.
+Every surface draws a pull request as the one PR mark (`web/src/components/pr-mark.tsx`): the state's icon in its colour and `#N` in the text colour, or, for a row or a root standing for several PRs, each state's icon and count in that state's colour, worst first, with no border and no glyph; a pressable mark fills under the pointer, a mark whose GitHub read is stale dims with the last read time in its tooltip, and where the row already names the pull request (a checkout's glyph, a graph head, a search row) the mark drops the number.
 Only a change request keeps a word beside the mark, `변경 요청` in red, as failed checks are; the Overview chip, Issues, the graph box and the PRs row draw no separate checks mark.
 On the web a checkout row whose glyph is a pull request's mark makes that glyph a button (PRD checkout-pr-glyph-card): a ring in the state's colour under the pointer and the pointer cursor say so, a click opens the pull request as a browser display of the Workspace in front (an address the Workspace already shows is brought forward instead), and ⌘-click opens it in the default browser.
 While no Workspace is in front (the shared Overview page) or the checkout is an SSH device's, the click opens the default browser too.

@@ -57,6 +57,8 @@ test("History opens a scoped patch, then updates after editing the original file
     await expect(page.locator('[data-patch-view] .cm-content')).toContainText("second <script>window.__executed = true</script>");
     expect(await page.evaluate(() => (window as Window & { __executed?: boolean }).__executed ?? false)).toBe(false);
     await expect(page.locator('[data-tab-kind="diff"]')).toHaveAttribute("data-preview", "true");
+    // The click hands the keyboard to the diff it opened, out of History.
+    await expect(page.locator('[data-patch-view] .cm-content')).toBeFocused();
     expect(sent.get("file_draft") ?? 0).toBe(0);
     expect(sent.get("file_save") ?? 0).toBe(0);
     await screenshot(page, "s4-working-diff");

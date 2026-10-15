@@ -44,7 +44,7 @@ async function openFile(lane: Lane, paneId: string, name: string): Promise<void>
 
 const resizes = (lane: Lane) => lane.sent.get("terminal_resize") ?? 0;
 
-test("an opened file comes up over Agent Views without resizing a terminal, and a terminal click puts it away with its document (B1, B3, B4, B16) @platform", async ({ page }) => {
+test("an opened file comes up over Agent Views without resizing a terminal, stays through a terminal click, and Escape puts it away with its document (B1, B3, B4, B16) @platform", async ({ page }) => {
   test.setTimeout(120_000);
   const lane = await startLane(page, "lane-overlay");
   try {
@@ -81,10 +81,10 @@ test("an opened file comes up over Agent Views without resizing a terminal, and 
     await expect(pane(page, lane.herdr.panes[0]!)).toBeVisible();
     expect(resizes(lane)).toBe(before);
 
+    // A terminal click takes the keyboard and leaves the unpinned lane up:
+    // only the operator takes it down (B4).
     await pane(page, lane.herdr.panes[0]!).click();
-    await expect(screen(page)).toHaveAttribute("data-lane-mode", "hidden");
-    await expect(page.locator('[data-lane-badge="1"]')).toBeVisible();
-    await railTool(page, "files").click();
+    await expect(pane(page, lane.herdr.panes[0]!).locator(".xterm-helper-textarea")).toBeFocused();
     await expect(screen(page)).toHaveAttribute("data-lane-mode", "overlay");
     await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
 
@@ -93,6 +93,7 @@ test("an opened file comes up over Agent Views without resizing a terminal, and 
     await page.keyboard.press("Escape");
     await expect(screen(page)).toHaveAttribute("data-lane-mode", "hidden");
     await expect(pane(page, lane.herdr.panes[0]!).locator(".xterm-helper-textarea")).toBeFocused();
+    await expect(page.locator('[data-lane-badge="1"]')).toBeVisible();
     await quietFor(page, 500, "no terminal was fitted again while the lane came and went");
     expect(resizes(lane)).toBe(before);
 
@@ -157,14 +158,15 @@ test("the pin docks the lane once, keeps it through a terminal click, a tool and
     await page.goto(`${lane.daemon.origin}/?probe=1#token=${lane.daemon.token}`);
     await expect(screen(page)).toHaveAttribute("data-lane-mode", "docked");
 
-    // Unpinned, the lane goes back over Agent Views, and a restart starts it put away.
+    // Unpinned, the lane goes back over Agent Views, and a restart brings it
+    // back there: the operator never took it down.
     await page.locator("[data-lane-pin]").click();
     await expect(screen(page)).toHaveAttribute("data-lane-mode", "overlay");
     lane.daemon = await lane.daemon.restart();
     await page.goto("about:blank");
     await page.goto(`${lane.daemon.origin}/?probe=1#token=${lane.daemon.token}`);
-    await expect(screen(page)).toHaveAttribute("data-lane-mode", "hidden");
-    await expect(railTool(page, "files")).toHaveAttribute("aria-pressed", "false");
+    await expect(screen(page)).toHaveAttribute("data-lane-mode", "overlay");
+    await expect(railTool(page, "files")).toHaveAttribute("aria-pressed", "true");
   } finally {
     lane.daemon.stop();
     lane.herdr.stop();

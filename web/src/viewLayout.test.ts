@@ -263,6 +263,26 @@ describe("where a display's place and the keyboard go", () => {
     expect(focusRequestArrived({ workspace: here, areaId: "a2" }, here, asked)).toBe(false);
     expect(focusRequestArrived({ workspace: here, areaId: "a2" }, here, landed)).toBe(true);
   });
+
+  it("follows an opened file or diff once the active area shows it past opening", () => {
+    const opened = { workspace: here, opened: { path: "/repo/b.md", kind: "file" as const, committed: null } };
+    const before = layout(area("a1", ["a"]));
+    expect(focusRequestArrived(opened, here, before)).toBe(false);
+    const opening = layout(area("a1", [display("b", { state: "opening", tab_id: null })]));
+    expect(focusRequestArrived(opened, here, opening)).toBe(false);
+    const shown = layout(area("a1", ["b"]));
+    expect(focusRequestArrived(opened, here, shown)).toBe(true);
+    expect(focusRequestArrived(opened, "mini\u0000/repo", shown)).toBe(false);
+    // The same path as a diff is not the file the operator opened, nor is
+    // the other History group's diff of it.
+    const diff = layout(area("a1", [display("b", { kind: "diff", committed: false })]));
+    expect(focusRequestArrived(opened, here, diff)).toBe(false);
+    expect(focusRequestArrived({ workspace: here, opened: { path: "/repo/b.md", kind: "diff", committed: false } }, here, diff)).toBe(true);
+    expect(focusRequestArrived({ workspace: here, opened: { path: "/repo/b.md", kind: "diff", committed: true } }, here, diff)).toBe(false);
+    // A view that cannot show the file still takes the keyboard, so ⌘W closes it.
+    const unavailable = layout(area("a1", [display("b", { state: "unavailable", tab_id: null })]));
+    expect(focusRequestArrived(opened, here, unavailable)).toBe(true);
+  });
 });
 
 describe("a dragged tab's target", () => {

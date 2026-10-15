@@ -14,7 +14,7 @@ export function sessionWorkScreens({frame, text, icon, screenButton, themedXref}
   const provider = (id, kind = 'claude', size = 14) => frame(id, 'Provider', {width: size, height: size, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${kind}.png`, mode: 'contain'}}, []);
   const prMark = (id, number, state) => {
     const [, glyph, fill] = PR_STATES.find(([key]) => key === state);
-    return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': {content: `#${number}`}, 'ath-pr-more': {enabled: false}});
+    return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': {content: `#${number}`}});
   };
   const heading = (id, title, count, extra = []) => frame(id, title, {width: 'fill_container', height: 24, layout: 'horizontal', gap: 6, alignItems: 'center', padding: [8, 0, 0, 0]}, [
     label(`${id}-t`, title, '$--subtle-foreground', {weight: '500'}),

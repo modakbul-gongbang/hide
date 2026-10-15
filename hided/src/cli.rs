@@ -721,6 +721,33 @@ fn memory_text(
                         .to_owned(),
                 );
             }
+            let comparison = &result["document_comparison"];
+            if comparison.is_object() {
+                let document = text(&comparison["document"]);
+                lines.push(match comparison["authority"].as_str() {
+                    Some("card_newer") => {
+                        format!("Document comparison: the operator's words are newer than {document}.")
+                    }
+                    Some("outdated") => format!(
+                        "Document comparison: {document} is newer than the operator's words, so this card is outdated."
+                    ),
+                    _ => format!(
+                        "Document comparison: {document} disagrees with the operator's words, and which is newer is not known."
+                    ),
+                });
+                lines.push(format!(
+                    "Document says: {}",
+                    text(&comparison["document_text"])
+                ));
+                let session = comparison["source_session"]
+                    .as_str()
+                    .map(|session| format!(" (session {session})"))
+                    .unwrap_or_default();
+                lines.push(format!(
+                    "Operator said{session}: {}",
+                    text(&comparison["operator_text"])
+                ));
+            }
             lines.join("\n") + "\n"
         }
         MemoryCommand::Forget { .. } => {
@@ -2780,6 +2807,24 @@ mod tests {
         assert_eq!(
             shown,
             "m3 · rule · active · 2 sources, 1 from the operator\nTests run with nextest\n\nRun tests with nextest.\nFiles: docs/TESTING.md\n"
+        );
+        let compared = memory_text(
+            &MemoryCommand::Show { number: 9 },
+            &serde_json::json!({
+                "card": "m9", "title": "Backlog follows one source", "kind": "decision",
+                "state": "active", "body": "Missed work offers 백로그로.",
+                "sources": 2, "operator_sources": 2,
+                "document_comparison": {
+                    "authority": "card_newer", "document": "docs/AI_PROVIDERS.md",
+                    "document_text": "An explicit `이슈로` press drafts an issue.",
+                    "document_at_unix_ms": 1, "operator_text": "좋아",
+                    "operator_at_unix_ms": 2, "source_session": "s-1",
+                },
+            }),
+        );
+        assert_eq!(
+            compared,
+            "m9 · decision · active · 2 sources, 2 from the operator\nBacklog follows one source\n\nMissed work offers 백로그로.\nDocument comparison: the operator's words are newer than docs/AI_PROVIDERS.md.\nDocument says: An explicit `이슈로` press drafts an issue.\nOperator said (session s-1): 좋아\n"
         );
         let search = MemoryCommand::Search { words: "x".into() };
         assert_eq!(

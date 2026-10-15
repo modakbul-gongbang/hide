@@ -133,11 +133,11 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await head("resolved").click();
     await expect(row(stopped)).toBeVisible();
     expect(JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "core-state.json"), "utf8")).resolved_sessions[stopped]).toBeTruthy();
-    // A restart keeps the chosen tool, hidden until asked (PRD right-lane B22), and the resolution.
+    // A restart keeps the chosen tool up over the agents (PRD right-lane B22), and the resolution.
     daemon = await daemon.restart();
     await page.goto("about:blank");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await expect(page.locator('[data-workspace-screen][data-lane-mode="hidden"]')).toHaveAttribute("data-lane-shows", "agent_sessions");
+    await expect(page.locator('[data-workspace-screen][data-lane-mode="overlay"]')).toHaveAttribute("data-lane-shows", "agent_sessions");
     await showSessions();
     await expect(head("resolved")).toContainText("1");
     await expect(page.locator(`nav[data-sidebar] [data-pane="${stopped}"]`)).toHaveCount(0);

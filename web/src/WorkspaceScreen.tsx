@@ -184,14 +184,8 @@ function LaneRow({ view, frame, width, body, setBody, sizes, actions, checkout }
   // The width Agent Views gives up: a docked lane's, kept while it is expanded.
   const slot = frame.agents > 0 && frame.agents < width ? width - frame.agents - sizes.divider : 0;
   const up = laneUp(frame.mode);
-  const unpinned = !view.pinned;
-  // A terminal click puts an unpinned lane away (B4); a pinned one, docked
-  // or over a body too narrow for it, stays (B5, B19). A press on a tab
-  // strip is not one, so a tab dragged over the lane meets it there.
-  const putAway = (event: React.PointerEvent<HTMLElement>) => {
-    if (!(event.target instanceof Element) || !event.target.closest("[data-pane-view]")) return;
-    if (frame.mode === "overlay" && unpinned) useUiStore.getState().putLaneAway();
-  };
+  // A terminal click leaves the lane where it is, pinned or not: only the
+  // operator closes it, or puts an unpinned one away with Escape (B4).
   const escape = (event: React.KeyboardEvent<HTMLElement>) => laneEscape(event, frame, view.pinned);
   const placed = frame.mode === "expanded" ? "inset-0 z-20" : "inset-y-0 right-0 z-20";
   const raised = frame.mode === "overlay" || frame.mode === "expanded" ? "border-l border-border shadow-lg" : "";
@@ -200,7 +194,7 @@ function LaneRow({ view, frame, width, body, setBody, sizes, actions, checkout }
       {/* Its own stacking context, so nothing the agents raise (a pane
           divider) draws over the lane; out of reach of the pointer and the
           keyboard while an expanded lane covers it. */}
-      <div className="isolate flex min-h-0 min-w-0 flex-1 flex-col" inert={frame.mode === "expanded"} data-agent-area="true" onPointerDownCapture={putAway}>
+      <div className="isolate flex min-h-0 min-w-0 flex-1 flex-col" inert={frame.mode === "expanded"} data-agent-area="true">
         <AgentArea checkout={checkout} actions={actions} />
       </div>
       {slot > 0 ? (
