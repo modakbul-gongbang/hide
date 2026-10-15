@@ -266,6 +266,7 @@ impl Runtime {
         action: &Action,
     ) -> Result<Option<Parked>, crate::workspace_control::Refusal> {
         let active = self.workspace_active_tab(key);
+        let projected_owner = self.projected_view_owner(key);
         let topology_ready = key.0 != self.node.as_str() || self.live.is_some();
         if topology_ready
             && self.arranges_agent_areas(&key.0)
@@ -296,12 +297,13 @@ impl Runtime {
         let calls = store.lane_calls;
         let generation = store.generation;
         let entry = store.views.entry(&key.0, &key.1);
-        if entry.view_owner.is_none() && active.as_deref().is_none_or(|active| active == tab) {
+        if entry.view_owner.is_none() && projected_owner.as_deref().is_none_or(|owner| owner == tab)
+        {
             return Ok(None);
         }
         let before = entry.clone();
         if entry.view_owner.is_none() {
-            entry.view_owner = active.clone();
+            entry.view_owner = projected_owner;
         }
         if entry.view_owner.as_deref() == Some(&tab)
             && active.as_deref() == Some(&tab)
