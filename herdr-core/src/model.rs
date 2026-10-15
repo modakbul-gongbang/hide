@@ -239,35 +239,36 @@ impl<T: Serialize> Serialize for Edited<T> {
     }
 }
 
-/// What the front Workspace shows: whether its File Views and Tools columns
-/// are on, the Tools column's tool, the two columns' widths, and its View
-/// area tree. The editor's `active_tab_id` is the document of the active
-/// area's active display.
+/// What the front Workspace shows: its right lane (the tool, the pin, the
+/// file tree and both widths) and its View area tree (PRD right-lane D-11).
+/// The editor's `active_tab_id` is the document of the active area's active
+/// display.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WorkspaceViewSnapshot {
     pub device_id: String,
     pub path: String,
-    /// Whether the File Views column is on (PRD three-column-panel D-08).
-    pub views: bool,
-    /// Whether the Tools column is on.
-    pub tools: bool,
-    /// The one tool the Tools column holds, kept while the column is off.
-    pub tool: crate::workspace_views::Tool,
-    /// The File Views column's width in CSS pixels, or null for the shell's
-    /// default until it is resized.
-    pub views_width: Option<u32>,
-    /// The Tools column's width, the same way.
-    pub tools_width: Option<u32>,
+    /// The tool the lane shows, or null while it is closed. An unpinned
+    /// lane is drawn over the agents only once a call opened it (D-02).
+    pub tool: Option<crate::workspace_views::Tool>,
+    /// Whether the lane is pinned beside Agent Views (D-03).
+    pub pinned: bool,
+    /// Whether the files tool shows the file tree column (D-05).
+    pub tree: bool,
+    /// The lane's width in CSS pixels, or null for the shell's default
+    /// until it is resized.
+    pub lane_width: Option<u32>,
+    /// The tree column's width, the same way.
+    pub tree_width: Option<u32>,
     /// The last width request the core accepted for this Workspace. Runtime
     /// only, so a shell can distinguish its latest intent from an older echo.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub width_request_id: Option<String>,
-    /// The number of this Workspace's last File Views call, 0 for none since
-    /// the core started; a number past `views_calls` as the shell last read
-    /// it is a call the shell shows in a narrow body (D-07).
-    pub views_called: u64,
-    /// How many File Views calls the core has numbered, in any Workspace.
-    pub views_calls: u64,
+    /// The number of this Workspace's last lane call, 0 for none since the
+    /// core started; a number past `lane_calls` as the shell last read it is
+    /// a call the shell shows by drawing the lane (D-02, B16).
+    pub lane_called: u64,
+    /// How many lane calls the core has numbered, in any Workspace.
+    pub lane_calls: u64,
     /// Whether this is the Workspace the operator last chose, now or before a
     /// restart, which the shell opens on; any other front starts on Main
     /// (D-11).
@@ -2570,7 +2571,7 @@ pub struct ProjectSessionsSnapshot {
 }
 
 /// Project Memory on the wire: the Project a shell opened Memory for in its
-/// Tools column's Memory tab.
+/// lane's Memory tool.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct MemorySnapshot {
     pub project: Option<ProjectMemorySnapshot>,

@@ -124,6 +124,7 @@ export type CommandId =
   | "toggle_device_rail"
   | "toggle_explorer"
   | "toggle_right_panel"
+  | "toggle_file_tree"
   | "keep_open"
   | "find_in_pane"
   | "save_file"
@@ -242,6 +243,7 @@ export const REGISTRY: readonly Command[] = [
   { id: "toggle_device_rail", title: "Toggle device rail", group: "Panels", browser: null, electron: null, moved: false },
   { id: "toggle_explorer", title: "Toggle Tools", group: "Panels", browser: { code: "KeyE", meta: true }, electron: { code: "KeyE", meta: true }, moved: false },
   { id: "toggle_right_panel", title: "Toggle File Views", group: "Panels", browser: { code: "KeyB", meta: true, shift: true }, electron: { code: "KeyB", meta: true, shift: true }, moved: false },
+  { id: "toggle_file_tree", title: "Toggle File Tree", group: "Panels", browser: { code: "KeyE", meta: true, shift: true }, electron: { code: "KeyE", meta: true, shift: true }, moved: false },
   { id: "find_in_pane", title: "Find in pane", group: "Panes", browser: { code: "KeyF", meta: true }, electron: { code: "KeyF", meta: true }, moved: false },
   { id: "save_file", title: "Save file", group: "Panes", browser: { code: "KeyS", meta: true }, electron: { code: "KeyS", meta: true }, moved: false },
   { id: "keep_open", title: "Keep open", group: "Panes", browser: { code: "KeyK", meta: true, shift: true }, electron: { code: "KeyK", meta: true, shift: true }, moved: false },

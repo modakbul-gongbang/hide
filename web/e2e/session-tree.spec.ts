@@ -9,7 +9,7 @@ import path from "node:path";
 import { declareParent, labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { measure } from "./session-panel-geometry.mjs";
-import { chooseTheme, screenshot } from "./wire";
+import { chooseTheme, screenshot, showTool } from "./wire";
 
 test.describe.configure({ timeout: 240_000 });
 test.use({ actionTimeout: 15_000 });
@@ -66,12 +66,13 @@ test("Sessions opens a five-level tree, stops the indent at three and names a ch
     daemon = await startHided(herdr, "session-tree");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator(`nav[data-sidebar] [data-agent-open="${root}"]`).first().click();
-    await page.getByRole("button", { name: "Tools", exact: true }).click();
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    await showTool(page, "agent_sessions");
     const panel = page.locator("[data-session-panel]");
     const childRow = (pane: string) => panel.locator(`[data-session-child="${pane}"]`);
     const open = (pane: string) => panel.locator(`[data-session-chevron="${pane}"]`).click();
-    await expect(panel.locator(`[data-session-row="${root}"] [data-descendant-mark="working"]`)).toContainText("4", { timeout: 30_000 });
+    // Four working descendants draw no `● N`: the root's row stands alone until it is opened.
+    await expect(panel.locator(`[data-session-row="${root}"]`)).toBeVisible({ timeout: 30_000 });
+    await expect(panel.locator(`[data-session-row="${root}"] [data-descendant-mark]`)).toHaveCount(0);
 
     // Each chevron opens one more level; nothing below a closed row is drawn.
     await open(root);
@@ -104,9 +105,8 @@ test("Sessions opens a five-level tree, stops the indent at three and names a ch
     // The focused pane's row is selected; folded away, its nearest drawn ancestor takes the selection.
     await childRow(deeper).locator('[data-session-focus="row"]').click();
     await expect(page.locator(`[data-pane-view="${deeper}"]`)).toHaveAttribute("data-focused", "true");
-    // The child's checkout is a Workspace seen for the first time, with Tools off.
-    if (!await page.locator("[data-tool-tabs]").isVisible()) await page.getByRole("button", { name: "Tools", exact: true }).click();
-    if (!await panel.isVisible()) await page.locator('[data-tool-tab="agent_sessions"]').click();
+    // The child's checkout is a Workspace seen for the first time, with its lane closed.
+    await showTool(page, "agent_sessions");
     await expect(childRow(deeper).locator('[data-session-focus="row"]')).toHaveAttribute("aria-current", "true");
     await open(grandchild);
     await expect(childRow(deeper)).toHaveCount(0);

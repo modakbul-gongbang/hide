@@ -308,7 +308,10 @@ impl Core {
         // store imports once is what the kit's retirement deletes.
         // Taken before the match: a guard in its scrutinee would be held
         // through the arms, which lock the runtime again.
-        let usage_gate = lock_recover(&runtime).usage_gate();
+        let (usage_gate, ai_usage) = {
+            let runtime = lock_recover(&runtime);
+            (runtime.usage_gate(), runtime.ai_usage())
+        };
         let labels = match crate::labels::LabelServices::start(
             std::path::Path::new(&options.app_state_path)
                 .parent()
@@ -318,6 +321,7 @@ impl Core {
             &options.node_id,
             Arc::clone(&own_node),
             usage_gate,
+            ai_usage,
         ) {
             Ok(services) => {
                 let services = Arc::new(services);

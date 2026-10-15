@@ -67,6 +67,9 @@ pub struct NodeIdentity {
     pub herdr_socket: PathBuf,
     /// The Herdr binary this machine's panes attach with.
     pub herdr_bin: PathBuf,
+    /// Where this node keeps what it measured of each repository's
+    /// worktrees across links and restarts; none keeps them for one link.
+    pub worktree_facts: Option<PathBuf>,
 }
 
 /// A link the core took, as the node's screens reach the core through it.
@@ -1251,6 +1254,7 @@ fn serve(
             opened_roots: Some(roots),
             browser,
             factory: true,
+            worktree_facts: identity.worktree_facts.clone(),
         },
     )
     .map(|()| "link_closed".to_owned())

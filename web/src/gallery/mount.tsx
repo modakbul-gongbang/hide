@@ -4,6 +4,7 @@ import { Gallery, GalleryFrame } from "./Gallery";
 import { CmdkScene, cmdkSceneParams } from "./CmdkScene";
 import { GALLERY, type Section } from "./manifest";
 import { ServerSessionScene } from "./ServerSessionScene";
+import { RightLaneScene, rightLaneSceneParams } from "./RightLaneScene";
 import { sceneParams, SidebarScene } from "./SidebarScene";
 import { AreaFocusScene } from "./AreaFocusScene";
 import { OnboardingScene, onboardingSceneParams } from "./OnboardingScene";
@@ -42,6 +43,11 @@ export function mountGallery(root: Root) {
     // A scene seeds the app's own stores, so it is one document per scene.
     if (scene === "workspace-servers" || scene === "session-search") {
       root.render(<StrictMode><ServerSessionScene scene={scene} {...sceneParams(params)}/></StrictMode>);
+      return;
+    }
+    if (scene === "right-lane") {
+      document.title = "hide · Right lane scene";
+      root.render(<StrictMode><RightLaneScene {...rightLaneSceneParams(params)} /></StrictMode>);
       return;
     }
     if (scene === "onboarding") {

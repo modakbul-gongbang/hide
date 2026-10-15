@@ -1303,6 +1303,9 @@ pub struct Runtime {
     /// judge each request by; written from the settings and the usage rows
     /// (`runtime/usage_limit.rs`).
     usage_limits: Arc<hide_ai::UsageLimits>,
+    /// Where every router tells what its attempts cost; the usage ledger
+    /// worker drains it (`runtime/usage_ledger.rs`).
+    ai_usage: Arc<crate::usage_ledger::ai_usage::AiUsageQueue>,
     /// Whether the diagnostic log last said the order is paused by the limit.
     usage_pause_announced: bool,
     recent_visible_tabs: Vec<String>,
@@ -2040,6 +2043,7 @@ impl Runtime {
             usage_popover_open: false,
             usage_popover_open_generation: 0,
             usage_limits: Arc::new(hide_ai::UsageLimits::new()),
+            ai_usage: crate::usage_ledger::ai_usage::AiUsageQueue::new(),
             usage_pause_announced: false,
             recent_visible_tabs: Vec::new(),
             pending_tab_rename: None,
@@ -2478,6 +2482,12 @@ impl Runtime {
             .separate_view_areas()
             .then(|| AreaIntent::of(&event))
             .flatten();
+        // An open asked while the front files tool shows the tree alone
+        // keeps the tree beside what it opens, whichever route it takes and
+        // however late its view lands (B11, B12).
+        let lone_tree = (self.separate_view_areas() && AreaIntent::opens_view(&event))
+            .then(|| self.front_lone_tree())
+            .flatten();
         // A keystroke in a document is as frequent as terminal input and
         // moves no area either: its first edit keeps its own displays open,
         // and the next snapshot read's sync publishes that.
@@ -2506,6 +2516,12 @@ impl Runtime {
                 // The call is numbered even when nothing else moved (an
                 // open of the view already shown), and the shell must hear it.
                 changed = true;
+            }
+            if let Some(key) = lone_tree
+                && self.snapshot.status.last_error.is_none()
+                && self.front_workspace_key().as_ref() == Some(&key)
+            {
+                changed |= self.keep_lone_tree(&key);
             }
             if chooses_workspace && self.snapshot.status.last_error.is_none() {
                 self.mark_front_chosen();

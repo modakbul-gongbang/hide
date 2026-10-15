@@ -16,7 +16,7 @@
     "states": { "rest": "Approved record at rest", "off": "Native title and raw requests only", "loading": "First read skeleton", "failed": "Read failure and retry", "draft": "Editable issue draft", "ended": "Folded missed-work group", "search": "Separate session search group" },
     "urlStates": ["off", "loading", "failed", "draft", "ended", "search"],
     "rules": { "noOverlap": true, "noSidewaysOverflow": true },
-    "judgment": ["Does the actual record preserve the approved order and compact hierarchy in both themes?", "Do long Korean requests and missed rows remain legible in a narrow Tools column? Native behavior is verified separately."]
+    "judgment": ["Does the actual record preserve the approved order and compact hierarchy in both themes?", "Do long Korean requests and missed rows remain legible in a narrow lane? Native behavior is verified separately."]
   },
   "session-panel": {
     "description": "The Sessions A selection: separate progress and branch metadata, a parent's complete PR count, own child PR marks, and the existing session groups and tree.",
@@ -188,7 +188,7 @@
     ]
   },
   "workspace-servers": {
-    "description": "Open server remains in the shared Workspace toolbar with File Views and Tools off; the picker distinguishes reachable IPv4/IPv6 endpoints without a redundant footer.",
+    "description": "Open server remains in the shared Workspace toolbar with the right lane closed; the picker distinguishes reachable IPv4/IPv6 endpoints without a redundant footer.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-workspace",
     "scene": "workspace-servers",
@@ -231,14 +231,14 @@
     },
     "states": {
       "rest": "Initial screen.",
-      "server-picker": "Open server remains in the shared Workspace toolbar with File Views and Tools off; the picker distinguishes reachable IPv4/IPv6 endpoints without a redundant footer."
+      "server-picker": "Open server remains in the shared Workspace toolbar with the right lane closed; the picker distinguishes reachable IPv4/IPv6 endpoints without a redundant footer."
     },
     "rules": {
       "noOverlap": true,
       "noSidewaysOverflow": true
     },
     "judgment": [
-      "Open server remains in the shared Workspace toolbar with File Views and Tools off; the picker distinguishes reachable IPv4/IPv6 endpoints without a redundant footer."
+      "Open server remains in the shared Workspace toolbar with the right lane closed; the picker distinguishes reachable IPv4/IPv6 endpoints without a redundant footer."
     ]
   },
   "session-search": {
@@ -1566,5 +1566,35 @@
       "Do all root status marks share one axis right of the checkout glyph, with each tab's guide centered under that glyph and its tab glyph on the guide's column at the head of its first row?",
       "Does the named tab line read as a quiet head, and do neutral selection, Korean titles and trailing metadata match the approved Pen in both themes?"
     ]
+  },
+  "right-lane": {
+    "description": "The right lane (PRD right-lane): Agent Views fill the body and one lane of four tools opens from the rail, over the agents or pinned beside them, with the file tree as its own column.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-workspace",
+    "scene": "right-lane",
+    "selector": "[data-gallery-scene=\"right-lane\"]",
+    "frames": [
+      { "node": "rl-closed-l-win", "theme": "light", "width": 1456, "scale": 1, "content": "reference", "state": "rest" },
+      { "node": "rl-closed-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "rest" },
+      { "node": "rl-overlay-l-win", "theme": "light", "width": 1456, "scale": 1, "content": "reference", "state": "overlay" },
+      { "node": "rl-overlay-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "overlay" },
+      { "node": "rl-pinned-l-win", "theme": "light", "width": 1456, "scale": 1, "content": "reference", "state": "pinned" },
+      { "node": "rl-pinned-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "pinned" },
+      { "node": "rl-tree-overlay-l-win", "theme": "light", "width": 1456, "scale": 1, "content": "reference", "state": "tree-overlay" },
+      { "node": "rl-tree-overlay-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "tree-overlay" },
+      { "node": "rl-tree-only-l-win", "theme": "light", "width": 1456, "scale": 1, "content": "reference", "state": "tree-only" },
+      { "node": "rl-tree-only-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "tree-only" },
+      { "node": "rl-expanded-l-win", "theme": "light", "width": 1456, "scale": 1, "content": "reference", "state": "expanded" },
+      { "node": "rl-expanded-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "expanded" },
+      { "node": "rl-sessions-l-win", "theme": "light", "width": 1456, "scale": 1, "content": "reference", "state": "sessions" },
+      { "node": "rl-sessions-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "sessions" },
+      { "node": "rl-narrow-l-win", "theme": "light", "width": 1040, "scale": 1, "content": "reference", "state": "narrow" },
+      { "node": "rl-narrow-d-win", "theme": "dark", "width": 1040, "scale": 1, "content": "reference", "state": "narrow" }
+    ],
+    "conditions": { "themes": ["light", "dark"], "widths": [1456], "contents": ["reference"], "scales": [1] },
+    "states": { "rest": "Lane closed: the rail alone at the window edge.", "overlay": "Files over the agents, unpinned; the terminals keep their width.", "pinned": "Files pinned and docked beside the agents behind the divider.", "tree-overlay": "The tree on beside the document, over the agents; the lane widens by the tree.", "tree-only": "No document open: the tree fills the pinned lane.", "expanded": "The lane expanded over the whole body, tree on.", "sessions": "Sessions pinned, its header naming the project scope.", "narrow": "A 1040 px window: the pinned lane opens over the agents, the pin still on." },
+    "urlStates": ["overlay", "pinned", "tree-overlay", "tree-only", "expanded", "sessions", "narrow"],
+    "rules": { "noOverlap": true, "noSidewaysOverflow": true },
+    "judgment": ["Does the lane read as one surface over or beside the agents, its rail, header, pin, tree button and divider matching the boards?", "Does opening over the agents keep the terminals at their width, with only pinning narrowing them, once?"]
   }
 }

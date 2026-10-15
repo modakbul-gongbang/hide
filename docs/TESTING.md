@@ -212,7 +212,7 @@ A piece that another open change is still building is marked as pending with the
    `web/e2e/herdr-fixture.ts` starts a private Herdr and `web/e2e/hided-fixture.ts` a private `hided`; `desktop/e2e/fixture.ts` takes a started Herdr fixture and gives the packaged window its own `HOME` and `hided` state.
    Why: a test that shares a server with another inherits its panes, focus and timers, and its failure cannot be read alone.
    The config runs one worker (`web/playwright.config.ts`) so a timing assertion does not compete with a neighbour for cores; CI deals tests out across runners by their recorded durations (`scripts/web-e2e-shard.py`, [Balancing the web e2e shards](#balancing-the-web-e2e-shards)).
-   A desktop spec sizes its window with `fitWindow` in `desktop/e2e/fixture.ts`, inside the work area of a CI runner's 1024-point screen; `hide-e2e/window-size-through-fixture` refuses `setSize` and `setBounds` anywhere else, and a spec whose subject needs a larger window (`workspace-columns.spec.ts` asserts column widths in whole CSS pixels of bodies wider than the screen) says why in a line allow and never orders that window out and in.
+   A desktop spec sizes its window with `fitWindow` in `desktop/e2e/fixture.ts`, inside the work area of a CI runner's 1024-point screen; `hide-e2e/window-size-through-fixture` refuses `setSize` and `setBounds` anywhere else, and a spec whose subject needs a larger window (`right-lane.spec.ts` asserts lane widths in whole CSS pixels of bodies wider than the screen) says why in a line allow and never orders that window out and in.
    Why: macOS can keep a window larger than the work area until the window is next ordered in, by the test's own `blur()` or `focus()`, and clamp it then, so the layout changes in the middle of the test; `area cycle native` lost both View areas that way in about one run in ten (issue 511).
 2. **Wait for a product signal, never for time.**
    The signals a spec waits on, in order of preference:
@@ -437,6 +437,7 @@ A table from a Windows or macOS runner's logs would need its own file and a lane
 A test is flaky when it both fails and passes on the same SHA.
 A failure on a different SHA is not evidence of flakiness by itself, and the same title can carry two different failures.
 
+A flaky test never blocks a pull request's required gate or a merge, and it does not stay: it is isolated as an issue rather than moved out of its lane, and its cause is removed by that issue's deadline.
 CI retries a failed test once, for classification and for the report, and for nothing else.
 
 - Playwright runs with `retries: 1` when `CI` is set (`web/playwright.config.ts`, `desktop/playwright.config.ts`), and the Rust workspace runs under `cargo nextest` with the `ci` profile's `retries = 1` (`.config/nextest.toml`, `scripts/verify-cargo.sh nextest`).
@@ -470,7 +471,7 @@ What the retry does not do:
 - Do not make a flaky test pass by raising a timeout or deadline, adding retries beyond the CI one, changing the number of clicks or keys, lowering an expected count, resending an action, accepting a partial string, or skipping it.
   Each of these hides the order or readiness problem the failure was reporting; fix the wait or the gate, or fix the product.
 
-No test leaves a required lane:
+A flaky test is isolated by its issue, never by leaving a required lane:
 
 - There is no quarantine tag and no quarantine step: every web and desktop e2e test runs in the lanes its plan picks, and a flaky one is retried, filed and fixed or deleted like any other.
 - Rust has no quarantine either: a flaky Rust test is retried, filed and fixed or deleted, and the policy is zero `ignore`.

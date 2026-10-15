@@ -2497,7 +2497,17 @@ fn listing(dir: &std::path::Path) -> Result<Vec<String>> {
     let mut names: Vec<String> = std::fs::read_dir(dir)?
         .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
         .collect::<Result<_>>()?;
-    names.retain(|name| name != "Logs" && !(name.starts_with('.') && name.contains(".hide-")));
+    // What the machine keeps of its own work, written by its node's ordinary
+    // reads and never moved with a core: its log and its worktree facts.
+    let worktree_facts = hide_kit::layout::worktree_facts(dir);
+    let worktree_facts = worktree_facts
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned());
+    names.retain(|name| {
+        name != "Logs"
+            && Some(name) != worktree_facts.as_ref()
+            && !(name.starts_with('.') && name.contains(".hide-"))
+    });
     names.sort();
     Ok(names)
 }
@@ -2879,7 +2889,7 @@ fn what_each_machine_shows_survives_the_move_and_the_move_back() -> Result<()> {
                         .as_object()
                         .is_some_and(|presentations| presentations
                             .values()
-                            .any(|parked| parked["views"] != view["views"]))),
+                            .any(|parked| parked["layout"] != view["layout"]))),
             "the move fixture must compare distinct current and parked tab presentations: {kept_before:#}"
         );
         let shown_after = wait_for("the window as it was, through the new core", || {
@@ -3025,7 +3035,11 @@ fn seed_through_events(fixture: &Fixture) -> Result<()> {
             "project_checkouts_fold",
             json!({"workspace_id": target_project, "expanded": false}),
         ),
-        ("workspace_view", json!({"views": true})),
+        ("workspace_view", json!({"tool": "files", "pinned": true})),
+        (
+            "browser_open",
+            json!({"url": "https://example.test/seed", "workspace": {"device_id": SOURCE_NODE, "path": source}}),
+        ),
         (
             "ui_state_update",
             json!({"expanded_paths": [source.join("src")], "device_expanded_paths": {DEVICE_ID: [target.join("lib")]}, "selected_path": source.join("src/a.txt"), "shortcut_bindings": bindings}),
@@ -3294,7 +3308,7 @@ fn kept_per_machine(dir: &std::path::Path, own: &str) -> Result<Value> {
             .into_iter()
             .flatten()
             .filter(|row| row["device_id"].as_str().and_then(|device| machine_of(device, own).ok()) == Some(machine))
-            .map(|row| unqualified(&json!({"path": row["path"], "views": row["views"], "layout": row["layout"], "agent_layout": row["agent_layout"], "bookmarks": row["view_bookmarks"], "visibility": row["view_visibility"], "owner": row["view_owner"], "presentations": row["view_presentations"], "next_id": row["view_next_id"]})))
+            .map(|row| unqualified(&json!({"path": row["path"], "tool": row["tool"], "pinned": row["pinned"], "tree": row["tree"], "layout": row["layout"], "agent_layout": row["agent_layout"], "bookmarks": row["view_bookmarks"], "owner": row["view_owner"], "presentations": row["view_presentations"], "next_id": row["view_next_id"]})))
             .collect();
         let label_records: serde_json::Map<String, Value> = labels["targets"]
             .as_object()

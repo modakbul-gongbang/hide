@@ -21,8 +21,8 @@ const browserCanvas = vi.hoisted(() => {
 afterAll(() => browserCanvas.restore());
 
 const view: WorkspaceView = {
-  device_id: "local", path: "/projects/studio", views: false, tools: false,
-  tool: "explorer", views_width: null, tools_width: null, views_called: 0, views_calls: 0,
+  device_id: "local", path: "/projects/studio", tool: null, pinned: false, tree: false,
+  lane_width: null, tree_width: null, lane_called: 0, lane_calls: 0,
 };
 function checkout(servers: { host: string; port: number }[]): Checkout {
   return { agent_scope: emptyScope(),

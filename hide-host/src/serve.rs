@@ -80,6 +80,13 @@ pub fn serve_with_terminals(
             opened_roots: None,
             browser: None,
             factory: false,
+            // A device's helper serves its core for the helper's whole life,
+            // and keeps its worktree facts across its restarts.
+            worktree_facts: std::env::var_os("HOME").map(|home| {
+                hide_kit::layout::worktree_facts(&hide_kit::layout::state_dir_from_process(
+                    Path::new(&home),
+                ))
+            }),
         },
     )
 }
@@ -115,6 +122,11 @@ pub struct Services<'a> {
     /// that dialed its core (PRD core-host-node-move Q17). A device its core
     /// dialed keeps no Factory and refuses it.
     pub factory: bool,
+    /// Where the node keeps what it measured of each repository's worktrees
+    /// beyond this link (`hide_kit::layout::worktree_facts`), so a node
+    /// that restarted or linked again measures only the worktrees that
+    /// moved; none keeps them for this link only.
+    pub worktree_facts: Option<PathBuf>,
 }
 
 /// The checkout roots a node's core opened on it over one link, which are
@@ -181,6 +193,7 @@ impl Services<'_> {
             opened_roots: None,
             browser: None,
             factory: false,
+            worktree_facts: None,
         }
     }
 }
@@ -200,6 +213,13 @@ fn serve_in(
     env: Env,
     services: Services<'_>,
 ) -> io::Result<()> {
+    let env = match services.worktree_facts {
+        Some(folder) => Env {
+            worktrees: Arc::new(worktrees::Measured::kept_in(folder)),
+            ..env
+        },
+        None => env,
+    };
     let terminals = services.terminals;
     let heartbeat = services.heartbeat;
     let factory = services.factory;
