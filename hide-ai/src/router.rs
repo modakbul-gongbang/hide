@@ -9,8 +9,8 @@ use crate::log::{AiLogEvent, AiLogSink};
 use crate::schema;
 use crate::usage_limit::{PastLimit, UsageLimits};
 use crate::{
-    AiBackend, AiError, AiRequest, AiResult, Availability, CancelToken, ModelCatalog,
-    ProcessMeasurement, ProviderId,
+    AiBackend, AiError, AiRequest, AiResponse, AiResult, AiUsageSink, Availability, CancelToken,
+    ModelCatalog, ProcessMeasurement, ProviderId,
 };
 
 /// Retry and selection policy. The defaults carry the retired label plugin's
@@ -65,6 +65,10 @@ pub struct RouterConfig {
     /// work an operator waits on is not (PRD hide-ai-usage-limit D-03). A
     /// request that names its own agent is never judged by it.
     pub usage_gate: Option<Arc<UsageLimits>>,
+    /// Where the usage of every attempt that reached a provider is told. A
+    /// router without one counts nothing: the Settings probe never submits a
+    /// model turn, and a test router has no ledger.
+    pub usage_sink: Option<Arc<dyn AiUsageSink>>,
 }
 
 impl Default for RouterConfig {
@@ -85,6 +89,7 @@ impl Default for RouterConfig {
             max_app_server_rss_bytes: 1024 * 1024 * 1024,
             max_consecutive_restarts: 3,
             usage_gate: None,
+            usage_sink: None,
         }
     }
 }
@@ -810,12 +815,14 @@ impl AiRouter {
             } else {
                 request
             };
-            let result = backend
-                .execute(attempt_request, cancel)
-                .and_then(|response| {
-                    schema::validate(&request.output_schema, &response.value)?;
-                    Ok(response)
-                });
+            let result = backend.execute(attempt_request, cancel);
+            // Before the schema judges the answer: a rejected answer was paid
+            // for all the same.
+            self.tell_usage(request, provider, &result);
+            let result = result.and_then(|response| {
+                schema::validate(&request.output_schema, &response.value)?;
+                Ok(response)
+            });
             match result {
                 Ok(response) => {
                     self.log(request, |event| {
@@ -842,7 +849,9 @@ impl AiRouter {
                     });
                     let attempts = match &error {
                         AiError::Transient(_) => self.config.max_transient_attempts,
-                        AiError::InvalidOutput(_) => self.config.max_invalid_output_attempts,
+                        AiError::InvalidOutput(_) | AiError::Rejected(_) => {
+                            self.config.max_invalid_output_attempts
+                        }
                         // Submitted, fate unknown: a second attempt could be
                         // a second completion.
                         AiError::Timeout | AiError::CompletionUnknown(_) => 0,
@@ -957,6 +966,38 @@ impl AiRouter {
                 });
             }
             _ => {}
+        }
+    }
+
+    /// Tells the sink what one backend attempt cost. An answer carries its
+    /// usage. A failure counts as an unknown call when the backend had been
+    /// handed the request, so a model turn may have run and the error carries
+    /// no usage: `Timeout`, `CompletionUnknown`, `Cancelled` and
+    /// `InvalidOutput`. A backend raises none of them before it submits the
+    /// prompt (a spawn or pipe failure is `ProviderUnavailable`, a lost
+    /// session before `turn/start` too). Every other failure is a refusal
+    /// before any model turn and cost nothing. A cancel that never reached a
+    /// backend, and a caller joined onto another's flight, return before this
+    /// is called, and a schema failure of an answer comes after it, so none
+    /// of them is told twice or at all.
+    fn tell_usage(
+        &self,
+        request: &AiRequest,
+        provider: ProviderId,
+        result: &Result<AiResponse, AiError>,
+    ) {
+        let Some(sink) = &self.config.usage_sink else {
+            return;
+        };
+        match result {
+            Ok(response) => sink.attempt(&request.feature_id, provider, &response.usage.models),
+            Err(
+                AiError::Timeout
+                | AiError::CompletionUnknown(_)
+                | AiError::Cancelled
+                | AiError::InvalidOutput(_),
+            ) => sink.attempt(&request.feature_id, provider, &[]),
+            Err(_) => {}
         }
     }
 
@@ -2941,6 +2982,326 @@ mod tests {
             Duration::from_secs(120),
             "a request that asked for more than the cap keeps its own deadline"
         );
+    }
+
+    /// Remembers every attempt the router told it, as (feature, provider,
+    /// models told).
+    #[derive(Debug, Default)]
+    struct Told(Mutex<Vec<(String, ProviderId, Vec<crate::ModelTokens>)>>);
+
+    impl AiUsageSink for Told {
+        fn attempt(&self, feature_id: &str, provider: ProviderId, models: &[crate::ModelTokens]) {
+            self.0
+                .lock()
+                .unwrap()
+                .push((feature_id.to_owned(), provider, models.to_vec()));
+        }
+    }
+
+    impl Told {
+        fn all(&self) -> Vec<(String, ProviderId, Vec<crate::ModelTokens>)> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    /// A provider that answers from a queue of whole responses, usage included.
+    struct Metered {
+        id: ProviderId,
+        outcomes: Mutex<VecDeque<Result<AiResponse, AiError>>>,
+    }
+
+    impl Metered {
+        fn new(id: ProviderId, outcomes: Vec<Result<AiResponse, AiError>>) -> Arc<Self> {
+            Arc::new(Self {
+                id,
+                outcomes: Mutex::new(outcomes.into()),
+            })
+        }
+    }
+
+    impl AiBackend for Metered {
+        fn id(&self) -> ProviderId {
+            self.id
+        }
+        fn availability(&self) -> Availability {
+            Availability::Ready
+        }
+        fn models(&self) -> ModelCatalog {
+            ModelCatalog::Offered(Vec::new())
+        }
+        fn execute(&self, _: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
+            self.outcomes
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("a scripted outcome")
+        }
+    }
+
+    fn tokens(model: &str, input: u64) -> crate::ModelTokens {
+        crate::ModelTokens {
+            model: model.to_owned(),
+            input,
+            output: 1,
+            cache_read: 0,
+            cache_write: 0,
+            cache_write_1h: 0,
+            reasoning: None,
+            lower_bound: false,
+        }
+    }
+
+    fn answered(summary: Value, models: Vec<crate::ModelTokens>) -> Result<AiResponse, AiError> {
+        Ok(AiResponse {
+            value: summary,
+            usage: crate::AiUsage {
+                models,
+                ..crate::AiUsage::default()
+            },
+        })
+    }
+
+    fn counting_router(backends: Vec<Arc<dyn AiBackend>>, told: &Arc<Told>) -> AiRouter {
+        let config = RouterConfig {
+            priority: backends.iter().map(|backend| backend.id()).collect(),
+            backoff_base: Duration::from_millis(1),
+            usage_sink: Some(Arc::clone(told) as Arc<dyn AiUsageSink>),
+            ..RouterConfig::default()
+        };
+        AiRouter::with_sleep(
+            backends,
+            config,
+            Arc::new(Recorder::default()),
+            Box::new(|_| {}),
+        )
+    }
+
+    #[test]
+    fn every_answer_is_told_with_its_usage_and_a_rejected_answer_is_told_each_time() {
+        let told = Arc::new(Told::default());
+        let claude = Metered::new(
+            ProviderId::CLAUDE,
+            vec![
+                answered(json!({"other": 1}), vec![tokens("m", 10)]),
+                answered(json!({"summary": 5}), vec![tokens("m", 20)]),
+            ],
+        );
+        let router = counting_router(vec![claude], &told);
+        assert!(matches!(
+            router.execute(&request("p1", "x"), &CancelToken::new()),
+            Err(AiError::InvalidOutput(_))
+        ));
+        let attempts: Vec<_> = told
+            .all()
+            .into_iter()
+            .map(|a| (a.2[0].input, a.0))
+            .collect();
+        assert_eq!(
+            attempts,
+            vec![
+                (10, "test_feature".to_owned()),
+                (20, "test_feature".to_owned())
+            ]
+        );
+    }
+
+    #[test]
+    fn a_retry_and_a_fallback_are_each_their_own_attempt() {
+        let told = Arc::new(Told::default());
+        let claude = Metered::new(
+            ProviderId::CLAUDE,
+            vec![
+                Err(AiError::Transient("busy".to_owned())),
+                answered(json!({"summary": "ok"}), vec![tokens("m", 7)]),
+            ],
+        );
+        let codex = Metered::new(
+            ProviderId::CODEX,
+            vec![Err(AiError::ProviderUnavailable("gone".to_owned()))],
+        );
+        let router = counting_router(vec![codex, claude], &told);
+        router
+            .execute(&request("p1", "x"), &CancelToken::new())
+            .unwrap();
+        // The refusals never took the request; only the answer is counted.
+        let all = told.all();
+        assert_eq!(all.len(), 1);
+        assert_eq!((all[0].1, all[0].2[0].input), (ProviderId::CLAUDE, 7));
+    }
+
+    #[test]
+    fn a_submitted_attempt_whose_end_is_unknown_is_an_unknown_call() {
+        for failure in [
+            AiError::Timeout,
+            AiError::CompletionUnknown("lost".to_owned()),
+        ] {
+            let told = Arc::new(Told::default());
+            let router = counting_router(
+                vec![Metered::new(ProviderId::CLAUDE, vec![Err(failure.clone())])],
+                &told,
+            );
+            let _ = router.execute(&request("p1", "x"), &CancelToken::new());
+            let all = told.all();
+            assert_eq!(all.len(), 1, "{failure:?}");
+            assert!(all[0].2.is_empty(), "{failure:?}");
+        }
+    }
+
+    #[test]
+    fn a_provider_whose_usage_is_not_read_is_an_unknown_call_and_a_refusal_is_not_counted() {
+        let told = Arc::new(Told::default());
+        let router = counting_router(
+            vec![Metered::new(
+                ProviderId::GEMINI,
+                vec![
+                    answered(json!({"summary": "a"}), Vec::new()),
+                    Err(AiError::NotAuthenticated),
+                ],
+            )],
+            &told,
+        );
+        router
+            .execute(&request("p1", "x"), &CancelToken::new())
+            .unwrap();
+        let _ = router.execute(&request("p2", "y"), &CancelToken::new());
+        let all = told.all();
+        assert_eq!(all.len(), 1, "{all:?}");
+        assert!(all[0].2.is_empty());
+    }
+
+    #[test]
+    fn a_request_the_provider_refused_itself_did_no_work_and_is_not_told() {
+        let told = Arc::new(Told::default());
+        let router = counting_router(
+            vec![Metered::new(
+                ProviderId::CLAUDE,
+                vec![
+                    // Retried like an invalid output, and neither is counted.
+                    Err(AiError::Rejected("claude_api_400".to_owned())),
+                    Err(AiError::Rejected("claude_api_400".to_owned())),
+                ],
+            )],
+            &told,
+        );
+        assert!(matches!(
+            router.execute(&request("p1", "x"), &CancelToken::new()),
+            Err(AiError::Rejected(_))
+        ));
+        assert!(told.all().is_empty());
+    }
+
+    #[test]
+    fn a_backend_failure_after_submission_is_an_unknown_call_for_each_attempt() {
+        let told = Arc::new(Told::default());
+        let router = counting_router(
+            vec![Metered::new(
+                ProviderId::CLAUDE,
+                vec![
+                    // The input is deterministic, so the router asks twice:
+                    // two dispatches, two unknown calls.
+                    Err(AiError::InvalidOutput("no_structured_output".to_owned())),
+                    Err(AiError::InvalidOutput("no_structured_output".to_owned())),
+                    Err(AiError::Cancelled),
+                ],
+            )],
+            &told,
+        );
+        assert!(matches!(
+            router.execute(&request("p1", "x"), &CancelToken::new()),
+            Err(AiError::InvalidOutput(_))
+        ));
+        assert!(matches!(
+            router.execute(&request("p2", "y"), &CancelToken::new()),
+            Err(AiError::Cancelled)
+        ));
+        let all = told.all();
+        assert_eq!(all.len(), 3, "{all:?}");
+        assert!(all.iter().all(|attempt| attempt.2.is_empty()), "{all:?}");
+    }
+
+    #[test]
+    fn a_cancel_before_any_backend_was_asked_does_no_work_and_is_not_told() {
+        let told = Arc::new(Told::default());
+        // No scripted outcome: asking the backend would panic.
+        let router = counting_router(vec![Metered::new(ProviderId::CLAUDE, Vec::new())], &told);
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        assert!(matches!(
+            router.execute(&request("p1", "x"), &cancel),
+            Err(AiError::Cancelled)
+        ));
+        assert!(told.all().is_empty());
+    }
+
+    #[test]
+    fn a_joined_caller_that_gives_up_adds_nothing_to_the_one_execution() {
+        let told = Arc::new(Told::default());
+        let sink = Arc::new(Recorder::default());
+        let held = Arc::new(Held::default());
+        let config = RouterConfig {
+            priority: vec![held.id()],
+            usage_sink: Some(Arc::clone(&told) as Arc<dyn AiUsageSink>),
+            ..RouterConfig::default()
+        };
+        let router = Arc::new(AiRouter::with_sleep(
+            vec![held.clone()],
+            config,
+            sink.clone(),
+            Box::new(|_| {}),
+        ));
+        let leader = {
+            let router = Arc::clone(&router);
+            std::thread::spawn(move || {
+                router.execute(&request("same", "same input"), &CancelToken::new())
+            })
+        };
+        held.started.wait();
+        let joiner_cancel = CancelToken::new();
+        let joiner = {
+            let router = Arc::clone(&router);
+            let cancel = joiner_cancel.clone();
+            std::thread::spawn(move || router.execute(&request("same", "same input"), &cancel))
+        };
+        sink.wait_for_events("ai.request.joined", 1);
+        joiner_cancel.cancel();
+        assert!(matches!(joiner.join().unwrap(), Err(AiError::Cancelled)));
+        held.release.open();
+        leader.join().unwrap().unwrap();
+        assert_eq!(told.all().len(), 1);
+    }
+
+    #[test]
+    fn callers_that_join_one_execution_are_told_once() {
+        let told = Arc::new(Told::default());
+        let sink = Arc::new(Recorder::default());
+        let held = Arc::new(Held::default());
+        let config = RouterConfig {
+            priority: vec![held.id()],
+            usage_sink: Some(Arc::clone(&told) as Arc<dyn AiUsageSink>),
+            ..RouterConfig::default()
+        };
+        let router = Arc::new(AiRouter::with_sleep(
+            vec![held.clone()],
+            config,
+            sink.clone(),
+            Box::new(|_| {}),
+        ));
+        let handles: Vec<_> = (0..3)
+            .map(|_| {
+                let router = Arc::clone(&router);
+                std::thread::spawn(move || {
+                    router
+                        .execute(&request("same", "same input"), &CancelToken::new())
+                        .unwrap()
+                })
+            })
+            .collect();
+        sink.wait_for_events("ai.request.joined", 2);
+        held.release.open();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        assert_eq!(told.all().len(), 1);
     }
 
     fn rand_input() -> u64 {

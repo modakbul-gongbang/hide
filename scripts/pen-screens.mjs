@@ -37,6 +37,7 @@ import {BUTTON_VARIANTS, BADGE_VARIANTS, frame, icon, num, text} from './pen-sys
 import {coreMoveRows} from './pen-screens-core-move.mjs';
 import {diskCleanupRows} from './pen-screens-disk.mjs';
 import {factoryRows} from './pen-screens-factory.mjs';
+import {laneBoards} from './pen-screens-lane.mjs';
 import {onboardingBoards} from './pen-screens-onboarding.mjs';
 import {settingsBoards, settingsParts} from './pen-screens-settings.mjs';
 import {sessionScreens} from './pen-screens-sessions.mjs';
@@ -2099,375 +2100,11 @@ function buildWorkspace(tokens) {
           },
           "hideui:Kjfje/hideui:side-panel-tools-toggle/hideui:ZIZFR": {
             "fill": "$--subtle-foreground"
-          },
-          "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button": {
-            "fill": "$--secondary"
-          },
-          "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button/hideui:ZIZFR": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge": {
-            "fill": "$--primary",
-            "enabled": false
-          },
-          "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-            "content": "1"
-          },
-          "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
-            "fill": "$--secondary"
-          },
-          "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM/hideui:ZIZFR": {
-            "fill": "$--subtle-foreground"
-          }
-        }
-      },
-      {
-        "id": "DtqSr",
-        "type": "ref",
-        "ref": "hideui:side-panel",
-        "name": "Docked columns",
-        "fill": "$--background",
-        "x": 340,
-        "y": 60,
-        "width": 1116,
-        "height": 840,
-        "descendants": {
-          "hideui:YpxMC": {
-            "fill": "$--background",
-            "enabled": true,
-            "x": 0,
-            "y": 0,
-            "width": 480,
-            "height": 840
-          },
-          "hideui:YpxMC/hideui:m3nqv": {
-            "fill": "$--card",
-            "stroke": "$--border"
-          },
-          "hideui:YpxMC/hideui:Yf5g6": {
-            "fill": "$--secondary"
-          },
-          "hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-mark": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-title": {
-            "fill": "$--foreground"
-          },
-          "hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-strike": {
-            "fill": "$--muted-foreground"
-          },
-          "hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-dirty": {
-            "fill": "$--warning"
-          },
-          "hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-close/hideui:ZIZFR": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:YpxMC/hideui:ujfpg/hideui:ZIZFR": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:YpxMC/hideui:GYdsi/hideui:ZIZFR": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:YpxMC/hideui:jEy0G": {
-            "fill": "$--background"
-          },
-          "hideui:YpxMC/hideui:blLvs": {
-            "fill": "$--secondary",
-            "stroke": "$--border"
-          },
-          "hideui:YpxMC/hideui:W2jHfs": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:YpxMC/hideui:v57l6H": {
-            "fill": "$--foreground"
-          },
-          "hideui:YpxMC/hideui:CG4wC": {
-            "fill": "$--muted-foreground"
-          },
-          "hideui:YpxMC/hideui:K8ikC/hideui:ZIZFR": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:YpxMC/hideui:a63n6t/hideui:ZIZFR": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:YpxMC/hideui:jPwvc": {
-            "fill": "$--background"
-          },
-          "hideui:YpxMC/hideui:PNaQy": {
-            "fill": "$--foreground"
-          },
-          "hideui:YpxMC/hideui:aTsYy": {
-            "fill": "$--background",
-            "stroke": "$--border"
-          },
-          "hideui:YpxMC/hideui:lFQa0": {
-            "fill": "$--card",
-            "stroke": "$--border"
-          },
-          "hideui:YpxMC/hideui:ljIwg": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:YpxMC/hideui:e7uYn": {
-            "fill": "$--foreground"
-          },
-          "hideui:YpxMC/hideui:uJYZa": {
-            "fill": "$--muted-foreground"
-          },
-          "hideui:YpxMC/hideui:x9QjtJ/hideui:ZIZFR": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:YpxMC/hideui:E0Mk6/hideui:ZIZFR": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:YpxMC/hideui:M6Mnyn": {
-            "fill": "$--background"
-          },
-          "hideui:YpxMC/hideui:QSc1K": {
-            "fill": "$--foreground"
-          },
-          "hideui:gPjhF": {
-            "enabled": true,
-            "x": 480,
-            "y": 0,
-            "width": 8,
-            "height": 840
-          },
-          "hideui:gPjhF/hideui:side-panel-grip-line-top": {
-            "fill": "$--muted-foreground"
-          },
-          "hideui:gPjhF/hideui:side-panel-grip-pill": {
-            "fill": "$--card",
-            "stroke": "$--border"
-          },
-          "hideui:gPjhF/hideui:side-panel-grip-glyph": {
-            "fill": "$--muted-foreground"
-          },
-          "hideui:giyPa": {
-            "fill": "$--card",
-            "enabled": true,
-            "x": 488,
-            "y": 0,
-            "width": 360,
-            "height": 840
-          },
-          "hideui:giyPa/hideui:tPjjv": {
-            "fill": "$--card",
-            "stroke": "$--border"
-          },
-          "hideui:giyPa/hideui:b7bsc7": {
-            "fill": "$--card",
-            "width": 304
-          },
-          "hideui:giyPa/hideui:b7bsc7/hideui:view-tab-mark": {
-            "fill": "$--file-blue"
-          },
-          "hideui:giyPa/hideui:b7bsc7/hideui:view-tab-title": {
-            "fill": "$--foreground"
-          },
-          "hideui:giyPa/hideui:b7bsc7/hideui:view-tab-strike": {
-            "fill": "$--muted-foreground"
-          },
-          "hideui:giyPa/hideui:b7bsc7/hideui:view-tab-dirty": {
-            "fill": "$--warning"
-          },
-          "hideui:giyPa/hideui:b7bsc7/hideui:view-tab-close/hideui:ZIZFR": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:giyPa/hideui:N6jVdg/hideui:ZIZFR": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:giyPa/hideui:eeRGB/hideui:ZIZFR": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:giyPa/hideui:fenJg": {
-            "fill": "$--card",
-            "stroke": "$--border"
-          },
-          "hideui:giyPa/hideui:fenJg/hideui:BUboy": {
-            "fill": "$--subtle-foreground",
-            "content": "… 제목과 경로 확인.md"
-          },
-          "hideui:giyPa/hideui:fenJg/hideui:ifLpE/hideui:btn-ic": {
-            "fill": "$--primary-foreground"
-          },
-          "hideui:giyPa/hideui:fenJg/hideui:ifLpE/hideui:btn-lb": {
-            "fill": "$--foreground"
-          },
-          "hideui:giyPa/hideui:fenJg/hideui:W8pA8k/hideui:btn-ic": {
-            "fill": "$--primary-foreground"
-          },
-          "hideui:giyPa/hideui:fenJg/hideui:W8pA8k/hideui:btn-lb": {
-            "fill": "$--foreground"
-          },
-          "hideui:giyPa/hideui:fenJg/hideui:iFSdQ/hideui:btn-ic": {
-            "fill": "$--primary-foreground"
-          },
-          "hideui:giyPa/hideui:fenJg/hideui:iFSdQ/hideui:btn-lb": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:giyPa/hideui:fenJg/hideui:lEjtc/hideui:btn-ic": {
-            "fill": "$--primary-foreground"
-          },
-          "hideui:giyPa/hideui:fenJg/hideui:lEjtc/hideui:btn-lb": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:giyPa/hideui:nFrdf": {
-            "fill": "$--card"
-          },
-          "hideui:giyPa/hideui:aX9gF": {
-            "fill": "$--secondary"
-          },
-          "hideui:giyPa/hideui:jOt0p": {
-            "fill": "$--muted-foreground"
-          },
-          "hideui:giyPa/hideui:iExJ4": {
-            "fill": "$--file-blue"
-          },
-          "hideui:giyPa/hideui:T1KFmN": {
-            "fill": "$--muted-foreground"
-          },
-          "hideui:giyPa/hideui:sfXAM": {
-            "fill": "$--foreground"
-          },
-          "hideui:giyPa/hideui:h10qC": {
-            "fill": "$--muted-foreground"
-          },
-          "hideui:giyPa/hideui:fzHJn": {
-            "fill": "$--foreground",
-            "content": "한글과 English가 함께 있는 파일을 읽습니다."
-          },
-          "hideui:giyPa/hideui:GQ6yZ": {
-            "fill": "$--muted-foreground"
-          },
-          "hideui:giyPa/hideui:oVfkk": {
-            "fill": "$--foreground"
-          },
-          "hideui:w7GZ7c": {
-            "enabled": true,
-            "x": 848,
-            "y": 0,
-            "width": 8,
-            "height": 840
-          },
-          "hideui:w7GZ7c/hideui:side-panel-grip-line-top": {
-            "fill": "$--muted-foreground"
-          },
-          "hideui:w7GZ7c/hideui:side-panel-grip-pill": {
-            "fill": "$--card",
-            "stroke": "$--border"
-          },
-          "hideui:w7GZ7c/hideui:side-panel-grip-glyph": {
-            "fill": "$--muted-foreground"
-          },
-          "hideui:eNvgI": {
-            "fill": "$--card",
-            "enabled": true,
-            "x": 856,
-            "y": 0,
-            "width": 260,
-            "height": 840
-          },
-          "hideui:eNvgI/hideui:H2M1v0": {
-            "stroke": "$--border"
-          },
-          "hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-explorer": {
-            "stroke": "$--primary"
-          },
-          "hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-explorer-glyph": {
-            "fill": "$--foreground"
-          },
-          "hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-history-glyph": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:eNvgI/hideui:b22eS": {
-            "stroke": "$--border"
-          },
-          "hideui:eNvgI/hideui:d927zh": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:eNvgI/hideui:DVJS6/hideui:ZIZFR": {
-            "fill": "$--subtle-foreground"
-          },
-          "hideui:eNvgI/hideui:NZoEx": {
-            "stroke": "$--border",
-            "enabled": false,
-            "height": 0,
-            "width": 0
-          },
-          "hideui:eNvgI/hideui:iDnaZ": {
-            "fill": "$--muted-foreground"
-          },
-          "hideui:eNvgI/hideui:MmldP": {
-            "stroke": "$--border"
-          },
-          "hideui:eNvgI/hideui:Cwgap": {
-            "fill": "$--file-blue"
-          },
-          "hideui:eNvgI/hideui:x1im3": {
-            "fill": "$--foreground",
-            "fontSize": "$--text-caption"
-          },
-          "hideui:eNvgI/hideui:fZi7M": {
-            "stroke": "$--border"
-          },
-          "hideui:eNvgI/hideui:t0QOE": {
-            "fill": "$--file-blue"
-          },
-          "hideui:eNvgI/hideui:aHlvp": {
-            "fill": "$--foreground",
-            "fontSize": "$--text-caption",
-            "content": "한글과 English 작업 기록 - 긴 파일 제…"
           }
         }
       }
     ]
   };
-  const states = [
-    {"id":"TUoDW","mode":"Light","key":"full1116","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["TUoDW","vT0el","mDiyL","sQ9MO","rxHFj","JNfcl","j82QG","NFivf","XHA5O","E6s0TD","mFUBL","di8S5","Rfg8S","Y02KdW","jAdn6","OYRm7","KGCa7","sv6IB","h2d0u","pv35D","NDnyJ","c4b0sQ","HObxT","qQH68","swzTQ","F0TmV","VnRz8","ydsLS","W2zeQP","DtqSr"],"changes":[]},
-    {"id":"PUDa5","mode":"Light","key":"mid1100","window":[1440,900],"body":1100,"visibleWidths":{"agents":480,"views":612,"tools":0},"openFileCount":1,"ids":["PUDa5","do6Xq","A0zOxv","ATZUh","WzX2i","i20ww","keYir","pMIs8","Wusym","XlqMm","OhD8s","R4J80","PXhqH","BTjWb","A2xtWy","f5eq5W","BVAgn","BPRAZ","hM2NT","PQu9f","C7H6gy","SkaIK","hrP2Y","z85Ehu","gnUYi","piBwT","d9xAM","UJsFv","r4zjY5","fjTt5"],"changes":[{"path":["children",0,"children",3,"x"],"value":706},{"path":["children",0,"width"],"value":1440},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",3,"width"],"value":1100},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":1108},{"path":["children",4,"descendants","hideui:giyPa","width"],"value":612},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":1100},{"path":["children",4,"width"],"value":1100},{"path":["name"],"value":"Workspace / Light / mid1100"},{"path":["width"],"value":1440}]},
-    {"id":"e7GLci","mode":"Light","key":"mid848","window":[1188,900],"body":848,"visibleWidths":{"agents":480,"views":360,"tools":0},"openFileCount":1,"ids":["e7GLci","vz6lz","zVQGC","kahQR","LOm0g","K01Xq","F7TgXs","iLgOv","mLgAQ","FjPNn","p01YEE","ESnQC","rH7HS","fH7lb","XkxSU","Mm0p0","PIfKg","ON8hj","JQhkG","i1hVs4","FgxJy","QX59A","jIiPK","v4eXnS","M8Q2A","SjVw4","q31JuN","HZ2HD","u6Y1IX","HcIQ7"],"changes":[{"path":["children",0,"children",3,"x"],"value":580},{"path":["children",0,"width"],"value":1188},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",3,"width"],"value":848},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"width"],"value":848},{"path":["name"],"value":"Workspace / Light / mid848"},{"path":["width"],"value":1188}]},
-    {"id":"wU6O3","mode":"Light","key":"narrow847agents","window":[1187,900],"body":847,"visibleWidths":{"agents":847,"views":0,"tools":0},"openFileCount":1,"ids":["wU6O3","O9JUq","XEKGT","PfYYC","AnWkc","U84r63","rgA0s","x3bCyj","Gdc8u","tARwm","F6Di99","cPxQV","EXdY1","IgOFJ","rQhwq","KT7b3","B0tNd","MeJlh","clMvA","SbbbC","dPBC5","Pt9Ah","XxJ0E","MMCLY","DdFbY","J1ISi7","j76tDF","sWiJq","X1RUk","MZ4ZX"],"changes":[{"path":["children",0,"children",3,"x"],"value":579.5},{"path":["children",0,"width"],"value":1187},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"width"],"value":847},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":847},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":855},{"path":["children",4,"descendants","hideui:gPjhF","enabled"],"value":false},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":847},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":847},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":847},{"path":["children",4,"width"],"value":847},{"path":["name"],"value":"Workspace / Light / narrow847agents"},{"path":["width"],"value":1187}]},
-    {"id":"l6fpKj","mode":"Light","key":"narrow847views","window":[1187,900],"body":847,"visibleWidths":{"agents":0,"views":847,"tools":0},"openFileCount":1,"ids":["l6fpKj","HQ6SS","K3L13b","xmFd1","mPgRM","BXZpN","ioMIf","HpLPw","yc8X0","XzcpN","d6jROt","avk0e","AvcQN","LFvl8","S4hQO","hynVp","TroX8","rp8qE","D3yQeZ","osWqi","UZDzv","DkdUU","sRY6j","K5TuJo","E6TYSv","BrkeT","LNf9A","Jsx1c","e6Ozqa","sahiH"],"changes":[{"path":["children",0,"children",3,"x"],"value":579.5},{"path":["children",0,"width"],"value":1187},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",3,"width"],"value":847},{"path":["children",4,"descendants","hideui:YpxMC","enabled"],"value":false},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":847},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":855},{"path":["children",4,"descendants","hideui:gPjhF","enabled"],"value":false},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":0},{"path":["children",4,"descendants","hideui:giyPa","width"],"value":847},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":0},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":847},{"path":["children",4,"width"],"value":847},{"path":["name"],"value":"Workspace / Light / narrow847views"},{"path":["width"],"value":1187}]},
-    {"id":"aoV0a","mode":"Light","key":"mid1100tools","window":[1440,900],"body":1100,"visibleWidths":{"agents":737,"views":0,"tools":355},"openFileCount":1,"ids":["aoV0a","zDLCi","ztEhg","Hjkup","F61zLZ","mw2X4","A4Cp3","l2WaGq","uQFGt","YlulQ","h7aSBI","ybhx9","MDGQY","r6B7Lt","j3M7MQ","w7QHo2","ELGF1","M9h2p","W41Xr","sH43B","ucQ37","auZaQ","I6zeHR","jekQ3","s2ho7","z2TKo4","VJofE","V136Si","nQqVo","KCq7h"],"changes":[{"path":["children",0,"children",3,"x"],"value":706},{"path":["children",0,"width"],"value":1440},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"width"],"value":1100},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":737},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":745},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":737},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":488},{"path":["children",4,"width"],"value":1100},{"path":["name"],"value":"Workspace / Light / mid1100tools"},{"path":["width"],"value":1440}]},
-    {"id":"QJQsr","mode":"Light","key":"mid848tools","window":[1188,900],"body":848,"visibleWidths":{"agents":485,"views":0,"tools":355},"openFileCount":1,"ids":["QJQsr","fS5am","Gsg2l","Enf1X","x1Ko4c","n8cdF","eVee5","eN8MU","I9AAcW","Yf0Il","c6BbC","agrS2","QrHVK","T212xl","sraVI","m6c21Y","UmonT","ILiZy","tWmvY","DwHaH","g8YfS","oNL8A","G2J0Oz","nEW0f","R2ixny","X8nJT","DD39j","JUbCY","hguxV","xqsrN"],"changes":[{"path":["children",0,"children",3,"x"],"value":580},{"path":["children",0,"width"],"value":1188},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"width"],"value":848},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":485},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":493},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":485},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":488},{"path":["children",4,"width"],"value":848},{"path":["name"],"value":"Workspace / Light / mid848tools"},{"path":["width"],"value":1188}]},
-    {"id":"OdCvV","mode":"Light","key":"narrow847tools","window":[1187,900],"body":847,"visibleWidths":{"agents":0,"views":0,"tools":847},"openFileCount":1,"ids":["OdCvV","y3IyH0","dAGe7","ktzql","ZdikY","r1iT7Y","x3p6Kk","wKi8I","ek5dK","iBhjp","DEgE1","ZwBpe","VxtaJ","kCFm1","HC9ww","MUe8s","rKvDw","PeEHM","I2NY5U","JZZgH","XtayH","SL2xL","pqohb","DvEAp","AlGIU","xyYRX","w4OGU","Y3LDHn","xa0Cy","AL6Wa"],"changes":[{"path":["children",0,"children",3,"x"],"value":579.5},{"path":["children",0,"width"],"value":1187},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"width"],"value":847},{"path":["children",4,"descendants","hideui:YpxMC","enabled"],"value":false},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":847},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":847},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":0},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","enabled"],"value":false},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":0},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":0},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":0},{"path":["children",4,"width"],"value":847},{"path":["name"],"value":"Workspace / Light / narrow847tools"},{"path":["width"],"value":1187}]},
-    {"id":"PmKT5","mode":"Light","key":"toolszero","window":[1456,900],"body":1116,"visibleWidths":{"agents":753,"views":0,"tools":355},"openFileCount":0,"ids":["PmKT5","FuHUy","MBro6","zBlnI","cCflh","wzmiI","fCwVW","g86tY","YsPwb","bZFJP","NcoAY","UNT0u","P6f46","EywVA","F1z8N","qMDKg","ICvwN","JuJrg","bhrtH","QvgD1","BRuHK","T93o69","wO5wW","BD3O5","MQEGk","PPGRI","v0fzbi","ItbQR","XyPFU","XEdY8"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count","content"],"value":"0"},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":753},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":761},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":753},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":761},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":761},{"path":["name"],"value":"Workspace / Light / toolszero"}]},
-    {"id":"jEUuK","mode":"Light","key":"toolshiddenfile","window":[1456,900],"body":1116,"visibleWidths":{"agents":753,"views":0,"tools":355},"openFileCount":1,"ids":["jEUuK","NRbxh","Up8D1","WYjPW","O9IdOq","tcmXN","ejvfd","RwSJG","Re1gc","NxjdC","j92NQS","cLOxu","hlR0t","m2TQUy","t2JEa","Uuwy2","DgOev","rML9g","tSeEd","o3OZQ","wUCzi","lJ3a3","sCBVw","DGGgW","YRt8i","z3Ma7","zDgGn","dGUCQ","r5KQox","HVkDE"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":753},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":761},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":753},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":761},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":761},{"path":["name"],"value":"Workspace / Light / toolshiddenfile"}]},
-    {"id":"DRb4n","mode":"Light","key":"dividerhover","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["DRb4n","aaTJ1","B8KRC","dEWrC","mSYXw","XyNRb","UZTqB","XsOz8","grCCD","x3VLW","HBzHV","v4WkhA","uEkie","d4erS","Koq7O","s8wznc","Qs4bQ","xlzXW","Po0Yy","VeG1E","Pi4GX","qpTnV","XbhFO","VwRXI","S0E5Qf","ZyOpL","lQKP1","q2pn0T","bV4cT","YDwUf"],"changes":[{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","height"],"value":840},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","y"],"value":408},{"path":["name"],"value":"Workspace / Light / dividerhover"}]},
-    {"id":"sPxvx","mode":"Light","key":"dividerfocus","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["sPxvx","QQVEE","Ph5vx","Go93y","SENyY","nkm0C","c1OJBF","pNuxp","qvqrN","O6aOiC","a8NRA","l7NfT","oIOAb","cAuBY","TNPBu","OJGB8","e5vK3W","FioQ2","B9x6o","tffiV","OqoNP","HAtvW","N87rh","ATA8H","Qk1AU","Z5azt","BptWt","ZWGxq","CcKmE","Mnq1V"],"changes":[{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","height"],"value":840},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","stroke"],"value":"$--border"},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","y"],"value":408},{"path":["name"],"value":"Workspace / Light / dividerfocus"}]},
-    {"id":"D3d5BU","mode":"Light","key":"dividerguide","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["D3d5BU","xlhgo","mj1iF","CPMwk","RXft7","KeWuF","REeGf","h9XzAW","FMfLu","N8Pw9","D4tzk","r0L6eA","mIhdS","xm1pt","a5nq2","i2FEP6","A09LQ","iBArK","hFjYu","UV6EW","i3hCtG","ZEa4C","zJRxJ","RkHyN","qVJCM","b6OlZD","ocTkR","x9IuOt","s3ksu","OlvXJ"],"changes":[{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","height"],"value":840},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","y"],"value":408},{"path":["children",5],"value":{"id":"HzVMM","type":"ref","ref":"hideui:side-panel-grip","name":"Temporary divider guide","x":852,"y":60,"width":8,"height":840,"descendants":{"hideui:side-panel-grip-line-top":{"fill":"$--muted-foreground","enabled":true,"height":840},"hideui:side-panel-grip-pill":{"fill":"$--card","stroke":"$--border","enabled":true,"y":408},"hideui:side-panel-grip-glyph":{"fill":"$--muted-foreground"}}}},{"path":["name"],"value":"Workspace / Light / dividerguide"}]},
-    {"id":"d6YJdY","mode":"Light","key":"dividerrelease","window":[1456,900],"body":1116,"visibleWidths":{"agents":512,"views":596,"tools":0},"openFileCount":1,"ids":["d6YJdY","bsNeH","x4qidL","X8loM","NGctU","U4GvJ8","EQBgn","t2v4A","b2VsX","NwNBc","Lw339","f9Z5Wt","bQ3wt","llMUa","g882uE","m12WwT","ZZaL5","Ktlv3","ZnPWA","H7QlVN","C5PDs","E9mrC","QocHU","Ke1LQ","Evqfu","qtabo","TafRU","iVyiH","Ne2iu","ekAYc"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":512},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":1124},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":512},{"path":["children",4,"descendants","hideui:giyPa","width"],"value":596},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":520},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":1116},{"path":["name"],"value":"Workspace / Light / dividerrelease"}]},
-    {"id":"ec1uu","mode":"Light","key":"dividercancel","window":[1940,900],"body":1600,"visibleWidths":{"agents":589,"views":640,"tools":355},"openFileCount":1,"ids":["ec1uu","eEMUc","e2TeTa","PzxQi","nYVOd","sqoI1","M8oSel","UyGio","biVeo","EHJyG","bi49h","l0y9Jm","s73UZ3","bnFuB","IE7lW","PiUC5","x59Vm","gjjwC","dP3sW","rVJft","FwBBm","wo0BA","J4Ak8","DV39t","W2UAfG","M6XZm","L4BiVy","TeO74","Ruf45","KrKXg"],"changes":[{"path":["children",0,"children",3,"x"],"value":956},{"path":["children",0,"width"],"value":1940},{"path":["children",2,"children",3,"content"],"value":"Projects · Recent activity · 2"},{"path":["children",2,"children",4,"children",1,"content"],"value":"beta"},{"path":["children",3,"descendants","hideui:bkh81","content"],"value":"Home  /  beta  /  main"},{"path":["children",3,"width"],"value":1600},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":589},{"path":["children",4,"descendants","hideui:YpxMC/hideui:aTsYy","enabled"],"value":false},{"path":["children",4,"descendants","hideui:YpxMC/hideui:aTsYy","height"],"value":780},{"path":["children",4,"descendants","hideui:YpxMC/hideui:aTsYy","width"],"value":0},{"path":["children",4,"descendants","hideui:YpxMC/hideui:v57l6H","content"],"value":"w2:p1"},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":1245},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":589},{"path":["children",4,"descendants","hideui:giyPa","width"],"value":640},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":597},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":1237},{"path":["children",4,"width"],"value":1600},{"path":["name"],"value":"Workspace / Light / dividercancel"},{"path":["width"],"value":1940}]},
-    {"id":"OkoMU","mode":"Light","key":"longpathhover","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["OkoMU","x5tRd","PacrB","ts4FW","S2Fg3","uM71H","HeS3x","FVE1R","bNtOg","JM6Ki","P0NW8T","ja2cH","cDUiX","hZNaf","h3dhZ","ORUbg","CUJPq","xCUps","lk5F7","IBgU5","gdqIG","m8emt","arGs3","DZ4yX","j9vxae","EBDfy","n8DsA","b1RYB","L2sgn","s638L"],"changes":[{"path":["children",5],"value":{"id":"w6Ykvp","type":"ref","ref":"hideui:tip-open-l","name":"Full file identity tooltip","fill":"$--popover","stroke":"$--border","x":739,"y":96,"width":360,"height":"fit_content","descendants":{"hideui:tip-open-l-t":{"fill":"$--foreground","content":"File: /workspace/fixture/한국어와 English 작업 기록/한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md · Preview","name":"Actual native file identity","width":"fill_container","textGrowth":"fixed-width","fontWeight":"normal"}}}},{"path":["name"],"value":"Workspace / Light / longpathhover"}]},
-    {"id":"V6UYh","mode":"Light","key":"views-tooltip","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["V6UYh","YblEd","h5Vazd","PcjCJ","FbRBI","t3GRBQ","bFDCw","M25NO","XAa87","rZs7d","MwKlA","VMusL","P0OvX","Wv6cF","uM74R","e0ZMHw","JHhu7","loQTy","UrJCT","nzM1F","ODcup","B17CM","T6LdxI","Y0Vees","sWzTz","XXxt8","y6GPr","JOOFN","nQbN6","raWzV"],"changes":[{"path":["children",5],"value":{"id":"Y81nx","type":"ref","ref":"hideui:tip-shortcut-l","name":"File Views tooltip","fill":"$--popover","stroke":"$--border","x":1332,"y":60,"descendants":{"hideui:tip-shortcut-l-t":{"fill":"$--foreground","content":"File Views","name":"File Views"},"hideui:tip-shortcut-l-k":{"fill":"$--muted-foreground","content":"⇧⌘B","name":"⇧⌘B"}}}},{"path":["name"],"value":"Workspace / Light / toolbarhints"}]},
-    {"id":"X7Fcc","mode":"Dark","key":"full1116","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["X7Fcc","xSWYt","EWggy","iludN","oF7H1","Vt3Nu","YuyMn","JIRsZ","ETRdh","x3KXtp","bvCMq","hUI2z","T5HGp","L1X8Tr","ilbS0","MT33P","i1onXy","j9UIfy","yGxcG","XHUlP","quni8","wokvt","Mqmgr","R9g0lT","k519J","iEz6j","ztrwz","l79l0Q","Aj3R1","hae0G"],"changes":[{"path":["name"],"value":"Workspace / Dark / full1116"}]},
-    {"id":"J3ckk6","mode":"Dark","key":"mid1100","window":[1440,900],"body":1100,"visibleWidths":{"agents":480,"views":612,"tools":0},"openFileCount":1,"ids":["J3ckk6","qIhMH","jXEVs","yj3AX","EGZNL","c64W1","wvz0E","KutwH","x9zTLj","H8ys6O","lV5VT","jcBGi","QSKEr","NTqgJ","K5QiC0","uW0PU","KfIgO","bkhkB","cMSOu","x8cftG","OOgfV","czRJl","c4PAeR","X0pQL","Wca3B","JnhcW","bQK7q","s3O4V","DneBV","AviT1"],"changes":[{"path":["children",0,"children",3,"x"],"value":706},{"path":["children",0,"width"],"value":1440},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",3,"width"],"value":1100},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":1108},{"path":["children",4,"descendants","hideui:giyPa","width"],"value":612},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":1100},{"path":["children",4,"width"],"value":1100},{"path":["name"],"value":"Workspace / Dark / mid1100"},{"path":["width"],"value":1440}]},
-    {"id":"fbxi3","mode":"Dark","key":"mid848","window":[1188,900],"body":848,"visibleWidths":{"agents":480,"views":360,"tools":0},"openFileCount":1,"ids":["fbxi3","ijx5y","SiDhH","E1HIQ","sFXCu","Hw9ox","AxK1U","g1pyK","smCyt","Hz0uy","NAnCd","DpTz8","OmEtx","ODKyO","mmmwG","EPcRq","BH3qw","HfJpv","y5yau","Hok4y","z2QRE","biLw2","p7ssr","t8rpDR","iQfNQ","jXbgZ","UwYaw","xcVLf","vRFQe","kpB8k"],"changes":[{"path":["children",0,"children",3,"x"],"value":580},{"path":["children",0,"width"],"value":1188},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",3,"width"],"value":848},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"width"],"value":848},{"path":["name"],"value":"Workspace / Dark / mid848"},{"path":["width"],"value":1188}]},
-    {"id":"Z6s9U8","mode":"Dark","key":"narrow847agents","window":[1187,900],"body":847,"visibleWidths":{"agents":847,"views":0,"tools":0},"openFileCount":1,"ids":["Z6s9U8","AcpxQ","naLSB","cEkes","mwUjJ","T431E","PPQnp","cz9u1","u7VVm1","J0sOlw","d1ubx","vuj7X","dPh0I","kZ3yA","pRPLM","eQmJQ","cmQ9R","oFmAY","HHXMg","KHFNb","d3fkrn","D6ICMs","BBcMF","zXkDs","qsGTb","sdA3w","W6ueJ1","PersO","LiSYT","jSY3P"],"changes":[{"path":["children",0,"children",3,"x"],"value":579.5},{"path":["children",0,"width"],"value":1187},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"width"],"value":847},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":847},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":855},{"path":["children",4,"descendants","hideui:gPjhF","enabled"],"value":false},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":847},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":847},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":847},{"path":["children",4,"width"],"value":847},{"path":["name"],"value":"Workspace / Dark / narrow847agents"},{"path":["width"],"value":1187}]},
-    {"id":"Ql0b5","mode":"Dark","key":"narrow847views","window":[1187,900],"body":847,"visibleWidths":{"agents":0,"views":847,"tools":0},"openFileCount":1,"ids":["Ql0b5","ajcGp","Mv0Ph","PgkXh","SvO2F","hsWNW","q6h7k","pNFj8","elzvI","Ioc2s","UeEud","fLT07","oo3bP","rJU03","y6EQtY","y4mki8","s35w1","wylU7","MrBQb","l9STyt","w0e3t","NzG8f","MeaGe","NGz63","oN0Eh","DYJbA","t2wv28","f8LVqh","Q9VJH","xYHKW"],"changes":[{"path":["children",0,"children",3,"x"],"value":579.5},{"path":["children",0,"width"],"value":1187},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",3,"width"],"value":847},{"path":["children",4,"descendants","hideui:YpxMC","enabled"],"value":false},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":847},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":855},{"path":["children",4,"descendants","hideui:gPjhF","enabled"],"value":false},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":0},{"path":["children",4,"descendants","hideui:giyPa","width"],"value":847},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":0},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":847},{"path":["children",4,"width"],"value":847},{"path":["name"],"value":"Workspace / Dark / narrow847views"},{"path":["width"],"value":1187}]},
-    {"id":"nBxva","mode":"Dark","key":"mid1100tools","window":[1440,900],"body":1100,"visibleWidths":{"agents":737,"views":0,"tools":355},"openFileCount":1,"ids":["nBxva","KkXP8","g7gnF","J1DwH","cpSAL","ggJGk","m82sA","Io5Ii","uv9m2","FyQlO","kYstM","N9hLo","TLkSm","uwhgP","M2XMV","f6Y5vY","MMkTu","Wh3OM","xrJbM","kIeLi","fDWkS","bJez6","h2GYVn","aGpXe","WaArP","zkQNe","MgIvy","xlEiO","XnKR2","MnlxC"],"changes":[{"path":["children",0,"children",3,"x"],"value":706},{"path":["children",0,"width"],"value":1440},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"width"],"value":1100},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":737},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":745},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":737},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":488},{"path":["children",4,"width"],"value":1100},{"path":["name"],"value":"Workspace / Dark / mid1100tools"},{"path":["width"],"value":1440}]},
-    {"id":"V4UiI","mode":"Dark","key":"mid848tools","window":[1188,900],"body":848,"visibleWidths":{"agents":485,"views":0,"tools":355},"openFileCount":1,"ids":["V4UiI","SWFW9","HIIqu","s8Hn5","mKESL","YX6Q1","pZVGl","FFm0y","B6Ubsg","fMrF1","wBqrE","OSkgp","dJ3VU","e9Pt8p","Ypy1G","AqfPY","j4jPUv","x5XicG","UoG9A","Egjym","zUquX","buC3A","z3Edxd","LhC9h","Esw0M","s2wgzN","BBAao","So12G","lpszu","Z9IPYk"],"changes":[{"path":["children",0,"children",3,"x"],"value":580},{"path":["children",0,"width"],"value":1188},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"width"],"value":848},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":485},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":493},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":485},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":488},{"path":["children",4,"width"],"value":848},{"path":["name"],"value":"Workspace / Dark / mid848tools"},{"path":["width"],"value":1188}]},
-    {"id":"Dz9IR","mode":"Dark","key":"narrow847tools","window":[1187,900],"body":847,"visibleWidths":{"agents":0,"views":0,"tools":847},"openFileCount":1,"ids":["Dz9IR","Wr9OS","G6Nfm","Rn7nw","vpCrE","PoPOH","cULY3","lVGGz","vXN7r","bEzhB","nKncM","U47yf","Ft1Zn","U00f1Q","XDHns","M9e9M","gUdfo","nZwFL","HzGgk","Rmhs0","VeNMx","XpcDx","J3mrcU","USX6Y","lZ1OA","vDkyN","IEJyA","L7P7jP","jExGZ","o2Oc5"],"changes":[{"path":["children",0,"children",3,"x"],"value":579.5},{"path":["children",0,"width"],"value":1187},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"width"],"value":847},{"path":["children",4,"descendants","hideui:YpxMC","enabled"],"value":false},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":847},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":847},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":0},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","enabled"],"value":false},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":0},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":0},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":0},{"path":["children",4,"width"],"value":847},{"path":["name"],"value":"Workspace / Dark / narrow847tools"},{"path":["width"],"value":1187}]},
-    {"id":"a8qXDY","mode":"Dark","key":"toolszero","window":[1456,900],"body":1116,"visibleWidths":{"agents":753,"views":0,"tools":355},"openFileCount":0,"ids":["a8qXDY","YE9Qq","JbRLu","jzMVJ","Y4Svf","hySbN","H8tE9g","HVJe3","Fcvxo","y4y9c","XeZUW","GfHL1","l7bNIU","Wei01","k4TgO","fZi0H","H1l5m","CJxKQ","GTxNO","rSHUO","IB2md","QvQ6s","E9vq1G","j20Doj","q9B4L","H56hdj","AxFRY","xqle6","OcMTT","DAMag"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count","content"],"value":"0"},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":753},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":761},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":753},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":761},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":761},{"path":["name"],"value":"Workspace / Dark / toolszero"}]},
-    {"id":"Kk60A","mode":"Dark","key":"toolshiddenfile","window":[1456,900],"body":1116,"visibleWidths":{"agents":753,"views":0,"tools":355},"openFileCount":1,"ids":["Kk60A","S4peZ","EOo5W","KSVZq","WXATa","deT2R","Vxngs","w2DGuU","NqcSV","uOJ3P","yMBtz","MYU7v","OaU1d","GxP7h","nIW10","L29bhV","asj4x","NfCgC","B51rqs","w0LKDp","V9uM1J","c7KciP","rHona","O61bS","GtYyK","j3zopa","kpIcn","xADYu","w5rNR1","dOyvA"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":753},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":761},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":753},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":761},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":761},{"path":["name"],"value":"Workspace / Dark / toolshiddenfile"}]},
-    {"id":"uhq8e","mode":"Dark","key":"dividerhover","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["uhq8e","T3qDd","cUsH6","tvvSG","s6rYIa","k4JXVp","F22Q2","HMQJz","WSeq2","PLfTC","YhDgv","YtfoO","Wdmna","oiKqp","nx61m","VaR1J","g6gq6","cEfyc","PK3Iy","G24v5c","Cniay","ps7OC","ssMkC","ueols","favAG","C0B47C","FKTNu","BnlnV","S9YkR","Re1tY"],"changes":[{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","height"],"value":840},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","y"],"value":408},{"path":["name"],"value":"Workspace / Dark / dividerhover"}]},
-    {"id":"eI9Uf","mode":"Dark","key":"dividerfocus","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["eI9Uf","B6tvm","WO7Sz","NwKXS","b0JjLN","vqjZn","L7pzP","CsSRF","W5UnK","etnxJ","hXqH3","DF8cd","g6kF0v","flNDz","qcsGY","a28xP","dSNlf","UrpK2","zo28A","bQiCk","BBBA6","q7s9F","f7qDt","LAoiB","x2zgyW","qCiMG","c0G5w5","gPqqa","XG5hI","pGIVX"],"changes":[{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","height"],"value":840},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","stroke"],"value":"$--border"},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","y"],"value":408},{"path":["name"],"value":"Workspace / Dark / dividerfocus"}]},
-    {"id":"DPFSq","mode":"Dark","key":"dividerguide","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["DPFSq","w9gY4G","Sgjwb","pMOih","tXmni","sb6fW","HiTAX","jQY3r","SKV2s","eeiLZ","O9cEr","VkPK0","akwsS","u2Dksi","OytVS","wz8d5","r43GE","Vm57g","z99vD","A84cc","aLBvB","GkzOh","c6ESwj","vvxi9","jw2h8","QoxlP","SNIjU","BJOO8","a9WT2k","STctY"],"changes":[{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","height"],"value":840},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","y"],"value":408},{"path":["children",5],"value":{"id":"dhyqM","type":"ref","ref":"hideui:side-panel-grip","name":"Temporary divider guide","x":852,"y":60,"width":8,"height":840,"descendants":{"hideui:side-panel-grip-line-top":{"fill":"$--muted-foreground","enabled":true,"height":840},"hideui:side-panel-grip-pill":{"fill":"$--card","stroke":"$--border","enabled":true,"y":408},"hideui:side-panel-grip-glyph":{"fill":"$--muted-foreground"}}}},{"path":["name"],"value":"Workspace / Dark / dividerguide"}]},
-    {"id":"N8yit","mode":"Dark","key":"dividerrelease","window":[1456,900],"body":1116,"visibleWidths":{"agents":512,"views":596,"tools":0},"openFileCount":1,"ids":["N8yit","pIBZg","e9RBr","RjxAo","FdI2i","kgcsL","yWfSc","XqLLE","iiSei","svoic","DT0n5","PfuLO","N7GoP","noQDW","DVCMf","uyd6N","x10ras","frre7","ejwBU","UCrSF","lJalK","YBc8y","HGBfD","qfg7H","C6KkS","h0ADX","l6cFsx","i7phN","p8hdt","hmu6a"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":512},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":1124},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":512},{"path":["children",4,"descendants","hideui:giyPa","width"],"value":596},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":520},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":1116},{"path":["name"],"value":"Workspace / Dark / dividerrelease"}]},
-    {"id":"YIxRN","mode":"Dark","key":"dividercancel","window":[1940,900],"body":1600,"visibleWidths":{"agents":589,"views":640,"tools":355},"openFileCount":1,"ids":["YIxRN","B2RbFU","NlEKy","CafJB","Wb8SU","Gb7bd","r9d0YB","zAzRe","M1V3je","U8dRPI","bIXIO","sgA9Q","YsBar","P6aMF","x0z8A","EtjPI","RxzPj","KW5JV","EsDzq","ypymv","F18tb","q1Rmif","H56Q5","RVFHf","MUsv4","Y820X","Qvuxu","Rj1e9","gaf4J","C687Ki"],"changes":[{"path":["children",0,"children",3,"x"],"value":956},{"path":["children",0,"width"],"value":1940},{"path":["children",2,"children",3,"content"],"value":"Projects · Recent activity · 2"},{"path":["children",2,"children",4,"children",1,"content"],"value":"beta"},{"path":["children",3,"descendants","hideui:bkh81","content"],"value":"Home  /  beta  /  main"},{"path":["children",3,"width"],"value":1600},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":589},{"path":["children",4,"descendants","hideui:YpxMC/hideui:aTsYy","enabled"],"value":false},{"path":["children",4,"descendants","hideui:YpxMC/hideui:aTsYy","height"],"value":780},{"path":["children",4,"descendants","hideui:YpxMC/hideui:aTsYy","width"],"value":0},{"path":["children",4,"descendants","hideui:YpxMC/hideui:v57l6H","content"],"value":"w2:p1"},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":1245},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":589},{"path":["children",4,"descendants","hideui:giyPa","width"],"value":640},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":597},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":1237},{"path":["children",4,"width"],"value":1600},{"path":["name"],"value":"Workspace / Dark / dividercancel"},{"path":["width"],"value":1940}]},
-    {"id":"fDgAU","mode":"Dark","key":"longpathhover","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["fDgAU","I6Fz0o","dJCwv","SEHfI","kIkme","gMxUN","ClZOI","kmjxb","F53lX","J4pFFA","rCoRu","Z6UEK3","WUPLJ","BRMdP","L4gdg3","fzdJu","IIpHb","TPaUb","hU3mm","GOtqS","QxUL7","j0Ux6","ahsaV","NmTzo","iZKD9","M4Ycl","D4XHA","VamER","ZGeLc","xfNIx"],"changes":[{"path":["children",5],"value":{"id":"cQEw5","type":"ref","ref":"hideui:tip-open-l","name":"Full file identity tooltip","fill":"$--popover","stroke":"$--border","x":739,"y":96,"width":360,"height":"fit_content","descendants":{"hideui:tip-open-l-t":{"fill":"$--foreground","content":"File: /workspace/fixture/한국어와 English 작업 기록/한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md · Preview","name":"Actual native file identity","width":"fill_container","textGrowth":"fixed-width","fontWeight":"normal"}}}},{"path":["name"],"value":"Workspace / Dark / longpathhover"}]},
-    {"id":"u7vlOH","mode":"Dark","key":"views-tooltip","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["u7vlOH","hx9OA","Grlmv","kReFs","miTEo","l6ZmGe","pBzIy","r2B6Y","lbEQq","zaCuj","nwOVx","d8cFy","t8rDk","mHqtL","dIIaJ","aJgF6","wA0sN","JJMaJ","Hsar2","kmPKQ","j69Sx","W35ji","j4FGQD","WenQA","AuuB8","c7zAa","S8Onh","m9TMO","Iw2wz","gvQSX"],"changes":[{"path":["children",5],"value":{"id":"brw2Q","type":"ref","ref":"hideui:tip-shortcut-l","name":"File Views tooltip","fill":"$--popover","stroke":"$--border","x":1332,"y":60,"descendants":{"hideui:tip-shortcut-l-t":{"fill":"$--foreground","content":"File Views","name":"File Views"},"hideui:tip-shortcut-l-k":{"fill":"$--muted-foreground","content":"⇧⌘B","name":"⇧⌘B"}}}},{"path":["name"],"value":"Workspace / Dark / toolbarhints"}]},
-    {"id":"Z6h2wQ","mode":"Light","key":"views-focus","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["Z6h2wQ","l4vs7","X2j4mm","s7XPrR","v1BYS","C29wUo","i6IS8","CM5Ye","ttmT4","UMbHJ","vYik3","uQMtF","oWSHR","NoNa4","p4lcP","ZgkOx","WZqV2","FyLg0","d1xaPV","dakYa","iqFiZ","M4xK2i","RiuxC","PpQgx","CZzD6","ceCJS","MnMYs","rKYpX","btUG7","l9WfA"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","stroke"],"value":"$--ring"},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","strokeAlignment"],"value":"outer"},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","strokeWidth"],"value":1},{"path":["children",5],"value":{"id":"UFK98","type":"ref","ref":"hideui:tip-shortcut-l","name":"File Views tooltip","fill":"$--popover","stroke":"$--border","x":1332,"y":60,"descendants":{"hideui:tip-shortcut-l-t":{"fill":"$--foreground","content":"File Views","name":"File Views"},"hideui:tip-shortcut-l-k":{"fill":"$--muted-foreground","content":"⇧⌘B","name":"⇧⌘B"}}}},{"path":["name"],"value":"Workspace / Light / views-focus"}]},
-    {"id":"KLhGG","mode":"Light","key":"tools-tooltip","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["KLhGG","QanvV","GvEwy","d5pksU","k6ZfY","s8JXo","OdKXW","Z28FrA","CloNd","a43cA","EY99d","yplre","IccJd","nnZWD","Jaozv","fwlX0","dETup","l7Y1j6","v843V3","OPvNY","CcIpF","r8eX3","S2Nbp","x1YXTm","ODi4T","ZKi5g","g0vE5","L3EyO","a59fDV","JNF6r"],"changes":[{"path":["children",5],"value":{"id":"LgfQY","type":"ref","ref":"hideui:tip-shortcut-l","name":"Tools tooltip","fill":"$--popover","stroke":"$--border","x":1368,"y":60,"descendants":{"hideui:tip-shortcut-l-t":{"fill":"$--foreground","content":"Tools","name":"Tools"},"hideui:tip-shortcut-l-k":{"fill":"$--muted-foreground","content":"⌘E","name":"⌘E"}}}},{"path":["name"],"value":"Workspace / Light / tools-tooltip"}]},
-    {"id":"obv9L","mode":"Light","key":"tools-focus","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["obv9L","HM2wg","tevZB","lpEQi","QKR6a","GtYXV","P7kRRJ","tIzgN","agWco","SEiHP","Jx5D2","sgmUg","ZhoLC","y692qZ","dOxN6","m9gd0t","Huhtg","NyAJh","XaIEw","uUJ5J","OwIgy","oaptw","BlDwy","QFHU0","zSx41","tFqIS","cIf3a","aR3eZ","mGTQl","M2FmQ"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","stroke"],"value":"$--ring"},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","strokeAlignment"],"value":"outer"},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","strokeWidth"],"value":1},{"path":["children",5],"value":{"id":"x42r4n","type":"ref","ref":"hideui:tip-shortcut-l","name":"Tools tooltip","fill":"$--popover","stroke":"$--border","x":1368,"y":60,"descendants":{"hideui:tip-shortcut-l-t":{"fill":"$--foreground","content":"Tools","name":"Tools"},"hideui:tip-shortcut-l-k":{"fill":"$--muted-foreground","content":"⌘E","name":"⌘E"}}}},{"path":["name"],"value":"Workspace / Light / tools-focus"}]},
-    {"id":"EctRK","mode":"Light","key":"server-tooltip","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["EctRK","pQehc","r5whC","iMxTY","iQbIX","A8Eund","CW7tM","bxKGb","PsvFR","zTQ6Z","qFnyz","y1q0u","Yvd3r","xuNm0","sdU4E","b9Mvfy","bgn8s","MpU0X","QjuC8","bbHlJ","Zi2SL","iHL3C","BlDel","eXDmn","qHamE","KrHmj","o4bNy1","ukiuy","B7lGHA","jfa7g"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:side-panel-tools-toggle"],"value":{"fill":"$--secondary"}},{"path":["children",5],"value":{"id":"UrmEF","type":"ref","ref":"hideui:tip-open-l","name":"Open server tooltip","fill":"$--popover","stroke":"$--border","x":1320,"y":60,"descendants":{"hideui:tip-open-l-t":{"fill":"$--foreground","content":"Open server","name":"Open server"}}}},{"path":["name"],"value":"Workspace / Light / server-tooltip"}]},
-    {"id":"tOJtb","mode":"Light","key":"server-focus","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["tOJtb","lDuuv","ENukt","KNGuB","ZbCXk","c5DXY4","VqIj2","IhG74","f2AsAj","qjq2s","sBo7V","rzHCi","sCaum","QUZ0G","RJKvi","G9Arxl","rV0fy","L60SgX","Uw3pS","UAeki","b6e86","S15pg6","E9UZEF","vPxeK","V1IaG","dziAs","XnSVC","EKvzN","J9e9F","T4QAvn"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:side-panel-tools-toggle"],"value":{"stroke":"$--ring","strokeWidth":1,"strokeAlignment":"outer","fill":"$--secondary"}},{"path":["children",5],"value":{"id":"OBLQQ","type":"ref","ref":"hideui:tip-open-l","name":"Open server tooltip","fill":"$--popover","stroke":"$--border","x":1320,"y":60,"descendants":{"hideui:tip-open-l-t":{"fill":"$--foreground","content":"Open server","name":"Open server"}}}},{"path":["name"],"value":"Workspace / Light / server-focus"}]},
-    {"id":"I5MCOS","mode":"Dark","key":"views-focus","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["I5MCOS","ubM5F","GZyBz","qQtDv","OuYc6","hhWFP","E2fl25","BxSaD","WIQjb","x6QurC","pwA4Y","fabik","wv54a","fyimM","JwxaA","nGhco","OyAJU","XlQJu","l0OC16","kBQVJ","hTz67","m8MAgM","RF6kA","WvdND","uTcG8","Ct6D2","BE5Go","bMgDP","I1D9V","F06qKC"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","stroke"],"value":"$--ring"},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","strokeAlignment"],"value":"outer"},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","strokeWidth"],"value":1},{"path":["children",5],"value":{"id":"C1UNFi","type":"ref","ref":"hideui:tip-shortcut-l","name":"File Views tooltip","fill":"$--popover","stroke":"$--border","x":1332,"y":60,"descendants":{"hideui:tip-shortcut-l-t":{"fill":"$--foreground","content":"File Views","name":"File Views"},"hideui:tip-shortcut-l-k":{"fill":"$--muted-foreground","content":"⇧⌘B","name":"⇧⌘B"}}}},{"path":["name"],"value":"Workspace / Dark / views-focus"}]},
-    {"id":"m3oMSt","mode":"Dark","key":"tools-tooltip","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["m3oMSt","brCGR","mBl8y","W15AR","S6TpF","SFLca","n2f9Kh","u4hEd","CnJeJ","AxY5q","s4vrix","u5jXC","Mlctg","ptqY1","Z8QK6r","pXT2b","qYMKy","u9lo8","WeZH5","uwD5D","Vw5SS","rJEI6","Xj8ol","R6YT5","WoQVx","b2KE5Y","m1ywqD","y6dQc0","vF17I","MOyZC"],"changes":[{"path":["children",5],"value":{"id":"Q3xTU","type":"ref","ref":"hideui:tip-shortcut-l","name":"Tools tooltip","fill":"$--popover","stroke":"$--border","x":1368,"y":60,"descendants":{"hideui:tip-shortcut-l-t":{"fill":"$--foreground","content":"Tools","name":"Tools"},"hideui:tip-shortcut-l-k":{"fill":"$--muted-foreground","content":"⌘E","name":"⌘E"}}}},{"path":["name"],"value":"Workspace / Dark / tools-tooltip"}]},
-    {"id":"dZ0c4","mode":"Dark","key":"tools-focus","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["dZ0c4","QxaDH","A9AiQ","J02Au","F4Yjm","tLV19","bhcGw","e2PEn","GsGK2","BIr9n","biol0","Dj7os","ncYoR","xtYOH","A5Dha","n9mHf","U2sH7","BOnta","sDOyW","GBH20","Q8tQDx","d6nTn0","Z8IRj","baKCt","Ox6Mq","vAmI8","lIUdt","dmV3i","arkOL","GjPeI"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","stroke"],"value":"$--ring"},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","strokeAlignment"],"value":"outer"},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","strokeWidth"],"value":1},{"path":["children",5],"value":{"id":"H3iU3J","type":"ref","ref":"hideui:tip-shortcut-l","name":"Tools tooltip","fill":"$--popover","stroke":"$--border","x":1368,"y":60,"descendants":{"hideui:tip-shortcut-l-t":{"fill":"$--foreground","content":"Tools","name":"Tools"},"hideui:tip-shortcut-l-k":{"fill":"$--muted-foreground","content":"⌘E","name":"⌘E"}}}},{"path":["name"],"value":"Workspace / Dark / tools-focus"}]},
-    {"id":"OKgI3","mode":"Dark","key":"server-tooltip","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["OKgI3","m4iF9t","m323z","qscy0","X3P5G","SNbTp","aLkGO","R6cY5","a8F2dL","dy3Q3","ps5RH","VF1Iw","ywCKD","Ka43Q","gp9f2","W387Tn","RLzat","O9XiSL","O45l4","helbU","CnhPb","Xg1ub","wOtn0","dCK9y","ZGH7e","i6A7M","SXjia","JzVmK","z9bOs","nLNPI"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:side-panel-tools-toggle"],"value":{"fill":"$--secondary"}},{"path":["children",5],"value":{"id":"DMGu4","type":"ref","ref":"hideui:tip-open-l","name":"Open server tooltip","fill":"$--popover","stroke":"$--border","x":1320,"y":60,"descendants":{"hideui:tip-open-l-t":{"fill":"$--foreground","content":"Open server","name":"Open server"}}}},{"path":["name"],"value":"Workspace / Dark / server-tooltip"}]},
-    {"id":"KB1kt","mode":"Dark","key":"server-focus","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["KB1kt","j31j36","YmE70","X5Auz","JBK8O","m8OdbW","V8Xup9","h85z3","t1o2TK","fuekS","wAreH","o8YzL","QYsSH","v0vEjg","l8CTzO","Y693r8","lbfnX","nhxXs","I3tmy","yj5TW","Ouq8n","iWz53","mPfGb","cEssB","XNsWX","PNanN","WhP9r","qbotF","eWx75","fiGFm"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:side-panel-tools-toggle"],"value":{"stroke":"$--ring","strokeWidth":1,"strokeAlignment":"outer","fill":"$--secondary"}},{"path":["children",5],"value":{"id":"O31Ij","type":"ref","ref":"hideui:tip-open-l","name":"Open server tooltip","fill":"$--popover","stroke":"$--border","x":1320,"y":60,"descendants":{"hideui:tip-open-l-t":{"fill":"$--foreground","content":"Open server","name":"Open server"}}}},{"path":["name"],"value":"Workspace / Dark / server-focus"}]}
-  ];
   const sheet = {
     "type": "frame",
     "id": "screen-workspace",
@@ -2497,7 +2134,7 @@ function buildWorkspace(tokens) {
         "fill": "$--muted-foreground",
         "textGrowth": "fixed-width",
         "width": 1940,
-        "content": "PRD #321 A: Agents | File Views | Tools. The window's top row carries the path and the four icons beside the traffic lights (PRD sidebar-titlebar-refresh D-15, D-16); independent controls; File badge only while hidden. Minima 480/360/260, divider 8, thresholds1116/848. Narrow calls substitute a column. Every scene below is linked to the copied component library; no Tools overlay, Pin or Expand.",
+        "content": "PRD right-lane: Agent Views fill the body and one right lane holds the four tools, Files, Changes, Sessions and Memory, chosen on the 48 px rail at the window's right edge. Unpinned, the lane opens over the agents and the terminals keep their width; a press on a terminal or Escape puts it away. Pinned, it docks beside the agents behind an 8 px divider, and a window that cannot leave the agents 480 px opens it over them instead (D-07). The lane is 520 px by default; the file tree is 240 px, stays on until it is turned off and widens the lane rather than the document; with no document open the tree fills the lane. Expand gives the lane the whole body until it is pressed again or Escape. The window's top row carries the path, Overview and Open server beside the traffic lights (PRD sidebar-titlebar-refresh D-15, D-16). Rail, lane header, pin, tree button, document header and dividers are refs of Component / Workspace columns.",
         "fontFamily": "$--font-ui",
         "fontSize": "$--text-body",
         "fontWeight": "normal"
@@ -2524,292 +2161,6 @@ function buildWorkspace(tokens) {
             "fontFamily": "$--font-ui",
             "fontSize": "$--text-headline",
             "fontWeight": "600"
-          },
-          {
-            "type": "text",
-            "id": "u344ck",
-            "name": "Full body 1116 - docked minima",
-            "fill": "$--foreground",
-            "content": "Full body 1116 - docked minima",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "TUoDW"
-          },
-          {
-            "type": "text",
-            "id": "bvuU6",
-            "name": "1440 window, sidebar open - body 1100 mid fallback",
-            "fill": "$--foreground",
-            "content": "1440 window, sidebar open - body 1100 mid fallback",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "PUDa5"
-          },
-          {
-            "type": "text",
-            "id": "l32P9H",
-            "name": "Body 848 - two columns at minima",
-            "fill": "$--foreground",
-            "content": "Body 848 - two columns at minima",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "e7GLci"
-          },
-          {
-            "type": "text",
-            "id": "D5BQE",
-            "name": "Body 847 - Agents base, stored File View hidden",
-            "fill": "$--foreground",
-            "content": "Body 847 - Agents base, stored File View hidden",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "wU6O3"
-          },
-          {
-            "type": "text",
-            "id": "u0Kzb",
-            "name": "Body 847 - explicitly called File Views replaces Agents",
-            "fill": "$--foreground",
-            "content": "Body 847 - explicitly called File Views replaces Agents",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "l6fpKj"
-          },
-          {
-            "type": "text",
-            "id": "s7jItz",
-            "name": "Body 1100 - explicit Tools call replaces File Views",
-            "fill": "$--foreground",
-            "content": "Body 1100 - explicit Tools call replaces File Views",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "aoV0a"
-          },
-          {
-            "type": "text",
-            "id": "k6cNm",
-            "name": "Body 848 - explicit Tools call replaces File Views",
-            "fill": "$--foreground",
-            "content": "Body 848 - explicit Tools call replaces File Views",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "QJQsr"
-          },
-          {
-            "type": "text",
-            "id": "juVtS",
-            "name": "Body 847 - explicit Tools call replaces Agents",
-            "fill": "$--foreground",
-            "content": "Body 847 - explicit Tools call replaces Agents",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "OdCvV"
-          },
-          {
-            "type": "text",
-            "id": "NToss",
-            "name": "Tools only - zero File Views, no File badge",
-            "fill": "$--foreground",
-            "content": "Tools only - zero File Views, no File badge",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "PmKT5"
-          },
-          {
-            "type": "text",
-            "id": "gyQKy",
-            "name": "Tools with one hidden File View - count 1",
-            "fill": "$--foreground",
-            "content": "Tools with one hidden File View - count 1",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "jEUuK"
-          },
-          {
-            "type": "text",
-            "id": "L2lp9T",
-            "name": "Divider hover - fixed column content",
-            "fill": "$--foreground",
-            "content": "Divider hover - fixed column content",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "DRb4n"
-          },
-          {
-            "type": "text",
-            "id": "ShHZU",
-            "name": "Divider keyboard focus - fixed column content",
-            "fill": "$--foreground",
-            "content": "Divider keyboard focus - fixed column content",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "sPxvx"
-          },
-          {
-            "type": "text",
-            "id": "Q23epb",
-            "name": "Frozen content drag",
-            "fill": "$--foreground",
-            "content": "Pointer drag - guide only, 480/360/260 columns frozen",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "D3d5BU"
-          },
-          {
-            "type": "text",
-            "id": "WiVSZ",
-            "name": "Pointer release - committed 512/596 widths",
-            "fill": "$--foreground",
-            "content": "Pointer release - committed 512/596 widths",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "d6YJdY"
-          },
-          {
-            "type": "text",
-            "id": "gaBp0",
-            "name": "Workspace switch cancels drag - restored 589/640/355",
-            "fill": "$--foreground",
-            "content": "Workspace switch cancels drag - restored 589/640/355",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "ec1uu"
-          },
-          {
-            "type": "text",
-            "id": "I59i4",
-            "name": "Long Korean/English file title - full path tooltip",
-            "fill": "$--foreground",
-            "content": "Long Korean/English file title - full path tooltip",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "OkoMU"
-          },
-          {
-            "type": "text",
-            "id": "gNqDV",
-            "name": "File Views tooltip",
-            "fill": "$--foreground",
-            "content": "File Views - tooltip",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "V6UYh"
-          },
-          {
-            "type": "text",
-            "id": "jpRRu",
-            "name": "File Views focus",
-            "fill": "$--foreground",
-            "content": "File Views - focus",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "Z6h2wQ"
-          },
-          {
-            "type": "text",
-            "id": "prPMi",
-            "name": "Tools tooltip",
-            "fill": "$--foreground",
-            "content": "Tools - tooltip",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "KLhGG"
-          },
-          {
-            "type": "text",
-            "id": "nf0zM",
-            "name": "Tools focus",
-            "fill": "$--foreground",
-            "content": "Tools - focus",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "obv9L"
-          },
-          {
-            "type": "text",
-            "id": "dIeFC",
-            "name": "Open server tooltip",
-            "fill": "$--foreground",
-            "content": "Open server - tooltip",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "EctRK"
-          },
-          {
-            "type": "text",
-            "id": "pgFdF",
-            "name": "Open server focus",
-            "fill": "$--foreground",
-            "content": "Open server - focus",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "tOJtb"
           }
         ]
       },
@@ -2835,298 +2186,11 @@ function buildWorkspace(tokens) {
             "fontFamily": "$--font-ui",
             "fontSize": "$--text-headline",
             "fontWeight": "600"
-          },
-          {
-            "type": "text",
-            "id": "JCBt8",
-            "name": "Full body 1116 - docked minima",
-            "fill": "$--foreground",
-            "content": "Full body 1116 - docked minima",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "X7Fcc"
-          },
-          {
-            "type": "text",
-            "id": "Kwewr",
-            "name": "1440 window, sidebar open - body 1100 mid fallback",
-            "fill": "$--foreground",
-            "content": "1440 window, sidebar open - body 1100 mid fallback",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "J3ckk6"
-          },
-          {
-            "type": "text",
-            "id": "JeQrI",
-            "name": "Body 848 - two columns at minima",
-            "fill": "$--foreground",
-            "content": "Body 848 - two columns at minima",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "fbxi3"
-          },
-          {
-            "type": "text",
-            "id": "NPmEc",
-            "name": "Body 847 - Agents base, stored File View hidden",
-            "fill": "$--foreground",
-            "content": "Body 847 - Agents base, stored File View hidden",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "Z6s9U8"
-          },
-          {
-            "type": "text",
-            "id": "ecD3E",
-            "name": "Body 847 - explicitly called File Views replaces Agents",
-            "fill": "$--foreground",
-            "content": "Body 847 - explicitly called File Views replaces Agents",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "Ql0b5"
-          },
-          {
-            "type": "text",
-            "id": "IyOM9",
-            "name": "Body 1100 - explicit Tools call replaces File Views",
-            "fill": "$--foreground",
-            "content": "Body 1100 - explicit Tools call replaces File Views",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "nBxva"
-          },
-          {
-            "type": "text",
-            "id": "d9jsX",
-            "name": "Body 848 - explicit Tools call replaces File Views",
-            "fill": "$--foreground",
-            "content": "Body 848 - explicit Tools call replaces File Views",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "V4UiI"
-          },
-          {
-            "type": "text",
-            "id": "Y9l8n",
-            "name": "Body 847 - explicit Tools call replaces Agents",
-            "fill": "$--foreground",
-            "content": "Body 847 - explicit Tools call replaces Agents",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "Dz9IR"
-          },
-          {
-            "type": "text",
-            "id": "Q7ovZH",
-            "name": "Tools only - zero File Views, no File badge",
-            "fill": "$--foreground",
-            "content": "Tools only - zero File Views, no File badge",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "a8qXDY"
-          },
-          {
-            "type": "text",
-            "id": "U5KoMH",
-            "name": "Tools with one hidden File View - count 1",
-            "fill": "$--foreground",
-            "content": "Tools with one hidden File View - count 1",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "Kk60A"
-          },
-          {
-            "type": "text",
-            "id": "gzJZl",
-            "name": "Divider hover - fixed column content",
-            "fill": "$--foreground",
-            "content": "Divider hover - fixed column content",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "uhq8e"
-          },
-          {
-            "type": "text",
-            "id": "PwiVd",
-            "name": "Divider keyboard focus - fixed column content",
-            "fill": "$--foreground",
-            "content": "Divider keyboard focus - fixed column content",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "eI9Uf"
-          },
-          {
-            "type": "text",
-            "id": "h44btJ",
-            "name": "Frozen content drag",
-            "fill": "$--foreground",
-            "content": "Pointer drag - guide only, 480/360/260 columns frozen",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "DPFSq"
-          },
-          {
-            "type": "text",
-            "id": "QQpfQ",
-            "name": "Pointer release - committed 512/596 widths",
-            "fill": "$--foreground",
-            "content": "Pointer release - committed 512/596 widths",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "N8yit"
-          },
-          {
-            "type": "text",
-            "id": "hv9wU",
-            "name": "Workspace switch cancels drag - restored 589/640/355",
-            "fill": "$--foreground",
-            "content": "Workspace switch cancels drag - restored 589/640/355",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "YIxRN"
-          },
-          {
-            "type": "text",
-            "id": "rOn1g",
-            "name": "Long Korean/English file title - full path tooltip",
-            "fill": "$--foreground",
-            "content": "Long Korean/English file title - full path tooltip",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "fDgAU"
-          },
-          {
-            "type": "text",
-            "id": "ZHGGw",
-            "name": "File Views tooltip",
-            "fill": "$--foreground",
-            "content": "File Views - tooltip",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "u7vlOH"
-          },
-          {
-            "type": "text",
-            "id": "hUc27",
-            "name": "File Views focus",
-            "fill": "$--foreground",
-            "content": "File Views - focus",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "I5MCOS"
-          },
-          {
-            "type": "text",
-            "id": "GcM9h",
-            "name": "Tools tooltip",
-            "fill": "$--foreground",
-            "content": "Tools - tooltip",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "m3oMSt"
-          },
-          {
-            "type": "text",
-            "id": "ctqfa",
-            "name": "Tools focus",
-            "fill": "$--foreground",
-            "content": "Tools - focus",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "dZ0c4"
-          },
-          {
-            "type": "text",
-            "id": "pin6N",
-            "name": "Open server tooltip",
-            "fill": "$--foreground",
-            "content": "Open server - tooltip",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "OKgI3"
-          },
-          {
-            "type": "text",
-            "id": "ACTwd",
-            "name": "Open server focus",
-            "fill": "$--foreground",
-            "content": "Open server - focus",
-            "fontFamily": "$--font-ui",
-            "fontSize": "$--text-subhead",
-            "fontWeight": "600"
-          },
-          {
-            "workspaceState": "KB1kt"
           }
         ]
       }
     ]
   };
-  const materialized = new Map();
   function nodes(node, result = []) {
     result.push(node);
     for (const child of node.children ?? []) nodes(child, result);
@@ -3135,9 +2199,8 @@ function buildWorkspace(tokens) {
   // PRD sidebar-titlebar-refresh D-15 to D-17: macOS's title bar and the toolbar
   // row are one top row. Over the rail and the sidebar it names the device a step
   // after the traffic lights; over the center the toolbar carries the path without
-  // Home and the four icons; the rail, the sidebar (Search row first, no Home row)
-  // and the columns start at its foot. Applied to every decoded state after its own
-  // changes, so the states keep their ids and differences.
+  // Home and the Workspace actions; the rail, the sidebar (Search row first, no Home
+  // row) and the body start at its foot.
   const TOP = num(tokens, '--size-tab-strip');
   const OLD_TOP = 28;
   const OLD_BODY = 60;
@@ -3153,7 +2216,6 @@ function buildWorkspace(tokens) {
     const rail = named(window, 'Device rail');
     const sidebar = named(window, 'Projects sidebar');
     const toolbar = named(window, 'Shared Workspace toolbar');
-    const columns = named(window, 'Docked columns');
     const [light0, light1, light2, title] = chrome.children;
     Object.assign(chrome, {name: 'Window top row: device', width: sidebar.x + sidebar.width, height: TOP, fill: '$--sidebar', strokeWidth: {bottom: '$--size-hairline', right: '$--size-hairline'}});
     chrome.children = [
@@ -3177,43 +2239,25 @@ function buildWorkspace(tokens) {
     const descendants = {...aliased(toolbarColors), ...toolbar.descendants};
     if (descendants[breadcrumb]?.content) descendants[breadcrumb] = {...descendants[breadcrumb], content: descendants[breadcrumb].content.replace(/^Home\s+\/\s+/, '')};
     Object.assign(toolbar, {name: 'Top row: Workspace path and icons', y: 0, height: TOP, descendants});
-    Object.assign(columns, {y: TOP, height: columns.height + OLD_BODY - TOP});
     for (const child of window.children) {
-      if (![chrome, rail, sidebar, toolbar, columns].includes(child) && child.y >= OLD_BODY) child.y -= OLD_BODY - TOP;
+      if (![chrome, rail, sidebar, toolbar].includes(child) && child.y >= OLD_BODY) child.y -= OLD_BODY - TOP;
     }
   }
-  for (const state of states) {
-    const window = structuredClone(windowTemplate);
-    nodes(window).forEach((node, index) => { node.id = state.ids[index]; });
-    for (const change of state.changes) {
-      const parent = change.path.slice(0, -1).reduce((value, key) => value[key], window);
-      const key = change.path.at(-1);
-      if (change.delete) delete parent[key];
-      else parent[key] = structuredClone(change.value);
-    }
-    for (const node of nodes(window)) {
-      if (node.type !== 'ref') continue;
-      if (!node.ref.startsWith(`${ALIAS}:`)) throw new Error(`Workspace reference ${node.ref} must use ${ALIAS}`);
-      const masterId = node.ref.slice(ALIAS.length + 1);
-      const master = findMaster({children: libraryDocument().children}, masterId);
-      if (!master?.reusable) throw new Error(`Workspace needs reusable master ${masterId}`);
-    }
-    topRow(window);
-    materialized.set(state.id, window);
+  // The window every lane board starts from: the template's ids, no columns of its own.
+  const template = structuredClone(windowTemplate);
+  topRow(template);
+  for (const node of nodes(template)) {
+    if (node.type !== 'ref') continue;
+    if (!node.ref.startsWith(`${ALIAS}:`)) throw new Error(`Workspace reference ${node.ref} must use ${ALIAS}`);
+    const masterId = node.ref.slice(ALIAS.length + 1);
+    const master = findMaster({children: libraryDocument().children}, masterId);
+    if (!master?.reusable) throw new Error(`Workspace needs reusable master ${masterId}`);
   }
-  function expand(node) {
-    if (node.workspaceState) {
-      const window = materialized.get(node.workspaceState);
-      if (!window) throw new Error(`Workspace state ${node.workspaceState} is missing`);
-      return window;
-    }
-    return {...node, ...(node.children ? {children: node.children.map(expand)} : {})};
-  }
-  const result = expand(sheet);
+  const result = structuredClone(sheet);
   for (const [name, suffix] of [['Light', 'l'], ['Dark', 'd']]) {
     const section = result.children.find(node => node.name === name);
     if (!section) throw new Error(`Workspace lacks ${name} section`);
-    section.children.push(sessionDesign(tokens).headerBoard(suffix));
+    section.children.push(...laneBoards(tokens, {themedXref, template, alias: ALIAS}, suffix), sessionDesign(tokens).headerBoard(suffix));
   }
   for (const state of buildWorkspaceSupplemental()) {
     const parent = nodes(result).find(node => node.id === state.parent);
@@ -3241,8 +2285,8 @@ function buildWorkspace(tokens) {
 // Their actual Pen IDs and Korean selection ownership are preserved.
 function buildWorkspaceSupplemental() {
   return [
-    {"mode":"Light","parent":"g0S6az","children":[{"type":"frame","id":"ws-focus-l","name":"One keyboard area, other selections readable","width":960,"height":440,"fill":"$--background","children":[{"type":"frame","id":"ws-focus-l-1","name":"Keyboard owner","width":"fill_container","height":"fill_container","layout":"vertical","children":[{"type":"frame","id":"ws-focus-l-1-bar","name":"Tab bar","width":"fill_container","height":32,"fill":"$--background","children":[{"id":"ws-focus-l-1-tab1","type":"ref","ref":"hideui:view-tab","name":"Selected Korean tab","fill":"$--background","stroke":"$--foreground","strokeWidth":{"bottom":"$--size-tab-indicator"},"strokeAlignment":"inner","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--foreground","content":"한글 노트.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:view-tab-close":{"enabled":true}}},{"id":"ws-focus-l-1-tab2","type":"ref","ref":"hideui:view-tab","name":"검증 결과.md","fill":"$--card","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--subtle-foreground","content":"검증 결과.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"}}}]},{"type":"frame","id":"ws-focus-l-1-body","name":"Readable Korean content","width":"fill_container","height":"fill_container","fill":"$--background","layout":"vertical","padding":"$--spacing-sm","children":[{"type":"text","id":"ws-focus-l-1-text","name":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인","fontFamily":"$--font-mono","fontSize":"$--text-caption","fontWeight":"normal"}]}]},{"type":"frame","id":"ws-focus-divider-l","name":"Area divider","width":"fit_content(0)","height":"fill_container","fill":"$--border"},{"type":"frame","id":"ws-focus-l-2","name":"Other area, retained selection","width":"fill_container","height":"fill_container","layout":"vertical","children":[{"type":"frame","id":"ws-focus-l-2-bar","name":"Tab bar","width":"fill_container","height":32,"fill":"$--card","children":[{"id":"ws-focus-l-2-tab1","type":"ref","ref":"hideui:view-tab","name":"Selected Korean tab","fill":"$--secondary","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--foreground","content":"한글 노트.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:view-tab-close":{"enabled":true}}},{"id":"ws-focus-l-2-tab2","type":"ref","ref":"hideui:view-tab","name":"검증 결과.md","fill":"$--card","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--subtle-foreground","content":"검증 결과.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"}}}]},{"type":"frame","id":"ws-focus-l-2-body","name":"Readable Korean content","width":"fill_container","height":"fill_container","fill":"$--background","layout":"vertical","padding":"$--spacing-sm","children":[{"type":"text","id":"ws-focus-l-2-text","name":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인","fontFamily":"$--font-mono","fontSize":"$--text-caption","fontWeight":"normal"}]}]}]},{"type":"frame","id":"ewWtp","name":"Multiple running servers; both File Views and Tools off","clip":true,"width":1440,"height":900,"fill":"$--background","layout":"none","children":[{"type":"frame","id":"NlkIg","x":0,"y":0,"name":"Native window chrome - comparison context","width":1440,"height":28,"fill":"$--secondary","stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","layout":"none","children":[{"type":"ellipse","id":"j9wRLv","x":8,"y":8,"name":"Inactive window control 1","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"ellipse","id":"PbX47","x":28,"y":8,"name":"Inactive window control 2","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"ellipse","id":"slAYW","x":48,"y":8,"name":"Inactive window control 3","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"text","id":"PXL5q","x":706,"y":5,"name":"Window title","fill":"$--muted-foreground","content":"hide","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"600"}]},{"type":"frame","id":"lE5kU","x":0,"y":28,"name":"Device rail","width":48,"height":872,"fill":"$--sidebar","stroke":"$--border","strokeWidth":{"right":1},"strokeAlignment":"inner","layout":"vertical","gap":12,"padding":[8,4],"children":[{"id":"tQ1fK","type":"ref","ref":"hideui:Nyvom","name":"This Mac","width":40,"height":40,"stroke":"$--foreground","strokeWidth":2,"cornerRadius":"$--radius-lg","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"laptop"}}},{"id":"O9kV0","type":"ref","ref":"hideui:Nyvom","name":"Add device","width":40,"height":32,"stroke":"$--border","strokeWidth":1,"cornerRadius":"$--radius-lg","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"plus"}}}]},{"type":"frame","id":"WXmI0","x":48,"y":28,"name":"Projects sidebar","width":292,"height":872,"fill":"$--sidebar","stroke":"$--border","strokeWidth":{"right":1},"strokeAlignment":"inner","layout":"none","children":[{"type":"frame","id":"e1gTd","x":0,"y":0,"name":"This Mac header","width":292,"height":32,"stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","gap":8,"padding":[0,12],"alignItems":"center","children":[{"type":"text","id":"YhV3w","name":"Device title","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"This Mac","fontFamily":"$--font-ui","fontSize":"$--text-title","fontWeight":"600"},{"id":"hjnnU","type":"ref","ref":"hideui:Nyvom","name":"Add project","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"plus"}}},{"id":"lr1rE","type":"ref","ref":"hideui:Nyvom","name":"Search","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"search"}}}]},{"type":"frame","id":"x47WeE","x":0,"y":32,"name":"Sidebar tab strip","width":292,"height":32,"stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","gap":8,"padding":[0,12],"alignItems":"center","children":[{"type":"text","id":"zVAh1","name":"Selected tab","fill":"$--foreground","content":"Projects","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"},{"type":"text","id":"aBZ23","name":"Other tab","fill":"$--muted-foreground","content":"Agents","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"}]},{"type":"frame","id":"e1Y8X","x":4,"y":68,"name":"Home","width":284,"height":36,"gap":8,"padding":[0,8],"alignItems":"center","children":[{"type":"icon","id":"z9Zjo","name":"Home icon","width":14,"height":14,"icon":"house","library":"lucide","fill":"$--subtle-foreground"},{"type":"text","id":"x0S7j","name":"Home title","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"Home","fontFamily":"$--font-ui","fontSize":"$--text-title","fontWeight":"600"},{"type":"text","id":"vGB7F","name":"Project count","fill":"$--muted-foreground","content":"0 projects","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"}]},{"type":"text","id":"iWAse","x":12,"y":110,"name":"Recent activity","fill":"$--muted-foreground","content":"Projects · Recent activity · 1","fontFamily":"$--font-ui","fontSize":"$--text-micro","fontWeight":"600"},{"type":"frame","id":"vhwXo","x":4,"y":124,"name":"Selected checkout","width":284,"height":36,"fill":"$--secondary","cornerRadius":"$--radius-sm","gap":8,"padding":[0,8],"alignItems":"center","children":[{"type":"icon","id":"klozz","name":"Checkout folder","width":14,"height":14,"icon":"folder","library":"lucide","fill":"$--subtle-foreground"},{"type":"text","id":"vmjI1","name":"Checkout label","fill":"$--foreground","content":"fixture","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"600"}]},{"type":"frame","id":"D2gM4I","x":0,"y":840,"name":"Sidebar footer","width":292,"height":32,"stroke":"$--border","strokeWidth":{"top":1},"strokeAlignment":"inner","gap":8,"padding":[0,12],"justifyContent":"end","alignItems":"center","children":[{"id":"pDsO7","type":"ref","ref":"hideui:Nyvom","name":"Background usage","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"activity"}}},{"id":"M9bxgS","type":"ref","ref":"hideui:Nyvom","name":"Settings","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"settings"}}}]}]},{"id":"KabPT","type":"ref","ref":"hideui:VMZTz","name":"Shared Workspace toolbar","fill":"$--sidebar","stroke":"$--border","x":340,"y":28,"width":1100,"height":32,"descendants":{"hideui:bkh81":{"fill":"$--subtle-foreground","content":"Home  /  fixture  /  main"},"hideui:Kjfje/hideui:side-panel-tools-toggle/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button":{"fill":[]},"hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge":{"fill":"$--primary","enabled":false},"hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count":{"content":"1"},"hideui:Kjfje/hideui:XHe9v/hideui:OaJhM":{"fill":[]},"hideui:Kjfje/hideui:XHe9v/hideui:OaJhM/hideui:ZIZFR":{"fill":"$--subtle-foreground"}}},{"id":"H4VH2","type":"ref","ref":"hideui:side-panel","name":"Docked columns","fill":"$--background","x":340,"y":60,"width":1100,"height":840,"descendants":{"hideui:YpxMC":{"fill":"$--background","enabled":true,"x":0,"y":0,"width":1100,"height":840},"hideui:YpxMC/hideui:m3nqv":{"fill":"$--card","stroke":"$--border"},"hideui:YpxMC/hideui:Yf5g6":{"fill":"$--secondary"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-mark":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-title":{"fill":"$--foreground"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-close/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:ujfpg/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:GYdsi/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:jEy0G":{"fill":"$--background","width":1100},"hideui:YpxMC/hideui:blLvs":{"fill":"$--secondary","stroke":"$--border"},"hideui:YpxMC/hideui:W2jHfs":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:v57l6H":{"fill":"$--foreground"},"hideui:YpxMC/hideui:CG4wC":{"fill":"$--muted-foreground"},"hideui:YpxMC/hideui:K8ikC/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:a63n6t/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:jPwvc":{"fill":"$--background"},"hideui:YpxMC/hideui:PNaQy":{"fill":"$--foreground"},"hideui:YpxMC/hideui:aTsYy":{"fill":"$--background","stroke":"$--border","enabled":false,"width":0,"height":0},"hideui:YpxMC/hideui:lFQa0":{"fill":"$--card","stroke":"$--border"},"hideui:YpxMC/hideui:ljIwg":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:e7uYn":{"fill":"$--foreground"},"hideui:YpxMC/hideui:uJYZa":{"fill":"$--muted-foreground"},"hideui:YpxMC/hideui:x9QjtJ/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:E0Mk6/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:M6Mnyn":{"fill":"$--background"},"hideui:YpxMC/hideui:QSc1K":{"fill":"$--foreground"},"hideui:gPjhF":{"enabled":false,"x":480,"y":0,"width":0,"height":0},"hideui:gPjhF/hideui:side-panel-grip-line-top":{"fill":"$--muted-foreground"},"hideui:gPjhF/hideui:side-panel-grip-pill":{"fill":"$--card","stroke":"$--border"},"hideui:gPjhF/hideui:side-panel-grip-glyph":{"fill":"$--muted-foreground"},"hideui:giyPa":{"fill":"$--card","enabled":false,"x":488,"y":0,"width":612,"height":840},"hideui:giyPa/hideui:tPjjv":{"fill":"$--card","stroke":"$--border"},"hideui:giyPa/hideui:b7bsc7":{"fill":"$--card","width":304},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-mark":{"fill":"$--file-blue"},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-title":{"fill":"$--foreground"},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-close/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:N6jVdg/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:eeRGB/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:fenJg":{"fill":"$--card","stroke":"$--border"},"hideui:giyPa/hideui:fenJg/hideui:BUboy":{"fill":"$--subtle-foreground","content":"… 제목과 경로 확인.md"},"hideui:giyPa/hideui:fenJg/hideui:ifLpE/hideui:btn-ic":{"fill":"$--primary-foreground"},"hideui:giyPa/hideui:fenJg/hideui:ifLpE/hideui:btn-lb":{"fill":"$--foreground"},"hideui:giyPa/hideui:fenJg/hideui:W8pA8k/hideui:btn-ic":{"fill":"$--primary-foreground"},"hideui:giyPa/hideui:fenJg/hideui:W8pA8k/hideui:btn-lb":{"fill":"$--foreground"},"hideui:giyPa/hideui:fenJg/hideui:iFSdQ/hideui:btn-ic":{"fill":"$--primary-foreground"},"hideui:giyPa/hideui:fenJg/hideui:iFSdQ/hideui:btn-lb":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:fenJg/hideui:lEjtc/hideui:btn-ic":{"fill":"$--primary-foreground"},"hideui:giyPa/hideui:fenJg/hideui:lEjtc/hideui:btn-lb":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:nFrdf":{"fill":"$--card"},"hideui:giyPa/hideui:aX9gF":{"fill":"$--secondary"},"hideui:giyPa/hideui:jOt0p":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:iExJ4":{"fill":"$--file-blue"},"hideui:giyPa/hideui:T1KFmN":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:sfXAM":{"fill":"$--foreground"},"hideui:giyPa/hideui:h10qC":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:fzHJn":{"fill":"$--foreground","content":"한글과 English가 함께 있는 파일을 읽습니다."},"hideui:giyPa/hideui:GQ6yZ":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:oVfkk":{"fill":"$--foreground"},"hideui:w7GZ7c":{"enabled":false,"x":1100,"y":0,"width":0,"height":0},"hideui:w7GZ7c/hideui:side-panel-grip-line-top":{"fill":"$--muted-foreground"},"hideui:w7GZ7c/hideui:side-panel-grip-pill":{"fill":"$--card","stroke":"$--border"},"hideui:w7GZ7c/hideui:side-panel-grip-glyph":{"fill":"$--muted-foreground"},"hideui:eNvgI":{"fill":"$--card","enabled":false,"x":1108,"y":0,"width":260,"height":840},"hideui:eNvgI/hideui:H2M1v0":{"stroke":"$--border"},"hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-explorer":{"stroke":"$--primary"},"hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-explorer-glyph":{"fill":"$--foreground"},"hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-history-glyph":{"fill":"$--subtle-foreground"},"hideui:eNvgI/hideui:b22eS":{"stroke":"$--border"},"hideui:eNvgI/hideui:d927zh":{"fill":"$--subtle-foreground"},"hideui:eNvgI/hideui:DVJS6/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:eNvgI/hideui:NZoEx":{"stroke":"$--border","enabled":false,"height":0,"width":0},"hideui:eNvgI/hideui:iDnaZ":{"fill":"$--muted-foreground"},"hideui:eNvgI/hideui:MmldP":{"stroke":"$--border"},"hideui:eNvgI/hideui:Cwgap":{"fill":"$--file-blue"},"hideui:eNvgI/hideui:x1im3":{"fill":"$--foreground","fontSize":"$--text-caption"},"hideui:eNvgI/hideui:fZi7M":{"stroke":"$--border"},"hideui:eNvgI/hideui:t0QOE":{"fill":"$--file-blue"},"hideui:eNvgI/hideui:aHlvp":{"fill":"$--foreground","fontSize":"$--text-caption","content":"한글과 English 작업 기록 - 긴 파일 제…"}}},{"type":"frame","id":"E3BX0","x":1056,"y":60,"name":"Running servers picker","width":320,"fill":"$--popover","cornerRadius":"$--radius-md","stroke":"$--border","strokeWidth":1,"strokeAlignment":"inner","layout":"vertical","gap":"$--spacing-xs","padding":"$--spacing-sm","children":[{"type":"text","id":"ILw1e","name":"Running servers","fill":"$--popover-foreground","content":"Running servers","fontFamily":"$--font-ui","fontSize":"$--text-caption","fontWeight":"500"},{"id":"u8ij3q","type":"ref","ref":"hideui:btn-m","name":"127.0.0.1:3000","width":"fill_container","height":28,"justifyContent":"start","gap":"$--spacing-xs","padding":[0,"$--spacing-md"],"fill":"$--accent","stroke":"$--ring","strokeWidth":1,"strokeAlignment":"outer","descendants":{"hideui:btn-ic":{"enabled":true,"icon":"globe","fill":"$--popover-foreground"},"hideui:btn-lb":{"content":"127.0.0.1:3000","fontFamily":"$--font-mono","fontSize":"$--text-caption","fill":"$--popover-foreground"}}},{"id":"BOKUB","type":"ref","ref":"hideui:btn-m","name":"[::1]:5173","width":"fill_container","height":28,"justifyContent":"start","gap":"$--spacing-xs","padding":[0,"$--spacing-md"],"fill":[],"stroke":[],"strokeWidth":0,"strokeAlignment":"outer","descendants":{"hideui:btn-ic":{"enabled":true,"icon":"globe","fill":"$--popover-foreground"},"hideui:btn-lb":{"content":"[::1]:5173","fontFamily":"$--font-mono","fontSize":"$--text-caption","fill":"$--popover-foreground"}}}]}]}]},
-    {"mode":"Dark","parent":"dkzAZ","children":[{"type":"frame","id":"ws-focus-d","name":"One keyboard area, other selections readable","width":960,"height":440,"fill":"$--background","children":[{"type":"frame","id":"ws-focus-d-1","name":"Keyboard owner","width":"fill_container","height":"fill_container","layout":"vertical","children":[{"type":"frame","id":"ws-focus-d-1-bar","name":"Tab bar","width":"fill_container","height":32,"fill":"$--background","children":[{"id":"ws-focus-d-1-tab1","type":"ref","ref":"hideui:view-tab","name":"Selected Korean tab","fill":"$--background","stroke":"$--foreground","strokeWidth":{"bottom":"$--size-tab-indicator"},"strokeAlignment":"inner","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--foreground","content":"한글 노트.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:view-tab-close":{"enabled":true}}},{"id":"ws-focus-d-1-tab2","type":"ref","ref":"hideui:view-tab","name":"검증 결과.md","fill":"$--card","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--subtle-foreground","content":"검증 결과.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"}}}]},{"type":"frame","id":"ws-focus-d-1-body","name":"Readable Korean content","width":"fill_container","height":"fill_container","fill":"$--background","layout":"vertical","padding":"$--spacing-sm","children":[{"type":"text","id":"ws-focus-d-1-text","name":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인","fontFamily":"$--font-mono","fontSize":"$--text-caption","fontWeight":"normal"}]}]},{"type":"frame","id":"ws-focus-divider-d","name":"Area divider","width":"fit_content(0)","height":"fill_container","fill":"$--border"},{"type":"frame","id":"ws-focus-d-2","name":"Other area, retained selection","width":"fill_container","height":"fill_container","layout":"vertical","children":[{"type":"frame","id":"ws-focus-d-2-bar","name":"Tab bar","width":"fill_container","height":32,"fill":"$--card","children":[{"id":"ws-focus-d-2-tab1","type":"ref","ref":"hideui:view-tab","name":"Selected Korean tab","fill":"$--secondary","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--foreground","content":"한글 노트.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:view-tab-close":{"enabled":true}}},{"id":"ws-focus-d-2-tab2","type":"ref","ref":"hideui:view-tab","name":"검증 결과.md","fill":"$--card","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--subtle-foreground","content":"검증 결과.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"}}}]},{"type":"frame","id":"ws-focus-d-2-body","name":"Readable Korean content","width":"fill_container","height":"fill_container","fill":"$--background","layout":"vertical","padding":"$--spacing-sm","children":[{"type":"text","id":"ws-focus-d-2-text","name":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인","fontFamily":"$--font-mono","fontSize":"$--text-caption","fontWeight":"normal"}]}]}]},{"type":"frame","id":"es3RE","name":"Multiple running servers; both File Views and Tools off","clip":true,"width":1440,"height":900,"fill":"$--background","layout":"none","children":[{"type":"frame","id":"aTb9G","x":0,"y":0,"name":"Native window chrome - comparison context","width":1440,"height":28,"fill":"$--secondary","stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","layout":"none","children":[{"type":"ellipse","id":"OXSdD","x":8,"y":8,"name":"Inactive window control 1","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"ellipse","id":"PJTbo","x":28,"y":8,"name":"Inactive window control 2","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"ellipse","id":"FO6Yr","x":48,"y":8,"name":"Inactive window control 3","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"text","id":"XgiMy","x":706,"y":5,"name":"Window title","fill":"$--muted-foreground","content":"hide","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"600"}]},{"type":"frame","id":"uwCzX","x":0,"y":28,"name":"Device rail","width":48,"height":872,"fill":"$--sidebar","stroke":"$--border","strokeWidth":{"right":1},"strokeAlignment":"inner","layout":"vertical","gap":12,"padding":[8,4],"children":[{"id":"m3Yw2","type":"ref","ref":"hideui:Nyvom","name":"This Mac","width":40,"height":40,"stroke":"$--foreground","strokeWidth":2,"cornerRadius":"$--radius-lg","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"laptop"}}},{"id":"FDTjR","type":"ref","ref":"hideui:Nyvom","name":"Add device","width":40,"height":32,"stroke":"$--border","strokeWidth":1,"cornerRadius":"$--radius-lg","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"plus"}}}]},{"type":"frame","id":"VJuAf","x":48,"y":28,"name":"Projects sidebar","width":292,"height":872,"fill":"$--sidebar","stroke":"$--border","strokeWidth":{"right":1},"strokeAlignment":"inner","layout":"none","children":[{"type":"frame","id":"ad4af","x":0,"y":0,"name":"This Mac header","width":292,"height":32,"stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","gap":8,"padding":[0,12],"alignItems":"center","children":[{"type":"text","id":"OA1kQ","name":"Device title","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"This Mac","fontFamily":"$--font-ui","fontSize":"$--text-title","fontWeight":"600"},{"id":"k09v3","type":"ref","ref":"hideui:Nyvom","name":"Add project","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"plus"}}},{"id":"CY50L","type":"ref","ref":"hideui:Nyvom","name":"Search","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"search"}}}]},{"type":"frame","id":"USpqd","x":0,"y":32,"name":"Sidebar tab strip","width":292,"height":32,"stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","gap":8,"padding":[0,12],"alignItems":"center","children":[{"type":"text","id":"W0Y3y","name":"Selected tab","fill":"$--foreground","content":"Projects","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"},{"type":"text","id":"ukkoQ","name":"Other tab","fill":"$--muted-foreground","content":"Agents","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"}]},{"type":"frame","id":"T6Nm2","x":4,"y":68,"name":"Home","width":284,"height":36,"gap":8,"padding":[0,8],"alignItems":"center","children":[{"type":"icon","id":"V84dHa","name":"Home icon","width":14,"height":14,"icon":"house","library":"lucide","fill":"$--subtle-foreground"},{"type":"text","id":"F2k1Um","name":"Home title","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"Home","fontFamily":"$--font-ui","fontSize":"$--text-title","fontWeight":"600"},{"type":"text","id":"OrXCs","name":"Project count","fill":"$--muted-foreground","content":"0 projects","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"}]},{"type":"text","id":"vWmVO","x":12,"y":110,"name":"Recent activity","fill":"$--muted-foreground","content":"Projects · Recent activity · 1","fontFamily":"$--font-ui","fontSize":"$--text-micro","fontWeight":"600"},{"type":"frame","id":"RBYXs","x":4,"y":124,"name":"Selected checkout","width":284,"height":36,"fill":"$--secondary","cornerRadius":"$--radius-sm","gap":8,"padding":[0,8],"alignItems":"center","children":[{"type":"icon","id":"tPXqp","name":"Checkout folder","width":14,"height":14,"icon":"folder","library":"lucide","fill":"$--subtle-foreground"},{"type":"text","id":"aYWyU","name":"Checkout label","fill":"$--foreground","content":"fixture","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"600"}]},{"type":"frame","id":"QuMHI","x":0,"y":840,"name":"Sidebar footer","width":292,"height":32,"stroke":"$--border","strokeWidth":{"top":1},"strokeAlignment":"inner","gap":8,"padding":[0,12],"justifyContent":"end","alignItems":"center","children":[{"id":"xaaDR","type":"ref","ref":"hideui:Nyvom","name":"Background usage","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"activity"}}},{"id":"M3iGzm","type":"ref","ref":"hideui:Nyvom","name":"Settings","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"settings"}}}]}]},{"id":"Uw8N7","type":"ref","ref":"hideui:VMZTz","name":"Shared Workspace toolbar","fill":"$--sidebar","stroke":"$--border","x":340,"y":28,"width":1100,"height":32,"descendants":{"hideui:bkh81":{"fill":"$--subtle-foreground","content":"Home  /  fixture  /  main"},"hideui:Kjfje/hideui:side-panel-tools-toggle/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button":{"fill":[]},"hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge":{"fill":"$--primary","enabled":false},"hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count":{"content":"1"},"hideui:Kjfje/hideui:XHe9v/hideui:OaJhM":{"fill":[]},"hideui:Kjfje/hideui:XHe9v/hideui:OaJhM/hideui:ZIZFR":{"fill":"$--subtle-foreground"}}},{"id":"ejdE4","type":"ref","ref":"hideui:side-panel","name":"Docked columns","fill":"$--background","x":340,"y":60,"width":1100,"height":840,"descendants":{"hideui:YpxMC":{"fill":"$--background","enabled":true,"x":0,"y":0,"width":1100,"height":840},"hideui:YpxMC/hideui:m3nqv":{"fill":"$--card","stroke":"$--border"},"hideui:YpxMC/hideui:Yf5g6":{"fill":"$--secondary"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-mark":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-title":{"fill":"$--foreground"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-close/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:ujfpg/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:GYdsi/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:jEy0G":{"fill":"$--background","width":1100},"hideui:YpxMC/hideui:blLvs":{"fill":"$--secondary","stroke":"$--border"},"hideui:YpxMC/hideui:W2jHfs":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:v57l6H":{"fill":"$--foreground"},"hideui:YpxMC/hideui:CG4wC":{"fill":"$--muted-foreground"},"hideui:YpxMC/hideui:K8ikC/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:a63n6t/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:jPwvc":{"fill":"$--background"},"hideui:YpxMC/hideui:PNaQy":{"fill":"$--foreground"},"hideui:YpxMC/hideui:aTsYy":{"fill":"$--background","stroke":"$--border","enabled":false,"width":0,"height":0},"hideui:YpxMC/hideui:lFQa0":{"fill":"$--card","stroke":"$--border"},"hideui:YpxMC/hideui:ljIwg":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:e7uYn":{"fill":"$--foreground"},"hideui:YpxMC/hideui:uJYZa":{"fill":"$--muted-foreground"},"hideui:YpxMC/hideui:x9QjtJ/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:E0Mk6/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:M6Mnyn":{"fill":"$--background"},"hideui:YpxMC/hideui:QSc1K":{"fill":"$--foreground"},"hideui:gPjhF":{"enabled":false,"x":480,"y":0,"width":0,"height":0},"hideui:gPjhF/hideui:side-panel-grip-line-top":{"fill":"$--muted-foreground"},"hideui:gPjhF/hideui:side-panel-grip-pill":{"fill":"$--card","stroke":"$--border"},"hideui:gPjhF/hideui:side-panel-grip-glyph":{"fill":"$--muted-foreground"},"hideui:giyPa":{"fill":"$--card","enabled":false,"x":488,"y":0,"width":612,"height":840},"hideui:giyPa/hideui:tPjjv":{"fill":"$--card","stroke":"$--border"},"hideui:giyPa/hideui:b7bsc7":{"fill":"$--card","width":304},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-mark":{"fill":"$--file-blue"},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-title":{"fill":"$--foreground"},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-close/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:N6jVdg/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:eeRGB/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:fenJg":{"fill":"$--card","stroke":"$--border"},"hideui:giyPa/hideui:fenJg/hideui:BUboy":{"fill":"$--subtle-foreground","content":"… 제목과 경로 확인.md"},"hideui:giyPa/hideui:fenJg/hideui:ifLpE/hideui:btn-ic":{"fill":"$--primary-foreground"},"hideui:giyPa/hideui:fenJg/hideui:ifLpE/hideui:btn-lb":{"fill":"$--foreground"},"hideui:giyPa/hideui:fenJg/hideui:W8pA8k/hideui:btn-ic":{"fill":"$--primary-foreground"},"hideui:giyPa/hideui:fenJg/hideui:W8pA8k/hideui:btn-lb":{"fill":"$--foreground"},"hideui:giyPa/hideui:fenJg/hideui:iFSdQ/hideui:btn-ic":{"fill":"$--primary-foreground"},"hideui:giyPa/hideui:fenJg/hideui:iFSdQ/hideui:btn-lb":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:fenJg/hideui:lEjtc/hideui:btn-ic":{"fill":"$--primary-foreground"},"hideui:giyPa/hideui:fenJg/hideui:lEjtc/hideui:btn-lb":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:nFrdf":{"fill":"$--card"},"hideui:giyPa/hideui:aX9gF":{"fill":"$--secondary"},"hideui:giyPa/hideui:jOt0p":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:iExJ4":{"fill":"$--file-blue"},"hideui:giyPa/hideui:T1KFmN":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:sfXAM":{"fill":"$--foreground"},"hideui:giyPa/hideui:h10qC":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:fzHJn":{"fill":"$--foreground","content":"한글과 English가 함께 있는 파일을 읽습니다."},"hideui:giyPa/hideui:GQ6yZ":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:oVfkk":{"fill":"$--foreground"},"hideui:w7GZ7c":{"enabled":false,"x":1100,"y":0,"width":0,"height":0},"hideui:w7GZ7c/hideui:side-panel-grip-line-top":{"fill":"$--muted-foreground"},"hideui:w7GZ7c/hideui:side-panel-grip-pill":{"fill":"$--card","stroke":"$--border"},"hideui:w7GZ7c/hideui:side-panel-grip-glyph":{"fill":"$--muted-foreground"},"hideui:eNvgI":{"fill":"$--card","enabled":false,"x":1108,"y":0,"width":260,"height":840},"hideui:eNvgI/hideui:H2M1v0":{"stroke":"$--border"},"hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-explorer":{"stroke":"$--primary"},"hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-explorer-glyph":{"fill":"$--foreground"},"hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-history-glyph":{"fill":"$--subtle-foreground"},"hideui:eNvgI/hideui:b22eS":{"stroke":"$--border"},"hideui:eNvgI/hideui:d927zh":{"fill":"$--subtle-foreground"},"hideui:eNvgI/hideui:DVJS6/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:eNvgI/hideui:NZoEx":{"stroke":"$--border","enabled":false,"height":0,"width":0},"hideui:eNvgI/hideui:iDnaZ":{"fill":"$--muted-foreground"},"hideui:eNvgI/hideui:MmldP":{"stroke":"$--border"},"hideui:eNvgI/hideui:Cwgap":{"fill":"$--file-blue"},"hideui:eNvgI/hideui:x1im3":{"fill":"$--foreground","fontSize":"$--text-caption"},"hideui:eNvgI/hideui:fZi7M":{"stroke":"$--border"},"hideui:eNvgI/hideui:t0QOE":{"fill":"$--file-blue"},"hideui:eNvgI/hideui:aHlvp":{"fill":"$--foreground","fontSize":"$--text-caption","content":"한글과 English 작업 기록 - 긴 파일 제…"}}},{"type":"frame","id":"Y0b444","x":1056,"y":60,"name":"Running servers picker","width":320,"fill":"$--popover","cornerRadius":"$--radius-md","stroke":"$--border","strokeWidth":1,"strokeAlignment":"inner","layout":"vertical","gap":"$--spacing-xs","padding":"$--spacing-sm","children":[{"type":"text","id":"eydR1","name":"Running servers","fill":"$--popover-foreground","content":"Running servers","fontFamily":"$--font-ui","fontSize":"$--text-caption","fontWeight":"500"},{"id":"UX8VT","type":"ref","ref":"hideui:btn-m","name":"127.0.0.1:3000","width":"fill_container","height":28,"justifyContent":"start","gap":"$--spacing-xs","padding":[0,"$--spacing-md"],"fill":"$--accent","stroke":"$--ring","strokeWidth":1,"strokeAlignment":"outer","descendants":{"hideui:btn-ic":{"enabled":true,"icon":"globe","fill":"$--popover-foreground"},"hideui:btn-lb":{"content":"127.0.0.1:3000","fontFamily":"$--font-mono","fontSize":"$--text-caption","fill":"$--popover-foreground"}}},{"id":"zn5Ax","type":"ref","ref":"hideui:btn-m","name":"[::1]:5173","width":"fill_container","height":28,"justifyContent":"start","gap":"$--spacing-xs","padding":[0,"$--spacing-md"],"fill":[],"stroke":[],"strokeWidth":0,"strokeAlignment":"outer","descendants":{"hideui:btn-ic":{"enabled":true,"icon":"globe","fill":"$--popover-foreground"},"hideui:btn-lb":{"content":"[::1]:5173","fontFamily":"$--font-mono","fontSize":"$--text-caption","fill":"$--popover-foreground"}}}]}]}]}
+    {"mode":"Light","parent":"g0S6az","children":[{"type":"frame","id":"ws-focus-l","name":"One keyboard area, other selections readable","width":960,"height":440,"fill":"$--background","children":[{"type":"frame","id":"ws-focus-l-1","name":"Keyboard owner","width":"fill_container","height":"fill_container","layout":"vertical","children":[{"type":"frame","id":"ws-focus-l-1-bar","name":"Tab bar","width":"fill_container","height":32,"fill":"$--background","children":[{"id":"ws-focus-l-1-tab1","type":"ref","ref":"hideui:view-tab","name":"Selected Korean tab","fill":"$--background","stroke":"$--foreground","strokeWidth":{"bottom":"$--size-tab-indicator"},"strokeAlignment":"inner","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--foreground","content":"한글 노트.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:view-tab-close":{"enabled":true}}},{"id":"ws-focus-l-1-tab2","type":"ref","ref":"hideui:view-tab","name":"검증 결과.md","fill":"$--card","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--subtle-foreground","content":"검증 결과.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"}}}]},{"type":"frame","id":"ws-focus-l-1-body","name":"Readable Korean content","width":"fill_container","height":"fill_container","fill":"$--background","layout":"vertical","padding":"$--spacing-sm","children":[{"type":"text","id":"ws-focus-l-1-text","name":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인","fontFamily":"$--font-mono","fontSize":"$--text-caption","fontWeight":"normal"}]}]},{"type":"frame","id":"ws-focus-divider-l","name":"Area divider","width":"fit_content(0)","height":"fill_container","fill":"$--border"},{"type":"frame","id":"ws-focus-l-2","name":"Other area, retained selection","width":"fill_container","height":"fill_container","layout":"vertical","children":[{"type":"frame","id":"ws-focus-l-2-bar","name":"Tab bar","width":"fill_container","height":32,"fill":"$--card","children":[{"id":"ws-focus-l-2-tab1","type":"ref","ref":"hideui:view-tab","name":"Selected Korean tab","fill":"$--secondary","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--foreground","content":"한글 노트.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:view-tab-close":{"enabled":true}}},{"id":"ws-focus-l-2-tab2","type":"ref","ref":"hideui:view-tab","name":"검증 결과.md","fill":"$--card","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--subtle-foreground","content":"검증 결과.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"}}}]},{"type":"frame","id":"ws-focus-l-2-body","name":"Readable Korean content","width":"fill_container","height":"fill_container","fill":"$--background","layout":"vertical","padding":"$--spacing-sm","children":[{"type":"text","id":"ws-focus-l-2-text","name":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인","fontFamily":"$--font-mono","fontSize":"$--text-caption","fontWeight":"normal"}]}]}]},{"type":"frame","id":"ewWtp","name":"Multiple running servers; the right lane closed","clip":true,"width":1440,"height":900,"fill":"$--background","layout":"none","children":[{"type":"frame","id":"NlkIg","x":0,"y":0,"name":"Native window chrome - comparison context","width":1440,"height":28,"fill":"$--secondary","stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","layout":"none","children":[{"type":"ellipse","id":"j9wRLv","x":8,"y":8,"name":"Inactive window control 1","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"ellipse","id":"PbX47","x":28,"y":8,"name":"Inactive window control 2","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"ellipse","id":"slAYW","x":48,"y":8,"name":"Inactive window control 3","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"text","id":"PXL5q","x":706,"y":5,"name":"Window title","fill":"$--muted-foreground","content":"hide","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"600"}]},{"type":"frame","id":"lE5kU","x":0,"y":28,"name":"Device rail","width":48,"height":872,"fill":"$--sidebar","stroke":"$--border","strokeWidth":{"right":1},"strokeAlignment":"inner","layout":"vertical","gap":12,"padding":[8,4],"children":[{"id":"tQ1fK","type":"ref","ref":"hideui:Nyvom","name":"This Mac","width":40,"height":40,"stroke":"$--foreground","strokeWidth":2,"cornerRadius":"$--radius-lg","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"laptop"}}},{"id":"O9kV0","type":"ref","ref":"hideui:Nyvom","name":"Add device","width":40,"height":32,"stroke":"$--border","strokeWidth":1,"cornerRadius":"$--radius-lg","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"plus"}}}]},{"type":"frame","id":"WXmI0","x":48,"y":28,"name":"Projects sidebar","width":292,"height":872,"fill":"$--sidebar","stroke":"$--border","strokeWidth":{"right":1},"strokeAlignment":"inner","layout":"none","children":[{"type":"frame","id":"e1gTd","x":0,"y":0,"name":"This Mac header","width":292,"height":32,"stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","gap":8,"padding":[0,12],"alignItems":"center","children":[{"type":"text","id":"YhV3w","name":"Device title","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"This Mac","fontFamily":"$--font-ui","fontSize":"$--text-title","fontWeight":"600"},{"id":"hjnnU","type":"ref","ref":"hideui:Nyvom","name":"Add project","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"plus"}}},{"id":"lr1rE","type":"ref","ref":"hideui:Nyvom","name":"Search","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"search"}}}]},{"type":"frame","id":"x47WeE","x":0,"y":32,"name":"Sidebar tab strip","width":292,"height":32,"stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","gap":8,"padding":[0,12],"alignItems":"center","children":[{"type":"text","id":"zVAh1","name":"Selected tab","fill":"$--foreground","content":"Projects","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"},{"type":"text","id":"aBZ23","name":"Other tab","fill":"$--muted-foreground","content":"Agents","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"}]},{"type":"frame","id":"e1Y8X","x":4,"y":68,"name":"Home","width":284,"height":36,"gap":8,"padding":[0,8],"alignItems":"center","children":[{"type":"icon","id":"z9Zjo","name":"Home icon","width":14,"height":14,"icon":"house","library":"lucide","fill":"$--subtle-foreground"},{"type":"text","id":"x0S7j","name":"Home title","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"Home","fontFamily":"$--font-ui","fontSize":"$--text-title","fontWeight":"600"},{"type":"text","id":"vGB7F","name":"Project count","fill":"$--muted-foreground","content":"0 projects","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"}]},{"type":"text","id":"iWAse","x":12,"y":110,"name":"Recent activity","fill":"$--muted-foreground","content":"Projects · Recent activity · 1","fontFamily":"$--font-ui","fontSize":"$--text-micro","fontWeight":"600"},{"type":"frame","id":"vhwXo","x":4,"y":124,"name":"Selected checkout","width":284,"height":36,"fill":"$--secondary","cornerRadius":"$--radius-sm","gap":8,"padding":[0,8],"alignItems":"center","children":[{"type":"icon","id":"klozz","name":"Checkout folder","width":14,"height":14,"icon":"folder","library":"lucide","fill":"$--subtle-foreground"},{"type":"text","id":"vmjI1","name":"Checkout label","fill":"$--foreground","content":"fixture","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"600"}]},{"type":"frame","id":"D2gM4I","x":0,"y":840,"name":"Sidebar footer","width":292,"height":32,"stroke":"$--border","strokeWidth":{"top":1},"strokeAlignment":"inner","gap":8,"padding":[0,12],"justifyContent":"end","alignItems":"center","children":[{"id":"pDsO7","type":"ref","ref":"hideui:Nyvom","name":"Background usage","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"activity"}}},{"id":"M9bxgS","type":"ref","ref":"hideui:Nyvom","name":"Settings","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"settings"}}}]}]},{"id":"KabPT","type":"ref","ref":"hideui:VMZTz","name":"Shared Workspace toolbar","fill":"$--sidebar","stroke":"$--border","x":340,"y":28,"width":1100,"height":32,"descendants":{"hideui:bkh81":{"fill":"$--subtle-foreground","content":"Home  /  fixture  /  main"},"hideui:Kjfje/hideui:side-panel-tools-toggle/hideui:ZIZFR":{"fill":"$--subtle-foreground"}}},{"id":"H4VH2","type":"ref","ref":"hideui:rnWpl","name":"Agent column","fill":"$--background","x":340,"y":60,"width":1052,"height":840,"descendants":{"hideui:m3nqv":{"fill":"$--card","stroke":"$--border"},"hideui:Yf5g6":{"fill":"$--secondary"},"hideui:Yf5g6/hideui:view-tab-mark":{"fill":"$--subtle-foreground"},"hideui:Yf5g6/hideui:view-tab-title":{"fill":"$--foreground"},"hideui:Yf5g6/hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:Yf5g6/hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:Yf5g6/hideui:view-tab-close/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:ujfpg/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:GYdsi/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:jEy0G":{"fill":"$--background","width":1100},"hideui:blLvs":{"fill":"$--secondary","stroke":"$--border"},"hideui:W2jHfs":{"fill":"$--subtle-foreground"},"hideui:v57l6H":{"fill":"$--foreground"},"hideui:CG4wC":{"fill":"$--muted-foreground"},"hideui:K8ikC/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:a63n6t/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:jPwvc":{"fill":"$--background"},"hideui:PNaQy":{"fill":"$--foreground"},"hideui:aTsYy":{"fill":"$--background","stroke":"$--border","enabled":false,"width":0,"height":0},"hideui:lFQa0":{"fill":"$--card","stroke":"$--border"},"hideui:ljIwg":{"fill":"$--subtle-foreground"},"hideui:e7uYn":{"fill":"$--foreground"},"hideui:uJYZa":{"fill":"$--muted-foreground"},"hideui:x9QjtJ/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:E0Mk6/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:M6Mnyn":{"fill":"$--background"},"hideui:QSc1K":{"fill":"$--foreground"}}},{"id":"ewWtp-rail","type":"ref","ref":"hideui:lane-rail","name":"Tool rail","x":1392,"y":60,"height":840},{"type":"frame","id":"E3BX0","x":1112,"y":60,"name":"Running servers picker","width":320,"fill":"$--popover","cornerRadius":"$--radius-md","stroke":"$--border","strokeWidth":1,"strokeAlignment":"inner","layout":"vertical","gap":"$--spacing-xs","padding":"$--spacing-sm","children":[{"type":"text","id":"ILw1e","name":"Running servers","fill":"$--popover-foreground","content":"Running servers","fontFamily":"$--font-ui","fontSize":"$--text-caption","fontWeight":"500"},{"id":"u8ij3q","type":"ref","ref":"hideui:btn-m","name":"127.0.0.1:3000","width":"fill_container","height":28,"justifyContent":"start","gap":"$--spacing-xs","padding":[0,"$--spacing-md"],"fill":"$--accent","stroke":"$--ring","strokeWidth":1,"strokeAlignment":"outer","descendants":{"hideui:btn-ic":{"enabled":true,"icon":"globe","fill":"$--popover-foreground"},"hideui:btn-lb":{"content":"127.0.0.1:3000","fontFamily":"$--font-mono","fontSize":"$--text-caption","fill":"$--popover-foreground"}}},{"id":"BOKUB","type":"ref","ref":"hideui:btn-m","name":"[::1]:5173","width":"fill_container","height":28,"justifyContent":"start","gap":"$--spacing-xs","padding":[0,"$--spacing-md"],"fill":[],"stroke":[],"strokeWidth":0,"strokeAlignment":"outer","descendants":{"hideui:btn-ic":{"enabled":true,"icon":"globe","fill":"$--popover-foreground"},"hideui:btn-lb":{"content":"[::1]:5173","fontFamily":"$--font-mono","fontSize":"$--text-caption","fill":"$--popover-foreground"}}}]}]}]},
+    {"mode":"Dark","parent":"dkzAZ","children":[{"type":"frame","id":"ws-focus-d","name":"One keyboard area, other selections readable","width":960,"height":440,"fill":"$--background","children":[{"type":"frame","id":"ws-focus-d-1","name":"Keyboard owner","width":"fill_container","height":"fill_container","layout":"vertical","children":[{"type":"frame","id":"ws-focus-d-1-bar","name":"Tab bar","width":"fill_container","height":32,"fill":"$--background","children":[{"id":"ws-focus-d-1-tab1","type":"ref","ref":"hideui:view-tab","name":"Selected Korean tab","fill":"$--background","stroke":"$--foreground","strokeWidth":{"bottom":"$--size-tab-indicator"},"strokeAlignment":"inner","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--foreground","content":"한글 노트.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:view-tab-close":{"enabled":true}}},{"id":"ws-focus-d-1-tab2","type":"ref","ref":"hideui:view-tab","name":"검증 결과.md","fill":"$--card","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--subtle-foreground","content":"검증 결과.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"}}}]},{"type":"frame","id":"ws-focus-d-1-body","name":"Readable Korean content","width":"fill_container","height":"fill_container","fill":"$--background","layout":"vertical","padding":"$--spacing-sm","children":[{"type":"text","id":"ws-focus-d-1-text","name":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인","fontFamily":"$--font-mono","fontSize":"$--text-caption","fontWeight":"normal"}]}]},{"type":"frame","id":"ws-focus-divider-d","name":"Area divider","width":"fit_content(0)","height":"fill_container","fill":"$--border"},{"type":"frame","id":"ws-focus-d-2","name":"Other area, retained selection","width":"fill_container","height":"fill_container","layout":"vertical","children":[{"type":"frame","id":"ws-focus-d-2-bar","name":"Tab bar","width":"fill_container","height":32,"fill":"$--card","children":[{"id":"ws-focus-d-2-tab1","type":"ref","ref":"hideui:view-tab","name":"Selected Korean tab","fill":"$--secondary","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--foreground","content":"한글 노트.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:view-tab-close":{"enabled":true}}},{"id":"ws-focus-d-2-tab2","type":"ref","ref":"hideui:view-tab","name":"검증 결과.md","fill":"$--card","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--subtle-foreground","content":"검증 결과.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"}}}]},{"type":"frame","id":"ws-focus-d-2-body","name":"Readable Korean content","width":"fill_container","height":"fill_container","fill":"$--background","layout":"vertical","padding":"$--spacing-sm","children":[{"type":"text","id":"ws-focus-d-2-text","name":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인","fontFamily":"$--font-mono","fontSize":"$--text-caption","fontWeight":"normal"}]}]}]},{"type":"frame","id":"es3RE","name":"Multiple running servers; the right lane closed","clip":true,"width":1440,"height":900,"fill":"$--background","layout":"none","children":[{"type":"frame","id":"aTb9G","x":0,"y":0,"name":"Native window chrome - comparison context","width":1440,"height":28,"fill":"$--secondary","stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","layout":"none","children":[{"type":"ellipse","id":"OXSdD","x":8,"y":8,"name":"Inactive window control 1","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"ellipse","id":"PJTbo","x":28,"y":8,"name":"Inactive window control 2","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"ellipse","id":"FO6Yr","x":48,"y":8,"name":"Inactive window control 3","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"text","id":"XgiMy","x":706,"y":5,"name":"Window title","fill":"$--muted-foreground","content":"hide","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"600"}]},{"type":"frame","id":"uwCzX","x":0,"y":28,"name":"Device rail","width":48,"height":872,"fill":"$--sidebar","stroke":"$--border","strokeWidth":{"right":1},"strokeAlignment":"inner","layout":"vertical","gap":12,"padding":[8,4],"children":[{"id":"m3Yw2","type":"ref","ref":"hideui:Nyvom","name":"This Mac","width":40,"height":40,"stroke":"$--foreground","strokeWidth":2,"cornerRadius":"$--radius-lg","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"laptop"}}},{"id":"FDTjR","type":"ref","ref":"hideui:Nyvom","name":"Add device","width":40,"height":32,"stroke":"$--border","strokeWidth":1,"cornerRadius":"$--radius-lg","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"plus"}}}]},{"type":"frame","id":"VJuAf","x":48,"y":28,"name":"Projects sidebar","width":292,"height":872,"fill":"$--sidebar","stroke":"$--border","strokeWidth":{"right":1},"strokeAlignment":"inner","layout":"none","children":[{"type":"frame","id":"ad4af","x":0,"y":0,"name":"This Mac header","width":292,"height":32,"stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","gap":8,"padding":[0,12],"alignItems":"center","children":[{"type":"text","id":"OA1kQ","name":"Device title","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"This Mac","fontFamily":"$--font-ui","fontSize":"$--text-title","fontWeight":"600"},{"id":"k09v3","type":"ref","ref":"hideui:Nyvom","name":"Add project","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"plus"}}},{"id":"CY50L","type":"ref","ref":"hideui:Nyvom","name":"Search","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"search"}}}]},{"type":"frame","id":"USpqd","x":0,"y":32,"name":"Sidebar tab strip","width":292,"height":32,"stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","gap":8,"padding":[0,12],"alignItems":"center","children":[{"type":"text","id":"W0Y3y","name":"Selected tab","fill":"$--foreground","content":"Projects","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"},{"type":"text","id":"ukkoQ","name":"Other tab","fill":"$--muted-foreground","content":"Agents","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"}]},{"type":"frame","id":"T6Nm2","x":4,"y":68,"name":"Home","width":284,"height":36,"gap":8,"padding":[0,8],"alignItems":"center","children":[{"type":"icon","id":"V84dHa","name":"Home icon","width":14,"height":14,"icon":"house","library":"lucide","fill":"$--subtle-foreground"},{"type":"text","id":"F2k1Um","name":"Home title","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"Home","fontFamily":"$--font-ui","fontSize":"$--text-title","fontWeight":"600"},{"type":"text","id":"OrXCs","name":"Project count","fill":"$--muted-foreground","content":"0 projects","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"}]},{"type":"text","id":"vWmVO","x":12,"y":110,"name":"Recent activity","fill":"$--muted-foreground","content":"Projects · Recent activity · 1","fontFamily":"$--font-ui","fontSize":"$--text-micro","fontWeight":"600"},{"type":"frame","id":"RBYXs","x":4,"y":124,"name":"Selected checkout","width":284,"height":36,"fill":"$--secondary","cornerRadius":"$--radius-sm","gap":8,"padding":[0,8],"alignItems":"center","children":[{"type":"icon","id":"tPXqp","name":"Checkout folder","width":14,"height":14,"icon":"folder","library":"lucide","fill":"$--subtle-foreground"},{"type":"text","id":"aYWyU","name":"Checkout label","fill":"$--foreground","content":"fixture","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"600"}]},{"type":"frame","id":"QuMHI","x":0,"y":840,"name":"Sidebar footer","width":292,"height":32,"stroke":"$--border","strokeWidth":{"top":1},"strokeAlignment":"inner","gap":8,"padding":[0,12],"justifyContent":"end","alignItems":"center","children":[{"id":"xaaDR","type":"ref","ref":"hideui:Nyvom","name":"Background usage","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"activity"}}},{"id":"M3iGzm","type":"ref","ref":"hideui:Nyvom","name":"Settings","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"settings"}}}]}]},{"id":"Uw8N7","type":"ref","ref":"hideui:VMZTz","name":"Shared Workspace toolbar","fill":"$--sidebar","stroke":"$--border","x":340,"y":28,"width":1100,"height":32,"descendants":{"hideui:bkh81":{"fill":"$--subtle-foreground","content":"Home  /  fixture  /  main"},"hideui:Kjfje/hideui:side-panel-tools-toggle/hideui:ZIZFR":{"fill":"$--subtle-foreground"}}},{"id":"ejdE4","type":"ref","ref":"hideui:rnWpl","name":"Agent column","fill":"$--background","x":340,"y":60,"width":1052,"height":840,"descendants":{"hideui:m3nqv":{"fill":"$--card","stroke":"$--border"},"hideui:Yf5g6":{"fill":"$--secondary"},"hideui:Yf5g6/hideui:view-tab-mark":{"fill":"$--subtle-foreground"},"hideui:Yf5g6/hideui:view-tab-title":{"fill":"$--foreground"},"hideui:Yf5g6/hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:Yf5g6/hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:Yf5g6/hideui:view-tab-close/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:ujfpg/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:GYdsi/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:jEy0G":{"fill":"$--background","width":1100},"hideui:blLvs":{"fill":"$--secondary","stroke":"$--border"},"hideui:W2jHfs":{"fill":"$--subtle-foreground"},"hideui:v57l6H":{"fill":"$--foreground"},"hideui:CG4wC":{"fill":"$--muted-foreground"},"hideui:K8ikC/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:a63n6t/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:jPwvc":{"fill":"$--background"},"hideui:PNaQy":{"fill":"$--foreground"},"hideui:aTsYy":{"fill":"$--background","stroke":"$--border","enabled":false,"width":0,"height":0},"hideui:lFQa0":{"fill":"$--card","stroke":"$--border"},"hideui:ljIwg":{"fill":"$--subtle-foreground"},"hideui:e7uYn":{"fill":"$--foreground"},"hideui:uJYZa":{"fill":"$--muted-foreground"},"hideui:x9QjtJ/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:E0Mk6/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:M6Mnyn":{"fill":"$--background"},"hideui:QSc1K":{"fill":"$--foreground"}}},{"id":"es3RE-rail","type":"ref","ref":"hideui:lane-rail","name":"Tool rail","x":1392,"y":60,"height":840},{"type":"frame","id":"Y0b444","x":1112,"y":60,"name":"Running servers picker","width":320,"fill":"$--popover","cornerRadius":"$--radius-md","stroke":"$--border","strokeWidth":1,"strokeAlignment":"inner","layout":"vertical","gap":"$--spacing-xs","padding":"$--spacing-sm","children":[{"type":"text","id":"eydR1","name":"Running servers","fill":"$--popover-foreground","content":"Running servers","fontFamily":"$--font-ui","fontSize":"$--text-caption","fontWeight":"500"},{"id":"UX8VT","type":"ref","ref":"hideui:btn-m","name":"127.0.0.1:3000","width":"fill_container","height":28,"justifyContent":"start","gap":"$--spacing-xs","padding":[0,"$--spacing-md"],"fill":"$--accent","stroke":"$--ring","strokeWidth":1,"strokeAlignment":"outer","descendants":{"hideui:btn-ic":{"enabled":true,"icon":"globe","fill":"$--popover-foreground"},"hideui:btn-lb":{"content":"127.0.0.1:3000","fontFamily":"$--font-mono","fontSize":"$--text-caption","fill":"$--popover-foreground"}}},{"id":"zn5Ax","type":"ref","ref":"hideui:btn-m","name":"[::1]:5173","width":"fill_container","height":28,"justifyContent":"start","gap":"$--spacing-xs","padding":[0,"$--spacing-md"],"fill":[],"stroke":[],"strokeWidth":0,"strokeAlignment":"outer","descendants":{"hideui:btn-ic":{"enabled":true,"icon":"globe","fill":"$--popover-foreground"},"hideui:btn-lb":{"content":"[::1]:5173","fontFamily":"$--font-mono","fontSize":"$--text-caption","fill":"$--popover-foreground"}}}]}]}]}
   ];
 }
 
@@ -3926,35 +2970,34 @@ function buildProjectsSidebar(tokens) {
 
   // A tab is a segment of its checkout's agent list, not a level: a 1px guide
   // centered under the checkout's kind glyph spans the segment's rows, and the
-  // gap between two guides is the tab boundary. A tab of two or more agents wears
-  // the tab glyph at the head of its guide, on the first row's line; a manual name
-  // adds one quiet 22px line carrying that glyph and the name, starting on the
-  // status-mark column (sidebar.tsx's TabSegmentHead).
-  function segment(id, {name = null, glyph = false, rows}) {
-    const line = num(tokens, '--size-sidebar-line');
-    const tabLine = line + num(tokens, '--spacing-xxs');
+  // gap between two guides is the tab boundary. A tab of two or more agents opens
+  // with one quiet 22px line inside the guide, the tab glyph on the status-mark
+  // column and its name (the manual one, else `Tab N`) on the title column
+  // (sidebar.tsx's TabSegmentHead); `name` is set exactly for such a tab.
+  function segment(id, {name = null, rows}) {
+    const tabLine = num(tokens, '--size-sidebar-line') + num(tokens, '--spacing-xxs');
     const glyphSize = num(tokens, '--size-icon-sm');
-    const kind = num(tokens, '--size-checkout-icon');
-    const air = num(tokens, '--spacing-xxs');
-    const named = glyph && name !== null;
-    const glyphX = glyphColumn + (kind - glyphSize) / 2;
-    const guideX = glyphColumn + (kind - 1) / 2;
-    const guideTop = !glyph ? xs : named ? tabLine / 2 + glyphSize / 2 + air : xs + line / 2 + glyphSize / 2 + air;
-    const head = named
-      ? [frame(`${id}-line`, 'Tab line', {width: row, height: tabLine, layout: 'horizontal', alignItems: 'center', gap: nameColumn - glyphX - glyphSize, padding: [0, xs, 0, glyphX]}, [
-        icon(`${id}-glyph`, 'panels-top-left', {size: glyphSize, fill: '$--subtle-foreground'}),
-        text(`${id}-name`, name, {size: '$--text-caption', fill: '$--subtle-foreground', width: 'fill_container'}),
-      ])]
-      : glyph ? [{...icon(`${id}-glyph`, 'panels-top-left', {size: glyphSize, fill: '$--subtle-foreground'}), layoutPosition: 'absolute', x: glyphX, y: xs + (line - glyphSize) / 2}] : [];
-    const total = (named ? tabLine : 0) + rows.reduce((sum, node) => sum + treeHeights.get(node), 0);
-    const guide = frame(`${id}-guide`, 'Tab guide', {layoutPosition: 'absolute', x: guideX, y: guideTop, width: 1, height: total - guideTop - xs, fill: '$--lineage-rail'}, []);
+    const mark = num(tokens, '--size-agent-mark');
+    const guideX = glyphColumn + (num(tokens, '--size-checkout-icon') - 1) / 2;
+    const markX = nameColumn + (mark - glyphSize) / 2;
+    const head = name === null ? [] : [frame(`${id}-line`, 'Tab line', {width: row, height: tabLine, layout: 'horizontal', alignItems: 'center', gap: nameColumn + mark + xs - markX - glyphSize, padding: [0, xs, 0, markX]}, [
+      icon(`${id}-glyph`, 'panels-top-left', {size: glyphSize, fill: '$--subtle-foreground'}),
+      text(`${id}-name`, name, {size: '$--text-caption', fill: '$--subtle-foreground', width: 'fill_container'}),
+    ])];
+    const total = (name === null ? 0 : tabLine) + rows.reduce((sum, node) => sum + treeHeights.get(node), 0);
+    const guide = frame(`${id}-guide`, 'Tab guide', {layoutPosition: 'absolute', x: guideX, y: xs, width: 1, height: total - 2 * xs, fill: '$--lineage-rail'}, []);
     return frame(id, 'Tab segment', {width: row, layout: 'vertical'}, [...head, ...rows, guide]);
   }
 
-  // An opened checkout and its unboxed tab segments, 8px apart.
+  // An opened checkout and its unboxed tab segments, 8px apart: the segments hang
+  // 2px under the checkout row, and the group's end carries the same 8px before
+  // the next row (sidebar.tsx's OpenAgentRows).
   function group(id, rows) {
     const [checkout, ...segments] = rows;
-    return frame(id, 'Opened checkout', {width: row, layout: 'vertical', gap: '$--spacing-sm'}, [checkout, ...segments]);
+    return frame(id, 'Opened checkout', {width: row, layout: 'vertical', gap: '$--spacing-xxs', padding: [0, 0, sm, 0]}, [
+      checkout,
+      frame(`${id}-segments`, 'Tab segments', {width: row, layout: 'vertical', gap: '$--spacing-sm'}, segments),
+    ]);
   }
 
   function fold(id, label, level) {
@@ -4146,7 +3189,7 @@ function buildProjectsSidebar(tokens) {
         // main opened (PRD agent-hierarchy-screens D-12, D-38, B35): one line, its agents as a tree.
         group(`psb-g-main-${s}`, [
           checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, expanded: true}),
-          segment(`psb-seg-main-${s}`, {glyph: true, rows: [
+          segment(`psb-seg-main-${s}`, {name: 'Tab 1', rows: [
             tree(`psb-t0-${s}`, {title: '사이드바 가독성 개선', status: 'approval', age: '12m', chevron: 'open', pr: {state: 'mergeable', number: 180}, bright: true}),
             tree(`psb-t1-${s}`, {title: 'P8 읽기 전용 준비', status: 'waiting', age: '19h', depth: 1, chevron: 'open', pr: {state: 'failed', number: 214}}),
             tree(`psb-t2-${s}`, {title: '테스트 작성', status: 'approval', age: '12m', depth: 2, rail: true}),
@@ -4421,28 +3464,28 @@ function buildProjectsSidebar(tokens) {
     return frame(`psb-hover-${s}`, 'Checkout row under the pointer, with its card', {width: width + gap + cardW, height: listH}, [{...list, x: 0, y: 0}, card]);
   }
   // The approved 240px cutout: the production rows at the narrowest width, a named
-  // tab (its line), a one-agent tab and an unnamed tab of two (its glyph).
+  // tab, a one-agent tab (no line) and an unnamed tab of two (its line reads Tab 3).
   function atRow(inner, draw) {
     const saved = row;
     row = inner;
     try { return draw(); } finally { row = saved; }
   }
   function statusAxis(s) {
-    return atRow(240 - 2 * sm, () => frame(`psb-axis-${s}`, 'Approved tab segments · 240 px', {width: 240, layout: 'vertical', gap: '$--spacing-sm', padding: sm, fill: '$--sidebar', clip: true}, [
+    return atRow(240 - 2 * sm, () => frame(`psb-axis-${s}`, 'Approved tab segments · 240 px', {width: 240, layout: 'vertical', padding: [sm, sm, 0, sm], fill: '$--sidebar', clip: true}, [group(`psb-axis-g-${s}`, [
       checkoutRow(`psb-axis-checkout-${s}`, {name: 'main', kind: 'primary', age: '8m', marks: {working: 4, idle: 1}, expanded: true}),
-      segment(`psb-axis-a-${s}`, {glyph: true, name: '아주 긴 한국어 탭 이름과 작업…', rows: [
+      segment(`psb-axis-a-${s}`, {name: '아주 긴 한국어 탭 이름과 작업…', rows: [
         tree(`psb-axis-one-${s}`, {title: '탭 경계·여백 정리', status: 'working', age: '1m', selected: true}),
         tree(`psb-axis-two-${s}`, {title: '왼쪽 pane 검토', status: 'working', age: '8m'}),
       ]}),
       segment(`psb-axis-single-${s}`, {rows: [tree(`psb-axis-three-${s}`, {title: '세션 기록 동기화', status: 'working', age: '2s'})]}),
-      segment(`psb-axis-b-${s}`, {glyph: true, rows: [
+      segment(`psb-axis-b-${s}`, {name: 'Tab 3', rows: [
         tree(`psb-axis-four-${s}`, {title: 'PR 질문 표시 개선', status: 'working', age: '6m'}),
         tree(`psb-axis-five-${s}`, {title: '탐색 개선', status: 'seen', age: '11m'}),
       ]}),
-    ]));
+    ])]));
   }
   const approvedBuild = suffix => [...build(suffix), statusAxis(suffix)];
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx and core agent_state (session-first-ui B1-B10; agent-hierarchy-screens D-12, D-37 to D-42): one sidebar follows the selected device, under the window’s top row that names it after the traffic lights (PRD sidebar-titlebar-refresh D-15): the Search row, the Overview row, bounded Needs You and Done groups and default-open project checkouts, with no Home row (D-06). Pinned leads with the pin and Projects ends in Add project; both headers stick to the list’s top with a hairline (D-05). A project’s name is 600 while an agent there works and 400 otherwise, a project whose agents all sleep is folded behind a moon cell with its age, projects with no agents fold behind No agents N (D-01 to D-03), and under the pointer + and ⋯ stand over the badge (D-04). The footer adds Help before the gear (D-11, D-12), and checkout and folder menus carry Open in VS Code before the reveal (D-13). A Needs You row’s second line is the verb and what to do. Roots and orphans head an opened checkout; a root the operator opened draws its children and grandchildren as one-line tree rows with elbow rails and a chevron lane, five siblings and then N개 더, each row with its own PR icon and, folded, its descendant mark; an opened checkout is one line. Every root stands on one status axis right of the checkout glyph whatever tab holds it: a hairline guide under that glyph spans each tab’s rows with a gap between tabs, a tab of two or more agents wears the tab glyph at the head of its guide, and a manual name adds one quiet line. A plain folder’s glyph and name stand on the project row’s columns. A grandchild’s chevron opens its tree popover, and the popover’s last line opens the Overview Agents graph. Clean worktrees without agents start in No agents; closed agent worktrees and missing paths start in Cleanup. Explicit checkout folds persist and retain Needs You rows. Project and checkout menus, glyphs, age columns, the device rail and usage footer retain their existing behavior.', approvedBuild, approvedBuild);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx and core agent_state (session-first-ui B1-B10; agent-hierarchy-screens D-12, D-37 to D-42): one sidebar follows the selected device, under the window’s top row that names it after the traffic lights (PRD sidebar-titlebar-refresh D-15): the Search row, the Overview row, bounded Needs You and Done groups and default-open project checkouts, with no Home row (D-06). Pinned leads with the pin and Projects ends in Add project; both headers stick to the list’s top with a hairline (D-05). A project’s name is 600 while an agent there works and 400 otherwise, a project whose agents all sleep is folded behind a moon cell with its age, projects with no agents fold behind No agents N (D-01 to D-03), and under the pointer + and ⋯ stand over the badge (D-04). The footer adds Help before the gear (D-11, D-12), and checkout and folder menus carry Open in VS Code before the reveal (D-13). A Needs You row’s second line is the verb and what to do. Roots and orphans head an opened checkout; a root the operator opened draws its children and grandchildren as one-line tree rows with elbow rails and a chevron lane, five siblings and then N개 더, each row with its own PR icon and, folded, its descendant mark; an opened checkout is one line. Every root stands on one status axis right of the checkout glyph whatever tab holds it: a hairline guide under that glyph spans each tab’s rows with a gap between tabs, and a tab of two or more agents opens with one quiet line inside the guide, the tab glyph on the status-mark column and its manual name or Tab N on the title column. A plain folder’s glyph and name stand on the project row’s columns. A grandchild’s chevron opens its tree popover, and the popover’s last line opens the Overview Agents graph. Clean worktrees without agents start in No agents; closed agent worktrees and missing paths start in Cleanup. Explicit checkout folds persist and retain Needs You rows. Project and checkout menus, glyphs, age columns, the device rail and usage footer retain their existing behavior.', approvedBuild, approvedBuild);
 }
 
 // -- Screen / Mobile ---------------------------------------------------------------
@@ -5001,8 +4044,8 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Factory', build: () => buildFactory(tokens)},
     {name: 'Screen / Core move', build: () => buildCoreMove(tokens, root)},
     {name: 'Screen / Session record', build: () => {
-      const build = sessionWorkScreens({frame,text,icon,screenButton});
-      return screenSheet('screen-session-record','Screen / Session record','Sessions work record: verdict, outputs, missed work, own chapters and delegated children. Approved session-work-ledger D-10, D-18, D-20; production SessionRecord and NewIssueDialog.',build,build);
+      const build = sessionWorkScreens({frame,text,icon,screenButton,themedXref});
+      return screenSheet('screen-session-record','Screen / Session record','Sessions work record (PRD session-record-redesign): every PR the session and its descendants made, assigned work as a checklist with missed work under its task, the operator\'s words behind 내 말, summaries off, and states. Production SessionRecord and NewIssueDialog.',build,build);
     }},
   ];
 }

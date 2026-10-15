@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UsageAmount, UsageRange } from "./generated/hided-ws";
-import { allTokens, sumUsageDays, usageDays, usagePeriodDays } from "./usageHistory";
+import { allTokens, hideAiReading, hideAiShare, sumHideAiDays, sumUsageDays, usageDays, usagePeriodDays } from "./usageHistory";
 
 const empty: UsageAmount = {
   calls: 0, new_tokens: 0,
@@ -10,7 +10,7 @@ const empty: UsageAmount = {
 const range = (reading: boolean): UsageRange => ({
   calendar_start: "2026-03-08", calendar_end: "2026-03-10", days: [], amount: empty,
   since: null, active_days: 0, observed_days: 0, peak: null, current_streak: 0, longest_streak: 0,
-  reading, limited: false, files_done: 0, files_total: 1,
+  reading, limited: false, files_done: 0, files_total: 1, hide_ai_since: null,
 });
 
 describe("sparse usage calendar", () => {
@@ -28,7 +28,7 @@ describe("sparse usage calendar", () => {
     const sparse = range(true);
     const recorded = {
       date: "2026-03-09", weekday: 1, week: 0, today: false, recent_week: true,
-      level: 0, pending: false, agents: [], top_agents: [], other_agents: 0,
+      level: 0, pending: false, agents: [], top_agents: [], other_agents: 0, hide_ai: null,
       amount: { ...empty, calls: 1, tokens: { ...empty.tokens, cache_read: 900 }, cost: { ...empty.cost, micro_usd: 125_000 } },
     };
     sparse.days = [recorded];
@@ -84,4 +84,34 @@ describe("usage display periods", () => {
     expect(days[1]!.amount.cost.unpriced_models).toEqual(["a", "i", "j", "k"]);
   });
 
+});
+
+describe("Hide AI reading", () => {
+  const hideDay = (unknown: number, basisPoints: number) => ({
+    ...usageDays(range(true))[1]!,
+    hide_ai: { amount: { ...empty, calls: 3, new_tokens: 4_500 }, share_basis_points: basisPoints, features: [], unknown_calls: unknown },
+  });
+
+  it("tells a counted day from one before counting began and one with no call", () => {
+    const counted = hideDay(0, 250);
+    expect(hideAiReading(counted, "2026-03-01")).toMatchObject({ state: "counted", unknown: 0, basisPoints: 250 });
+    const bare = { ...counted, hide_ai: null };
+    expect(hideAiReading(bare, "2026-03-09")).toEqual({ state: "none" });
+    expect(hideAiReading(bare, "2026-03-10")).toEqual({ state: "before" });
+    expect(hideAiReading(bare, null)).toEqual({ state: "none" });
+  });
+
+  it("sums the counted days and keeps unknown calls a count", () => {
+    const sum = sumHideAiDays([hideDay(2, 100), hideDay(1, 100), { ...hideDay(0, 0), hide_ai: null }]);
+    expect(sum.amount.new_tokens).toBe(9_000);
+    expect(sum.amount.calls).toBe(6);
+    expect(sum.unknown).toBe(3);
+  });
+
+  it("writes a share as a rounded percent and a vanishing one as below a tenth of a percent", () => {
+    expect(hideAiShare(1234, "en")).toBe("12%");
+    expect(hideAiShare(250, "en")).toBe("2.5%");
+    expect(hideAiShare(5, "en")).toBe("<0.1%");
+    expect(hideAiShare(0, "en")).toBe("0%");
+  });
 });

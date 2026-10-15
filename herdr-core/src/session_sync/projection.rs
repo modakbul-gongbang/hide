@@ -59,6 +59,10 @@ pub(crate) struct ProjectedAgent {
     pub(crate) declared_parent_session: Option<String>,
     pub(crate) lineage_session: Option<String>,
     pub(crate) state_change_seq: u64,
+    /// Present while the agent's current stop finished work, whoever has
+    /// looked at it since: Herdr's `done` turning `idle` when it marks the
+    /// tab seen leaves it in place.
+    pub(crate) completion_seq: Option<u64>,
     pub(crate) tokens: BTreeMap<String, Value>,
 }
 
@@ -116,6 +120,7 @@ impl ProjectionState {
                     declared_parent_session: agent.declared_parent_session.clone(),
                     lineage_session: agent.lineage_session.clone(),
                     state_change_seq: Some(agent.state_change_seq),
+                    completion_seq: agent.completion_seq,
                     tokens: agent.tokens.clone(),
                     // The coordinator's label worker lays these on.
                     label: None,

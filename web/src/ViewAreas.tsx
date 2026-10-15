@@ -23,9 +23,9 @@ import { locateDisplay } from "./areaLayout";
 import { workspaceViewOf } from "./workspace";
 
 /**
- * The front Workspace's View areas, the File Views column. With no display
- * they are drawn only while a file of this checkout is opening; otherwise
- * the column is not drawn (`columnFrame`).
+ * The front Workspace's View areas, the lane's files tool. With no display
+ * the files tool draws its tree alone (`laneFrame`'s `treeOnly`), so these
+ * are drawn only while a view is open or a file of this checkout is opening.
  */
 export function ViewAreas({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();

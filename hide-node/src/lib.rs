@@ -80,6 +80,14 @@ impl Local {
         self
     }
 
+    /// The node keeps what it measured of each repository's worktrees in
+    /// `folder` (`hide_kit::layout::worktree_facts`), so a restarted daemon
+    /// measures again only the worktrees whose inputs moved.
+    pub fn keeping_worktree_facts_in(mut self, folder: std::path::PathBuf) -> Self {
+        self.env.worktrees = Arc::new(hide_host::worktrees::Measured::kept_in(folder));
+        self
+    }
+
     /// The node answers for an account whose panes start `shell`, rather
     /// than the one this process's environment names.
     pub fn with_shell(mut self, shell: hide_host::shell_integration::UserShell) -> Self {

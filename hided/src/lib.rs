@@ -546,8 +546,9 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
         roots_failed(&error);
     }
     spawn_root_refresh(Arc::clone(&app.roots), Arc::clone(&app.clients));
-    // The core starts out drawn; until a window says otherwise, it is not.
-    server::dispatch_ui_attached(&app.core, false);
+    // The core and the Explorer watch start out drawn; until a window says
+    // otherwise, they are not.
+    server::renderers_drawn(&app, false);
     tokio::spawn(pane_auth::serve(
         pane_listener,
         Arc::clone(&pane_capabilities),
@@ -664,6 +665,7 @@ pub async fn start_node_role(env: Env, seat: seat::SeatParts) -> Result<RunningN
                 .herdr_bin_path
                 .clone()
                 .ok_or("the node role needs this machine's Herdr binary")?,
+            worktree_facts: Some(hide_kit::layout::worktree_facts(&env.state_dir)),
         },
         node_daemon::ServerParts {
             token: Arc::new(token.clone()),

@@ -1064,6 +1064,7 @@ mod tests {
                     pane.clone(),
                     json!({"demand": "none", "activity": "idle", "descendant_signals": [{"pane_id": panes[index]}]}),
                 )).collect()),
+                "pane_completions": keyed("pane", json!({"session": "s", "server": "m", "state_change_seq": 4})),
                 "request_verbs": keyed("pane", json!({"verb": "review"})),
                 "pane_terminal_sizes": keyed("pane", json!([80, 24])),
                 "resolved_sessions": keyed("pane", json!({"at_unix_ms": 1})),
@@ -1098,11 +1099,11 @@ mod tests {
             WORKSPACE_VIEWS,
             json!({"schema_version": 2, "workspaces": [
                 {"device_id": M, "path": M_ROOT, "agent_layout": layout(&tabs[0]),
-                 "view_bookmarks": {tabs[0].clone(): {"a1": "d1"}}, "view_visibility": {tabs[0].clone(): false}, "view_owner": tabs[0], "view_presentations": {tabs[0].clone(): {"views": false, "layout": {"root": {"area": {"id": "a3"}}}}}, "layout": {"root": {"area": {"id": "a1"}}}},
+                 "view_bookmarks": {tabs[0].clone(): {"a1": "d1"}}, "view_owner": tabs[0], "view_presentations": {tabs[0].clone(): {"views": false, "layout": {"root": {"area": {"id": "a3"}}}}}, "layout": {"root": {"area": {"id": "a1"}}}},
                 {"device_id": ALIAS, "path": C_ROOT, "agent_layout": layout(&tabs[1]),
-                 "view_bookmarks": {tabs[1].clone(): {"a1": "d2"}}, "view_visibility": {tabs[1].clone(): true}, "view_owner": tabs[1], "view_presentations": {tabs[1].clone(): {"views": true, "layout": {}}}, "layout": {}},
+                 "view_bookmarks": {tabs[1].clone(): {"a1": "d2"}}, "view_owner": tabs[1], "view_presentations": {tabs[1].clone(): {"views": true, "layout": {}}}, "layout": {}},
                 {"device_id": X, "path": X_ROOT, "agent_layout": layout(&tabs[2]),
-                 "view_bookmarks": {tabs[2].clone(): {"a1": "d3"}}, "view_visibility": {tabs[2].clone(): false}, "view_owner": tabs[2], "view_presentations": {tabs[2].clone(): {"views": false, "layout": {}}}, "layout": {}},
+                 "view_bookmarks": {tabs[2].clone(): {"a1": "d3"}}, "view_owner": tabs[2], "view_presentations": {tabs[2].clone(): {"views": false, "layout": {}}}, "layout": {}},
             ]}),
         );
         write(

@@ -191,6 +191,14 @@ impl WatchService {
         self.device.set(target);
     }
 
+    /// Whether a renderer draws the Explorer. With none, neither watcher
+    /// stamps anything; the targets the snapshot asked for are kept, so the
+    /// first renderer back is stamped for again at once.
+    pub fn set_drawn(&self, drawn: bool) {
+        self.local.set_drawn(drawn);
+        self.device.set_drawn(drawn);
+    }
+
     pub fn subscribe(&self) -> broadcast::Receiver<String> {
         self.frames.subscribe()
     }
@@ -198,6 +206,9 @@ impl WatchService {
 
 struct Watcher {
     kind: &'static str,
+    /// The target the snapshot asked for, and whether a renderer draws it;
+    /// `target` is the first while the second holds, else none.
+    asked: Mutex<(Option<Target>, bool)>,
     target: Arc<Mutex<Option<Target>>>,
     /// Wakes the poll when the target changes, so a folder the page has just
     /// listed is stamped at once rather than up to one interval later.
@@ -217,12 +228,28 @@ impl Watcher {
         ));
         Self {
             kind,
+            // A daemon no renderer count has reached yet is drawn, as the
+            // core is (`Runtime::ui_attached`).
+            asked: Mutex::new((None, true)),
             target,
             changed,
         }
     }
 
     fn set(&self, target: Option<Target>) {
+        let mut asked = self.asked.lock().expect("watch asked");
+        asked.0 = target;
+        self.apply(&asked);
+    }
+
+    fn set_drawn(&self, drawn: bool) {
+        let mut asked = self.asked.lock().expect("watch asked");
+        asked.1 = drawn;
+        self.apply(&asked);
+    }
+
+    fn apply(&self, (asked, drawn): &(Option<Target>, bool)) {
+        let target = if *drawn { asked.clone() } else { None };
         let mut current = self.target.lock().expect("watch target");
         if *current == target {
             return;
@@ -233,6 +260,7 @@ impl Watcher {
                 "component": "hided", "kind": "watch.target", "watch": self.kind,
                 "node": target.as_ref().map(|target| &target.node),
                 "folders": target.as_ref().map_or(0, |target| target.folders.len()),
+                "drawn": drawn,
             })
         );
         *current = target;
@@ -568,6 +596,30 @@ pub(crate) mod tests {
             watched_folders(root, &expanded),
             vec![PathBuf::from("/repo"), PathBuf::from("/repo/a")]
         );
+    }
+
+    /// With no renderer drawing, the watcher stamps nothing, whatever the
+    /// snapshot asks; the target it asked for is kept, so the first renderer
+    /// back is stamped for at once, and a target asked meanwhile is the one
+    /// stamped then.
+    #[test]
+    fn a_watcher_stamps_nothing_while_no_renderer_draws() {
+        let watcher = Watcher {
+            kind: "local",
+            asked: Mutex::new((None, true)),
+            target: Arc::new(Mutex::new(None)),
+            changed: Arc::new(Notify::new()),
+        };
+        let target = |root: &str| Target::of("test-node", root.to_owned(), &[]);
+        let stamped = |watcher: &Watcher| watcher.target.lock().unwrap().clone();
+        watcher.set(Some(target("/repo")));
+        assert_eq!(stamped(&watcher), Some(target("/repo")));
+        watcher.set_drawn(false);
+        assert_eq!(stamped(&watcher), None);
+        watcher.set(Some(target("/other")));
+        assert_eq!(stamped(&watcher), None, "a snapshot alone does not wake it");
+        watcher.set_drawn(true);
+        assert_eq!(stamped(&watcher), Some(target("/other")));
     }
 
     pub(crate) fn remote_snapshot() -> herdr_core::Snapshot {

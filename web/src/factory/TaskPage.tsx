@@ -184,7 +184,7 @@ function MetaLine({ detail, actions }: { detail: TaskDetail; actions: Actions })
       {detail.pr ? (
         <Button variant="link" size="sm" className="h-auto gap-xxs px-none font-mono text-caption text-muted-foreground" data-factory-pr={detail.pr.number} onClick={() => actions.openLink(detail.pr!.url, true)}>
           <GitPullRequestIcon aria-hidden="true" />
-          {detail.pr.number}
+          #{detail.pr.number}
         </Button>
       ) : null}
       {detail.branch ? <span className="font-mono [overflow-wrap:anywhere]">· {detail.branch}</span> : null}

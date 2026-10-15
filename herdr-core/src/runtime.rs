@@ -1303,6 +1303,9 @@ pub struct Runtime {
     /// judge each request by; written from the settings and the usage rows
     /// (`runtime/usage_limit.rs`).
     usage_limits: Arc<hide_ai::UsageLimits>,
+    /// Where every router tells what its attempts cost; the usage ledger
+    /// worker drains it (`runtime/usage_ledger.rs`).
+    ai_usage: Arc<crate::usage_ledger::ai_usage::AiUsageQueue>,
     /// Whether the diagnostic log last said the order is paused by the limit.
     usage_pause_announced: bool,
     recent_visible_tabs: Vec<String>,
@@ -1448,9 +1451,17 @@ pub struct Runtime {
     /// operator's behalf arms this, and it is memory only: a launch starts
     /// with the operator having looked at nothing.
     operator_focused_pane_id: Option<String>,
-    /// Persisted records waiting to compare against an agent after a fresh
-    /// Herdr connection. Agent detection can trail restored pane topology.
-    pending_read_record_reconciliation: HashSet<String>,
+    /// The read axis's view of the current connection to the local Herdr
+    /// server and to each device's: the mark that names the server and the
+    /// panes settled on it so far (`agent_state::ReadConnection`). Memory
+    /// only; every connection starts a new one.
+    local_read_connection: crate::agent_state::ReadConnection,
+    /// One per device target that has connected, so at most one per
+    /// registered device.
+    remote_read_connections: BTreeMap<String, crate::agent_state::ReadConnection>,
+    /// Numbers the marks this process makes, so two connections made in the
+    /// same millisecond still get different marks.
+    read_marks_made: u64,
     /// The tab Hide is showing in each checkout it has been asked about.
     ///
     /// Hide owns the visible tab. The navigator is rebuilt from Herdr's
@@ -2032,6 +2043,7 @@ impl Runtime {
             usage_popover_open: false,
             usage_popover_open_generation: 0,
             usage_limits: Arc::new(hide_ai::UsageLimits::new()),
+            ai_usage: crate::usage_ledger::ai_usage::AiUsageQueue::new(),
             usage_pause_announced: false,
             recent_visible_tabs: Vec::new(),
             pending_tab_rename: None,
@@ -2099,7 +2111,9 @@ impl Runtime {
             pet_waking_until_unix_ms: 0,
             pet_dragging: false,
             operator_focused_pane_id: None,
-            pending_read_record_reconciliation: HashSet::new(),
+            local_read_connection: crate::agent_state::ReadConnection::new(read_mark(0)),
+            remote_read_connections: BTreeMap::new(),
+            read_marks_made: 1,
             visible_tab_ids: BTreeMap::new(),
             tab_focus_requests: Vec::new(),
             herdr_tab_moves_read: None,
@@ -2468,6 +2482,12 @@ impl Runtime {
             .separate_view_areas()
             .then(|| AreaIntent::of(&event))
             .flatten();
+        // An open asked while the front files tool shows the tree alone
+        // keeps the tree beside what it opens, whichever route it takes and
+        // however late its view lands (B11, B12).
+        let lone_tree = (self.separate_view_areas() && AreaIntent::opens_view(&event))
+            .then(|| self.front_lone_tree())
+            .flatten();
         // A keystroke in a document is as frequent as terminal input and
         // moves no area either: its first edit keeps its own displays open,
         // and the next snapshot read's sync publishes that.
@@ -2496,6 +2516,12 @@ impl Runtime {
                 // The call is numbered even when nothing else moved (an
                 // open of the view already shown), and the shell must hear it.
                 changed = true;
+            }
+            if let Some(key) = lone_tree
+                && self.snapshot.status.last_error.is_none()
+                && self.front_workspace_key().as_ref() == Some(&key)
+            {
+                changed |= self.keep_lone_tree(&key);
             }
             if chooses_workspace && self.snapshot.status.last_error.is_none() {
                 self.mark_front_chosen();
@@ -2794,6 +2820,17 @@ fn import_native_app_shortcuts(snapshot: &mut Snapshot, source: &Path) -> bool {
         occurred_at: unix_milliseconds(),
     });
     false
+}
+
+/// A mark no other connection has written: this process's start, its id and
+/// how many marks it has made. Two hided processes never share a pid at the
+/// same millisecond, and one never makes the same count twice.
+fn read_mark(made: u64) -> String {
+    format!(
+        "{:x}-{:x}-{made:x}",
+        unix_milliseconds(),
+        std::process::id()
+    )
 }
 
 fn unix_milliseconds() -> u64 {

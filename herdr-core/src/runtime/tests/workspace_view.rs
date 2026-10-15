@@ -68,14 +68,24 @@ pub(super) fn layout(runtime: &mut Runtime, payload: serde_json::Value) {
     assert_eq!(runtime.snapshot.status.last_error, None);
 }
 
-/// Whether the front Workspace's File Views and Tools columns are on.
-fn columns(runtime: &Runtime) -> (bool, bool) {
+/// The front Workspace's lane: its tool, pin and tree.
+fn lane(runtime: &Runtime) -> (Option<Tool>, bool, bool) {
     let view = runtime
         .snapshot
         .workspace_view
         .as_ref()
         .expect("a front Workspace");
-    (view.views, view.tools)
+    (view.tool, view.pinned, view.tree)
+}
+
+/// The front Workspace's last lane call number.
+fn called(runtime: &Runtime) -> u64 {
+    runtime
+        .snapshot
+        .workspace_view
+        .as_ref()
+        .unwrap()
+        .lane_called
 }
 
 fn only_display(runtime: &Runtime) -> (serde_json::Value, String) {
@@ -412,24 +422,27 @@ fn a_terminal_tab_choice_keeps_the_workspace_document_only_with_separate_areas()
     }
 }
 
-/// PRD three-column-panel B2, B4, B22, D-17: a new Workspace shows Agent
-/// Views alone; an explicit file open turns File Views on and the file lands
-/// in it; a session update changes no column, and an agent or tab chosen
-/// from anywhere changes no Tools column while File Views follows that tab's
-/// own Views, none for a tab not shown before.
+/// PRD right-lane B1, B15, B16: a new Workspace shows Agent Views alone; an
+/// explicit file open opens the lane on the files tool, numbers that call
+/// and lands the file in it; a session update, and an agent or tab chosen
+/// from anywhere, move no lane state the core keeps; a tab not shown before
+/// has no Views of its own.
 #[test]
-fn a_file_open_turns_file_views_on_and_an_agent_choice_changes_no_column() {
+fn a_file_open_opens_the_files_lane_and_an_agent_choice_moves_no_lane_state() {
     let (runtime, checkout_id, directory) = strip_checkout("area-intent");
     let mut runtime = with_new_views(runtime, "area-intent");
     with_tabs(&mut runtime, &directory);
-    assert_eq!(columns(&runtime), (false, false), "Agent Views alone");
-    assert_eq!(
-        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
-        Tool::Explorer
-    );
+    assert_eq!(lane(&runtime), (None, false, false), "Agent Views alone");
+    assert_eq!(called(&runtime), 0);
 
     open(&mut runtime, &checkout_id, &directory.join("notes.md"));
-    assert_eq!(columns(&runtime), (true, false));
+    assert_eq!(lane(&runtime), (Some(Tool::Files), false, false));
+    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+    assert!(
+        view.lane_called > 0 && view.lane_called == view.lane_calls,
+        "the open is this Workspace's newest lane call"
+    );
+    let opened = view.lane_called;
     assert_eq!(active_label(&runtime).as_deref(), Some("notes.md"));
 
     let tabs = ["w-order:t1", "w-order:t2"];
@@ -440,38 +453,68 @@ fn a_file_open_turns_file_views_on_and_an_agent_choice_changes_no_column() {
         "w-order:t2",
     )));
     assert_eq!(
-        columns(&runtime),
-        (true, false),
+        (lane(&runtime), called(&runtime)),
+        ((Some(Tool::Files), false, false), opened),
         "a session update is not a request"
     );
     runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
     assert_eq!(runtime.snapshot.status.last_error, None);
     assert_eq!(
-        columns(&runtime),
-        (false, false),
+        (lane(&runtime), called(&runtime)),
+        ((Some(Tool::Files), false, false), opened),
+        "an agent choice moves no lane state and calls nothing"
+    );
+    assert_eq!(
+        active_label(&runtime),
+        None,
         "a tab not shown before has no Views"
     );
-    layout(&mut runtime, serde_json::json!({"tools": true}));
+    layout(&mut runtime, serde_json::json!({"pinned": true}));
     runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1"));
-    assert_eq!(columns(&runtime), (true, true));
+    assert_eq!(lane(&runtime), (Some(Tool::Files), true, false));
 }
 
-/// PRD three-column-panel D-05, B11, B12, B13, B21: each column turns on and
-/// off by its own result value, the same value twice lands once, turning one
-/// off keeps the other and the View tree, and the widths are stored per
-/// Workspace within the core's bound.
+/// PRD right-lane D-12, B2, B5, B7, B11, B20: every lane field ends at the
+/// value sent, so a repeat changes nothing and reports no change; a tool
+/// sent again is still a call, so a page shows a lane it had hidden; closing
+/// keeps the pin and the View tree and turns the file tree off; and the
+/// widths are stored per Workspace within the core's bound.
 #[test]
-fn each_column_toggles_by_its_own_result_value_and_keeps_the_other() {
-    let (runtime, checkout_id, directory) = strip_checkout("columns");
-    let (_views, state) = views_path("columns");
+fn each_lane_field_ends_at_its_sent_value_and_a_repeat_converges() {
+    let (runtime, checkout_id, directory) = strip_checkout("lane-fields");
+    let (_views, state) = views_path("lane-fields");
     let mut runtime = with_views(runtime, &state);
     with_tabs(&mut runtime, &directory);
     open(&mut runtime, &checkout_id, &directory.join("notes.md"));
-    layout(&mut runtime, serde_json::json!({"tools": true}));
-    assert_eq!(columns(&runtime), (true, true));
+    layout(
+        &mut runtime,
+        serde_json::json!({"pinned": true, "tree": true}),
+    );
+    assert_eq!(lane(&runtime), (Some(Tool::Files), true, true));
+    assert!(!runtime.dispatch_json(&explorer_event(
+        "workspace_view",
+        serde_json::json!({"pinned": true, "tree": true})
+    )));
 
-    layout(&mut runtime, serde_json::json!({"views": false}));
-    assert_eq!(columns(&runtime), (false, true), "Tools stays");
+    let before = called(&runtime);
+    layout(&mut runtime, serde_json::json!({"tool": "agent_sessions"}));
+    assert_eq!(lane(&runtime), (Some(Tool::AgentSessions), true, true));
+    assert_eq!(called(&runtime), before + 1);
+    // The same tool again changes nothing stored but is a call the page
+    // shows, so it reports a change.
+    assert!(runtime.dispatch_json(&explorer_event(
+        "workspace_view",
+        serde_json::json!({"tool": "agent_sessions"})
+    )));
+    assert_eq!(called(&runtime), before + 2);
+
+    layout(&mut runtime, serde_json::json!({"tool": null}));
+    assert_eq!(
+        lane(&runtime),
+        (None, true, false),
+        "closing keeps the pin and turns the tree off (B11)"
+    );
+    assert_eq!(called(&runtime), before + 2, "a close is no call");
     assert_eq!(
         runtime
             .snapshot
@@ -481,126 +524,175 @@ fn each_column_toggles_by_its_own_result_value_and_keeps_the_other() {
             .layout
             .display_count,
         1,
-        "turning File Views off closes no view"
+        "closing the lane closes no view"
     );
-    // The same result sent again changes nothing and reports no change.
     assert!(!runtime.dispatch_json(&explorer_event(
         "workspace_view",
-        serde_json::json!({"views": false})
+        serde_json::json!({"tool": null})
     )));
-    assert_eq!(columns(&runtime), (false, true));
-    layout(&mut runtime, serde_json::json!({"views": true}));
-    assert_eq!(columns(&runtime), (true, true));
+    layout(&mut runtime, serde_json::json!({"tool": "files"}));
+    assert_eq!(lane(&runtime), (Some(Tool::Files), true, false));
     assert_eq!(active_label(&runtime).as_deref(), Some("notes.md"));
-    layout(&mut runtime, serde_json::json!({"tools": false}));
-    assert_eq!(columns(&runtime), (true, false), "File Views stays");
 
     layout(
         &mut runtime,
-        serde_json::json!({"views_width": 700, "tools_width": 300}),
+        serde_json::json!({"lane_width": 700, "tree_width": 300}),
     );
-    layout(&mut runtime, serde_json::json!({"tools_width": 99_999}));
+    layout(&mut runtime, serde_json::json!({"tree_width": 99_999}));
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
     assert_eq!(
-        (view.views_width, view.tools_width),
-        (Some(700), Some(crate::workspace_views::MAX_COLUMN_WIDTH))
+        (view.lane_width, view.tree_width),
+        (Some(700), Some(crate::workspace_views::MAX_WIDTH))
     );
     let (saved, _) = crate::workspace_views::load(&state, 0);
     let saved = saved.get(&view.device_id, &view.path).unwrap();
     assert_eq!(
-        (saved.views, saved.tools, saved.views_width),
-        (true, false, Some(700))
+        (saved.tool, saved.pinned, saved.tree, saved.lane_width),
+        (Some(Tool::Files), true, false, Some(700))
     );
     let written = std::fs::read_to_string(&state).unwrap();
-    for retired in ["\"panel\"", "pinned", "views_over_share", "covered"] {
+    for retired in ["\"views\"", "\"tools\"", "views_width", "lane_called"] {
         assert!(!written.contains(retired), "{retired} is not written");
     }
 }
 
-/// PRD three-column-panel D-10, B16: File Views turned on with no view opens
-/// one New tab page in the same event, and closing that untouched tab turns
-/// File Views off again.
+/// PRD right-lane B12: the files lane opened with no view opens nothing in
+/// it (the shell draws the tree alone); a file picked there opens beside the
+/// tree, which stays on; and closing the last view keeps the lane on the
+/// files tool, where the tree shows whether or not it is on.
 #[test]
-fn file_views_turned_on_with_no_view_opens_a_new_tab_page() {
-    let (runtime, _checkout_id, _directory) = strip_checkout("views-empty");
+fn the_files_lane_opens_with_no_view_and_stays_on_when_the_last_view_closes() {
+    let (runtime, checkout_id, directory) = strip_checkout("views-empty");
     let mut runtime = with_new_views(runtime, "views-empty");
-    layout(&mut runtime, serde_json::json!({"views": true}));
+    layout(&mut runtime, serde_json::json!({"tool": "files"}));
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert!(view.views);
-    assert_eq!(view.layout.display_count, 1);
+    assert_eq!(view.tool, Some(Tool::Files));
+    assert_eq!(view.layout.display_count, 0, "no New tab page is opened");
+    assert!(!runtime.new_tab_visible());
     assert!(
-        runtime.new_tab_visible(),
-        "the one view is the New tab page"
-    );
-    // The same request again opens no second page.
-    layout(&mut runtime, serde_json::json!({"views": true}));
-    assert_eq!(
-        runtime
-            .snapshot
-            .workspace_view
-            .as_ref()
-            .unwrap()
-            .layout
-            .display_count,
-        1
+        runtime.snapshot.ui_state.right_panel_visible
+            && runtime.snapshot.ui_state.right_panel_section == RightPanelSection::Explorer,
+        "the tree alone is the files tool's content"
     );
 
+    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+    assert_eq!(lane(&runtime), (Some(Tool::Files), false, true));
+    assert!(
+        runtime.snapshot.ui_state.right_panel_visible,
+        "the file opens beside the tree it was picked from"
+    );
+    layout(&mut runtime, serde_json::json!({"tree": false}));
+    assert!(
+        !runtime.snapshot.ui_state.right_panel_visible,
+        "a document with the tree off draws no tree"
+    );
     close_only_display(&mut runtime);
-    assert_eq!(columns(&runtime), (false, false));
+    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
     assert_eq!(
-        runtime
-            .snapshot
-            .workspace_view
-            .as_ref()
-            .unwrap()
-            .layout
-            .display_count,
-        0
+        (view.tool, view.layout.display_count),
+        (Some(Tool::Files), 0)
+    );
+    assert!(runtime.snapshot.ui_state.right_panel_visible);
+}
+
+/// PRD right-lane B12, B16: only a file opened while the files tool shows the
+/// tree alone keeps the tree; opened from a closed lane or another tool, the
+/// files tool opens with the tree as it was, the file read before or not.
+#[test]
+fn a_file_opened_from_a_closed_lane_or_another_tool_leaves_the_tree_off() {
+    let (runtime, checkout_id, directory) = strip_checkout("tree-stays-off");
+    let mut runtime = with_new_views(runtime, "tree-stays-off");
+    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+    assert_eq!(
+        lane(&runtime),
+        (Some(Tool::Files), false, false),
+        "from a closed lane"
+    );
+    close_only_display(&mut runtime);
+    layout(&mut runtime, serde_json::json!({"tool": "changes"}));
+    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+    assert_eq!(
+        lane(&runtime),
+        (Some(Tool::Files), false, false),
+        "from another tool, the file read before"
     );
 }
 
-/// Issue 170, revised, and PRD three-column-panel B5, B12: Tools holds one
-/// tool; choosing one turns Tools on with it, a reveal turns Tools on with
-/// the Explorer and leaves File Views as it was, and `reveal_path` (a
-/// terminal link) turns File Views on with the file it opens and
-/// leaves Tools as it was (B4); a folder, which only the Explorer shows,
-/// turns Tools on and leaves File Views as it was.
+/// PRD right-lane B11, B12: an open asked while the files tool shows the tree
+/// alone keeps the tree beside what it opens, a page as much as a file, and
+/// a refused open moves nothing.
 #[test]
-fn a_tool_or_a_reveal_turns_tools_on_and_leaves_file_views_alone() {
+fn an_open_asked_from_the_lone_tree_keeps_the_tree_whatever_it_opens() {
+    let (runtime, checkout_id, directory) = strip_checkout("lone-tree");
+    let mut runtime = with_new_views(runtime, "lone-tree");
+    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+    close_only_display(&mut runtime);
+    assert_eq!(lane(&runtime), (Some(Tool::Files), false, false));
+    let page = |url: &str| {
+        explorer_event(
+            "browser_open",
+            serde_json::json!({
+                "url": url,
+                "workspace": {"device_id": crate::node::TEST_NODE, "path": directory.to_string_lossy()},
+            }),
+        )
+    };
+    runtime.dispatch_json(&page("not an address"));
+    assert!(runtime.snapshot.status.last_error.is_some());
+    assert_eq!(lane(&runtime), (Some(Tool::Files), false, false), "refused");
+    runtime.dispatch_json(&page("https://example.test/page"));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(lane(&runtime), (Some(Tool::Files), false, true));
+
+    // A terminal link's file, once it settles in this Workspace.
+    close_only_display(&mut runtime);
+    layout(&mut runtime, serde_json::json!({"tree": false}));
+    runtime.dispatch_json(&explorer_event(
+        "reveal_path",
+        serde_json::json!({
+            "path": directory.join("notes.md"), "workspace_id": runtime.snapshot.navigator.focused_workspace_id,
+            "checkout_id": checkout_id, "is_directory": false,
+        }),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(lane(&runtime), (Some(Tool::Files), false, true), "a link");
+}
+
+/// PRD right-lane B16, D-13: a reveal opens the files tool with its tree,
+/// opens nothing and is a call; a terminal link's file opens the files tool
+/// and leaves the tree as it was; a linked folder opens the files tool with
+/// its tree on, where the folder shows. Each is a lane call.
+#[test]
+fn a_reveal_or_a_linked_folder_opens_the_files_tool_with_its_tree() {
     let (runtime, _checkout_id, directory) = strip_checkout("tool-opens");
     let mut runtime = with_new_views(runtime, "tool-opens");
-    let tools = |runtime: &Runtime| {
-        let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-        (view.tool, view.tools)
-    };
-    assert_eq!(tools(&runtime), (Tool::Explorer, false));
     assert!(!runtime.snapshot.ui_state.right_panel_visible);
 
     layout(&mut runtime, serde_json::json!({"tool": "changes"}));
-    assert_eq!(columns(&runtime), (false, true), "Tools alone is a state");
-    assert_eq!(tools(&runtime), (Tool::Changes, true));
-    assert!(runtime.snapshot.ui_state.right_panel_visible);
-    layout(&mut runtime, serde_json::json!({"tool": "explorer"}));
-    assert_eq!(tools(&runtime), (Tool::Explorer, true));
-
-    // Turning Tools off keeps the tool for the next time.
-    layout(&mut runtime, serde_json::json!({"tools": false}));
-    assert_eq!(tools(&runtime), (Tool::Explorer, false));
-    assert!(!runtime.snapshot.ui_state.right_panel_visible);
-
-    layout(
-        &mut runtime,
-        serde_json::json!({"tool": "changes", "tools": false}),
-    );
-    assert_eq!(tools(&runtime), (Tool::Changes, false));
+    assert_eq!(lane(&runtime), (Some(Tool::Changes), false, false));
+    let before = called(&runtime);
     layout(
         &mut runtime,
         serde_json::json!({"reveal": directory.join("notes.md").to_string_lossy()}),
     );
-    assert_eq!(columns(&runtime), (false, true), "a reveal opens nothing");
-    assert_eq!(tools(&runtime), (Tool::Explorer, true));
+    assert_eq!(lane(&runtime), (Some(Tool::Files), false, true));
+    assert_eq!(called(&runtime), before + 1);
+    assert_eq!(
+        runtime
+            .snapshot
+            .workspace_view
+            .as_ref()
+            .unwrap()
+            .layout
+            .display_count,
+        0,
+        "a reveal opens nothing"
+    );
 
-    layout(&mut runtime, serde_json::json!({"tools": false}));
+    layout(
+        &mut runtime,
+        serde_json::json!({"tool": null, "tree": false}),
+    );
     let checkout_id = runtime
         .snapshot
         .navigator
@@ -616,19 +708,15 @@ fn a_tool_or_a_reveal_turns_tools_on_and_leaves_file_views_alone() {
     ));
     assert_eq!(runtime.snapshot.status.last_error, None);
     assert_eq!(
-        columns(&runtime),
-        (true, false),
-        "a linked file leaves Tools off"
+        lane(&runtime),
+        (Some(Tool::Files), false, false),
+        "a linked file leaves the tree off"
     );
-    assert_eq!(tools(&runtime), (Tool::Explorer, false));
-    assert!(!runtime.snapshot.ui_state.right_panel_visible);
+    assert_eq!(called(&runtime), before + 2);
 
-    // A linked folder opens nothing in File Views: it turns Tools on with
-    // the Explorer, leaves File Views off and is no File Views call.
-    layout(&mut runtime, serde_json::json!({"views": false}));
+    layout(&mut runtime, serde_json::json!({"tool": null}));
     let folder = directory.join("docs");
     std::fs::create_dir_all(&folder).unwrap();
-    let calls = runtime.workspace_views.as_ref().unwrap().views_calls;
     runtime.dispatch_json(&explorer_event(
         "reveal_path",
         serde_json::json!({
@@ -638,64 +726,61 @@ fn a_tool_or_a_reveal_turns_tools_on_and_leaves_file_views_alone() {
     ));
     assert_eq!(runtime.snapshot.status.last_error, None);
     assert_eq!(
-        columns(&runtime),
-        (false, true),
-        "a linked folder shows in the Explorer alone"
+        lane(&runtime),
+        (Some(Tool::Files), false, true),
+        "a linked folder shows in the tree"
     );
-    assert_eq!(tools(&runtime), (Tool::Explorer, true));
-    assert_eq!(
-        runtime.workspace_views.as_ref().unwrap().views_calls,
-        calls,
-        "a linked folder is no File Views call"
-    );
+    assert_eq!(called(&runtime), before + 3);
 }
 
-/// D-05, A5: the tool is the Workspace's, and the one global panel every
-/// existing reader gates on follows it; an unknown value is refused.
+/// PRD right-lane D-01, A5: the lane is the Workspace's, and the one global
+/// panel every existing reader gates on follows it: the files tool reads the
+/// Explorer only while its tree is drawn, and a closed lane reads nothing;
+/// a value no lane has, the retired `explorer` included, is refused.
 #[test]
-fn workspace_tools_drive_the_panel_the_changes_reader_gates_on() {
-    let (runtime, _checkout_id, _directory) = strip_checkout("tools");
+fn the_lane_drives_the_panel_the_readers_gate_on() {
+    let (runtime, checkout_id, directory) = strip_checkout("tools");
     let mut runtime = with_new_views(runtime, "tools");
+    let panel = |runtime: &Runtime| {
+        (
+            runtime.snapshot.ui_state.right_panel_visible,
+            runtime.snapshot.ui_state.right_panel_section,
+        )
+    };
     layout(&mut runtime, serde_json::json!({"tool": "changes"}));
-    assert!(runtime.snapshot.ui_state.right_panel_visible);
-    assert_eq!(
-        runtime.snapshot.ui_state.right_panel_section,
-        RightPanelSection::Changes
-    );
-
-    layout(&mut runtime, serde_json::json!({"tool": "explorer"}));
-    assert_eq!(
-        runtime.snapshot.ui_state.right_panel_section,
-        RightPanelSection::Explorer
-    );
-
+    assert_eq!(panel(&runtime), (true, RightPanelSection::Changes));
     layout(&mut runtime, serde_json::json!({"tool": "agent_sessions"}));
-    assert_eq!(
-        runtime.snapshot.ui_state.right_panel_section,
-        RightPanelSection::AgentSessions
-    );
-    assert_eq!(
-        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
-        Tool::AgentSessions
-    );
+    assert_eq!(panel(&runtime), (true, RightPanelSection::AgentSessions));
+    layout(&mut runtime, serde_json::json!({"tool": "memory"}));
+    assert_eq!(panel(&runtime), (true, RightPanelSection::Memory));
 
-    layout(&mut runtime, serde_json::json!({"tools": false}));
-    assert!(!runtime.snapshot.ui_state.right_panel_visible);
-
-    runtime.dispatch_json(&explorer_event(
-        "workspace_view",
-        serde_json::json!({"tool": "terminal"}),
-    ));
-    assert_eq!(
-        runtime
-            .snapshot
-            .status
-            .last_error
-            .as_ref()
-            .map(|error| error.kind.as_str()),
-        Some("workspace_view.unknown_tool")
+    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+    assert!(
+        !panel(&runtime).0,
+        "a document without its tree reads no tree"
     );
-    assert!(!runtime.snapshot.ui_state.right_panel_visible);
+    layout(&mut runtime, serde_json::json!({"tree": true}));
+    assert_eq!(panel(&runtime), (true, RightPanelSection::Explorer));
+
+    layout(&mut runtime, serde_json::json!({"tool": null}));
+    assert!(!panel(&runtime).0);
+
+    for refused in ["terminal", "explorer"] {
+        runtime.dispatch_json(&explorer_event(
+            "workspace_view",
+            serde_json::json!({"tool": refused}),
+        ));
+        assert_eq!(
+            runtime
+                .snapshot
+                .status
+                .last_error
+                .as_ref()
+                .map(|error| error.kind.as_str()),
+            Some("workspace_view.unknown_tool")
+        );
+        assert_eq!(lane(&runtime).0, None);
+    }
 }
 
 /// B19: the daemon opens a checkout's root after the first snapshot names
@@ -860,14 +945,14 @@ fn returning_to_a_workspace_without_agent_tabs_keeps_its_active_view_tab() {
     assert_eq!(active_label(&runtime).as_deref(), Some("notes.md"));
 }
 
-/// B10, AGENTS.md one event per action: revealing a file shows the column on the Explorer
-/// and unfolds its folders in the same `workspace_view`, and a path outside
-/// the Workspace is refused without showing anything.
+/// PRD right-lane B16, AGENTS.md one event per action: revealing a file
+/// opens the files tool with its tree and unfolds its folders in the same
+/// `workspace_view`, and a path outside the Workspace is refused without
+/// showing anything.
 #[test]
-fn a_reveal_shows_the_explorer_and_unfolds_the_folders_in_one_event() {
+fn a_reveal_shows_the_tree_and_unfolds_the_folders_in_one_event() {
     let (runtime, _checkout_id, directory) = strip_checkout("reveal");
     let mut runtime = with_new_views(runtime, "reveal");
-    layout(&mut runtime, serde_json::json!({"tools": false}));
     let root = directory.to_string_lossy().into_owned();
 
     runtime.dispatch_json(&explorer_event(
@@ -875,7 +960,7 @@ fn a_reveal_shows_the_explorer_and_unfolds_the_folders_in_one_event() {
         serde_json::json!({"reveal": "/elsewhere/a.txt"}),
     ));
     assert!(runtime.snapshot.status.last_error.is_some());
-    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().tools);
+    assert_eq!(lane(&runtime), (None, false, false));
     runtime.dispatch_json(&explorer_event(
         "workspace_view",
         serde_json::json!({"reveal": format!("{root}/../elsewhere/a.txt")}),
@@ -890,13 +975,14 @@ fn a_reveal_shows_the_explorer_and_unfolds_the_folders_in_one_event() {
         Some("workspace_view.reveal_outside"),
         "a path that climbs out of the Workspace is refused, not unfolded"
     );
-    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().tools);
+    assert_eq!(lane(&runtime), (None, false, false));
+    assert_eq!(called(&runtime), 0);
 
     layout(
         &mut runtime,
         serde_json::json!({"reveal": format!("{root}/src/deep/a.rs")}),
     );
-    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().tools);
+    assert_eq!(lane(&runtime), (Some(Tool::Files), false, true));
     let expanded = &runtime.snapshot.ui_state.expanded_paths;
     assert!(expanded.contains(&format!("{root}/src")));
     assert!(expanded.contains(&format!("{root}/src/deep")));
@@ -1086,7 +1172,7 @@ fn workspace_tools_never_reach_the_older_settings_file() {
     let mut runtime = with_new_views(runtime, "settings");
     layout(
         &mut runtime,
-        serde_json::json!({"tool": "explorer", "tools": !saved.0}),
+        serde_json::json!({"tool": if saved.0 { serde_json::Value::Null } else { "changes".into() }}),
     );
     assert_eq!(runtime.snapshot.ui_state.right_panel_visible, !saved.0);
     let written = runtime.ui_state_to_save();
@@ -1116,13 +1202,13 @@ fn removing_a_device_forgets_its_workspace_views() {
             host_consent: None,
         });
     let store = runtime.workspace_views.as_mut().unwrap();
-    store.views.entry("studio", "/srv/app").views = true;
+    store.views.entry("studio", "/srv/app").tool = Some(Tool::Files);
     store
         .views
         .entry(crate::node::TEST_NODE, &directory.to_string_lossy());
     runtime.apply_area_intent_to(
         &("studio".to_owned(), "/srv/app".to_owned()),
-        AreaIntent::Views,
+        AreaIntent::Files,
     );
 
     assert!(runtime.dispatch_json(&explorer_event(
@@ -1142,26 +1228,26 @@ fn removing_a_device_forgets_its_workspace_views() {
             .workspace_views
             .as_ref()
             .unwrap()
-            .views_called
+            .lane_called
             .keys()
             .all(|(device, _)| device != "studio")
     );
 }
 
-/// Column-call history follows the existing bounded Workspace retention.
+/// Lane-call history follows the existing bounded Workspace retention.
 #[test]
-fn workspace_column_calls_forget_evicted_workspaces() {
-    let (runtime, _, _) = strip_checkout("column-calls-cap");
-    let mut runtime = with_new_views(runtime, "column-calls-cap");
+fn workspace_lane_calls_forget_evicted_workspaces() {
+    let (runtime, _, _) = strip_checkout("lane-calls-cap");
+    let mut runtime = with_new_views(runtime, "lane-calls-cap");
     for index in 0..=crate::workspace_views::MAX_WORKSPACES {
         let key = ("studio".to_owned(), format!("/srv/workspace-{index}"));
-        runtime.apply_area_intent_to(&key, AreaIntent::Views);
+        runtime.apply_area_intent_to(&key, AreaIntent::Files);
     }
     let store = runtime.workspace_views.as_ref().unwrap();
-    assert!(store.views_called.len() <= crate::workspace_views::MAX_WORKSPACES);
+    assert!(store.lane_called.len() <= crate::workspace_views::MAX_WORKSPACES);
     assert!(
         store
-            .views_called
+            .lane_called
             .keys()
             .all(|(device, path)| store.views.get(device, path).is_some())
     );
@@ -1169,18 +1255,17 @@ fn workspace_column_calls_forget_evicted_workspaces() {
         "studio".to_owned(),
         format!("/srv/workspace-{}", crate::workspace_views::MAX_WORKSPACES),
     );
-    assert_eq!(store.views_called.get(&last), Some(&store.views_calls));
+    assert_eq!(store.lane_called.get(&last), Some(&store.lane_calls));
 }
 
-/// PRD three-column-panel D-10, B17: closing the last view turns File Views
-/// off in the same transition and saves it, whatever Tools is, and Tools
-/// stays as it was.
+/// PRD right-lane B12: closing the last view keeps the lane open on the
+/// files tool, pinned or not, with that state saved.
 #[test]
-fn closing_the_last_view_turns_file_views_off_and_keeps_tools() {
-    for tools in [true, false] {
+fn closing_the_last_view_keeps_the_lane_on_the_files_tool() {
+    for pinned in [true, false] {
         for browser in [true, false] {
-            let (runtime, checkout_id, directory) = strip_checkout("last-view-columns");
-            let (_views, state) = views_path("last-view-columns");
+            let (runtime, checkout_id, directory) = strip_checkout("last-view-lane");
+            let (_views, state) = views_path("last-view-lane");
             let mut runtime = with_views(runtime, &state);
             with_tabs(&mut runtime, &directory);
             if browser {
@@ -1191,17 +1276,17 @@ fn closing_the_last_view_turns_file_views_off_and_keeps_tools() {
             } else {
                 open(&mut runtime, &checkout_id, &directory.join("notes.md"));
             }
-            layout(&mut runtime, serde_json::json!({"tools": tools}));
-            assert_eq!(columns(&runtime), (true, tools));
+            layout(&mut runtime, serde_json::json!({"pinned": pinned}));
+            assert_eq!(lane(&runtime), (Some(Tool::Files), pinned, false));
             close_only_display(&mut runtime);
             let view = runtime.snapshot.workspace_view.as_ref().unwrap();
             assert_eq!(
-                (view.layout.display_count, view.views, view.tools),
-                (0, false, tools)
+                (view.layout.display_count, view.tool, view.pinned),
+                (0, Some(Tool::Files), pinned)
             );
             let (saved, _) = crate::workspace_views::load(&state, 0);
             let saved = saved.get(&view.device_id, &view.path).unwrap();
-            assert_eq!((saved.views, saved.tools), (false, tools));
+            assert_eq!((saved.tool, saved.pinned), (Some(Tool::Files), pinned));
         }
     }
 }
@@ -1219,7 +1304,7 @@ fn workspace_width_requests_are_bounded_ephemeral_and_confirm_exact_intents() {
     with_tabs(&mut runtime, &directory);
     layout(
         &mut runtime,
-        serde_json::json!({"views_width": 672, "width_request_id": "divider:first"}),
+        serde_json::json!({"lane_width": 672, "width_request_id": "divider:first"}),
     );
     assert_eq!(
         runtime
@@ -1233,22 +1318,22 @@ fn workspace_width_requests_are_bounded_ephemeral_and_confirm_exact_intents() {
     );
     layout(
         &mut runtime,
-        serde_json::json!({"views_width": 704, "width_request_id": "divider:second"}),
+        serde_json::json!({"lane_width": 704, "width_request_id": "divider:second"}),
     );
     let published = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert_eq!(published.views_width, Some(704));
+    assert_eq!(published.lane_width, Some(704));
     assert_eq!(
         published.width_request_id.as_deref(),
         Some("divider:second")
     );
     assert!(!runtime.dispatch_json(&explorer_event(
         "workspace_view",
-        serde_json::json!({"views_width": 704, "width_request_id": "divider:second"})
+        serde_json::json!({"lane_width": 704, "width_request_id": "divider:second"})
     )));
     let saved = std::fs::read_to_string(&state).unwrap();
     assert!(runtime.dispatch_json(&explorer_event(
         "workspace_view",
-        serde_json::json!({"views_width": 704, "width_request_id": "divider:third"})
+        serde_json::json!({"lane_width": 704, "width_request_id": "divider:third"})
     )));
     assert_eq!(
         runtime
@@ -1262,7 +1347,7 @@ fn workspace_width_requests_are_bounded_ephemeral_and_confirm_exact_intents() {
     );
     assert_eq!(std::fs::read_to_string(&state).unwrap(), saved);
     assert!(!saved.contains("width_request_id"));
-    layout(&mut runtime, serde_json::json!({"tools": true}));
+    layout(&mut runtime, serde_json::json!({"pinned": true}));
     assert_eq!(
         runtime
             .snapshot
@@ -1273,7 +1358,7 @@ fn workspace_width_requests_are_bounded_ephemeral_and_confirm_exact_intents() {
             .as_deref(),
         Some("divider:third")
     );
-    layout(&mut runtime, serde_json::json!({"views_width": 650}));
+    layout(&mut runtime, serde_json::json!({"lane_width": 650}));
     assert_eq!(
         runtime
             .snapshot
@@ -1286,19 +1371,14 @@ fn workspace_width_requests_are_bounded_ephemeral_and_confirm_exact_intents() {
     for invalid in [String::new(), "x".repeat(129)] {
         assert!(runtime.dispatch_json(&explorer_event(
             "workspace_view",
-            serde_json::json!({"views_width": 720, "width_request_id": invalid})
+            serde_json::json!({"lane_width": 720, "width_request_id": invalid})
         )));
         assert_eq!(
             runtime.snapshot.status.last_error.as_ref().unwrap().kind,
             "workspace_view.invalid_width_request"
         );
         assert_eq!(
-            runtime
-                .snapshot
-                .workspace_view
-                .as_ref()
-                .unwrap()
-                .views_width,
+            runtime.snapshot.workspace_view.as_ref().unwrap().lane_width,
             Some(650)
         );
     }
@@ -1306,7 +1386,7 @@ fn workspace_width_requests_are_bounded_ephemeral_and_confirm_exact_intents() {
     let key = (published.device_id.clone(), published.path.clone());
     drop(runtime);
     let (reloaded, _) = crate::workspace_views::load(&state, 0);
-    assert_eq!(reloaded.get(&key.0, &key.1).unwrap().views_width, Some(650));
+    assert_eq!(reloaded.get(&key.0, &key.1).unwrap().lane_width, Some(650));
     std::fs::remove_dir_all(state.parent().unwrap()).unwrap();
     std::fs::remove_dir_all(directory).unwrap();
 }

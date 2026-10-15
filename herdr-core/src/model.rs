@@ -239,35 +239,36 @@ impl<T: Serialize> Serialize for Edited<T> {
     }
 }
 
-/// What the front Workspace shows: whether its File Views and Tools columns
-/// are on, the Tools column's tool, the two columns' widths, and its View
-/// area tree. The editor's `active_tab_id` is the document of the active
-/// area's active display.
+/// What the front Workspace shows: its right lane (the tool, the pin, the
+/// file tree and both widths) and its View area tree (PRD right-lane D-11).
+/// The editor's `active_tab_id` is the document of the active area's active
+/// display.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WorkspaceViewSnapshot {
     pub device_id: String,
     pub path: String,
-    /// Whether the File Views column is on (PRD three-column-panel D-08).
-    pub views: bool,
-    /// Whether the Tools column is on.
-    pub tools: bool,
-    /// The one tool the Tools column holds, kept while the column is off.
-    pub tool: crate::workspace_views::Tool,
-    /// The File Views column's width in CSS pixels, or null for the shell's
-    /// default until it is resized.
-    pub views_width: Option<u32>,
-    /// The Tools column's width, the same way.
-    pub tools_width: Option<u32>,
+    /// The tool the lane shows, or null while it is closed. An unpinned
+    /// lane is drawn over the agents only once a call opened it (D-02).
+    pub tool: Option<crate::workspace_views::Tool>,
+    /// Whether the lane is pinned beside Agent Views (D-03).
+    pub pinned: bool,
+    /// Whether the files tool shows the file tree column (D-05).
+    pub tree: bool,
+    /// The lane's width in CSS pixels, or null for the shell's default
+    /// until it is resized.
+    pub lane_width: Option<u32>,
+    /// The tree column's width, the same way.
+    pub tree_width: Option<u32>,
     /// The last width request the core accepted for this Workspace. Runtime
     /// only, so a shell can distinguish its latest intent from an older echo.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub width_request_id: Option<String>,
-    /// The number of this Workspace's last File Views call, 0 for none since
-    /// the core started; a number past `views_calls` as the shell last read
-    /// it is a call the shell shows in a narrow body (D-07).
-    pub views_called: u64,
-    /// How many File Views calls the core has numbered, in any Workspace.
-    pub views_calls: u64,
+    /// The number of this Workspace's last lane call, 0 for none since the
+    /// core started; a number past `lane_calls` as the shell last read it is
+    /// a call the shell shows by drawing the lane (D-02, B16).
+    pub lane_called: u64,
+    /// How many lane calls the core has numbered, in any Workspace.
+    pub lane_calls: u64,
     /// Whether this is the Workspace the operator last chose, now or before a
     /// restart, which the shell opens on; any other front starts on Main
     /// (D-11).
@@ -1093,6 +1094,11 @@ pub struct SidebarAgentSnapshot {
     /// declaration is compared with when this row is its parent.
     #[serde(skip_serializing)]
     pub lineage_session: Option<String>,
+    /// Hide's server mark as the pane carries it (`wire::SERVER_MARK_TOKEN`):
+    /// which Herdr server a saved `state_change_seq` for this pane can be
+    /// compared on.
+    #[serde(skip_serializing)]
+    pub server_mark: Option<String>,
     /// Ownership, derived from the lineage alone: a root is the operator's own
     /// work, a descendant is work the root delegated. It is the fourth derived
     /// axis beside demand, activity and read, and it is advice rather than a
@@ -2565,7 +2571,7 @@ pub struct ProjectSessionsSnapshot {
 }
 
 /// Project Memory on the wire: the Project a shell opened Memory for in its
-/// Tools column's Memory tab.
+/// lane's Memory tool.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct MemorySnapshot {
     pub project: Option<ProjectMemorySnapshot>,
@@ -3247,6 +3253,11 @@ pub struct UiStateSnapshot {
     // The store owns persistence; the shell only reads the derived unread axis.
     #[serde(default, skip_serializing)]
     pub pane_read_records: BTreeMap<String, PaneReadRecord>,
+    /// The panes whose last stop finished work, keyed by pane id, so a
+    /// completion a restored Herdr server no longer reports is still shown
+    /// (`agent_state::apply_completions`). The store owns it.
+    #[serde(default, skip_serializing)]
+    pub pane_completions: BTreeMap<String, PaneCompletion>,
     /// Each agent pane's request-view verb and when it took it, so the time
     /// a row has waited survives a restart (PRD overview-request-view D-40).
     /// The store owns it; the shell reads it on the row.
@@ -3349,6 +3360,33 @@ pub struct PaneReadRecord {
     /// works and finishes a second time (PRD B5, B6, B8).
     #[serde(default)]
     pub descendant_signals: BTreeSet<DescendantSignal>,
+    /// The server mark (`wire::SERVER_MARK_TOKEN`) of the Herdr server
+    /// `state_change_seq` was read on. Herdr's sequence restarts with its
+    /// server, so the record is compared with the pane only on that server;
+    /// none means no server can be named, as for a record saved before marks.
+    #[serde(default)]
+    pub server: Option<String>,
+    /// The pane no longer matched this record when Hide last judged it, and
+    /// the operator has not read it since. Saved whenever it changes, so a
+    /// restart that loses Herdr's sequence carries the verdict over rather
+    /// than judging the pane again from numbers that no longer compare.
+    #[serde(default)]
+    pub unread: bool,
+}
+
+/// A pane whose last stop finished work, as Hide last saw it. Herdr's
+/// restored server can report such a pane as only ready (it does for a
+/// restored Claude), and this is what keeps its completion through that.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PaneCompletion {
+    /// The digest of the session that finished (`wire::session_digest`).
+    #[serde(default)]
+    pub session: Option<String>,
+    /// The server mark and Herdr sequence the completion was last seen at.
+    #[serde(default)]
+    pub server: Option<String>,
+    #[serde(default)]
+    pub state_change_seq: Option<u64>,
 }
 
 /// The scale a pane has until the user zooms it.
@@ -3714,6 +3752,7 @@ impl Default for UiStateSnapshot {
             editor_text_scale: DEFAULT_PANE_TEXT_SCALE,
             conversation_pane_ids: BTreeSet::new(),
             pane_read_records: BTreeMap::new(),
+            pane_completions: BTreeMap::new(),
             request_verbs: BTreeMap::new(),
             agent_sleep_after_hours: None,
             project_issue_sources: BTreeMap::new(),

@@ -273,11 +273,11 @@ test("dropping onto another area's bar collapses the areas, and the other edges 
   } finally { group.stop(); }
 });
 
-test("a tab dragged onto the floating tools panel is refused and the areas stay as they were", async ({ page }) => {
+test("a tab dragged onto the lane over Agent Views is refused and the areas stay as they were", async ({ page }) => {
   const group = await startGroups(page, "agent-groups-panel");
   try {
-    await showTool(page, "explorer");
-    const panel = page.locator('[data-column="tools"]');
+    await showTool(page, "changes");
+    const panel = page.locator('[data-lane-frame="overlay"]');
     await expect(panel).toBeVisible();
     const floating = await box(panel);
     const beforePanelDrop = await shape(page);

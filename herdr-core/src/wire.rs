@@ -411,6 +411,24 @@ pub(crate) const FORK_SESSION_TOKEN: &str = "fork_session";
 /// (`crate::agent_state::apply_fork_sources`).
 pub(crate) const FORK_SOURCE_SESSION_TOKEN: &str = "fork_source_session";
 
+/// Hide's mark on a pane whose saved read state it vouches for, written by
+/// the lineage writer (`crate::coordination::lineage`). Herdr keeps a pane
+/// token only for as long as the server that took it, so a pane that still
+/// carries the mark a saved state names is on the server that state was read
+/// from, and its `state_change_seq` can be compared with the saved one
+/// (`crate::agent_state::apply_read_state`).
+pub(crate) const SERVER_MARK_TOKEN: &str = "hide_server";
+
+/// The server mark a pane carries, when it carries one.
+pub(crate) fn server_mark(tokens: &std::collections::BTreeMap<String, Value>) -> Option<String> {
+    tokens
+        .get(SERVER_MARK_TOKEN)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|mark| !mark.is_empty())
+        .map(str::to_owned)
+}
+
 /// The tokens a sleeping fork's row stands in for, as its pane carried them.
 pub(crate) fn fork_tokens(
     source_pane: &str,
@@ -525,6 +543,7 @@ impl From<res::AgentInfo> for ProjectedAgent {
             declared_parent_session,
             lineage_session: own_session,
             state_change_seq: v.state_change_seq,
+            completion_seq: v.completion_seq,
             tokens: v
                 .tokens
                 .into_iter()

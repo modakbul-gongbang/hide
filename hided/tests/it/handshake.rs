@@ -1337,7 +1337,17 @@ async fn a_change_in_a_watched_checkout_is_announced() {
     std::fs::create_dir_all(checkout.join("src")).unwrap();
     seed_registration(&env.state_dir, "w-alpha", &checkout);
     let running = hided::start_daemon(env).await.expect("start daemon");
-    let mut socket = live_socket(&running).await;
+    // A window that draws, as the web shell names itself: the Explorer watch
+    // runs only while one does.
+    let mut socket = connect(running.port, None).await;
+    socket
+        .send(Message::Text(
+            json!({"token": running.token, "schema_version": 2, "client_kind": "web"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
     // The watcher arms after the daemon's first snapshot read; let it settle
     // so the change below is not missed by a watcher that was not up yet.
     tokio::time::sleep(Duration::from_millis(750)).await;

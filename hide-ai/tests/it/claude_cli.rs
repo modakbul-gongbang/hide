@@ -87,6 +87,32 @@ fn a_completed_turn_returns_structured_output_with_usage() {
     });
 }
 
+/// The ledger counts the whole call under the one model the frame names,
+/// with the cache categories and the one-hour split of `usage`.
+#[test]
+fn a_completed_turn_reports_ledger_tokens_under_the_resolved_model() {
+    with_mode("ok", || {
+        let response = backend()
+            .execute(&request(Duration::from_secs(30)), &CancelToken::new())
+            .unwrap();
+        let [tokens] = response.usage.models.as_slice() else {
+            panic!("{:?}", response.usage.models);
+        };
+        assert_eq!(tokens.model, "claude-haiku-4-5-20251001");
+        assert_eq!(
+            (
+                tokens.input,
+                tokens.output,
+                tokens.cache_read,
+                tokens.cache_write
+            ),
+            (1188, 468, 4000, 600)
+        );
+        assert_eq!(tokens.cache_write_1h, 100);
+        assert!(!tokens.lower_bound);
+    });
+}
+
 /// The three flags that decide whether the answer is right at all have to
 /// reach the child, not merely the vector the backend builds. Dropping one
 /// produces a confident wrong answer, so the vector is the assertion.
@@ -249,17 +275,14 @@ fn each_measured_failure_shape_maps_to_its_class() {
         ("api_403", AiError::NotAuthenticated),
         ("api_429", AiError::UsageLimited { retry_after: None }),
         ("api_500", AiError::Transient("claude_api_500".to_owned())),
-        (
-            "api_400",
-            AiError::InvalidOutput("claude_api_400".to_owned()),
-        ),
+        ("api_400", AiError::Rejected("claude_api_400".to_owned())),
         (
             "structured_output_retries",
             AiError::InvalidOutput("claude_structured_output_retries".to_owned()),
         ),
         (
             "context_limit",
-            AiError::InvalidOutput("claude_context_limit:prompt_too_long".to_owned()),
+            AiError::Rejected("claude_context_limit:prompt_too_long".to_owned()),
         ),
     ];
     for (mode, expected) in cases {

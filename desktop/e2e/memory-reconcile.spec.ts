@@ -33,7 +33,7 @@ test("Memory compares sources, limits a batch and groups a confirmed PR", async 
     seedReconciliation(run);
     await page.reload();
     await showTool(page, "memory");
-    const tab = page.locator('[data-tool="memory"]');
+    const tab = page.locator('[data-lane="memory"]');
     await expect(tab.locator('[data-memory="on"]')).toBeVisible();
     await expect(tab.locator('[data-memory-pr-group="72"]')).toContainText("m9 · m10");
     await expect(tab).toContainText("Personal");
@@ -75,13 +75,14 @@ test("Memory compares sources, limits a batch and groups a confirmed PR", async 
     await fitWindow(app, { width: 900, height: 760 });
     await showTool(page, "memory");
     await screenshot(page, "memory-compact-light-narrow");
-    // A narrow window can widen Tools in the responsive fallback. Prove
-    // the actual column minimum through its existing accessible divider.
+    // Pinned, the lane has a divider that proves its minimum width (PRD
+    // right-lane B6).
     await fitWindow(app, { width: 1440, height: 900 });
     await showTool(page, "memory");
-    const divider = page.locator('[data-column-divider="tools"]');
-    for (let step = 0; step < 4; step++) await divider.press("ArrowRight");
-    await expect.poll(() => page.locator('[data-column="tools"]').evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(260);
+    await page.locator('[data-lane-pin="off"]').click();
+    const divider = page.locator('[data-lane-divider="lane"]');
+    for (let step = 0; step < 6; step++) await divider.press("ArrowRight");
+    await expect.poll(() => page.locator("[data-lane-frame]").evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(360);
     for (const language of ["en", "ko", "zh-CN", "ja"]) {
       await page.locator("[data-open-settings]").click();
       await page.locator("[data-interface-language]").click();

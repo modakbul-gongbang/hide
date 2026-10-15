@@ -1473,7 +1473,7 @@ fn a_quit_mid_restore_keeps_the_stored_layout_byte_for_byte() {
     // and a.txt in the area beside it, which was in use.
     let mut views = crate::workspace_views::WorkspaceViews::default();
     let entry = views.entry(DEVICE, &f.root.to_string_lossy());
-    entry.views = true;
+    entry.tool = Some(crate::workspace_views::Tool::Files);
     let layout = &mut entry.layout;
     let diff = layout.new_display(&f.path("a.txt"), DisplayKind::Diff, Some(false), false);
     layout.insert("a1", diff, 1).unwrap();
@@ -1689,7 +1689,11 @@ fn a_gui_file_read_opens_file_views_when_its_document_lands() {
         let mut runtime = f.shared.lock().unwrap();
         runtime.sync_workspace_view();
         let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-        assert!(view.views, "a successful GUI open must be visible");
+        assert_eq!(
+            view.tool,
+            Some(crate::workspace_views::Tool::Files),
+            "a successful GUI open must be visible"
+        );
         assert_eq!(view.layout.display_count, 1);
         assert_eq!(runtime.visible_view_documents().len(), 1);
     }
@@ -1740,7 +1744,7 @@ fn a_gui_file_read_keeps_its_tab_when_another_tab_is_chosen() {
     runtime.choose_remote_view_presentation(DEVICE, "tab-a");
     runtime.sync_workspace_view();
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert!(view.views);
+    assert_eq!(view.tool, Some(crate::workspace_views::Tool::Files));
     assert_eq!(view.layout.display_count, 1);
     assert_eq!(runtime.visible_view_documents().len(), 1);
 }
@@ -1850,8 +1854,9 @@ fn a_coalesced_gui_read_serves_each_live_requesting_tab() {
         let mut runtime = f.shared.lock().unwrap();
         runtime.sync_workspace_view();
         let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-        assert!(
-            view.views,
+        assert_eq!(
+            view.tool,
+            Some(crate::workspace_views::Tool::Files),
             "B's explicit GUI open must become visible (A closed: {close_a})"
         );
         assert_eq!(view.layout.display_count, 1);
@@ -1866,7 +1871,7 @@ fn a_coalesced_gui_read_serves_each_live_requesting_tab() {
             runtime.choose_remote_view_presentation(DEVICE, "tab-a");
             runtime.sync_workspace_view();
             let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-            assert!(view.views);
+            assert_eq!(view.tool, Some(crate::workspace_views::Tool::Files));
             assert_eq!(view.layout.display_count, 1);
             let ViewNodeSnapshot::Area(area) = &view.layout.root else {
                 panic!("one area")
@@ -1962,8 +1967,9 @@ fn a_gui_read_places_an_existing_dirty_buffer_in_its_requesting_tab() {
     runtime.choose_remote_view_presentation(DEVICE, "tab-a");
     runtime.sync_workspace_view();
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert!(
-        view.views,
+    assert_eq!(
+        view.tool,
+        Some(crate::workspace_views::Tool::Files),
         "A's GUI placement must survive an existing buffer"
     );
     assert_eq!(view.layout.display_count, 1);
@@ -2019,7 +2025,6 @@ fn a_coalesced_gui_read_cannot_replace_closed_new_tabs() {
     let mut runtime = f.shared.lock().unwrap();
     runtime.sync_workspace_view();
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert!(!view.views);
     assert_eq!(view.layout.display_count, 0);
     assert!(runtime.snapshot.editor.tabs.is_empty());
     assert!(runtime.editor_documents.is_empty());
@@ -2162,15 +2167,26 @@ fn a_gui_read_survives_another_tabs_clean_buffer_retirement() {
     });
     let mut runtime = f.shared.lock().unwrap();
     runtime.sync_workspace_view();
-    assert!(
-        !runtime.snapshot.workspace_view.as_ref().unwrap().views,
-        "B stays closed"
+    assert_eq!(
+        runtime
+            .snapshot
+            .workspace_view
+            .as_ref()
+            .unwrap()
+            .layout
+            .display_count,
+        0,
+        "B's View list keeps no display"
     );
     runtime.snapshot.navigator.workspaces[0].checkouts[0].active_tab_id = Some("tab-a".to_owned());
     runtime.choose_remote_view_presentation(DEVICE, "tab-a");
     runtime.sync_workspace_view();
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert!(view.views, "A still owns its accepted GUI open");
+    assert_eq!(
+        view.tool,
+        Some(crate::workspace_views::Tool::Files),
+        "A still owns its accepted GUI open"
+    );
     assert_eq!(view.layout.display_count, 1);
     assert_eq!(runtime.snapshot.editor.tabs.len(), 1);
 }

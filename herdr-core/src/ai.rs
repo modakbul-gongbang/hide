@@ -24,8 +24,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hide_ai::{
     AiBackend, AiError, AiLogEvent, AiLogSink, AiRequest as ProviderRequest, AiResponse, AiRouter,
-    AiSettings, Availability, CancelToken, ModelCatalog, ProcessMeasurement, ProviderId,
-    ProviderStatus, UsageLimits,
+    AiSettings, AiUsageSink, Availability, CancelToken, ModelCatalog, ProcessMeasurement,
+    ProviderId, ProviderStatus, UsageLimits,
 };
 use hide_node_link::ai::{BackendSpec, Logged};
 use hide_node_link::protocol::Call;
@@ -425,9 +425,11 @@ pub(crate) fn memory_router(
     node: &Arc<dyn NodeLink>,
     settings: &AiSettings,
     gate: &Arc<UsageLimits>,
+    usage: &Arc<dyn AiUsageSink>,
 ) -> AiRouter {
     let mut config = memory_router_config(settings);
     config.usage_gate = Some(Arc::clone(gate));
+    config.usage_sink = Some(Arc::clone(usage));
     AiRouter::new(
         backends(node, &settings.models_by_provider(), None),
         config,
@@ -437,9 +439,14 @@ pub(crate) fn memory_router(
 
 /// The router one `hide memory add` asks, whose every try ends before the
 /// caller stops waiting (PRD project-memory-v2 B8).
-pub(crate) fn memory_add_router(node: &Arc<dyn NodeLink>, settings: &AiSettings) -> AiRouter {
+pub(crate) fn memory_add_router(
+    node: &Arc<dyn NodeLink>,
+    settings: &AiSettings,
+    usage: &Arc<dyn AiUsageSink>,
+) -> AiRouter {
     let mut config = memory_router_config(settings);
     config.overall_deadline_cap = crate::memory_command::ADD_PROVIDER_DEADLINE;
+    config.usage_sink = Some(Arc::clone(usage));
     AiRouter::new(
         backends(node, &settings.models_by_provider(), None),
         config,
@@ -452,17 +459,27 @@ pub(crate) fn memory_add_router(node: &Arc<dyn NodeLink>, settings: &AiSettings)
 /// label and Project Memory routers so its queue never takes their budget.
 /// Like the Start dialog's worktree name it is not judged by the usage limit
 /// (PRD hide-ai-usage-limit D-03): an operator or a Factory is waiting on it.
-pub(crate) fn factory_router(node: &Arc<dyn NodeLink>, settings: &AiSettings) -> AiRouter {
-    waited_router(node, settings)
+pub(crate) fn factory_router(
+    node: &Arc<dyn NodeLink>,
+    settings: &AiSettings,
+    usage: &Arc<dyn AiUsageSink>,
+) -> AiRouter {
+    waited_router(node, settings, usage)
 }
 
 /// A router for work the operator waits on, such as the Start dialog's
 /// worktree name: the provider order with no usage limit, so it answers
 /// however much of the week is spent (PRD hide-ai-usage-limit D-03, B6).
-pub(crate) fn waited_router(node: &Arc<dyn NodeLink>, settings: &AiSettings) -> AiRouter {
+pub(crate) fn waited_router(
+    node: &Arc<dyn NodeLink>,
+    settings: &AiSettings,
+    usage: &Arc<dyn AiUsageSink>,
+) -> AiRouter {
+    let mut config = settings.router_config();
+    config.usage_sink = Some(Arc::clone(usage));
     AiRouter::new(
         backends(node, &settings.models_by_provider(), None),
-        settings.router_config(),
+        config,
         Arc::new(DiagnosticLogSink),
     )
 }
@@ -474,9 +491,11 @@ pub(crate) fn labels_router(
     node: &Arc<dyn NodeLink>,
     settings: &AiSettings,
     gate: &Arc<UsageLimits>,
+    usage: &Arc<dyn AiUsageSink>,
 ) -> AiRouter {
     let mut config = settings.router_config();
     config.usage_gate = Some(Arc::clone(gate));
+    config.usage_sink = Some(Arc::clone(usage));
     AiRouter::new(
         backends(node, &settings.models_by_provider(), None),
         config,
@@ -695,6 +714,7 @@ pub(crate) fn branch_slug(text: &str) -> String {
 pub(crate) fn suggest_worktree_name(
     node: &Arc<dyn NodeLink>,
     settings: &AiSettings,
+    usage: &Arc<dyn AiUsageSink>,
     subject: &str,
     prefix: &str,
     title: &str,
@@ -717,7 +737,7 @@ pub(crate) fn suggest_worktree_name(
         schema_version: "1".into(),
         pick: None,
     };
-    let router = waited_router(node, settings);
+    let router = waited_router(node, settings, usage);
     let answer = router
         .execute(&request, &hide_ai::CancelToken::new())
         .map_err(|error| format!("{error:?}"))?;
@@ -736,6 +756,7 @@ pub(crate) fn suggest_worktree_name(
 pub(crate) fn draft_session_issue(
     node: &Arc<dyn NodeLink>,
     settings: &AiSettings,
+    usage: &Arc<dyn AiUsageSink>,
     subject: &str,
     missed: &str,
     context: &hide_node_link::sessions::WorkContext,
@@ -751,7 +772,7 @@ pub(crate) fn draft_session_issue(
         output_schema: serde_json::json!({"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":256},"body":{"type":"string","maxLength":16384}},"required":["title","body"],"additionalProperties":false}),
         deadline: Duration::from_secs(45), schema_version: "1".into(), pick: None,
     };
-    let answer = waited_router(node, settings)
+    let answer = waited_router(node, settings, usage)
         .execute(&request, cancel)
         .map_err(|error| error.class().to_owned())?;
     let title = answer
@@ -817,7 +838,12 @@ mod tests {
             provider: ProviderId::CLAUDE,
             ..AiSettings::default()
         };
-        let router = memory_router(&node(), &settings, &Arc::new(UsageLimits::new()));
+        let router = memory_router(
+            &node(),
+            &settings,
+            &Arc::new(UsageLimits::new()),
+            &(crate::usage_ledger::ai_usage::AiUsageQueue::new() as Arc<dyn AiUsageSink>),
+        );
         assert_eq!(
             router.provider_state().unwrap().selected,
             ProviderId::CLAUDE

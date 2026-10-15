@@ -298,6 +298,7 @@ impl SleepRecord {
             spawned_from_machine_id: None,
             declared_parent_session: self.parent_session.clone(),
             lineage_session: crate::wire::session_digest(&self.session_id),
+            completion_seq: None,
             state_change_seq: self.state_change_seq,
             tokens: self
                 .fork_source
@@ -675,6 +676,7 @@ mod tests {
             spawned_from_machine_id: None,
             declared_parent_session: None,
             lineage_session: None,
+            server_mark: None,
             delegated: false,
             descendant_counts: crate::model::DescendantCountsSnapshot::default(),
             direct_child_counts: crate::model::DescendantCountsSnapshot::default(),

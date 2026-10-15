@@ -1,6 +1,7 @@
 //! Content-free usage accounting. The worker alone owns the writer; node
 //! readers return normalized calls and never open this store.
 
+pub mod ai_usage;
 pub mod prices;
 pub mod query;
 pub mod store;

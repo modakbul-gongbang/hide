@@ -15,6 +15,7 @@ import { useShellStore } from "./store";
 import { locateDisplay, workspaceKey, type ViewWorkspace } from "./viewLayout";
 import { workspaceViewOf } from "./workspace";
 import { commandLabel } from "./shortcutLabels";
+import { TreeButton } from "./TreeButton";
 import { useInterfaceTranslation } from "./i18n/client";
 
 // A browser display (issue 155): its toolbar and the place its page shows.
@@ -33,7 +34,8 @@ export function BrowserDisplay({ display, workspace, actions }: { display: ViewD
     const web = /^https?:/i.test(url);
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-browser-display={display.id}>
-        <div className="flex h-(--size-tab-strip) shrink-0 items-center border-b border-border px-md" data-browser-toolbar={display.id}>
+        <div className="flex h-(--size-tab-strip) shrink-0 items-center gap-xs border-b border-border pl-xs pr-md" data-browser-toolbar={display.id}>
+          <TreeButton actions={actions} />
           <span className="min-w-0 flex-1 truncate font-mono text-caption text-subtle-foreground" data-browser-address="true">
             {addressShown(url)}
           </span>
@@ -57,7 +59,8 @@ function NewTab({ display, actions }: { display: ViewDisplaySnapshot; actions: A
   const changes = useShellStore((s) => s.changes);
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-browser-display={display.id}>
-      <div className="flex h-(--size-tab-strip) shrink-0 items-center gap-xs border-b border-border px-sm" data-browser-toolbar={display.id}>
+      <div className="flex h-(--size-tab-strip) shrink-0 items-center gap-xs border-b border-border pl-xs pr-sm" data-browser-toolbar={display.id}>
+        <TreeButton actions={actions} />
         <Hint label={t("common.back")}><Button variant="ghost" size="icon-sm" disabled><ArrowLeftIcon /></Button></Hint>
         <Hint label={t("documents.browserForward")}><Button variant="ghost" size="icon-sm" disabled><ArrowRightIcon /></Button></Hint>
         <Hint label={t("documents.browserReload")}><Button variant="ghost" size="icon-sm" disabled><RotateCwIcon /></Button></Hint>
@@ -81,7 +84,8 @@ function HostedPage({ display, workspace, actions }: { display: ViewDisplaySnaps
   const address = page?.url || display.url || "";
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-browser-display={display.id}>
-      <div className="flex h-(--size-tab-strip) shrink-0 items-center gap-xs border-b border-border px-sm" data-browser-toolbar={display.id}>
+      <div className="flex h-(--size-tab-strip) shrink-0 items-center gap-xs border-b border-border pl-xs pr-sm" data-browser-toolbar={display.id}>
+        <TreeButton actions={actions} />
         <Hint label={t("common.back")}>
           <Button variant="ghost" size="icon-sm" disabled={!page?.canGoBack} onClick={() => command("back")} data-browser-command="back">
             <ArrowLeftIcon />

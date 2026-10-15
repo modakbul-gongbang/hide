@@ -383,12 +383,13 @@ A spawn records the Herdr terminal its pane runs (`terminal_id` from `pane.get`)
 An earlier pane is closed only while Herdr still reports the terminal its spawn recorded; a pane id now running another terminal is logged with the reason `pane_replaced`, and a spawn record written before terminals were recorded with `pane_identity_unrecorded`, and both panes are left open.
 
 The existing one-second `agent.list` refresh, also requested by native events, reconciles only panes whose four lineage tokens differ; startup and reconnect perform one full pass.
+The same pass writes the read axis's server mark (`hide_server`) on a pane whose saved read record or completion names the current connection's mark and that does not carry it, in the pane's lineage report when it has one ([status-model.md](status-model.md#across-a-herdr-restart)); a change in which panes want a mark replans like a moved registration.
 Each server's pass reads the registrations recorded under its machine: this machine's are keyed by its node id, the same `machine` that `hide agent list` shows, and a device's by its device id, so a token Herdr drops (a live handoff drops every pane token) is written again on this machine as on a device.
 An unchanged native observation and append-only registration count skip planning; unrelated letter/watch writes and label/process/catalog publications do not start a lineage pass.
 The native pane and positive session select the matching retained registration, including an ended one, independently of append order.
 A positive child-session replacement clears stale tokens; an absent native session or agent end leaves the pane's tokens in place, while unchanged readers reject obsolete session identities.
 There is no separate lineage timer, subprocess on the input path or blocking work under `Mutex<Runtime>`.
-The token readers and digest contract remain unchanged.
+The lineage token readers and digest contract remain unchanged; the server mark is read only by the read axis (`wire::server_mark`).
 
 People receive notifications only for an unanswered parent inactivity warning and an overdue undelivered letter.
 A first warning left unacknowledged, uncancelled and unreplied for 60 minutes triggers one human notification per native target and inactivity episode, shared across sibling watches and phone Web Push/Herdr channels.

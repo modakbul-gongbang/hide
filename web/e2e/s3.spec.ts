@@ -13,7 +13,7 @@ import zlib from "node:zlib";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, enterWorkspace, screenshot, showExplorer, showProjectRow } from "./wire";
+import { countSent, enterWorkspace, screenshot, showExplorer, showProjectRow, showTool } from "./wire";
 import { chord } from "./chords";
 import { dumpOnFailure } from "./failure-dump";
 import { onDisk, quietFor } from "./wait";
@@ -139,13 +139,13 @@ async function openCheckout(page: Page, beforeLoad?: (page: Page) => Promise<voi
     await beforeLoad?.(page);
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
 
-    // Focus the repository checkout and show the Explorer in the Tools
-    // column: that is where the tree lives (S6 D-05, B10).
+    // Focus the repository checkout and show the files tool with its tree
+    // (PRD right-lane B9).
     const row = await showProjectRow(page, page.locator("[data-project]", { hasText: "repo" }).locator("[data-checkout]").first());
     await row.click();
     await expect(row).toHaveAttribute("aria-current", "true");
     await showExplorer(page);
-    await expect(page.locator('[data-right-panel="explorer"]')).toBeVisible();
+    await expect(page.locator("[data-lane-tree] [data-explorer]")).toBeVisible();
     await expect(page.locator(`[data-explorer-row="${repo}/src"]`)).toBeVisible();
 
     // Expand src and open the file into the preview tab.
@@ -1043,11 +1043,12 @@ test("⌘P opens a file by name and ⌘K switches checkout", { tag: "@platform" 
     await page.locator(`[data-explorer-row="${repo}/src"]`).click();
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(0);
     await page.keyboard.press(chord("toggle_right_panel"));
-    await expect(page.locator('[data-column="views"]')).toHaveCount(0);
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
 
     // ⌘P: hided indexes the checkout, ranks the typed name and opens it in the
-    // preview tab (B12). The open turns File Views back on and reveals its
-    // row in the Explorer (S6 B10; PRD three-column-panel B2).
+    // preview tab (B12). The open brings the files tool back; the close
+    // turned the tree off, and turned on it shows the row revealed (PRD
+    // right-lane B11, B16).
     await page.keyboard.press(chord("open_file"));
     const input = page.locator('[data-palette="Open file"] [data-palette-input]');
     await expect(input).toBeVisible();
@@ -1058,7 +1059,9 @@ test("⌘P opens a file by name and ⌘K switches checkout", { tag: "@platform" 
     await row.click();
     await expect(page.locator("[data-palette-input]")).toHaveCount(0);
     await expect(page.locator('[data-tab-kind="file"]').filter({ hasText: "main.ts" })).toHaveCount(1);
-    await expect(page.locator('[data-right-panel="explorer"]')).toBeVisible();
+    await expect(page.locator("[data-lane-tree]")).toHaveCount(0);
+    await page.keyboard.press(chord("toggle_file_tree"));
+    await expect(page.locator("[data-lane-tree] [data-explorer]")).toBeVisible();
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveAttribute("data-selected", "true", { timeout: 10_000 });
     expect(sent.get("file_index") ?? 0).toBeGreaterThanOrEqual(1);
 
@@ -1571,6 +1574,7 @@ test("a save refused at the daemon's boundary keeps the draft unsaved, across a 
 
     await page.reload();
     await expect(content).toContainText("answer = 55", { timeout: 20_000 });
+    await showTool(page, "files"); // an unpinned lane comes back put away (PRD right-lane B22)
     await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
     expect(fs.readFileSync(file, "utf8")).toBe(original);
 

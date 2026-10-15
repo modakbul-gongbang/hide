@@ -1,86 +1,236 @@
-import { useId, type KeyboardEvent } from "react";
+import { BookOpenIcon, EllipsisIcon, FileIcon, GitBranchIcon, Maximize2Icon, MessageSquareIcon, Minimize2Icon, PinIcon, XIcon, type LucideIcon } from "lucide-react";
+import { useState } from "react";
 import type { Actions } from "./actions";
 import { AgentSessions } from "./AgentSessions";
+import { Button } from "./components/ui/button";
+import { cn } from "./lib/utils";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuShortcut, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
+import { Hint } from "./components/ui/tooltip";
 import { ExplorerTree } from "./ExplorerTree";
 import { HistoryList } from "./HistoryList";
 import { MemoryTab, useMemoryProject } from "./MemoryTab";
-import { frontCheckout } from "./snapshot";
+import { DividerGuide, LaneDivider } from "./LaneDivider";
+import { commandLabel } from "./shortcutLabels";
+import { catalogWorkspaces, frontCheckout, type Checkout } from "./snapshot";
 import { useShellStore } from "./store";
+import { useUiStore } from "./ui";
+import { ViewAreas } from "./ViewAreas";
+import { workspaceKey } from "./viewLayout";
+import { TOOLS, type LaneFrame, type LaneSizes, type Tool, type WorkspaceView } from "./workspace";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
-import type { Tool } from "./workspace";
+import type { CommandId } from "./shortcuts";
 
-// The Tools column (PRD S6 D-05, B10; PRD three-column-panel D-01, D-04): the
-// Sessions, Explorer, History or Memory (PRD project-memory-v2 D-17), one at a time, at the Workspace body's right
-// edge. The tool is the front Workspace's, so switching it here leaves every
-// other Workspace's alone. The column has no title row and no close: its
-// first row is its named tool tabs, level with the other
-// columns' tab rows, and the toolbar's Tools icon and ⌘E turn it off. The
-// names are docs/UI_BEHAVIOR.md's current ones.
+// The right lane and its tool rail (PRD right-lane D-01, D-05, D-08, D-09):
+// one lane shows one tool at a time, Files (the View areas, with the file
+// tree as a column of its own), Changes (History), Sessions and Memory, and
+// the rail at the body's right edge opens, switches and closes it. The tool,
+// the pin, the tree and the widths are the front Workspace's, kept by the
+// core; whether an unpinned lane is up and whether it is expanded are this
+// page's (`ui.ts`).
 
-const TOOL_NAMES = { agent_sessions: "agentSessions.title", explorer: "panes.tools.explorer", changes: "panes.tools.history", memory: "memory.title" } as const satisfies Record<Tool, MessageKey>;
-const TOOLS: readonly Tool[] = ["agent_sessions", "explorer", "changes", "memory"];
+const TOOL_NAMES = { files: "panes.lane.files", changes: "panes.lane.changes", agent_sessions: "panes.lane.sessions", memory: "panes.lane.memory" } as const satisfies Record<Tool, MessageKey>;
+const TOOL_ICONS: Record<Tool, LucideIcon> = { files: FileIcon, changes: GitBranchIcon, agent_sessions: MessageSquareIcon, memory: BookOpenIcon };
+/** The chord that opens and closes the lane on a tool, where one does (D-12). */
+const TOOL_CHORDS: Partial<Record<Tool, CommandId>> = { files: "toggle_right_panel", agent_sessions: "toggle_explorer" };
 
-export function Tools({ tool, actions }: { tool: Tool; actions: Actions }) {
-  const { t } = useInterfaceTranslation();
-  const id = useId();
-  useMemoryProject(actions);
-  return (
-    <aside className="flex h-full min-h-0 min-w-0 flex-1 flex-col text-foreground" aria-label={t("panes.tools.aria")} data-workspace-tools={tool}>
-      <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center border-b border-border" data-column-row="tools">
-        <ToolTabs tool={tool} actions={actions} id={id} />
-      </div>
-      <section role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-${tool}`} className="flex min-h-0 flex-1 flex-col" aria-label={t(TOOL_NAMES[tool])} data-tool={tool} data-right-panel={tool}>
-        {/* The tree reads the selected device's checkout through its helper;
-            History reads the front checkout's Git through its own host. */}
-        {tool === "agent_sessions" ? <AgentSessions actions={actions} /> : tool === "explorer" ? <ExplorerTree actions={actions} /> : tool === "memory" ? <MemoryTab actions={actions} /> : <HistoryList actions={actions} />}
-      </section>
-    </aside>
-  );
+/** Whether a lane drawn this way is on screen. */
+export function laneUp(mode: LaneFrame["mode"]): boolean {
+  return mode === "overlay" || mode === "docked" || mode === "expanded";
 }
 
-/** Named tabs share one keyboard stop; arrows select in displayed order. */
-function ToolTabs({ tool, actions, id }: { tool: Tool; actions: Actions; id: string }) {
+/**
+ * What a tool's scope reads as (D-08, B14): the front checkout for Files and
+ * Changes, the Project for Sessions and Memory.
+ */
+function useScope(checkout: Checkout | null): (tool: Tool) => string {
   const { t } = useInterfaceTranslation();
-  // The Memory tab's dot: its Project has something to ask (B28).
+  const project = useShellStore((s) => (checkout ? catalogWorkspaces(s.rest).find((row) => row.checkouts.some((candidate) => candidate.id === checkout.id)) ?? null : null));
+  const name = checkout ? (checkout.branch ?? checkout.label) : "";
+  const projectName = project?.label ?? name;
+  return (tool) => (tool === "agent_sessions" ? t("panes.lane.scopeProject", { project: projectName }) : tool === "memory" ? projectName : name);
+}
+
+/**
+ * The tool rail (B1, B2, B23): one icon per tool, its name under it, pressed
+ * while the lane shows that tool; pressing it opens the lane on that tool,
+ * or closes the lane when it already shows it. The Files icon counts the
+ * views open while the lane does not show them (B17), and Memory's dot says
+ * its Project has something to ask.
+ */
+export function ToolRail({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const checkout = useShellStore((s) => frontCheckout(s.rest));
+  const views = useShellStore((s) => (s.rest?.workspace_view as WorkspaceView | undefined)?.layout?.display_count ?? 0);
+  const drawn = useUiStore((s) => s.drawnLane);
+  const bindings = useShellStore((s) => s.rest?.ui_state);
   const asking = useShellStore((state) => {
     const project = state.memory?.project;
     return Boolean(project?.enabled && project.questions.length > 0 && project.workspace_id === frontCheckout(state.rest)?.workspace_id);
   });
-  const move = (event: KeyboardEvent<HTMLDivElement>) => {
-    const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : null;
-    if (step === null && event.key !== "Home" && event.key !== "End") return;
-    const index = TOOLS.indexOf(tool);
-    const next = event.key === "Home" ? TOOLS[0] : event.key === "End" ? TOOLS.at(-1) : TOOLS[(index + (step ?? 0) + TOOLS.length) % TOOLS.length];
-    if (!next) return;
-    event.preventDefault();
-    event.currentTarget.querySelector<HTMLButtonElement>(`[data-tool-tab="${next}"]`)?.focus();
-    actions.showTool(next);
-  };
+  const scope = useScope(checkout);
+  const up = laneUp(drawn.mode);
+  // The rail is always drawn, so Memory's dot reads its Project whichever tool shows.
+  useMemoryProject(actions);
   return (
-    <div role="tablist" aria-label={t("panes.tools.aria")} onKeyDown={move} className="flex h-full min-w-0 items-stretch" data-tool-tabs="true">
-      {TOOLS.map((each) => {
-        const selected = each === tool;
+    <nav className="flex w-(--size-tool-rail) shrink-0 flex-col items-center gap-xxs border-l border-border bg-sidebar py-xs" aria-label={t("panes.lane.rail")} data-tool-rail="true">
+      {TOOLS.map((tool) => {
+        const Icon = TOOL_ICONS[tool];
+        const pressed = up && drawn.tool === tool;
+        const name = t(TOOL_NAMES[tool]);
+        const chord = TOOL_CHORDS[tool];
+        const count = tool === "files" && !pressed ? views : 0;
         return (
+          <Hint key={tool} label={`${name} · ${scope(tool)}`} shortcut={chord ? commandLabel(chord, bindings) : undefined} side="left">
             <button
-              key={each}
-              id={`${id}-${each}`}
               type="button"
-              role="tab"
-              aria-controls={`${id}-panel`}
-              tabIndex={selected ? 0 : -1}
-              aria-selected={selected}
-              aria-label={t(TOOL_NAMES[each])}
-              data-tool-tab={each}
-              className={`relative flex min-w-0 items-center justify-center gap-xxs px-sm text-caption outline-none hover:bg-accent focus-visible:bg-accent ${selected ? "text-foreground" : "text-subtle-foreground"}`}
-              onClick={() => actions.showTool(each)}
+              aria-pressed={pressed}
+              aria-label={name}
+              aria-description={count > 0 ? t("panes.workspace.viewsOpen", { count }) : undefined}
+              className={`relative flex size-(--size-tool-rail-button) flex-col items-center justify-center gap-xxs rounded-md text-micro outline-none hover:bg-secondary hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${pressed ? "bg-secondary font-medium text-foreground" : "text-muted-foreground"}`}
+              data-lane-tool={tool}
+              onClick={() => actions.toggleTool(tool)}
             >
-              <span className="truncate">{t(TOOL_NAMES[each])}</span>
-              {each === "memory" && asking ? <span role="img" aria-label={t("memory.questionsWaiting")} className="size-(--size-status-mark) shrink-0 rounded-full bg-warning" data-tool-dot="memory" /> : null}
-              {selected ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-primary" /> : null}
+              {pressed ? <span aria-hidden="true" className="absolute -left-xxs inset-y-sm w-(--size-tab-indicator) rounded-full bg-primary" data-lane-tool-bar="true" /> : null}
+              <Icon aria-hidden="true" className="size-(--size-icon)" />
+              <span className="whitespace-nowrap tracking-tight [:lang(ja)_&]:[font-feature-settings:'palt']" data-lane-tool-name="true">
+                {name}
+              </span>
+              {count > 0 ? (
+                <span aria-hidden="true" className="absolute right-0 top-0 flex h-(--size-icon) min-w-(--size-icon) items-center justify-center rounded-full bg-primary px-xxs text-micro text-primary-foreground" data-lane-badge={count}>
+                  {count}
+                </span>
+              ) : null}
+              {tool === "memory" && asking ? <span role="img" aria-label={t("memory.questionsWaiting")} className="absolute right-xs top-xs size-(--size-status-mark) rounded-full bg-warning" data-lane-tool-dot="memory" /> : null}
             </button>
+          </Hint>
         );
       })}
+      <LaneMenu actions={actions} />
+    </nav>
+  );
+}
+
+/** The rail's `…`: the lane's own commands with their chords, so ⌘⇧E has a place to be found. */
+function LaneMenu({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const view = useShellStore((s) => (s.rest?.workspace_view as WorkspaceView | undefined) ?? null);
+  const drawn = useUiStore((s) => s.drawnLane);
+  const expanded = useUiStore((s) => s.laneExpanded);
+  const treeChord = useShellStore((s) => commandLabel("toggle_file_tree", s.rest?.ui_state));
+  const up = laneUp(drawn.mode);
+  // The tree fills a files lane with no view, so there is nothing to turn off.
+  const treeAlone = up && drawn.tool === "files" && (view?.layout?.display_count ?? 0) === 0;
+  return (
+    <DropdownMenu>
+      <Hint label={t("panes.lane.more")} side="left">
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon-sm" className="mt-auto text-muted-foreground" aria-label={t("panes.lane.more")} data-lane-more="true">
+            <EllipsisIcon />
+          </Button>
+        </DropdownMenuTrigger>
+      </Hint>
+      <DropdownMenuContent align="end" side="left" aria-label={t("panes.lane.more")} data-lane-menu="true">
+        <DropdownMenuItem data-lane-menu-item="tree" disabled={treeAlone} onSelect={() => actions.toggleFileTree()}>
+          {t("panes.lane.tree")}
+          {treeChord ? <DropdownMenuShortcut>{treeChord}</DropdownMenuShortcut> : null}
+        </DropdownMenuItem>
+        {view?.tool ? (
+          <DropdownMenuItem data-lane-menu-item="pin" onSelect={() => actions.setLanePinned(!view.pinned)}>
+            {view.pinned ? t("panes.lane.unpinHint") : t("panes.lane.pinHint")}
+          </DropdownMenuItem>
+        ) : null}
+        {up ? (
+          <DropdownMenuItem data-lane-menu-item="expand" onSelect={() => useUiStore.getState().setLaneExpanded(!expanded)}>
+            {t("panes.lane.expand")}
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
+ * The lane (B2, B4, B5, B8, B9-B14): its header names the tool and its
+ * scope, with the pin, expand and close at its right; its body is the tool.
+ * The files tool stays mounted under another tool, so its documents, tabs,
+ * scroll and previews are as they were when it comes back (B2); its tree
+ * column is drawn only while the files tool shows.
+ */
+export function Lane({ view, tool, frame, sizes, checkout, actions }: { view: WorkspaceView; tool: Tool; frame: LaneFrame; sizes: LaneSizes; checkout: Checkout; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const expanded = frame.mode === "expanded";
+  const scope = useScope(checkout);
+  // Pinned in a window too narrow to dock, the tooltip reads as the approved
+  // board draws it (PRD right-lane B19, D-17).
+  const pinHint = !view.pinned ? t("panes.lane.pinHint") : frame.narrowPin ? t("panes.lane.pinNarrowHint") : t("panes.lane.unpinHint");
+  const filesShown = tool === "files";
+  return (
+    <aside className="flex h-full min-h-0 min-w-0 flex-1 flex-col text-foreground" aria-label={t("panes.lane.aria")} data-lane={tool}>
+      <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-xxs border-b border-border pl-md pr-xs text-caption" data-lane-header="true">
+        <span className="min-w-0 flex-1 truncate" data-lane-scope={scope(tool)}>
+          <span className="font-semibold text-foreground">{t(TOOL_NAMES[tool])}</span>
+          <span className="text-subtle-foreground"> · {scope(tool)}</span>
+        </span>
+        <Hint label={pinHint}>
+          <Button variant={view.pinned ? "secondary" : "ghost"} size="icon-sm" className={view.pinned ? "text-primary" : "text-muted-foreground"} aria-pressed={view.pinned} aria-label={t("panes.lane.pin")} data-lane-pin={view.pinned ? (frame.narrowPin ? "narrow" : "on") : "off"} onClick={() => actions.setLanePinned(!view.pinned)}>
+            <PinIcon className={view.pinned ? "fill-current" : undefined} />
+          </Button>
+        </Hint>
+        <Hint label={t("panes.lane.expand")}>
+          <Button variant={expanded ? "secondary" : "ghost"} size="icon-sm" className="text-muted-foreground" aria-pressed={expanded} aria-label={t("panes.lane.expand")} data-lane-expand={expanded ? "on" : "off"} onClick={() => useUiStore.getState().setLaneExpanded(!expanded)}>
+            {expanded ? <Minimize2Icon /> : <Maximize2Icon />}
+          </Button>
+        </Hint>
+        <Hint label={t("panes.lane.close")}>
+          <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={t("panes.lane.close")} data-lane-close="true" onClick={() => actions.closeLane()}>
+            <XIcon />
+          </Button>
+        </Hint>
+      </div>
+      <div className="relative flex min-h-0 min-w-0 flex-1">
+        <div className={cn("flex min-h-0 min-w-0 flex-1", !filesShown && "invisible absolute inset-0")} inert={!filesShown} data-lane-hidden={filesShown ? undefined : "true"}>
+          <FilesTool view={view} frame={frame} sizes={sizes} shown={filesShown} actions={actions} />
+        </div>
+        {filesShown ? null : (
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={t(TOOL_NAMES[tool])} data-tool={tool}>
+            {/* History reads the front checkout's Git through its own host. */}
+            {tool === "agent_sessions" ? <AgentSessions actions={actions} /> : tool === "memory" ? <MemoryTab actions={actions} /> : <HistoryList actions={actions} />}
+          </section>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+/**
+ * The files tool (B9-B13): the View areas, and the file tree as a column at
+ * their left while it is on; with no view open, the tree alone (B12). The
+ * tree reads the selected device's checkout through its helper.
+ */
+function FilesTool({ view, frame, sizes, shown, actions }: { view: WorkspaceView; frame: LaneFrame; sizes: LaneSizes; shown: boolean; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const [body, setBody] = useState<HTMLElement | null>(null);
+  const [guide, setGuide] = useState<number | null>(null);
+  const treeChord = useShellStore((s) => commandLabel("toggle_file_tree", s.rest?.ui_state));
+  const treeFooter = treeChord ? t("panes.lane.treeFooter", { chord: treeChord }) : t("panes.lane.treeFooterBare");
+  // One place for the tree whether it fills the lane or stands beside a
+  // document, so a pick from the tree alone keeps its filter and scroll.
+  const tree = frame.treeOnly || frame.tree !== null;
+  return (
+    <div ref={setBody} className="relative flex min-h-0 min-w-0 flex-1">
+      {tree ? (
+        <div className={cn("flex min-h-0 flex-col", frame.treeOnly ? "min-w-0 flex-1" : "shrink-0")} style={frame.treeOnly ? undefined : { width: frame.tree ?? undefined }} data-lane-tree={frame.treeOnly ? "only" : "beside"}>
+          {shown ? <ExplorerTree actions={actions} hint={t(frame.treeOnly ? "panes.lane.treeOnlyHint" : "panes.lane.treeHint")} footer={frame.treeOnly ? t("panes.lane.treeOnlyFooter") : treeFooter} /> : null}
+        </div>
+      ) : null}
+      {frame.tree !== null && !frame.treeOnly ? <LaneDivider kind="tree" label={t("panes.lane.resizeTree")} workspace={workspaceKey(view)} acknowledged={view.width_request_id ?? null} frame={frame} origin={body} sizes={sizes} setGuide={setGuide} actions={actions} /> : null}
+      {frame.treeOnly ? null : (
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-card" role="region" aria-label={t("panes.lane.files")} data-view-area="true">
+          <ViewAreas actions={actions} />
+        </div>
+      )}
+      {guide !== null ? <DividerGuide left={guide} /> : null}
     </div>
   );
 }
