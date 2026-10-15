@@ -843,6 +843,9 @@ Only `hide-links` writes it; record reads and session search are latest-only mai
 The helper's version 32 supplies canonical request senders and letter kinds from every supported native reader; an older helper keeps its existing raw requests and PR facts until updated.
 
 The record retains requests of at most 500 characters, goal chapters, assigned tasks, END judgments, created outputs and missed work.
+A Claude Code command record (`<command-name>`) is a request only when what Claude Code wrote after it shows the command went to the model: a command it answers itself, such as `/model` with its `<local-command-stdout>` or a `local_command` system record, is neither a request nor a Sessions last request, a search hit or label context.
+The incremental reader holds a command record that has no reply in the bytes it read, rereads it with the next poll and so neither loses nor repeats it; a reader of a whole page or file with no reply after the command counts it as a request.
+Requests already stored from before this rule are not filtered on read.
 It bounds requests and turns at 2,000 per session, chapters and tasks at 200, missed work at 200, new missed items at three per END and 80 characters each, and continuations at two tasks.
 Oldest entries beyond a retention cap are removed with a diagnostic, and the existing 64 MiB file and Copied history policy govern the whole ledger.
 A record tree has a 2,000-node, 32-depth and 2,000-request/output budget; an overflow is a failed read, rather than a larger snapshot.

@@ -476,7 +476,7 @@ function DoneColumn({
                 <Hint label={[t("board.mergedPr", { number: String(value.pr.number) }), value.mergedAt === null ? null : issueDate(value.mergedAt, i18n.language)].filter(Boolean).join(" · ")}>
                   <span className="inline-flex shrink-0 items-center gap-xxs px-xs font-mono text-caption text-muted-foreground" tabIndex={0} data-done-pr={value.pr.number}>
                     <GitMergeIcon aria-hidden="true" className="size-(--size-icon-sm)" />
-                    {value.pr.number}
+                    #{value.pr.number}
                   </span>
                 </Hint>
               ) : null}

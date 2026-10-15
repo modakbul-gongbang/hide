@@ -55,7 +55,6 @@ export const agentSessionsEnglish = {
   "agentSessions.tree.expand": "Show the children of {{name}}",
   "agentSessions.tree.collapse": "Hide the children of {{name}}",
   "agentSessions.tree.raised": "{{count}} raised below",
-  "agentSessions.tree.working": "{{count}} working below",
 } as const;
 
 type Messages = Catalog<typeof agentSessionsEnglish>;
@@ -115,7 +114,6 @@ const ko: Messages = {
   "agentSessions.tree.expand": "{{name}}의 자식 펼치기",
   "agentSessions.tree.collapse": "{{name}}의 자식 접기",
   "agentSessions.tree.raised": "아래 승격 {{count}}",
-  "agentSessions.tree.working": "아래 일하는 중 {{count}}",
 };
 
 const zh: Messages = {
@@ -173,7 +171,6 @@ const zh: Messages = {
   "agentSessions.tree.expand": "展开 {{name}} 的子代理",
   "agentSessions.tree.collapse": "收起 {{name}} 的子代理",
   "agentSessions.tree.raised": "下方上报 {{count}}",
-  "agentSessions.tree.working": "下方工作中 {{count}}",
 };
 
 const ja: Messages = {
@@ -231,7 +228,6 @@ const ja: Messages = {
   "agentSessions.tree.expand": "{{name}} の子を開く",
   "agentSessions.tree.collapse": "{{name}} の子を閉じる",
   "agentSessions.tree.raised": "下で昇格 {{count}}",
-  "agentSessions.tree.working": "下で作業中 {{count}}",
 };
 
 export const agentSessionsCatalogs = { en: agentSessionsEnglish, ko, "zh-CN": zh, ja } satisfies Catalogs<typeof agentSessionsEnglish>;
