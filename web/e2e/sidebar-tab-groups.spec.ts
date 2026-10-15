@@ -9,7 +9,7 @@ const guide = (page: Page, tab: string) => page.locator(`[data-project-list] [da
 const segment = (page: Page, tab: string) => page.locator(`[data-project-list] [data-sidebar-tab-group="${tab}"]`);
 const position = async (row: ReturnType<Page["locator"]>) => (await row.boundingBox())!;
 
-test("a tab with two agents opens with a line that opens it, takes its name once renamed, and leaves with its second agent", { tag: "@platform" }, async ({ page }) => {
+test("a tab with two agents opens with a line that opens it, takes its name once renamed, and keeps it at one agent while named", { tag: "@platform" }, async ({ page }) => {
   // The platform's Herdr owns pane/process existence and the tab names.
   const herdr = await startHerdr();
   const daemon = await startHided(herdr, "sidebar-tab-segments");
@@ -40,14 +40,15 @@ test("a tab with two agents opens with a line that opens it, takes its name once
     expect(sent.get("focus_pane") ?? 0).toBe(before);
     await expect(segment(page, herdr.tab).locator("[data-agent-open]")).toHaveCount(2);
 
-    // One agent left: the row alone, with no guide and no line, even though the tab is still named.
+    // One agent left: the named tab keeps its guide and line, now counting one agent.
     herdr.run(["pane", "close", herdr.panes[1]]);
-    await expect(tabButton(page, herdr.tab)).toHaveCount(0);
-    await expect(page.locator("[data-sidebar-tab-name]")).toHaveCount(0);
-    await expect(guide(page, herdr.tab)).toHaveCount(0);
     await expect(segment(page, herdr.tab).locator("[data-agent-open]")).toHaveCount(1);
+    await expect(tabButton(page, herdr.tab)).toHaveAccessibleName("아주 긴 한국어 탭 이름과 작업 묶음의 경계 확인, 1 agent");
+    await expect(page.locator("[data-sidebar-tab-name]")).toHaveText("아주 긴 한국어 탭 이름과 작업 묶음의 경계 확인");
+    await expect(guide(page, herdr.tab)).toHaveCount(1);
+    await screenshot(page, "sidebar-tab-named-single");
 
-    // A second agent brings the line back with the retained name.
+    // A second agent joins the same line under the retained name.
     const split = herdr.run(["pane", "split", herdr.panes[0], "--direction", "right", "--cwd", path.join(herdr.root, "fixture"), "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]) as { result: { pane: { pane_id: string } } };
     herdr.run(["agent", "start", "returned", "--kind", "claude", "--pane", split.result.pane.pane_id]);
     await expect(tabButton(page, herdr.tab)).toHaveAccessibleName("아주 긴 한국어 탭 이름과 작업 묶음의 경계 확인, 2 agents");
@@ -60,7 +61,8 @@ test("2-1-2 tab segments share one root column right of the kind glyph, with gui
   let daemon: Awaited<ReturnType<typeof startHided>> | undefined;
   try {
     herdr.run(["tab", "rename", herdr.tab, "작업 묶음 A"]);
-    const created = ["single", "작업 묶음 B"].map((name) => herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--env", `PATH=${herdr.fixturePath}`, "--label", name, "--no-focus"]) as { result: { tab: { tab_id: string }; root_pane: { pane_id: string } } });
+    // The one-agent tab stays unnamed: a named one would draw its line.
+    const created = [null, "작업 묶음 B"].map((name) => herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--env", `PATH=${herdr.fixturePath}`, ...(name ? ["--label", name] : []), "--no-focus"]) as { result: { tab: { tab_id: string }; root_pane: { pane_id: string } } });
     const single = created[0]!.result;
     const paired = created[1]!.result;
     herdr.run(["agent", "start", "single", "--kind", "claude", "--pane", single.root_pane.pane_id]);
@@ -85,7 +87,7 @@ test("2-1-2 tab segments share one root column right of the kind glyph, with gui
     const titles = await Promise.all((await page.locator("[data-project-list] li[data-pane][data-depth='0'] [data-agent-title]").all()).map(position));
     expect(titles.map((title) => title.x - marks[0]!.x)).toEqual(titles.map(() => 16));
 
-    // A two-agent segment's guide is 1px, centered under the kind glyph; the single-agent segment draws none, and the gap between segments is 8px.
+    // A two-agent segment's guide is 1px, centered under the kind glyph; the unnamed single-agent segment draws none, and the gap between segments is 8px.
     const center = kind.x + kind.width / 2;
     await expect(guide(page, single.tab.tab_id)).toHaveCount(0);
     for (const tab of [herdr.tab, paired.tab.tab_id]) {
