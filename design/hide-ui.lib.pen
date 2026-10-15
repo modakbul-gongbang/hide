@@ -33522,10 +33522,7 @@
               "name": "Files",
               "descendants": {
                 "lane-tool-glyph": {
-                  "icon": "file"
-                },
-                "lane-tool-label": {
-                  "content": "Files"
+                  "icon": "files"
                 }
               }
             },
@@ -33536,10 +33533,7 @@
               "name": "Changes",
               "descendants": {
                 "lane-tool-glyph": {
-                  "icon": "git-branch"
-                },
-                "lane-tool-label": {
-                  "content": "Changes"
+                  "icon": "file-diff"
                 }
               }
             },
@@ -33550,10 +33544,7 @@
               "name": "Sessions",
               "descendants": {
                 "lane-tool-glyph": {
-                  "icon": "message-square"
-                },
-                "lane-tool-label": {
-                  "content": "Sessions"
+                  "icon": "messages-square"
                 }
               }
             },
@@ -33564,10 +33555,7 @@
               "name": "Memory",
               "descendants": {
                 "lane-tool-glyph": {
-                  "icon": "book-open"
-                },
-                "lane-tool-label": {
-                  "content": "Memory"
+                  "icon": "brain"
                 }
               }
             },
@@ -33638,16 +33626,6 @@
               "icon": "file",
               "library": "lucide",
               "fill": "$--muted-foreground"
-            },
-            {
-              "type": "text",
-              "id": "lane-tool-label",
-              "name": "Files",
-              "content": "Files",
-              "fill": "$--muted-foreground",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-micro",
-              "fontWeight": "400"
             },
             {
               "type": "frame",
@@ -33913,10 +33891,6 @@
                         },
                         "lane-rail-files/lane-tool-glyph": {
                           "fill": "$--foreground"
-                        },
-                        "lane-rail-files/lane-tool-label": {
-                          "fill": "$--foreground",
-                          "fontWeight": "500"
                         }
                       }
                     }
@@ -33956,10 +33930,6 @@
                         },
                         "lane-rail-changes/lane-tool-glyph": {
                           "fill": "$--foreground"
-                        },
-                        "lane-rail-changes/lane-tool-label": {
-                          "fill": "$--foreground",
-                          "fontWeight": "500"
                         }
                       }
                     }
@@ -33999,10 +33969,6 @@
                         },
                         "lane-rail-sessions/lane-tool-glyph": {
                           "fill": "$--foreground"
-                        },
-                        "lane-rail-sessions/lane-tool-label": {
-                          "fill": "$--foreground",
-                          "fontWeight": "500"
                         }
                       }
                     }
@@ -34042,10 +34008,6 @@
                         },
                         "lane-rail-memory/lane-tool-glyph": {
                           "fill": "$--foreground"
-                        },
-                        "lane-rail-memory/lane-tool-label": {
-                          "fill": "$--foreground",
-                          "fontWeight": "500"
                         }
                       }
                     }
@@ -34827,10 +34789,6 @@
                         },
                         "lane-rail-files/lane-tool-glyph": {
                           "fill": "$--foreground"
-                        },
-                        "lane-rail-files/lane-tool-label": {
-                          "fill": "$--foreground",
-                          "fontWeight": "500"
                         }
                       }
                     }
@@ -34870,10 +34828,6 @@
                         },
                         "lane-rail-changes/lane-tool-glyph": {
                           "fill": "$--foreground"
-                        },
-                        "lane-rail-changes/lane-tool-label": {
-                          "fill": "$--foreground",
-                          "fontWeight": "500"
                         }
                       }
                     }
@@ -34913,10 +34867,6 @@
                         },
                         "lane-rail-sessions/lane-tool-glyph": {
                           "fill": "$--foreground"
-                        },
-                        "lane-rail-sessions/lane-tool-label": {
-                          "fill": "$--foreground",
-                          "fontWeight": "500"
                         }
                       }
                     }
@@ -34956,10 +34906,6 @@
                         },
                         "lane-rail-memory/lane-tool-glyph": {
                           "fill": "$--foreground"
-                        },
-                        "lane-rail-memory/lane-tool-label": {
-                          "fill": "$--foreground",
-                          "fontWeight": "500"
                         }
                       }
                     }

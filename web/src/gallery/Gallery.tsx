@@ -280,13 +280,13 @@ const renderers: Renderers = {
     "With Shortcut": () => (
       <Tooltip open>
         <TooltipTrigger asChild>
-          <Button variant="ghost" size="icon" aria-label="Toggle right panel">
+          <Button variant="ghost" size="icon" aria-label="Toggle right lane">
             <ArrowRightIcon />
           </Button>
         </TooltipTrigger>
         <TooltipContent side="bottom">
           <span className="inline-flex items-center gap-sm">
-            Toggle right panel <span className="text-muted-foreground">⇧⌘B</span>
+            Toggle right lane <span className="text-muted-foreground">⌘E</span>
           </span>
         </TooltipContent>
       </Tooltip>

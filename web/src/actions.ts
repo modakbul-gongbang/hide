@@ -412,10 +412,14 @@ export function createActions(send: DispatchFn) {
     setWorkspaceView({ tool: null });
   };
 
-  /** A rail icon, ⌘⇧B or ⌘E (B2, B20): the tool showing closes the lane, otherwise the lane opens on it. */
+  /** A rail icon (B2, B20): the tool showing closes the lane, otherwise the lane opens on it. */
   const toggleTool = (tool: Tool) => (laneUpWith(tool) ? closeLane() : showTool(tool));
-  const toggleFileViews = () => toggleTool("files");
-  const toggleTools = () => toggleTool("agent_sessions");
+  /** ⌘E and the path's menu (B20): the lane closes while it shows, and otherwise comes back on the tool it holds, Files when it holds none. */
+  const toggleLane = () => {
+    const { mode } = ui().drawnLane;
+    if (mode !== "closed" && mode !== "hidden") return closeLane();
+    showTool(workspaceViewOf(rest())?.tool ?? "files");
+  };
 
   /**
    * The tree button or ⌘⇧E (B9, B11): with the files tool on screen the tree
@@ -2182,13 +2186,12 @@ export function createActions(send: DispatchFn) {
 
     showSidebarMode,
 
-    toggleFileViews,
     toggleTool,
     toggleFileTree,
     closeLane,
     setLanePinned,
 
-    toggleTools,
+    toggleLane,
 
     setWorkspaceView,
 

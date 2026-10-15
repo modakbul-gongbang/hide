@@ -90,14 +90,12 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
     ]);
   }
 
-  // -- the rail, its labels as the Korean interface reads them --
-  const TOOLS = [['files', '파일'], ['changes', '변경'], ['sessions', '세션'], ['memory', '기억']];
+  // -- the rail: icons alone, each tool's name in its hint --
+  const TOOLS = ['files', 'changes', 'sessions', 'memory'];
   function rail(id, active) {
     const descendants = {};
-    for (const [key, label] of TOOLS) {
-      const on = key === active;
-      descendants[`lane-rail-${key}/lane-tool-label`] = {content: label, ...(on ? {fill: '$--foreground', fontWeight: '500'} : {})};
-      if (!on) continue;
+    for (const key of TOOLS) {
+      if (key !== active) continue;
       descendants[`lane-rail-${key}`] = {fill: '$--secondary'};
       descendants[`lane-rail-${key}/lane-tool-bar`] = {enabled: true};
       descendants[`lane-rail-${key}/lane-tool-glyph`] = {fill: '$--foreground'};

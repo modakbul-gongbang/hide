@@ -45,10 +45,10 @@ test("close follows the keyboard and the lane never renders an empty surface", a
     await expect(editor).toBeVisible();
     await page.keyboard.press(chord("toggle_file_tree"));
     await expect(tree).toHaveCount(0);
-    // ⌘⇧B closes the lane and brings it back with its view (B2, B20).
-    await page.keyboard.press(chord("toggle_right_panel"));
+    // ⌘E closes the lane and brings it back with its view (B2, B20).
+    await page.keyboard.press(chord("toggle_lane"));
     await expect(screen).toHaveAttribute("data-lane-mode", "closed");
-    await page.keyboard.press(chord("toggle_right_panel"));
+    await page.keyboard.press(chord("toggle_lane"));
     await expect(editor).toBeVisible();
     await expect(tree).toHaveCount(0);
 
