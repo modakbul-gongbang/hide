@@ -1448,9 +1448,17 @@ pub struct Runtime {
     /// operator's behalf arms this, and it is memory only: a launch starts
     /// with the operator having looked at nothing.
     operator_focused_pane_id: Option<String>,
-    /// Persisted records waiting to compare against an agent after a fresh
-    /// Herdr connection. Agent detection can trail restored pane topology.
-    pending_read_record_reconciliation: HashSet<String>,
+    /// The read axis's view of the current connection to the local Herdr
+    /// server and to each device's: the mark that names the server and the
+    /// panes settled on it so far (`agent_state::ReadConnection`). Memory
+    /// only; every connection starts a new one.
+    local_read_connection: crate::agent_state::ReadConnection,
+    /// One per device target that has connected, so at most one per
+    /// registered device.
+    remote_read_connections: BTreeMap<String, crate::agent_state::ReadConnection>,
+    /// Numbers the marks this process makes, so two connections made in the
+    /// same millisecond still get different marks.
+    read_marks_made: u64,
     /// The tab Hide is showing in each checkout it has been asked about.
     ///
     /// Hide owns the visible tab. The navigator is rebuilt from Herdr's
@@ -2099,7 +2107,9 @@ impl Runtime {
             pet_waking_until_unix_ms: 0,
             pet_dragging: false,
             operator_focused_pane_id: None,
-            pending_read_record_reconciliation: HashSet::new(),
+            local_read_connection: crate::agent_state::ReadConnection::new(read_mark(0)),
+            remote_read_connections: BTreeMap::new(),
+            read_marks_made: 1,
             visible_tab_ids: BTreeMap::new(),
             tab_focus_requests: Vec::new(),
             herdr_tab_moves_read: None,
@@ -2794,6 +2804,17 @@ fn import_native_app_shortcuts(snapshot: &mut Snapshot, source: &Path) -> bool {
         occurred_at: unix_milliseconds(),
     });
     false
+}
+
+/// A mark no other connection has written: this process's start, its id and
+/// how many marks it has made. Two hided processes never share a pid at the
+/// same millisecond, and one never makes the same count twice.
+fn read_mark(made: u64) -> String {
+    format!(
+        "{:x}-{:x}-{made:x}",
+        unix_milliseconds(),
+        std::process::id()
+    )
 }
 
 fn unix_milliseconds() -> u64 {

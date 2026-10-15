@@ -202,7 +202,7 @@ fn run_coordinator(
                     subscription: next_subscription,
                     snapshot_at,
                 }) => {
-                    if context.is_local() && !begin_local_read_record_reconciliation(&context) {
+                    if !begin_read_connection(&context) {
                         stop_subscription(&mut subscription);
                         return;
                     }
@@ -233,21 +233,16 @@ fn run_coordinator(
                     agents_refresh_owed = false;
                     next_operation_tick = Instant::now() + ASYNC_OPERATION_TICK_INTERVAL;
                     if let Some(writer) = lineage_writer.as_mut()
-                        && let Some(runtime) = context.runtime.upgrade()
+                        && let Some((state, marks)) = lineage_inputs(&context)
                     {
-                        let state = runtime
-                            .lock()
-                            .ok()
-                            .and_then(|guard| guard.delivery_state().ok());
-                        if let Some(state) = state {
-                            writer.reconnected();
-                            writer.observe(
-                                &state,
-                                &replica.as_ref().unwrap().state.agents,
-                                true,
-                                snapshot_started_at,
-                            );
-                        }
+                        writer.reconnected();
+                        writer.observe(
+                            &state,
+                            &replica.as_ref().unwrap().state.agents,
+                            &marks,
+                            true,
+                            snapshot_started_at,
+                        );
                     }
                     if let (Some(restorer), Some(current)) =
                         (hook_token_restorer.as_mut(), replica.as_ref())
@@ -764,15 +759,9 @@ fn run_coordinator(
                             let (native_changed, requested) =
                                 agent_tick_changes(current, &agents, catalog_cache.as_ref());
                             if let Some(writer) = lineage_writer.as_mut()
-                                && let Some(runtime) = context.runtime.upgrade()
+                                && let Some((state, marks)) = lineage_inputs(&context)
                             {
-                                let state = runtime
-                                    .lock()
-                                    .ok()
-                                    .and_then(|guard| guard.delivery_state().ok());
-                                if let Some(state) = state {
-                                    writer.observe(&state, &agents, native_changed, started_at);
-                                }
+                                writer.observe(&state, &agents, &marks, native_changed, started_at);
                             }
                             if let Some(restorer) = hook_token_restorer.as_mut() {
                                 restorer.observe(&agents, false);
@@ -1670,19 +1659,32 @@ fn observe_labels(worker: &mut LabelWorker, replica: &SessionReplica) {
     worker.observe(&agents, Some(&live), Instant::now(), now_unix_ms);
 }
 
-/// Marks persisted read records before the first projection from a fresh
-/// connection. Restored topology and agent detection can arrive on different
-/// ticks, so the runtime keeps this bounded set until each pane is observed or
-/// the authoritative topology drops it.
-fn begin_local_read_record_reconciliation(context: &SessionSyncContext) -> bool {
+/// Starts the read axis's view of this connection before its first
+/// projection: the server reached may be the one lost or a restored one, and
+/// only the panes' marks tell (`agent_state::ReadConnection`).
+fn begin_read_connection(context: &SessionSyncContext) -> bool {
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
     let Ok(mut guard) = runtime.lock() else {
         return false;
     };
-    guard.begin_local_read_record_reconciliation();
+    guard.begin_read_connection(context.read_target());
     true
+}
+
+/// What the lineage writer reads from the runtime in one lock: the delivery
+/// ledger and the panes that should carry this connection's mark.
+fn lineage_inputs(
+    context: &SessionSyncContext,
+) -> Option<(
+    Arc<crate::delivery::ledger::Ledger>,
+    BTreeMap<String, String>,
+)> {
+    let runtime = context.runtime.upgrade()?;
+    let guard = runtime.lock().ok()?;
+    let ledger = guard.delivery_state().ok()?;
+    Some((ledger, guard.wanted_server_marks(context.read_target())))
 }
 
 /// Forgets the host's published panes before a fresh snapshot is asked for,
