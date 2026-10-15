@@ -183,7 +183,9 @@ A drag keeps its original tab in place and changes no terminal size until a vali
 Dropping on a tab bar reorders or moves the tab; dropping on a content edge highlights the new half with Split left/right/up/down and creates another area on release.
 Moving the last tab out collapses its area, as does closing it or its disappearance from Herdr.
 Closing a tab, or its only pane, takes the tab out of its area the moment the close is approved, without waiting for Herdr: the area shows the tab it showed before it, or collapses when the tab was its last, and when the closed tab held the keyboard the keyboard goes to what is now shown in its place (the area's next tab, or the neighbouring area's), never to the next tab in Herdr's order.
-A close Herdr refuses, or one that fails before it is sent, puts the tab back where it stood, and the keyboard with it when nothing has moved since; a close whose result is unknown shows the tab again until the status check settles it.
+When that close leaves the checkout in front with no tab at all, the operator is done there: in the same frame the screen goes back to the most recent checkout of this machine they were in before it that still holds a tab and is not being removed, as choosing it from the sidebar would, and a reload opens there.
+With no such checkout, the screen stays and the area shows its empty state; a tab off the strip (a delegated child's) still keeps the checkout, and a close Hide makes on its own (an agent's sleep) never moves the screen.
+A close Herdr refuses, or one that fails before it is sent, puts the tab back where it stood, and the operator and the keyboard with it, to that checkout too, when nothing has moved since; a close whose result is unknown shows the tab again until the status check settles it.
 A pane closing inside a tab that keeps other panes leaves the canvas the moment the close is approved, and its neighbours take its space as Herdr will lay them out; its sidebar row stays until Herdr confirms the close, and a close Herdr refuses or cannot answer draws the pane back where it stood.
 A split, a zoom or unzoom and a pane resize Hide asked for are drawn at once, a split as soon as Herdr names the new pane, without waiting for Herdr's layout; a new tab appears in its area as soon as Herdr answers its creation.
 While such a change is drawn ahead of Herdr, each terminal keeps its grid and draws it inside its new rectangle, and its rows and columns change only once Herdr has applied the change, so a change Herdr lays out differently never reflows a terminal twice.
@@ -542,13 +544,14 @@ Web owner: `web/src/close.ts` (which sheet, which panes and descendants, and the
 A terminal pane links what its program prints, whichever program it is: an http(s) URL, a path, and a link the program marked itself (OSC 8).
 A plain-text path is a link only where it names something on this Mac, so a word that merely looks like a path draws nothing; the check runs when the pointer reaches a row, never per frame.
 A relative path is looked for under the pane's folder and then under its checkout's root, `~/` names the home folder, and a location written after it (`:12`, `:12:5`, `#L12`, `(12,5)`) is where the file opens.
-The original spelling is checked before treating punctuation, a Korean particle or a location as context: if `docs/a.md)에`, `docs/a.md)` or `src/a.ts:12:5` is itself a file name, that complete name wins.
-Composite punctuation, particles and locations also preserve grammar-only literal names such as `(src/a.ts:12:5)` before dropping their leading or closing punctuation or interpreting the location.
+The original spelling is checked before treating punctuation, attached prose or a location as context: if `docs/a.md)에`, `docs/a.md)` or `src/a.ts:12:5` is itself a file name, that complete name wins.
+Composite punctuation, prose and locations also preserve prose-only literal names such as `(src/a.ts:12:5)` before dropping their leading or closing punctuation or interpreting the location.
 Among the bounded interpretations, the longest existing path wins; a failed or budget-skipped longer check never establishes a shorter link.
 In Korean prose such as `보드 보기 (docs/README.md)에 C안을 추가했습니다.`, only `docs/README.md` is underlined and clickable when that is the actual path.
-Grammar is interpreted only after a closing parenthesis, square/curly bracket or quotation mark: 에, 에서, 에게, 께, 으로, 로, 와, 과, 을, 를, 은, 는, 이, 가, 의, 도, 만, 부터, 까지, optionally followed by one of 도, 만, 는 or 은.
-An unsupported word, an unbounded particle chain, or Hangul attached without that closing boundary is never shortened.
-A URL takes the same boundary, and since a URL cannot be checked, a particle after its closing mark is always prose: in `PR #682 (https://github.com/o/r/pull/682)이 끝났습니다`, only `https://github.com/o/r/pull/682` is the link.
+Korean, Japanese and Chinese attach the next word to a path without a space, and Claude Code draws a backticked path without its backticks, so `view-mode.html에` reaches the pane as one word.
+The run of Hangul, kana or Han characters at a word's end is that attached prose, and it is cut once, where the script changes: `view-mode.html에`, `docs/a.md)에서도` and `view-mode.htmlに` link `view-mode.html`, `docs/a.md` and `view-mode.html`, with no list of particles.
+A run that starts right after `/` is a folder entry's own name and is never cut, so `docs/회의록에` is checked only as written; a word in another script attached to a path is not prose either.
+A URL cannot be checked, so its attached prose is cut only after a closing mark, where it is always prose: in `PR #682 (https://github.com/o/r/pull/682)이 끝났습니다`, only `https://github.com/o/r/pull/682` is the link, while `https://ko.wikipedia.org/wiki/서울이` links all of it.
 Ranges follow the terminal's actual cells, including wide glyphs, combining sequences and wrapped rows.
 A path or URL the terminal wrapped at its last column, or a TUI broke at its own margin and indented, is one link across its rows; a URL spans rows only where the terminal wrapped it, because it cannot be checked.
 Under the pointer a link is underlined and the pointer becomes a hand; a click on it is the link's and never reaches the program, and a drag across it selects its text and opens nothing.
@@ -1226,21 +1229,21 @@ Checkouts start open, and `session_collapsed_checkout_ids` keeps only the checko
 Within an open checkout or plain folder, every operator root stands at one depth whatever tab holds it: tabs make no depth and, unless named, no row.
 The sidebar keeps each root and its complete lineage subtree together under the root's actual tab, in checkout tab order and then the core's root order.
 Groups stay separated by `--spacing-sm` (8px), without a card or border.
+The first group hangs `--spacing-xxs` (2px) under its checkout row, only so the checkout's fill and a selected row's never merge, and the last group ends with the same 8px before the next row, so every agent stands nearer its own checkout than the one below it.
 Root status marks share one axis on the checkout name's column, to the right of the checkout's kind glyph, so no agent row's leftmost ink stands left of its checkout's glyph and a `?` or `!` is scanned on one line.
 Lineage children keep their `--size-lineage-indent` (18px) step and elbow rails from that axis, and a root's lineage disclosure stays in the reserved trailing slot.
-A tab with two or more recognized agent panes draws a 1px vertical guide centered under the checkout's kind glyph (a plain folder's folder glyph) and spanning the group's rows, with the tab glyph at the head of the guide, on the guide's column and its first row's line; the head adds no row.
-A single-agent tab draws no guide and no glyph: its row alone is the segment, and the 8px gap between segments is the tab boundary.
+A tab with two or more recognized agent panes draws a 1px vertical guide centered under the checkout's kind glyph (a plain folder's folder glyph) and spanning the group's rows, and opens with one quiet line at its head, a sidebar line and a hairline high, standing inside the guide like a row: the guide runs past it unbroken, the tab glyph stands on the status-mark column and the tab's name in 11px subtle text starts on the title column, so the tab reads as part of its checkout and never as a row beside the checkout's own glyph.
+The name is the tab's manual name, or localized `Tab N` from the core's stable number when it has none.
 Shell panes are not counted, children in other tabs do not inflate their parent's count, and a tab without a sidebar root draws no segment.
-Pointer or keyboard focus on the glyph shows its hint, the tab's manual name or localized `Tab N` from the core's stable number, and its agent count.
-The glyph is a button with that accessible name: click, Enter and Space open the real tab without read-state or process effects, and it is a stop in the Arrow Up/Down and Home/End traversal, ahead of its segment's rows.
-A tab with two or more agents and a manual name also gets one quiet line at its head, a sidebar line and a hairline high: the tab glyph on the guide's column and the name in 11px subtle text starting on the status-mark column.
-The line opens the tab as the glyph does, and the existing tab Rename still sets or clears the name; automatic tabbar titles remain independent.
-An unnamed tab never draws `Tab N` text, and a single-agent tab draws no guide, no glyph and no line even when named.
+Pointer or keyboard focus on the line shows its hint, the same name and its agent count.
+The line is a button with that accessible name: click, Enter and Space open the real tab without read-state or process effects, and it is a stop in the Arrow Up/Down and Home/End traversal, ahead of its segment's rows.
+The existing tab Rename still sets or clears the manual name; automatic tabbar titles remain independent.
+A single-agent tab draws no guide and no line even when named: its row alone is the segment, and the 8px gap between segments is the tab boundary.
 A tab has no disclosure and the sidebar saves nothing about it; a stored fold choice from an earlier version is ignored on load and dropped on the next write.
-When two agents become one the segment loses its guide, glyph and line, and a second agent brings them back with the name the tab still has.
-At a 240px sidebar width, its 8px list inset puts the checkout's kind glyph at x28 with the guide centered on x35, tab glyphs on the same center, root status marks starting at x46 and titles at x62; quiet agent rows are 28px high, using the existing 20px line and 4px vertical padding, and the head adds none.
+When two agents become one the segment loses its guide and line, and a second agent brings them back with the name the tab still has.
+At a 240px sidebar width, its 8px list inset puts the checkout's kind glyph at x28 with the guide centered on x35, root status marks starting at x46 and titles at x62, and a tab line's glyph centered on the status-mark column at x52 with its name at x62; quiet agent rows are 28px high, using the existing 20px line and 4px vertical padding, and a tab line is 22px.
 Focused sidebar agent and checkout rows use the neutral `--secondary` fill.
-Root shortcuts follow the same physical grouping order and deduplicate raised occurrences, with no numbers for tab glyphs or children.
+Root shortcuts follow the same physical grouping order and deduplicate raised occurrences, with no numbers for tab lines or children.
 A closed checkout draws its status badge and still shows questioning or blocked Needs You rows.
 A status badge counts agents under the mark each agent's own row draws, one mark and count per state, worst first (`▲ ! ? ● ◐ ✓ ○`), with idle agents included and zero states left out (docs/status-model.md, Workspace aggregation).
 A web project row opens its device's last focused usable checkout, falling back to the primary checkout and then the first usable checkout.

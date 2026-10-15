@@ -1643,7 +1643,7 @@ fn restored_pane_keeps_its_read_record_through_delayed_agent_detection() {
     assert!(runtime.dispatch_json(&operator_focus_event("w1:p1")));
     assert_eq!(unread_panes(&runtime), vec!["w1:p2", "w1:p3"]);
 
-    runtime.begin_local_read_record_reconciliation();
+    runtime.begin_read_connection(None);
     let mut topology_first = finished_tab_payload(&original, "w1:p1");
     topology_first.agents.clear();
     runtime.ingest_session(Ok(topology_first));
@@ -1664,6 +1664,94 @@ fn restored_pane_keeps_its_read_record_through_delayed_agent_detection() {
             .all(|pane_id| pane_id != "w1:p1"),
         "the restored stopped agent stays Seen after sequence rebasing"
     );
+}
+
+/// A device's Herdr server restarts the way this machine's does, and its
+/// panes are judged the same way: a pane the operator read there stays read
+/// through the restored server's steps, the mark Hide wants on it names the
+/// device's own pane id, and work after the restore is news again.
+#[test]
+fn a_device_pane_read_before_its_server_restarts_stays_read() {
+    let mut runtime = runtime();
+    let pane_id = "remote:mini:pane:w9:p1";
+    let workspace_id = "remote:mini:workspace:w9";
+    let checkout_id = "remote:mini:checkout:w9";
+    let tab_id = "remote:mini:tab:w9:t1";
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: "mini".to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: None,
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    let session = |status: &str, seq: u64, focused: Option<&str>| {
+        let mut remote_checkout = checkout(
+            workspace_id,
+            checkout_id,
+            "/tmp/herdr-remote-read",
+            Some(pane(pane_id, "/tmp/herdr-remote-read")),
+        );
+        remote_checkout.tabs[0].id = Some(tab_id.to_owned());
+        let mut remote_workspace = workspace(
+            workspace_id,
+            "Remote",
+            "/tmp/herdr-remote-read",
+            vec![remote_checkout],
+        );
+        remote_workspace.remote_target_id = Some("mini".to_owned());
+        remote_workspace.device_id = "mini".to_owned();
+        RemoteSessionSnapshot {
+            workspaces: vec![remote_workspace],
+            agents: project_agents(
+                serde_json::from_value(serde_json::json!({
+                    "agents": [{"pane_id": pane_id, "agent": "codex", "agent_status": status,
+                        "state_change_seq": seq, "agent_session": {"kind": "id", "value": "s1"},
+                        "cwd": "/tmp/herdr-remote-read"}]
+                }))
+                .unwrap(),
+            )
+            .agents,
+            active_tab_ids: [(checkout_id.to_owned(), tab_id.to_owned())]
+                .into_iter()
+                .collect(),
+            focused_workspace_id: Some(workspace_id.to_owned()),
+            focused_checkout_id: Some(checkout_id.to_owned()),
+            focused_tab_id: Some(tab_id.to_owned()),
+            focused_pane_id: focused.map(str::to_owned),
+            pane_layouts: Vec::new(),
+            pane_hook_tokens: Default::default(),
+            issue_tokens: Default::default(),
+            issue_links: Default::default(),
+        }
+    };
+    let unread = |runtime: &Runtime| {
+        runtime.snapshot.status.remote[0]
+            .session
+            .as_ref()
+            .unwrap()
+            .agents[0]
+            .unread
+    };
+
+    runtime.begin_read_connection(Some("mini"));
+    runtime.ingest_remote_session("mini", Ok(session("done", 40, Some(pane_id))));
+    assert!(!unread(&runtime));
+    let wanted = runtime.wanted_server_marks(Some("mini"));
+    assert_eq!(
+        wanted.keys().collect::<Vec<_>>(),
+        ["w9:p1"],
+        "the mark goes on the device's own pane id"
+    );
+
+    runtime.begin_read_connection(Some("mini"));
+    for (status, seq) in [("idle", 0), ("unknown", 1), ("done", 5)] {
+        runtime.ingest_remote_session("mini", Ok(session(status, seq, None)));
+        assert!(!unread(&runtime), "{status} at {seq} stays read");
+    }
+    runtime.ingest_remote_session("mini", Ok(session("working", 6, None)));
+    assert!(unread(&runtime), "work after the restore is news");
 }
 
 /// AC2, AC7, SC1. The defect the PRD was written against, from the other

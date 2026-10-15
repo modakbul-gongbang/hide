@@ -1047,22 +1047,127 @@ impl Runtime {
         self.snapshot.pet.shortcut = self.snapshot.ui_state.pet_shortcut.clone();
     }
 
-    /// Arms the records that need one sequence reconciliation after a fresh
-    /// connection. The set is bounded by the persisted read ledger.
-    pub(crate) fn begin_local_read_record_reconciliation(&mut self) {
-        self.pending_read_record_reconciliation = self
-            .snapshot
-            .ui_state
-            .pane_read_records
-            .keys()
-            .filter(|pane_id| ReadRecordScope::Local.owns(pane_id))
-            .cloned()
-            .collect();
+    /// Starts the read axis's view of a new connection to one Herdr server:
+    /// a mark no earlier connection wrote, and no pane settled yet. Every
+    /// connect starts one, because a reconnect cannot tell whether the server
+    /// it reaches is the one it lost; the panes' marks say that
+    /// (`agent_state::ReadConnection`).
+    pub(crate) fn begin_read_connection(&mut self, target_id: Option<&str>) {
+        let connection =
+            crate::agent_state::ReadConnection::new(super::read_mark(self.read_marks_made));
+        self.read_marks_made = self.read_marks_made.saturating_add(1);
         crate::diagnostic!(serde_json::json!({
             "component": "read_state",
-            "kind": "reconciliation.started",
-            "record_count": self.pending_read_record_reconciliation.len(),
+            "kind": "connection.started",
+            "target": target_id.unwrap_or("local"),
+            "mark": connection.mark,
         }));
+        match target_id {
+            None => self.local_read_connection = connection,
+            Some(target_id) => {
+                self.remote_read_connections
+                    .insert(target_id.to_owned(), connection);
+            }
+        }
+    }
+
+    /// The connection the read axis judges one target's panes on.
+    pub(super) fn read_connection(
+        &mut self,
+        target_id: Option<&str>,
+    ) -> &mut crate::agent_state::ReadConnection {
+        match target_id {
+            None => &mut self.local_read_connection,
+            Some(target_id) => {
+                if !self.remote_read_connections.contains_key(target_id) {
+                    self.begin_read_connection(Some(target_id));
+                }
+                self.remote_read_connections
+                    .get_mut(target_id)
+                    .expect("inserted above")
+            }
+        }
+    }
+
+    /// The panes on one target's server that should carry this connection's
+    /// mark, by Herdr's own pane id: those whose saved read record or
+    /// completion names it. The lineage writer writes the ones that do not.
+    pub(crate) fn wanted_server_marks(&self, target_id: Option<&str>) -> BTreeMap<String, String> {
+        let (connection, agents, prefix) = match target_id {
+            None => (
+                &self.local_read_connection,
+                self.snapshot.navigator.agents.as_slice(),
+                None,
+            ),
+            Some(target_id) => {
+                let Some(connection) = self.remote_read_connections.get(target_id) else {
+                    return BTreeMap::new();
+                };
+                let Some(session) = self
+                    .snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .find(|remote| remote.target_id == target_id)
+                    .and_then(|remote| remote.session.as_ref())
+                else {
+                    return BTreeMap::new();
+                };
+                (
+                    connection,
+                    session.agents.as_slice(),
+                    Some(remote_pane_id_prefix(target_id)),
+                )
+            }
+        };
+        let names = |server: &Option<String>| server.as_deref() == Some(connection.mark.as_str());
+        let ui_state = &self.snapshot.ui_state;
+        agents
+            .iter()
+            .filter(|agent| {
+                ui_state
+                    .pane_read_records
+                    .get(&agent.pane_id)
+                    .is_some_and(|record| names(&record.server))
+                    || ui_state
+                        .pane_completions
+                        .get(&agent.pane_id)
+                        .is_some_and(|completion| names(&completion.server))
+            })
+            .filter_map(|agent| {
+                let pane_id = match &prefix {
+                    None => agent.pane_id.as_str(),
+                    Some(prefix) => agent.pane_id.strip_prefix(prefix.as_str())?,
+                };
+                Some((pane_id.to_owned(), connection.mark.clone()))
+            })
+            .collect()
+    }
+
+    /// Shows each finished pane's completion through a server that no
+    /// longer reports it, before the lineage hands completions up, and saves
+    /// the completions when they moved (`agent_state::apply_completions`).
+    pub(super) fn apply_pane_completions(
+        &mut self,
+        agents: &mut [SidebarAgentSnapshot],
+        target_id: Option<&str>,
+        scope: ReadRecordScope<'_>,
+        live_pane_ids: Option<&HashSet<String>>,
+    ) {
+        let mut completions = std::mem::take(&mut self.snapshot.ui_state.pane_completions);
+        let mut changed = crate::agent_state::apply_completions(
+            agents,
+            &mut completions,
+            self.read_connection(target_id),
+        );
+        if let Some(live_pane_ids) = live_pane_ids {
+            changed |=
+                crate::agent_state::prune_completions(&mut completions, live_pane_ids, scope);
+        }
+        self.snapshot.ui_state.pane_completions = completions;
+        if changed {
+            self.persist_ui_state();
+        }
     }
 
     /// Raises the operator-focused pane's read record and sets the read axis
@@ -1084,31 +1189,25 @@ impl Runtime {
         live_pane_ids: Option<&HashSet<String>>,
     ) -> bool {
         let focused = self.operator_focused_pane_id.clone();
-        let mut changes = if scope == ReadRecordScope::Local {
-            crate::agent_state::reconcile_read_records(
-                agents,
-                &mut self.snapshot.ui_state.pane_read_records,
-                &mut self.pending_read_record_reconciliation,
-            )
-        } else {
-            Vec::new()
-        };
+        let mut records = std::mem::take(&mut self.snapshot.ui_state.pane_read_records);
+        let mut changes = Vec::new();
         if let Some(live_pane_ids) = live_pane_ids {
             changes.extend(crate::agent_state::prune_read_records(
-                &mut self.snapshot.ui_state.pane_read_records,
+                &mut records,
                 live_pane_ids,
                 scope,
             ));
-            if scope == ReadRecordScope::Local {
-                self.pending_read_record_reconciliation
-                    .retain(|pane_id| live_pane_ids.contains(pane_id));
-            }
+            self.local_read_connection
+                .settled
+                .retain(|pane_id| live_pane_ids.contains(pane_id));
         }
         changes.extend(crate::agent_state::apply_read_state(
             agents,
-            &mut self.snapshot.ui_state.pane_read_records,
+            &mut records,
+            &mut self.local_read_connection,
             focused.as_deref(),
         ));
+        self.snapshot.ui_state.pane_read_records = records;
         let synced = self.sync_pane_status_from_agents(agents);
         let pruned = prune_pane_text_scales(
             &mut self.snapshot.ui_state.pane_text_scales,
@@ -1171,21 +1270,34 @@ impl Runtime {
             &session.agents,
             ReadRecordScope::Remote(&prefix),
         );
+        self.apply_pane_completions(
+            &mut session.agents,
+            Some(target_id),
+            ReadRecordScope::Remote(&prefix),
+            Some(&live_pane_ids),
+        );
         crate::agent_state::apply_lineage(
             &mut session.agents,
             &session.workspaces,
             &self.snapshot.ui_state.expanded_agent_pane_ids,
         );
+        let mut records = std::mem::take(&mut self.snapshot.ui_state.pane_read_records);
         let mut changes = crate::agent_state::prune_read_records(
-            &mut self.snapshot.ui_state.pane_read_records,
+            &mut records,
             &live_pane_ids,
             ReadRecordScope::Remote(&prefix),
         );
+        let connection = self.read_connection(Some(target_id));
+        connection
+            .settled
+            .retain(|pane_id| live_pane_ids.contains(pane_id));
         changes.extend(crate::agent_state::apply_read_state(
             &mut session.agents,
-            &mut self.snapshot.ui_state.pane_read_records,
+            &mut records,
+            connection,
             focused.as_deref(),
         ));
+        self.snapshot.ui_state.pane_read_records = records;
         if lineage_pruned {
             self.persist_ui_state();
         }
@@ -1230,6 +1342,8 @@ impl Runtime {
                 "state_change_seq": change.record.state_change_seq,
                 "demand": change.record.demand,
                 "activity": change.record.activity,
+                "server": change.record.server,
+                "unread": change.record.unread,
             }));
         }
         self.persist_ui_state();
