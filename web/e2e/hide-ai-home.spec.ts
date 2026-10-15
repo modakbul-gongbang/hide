@@ -71,7 +71,7 @@ connection.execute("UPDATE projects SET next_number=44 WHERE id=?", (project,))
 connection.execute("INSERT INTO memory_items(id,project_id,lifecycle,current_revision,confidence,salience,created_at_ms,updated_at_ms,number) VALUES('item-43',?,'active',1,0.9,0.5,?,?,43)", (project, now, now))
 connection.execute("INSERT INTO memory_revisions(id,item_id,revision,body,kind,lifecycle,created_at_ms,batch_id,title,docs_compared) VALUES('rev-43','item-43',1,'Run the linter before the tests.','rule','active',?,'batch-43','Lint before tests',1)", (now,))
 connection.execute("INSERT INTO memory_fts(item_id,project_id,body,normalized_terms) VALUES('item-43',?,'Run the linter before the tests.','run linter before tests')", (project,))
-connection.execute("INSERT INTO card_promotions(item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms) VALUES('item-43','pr_open',1,1,?,?,${PR},NULL,?,?)", (agent, "${BRANCH}", now - 60000, now))
+connection.execute("INSERT INTO card_promotions(item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms,repository) VALUES('item-43','pr_open',1,1,?,?,${PR},NULL,?,?,'acme/repo')", (agent, "${BRANCH}", now - 60000, now))
 connection.commit()
 connection.close()
 `;
@@ -157,7 +157,7 @@ test("a promotion's agent is in Needs You only while its pull request waits for 
     await open(page, stack.daemon);
 
     // B8: the pull request is open, ready and passing, so the operator's turn is the review.
-    const needsYou = page.locator('[data-raised-group="needs_you"]');
+    const needsYou = page.locator('[data-raised-list] [data-raised-group="needs_you"]');
     const row = needsYou.locator(`[data-pane="${stack.hideAiPane}"]`);
     await expect(row).toHaveCount(1, { timeout: 60_000 });
     await expect(row).toContainText("Promote Memory · m43");

@@ -40,6 +40,7 @@ import {factoryRows} from './pen-screens-factory.mjs';
 import {laneBoards} from './pen-screens-lane.mjs';
 import {onboardingBoards} from './pen-screens-onboarding.mjs';
 import {settingsBoards, settingsParts} from './pen-screens-settings.mjs';
+import {projectSettingsScreens} from './pen-screens-project-settings.mjs';
 import {sessionScreens} from './pen-screens-sessions.mjs';
 import {sessionWorkScreens} from './pen-screens-session-work.mjs';
 import {AGENT_TREE_MASTERS, PR_STATES} from './pen-agent-tree.mjs';
@@ -2973,12 +2974,13 @@ function buildProjectsSidebar(tokens) {
     return node;
   }
 
-  // A tab is a segment of its checkout's agent list, not a level: a 1px guide
-  // centered under the checkout's kind glyph spans the segment's rows, and the
-  // gap between two guides is the tab boundary. A tab of two or more agents opens
-  // with one quiet 22px line inside the guide, the tab glyph on the status-mark
-  // column and its name (the manual one, else `Tab N`) on the title column
-  // (sidebar.tsx's TabSegmentHead); `name` is set exactly for such a tab.
+  // A tab is a segment of its checkout's agent list, not a level. A tab of two
+  // or more agents draws a 1px guide centered under the checkout's kind glyph
+  // spanning the segment's rows, and opens with one quiet 22px line inside the
+  // guide, the tab glyph on the status-mark column and its name (the manual
+  // one, else `Tab N`) on the title column (sidebar.tsx's TabSegmentHead);
+  // `name` is set exactly for such a tab. A single-agent tab draws no guide;
+  // the gap between segments is the tab boundary.
   function segment(id, {name = null, rows}) {
     const tabLine = num(tokens, '--size-sidebar-line') + num(tokens, '--spacing-xxs');
     const glyphSize = num(tokens, '--size-icon-sm');
@@ -2990,8 +2992,8 @@ function buildProjectsSidebar(tokens) {
       text(`${id}-name`, name, {size: '$--text-caption', fill: '$--subtle-foreground', width: 'fill_container'}),
     ])];
     const total = (name === null ? 0 : tabLine) + rows.reduce((sum, node) => sum + treeHeights.get(node), 0);
-    const guide = frame(`${id}-guide`, 'Tab guide', {layoutPosition: 'absolute', x: guideX, y: xs, width: 1, height: total - 2 * xs, fill: '$--lineage-rail'}, []);
-    return frame(id, 'Tab segment', {width: row, layout: 'vertical'}, [...head, ...rows, guide]);
+    const guide = name === null ? [] : [frame(`${id}-guide`, 'Tab guide', {layoutPosition: 'absolute', x: guideX, y: xs, width: 1, height: total - 2 * xs, fill: '$--lineage-rail'}, [])];
+    return frame(id, 'Tab segment', {width: row, layout: 'vertical'}, [...head, ...rows, ...guide]);
   }
 
   // An opened checkout and its unboxed tab segments, 8px apart: the segments hang
@@ -4034,6 +4036,7 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Workspace', build: () => buildWorkspace(tokens)},
     {name: 'Screen / Project Sessions', build: () => buildSessions(tokens)},
     {name: 'Screen / Settings', build: () => buildSettings(tokens, root)},
+    {name: 'Screen / Project Settings', build: () => projectSettingsScreens(tokens, settingsParts(tokens, root, {themedXref, screenIconButton, screenSwatch}), {screenSheet, screenIconButton, screenInput})},
     {name: 'Screen / Usage', build: () => {
       const build = suffix => [themedXref(`screen-usage-popover-${suffix}`, 'usage-popover-light', 'Usage popover'),
         themedXref(`screen-usage-week-${suffix}`, 'usage-history-popover-week-light', 'Seven-day chart'),

@@ -5,9 +5,9 @@
 // from these measurements. Plain JavaScript because that command is a Node
 // script, not a Playwright spec.
 
-export async function measure(page) {
-  return page.evaluate(() => {
-    const dialog = document.querySelector("[data-first-run]");
+export async function measure(page, selector = "[data-first-run]") {
+  return page.evaluate((selector) => {
+    const dialog = document.querySelector(selector);
     if (!dialog) throw new Error("The first-run wizard is not on the scene");
     const visible = (element) => element.getClientRects().length > 0;
     const describe = (element) => {
@@ -53,5 +53,5 @@ export async function measure(page) {
     // Taller interface text grows the tiles, and the wizard has no scroll of its own, so it must still fit the window (B41).
     if (box.top < -0.5 || box.bottom > document.documentElement.clientHeight + 0.5) overflow.push("the wizard passes the window's top or bottom edge");
     return { partProblems, rowsFit, overflow };
-  });
+  }, selector);
 }

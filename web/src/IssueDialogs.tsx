@@ -6,6 +6,7 @@
 
 import { FileTextIcon, CircleDotIcon, RotateCcwIcon, SparklesIcon } from "lucide-react";
 import type { TFunction } from "i18next";
+import { issueDraftFailureKey } from "./sessionWork";
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { rememberedSelection, modelToSend, type AgentSelection } from "./agentPicker";
@@ -167,7 +168,7 @@ export function NewIssueDialog({ actions, workspace, draft, onClose }: { actions
               </Select>}
             </Field>
             {draft ? <Note>{t("sessionWork.draftNote")}</Note> : null}
-            {draft?.message ? <Note tone="warn">{t(draft.phase === "failed" ? "sessionWork.issue_draft_unavailable" : draft.message === "issue_draft_ai_unavailable" ? "sessionWork.issue_draft_ai_unavailable" : draft.message === "issue_draft_github_unavailable" ? "sessionWork.issue_draft_github_unavailable" : "sessionWork.issue_draft_context_unavailable")}</Note> : null}
+            {draft?.message ? <Note tone="warn">{t(draft.phase === "failed" ? issueDraftFailureKey(draft.message) : draft.message === "issue_draft_ai_unavailable" ? "sessionWork.issue_draft_ai_unavailable" : draft.message === "issue_draft_github_unavailable" ? "sessionWork.issue_draft_github_unavailable" : "sessionWork.issue_draft_context_unavailable")}</Note> : null}
             <Field label={t("issue.title")}>
               <Input value={title} autoFocus disabled={working} maxLength={256} onChange={(event) => setTitle(event.target.value.replace(/[\r\n]+/g, " "))} data-new-issue-title="true" />
             </Field>

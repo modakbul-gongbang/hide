@@ -2289,6 +2289,7 @@ impl Runtime {
             );
             self.acknowledge_session_save(&state, result.is_ok());
             self.ingest_dormant_saved(&state.agent_sleep, result.is_ok());
+            self.acknowledge_project_settings_save(&state, result.is_ok());
             return result;
         };
         self.state_save_pending = true;
@@ -2332,8 +2333,15 @@ impl Runtime {
                             guard.acknowledge_session_save(&state, result.is_ok());
                         let dormant_changed =
                             guard.ingest_dormant_saved(&state.agent_sleep, result.is_ok());
+                        let settings_changed =
+                            guard.acknowledge_project_settings_save(&state, result.is_ok());
                         if let Err(message) = &result {
-                            if resolving && !dormant_changed {
+                            if settings_changed {
+                                guard.push_diagnostic(
+                                    "project_settings.save_failed",
+                                    message.clone(),
+                                );
+                            } else if resolving && !dormant_changed {
                                 guard.push_diagnostic(
                                     "session.resolve.save_failed",
                                     message.clone(),
@@ -2342,7 +2350,7 @@ impl Runtime {
                                 guard.set_error("ui_state.save_failed", message.clone(), true);
                             }
                         }
-                        resolved_changed || dormant_changed || result.is_err()
+                        resolved_changed || dormant_changed || settings_changed || result.is_err()
                     };
                     if changed {
                         context.notifier.notify();
@@ -2786,6 +2794,7 @@ impl Runtime {
                 {
                     self.record_created_device_tab(target_id, tab_id, cwd);
                 }
+                self.acknowledge_memory_navigation(target_id, request_id);
                 let mut receipt = String::new();
                 if let Some(tab_id) = created_tab_id.as_deref() {
                     receipt.push_str(&format!("; created tab {tab_id}"));
@@ -2812,6 +2821,7 @@ impl Runtime {
             }
             // A tab move is settled above; no other action reports an order.
             Ok(RemoteControlOutcome::TabsOrdered { .. }) => {
+                self.drop_pending_choice(target_id, request_id);
                 if tracked_remote_operation {
                     self.fail_remote_operation(
                         target_id,

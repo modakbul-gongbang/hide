@@ -20,11 +20,11 @@ export function startRequestId(): string {
   return `start-${random}`;
 }
 
-export function startAnswer(rest: SnapshotRest | null, requestId: string): StartAnswer {
+export function startAnswer(rest: SnapshotRest | null, requestId: string, kind: "agent_start" | "worktree_create" = "agent_start"): StartAnswer {
   const error = rest?.status?.last_error;
   if (error?.request_id === requestId) return { phase: "refused", message: error.message };
   const operation = rest?.task_operation;
-  if (operation?.request_id !== requestId || operation.kind !== "agent_start") return { phase: "pending" };
+  if (operation?.request_id !== requestId || operation.kind !== kind) return { phase: "pending" };
   if (operation.phase === "failed") return { phase: "failed", message: operation.message };
   if (operation.phase !== "ready") return { phase: "pending" };
   return { phase: "ready", taskId: operation.id, paneId: operation.pane_id, agentPhase: operation.agent_phase, agentMessage: operation.agent_message };

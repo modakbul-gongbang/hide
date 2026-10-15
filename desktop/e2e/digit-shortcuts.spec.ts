@@ -239,7 +239,7 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
       await page.keyboard.down("Alt");
       await expect(raised.locator("[data-keycap]")).toHaveText("1");
       await expect(tree.locator(`[data-pane="${other}"] [data-keycap]`)).toHaveText("2");
-      await expect(page.locator("[data-project-list] [data-keycap]")).toHaveCount(2);
+      await expect(page.locator(":is([data-raised-list], [data-project-list]) [data-keycap]")).toHaveCount(2);
       await capture(page, "digit-hints-projects-raised-dark", source);
       await page.keyboard.up("Alt");
       await expect(page.locator("[data-keycap]")).toHaveCount(0);

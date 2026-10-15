@@ -11,7 +11,7 @@ import { formatDateTime } from "./i18n/format";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { useInterfaceTranslation } from "./i18n/client";
 import { cn } from "./lib/utils";
-import { checklist, orderedOutputs, outputPrState, recordTitle, recordTree, workKey, type Checklist, type ChecklistTask, type TaskState } from "./sessionWork";
+import { checklist, issueDraftFailureKey, orderedOutputs, outputPrState, recordTitle, recordTree, workKey, type Checklist, type ChecklistTask, type TaskState } from "./sessionWork";
 import type { AgentStatusCode, MissedWork, SessionRecord as RecordValue, WorkOutput, WorkRequest, WorkSession } from "./snapshot";
 import { statusText } from "./agentStatus";
 import { useShellStore } from "./store";
@@ -227,7 +227,7 @@ function MissedLine({ missed, session, owner, actions }: { missed: MissedWork; s
       <Button size="sm" variant="ghost" disabled={busy} onClick={() => actions.setMissedStatus(session, missed.id, "dismissed")}>{t("sessionWork.dismiss")}</Button>
       {drafting ? <Button size="sm" variant="ghost" onClick={() => actions.cancelMissedIssueDraft()}>{t("common.cancel")}</Button> : null}
     </div> : null}
-    {ownDraft?.phase === "failed" ? <p role="status" className="mt-xxs text-micro text-destructive">{t("sessionWork.issue_draft_unavailable")}</p> : null}
+    {ownDraft?.phase === "failed" ? <p role="status" className="mt-xxs text-micro text-destructive">{t(issueDraftFailureKey(ownDraft.message))}</p> : null}
   </div>;
 }
 
