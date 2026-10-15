@@ -539,16 +539,30 @@ fn a_merge_that_went_through_reads_as_merged_before_the_list_says_so() {
     runtime.ingest_pr_write("w", 2, None, "/repo", Ok(()));
     assert_eq!(badge(&runtime), PullRequestBadge::Merged);
 
-    // The next read still says open: the merge Hide saw wins over it.
+    // The next read still says open: the merge Hide saw wins over it, with
+    // the time it was seen, the same on every read.
+    let seen = runtime.merged_here[&("/repo".to_owned(), 2)];
     let mut stale = open_list.clone();
     runtime.read_merges_made_here(&mut stale);
+    let shown = &stale.project("/repo").unwrap().pull_requests[0];
+    assert_eq!(shown.badge, PullRequestBadge::Merged);
+    assert_eq!(shown.merged_at_unix_ms, Some(seen));
+
+    // A read that failed carries the previous list, overlay included, and
+    // releases nothing: the next good read that still says open is overlaid.
+    let mut failed = stale.clone();
+    failed.projects[0].status.stale = true;
+    runtime.read_merges_made_here(&mut failed);
+    assert!(runtime.merged_here.contains_key(&("/repo".to_owned(), 2)));
+    let mut open_after = open_list.clone();
+    runtime.read_merges_made_here(&mut open_after);
     assert_eq!(
-        stale.project("/repo").unwrap().pull_requests[0].badge,
+        open_after.project("/repo").unwrap().pull_requests[0].badge,
         PullRequestBadge::Merged
     );
 
-    // A read that says merged is taken as it is, and the mark is let go.
-    let mut said = open_list;
+    // A fresh read that says merged is taken as it is, and the mark is let go.
+    let mut said = open_list.clone();
     said.projects[0].pull_requests[0].badge = PullRequestBadge::Merged;
     said.projects[0].pull_requests[0].merged_at_unix_ms = Some(7);
     runtime.read_merges_made_here(&mut said);
@@ -556,13 +570,25 @@ fn a_merge_that_went_through_reads_as_merged_before_the_list_says_so() {
         said.project("/repo").unwrap().pull_requests[0].merged_at_unix_ms,
         Some(7)
     );
-    let mut open_again = said.clone();
-    open_again.projects[0].pull_requests[0].badge = PullRequestBadge::Open;
+    let mut open_again = open_list.clone();
     runtime.read_merges_made_here(&mut open_again);
     assert_eq!(
         open_again.project("/repo").unwrap().pull_requests[0].badge,
         PullRequestBadge::Open
     );
+
+    // Whatever the reads say, the overlay lapses after its lifetime.
+    runtime.merged_here.insert(
+        ("/repo".to_owned(), 2),
+        unix_milliseconds() - 11 * 60 * 1000,
+    );
+    let mut late = open_list;
+    runtime.read_merges_made_here(&mut late);
+    assert_eq!(
+        late.project("/repo").unwrap().pull_requests[0].badge,
+        PullRequestBadge::Open
+    );
+    assert!(runtime.merged_here.is_empty());
 }
 
 /// D-22, B31: GitHub accepts any head that is its current one, so a write

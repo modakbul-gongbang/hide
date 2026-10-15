@@ -1033,9 +1033,12 @@ impl Runtime {
                 write.phase = "done";
                 // A merge with a method is made now; one asked of a merge
                 // queue only joins it, and GitHub's list says when it lands.
-                let merged_now = action == "merge" && write.method.is_some();
+                // A node's project is read from that node and waits for its
+                // poll, so the overlay is for this machine's own projects.
+                let merged_now = action == "merge" && write.method.is_some() && machine.is_none();
                 if merged_now {
-                    self.merged_here.insert((root.to_owned(), number));
+                    self.merged_here
+                        .insert((root.to_owned(), number), unix_milliseconds());
                     let mut github = self.github.clone();
                     self.read_merges_made_here(&mut github);
                     self.github = github;
