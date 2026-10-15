@@ -129,14 +129,24 @@ pub(super) struct PromotionTracking {
     /// Replaced whole by each check.
     homes: HashMap<String, HomeAttempt>,
     /// Each settled attempt whose agent and worktree are not yet retired,
-    /// with whether the diagnostic for an unreachable machine was written.
+    /// with what a check has already written about it (`Tried`).
     /// An attempt a retire could not finish for a reason that may pass (the
     /// machine away, Herdr refusing) stays here and is tried on the next
     /// check; one kept for what it holds is left until the next start.
-    retiring: HashMap<Retire, bool>,
+    retiring: HashMap<Retire, Tried>,
     /// Whether a check has looked for attempts settled before this run
     /// started (B19).
     converged: bool,
+}
+
+/// What a check has learned about retiring an attempt, in the order a check
+/// tries them: not tried yet, waiting for a machine that is away (written
+/// once), then refused by Herdr or the node (written once).
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) enum Tried {
+    Fresh,
+    Away,
+    Failed,
 }
 
 /// A settled attempt's branch, to retire its agent and worktree (D-18).
@@ -653,7 +663,7 @@ struct TrackOutcome {
     homes: Option<HashMap<String, HomeAttempt>>,
     /// The settled attempts still to retire after this check, and whether it
     /// looked for those settled before the run.
-    retiring: Option<(HashMap<Retire, bool>, bool)>,
+    retiring: Option<(HashMap<Retire, Tried>, bool)>,
     /// Starts the check took to ask again and hands back, the agent still
     /// unseen.
     unseen: Vec<(AttemptKey, PromotionStart)>,
@@ -957,10 +967,10 @@ fn track_promotions(
     let due = retire_due(&mut retiring, |node| reach.contains_key(node));
     for retire in due {
         let (connector, link) = &reach[&retire.node];
-        let noticed = retiring[&retire];
+        let noticed = retiring[&retire] == Tried::Failed;
         match retire_attempt(connector.as_ref(), link.as_ref(), &retire, noticed) {
             Retired::Failed => {
-                retiring.insert(retire, true);
+                retiring.insert(retire, Tried::Failed);
             }
             Retired::Done | Retired::Kept => {
                 retiring.remove(&retire);
@@ -1247,13 +1257,13 @@ fn release_attempt(
 /// branch an attempt still followed holds (a retry reuses a failed
 /// attempt's branch, and a batch shares one).
 fn retire_plan(
-    carried: HashMap<Retire, bool>,
+    carried: HashMap<Retire, Tried>,
     found: impl IntoIterator<Item = Retire>,
     held: &HashSet<(String, String)>,
-) -> HashMap<Retire, bool> {
+) -> HashMap<Retire, Tried> {
     let mut plan = carried;
     for retire in found {
-        plan.entry(retire).or_insert(false);
+        plan.entry(retire).or_insert(Tried::Fresh);
     }
     plan.retain(|retire, _| !held.contains(&(retire.project_id.clone(), retire.branch.clone())));
     plan
@@ -1264,14 +1274,14 @@ fn retire_plan(
 /// holds no slot, so a backlog of refusals or an absent device never starves
 /// the rest (engineering principle 15). The absence is written once.
 fn retire_due(
-    retiring: &mut HashMap<Retire, bool>,
+    retiring: &mut HashMap<Retire, Tried>,
     reachable: impl Fn(&NodeId) -> bool,
 ) -> Vec<Retire> {
     let mut due = Vec::new();
-    for (retire, noticed) in retiring.iter_mut() {
+    for (retire, tried) in retiring.iter_mut() {
         if reachable(&retire.node) {
             due.push(retire.clone());
-        } else if !std::mem::replace(noticed, true) {
+        } else if std::mem::replace(tried, Tried::Away) == Tried::Fresh {
             crate::diagnostic!(json!({
                 "component": "memory",
                 "kind": "promotion.worktree_retired",
@@ -2812,10 +2822,13 @@ mod tests {
         };
         let mut retiring = HashMap::new();
         for index in 0..RETIRE_PER_CHECK + 4 {
-            retiring.insert(at("away", "a", &format!("hide-memory-m{index}")), false);
+            retiring.insert(
+                at("away", "a", &format!("hide-memory-m{index}")),
+                Tried::Fresh,
+            );
         }
-        retiring.insert(at("here", "a", "failed-before"), true);
-        retiring.insert(at("here", "b", "fresh"), false);
+        retiring.insert(at("here", "a", "failed-before"), Tried::Failed);
+        retiring.insert(at("here", "b", "fresh"), Tried::Fresh);
         let due = retire_due(&mut retiring, |node| {
             node == &NodeId::parse("here").unwrap()
         });
@@ -2829,7 +2842,7 @@ mod tests {
             retiring
                 .iter()
                 .filter(|(retire, _)| retire.node == NodeId::parse("away").unwrap())
-                .all(|(_, noticed)| *noticed),
+                .all(|(_, tried)| *tried == Tried::Away),
             "the absence is noticed once"
         );
     }
@@ -2902,12 +2915,12 @@ mod tests {
     #[test]
     fn the_retire_plan_merges_what_was_carried_and_found_and_spares_a_followed_branch() {
         let (a, b, c) = (retire_of("a"), retire_of("b"), retire_of("c"));
-        let carried = HashMap::from([(a.clone(), true), (c.clone(), false)]);
+        let carried = HashMap::from([(a.clone(), Tried::Failed), (c.clone(), Tried::Fresh)]);
         let held = HashSet::from([("p".to_owned(), "c".to_owned())]);
         let plan = retire_plan(carried, [a.clone(), b.clone(), b.clone()], &held);
         assert_eq!(
             plan,
-            HashMap::from([(a, true), (b, false)]),
+            HashMap::from([(a, Tried::Failed), (b, Tried::Fresh)]),
             "a keeps its note, b is added once, c is held by a followed attempt"
         );
     }
