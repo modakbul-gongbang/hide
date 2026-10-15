@@ -124,8 +124,8 @@ it("adds and removes protected paths and says why a path is refused in place (B1
     expect(guard("files").textContent).toContain("That path is already on the list.");
     expect(saved()?.guardrails?.paths.filter((path) => path === ".env")).toHaveLength(1);
     const input = () => guard("files").querySelector<HTMLInputElement>("input");
-    // Escape leaves the field and keeps the dialog.
-    await act(async () => input()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    // Escape leaves the field and keeps the dialog: the shell's Escape runs the innermost layer, which is the field's.
+    await act(async () => useUiStore.getState().escapeLayers.at(-1)!());
     expect(input()).toBeNull();
     expect(sheet()).not.toBeNull();
     expect(document.activeElement?.textContent).toBe("Add path");
@@ -136,6 +136,7 @@ it("adds and removes protected paths and says why a path is refused in place (B1
     // nothing to retry.
     await add("[z-a]");
     expect(input()?.value).toBe("[z-a]");
+    expect(document.activeElement).toBe(input());
     expect(guard("files").textContent).toContain("That isn't a valid pattern.");
     expect([...guard("files").querySelectorAll("button")].some((button) => button.textContent === "Try again")).toBe(false);
   });

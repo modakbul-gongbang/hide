@@ -9,6 +9,7 @@ import { Group, Note, Row } from "./components/settings-rows";
 import { Button } from "./components/ui/button";
 import { Checkbox } from "./components/ui/checkbox";
 import { Input } from "./components/ui/input";
+import { useEscapeLayer } from "./components/ui/layer";
 import { Switch } from "./components/ui/switch";
 import { useInterfaceTranslation } from "./i18n/client";
 import { guardPathRefusal, type Guardrails } from "./projectSettings";
@@ -46,6 +47,7 @@ export function ProjectGuardrails({ rules, isGit, base, disabled, unguarded, sav
   // The path sent and not yet confirmed: its field stays open with it, so a refusal shows where it was typed (B16).
   const [sent, setSent] = useState<string | null>(null);
   const addButton = useRef<HTMLButtonElement>(null);
+  const field = useRef<HTMLInputElement>(null);
   const change = (part: GuardPart, next: Partial<Guardrails>) => save(part, { ...rules, ...next });
   useEffect(() => {
     if (sent === null || !rules.paths.includes(sent)) return;
@@ -69,6 +71,14 @@ export function ProjectGuardrails({ rules, isGit, base, disabled, unguarded, sav
     setSent(null);
     setRefusal(null);
   };
+  // Escape leaves the field and keeps the dialog open: the shell answers Escape with the innermost layer.
+  useEscapeLayer(adding, cancel);
+  // A refused add leaves the field open with what was typed; the save that disabled it no longer holds focus.
+  const wasDisabled = useRef(disabled);
+  useEffect(() => {
+    if (wasDisabled.current && !disabled && adding) field.current?.focus();
+    wasDisabled.current = disabled;
+  }, [disabled, adding]);
   // A plain folder's three Git protections are off and unavailable, said once (B17).
   const gitReason = isGit ? null : <Note>{t("workspace.unavailable.notGit")}</Note>;
   const add = () => {
@@ -111,15 +121,10 @@ export function ProjectGuardrails({ rules, isGit, base, disabled, unguarded, sav
         {!adding ? <li><Button ref={addButton} variant="ghost" size="sm" disabled={disabled} onClick={() => setAdding(true)}><PlusIcon aria-hidden="true" />{t("projectSettings.guardPathAdd")}</Button></li> : null}
       </ul>
       {adding ? <div className="flex min-w-0 max-w-full flex-wrap gap-xs">
-        <Input autoFocus aria-label={t("projectSettings.guardPathAdd")} placeholder={t("projectSettings.guardPathHint")} value={draft} disabled={disabled}
+        <Input ref={field} autoFocus aria-label={t("projectSettings.guardPathAdd")} placeholder={t("projectSettings.guardPathHint")} value={draft} disabled={disabled}
           className="w-(--size-settings-control-w) max-w-full font-mono"
           onChange={(event) => { setDraft(event.target.value); setRefusal(null); setSent(null); }}
-          onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) return;
-            if (event.key === "Enter") add();
-            // Escape leaves the field and keeps the dialog open.
-            if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancel(); }
-          }} />
+          onKeyDown={(event) => { if (!event.nativeEvent.isComposing && event.key === "Enter") add(); }} />
         <Button size="sm" disabled={disabled} onClick={add}>{t("projectSettings.apply")}</Button>
       </div> : null}
       {refusal ? <Note tone="error">{t(pathRefusalKey(refusal))}</Note> : null}
