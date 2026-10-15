@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { TaskState } from "./agentScope";
-import { diskCell, diskSummary, nowCounts, orderedRows, projectRows } from "./overviewProjects";
+import { diskCell, diskSummary, nowCounts, nowParts, orderedRows, projectRows } from "./overviewProjects";
 import type { BoardProject } from "./projectBoard";
 import type { ProjectDisk, Workspace } from "./snapshot";
 
@@ -33,6 +33,12 @@ describe("a row's 지금 (B48)", () => {
   it("counts Needs You with the blocked ones, working, waiting and finished, and the rest as resting", () => {
     expect(nowCounts(["needs_you", "blocked", "working", "waiting", "done", "resting", "cleanup"].map((state) => ({ state: state as TaskState })))).toEqual({ needs: 2, working: 1, waiting: 1, done: 1, resting: 2, total: 7 });
     expect(nowCounts([])).toEqual({ needs: 0, working: 0, waiting: 0, done: 0, resting: 0, total: 0 });
+  });
+
+  it("names only the counts that are not zero, in the cell's order", () => {
+    expect(nowParts({ needs: 1, working: 2, waiting: 0, done: 0, resting: 3, total: 6 })).toEqual([{ key: "needs", value: 1 }, { key: "working", value: 2 }]);
+    expect(nowParts({ needs: 0, working: 0, waiting: 1, done: 4, resting: 0, total: 5 })).toEqual([{ key: "waiting", value: 1 }, { key: "done", value: 4 }]);
+    expect(nowParts({ needs: 0, working: 0, waiting: 0, done: 0, resting: 2, total: 2 })).toEqual([]);
   });
 
   it("carries the project's backlog count, and marks a project that is not a Git repository as a folder", () => {

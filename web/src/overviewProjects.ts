@@ -23,6 +23,20 @@ export function nowCounts(cards: readonly Pick<TaskCardScope, "state">[]): NowCo
   return counts;
 }
 
+/** One count the 지금 cell names, in the cell's order. */
+export type NowPart = { key: "needs" | "working" | "waiting" | "done"; value: number };
+
+/** The counts the 지금 cell names (B48): Needs You, working, waiting and done, each only when it is not zero. */
+export function nowParts(now: NowCounts): NowPart[] {
+  const parts: NowPart[] = [
+    { key: "needs", value: now.needs },
+    { key: "working", value: now.working },
+    { key: "waiting", value: now.waiting },
+    { key: "done", value: now.done },
+  ];
+  return parts.filter((part) => part.value > 0);
+}
+
 /** A disk cell as the sweep left it (B53-B56): the last size, whether it is being measured or waits, and why it failed. */
 export type DiskCellState = {
   /** The last size measured, kept while it is measured again or failed. */

@@ -1,5 +1,6 @@
 import { AlertTriangleIcon, ArrowRightIcon, ChevronRightIcon, ExternalLinkIcon, FolderGit2Icon, FolderIcon, LoaderCircleIcon, PlusIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo } from "react";
+import { Trans } from "react-i18next";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
@@ -12,7 +13,7 @@ import { useInterfaceTranslation } from "./i18n/client";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { cn } from "./lib/utils";
 import { ageWords } from "./overviewLens";
-import { diskSummary, orderedRows, projectRows, type NowCounts, type ProjectRowModel } from "./overviewProjects";
+import { diskSummary, nowParts, orderedRows, projectRows, type NowCounts, type NowPart, type ProjectRowModel } from "./overviewProjects";
 import { backlogOf } from "./overviewBacklog";
 import type { BoardProject } from "./projectBoard";
 import { machineName } from "./screenMachine";
@@ -53,17 +54,19 @@ export function OverviewProjects({ projects, deviceId, actions }: { projects: re
   return (
     <div className="flex flex-col gap-sm px-lg py-md" data-overview-projects="true">
       {dialed ? null : (
-        <p className="flex flex-wrap items-center gap-x-sm font-mono text-caption text-subtle-foreground" data-projects-disk-line="true">
+        <p className="flex flex-wrap items-center gap-x-sm text-caption text-subtle-foreground" data-projects-disk-line="true">
           {summary.free !== null && summary.total !== null ? (
             <span>
               {t("overviewProjects.diskFree", { device: name })}{" "}
-              <span className={cn(summary.low && "text-warning")} data-projects-free-low={summary.low || undefined}>{formatBytes(language, summary.free)}</span>
-              {" / "}
-              {formatBytes(language, summary.total)}
+              <span className="font-mono">
+                <span className={cn(summary.low && "text-warning")} data-projects-free-low={summary.low || undefined}>{formatBytes(language, summary.free)}</span>
+                {" / "}
+                {formatBytes(language, summary.total)}
+              </span>
             </span>
           ) : null}
-          {summary.sum !== null ? <span>· {t("overviewProjects.sum", { size: formatBytes(language, summary.sum) })}</span> : null}
-          {summary.reclaimable > 0 ? <span className="text-pr-merged">· {t("overviewProjects.reclaimable", { size: formatBytes(language, summary.reclaimable) })}</span> : null}
+          {summary.sum !== null ? <span>· <Trans i18n={i18n} t={t} i18nKey="overviewProjects.sum" values={{ size: formatBytes(language, summary.sum) }} components={{ n: NUMBER }} /></span> : null}
+          {summary.reclaimable > 0 ? <span className="text-pr-merged">· <Trans i18n={i18n} t={t} i18nKey="overviewProjects.reclaimableSum" values={{ size: formatBytes(language, summary.reclaimable) }} components={{ n: NUMBER }} /></span> : null}
           {summary.measuring ? <span className="inline-flex items-center gap-xxs text-muted-foreground" role="status" data-projects-measuring="true"><LoaderCircleIcon aria-hidden="true" className="size-(--size-icon-sm) animate-spin" />{t("overviewProjects.measuring")}</span> : null}
         </p>
       )}
@@ -97,22 +100,22 @@ export function OverviewProjects({ projects, deviceId, actions }: { projects: re
 }
 
 /** `Needs You N · 일하는 중 N · 기다림 N · 끝남 N` with its colour bar, `쉬는 중 N` when nothing moves, `일감 없음` with no task (B48). */
+/** A size inside a summary sentence: mono for the number, the words in the body font. */
+const NUMBER = <span className="font-mono" />;
+
+const NOW_TONE: Record<NowPart["key"], string> = { needs: "bg-warning", working: "bg-agent-working", waiting: "bg-muted-foreground", done: "bg-success" };
+
 function NowCell({ now }: { now: NowCounts }) {
   const { t } = useInterfaceTranslation();
   if (now.total === 0) return <span className="text-muted-foreground">{t("overviewProjects.noTasks")}</span>;
   if (now.total === now.resting) return <span className="text-muted-foreground">{t("overviewProjects.restingCount", { count: now.resting })}</span>;
-  const parts = [
-    { key: "needs", value: now.needs, tone: "bg-warning" },
-    { key: "working", value: now.working, tone: "bg-agent-working" },
-    { key: "waiting", value: now.waiting, tone: "bg-muted-foreground" },
-    { key: "done", value: now.done, tone: "bg-success" },
-  ];
+  const parts = nowParts(now);
   return (
     <span className="flex min-w-0 flex-col gap-xxs">
       <span aria-hidden="true" className="flex h-(--size-hairline) w-full gap-px overflow-hidden rounded-full bg-muted">
-        {parts.filter((part) => part.value > 0).map((part) => <span key={part.key} className={part.tone} style={{ flexGrow: part.value }} />)}
+        {parts.map((part) => <span key={part.key} className={NOW_TONE[part.key]} style={{ flexGrow: part.value }} />)}
       </span>
-      <span className="truncate text-micro text-subtle-foreground">{t("overviewProjects.now", { needs: now.needs, working: now.working, waiting: now.waiting, done: now.done })}</span>
+      <span className="truncate text-micro text-subtle-foreground">{parts.map((part) => t(`overviewProjects.now.${part.key}`, { count: part.value })).join(" · ")}</span>
     </span>
   );
 }
