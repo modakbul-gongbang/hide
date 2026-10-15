@@ -313,8 +313,9 @@ code, .mono { font-family: var(--font-mono); }
 .grp:first-child { margin-top: 0; }
 .grp b { font-weight: var(--w-medium); color: var(--muted); }
 .row { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 7px 8px; margin-inline: -8px; border-radius: var(--radius-sm); color: var(--ink); }
+.row > span { min-width: 0; }
 .row + .row { margin-top: 2px; }
-.row .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-sans); font-size: var(--t-small); }
+.row .t { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-sans); font-size: var(--t-small); }
 .row .sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: var(--t-label); }
 .row .meta { color: var(--faint); font-size: var(--t-label); white-space: nowrap; }
 .row.hl { background: color-mix(in srgb, var(--st-needs) 10%, transparent); }
@@ -353,6 +354,7 @@ code, .mono { font-family: var(--font-mono); }
 .night-band { margin-top: var(--space-section); padding-block: 112px; border-block: 1px solid var(--line); background: var(--night); }
 .night-band .section-head { max-width: 1100px; }
 .night-scroll { margin-top: 56px; padding-bottom: 8px; overflow-x: auto; }
+.night-hint { display: none; font-family: var(--font-mono); font-size: var(--t-label); letter-spacing: 0.06em; color: var(--faint); }
 .night-stage { --lane-h: 68px; --who-w: 210px; position: relative; min-width: 860px; }
 .night-stage .axis { display: grid; grid-template-columns: var(--who-w) 1fr; height: 30px; }
 .night-stage .ticks { position: relative; }
@@ -480,6 +482,11 @@ select { width: 100%; min-height: 48px; padding: 0 40px 0 14px; border: 1px soli
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   .reveal { opacity: 1; transform: none; transition: none; }
+}
+
+@media (max-width: 920px) {
+  .night-hint { display: block; margin-top: 40px; }
+  .night-hint + .night-scroll { margin-top: 12px; }
 }
 
 @media (max-width: 1000px) {
