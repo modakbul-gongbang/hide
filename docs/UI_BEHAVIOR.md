@@ -1269,6 +1269,8 @@ Retired `toggle_sidebar_view` and `project_home` stored bindings are ignored wit
 
 A device that is not connected shows the top row and its reconnect view with no tab strip.
 The list shows the device's Needs You and Done and projects with their operator-owned roots.
+Needs You and Done stand still above the projects: the project list scrolls under them and never carries them off, and past half the sidebar's height they scroll on their own.
+Opening a raised row that leaves its section, a Done row once read, moves the next row up into its place, so the operator opens one after another from the same spot while the project list brings each one's tree row into view below (`web/e2e/projects-sidebar.spec.ts`).
 Choosing a tile keeps each device's list apart, and ⌥n numbers its visible root rows in physical order.
 The Search row at the sidebar's top, a field-shaped button reading `Search` with the current ⌘K chord (a rebound chord shows as bound), opens the ⌘K palette by a click or Enter on this machine or a selected SSH device alike; Add project sits on the Projects title instead (see Adding a project), and there is no bottom new-workspace button.
 The Herdr status line sits under the top and above the list, and is not shown while a device is in front.

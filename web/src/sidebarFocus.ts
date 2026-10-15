@@ -34,17 +34,24 @@ export function sidebarFocusPane(focused: string | null, agents: readonly AgentR
 }
 
 /**
- * Scrolls the list by as little as brings the focus's row into view, and not
- * at all while one of its rows is already in view. The row is the deepest one
- * marked current: an agent row, else the focused checkout's row, else the
- * project or fold row that hides it; an agent drawn both raised and in its
- * tree is brought in at its tree row.
+ * Scrolls the project list by as little as brings the focus's row into view,
+ * and not at all while one of its rows is already in view, in the project
+ * list or in the raised list held above it. The row is the deepest one marked
+ * current: an agent row, else the focused checkout's row, else the project or
+ * fold row that hides it; an agent drawn both raised and in its tree is
+ * brought in at its tree row, and one drawn only raised within the raised list.
  */
-export function revealSidebarFocus(list: HTMLElement): void {
-  const marked = [...list.querySelectorAll<HTMLElement>('[aria-current="true"]')];
+export function revealSidebarFocus(lists: HTMLElement): void {
+  const marked = [...lists.querySelectorAll<HTMLElement>('[aria-current="true"]')];
   if (marked.length === 0) return;
   const deepest = ["[data-agent-open]", "[data-checkout]"].map((kind) => marked.filter((row) => row.matches(kind))).find((rows) => rows.length > 0) ?? marked;
-  revealRow(list, deepest, deepest.find((row) => row.closest("[data-raised-group]") === null) ?? deepest[0]!);
+  const raised = deepest.filter((row) => row.closest("[data-raised-list]") !== null);
+  const tree = deepest.filter((row) => !raised.includes(row));
+  const held = lists.querySelector<HTMLElement>("[data-raised-list]")?.getBoundingClientRect();
+  if (held && raised.some((row) => inside(row.getBoundingClientRect(), held.top, held.bottom))) return;
+  const list = lists.querySelector<HTMLElement>("[data-project-list]");
+  if (list && tree.length > 0) revealRow(list, tree, tree[0]!);
+  else raised[0]?.scrollIntoView({ block: "nearest" });
 }
 
 /**
