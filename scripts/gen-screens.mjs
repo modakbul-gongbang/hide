@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {readTokens} from './gen-tokens.mjs';
 import {screenSheets, readLocalVariables, ALIAS, LIBRARY_PATH} from './pen-screens.mjs';
+import {THEMES} from './pen-tokens.mjs';
 import {serialize} from './pen-bands.mjs';
 
 export const FILE = 'design/hide-screens.pen';
@@ -42,7 +43,7 @@ export function generate(root) {
     children = found ? children.map(node => node === found ? sheet : node) : [...children, sheet];
   }
 
-  const document = {version: existing?.version ?? '2.18', themes: {Mode: ['Light', 'Dark']}, imports: {[ALIAS]: LIBRARY_PATH}, variables, children};
+  const document = {version: existing?.version ?? '2.18', themes: THEMES, imports: {[ALIAS]: LIBRARY_PATH}, variables, children};
   const before = existing ? serialize(existing) : null;
   const after = serialize(document);
   return {file: path.join(root, FILE), before, after, sheetCount: generated.length};
