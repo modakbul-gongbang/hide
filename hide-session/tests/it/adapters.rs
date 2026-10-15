@@ -1186,6 +1186,33 @@ mod omp {
         }
     }
 
+    /// Herdr reports an omp session as its file. The proof that names the
+    /// pane's session from that file and the link reader name the same
+    /// session, by the id in the header, so the core can key the link
+    /// record's lineage by either.
+    #[test]
+    fn the_file_herdr_reports_and_the_link_reader_name_one_session() {
+        let mut native = Native::new();
+        native.request.reference_kind = "path".to_owned();
+        native.request.reference_value = native.path.display().to_string();
+        let pane = native.read().unwrap();
+        let linked = hide_session::links::read(
+            native.home.path(),
+            &[hide_session::links::ReadRequest {
+                agent: Agent::Omp,
+                path: native.path.display().to_string(),
+                checkpoint: None,
+            }],
+        )
+        .remove(0);
+        assert_eq!(linked.error, None);
+        assert_eq!(
+            pane.confirmed.native_session_id.as_deref(),
+            Some("omp-native-a")
+        );
+        assert_eq!(linked.facts.session_id.as_deref(), Some("omp-native-a"));
+    }
+
     #[test]
     fn legacy_current_header_wins_over_audit_and_nested_children_never_enter_root_catalog() {
         let native = Native::new();
@@ -2444,6 +2471,33 @@ mod pi {
         let fork = native.read().unwrap();
         assert_eq!(fork.events.len(), 4);
         assert!(fork.subagents.is_empty());
+    }
+
+    /// Herdr reports a Pi session as its file. The proof that names the
+    /// pane's session from that file and the link reader name the same
+    /// session, by the id in the header, so the core can key the link
+    /// record's lineage by either.
+    #[test]
+    fn the_file_herdr_reports_and_the_link_reader_name_one_session() {
+        let mut native = Native::new();
+        native.request.reference_kind = "path".to_owned();
+        native.request.reference_value = native.path.display().to_string();
+        let pane = native.read().unwrap();
+        let linked = hide_session::links::read(
+            native.home.path(),
+            &[hide_session::links::ReadRequest {
+                agent: Agent::Pi,
+                path: native.path.display().to_string(),
+                checkpoint: None,
+            }],
+        )
+        .remove(0);
+        assert_eq!(linked.error, None);
+        assert_eq!(
+            pane.confirmed.native_session_id.as_deref(),
+            Some("pi-native-a")
+        );
+        assert_eq!(linked.facts.session_id.as_deref(), Some("pi-native-a"));
     }
 
     #[test]

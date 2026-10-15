@@ -189,6 +189,10 @@ pub struct PaneFact {
 }
 
 /// A session `hide agent spawn` started for a parent session (D-27).
+///
+/// Each side names its session as the core knows it: a live agent by its
+/// reader's id, a registration by the value Herdr reported, which for Pi and
+/// omp is the session's file. The store names both as its reader does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParentFact {
     pub device_id: String,

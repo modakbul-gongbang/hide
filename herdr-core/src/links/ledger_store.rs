@@ -1059,8 +1059,8 @@ impl LinkStore {
             return Err("ledger_output_capacity".into());
         }
         // A child is part of the record once the ledger records it: a spawn
-        // is known before its file is read, and a Pi or omp child is named
-        // by its file where its reader names it by its own id.
+        // is known before its file is read, and a Pi or omp child's edge is
+        // under its file until the reader names it.
         let mut statement = self
             .connection
             .prepare(

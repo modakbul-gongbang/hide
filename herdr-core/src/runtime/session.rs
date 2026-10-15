@@ -2268,13 +2268,34 @@ impl Runtime {
     /// leaves the answer without authority. An unconfirmed answer changes
     /// nothing and is not asked again until the next session update; an
     /// update that arrived while the read was out is that next update.
+    ///
+    /// Herdr's focus on another pane is the readback doing its work: the
+    /// stream showed a move older than Herdr's focus, most often older than
+    /// Hide's own last focus. Only a readback Herdr could not answer while
+    /// it was still the latest is a failure, logged with Herdr's reason; one
+    /// a newer focus, selection or connection overtook ends quietly.
     pub(crate) fn finish_pane_focus_readback(
         &mut self,
         identity: PendingPaneFocusControl,
-        confirmed: bool,
+        answer: crate::live::FocusReadback,
     ) -> (bool, Option<PendingPaneFocusControl>) {
         self.pane_focus_readback = None;
         let again = std::mem::take(&mut self.pane_focus_readback_again);
+        // The move must still be the one the selected pane's layout shows:
+        // the apply below rechecks the identity only inside that layout, so
+        // an answer for another tab than the selected one has no authority.
+        let latest = self.pane_focus_readback_target().as_ref() == Some(&identity);
+        if latest && let crate::live::FocusReadback::Unread(message) = &answer {
+            crate::diagnostic!(serde_json::json!({
+                "component": "pane_focus",
+                "kind": "pane.focus.stream_readback_failed",
+                "pane_id": identity.target_id,
+                "serial": identity.serial,
+                "connection_generation": identity.live_generation,
+                "message": message,
+            }));
+        }
+        let confirmed = answer == crate::live::FocusReadback::Confirmed;
         let stored = self
             .snapshot
             .pane_layouts
@@ -2282,11 +2303,8 @@ impl Runtime {
             .find(|layout| layout.focused_pane_id == identity.target_id)
             .cloned();
         let mut changed = false;
-        // The move must still be the one the selected pane's layout shows:
-        // the apply below rechecks the identity only inside that layout, so
-        // an answer for another tab than the selected one has no authority.
         if confirmed
-            && self.pane_focus_readback_target().as_ref() == Some(&identity)
+            && latest
             && let Some(layout) = stored.clone()
         {
             changed |= self.apply_pane_layout_with_focus_check(
