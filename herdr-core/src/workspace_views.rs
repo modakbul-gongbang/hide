@@ -147,6 +147,11 @@ pub struct WorkspaceView {
     /// An unpinned lane the operator hid by going back to a terminal keeps
     /// its tool: hiding it is the shell's moment, not a close.
     pub tool: Option<Tool>,
+    /// The tool the lane last showed, kept while it is closed so the next
+    /// open comes back on it; `None` for a lane that never showed one. Set
+    /// only through `set_tool`, so it follows `tool` and a close leaves it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_tool: Option<Tool>,
     /// The Work tool's basis and scope; left out of the file while default,
     /// so a Workspace that never used it reads as before.
     #[serde(skip_serializing_if = "WorkView::is_default")]
@@ -203,6 +208,8 @@ struct StoredLane {
     #[serde(default)]
     tool: Option<Tool>,
     #[serde(default)]
+    last_tool: Option<Tool>,
+    #[serde(default)]
     work: WorkView,
     #[serde(default)]
     pinned: bool,
@@ -234,6 +241,9 @@ impl StoredLane {
             device_id: self.device_id,
             path: self.path,
             tool: self.tool,
+            // A file written before the last tool was kept has only the
+            // tool an open lane shows.
+            last_tool: self.last_tool.or(self.tool),
             work: self.work,
             pinned: self.pinned,
             tree: self.tree,
@@ -313,6 +323,7 @@ impl StoredColumns {
             device_id: self.device_id,
             path: self.path,
             tool,
+            last_tool: tool,
             work: WorkView::default(),
             pinned: false,
             tree,
@@ -556,6 +567,7 @@ impl WorkspaceView {
             device_id: device_id.to_owned(),
             path: path.to_owned(),
             tool: None,
+            last_tool: None,
             work: WorkView::default(),
             pinned: false,
             tree: false,
@@ -573,6 +585,15 @@ impl WorkspaceView {
 
     pub fn is(&self, device_id: &str, path: &str) -> bool {
         self.device_id == device_id && self.path == path
+    }
+
+    /// Shows a tool or closes the lane. A tool shown is remembered, a close
+    /// is not a forgetting: the next open returns to `last_tool`.
+    pub fn set_tool(&mut self, tool: Option<Tool>) {
+        self.tool = tool;
+        if tool.is_some() {
+            self.last_tool = tool;
+        }
     }
 
     /// Whether the lane holds the View areas: it is open on the files tool.
@@ -720,6 +741,7 @@ impl V1View {
         let (tool, tree) = lane_of(legacy_views(self.mode, false), tools.then_some(tool));
         WorkspaceView {
             tool,
+            last_tool: tool,
             tree,
             last_used_unix_ms: self.last_used_unix_ms,
             layout,
@@ -1007,7 +1029,7 @@ mod tests {
         let path = root.join("workspace-views.json");
         let mut views = WorkspaceViews::default();
         let entry = views.entry("local", "/repo");
-        entry.tool = Some(Tool::Changes);
+        entry.set_tool(Some(Tool::Changes));
         entry.pinned = true;
         entry.tree = true;
         entry.lane_width = Some(720);
@@ -1093,7 +1115,7 @@ mod tests {
     #[test]
     fn the_files_tool_without_a_view_shows_the_tree() {
         let mut view = WorkspaceView::new("local", "/repo");
-        view.tool = Some(Tool::Files);
+        view.set_tool(Some(Tool::Files));
         assert!(view.shows_tree());
         let display = view
             .layout
@@ -1102,7 +1124,7 @@ mod tests {
         assert!(!view.shows_tree());
         view.tree = true;
         assert!(view.shows_tree());
-        view.tool = Some(Tool::Memory);
+        view.set_tool(Some(Tool::Memory));
         assert!(!view.shows_tree());
     }
 
@@ -1296,6 +1318,45 @@ mod tests {
             stored["workspaces"][0].get("work").is_none(),
             "a default basis leaves the file as it was"
         );
+    }
+
+    /// A closed lane returns to the tool it last showed: the key is stored
+    /// while the lane is closed, an entry written before it falls back to
+    /// the tool an open lane shows, and a lane that never showed one has
+    /// none (the shell opens it on Files).
+    #[test]
+    fn the_last_tool_is_stored_beside_a_closed_lane_and_read_from_older_files() {
+        let folder = scratch("last-tool");
+        let path = folder.path().join("workspace-views.json");
+        let mut views = WorkspaceViews::default();
+        let entry = views.entry("local", "/closed");
+        entry.set_tool(Some(Tool::Memory));
+        entry.set_tool(None);
+        assert_eq!((entry.tool, entry.last_tool), (None, Some(Tool::Memory)));
+        assert_eq!(views.entry("local", "/never").last_tool, None);
+        save(&path, &views).unwrap();
+        let (loaded, _) = load(&path, 1);
+        let closed = loaded.get("local", "/closed").unwrap();
+        assert_eq!((closed.tool, closed.last_tool), (None, Some(Tool::Memory)));
+
+        fs::write(
+            &path,
+            serde_json::json!({
+                "schema_version": 3,
+                "workspaces": [
+                    {"device_id": "local", "path": "/open", "tool": "changes"},
+                    {"device_id": "local", "path": "/shut"},
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let (older, _) = load(&path, 2);
+        assert_eq!(
+            older.get("local", "/open").unwrap().last_tool,
+            Some(Tool::Changes)
+        );
+        assert_eq!(older.get("local", "/shut").unwrap().last_tool, None);
     }
 
     /// PRD right-lane D-11, B22: every shape schema 2 stored becomes the

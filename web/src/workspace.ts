@@ -7,9 +7,8 @@
 
 import type { Checkout, SnapshotRest, StripTab, ViewLayoutSnapshot } from "./snapshot";
 
-/** The lane's tools, in the rail's order (D-01). */
-export const TOOLS = ["work", "memory", "files", "changes"] as const;
-export type Tool = (typeof TOOLS)[number];
+export { TOOLS, type Tool } from "./laneTools";
+import type { Tool } from "./laneTools";
 
 /** What a tool is about: the Project (Work, Memory) or the front checkout (Files, Changes). The rail and the lane header draw it (PRD work-tab-pr-lens D-37). */
 export type ToolScope = "project" | "checkout";
@@ -27,6 +26,8 @@ export type WorkspaceView = {
   path: string;
   /** The tool the lane shows, or null while the lane is closed. */
   tool: Tool | null;
+  /** The tool the lane last showed, kept while it is closed; null when it never showed one. */
+  last_tool: Tool | null;
   /** The Work tool's basis and scope. */
   work: WorkView;
   /** Whether the lane is pinned beside Agent Views rather than drawn over it (D-03). */

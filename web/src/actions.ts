@@ -410,11 +410,11 @@ export function createActions(send: DispatchFn) {
 
   /** A rail icon (B2, B20): the tool showing closes the lane, otherwise the lane opens on it. */
   const toggleTool = (tool: Tool) => (laneUpWith(tool) ? closeLane() : showTool(tool));
-  /** ⌘E and the path's menu (B20): the lane closes while it shows, and otherwise comes back on the tool it holds, Files when it holds none. */
+  /** ⌘E and the path's menu (B20): the lane closes while it shows, and otherwise comes back on the tool it last showed, Files for a Workspace whose lane never showed one. */
   const toggleLane = () => {
     const { mode } = ui().drawnLane;
     if (mode !== "closed" && mode !== "hidden") return closeLane();
-    showTool(workspaceViewOf(rest())?.tool ?? "files");
+    showTool(workspaceViewOf(rest())?.last_tool ?? "files");
   };
 
   /**
