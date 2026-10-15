@@ -14,7 +14,7 @@ import { WorkspaceScreen } from "../WorkspaceScreen";
 import { REFERENCE_FOLDS, sidebarScene } from "./sceneData";
 import { sceneParams, type SceneParams } from "./SidebarScene";
 
-const STATES = ["closed", "overlay", "pinned", "tree-overlay", "tree-only", "expanded", "sessions", "narrow"] as const;
+const STATES = ["closed", "overlay", "pinned", "tree-overlay", "tree-only", "expanded", "work", "narrow"] as const;
 type LaneState = (typeof STATES)[number];
 type Lane = { tool: Tool | null; pinned: boolean; tree: boolean; documents: boolean; expanded: boolean };
 
@@ -25,7 +25,7 @@ const LANES: Record<LaneState, Lane> = {
   "tree-overlay": { tool: "files", pinned: false, tree: true, documents: true, expanded: false },
   "tree-only": { tool: "files", pinned: true, tree: false, documents: false, expanded: false },
   expanded: { tool: "files", pinned: false, tree: true, documents: true, expanded: true },
-  sessions: { tool: "work", pinned: true, tree: false, documents: true, expanded: false },
+  work: { tool: "work", pinned: true, tree: false, documents: true, expanded: false },
   narrow: { tool: "files", pinned: true, tree: false, documents: true, expanded: false },
 };
 

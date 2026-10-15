@@ -1,6 +1,6 @@
 // The right lane's boards in `Screen / Workspace` (PRD right-lane B25, D-17):
 // the approved v3 states, closed, over the agents, pinned, the tree on over
-// the agents, the tree alone, expanded, Sessions pinned and a narrow window,
+// the agents, the tree alone, expanded, Work pinned and a narrow window,
 // each a whole window with its measure line, in one theme. The rail, the lane
 // header, the pin, the tree button, the document header and the dividers are
 // refs of `Component / Workspace columns` in design/hide-ui.lib.pen; the
@@ -91,12 +91,18 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
   }
 
   // -- the rail, its labels as the Korean interface reads them --
-  const TOOLS = [['files', '파일'], ['changes', '변경'], ['sessions', '세션'], ['memory', '기억']];
+  const TOOLS = [['files', '파일'], ['changes', '변경'], ['work', 'Work'], ['memory', '기억']];
+  // What needs the operator in Work, as the rail's warning badge draws it (PRD work-tab-pr-lens B4).
+  const WORK_COUNT = '3';
   function rail(id, active) {
     const descendants = {};
     for (const [key, label] of TOOLS) {
       const on = key === active;
       descendants[`lane-rail-${key}/lane-tool-label`] = {content: label, ...(on ? {fill: '$--foreground', fontWeight: '500'} : {})};
+      if (key === 'work') {
+        descendants['lane-rail-work/lane-tool-badge'] = {enabled: true, fill: '$--warning'};
+        descendants['lane-rail-work/lane-tool-badge-t'] = {content: WORK_COUNT};
+      }
       if (!on) continue;
       descendants[`lane-rail-${key}`] = {fill: '$--secondary'};
       descendants[`lane-rail-${key}/lane-tool-bar`] = {enabled: true};
@@ -178,7 +184,10 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
   function sessions(id) {
     const MARK = {ask: '$--warning', work: '$--agent-working', done: '$--success'};
     const chip = (key, label, on) => frame(`${id}-chip-${key}`, label, {height: 20, layout: 'horizontal', alignItems: 'center', padding: [0, 8], cornerRadius: 999, stroke: '$--border', strokeWidth: 1, strokeAlignment: 'inner', ...(on ? {fill: '$--secondary'} : {})}, [cap(`${id}-chip-${key}-t`, label, on ? '$--foreground' : '$--muted-foreground', {weight: on ? '600' : '400'})]);
-    return frame(id, 'Sessions list', {width: 'fill_container', height: 'fill_container', layout: 'vertical', padding: [8, 6]}, [
+    // Work's two bases (PRD work-tab-pr-lens B2): Sessions pressed here, the dot where something needs the operator.
+    const basis = (key, label, on) => frame(`${id}-basis-${key}`, label, {width: 'fill_container', height: 24, layout: 'horizontal', gap: 4, alignItems: 'center', justifyContent: 'center', cornerRadius: '$--radius-sm', ...(on ? {fill: '$--secondary'} : {})}, [cap(`${id}-basis-${key}-t`, label, on ? '$--foreground' : '$--muted-foreground', {weight: on ? '600' : '400'}), dot(`${id}-basis-${key}-d`, '$--warning', 5)]);
+    return frame(id, 'Work list · Sessions basis', {width: 'fill_container', height: 'fill_container', layout: 'vertical', padding: [8, 6]}, [
+      frame(`${id}-basis`, 'Sessions | PRs', {width: 'fill_container', height: 30, layout: 'horizontal', alignItems: 'center', padding: 3, margin: [0, 0, 6, 0], fill: '$--background', stroke: '$--border', strokeWidth: 1, strokeAlignment: 'inner', cornerRadius: '$--radius-md'}, [basis('sessions', 'Sessions', true), basis('prs', 'PRs', false)]),
       frame(`${id}-chips`, 'Scope chips', {layout: 'horizontal', gap: 6, padding: [0, 6, 6, 6]}, [chip('all', 'All checkouts', true), chip('main', 'main only', false)]),
       ...SESSIONS.flatMap(([group, fill, rows], groupIndex) => [
         frame(`${id}-g${groupIndex}`, group, {width: 'fill_container', height: 28, layout: 'horizontal', gap: 6, alignItems: 'center', padding: [0, 6]}, [cap(`${id}-g${groupIndex}-t`, group, fill, {weight: '600'}), cap(`${id}-g${groupIndex}-n`, String(rows.length))]),
@@ -191,9 +200,9 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
   // A lane over the agents is set apart by a shadow and its left border (B3).
   const SHADOW = {type: 'shadow', shadowType: 'outer', offset: {x: -16, y: 0}, blur: 40, spread: 0, color: suffix === 'l' ? '#00000052' : '#000000f0'};
   function lane(id, {tool, tree: treeMode = 'off', pinned, expanded = false, overlay, width}) {
-    const head = tool === 'sessions' ? header(`${id}-head`, '세션', 'hide 전체', {pinned, expanded}) : header(`${id}-head`, '파일', 'settings-ui', {pinned, expanded});
+    const head = tool === 'work' ? header(`${id}-head`, 'Work', 'hide 전체', {pinned, expanded}) : header(`${id}-head`, '파일', 'settings-ui', {pinned, expanded});
     let content;
-    if (tool === 'sessions') content = sessions(`${id}-ses`);
+    if (tool === 'work') content = sessions(`${id}-ses`);
     else if (treeMode === 'only') content = tree(`${id}-tree`, 'fill_container', {only: true});
     else {
       const documentWidth = treeMode === 'on' ? width - TREE_W : width;
@@ -295,12 +304,12 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
       measures: [['터미널', '540px'], ['View', '520px · 핀'], ['트리', '520px · 트리만']], caption: '파일을 고르면 문서가 옆에 열림'},
     {key: 'expanded', no: 6, title: '확대', name: 'expanded', lane: {tool: 'files', tree: 'on', pinned: false, expanded: true, overlay: true, width: LANE_W},
       measures: [['터미널', '1068px · 아래에서 그대로'], ['View', '1068px · 확대'], ['트리', '240px · 켬']], caption: '다시 누르거나 Esc로 이전 배치'},
-    {key: 'sessions', no: 7, title: '세션 도구 · 핀', name: 'sessions, pinned', lane: {tool: 'sessions', pinned: true, overlay: false, width: LANE_W},
-      measures: [['터미널', '540px'], ['View', '520px · 핀'], ['범위', 'hide 전체']], caption: '핀은 도구를 바꿔도 그대로'},
+    {key: 'work', no: 7, title: 'Work 도구 · 핀 · Sessions 기준', name: 'work, pinned', lane: {tool: 'work', pinned: true, overlay: false, width: LANE_W},
+      measures: [['터미널', '540px'], ['View', '520px · 핀'], ['범위', 'hide 전체'], ['Work 숫자', '3']], caption: '핀은 도구를 바꿔도 그대로 · PR 카드는 파일 도구에서 열림'},
     {key: 'narrow', no: 8, title: '좁은 창 · 핀을 켰지만 겹침', name: 'narrow 1040', width: 1040, lane: {tool: 'files', pinned: true, overlay: true, width: LANE_W}, tooltip: {label: '핀 · 폭이 부족해 겹쳐 열림', dx: 262, y: 4},
       measures: [['터미널', '652px · 유지'], ['View', '520px · 겹침'], ['남는 터미널 폭', '124px < 480px']], caption: '핀 켬 · 480px이 남지 않아 겹쳐 열림, 터미널을 눌러도 남음'},
   ];
-  const toolOf = spec => spec.lane ? (spec.lane.tool === 'sessions' ? 'sessions' : 'files') : null;
+  const toolOf = spec => spec.lane ? (spec.lane.tool === 'work' ? 'work' : 'files') : null;
   return STATES.map(spec => board(`rl-${spec.key}-${suffix}`, {
     no: spec.no, title: spec.title, measures: spec.measures, caption: spec.caption,
     win: window(`rl-${spec.key}-${suffix}-win`, {name: spec.name, width: spec.width, lane: spec.lane, tooltip: spec.tooltip, tool: toolOf(spec)}),

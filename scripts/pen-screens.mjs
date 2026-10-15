@@ -136,7 +136,7 @@ export function themedOverrides(masterId, document = libraryDocument()) {
 }
 
 /** xref(), with every themed color themedOverrides(masterId) finds restated first; `overrides`/`descendants` win on a shared key. */
-function themedXref(id, masterId, name, overrides = {}, descendants = {}) {
+export function themedXref(id, masterId, name, overrides = {}, descendants = {}) {
   const auto = themedOverrides(masterId);
   const mergedDescendants = {...auto.descendants};
   for (const [key, props] of Object.entries(descendants)) mergedDescendants[key] = {...(mergedDescendants[key] ?? {}), ...props};
