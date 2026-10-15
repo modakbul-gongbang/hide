@@ -1736,6 +1736,11 @@ fn a_program_running_from_a_folder_or_a_file_open_in_it_holds_it_in_use() {
         .any(|line| line.contains("READY"));
     assert!(ready, "the program never started");
     assert_eq!(first_in_use(sandbox.path()).unwrap(), Some(program.clone()));
+    // Why a rename is no test of use: the running program's folder moves.
+    let moved = sandbox.path().join("moved");
+    fs::rename(program.parent().unwrap(), &moved)
+        .expect("Windows renames a running program's folder");
+    fs::rename(&moved, program.parent().unwrap()).unwrap();
     drop(running);
     let deadline = Instant::now() + Duration::from_secs(10);
     while first_in_use(sandbox.path()).unwrap().is_some() {
