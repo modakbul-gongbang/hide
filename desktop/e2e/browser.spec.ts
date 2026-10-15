@@ -591,6 +591,10 @@ test("browser: waiting for a hidden page does not take the operator's keyboard t
   };
   const agent = created.result.root_pane.pane_id;
   try {
+    // Until the core has projected the new tab, its pane is not a caller Hide
+    // knows: the command would run with its checkout's authority, not as the
+    // agent in that tab, and its page would not be that tab's (issue 1125).
+    await expect(page.locator(`[data-agent-tab-bar] [data-tab="${created.result.tab.tab_id}"]`)).toHaveCount(1);
     const hidden = await cliFromPane(["browser", "open", `${origin}/b.html`, "--wait"], agent);
     expect(hidden).toMatchObject({ status: 2, ok: false, applied: "applied", reason: "page_wait_timeout", page: { state: "pending" } });
     expect(await cliFromPane(["view", "status", hidden.view_id as string], agent)).toMatchObject({ status: 0, ok: true, view: { page: { state: "pending" } } });

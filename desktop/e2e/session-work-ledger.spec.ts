@@ -60,9 +60,12 @@ test("@platform session work records, drafts, ended work and search render in bo
       await captureElectronWindow(app, `record-chapters-children-${theme}`, facts);
       const missed = record.locator('[data-missed-work]', { hasText: MISSED });
       await missed.getByRole("button", { name: "무시", exact: true }).click();
-      await record.getByText("닫힘 1", { exact: true }).click();
+      // A closed one is a muted line under its task; Undo shows under the pointer.
+      await expect(missed).toHaveAttribute("data-missed-status", "dismissed");
       await captureElectronWindow(app, `record-closed-${theme}`, facts);
+      await missed.hover();
       await missed.getByRole("button", { name: "되돌리기", exact: true }).click();
+      await expect(missed).toHaveAttribute("data-missed-status", "open");
       await missed.locator('[data-missed-issue]').click();
       await expect(page.locator('[data-new-issue-title]')).toHaveValue("한국어 요청 줄바꿈 확인", { timeout: 30_000 });
       await captureElectronWindow(app, `record-issue-draft-${theme}`, facts);
@@ -83,7 +86,8 @@ test("@platform session work records, drafts, ended work and search render in bo
       await expect(record.locator('[data-record-request]')).toHaveCount(3);
       await expect(record.getByRole('heading', { level: 2 })).toHaveText('Claude');
       await expect(record.locator('[data-record-child] > summary')).toContainText('Claude');
-      await expect(record.locator('[data-output-source]')).toHaveText(Array(4).fill('Claude'));
+      // Only the child's pull request names its maker; the session's own say nothing.
+      await expect(record.locator('[data-output-source]')).toHaveText(['Claude']);
       await captureElectronWindow(app, `record-summaries-off-${theme}`, facts);
       await page.locator('[data-open-settings]').click();
       await page.locator('[data-settings-tab="hideAi"]').click();
@@ -93,7 +97,8 @@ test("@platform session work records, drafts, ended work and search render in bo
     await record.getByRole("button", { name: "Sessions로 돌아가기" }).click();
     await root.hover();
     await root.locator('[data-session-resolve]').click();
-    const ended = page.locator('[data-ended-missed]');
+    // Open missed work of live and ended sessions alike gathers in the group at the top.
+    const ended = page.locator('[data-open-missed]');
     await expect(ended).toBeVisible({ timeout: 30_000 });
     await ended.locator('summary').click();
     for (const theme of ["light", "dark"] as const) {
