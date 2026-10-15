@@ -222,22 +222,16 @@ test("expand takes the whole body and returns on Escape without resizing a termi
   }
 });
 
-test("the rail's names stay whole in four languages and both themes, and Tab reaches each tool with its pressed state (B23)", async ({ page }) => {
+test("the rail shows icons alone and names each tool in its hint in four languages and both themes, and Tab reaches each tool with its pressed state (B23)", async ({ page }) => {
   test.setTimeout(120_000);
   const lane = await startLane(page, "lane-rail");
   try {
     await openFile(lane, lane.herdr.panes[0]!, "a.md");
     await expect(railTool(page, "files")).toHaveAttribute("aria-pressed", "true");
     const rail = page.locator("[data-tool-rail]");
-    // Every name sits inside the rail on one line: no ellipsis, no second line.
-    const spill = () =>
-      rail.evaluate((node) => {
-        const edge = node.getBoundingClientRect();
-        return [...node.querySelectorAll("[data-lane-tool-name]")].map((name) => {
-          const box = name.getBoundingClientRect();
-          return Math.max(edge.left + 1 - box.left, box.right - edge.right, box.height > 16 ? box.height : 0, name.scrollWidth - name.clientWidth);
-        });
-      });
+    // The rail draws no text of its own: a tool's name is its accessible name
+    // and the hint that opens on hover, with the tool's scope and chord.
+    await expect(rail).toHaveText("");
     for (const [language, theme] of [
       ["en", "light"],
       ["ko", "dark"],
@@ -252,8 +246,14 @@ test("the rail's names stay whole in four languages and both themes, and Tab rea
       await page.locator(`[data-theme-option="${theme}"]`).click();
       await page.keyboard.press("Escape");
       await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-      await expect.poll(async () => Math.max(...(await spill()))).toBeLessThanOrEqual(0);
+      // The hint reads `<name> · <scope>`, and the name is the button's accessible name.
+      await railTool(page, "changes").hover();
+      const hint = page.locator('[data-slot="tooltip-content"]');
+      await expect(hint).toContainText(" · ");
+      await expect(railTool(page, "changes")).toHaveAttribute("aria-label", (await hint.innerText()).split(" · ")[0]!.trim());
       await screenshot(page, `right-lane-rail-${language}-${theme}`);
+      await page.mouse.move(400, 400);
+      await expect(page.locator('[data-slot="tooltip-content"]')).toHaveCount(0);
     }
 
     // The keyboard reaches the rail; each tool says whether it shows.

@@ -1,4 +1,4 @@
-import { BookOpenIcon, EllipsisIcon, FileIcon, GitBranchIcon, Maximize2Icon, MessageSquareIcon, Minimize2Icon, PinIcon, XIcon, type LucideIcon } from "lucide-react";
+import { BrainIcon, EllipsisIcon, FileDiffIcon, FilesIcon, Maximize2Icon, MessagesSquareIcon, Minimize2Icon, PinIcon, XIcon, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 import type { Actions } from "./actions";
 import { AgentSessions } from "./AgentSessions";
@@ -30,7 +30,7 @@ import type { CommandId } from "./shortcuts";
 // page's (`ui.ts`).
 
 const TOOL_NAMES = { files: "panes.lane.files", changes: "panes.lane.changes", agent_sessions: "panes.lane.sessions", memory: "panes.lane.memory" } as const satisfies Record<Tool, MessageKey>;
-const TOOL_ICONS: Record<Tool, LucideIcon> = { files: FileIcon, changes: GitBranchIcon, agent_sessions: MessageSquareIcon, memory: BookOpenIcon };
+const TOOL_ICONS: Record<Tool, LucideIcon> = { files: FilesIcon, changes: FileDiffIcon, agent_sessions: MessagesSquareIcon, memory: BrainIcon };
 /** The chord that opens and closes the lane on a tool, where one does (D-12). */
 const TOOL_CHORDS: Partial<Record<Tool, CommandId>> = { files: "toggle_right_panel", agent_sessions: "toggle_explorer" };
 
@@ -87,15 +87,12 @@ export function ToolRail({ actions }: { actions: Actions }) {
               aria-pressed={pressed}
               aria-label={name}
               aria-description={count > 0 ? t("panes.workspace.viewsOpen", { count }) : undefined}
-              className={`relative flex size-(--size-tool-rail-button) flex-col items-center justify-center gap-xxs rounded-md text-micro outline-none hover:bg-secondary hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${pressed ? "bg-secondary font-medium text-foreground" : "text-muted-foreground"}`}
+              className={`relative flex size-(--size-tool-rail-button) items-center justify-center rounded-md outline-none hover:bg-secondary hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${pressed ? "bg-secondary font-medium text-foreground" : "text-muted-foreground"}`}
               data-lane-tool={tool}
               onClick={() => actions.toggleTool(tool)}
             >
               {pressed ? <span aria-hidden="true" className="absolute -left-xxs inset-y-sm w-(--size-tab-indicator) rounded-full bg-primary" data-lane-tool-bar="true" /> : null}
-              <Icon aria-hidden="true" className="size-(--size-icon)" />
-              <span className="whitespace-nowrap tracking-tight [:lang(ja)_&]:[font-feature-settings:'palt']" data-lane-tool-name="true">
-                {name}
-              </span>
+              <Icon aria-hidden="true" className="size-(--size-icon-lg)" />
               {count > 0 ? (
                 <span aria-hidden="true" className="absolute right-0 top-0 flex h-(--size-icon) min-w-(--size-icon) items-center justify-center rounded-full bg-primary px-xxs text-micro text-primary-foreground" data-lane-badge={count}>
                   {count}

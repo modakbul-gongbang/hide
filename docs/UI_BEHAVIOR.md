@@ -51,11 +51,10 @@ Only when the window's frame itself cannot draw does the line take the whole win
 ### The right lane
 
 The Workspace body, under the top row, is Agent Views (the Agent area), one right lane, and the tool rail, 48px wide, at the window's right edge.
-The rail lists Files, Changes, Sessions and Memory from the top, each an icon with its name under it, and the lane shows one of them at a time: Files (the View areas and the file tree), Changes (History), Sessions, and Memory.
+The rail lists Files, Changes, Sessions and Memory from the top, each an icon alone (files, a file diff, conversations, a brain) whose name, scope and chord are its hint on hover and its accessible name, and the lane shows one of them at a time: Files (the View areas and the file tree), Changes (History), Sessions, and Memory.
 A rail icon is drawn pressed, with a primary bar at the rail's edge, while the lane shows its tool; pressing it opens the lane on that tool, and pressing the pressed one closes the lane.
 Each icon's tooltip names the tool, its scope and its chord (`Files · settings-ui ⇧⌘B`, `Sessions · all of hide ⌘E`), with a rebound chord shown as bound.
 While the lane does not show Files, its icon carries a badge counting the views open, also given as its accessible description; Memory's carries a dot while its Project has questions waiting.
-The rail's names stay whole on one line in all four languages; Japanese sets them with proportional kana.
 The rail's `…` menu holds Toggle File Tree with its chord, Pin or Unpin, and Expand.
 A Workspace seen for the first time shows Agent Views alone, its lane closed.
 The lane's header names its tool and scope, `Files · <checkout>`, `Changes · <checkout>`, `Sessions · all of <project>` and `Memory · <project>`, with Pin, Expand and Close at its right; a new checkout in front renames the Files and Changes scopes and leaves Sessions and Memory as they are.
