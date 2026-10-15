@@ -59,7 +59,9 @@ It never speaks for an agent, never stands in for a status mark, and never signa
 Copy beside it describes keeping work in view, never watching people or agents.
 Inside the app the character appears only where a PRD puts it, because the shell's states belong to its status marks (design principle 13).
 
-The current poses are in `site/assets/owls/`: `owl-peek` over the hero window, `owl-agents`, `owl-devices`, `owl-ai` and `owl-factory` beside the pillars, and `owl-rest` at the close.
+The current poses are in `site/assets/owls/`: `owl-peek` around the hero window, `owl-agents`, `owl-devices`, `owl-ai` and `owl-factory` beside the pillars, and `owl-rest` at the close.
+`owl-peek` is not a new pose but `owl-agents` traced into vector parts: it peeks out from behind the window's edges, glances at the work in each place and ducks back, the same loop every time.
+It keeps work in view rather than reacting to it: its expression never changes with what a pane shows, and it holds one still frame under reduced motion.
 They were made with the mark as the style reference, so a new pose starts from the mark again rather than from an edited copy of another pose, and it is reviewed against this section before it ships.
 
 ## Third-party agent marks
