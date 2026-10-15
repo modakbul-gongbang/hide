@@ -550,12 +550,11 @@ fn nothing_is_refused_with_every_protection_off_or_outside_a_project() {
 }
 
 #[test]
-fn a_corrupt_or_newer_policy_lets_the_call_run_and_says_why() {
+fn a_missing_corrupt_or_newer_policy_lets_the_call_run_and_says_why() {
     let fixture = Fixture::new();
     let action = Action::Shell("git push --force".to_owned());
     let decide = || decide(&fixture.home, &fixture.repo, &action, &|_| Some(false));
-    // No file is no protection on, and nothing to report.
-    assert_eq!(decide(), Outcome::Allow);
+    assert_eq!(decide(), Outcome::PolicyUnreadable(PolicyFailure::Missing));
     std::fs::create_dir_all(policy_path(&fixture.home).parent().unwrap()).unwrap();
     std::fs::write(policy_path(&fixture.home), "{not json").unwrap();
     assert_eq!(decide(), Outcome::PolicyUnreadable(PolicyFailure::Corrupt));

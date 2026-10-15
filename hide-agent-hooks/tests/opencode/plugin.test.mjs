@@ -24,6 +24,18 @@ const HERDR = { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_SOCKET_PATH: "/tmp
 const sample = (name) => structuredClone(SAMPLES[name]);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Writes the guardrails policy the core would publish, with `rules` on the fixture project, or removes it. */
+function policy(rules) {
+  const file = path.join(homedir(), ".hide", "agent-hooks", "guardrails.json");
+  if (!rules) return rmSync(file, { force: true });
+  mkdirSync(path.dirname(file), { recursive: true });
+  const all = { worktree_folder: false, base_branch: false, agent_merge: false, git_commands: false, files: false, paths: [] };
+  writeFileSync(file, JSON.stringify({ version: 1, projects: [{ root: "/checkouts/fixture", base: null, rules: { ...all, ...rules } }] }));
+}
+
+// The policy the core writes at its start: no protection on.
+policy({});
+
 /** The helper's answers by operation; `delay_ms` holds an operation back. */
 function answer(answers) {
   writeFileSync(ANSWERS, JSON.stringify(answers));
@@ -225,14 +237,6 @@ test("a shell call that starts an agent through Herdr is refused with the helper
   assert.equal(calls().filter((c) => c.operation === "tool").length, 1);
 });
 
-/** Writes the guardrails policy the core would publish, with `rules` on the fixture project, or removes it. */
-function policy(rules) {
-  const file = path.join(homedir(), ".hide", "agent-hooks", "guardrails.json");
-  if (!rules) return rmSync(file, { force: true });
-  mkdirSync(path.dirname(file), { recursive: true });
-  const all = { worktree_folder: false, base_branch: false, agent_merge: false, git_commands: false, files: false, paths: [] };
-  writeFileSync(file, JSON.stringify({ version: 1, projects: [{ root: "/checkouts/fixture", base: null, rules: { ...all, ...rules } }] }));
-}
 
 test("while a project has a protection on, file and shell calls ask the helper with paths only", async () => {
   answer({ start: { context: "" }, tool: { deny: "Not run: Guard files is on" } });
@@ -261,7 +265,7 @@ test("while a project has a protection on, file and shell calls ask the helper w
     await sleep(100);
     assert.deepEqual(calls(), []);
   } finally {
-    policy(null);
+    policy({});
   }
 });
 

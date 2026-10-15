@@ -33,8 +33,8 @@ const CUSTOM_TYPE = "hide";
 
 // The project guardrails' policy, which Hide's core writes for this machine (`guardrails::policy_path`). A tool
 // call reaches the helper for them only while some project has a protection on, read again when the file changes,
-// so a machine with none starts no helper for a file tool (PRD agent-guardrails B27). No file is none on; a file that
-// cannot be read lets the helper read it and record why.
+// so a machine with none starts no helper for a file tool (PRD agent-guardrails B27). A file that is missing or
+// unreadable lets the helper read it and record why.
 const POLICY = path.join(homedir(), ".hide", "agent-hooks", "guardrails.json");
 const FILE_TOOLS = new Set(["read", "edit", "write"]);
 // The arguments that name a file; the rest of a write (its content) is not sent.
@@ -45,9 +45,8 @@ function guardrailsOn() {
   let stat;
   try {
     stat = statSync(POLICY);
-  } catch (error) {
-    // No file is no protection on; one that cannot be read is the helper's to report.
-    return error?.code !== "ENOENT";
+  } catch {
+    return true;
   }
   if (stat.mtimeMs === policy.mtimeMs && stat.size === policy.size) return policy.on;
   let on = true;

@@ -1,4 +1,4 @@
-// hide-extension@4 sha256=f0432da4f4e35f32e0af39dbe67f1cdc21bfb341522c6596eeaef8510a927d5e
+// hide-extension@4 sha256=23072b4bae2a7df183b12a7ffcf1781448898aa6134ec2f92c862c353d7efb85
 // Hide's extension for Pi and omp, written by Hide's install kit (hide-agent-hooks).
 // An edit is kept and shown as edited in Settings; Reinstall puts Hide's back.
 // Outside a Herdr pane, in an agent started from another Pi's or omp's shell, or when its helper is gone, it does
@@ -34,8 +34,8 @@ const CUSTOM_TYPE = "hide";
 
 // The project guardrails' policy, which Hide's core writes for this machine (`guardrails::policy_path`). A tool
 // call reaches the helper for them only while some project has a protection on, read again when the file changes,
-// so a machine with none starts no helper for a file tool (PRD agent-guardrails B27). No file is none on; a file that
-// cannot be read lets the helper read it and record why.
+// so a machine with none starts no helper for a file tool (PRD agent-guardrails B27). A file that is missing or
+// unreadable lets the helper read it and record why.
 const POLICY = path.join(homedir(), ".hide", "agent-hooks", "guardrails.json");
 const FILE_TOOLS = new Set(["read", "edit", "write"]);
 // The arguments that name a file; the rest of a write (its content) is not sent.
@@ -46,9 +46,8 @@ function guardrailsOn() {
   let stat;
   try {
     stat = statSync(POLICY);
-  } catch (error) {
-    // No file is no protection on; one that cannot be read is the helper's to report.
-    return error?.code !== "ENOENT";
+  } catch {
+    return true;
   }
   if (stat.mtimeMs === policy.mtimeMs && stat.size === policy.size) return policy.on;
   let on = true;

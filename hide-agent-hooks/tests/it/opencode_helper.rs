@@ -55,6 +55,10 @@ impl Machine {
         stand_ins::place(programs::hook(), &helper);
         // The stand-in finds its record from HOME, which the helper hands on.
         stand_ins::program(&bin.join("hide"), FAKE_HIDE);
+        // The guardrails policy the core writes at its start: no protection on.
+        let policy = home.join(".hide/agent-hooks/guardrails.json");
+        std::fs::create_dir_all(policy.parent().unwrap()).unwrap();
+        std::fs::write(policy, r#"{"version":1,"projects":[]}"#).unwrap();
         Self {
             _dir: dir,
             calls: root.join("hide-calls"),
@@ -207,10 +211,8 @@ fn a_file_tool_on_a_protected_path_is_refused_for_opencode_pi_and_omp() {
     let project = machine.home.join("project");
     std::fs::create_dir_all(project.join(".git")).unwrap();
     std::fs::write(project.join(".git/HEAD"), "ref: refs/heads/topic\n").unwrap();
-    let policy = machine.home.join(".hide/agent-hooks/guardrails.json");
-    std::fs::create_dir_all(policy.parent().unwrap()).unwrap();
     std::fs::write(
-        &policy,
+        machine.home.join(".hide/agent-hooks/guardrails.json"),
         json!({"version": 1, "projects": [{"root": project, "base": null, "rules": {
             "worktree_folder": false, "base_branch": false, "agent_merge": false,
             "git_commands": false, "files": true, "paths": [".env"]}}]})

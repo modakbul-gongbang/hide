@@ -184,11 +184,7 @@ fn with_no_protection_on_or_outside_a_pane_nothing_is_refused_or_logged() {
     let machine = Machine::new("registered");
     let env = machine.checkout.join(".env");
     let write = claude(&machine, "Write", json!({"file_path": env, "content": "X"}));
-    // No policy file: no protection on.
-    let run = machine.run_event("claude-code", "PreToolUse", &write, Some(PANE), &[]);
-    assert_eq!(claude_reason(&run), None);
-    // Every protection off.
-    policy(&machine, json!({}));
+    // The policy the core writes when no protection is on.
     let run = machine.run_event("claude-code", "PreToolUse", &write, Some(PANE), &[]);
     assert_eq!(claude_reason(&run), None);
     // On, but the agent runs outside a Herdr pane.
@@ -200,24 +196,28 @@ fn with_no_protection_on_or_outside_a_pane_nothing_is_refused_or_logged() {
 }
 
 #[test]
-fn a_corrupt_policy_lets_the_call_run_and_says_why_once() {
-    let machine = Machine::new("registered");
-    let file = machine.home.join(".hide/agent-hooks/guardrails.json");
-    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-    std::fs::write(&file, "{not json").unwrap();
-    let write = claude(
-        &machine,
-        "Write",
-        json!({"file_path": machine.checkout.join(".env")}),
-    );
-    for _ in 0..2 {
-        let run = machine.run_event("claude-code", "PreToolUse", &write, Some(PANE), &[]);
-        assert_eq!(claude_reason(&run), None);
+fn a_missing_or_corrupt_policy_lets_the_call_run_and_says_why_once() {
+    for (contents, cause) in [(None, "missing"), (Some("{not json"), "corrupt")] {
+        let machine = Machine::new("registered");
+        let file = machine.home.join(".hide/agent-hooks/guardrails.json");
+        match contents {
+            Some(contents) => std::fs::write(&file, contents).unwrap(),
+            None => std::fs::remove_file(&file).unwrap(),
+        }
+        let write = claude(
+            &machine,
+            "Write",
+            json!({"file_path": machine.checkout.join(".env")}),
+        );
+        for _ in 0..2 {
+            let run = machine.run_event("claude-code", "PreToolUse", &write, Some(PANE), &[]);
+            assert_eq!(claude_reason(&run), None);
+        }
+        let lines = log(&machine);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(lines[0]["kind"], "policy.unreadable");
+        assert_eq!(lines[0]["cause"], cause);
     }
-    let lines = log(&machine);
-    assert_eq!(lines.len(), 1, "{lines:?}");
-    assert_eq!(lines[0]["kind"], "policy.unreadable");
-    assert_eq!(lines[0]["cause"], "corrupt");
 }
 
 #[test]

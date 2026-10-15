@@ -1,4 +1,4 @@
-// hide-opencode-plugin@2 sha256=1c4acd5f045ce324bd49f03ed319f9ebb03e77b476912cfbf80a5daf38a8f20f
+// hide-opencode-plugin@2 sha256=50bbc660bc6ce6d84a2b87bb6bb46bd411cedc3e9a512a023b1f5e32ce796d1b
 // Hide's OpenCode plugin, written by Hide's install kit (hide-agent-hooks).
 // An edit is kept and shown as edited in Settings; Reinstall puts Hide's back.
 // Outside a Herdr pane Hide manages, or when its helper is gone, it does nothing.
@@ -31,8 +31,8 @@ const PENDING_AGE_MS = 10 * 60 * 1000;
 
 // The project guardrails' policy, which Hide's core writes for this machine (`guardrails::policy_path`). A tool
 // call reaches the helper for them only while some project has a protection on, read again when the file changes,
-// so a machine with none starts no helper for a file tool (PRD agent-guardrails B27). No file is none on; a file that
-// cannot be read lets the helper read it and record why.
+// so a machine with none starts no helper for a file tool (PRD agent-guardrails B27). A file that is missing or
+// unreadable lets the helper read it and record why.
 const POLICY = path.join(homedir(), ".hide", "agent-hooks", "guardrails.json");
 const FILE_TOOLS = new Set(["read", "edit", "write", "apply_patch", "multiedit"]);
 // The arguments that name a file; the rest of a write (its content) is not sent.
@@ -43,9 +43,8 @@ function guardrailsOn() {
   let stat;
   try {
     stat = statSync(POLICY);
-  } catch (error) {
-    // No file is no protection on; one that cannot be read is the helper's to report.
-    return error?.code !== "ENOENT";
+  } catch {
+    return true;
   }
   if (stat.mtimeMs === policy.mtimeMs && stat.size === policy.size) return policy.on;
   let on = true;

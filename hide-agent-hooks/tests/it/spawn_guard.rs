@@ -88,6 +88,10 @@ impl Machine {
         stand_ins::place(programs::hook(), &hook);
         stand_ins::program(&bin.join("hide"), FAKE_HIDE);
         std::fs::write(root.join("mode"), daemon).unwrap();
+        // The guardrails policy the core writes at its start: no protection on.
+        let policy = home.join(".hide/agent-hooks/guardrails.json");
+        std::fs::create_dir_all(policy.parent().unwrap()).unwrap();
+        std::fs::write(policy, r#"{"version":1,"projects":[]}"#).unwrap();
         Self {
             _dir: dir,
             root,

@@ -16,10 +16,10 @@
 //!
 //! What fails, and how (D-27):
 //!
-//! - no policy file is no protection on: the core writes it before it saves
-//!   the first protection, and again at every start;
-//! - a policy file that is unreadable or not this version: the call runs and
-//!   [`Outcome::PolicyUnreadable`] carries why, for a throttled diagnostic;
+//! - the policy file is missing, unreadable or not this version: the call
+//!   runs and [`Outcome::PolicyUnreadable`] carries why, for a throttled
+//!   diagnostic; the core writes the file, empty when no protection is on, at
+//!   every start and device connection (D-28), so a missing one is a fault;
 //! - a fact a protection that is on needs cannot be read (the checkout's
 //!   repository, its branch, the base branch, whether it has uncommitted
 //!   changes): the call is refused and the reason says so;
@@ -217,6 +217,7 @@ impl Policy {
 /// Why the policy file was not read: the call runs, and this is recorded.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PolicyFailure {
+    Missing,
     Unreadable,
     Corrupt,
     Version,
@@ -225,6 +226,7 @@ pub enum PolicyFailure {
 impl PolicyFailure {
     pub fn code(self) -> &'static str {
         match self {
+            Self::Missing => "missing",
             Self::Unreadable => "unreadable",
             Self::Corrupt => "corrupt",
             Self::Version => "version",
@@ -232,13 +234,13 @@ impl PolicyFailure {
     }
 }
 
-/// Reads the policy file under `home`; no file is a policy with no project.
+/// Reads the policy file under `home`.
 pub fn read_policy(home: &Path) -> Result<Policy, PolicyFailure> {
     use std::io::Read;
     let file = match hide_platform::fs::open_regular(&policy_path(home)) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Policy::new(Vec::new()));
+            return Err(PolicyFailure::Missing);
         }
         Err(_) => return Err(PolicyFailure::Unreadable),
     };
