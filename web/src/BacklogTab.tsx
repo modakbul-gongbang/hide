@@ -260,6 +260,7 @@ export function BacklogItemPanel({ panel, projects, actions }: { panel: Extract<
   const task = project?.tasks?.tasks.find((row) => row.key === panel.taskKey) ?? null;
   const origin = useShellStore((s) => (s.rest?.issue_work?.origin?.task_key === panel.taskKey ? s.rest.issue_work.origin : null));
   const undo = useShellStore((s) => (s.rest?.issue_work?.undo?.task_key === panel.taskKey ? s.rest.issue_work.undo : null));
+  const madeByHide = useShellStore((s) => s.rest?.issue_work?.made_keys?.some((key) => key.toLowerCase() === panel.taskKey.toLowerCase()) ?? false);
   const language = requireInterfaceLanguage(i18n.language);
   useEffect(() => {
     actions.readBacklogOrigin(panel.workspaceId, panel.taskKey);
@@ -279,6 +280,9 @@ export function BacklogItemPanel({ panel, projects, actions }: { panel: Extract<
   }
   const started = startedKeys(project).has(task.key);
   const local = isMemoKey(task.key);
+  // Only an item Hide made can be undone: every memo, and a GitHub issue
+  // the core's create record names (D-21); someone else's issue never is.
+  const undoable = !started && (local || madeByHide);
   const at = task.created_at_unix_ms ?? task.updated_at_unix_ms ?? null;
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-backlog-item={task.key}>
@@ -294,7 +298,7 @@ export function BacklogItemPanel({ panel, projects, actions }: { panel: Extract<
         <div className="flex flex-wrap items-center gap-xs pb-sm">
           <Button size="sm" onClick={() => useUiStore.getState().setWorkspaceDialog({ kind: "start_issue", workspaceId: project.id, taskKey: task.key })} data-item-start="true"><PlayIcon />{t("backlog.start")}</Button>
           {task.url && !local ? <Button size="sm" variant="outline" asChild><a href={task.url} target="_blank" rel="noreferrer" data-item-github="true"><ExternalLinkIcon />{t("backlog.openOnGithub")}</a></Button> : null}
-          {!started ? (
+          {undoable ? (
             <Button size="sm" variant="ghost" disabled={undo?.phase === "working"} onClick={() => actions.undoBacklog(project.id, task.key)} data-item-undo="true">
               {t(undo?.phase === "working" ? "backlog.panel.undoing" : "backlog.panel.undo")}
             </Button>

@@ -82,7 +82,7 @@ pub(super) struct BacklogWork {
     evicted: VecDeque<String>,
     undo_generation: u64,
     origin_generation: u64,
-    missed_keys_generation: u64,
+    keys_generation: u64,
 }
 
 /// `backlog_add`.
@@ -420,7 +420,7 @@ impl Runtime {
                     }
                 }
                 runtime.feed_links();
-                runtime.refresh_missed_keys();
+                runtime.refresh_backlog_keys();
                 true
             },
         );
@@ -682,8 +682,8 @@ impl Runtime {
                 }
                 if job.missed.is_some() {
                     self.feed_links();
-                    self.refresh_missed_keys();
                 }
+                self.refresh_backlog_keys();
             }
             Err(failure) => {
                 crate::diagnostic!(
@@ -696,35 +696,38 @@ impl Runtime {
         true
     }
 
-    /// The backlog items missed lines made, read again after one is made or
-    /// undone and at start, so the backlog row's flag follows the ledger.
-    pub(super) fn refresh_missed_keys(&mut self) {
+    /// The backlog items missed lines made and the GitHub issues Hide made,
+    /// read again after one is made or undone and at start, so the row's
+    /// flag and `되돌리기` follow the ledger.
+    pub(super) fn refresh_backlog_keys(&mut self) {
         let Some(client) = self.links_work.client.clone() else {
             return;
         };
-        self.backlog_work.missed_keys_generation += 1;
-        let generation = self.backlog_work.missed_keys_generation;
+        self.backlog_work.keys_generation += 1;
+        let generation = self.backlog_work.keys_generation;
         let spawned = self.spawn_issue_worker(
-            "backlog-missed-keys",
-            move || client.call(LedgerCall::MissedKeys),
+            "backlog-keys",
+            move || client.call(LedgerCall::BacklogKeys),
             move |runtime, answer| match answer {
                 // A later read is on its way; this one may predate its change.
-                _ if runtime.backlog_work.missed_keys_generation != generation => false,
-                Ok(LedgerAnswer::Keys(keys)) => {
-                    let changed = runtime.snapshot.issue_work.missed_keys != keys;
-                    runtime.snapshot.issue_work.missed_keys = keys;
+                _ if runtime.backlog_work.keys_generation != generation => false,
+                Ok(LedgerAnswer::BacklogKeys { missed, made }) => {
+                    let work = &mut runtime.snapshot.issue_work;
+                    let changed = work.missed_keys != missed || work.made_keys != made;
+                    work.missed_keys = missed;
+                    work.made_keys = made;
                     changed
                 }
                 Ok(_) => false,
                 Err(code) => {
-                    crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.missed_keys_failed","code":code}));
+                    crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.keys_failed","code":code}));
                     false
                 }
             },
         );
         if let Err(code) = spawned {
             crate::diagnostic!(
-                serde_json::json!({"component":"backlog","kind":"backlog.missed_keys_failed","code":code})
+                serde_json::json!({"component":"backlog","kind":"backlog.keys_failed","code":code})
             );
         }
     }
@@ -735,7 +738,7 @@ impl Runtime {
         let Some(client) = self.links_work.client.clone() else {
             return;
         };
-        self.refresh_missed_keys();
+        self.refresh_backlog_keys();
         let spawned = self.spawn_issue_worker(
             "backlog-restore",
             move || client.call(LedgerCall::PendingBacklog),
@@ -858,12 +861,33 @@ impl Runtime {
                 return true;
             }
         };
+        // Only an issue Hide made is closed (D-21): the ledger's create record
+        // says so, and without the ledger nothing says so.
+        let Some(ledger) = client.clone() else {
+            return self.refuse_backlog(
+                "backlog.undo_unrecorded",
+                "Hide cannot read which issues it made",
+            );
+        };
         self.snapshot.issue_work.undo = Some(snapshot);
         let own = self.own_node();
         let project = workspace.path.clone();
         let spawned = self.spawn_issue_worker(
             "backlog-undo",
             move || {
+                let made = ledger
+                    .call(LedgerCall::MadeIssue {
+                        repository: reference.repository.clone(),
+                        number: reference.number,
+                    })
+                    .map_err(|code| {
+                        crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.undo_unrecorded","code":code}));
+                        BacklogFailure::Refused
+                    })?;
+                if !matches!(made, LedgerAnswer::Made(true)) {
+                    crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.undo_not_made"}));
+                    return Err(BacklogFailure::Refused);
+                }
                 // Only an issue of the project's own repository is closed.
                 let repository = crate::github::issue_repository(own.as_ref(), &place).map_err(|code| {
                     crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.repository_unread","code":code}));
@@ -928,7 +952,7 @@ impl Runtime {
                     crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.release_failed","code":code}));
                 }
                 runtime.feed_links();
-                runtime.refresh_missed_keys();
+                runtime.refresh_backlog_keys();
                 true
             },
         );

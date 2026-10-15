@@ -142,7 +142,15 @@ test("@platform 백로그로 makes one title-only issue, a lost create response 
     // closes the issue and opens the missed line again (B32).
     await missed.locator('[data-missed-backlog="#77"]').click();
     const item = page.locator("[data-overview-panel] [data-backlog-item]");
-    await expect(item).toBeVisible();
+    await expect(item).toHaveAttribute("data-backlog-item", "github:acme/repo#77");
+    // D-21: #41 is in the same backlog but Hide did not make it, so its
+    // panel has no 되돌리기 and Hide never closes someone else's issue.
+    await page.locator('[data-backlog-row="github:acme/repo#41"]').getByRole("button").first().click();
+    await expect(item).toHaveAttribute("data-backlog-item", "github:acme/repo#41");
+    await expect(item.locator("[data-item-start]")).toBeVisible();
+    await expect(item.locator("[data-item-undo]")).toHaveCount(0);
+    await page.locator('[data-backlog-row="github:acme/repo#77"]').getByRole("button").first().click();
+    await expect(item).toHaveAttribute("data-backlog-item", "github:acme/repo#77");
     await item.locator("[data-item-undo]").click();
     await expect.poll(() => calls().some((args) => args[0] === "issue" && args[1] === "close" && args[2] === "77"), { timeout: 30_000 }).toBe(true);
     await page.keyboard.press("Escape");

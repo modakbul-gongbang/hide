@@ -752,7 +752,7 @@ The newest eight rows show and the rest fold under `나머지 이슈 N ›` (`�
 When the source cannot be read the section keeps the last rows it read, and its head carries ⚠ with one line of why and where to fix it; a source never read has the line alone in the rows' place, and the input still works (B35).
 On a device the core dials every section is the one line `이 기기의 <project>는 이슈를 읽지 않는다`, with no input and no `▷ 시작` (B36).
 
-A row opens the item in the panel: its title, `#N` or `L-N`, its source, when it was made, its labels, `어디서 왔나` for an item from missed work (the session's title, the assigned work it came from and the missed sentence, which open that session's record), `▷ 시작`, `GitHub에서 열기` for a GitHub issue, and `되돌리기` while it is not started (B31).
+A row opens the item in the panel: its title, `#N` or `L-N`, its source, when it was made, its labels, `어디서 왔나` for an item from missed work (the session's title, the assigned work it came from and the missed sentence, which open that session's record), `▷ 시작`, `GitHub에서 열기` for a GitHub issue, and `되돌리기` while it is not started and Hide made it: every memo, and a GitHub issue made by the quick add, the backlog's input or `백로그로`; an issue someone else made never offers it (B31).
 `되돌리기` deletes a memo or closes a GitHub issue and the row leaves the backlog; a missed line it came from opens again with `백로그로 · 무시`, and a close that fails leaves why and `다시 시도` in the panel with the row in place (B32).
 
 `▷ 시작` opens the Start dialog, which turns an item into work in one step: a worktree named for the item, its base, the agent, and the agent's first prompt.

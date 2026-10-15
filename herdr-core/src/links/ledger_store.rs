@@ -600,6 +600,12 @@ impl LinkStore {
                 LedgerAnswer::Saved
             }
             LedgerCall::ReleaseBacklog { backlog_key } => {
+                // A typed item's issue was closed: its create no longer
+                // names an issue `되돌리기` may close.
+                if let Some(reference) = crate::tasks::parse_github_key(&backlog_key) {
+                    tx.execute("UPDATE ledger_backlog SET state='undone' WHERE state='complete' AND lower(repo)=lower(?1) AND number=?2",
+                        params![reference.repository,reference.number]).map_err(failed)?;
+                }
                 tx.execute("DELETE FROM ledger_issue_attempts WHERE EXISTS(SELECT 1 FROM ledger_missed m WHERE m.device=ledger_issue_attempts.device AND m.agent=ledger_issue_attempts.agent AND m.id=ledger_issue_attempts.id AND m.missed=ledger_issue_attempts.missed AND m.backlog_key=?1)",
                     params![backlog_key]).map_err(failed)?;
                 tx.execute("UPDATE ledger_missed SET status=?2,issue_repo=NULL,issue_number=NULL,backlog_key=NULL WHERE backlog_key=?1",
@@ -658,17 +664,41 @@ impl LinkStore {
                 };
                 LedgerAnswer::Origin(origin)
             }
-            LedgerCall::MissedKeys => {
+            LedgerCall::BacklogKeys => {
                 let mut statement = tx
                     .prepare("SELECT backlog_key FROM ledger_missed WHERE backlog_key IS NOT NULL GROUP BY backlog_key ORDER BY MAX(at) DESC LIMIT ?1")
                     .map_err(failed)?;
-                let keys = statement
-                    .query_map(params![MISSED_KEYS_LIMIT as i64], |r| r.get(0))
+                let missed = statement
+                    .query_map(params![BACKLOG_KEYS_LIMIT as i64], |r| r.get(0))
                     .map_err(failed)?
                     .collect::<Result<Vec<String>, _>>()
                     .map_err(failed)?;
                 drop(statement);
-                LedgerAnswer::Keys(keys)
+                let mut statement = tx
+                    .prepare("SELECT repo,number FROM (SELECT repo,number,started_at FROM ledger_backlog WHERE state='complete' AND number IS NOT NULL UNION ALL SELECT repo,number,started_at FROM ledger_issue_attempts WHERE state='complete' AND number IS NOT NULL) GROUP BY lower(repo),number ORDER BY MAX(started_at) DESC LIMIT ?1")
+                    .map_err(failed)?;
+                let made = statement
+                    .query_map(params![BACKLOG_KEYS_LIMIT as i64], |r| {
+                        Ok(crate::tasks::github_key(&crate::issues::IssueReference {
+                            repository: r.get(0)?,
+                            number: r.get(1)?,
+                        }))
+                    })
+                    .map_err(failed)?
+                    .collect::<Result<Vec<String>, _>>()
+                    .map_err(failed)?;
+                drop(statement);
+                LedgerAnswer::BacklogKeys { missed, made }
+            }
+            LedgerCall::MadeIssue { repository, number } => {
+                let made: bool = tx
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM ledger_backlog WHERE state='complete' AND lower(repo)=lower(?1) AND number=?2) OR EXISTS(SELECT 1 FROM ledger_issue_attempts WHERE state='complete' AND lower(repo)=lower(?1) AND number=?2)",
+                        params![repository, number],
+                        |r| r.get(0),
+                    )
+                    .map_err(failed)?;
+                LedgerAnswer::Made(made)
             }
         };
         tx.commit().map_err(failed)?;

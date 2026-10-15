@@ -118,13 +118,22 @@ pub enum LedgerCall {
     BacklogOrigin {
         backlog_key: String,
     },
-    /// Every backlog item a missed line made, newest first, at most
-    /// `MISSED_KEYS_LIMIT`.
-    MissedKeys,
+    /// Every backlog item key a missed line made, and every GitHub issue
+    /// Hide made for the backlog, each newest first and at most
+    /// `BACKLOG_KEYS_LIMIT`.
+    BacklogKeys,
+    /// Whether Hide made this GitHub issue for the backlog: a typed item's
+    /// or a missed line's completed create names it. Only such an issue is
+    /// closed by `되돌리기` (D-21).
+    MadeIssue {
+        repository: String,
+        number: u32,
+    },
 }
 
-/// The backlog item keys `MissedKeys` answers; the backlog shows far fewer.
-pub const MISSED_KEYS_LIMIT: usize = 1024;
+/// The backlog item keys `BacklogKeys` answers per list; the backlog shows
+/// far fewer.
+pub const BACKLOG_KEYS_LIMIT: usize = 1024;
 
 #[derive(Debug)]
 pub enum LedgerAnswer {
@@ -133,7 +142,11 @@ pub enum LedgerAnswer {
     Saved,
     Pending(Vec<PendingBacklog>),
     Origin(Option<Box<BacklogOrigin>>),
-    Keys(Vec<String>),
+    BacklogKeys {
+        missed: Vec<String>,
+        made: Vec<String>,
+    },
+    Made(bool),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

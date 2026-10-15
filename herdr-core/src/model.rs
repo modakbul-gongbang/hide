@@ -3436,6 +3436,11 @@ pub struct IssueWorkSnapshot {
     /// backlog row's flag (B27).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub missed_keys: Vec<String>,
+    /// Every GitHub issue key Hide made for the backlog (the quick add, the
+    /// backlog's input or `백로그로`), newest first: only these and memos
+    /// show `되돌리기` (D-21, B31).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub made_keys: Vec<String>,
 }
 
 /// One backlog item made from the backlog's input, the quick add or a

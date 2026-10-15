@@ -398,6 +398,68 @@ fn undo_deletes_a_memo_and_closes_a_github_issue() {
 }
 
 #[test]
+fn undo_closes_only_an_issue_hide_made() {
+    let gh = FakeGh::new();
+    let (shared, _worker) = backlog_runtime(gh.clone());
+    add(&shared, "i-1", "w", "Ship it");
+    wait(&shared, "the made issue to be named", |runtime| {
+        runtime.snapshot.issue_work.made_keys == ["github:acme/project#41"]
+    });
+
+    // Someone else's issue in the same repository: the core refuses it even
+    // though no button offers it, and gh is never asked.
+    send(
+        &shared,
+        "backlog_undo",
+        serde_json::json!({"workspace_id": "w", "task_key": "github:acme/project#7"}),
+    );
+    wait(&shared, "the refusal", |runtime| {
+        runtime
+            .snapshot
+            .issue_work
+            .undo
+            .as_ref()
+            .is_some_and(|undo| undo.phase == "failed")
+    });
+    assert_eq!(
+        shared
+            .lock()
+            .unwrap()
+            .snapshot
+            .issue_work
+            .undo
+            .as_ref()
+            .unwrap()
+            .failure,
+        Some(BacklogFailure::Refused)
+    );
+    assert!(gh.calls("issue close").is_empty(), "nothing is sent to gh");
+
+    send(
+        &shared,
+        "backlog_undo",
+        serde_json::json!({"workspace_id": "w", "task_key": "github:acme/project#41"}),
+    );
+    wait(
+        &shared,
+        "the made issue to close and leave the list",
+        |runtime| {
+            runtime
+                .snapshot
+                .issue_work
+                .undo
+                .as_ref()
+                .is_some_and(|undo| undo.phase == "done")
+                && runtime.snapshot.issue_work.made_keys.is_empty()
+        },
+    );
+    assert_eq!(
+        gh.calls("issue close"),
+        ["issue close 41 --repo acme/project"]
+    );
+}
+
+#[test]
 fn a_started_item_cannot_be_undone() {
     let gh = FakeGh::new();
     let (shared, _worker) = backlog_runtime(gh);

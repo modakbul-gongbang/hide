@@ -419,7 +419,7 @@ fn a_v3_store_keeps_its_session_origins_when_the_backlog_arrives() {
             .as_deref(),
         Some("acme/first")
     );
-    assert!(store.ledger_call(LedgerCall::MissedKeys).is_ok());
+    assert!(store.ledger_call(LedgerCall::BacklogKeys).is_ok());
 }
 
 fn request(store: &mut LinkStore, offset: u64, text: &str) {
@@ -1496,7 +1496,9 @@ fn a_memo_from_missed_work_marks_its_line_and_undo_opens_it_again() {
     let missed = &store.ledger_record(&session()).unwrap().missed[0];
     assert_eq!(missed.status, MissedStatus::Backlog);
     assert_eq!(missed.backlog_key.as_deref(), Some(key.as_str()));
-    let LedgerAnswer::Keys(keys) = store.ledger_call(LedgerCall::MissedKeys).unwrap() else {
+    let LedgerAnswer::BacklogKeys { missed: keys, .. } =
+        store.ledger_call(LedgerCall::BacklogKeys).unwrap()
+    else {
         panic!("expected the missed lines' items")
     };
     assert_eq!(
@@ -1530,7 +1532,9 @@ fn a_memo_from_missed_work_marks_its_line_and_undo_opens_it_again() {
     let missed = &store.ledger_record(&session()).unwrap().missed[0];
     assert_eq!(missed.status, MissedStatus::Open);
     assert_eq!(missed.backlog_key, None);
-    let LedgerAnswer::Keys(keys) = store.ledger_call(LedgerCall::MissedKeys).unwrap() else {
+    let LedgerAnswer::BacklogKeys { missed: keys, .. } =
+        store.ledger_call(LedgerCall::BacklogKeys).unwrap()
+    else {
         panic!("expected the missed lines' items")
     };
     assert!(keys.is_empty(), "an undone item is no longer flagged");
@@ -1582,5 +1586,77 @@ fn only_unconfirmed_typed_items_are_pending_after_a_restart() {
             .map(|row| (row.intent.intent.as_str(), row.title.as_str()))
             .collect::<Vec<_>>(),
         [("lost", "lost item")]
+    );
+}
+
+/// `되돌리기` closes only an issue a completed create names, across a
+/// restart; once undone, the create names it no more (D-21).
+#[test]
+fn only_an_issue_hide_made_is_named_as_made_after_a_restart_until_it_is_undone() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("links.sqlite3");
+    let intent = |name: &str| BacklogIntent {
+        intent: name.into(),
+        device: "mac".into(),
+        project: "/repo".into(),
+        workspace_id: "w".into(),
+    };
+    {
+        let (mut store, _) = LinkStore::open(&path).unwrap();
+        for name in ["made", "lost"] {
+            store
+                .ledger_call(LedgerCall::ReserveIssue {
+                    key: AttemptKey::Intent(intent(name)),
+                    repository: "owner/repo".into(),
+                    title: format!("{name} item"),
+                    body: String::new(),
+                    at_unix_ms: 1,
+                })
+                .unwrap();
+        }
+        store
+            .ledger_call(LedgerCall::FinishIssue {
+                key: AttemptKey::Intent(intent("made")),
+                number: 5,
+                url: "https://github.com/owner/repo/issues/5".into(),
+            })
+            .unwrap();
+    }
+    let (mut store, _) = LinkStore::open(&path).unwrap();
+    let made = |store: &mut LinkStore, repository: &str, number: u32| {
+        matches!(
+            store
+                .ledger_call(LedgerCall::MadeIssue {
+                    repository: repository.into(),
+                    number,
+                })
+                .unwrap(),
+            LedgerAnswer::Made(true)
+        )
+    };
+    assert!(made(&mut store, "Owner/Repo", 5));
+    assert!(
+        !made(&mut store, "owner/repo", 6),
+        "an issue Hide never made"
+    );
+    assert!(
+        !made(&mut store, "other/repo", 5),
+        "the same number elsewhere"
+    );
+    let LedgerAnswer::BacklogKeys { made: keys, .. } =
+        store.ledger_call(LedgerCall::BacklogKeys).unwrap()
+    else {
+        panic!("expected the backlog keys")
+    };
+    assert_eq!(keys, ["github:owner/repo#5"]);
+
+    store
+        .ledger_call(LedgerCall::ReleaseBacklog {
+            backlog_key: "github:owner/repo#5".into(),
+        })
+        .unwrap();
+    assert!(
+        !made(&mut store, "owner/repo", 5),
+        "an undone issue is closed"
     );
 }

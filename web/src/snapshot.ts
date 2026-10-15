@@ -496,6 +496,8 @@ export type IssueWork = {
   origin?: BacklogOrigin | null;
   /** Every item key a missed line made, for the backlog row's flag (B27). */
   missed_keys?: string[];
+  /** Every GitHub issue key Hide made for the backlog: only these and memos show `되돌리기` (D-21, B31). */
+  made_keys?: string[];
   detail: IssueDetail | null;
   name: { request_id: string; phase: "working" | "ready" | "failed"; name: string | null; message: string | null } | null;
   /** The answer to a Local issue's edit, by the web's request id. */
