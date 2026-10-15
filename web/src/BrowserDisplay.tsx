@@ -275,7 +275,10 @@ function BrowserCommentButton({ display, workspace, areaId, address, actions }: 
   const view = parseWorkspaceKey(workspace);
   const key = view ? browserCommentKey(view, display.id) : null;
   const mode = useFeedbackStore((s) => (key ? s.browser[key] : undefined) ?? null);
-  const on = mode?.on === true;
+  // Comment shows on only once hided holds the page and its overlay is in:
+  // before that, a press in the page would still reach the page.
+  const starting = mode?.on === true && mode.starting === true;
+  const on = mode?.on === true && !starting;
   const feedback = useViewFeedback();
   const comments = commentsOn(feedback, display.id);
   const pins = comments
@@ -304,7 +307,7 @@ function BrowserCommentButton({ display, workspace, areaId, address, actions }: 
     if (on && drawn.current !== request) sendRef.current(true, true);
     drawn.current = request;
   }, [on, request]);
-  // Leaving the View ends its Comment.
+  // Leaving the View ends its Comment, one still starting too.
   useEffect(
     () => () => {
       if (key && useFeedbackStore.getState().browser[key]?.on) {
@@ -319,7 +322,7 @@ function BrowserCommentButton({ display, workspace, areaId, address, actions }: 
     ? reason === "display_busy" || reason === "comment_limit" || reason === "comment_unavailable_here"
       ? t(`feedback.unavailable.${reason}`)
       : t("feedback.unavailable.other", { reason })
-    : on
+    : on || starting
       ? t("feedback.commentStop")
       : t("feedback.commentOn");
   return (
@@ -329,12 +332,15 @@ function BrowserCommentButton({ display, workspace, areaId, address, actions }: 
         size="sm"
         className={on ? "" : reason ? "text-warning" : "text-muted-foreground"}
         aria-pressed={on}
+        aria-busy={starting}
         disabled={!areaId || !view}
-        data-browser-comment={on ? "on" : "off"}
+        data-browser-comment={on ? "on" : starting ? "starting" : "off"}
         onClick={() => {
-          if (key) noteBrowserComment(key, { on: !on, reason: null });
-          send(!on);
-          if (!on) focusBrowserDisplay(workspace, display.id);
+          // A press while it starts takes the turn-on back.
+          const turnOn = !on && !starting;
+          if (key) noteBrowserComment(key, turnOn ? { on: true, reason: null, starting: true } : { on: false, reason: null });
+          send(turnOn);
+          if (turnOn) focusBrowserDisplay(workspace, display.id);
         }}
       >
         <MessageSquarePlusIcon />
