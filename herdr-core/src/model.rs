@@ -1094,6 +1094,11 @@ pub struct SidebarAgentSnapshot {
     /// declaration is compared with when this row is its parent.
     #[serde(skip_serializing)]
     pub lineage_session: Option<String>,
+    /// Hide's server mark as the pane carries it (`wire::SERVER_MARK_TOKEN`):
+    /// which Herdr server a saved `state_change_seq` for this pane can be
+    /// compared on.
+    #[serde(skip_serializing)]
+    pub server_mark: Option<String>,
     /// Ownership, derived from the lineage alone: a root is the operator's own
     /// work, a descendant is work the root delegated. It is the fourth derived
     /// axis beside demand, activity and read, and it is advice rather than a
@@ -3280,6 +3285,11 @@ pub struct UiStateSnapshot {
     // The store owns persistence; the shell only reads the derived unread axis.
     #[serde(default, skip_serializing)]
     pub pane_read_records: BTreeMap<String, PaneReadRecord>,
+    /// The panes whose last stop finished work, keyed by pane id, so a
+    /// completion a restored Herdr server no longer reports is still shown
+    /// (`agent_state::apply_completions`). The store owns it.
+    #[serde(default, skip_serializing)]
+    pub pane_completions: BTreeMap<String, PaneCompletion>,
     /// Each agent pane's request-view verb and when it took it, so the time
     /// a row has waited survives a restart (PRD overview-request-view D-40).
     /// The store owns it; the shell reads it on the row.
@@ -3382,6 +3392,33 @@ pub struct PaneReadRecord {
     /// works and finishes a second time (PRD B5, B6, B8).
     #[serde(default)]
     pub descendant_signals: BTreeSet<DescendantSignal>,
+    /// The server mark (`wire::SERVER_MARK_TOKEN`) of the Herdr server
+    /// `state_change_seq` was read on. Herdr's sequence restarts with its
+    /// server, so the record is compared with the pane only on that server;
+    /// none means no server can be named, as for a record saved before marks.
+    #[serde(default)]
+    pub server: Option<String>,
+    /// The pane no longer matched this record when Hide last judged it, and
+    /// the operator has not read it since. Saved whenever it changes, so a
+    /// restart that loses Herdr's sequence carries the verdict over rather
+    /// than judging the pane again from numbers that no longer compare.
+    #[serde(default)]
+    pub unread: bool,
+}
+
+/// A pane whose last stop finished work, as Hide last saw it. Herdr's
+/// restored server can report such a pane as only ready (it does for a
+/// restored Claude), and this is what keeps its completion through that.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PaneCompletion {
+    /// The digest of the session that finished (`wire::session_digest`).
+    #[serde(default)]
+    pub session: Option<String>,
+    /// The server mark and Herdr sequence the completion was last seen at.
+    #[serde(default)]
+    pub server: Option<String>,
+    #[serde(default)]
+    pub state_change_seq: Option<u64>,
 }
 
 /// The scale a pane has until the user zooms it.
@@ -3748,6 +3785,7 @@ impl Default for UiStateSnapshot {
             editor_text_scale: DEFAULT_PANE_TEXT_SCALE,
             conversation_pane_ids: BTreeSet::new(),
             pane_read_records: BTreeMap::new(),
+            pane_completions: BTreeMap::new(),
             request_verbs: BTreeMap::new(),
             agent_sleep_after_hours: None,
             project_issue_sources: BTreeMap::new(),

@@ -5,9 +5,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    ColorTheme, DeviceRegistration, PaneReadRecord, PetOriginSnapshot, RightPanelSection,
-    ThemePreference, UiStateSnapshot, WorkspaceRegistration, default_accent_hex, default_font_size,
-    default_pane_text_scale, default_panel_visible, default_sidebar_width,
+    ColorTheme, DeviceRegistration, PaneCompletion, PaneReadRecord, PetOriginSnapshot,
+    RightPanelSection, ThemePreference, UiStateSnapshot, WorkspaceRegistration, default_accent_hex,
+    default_font_size, default_pane_text_scale, default_panel_visible, default_sidebar_width,
 };
 
 const UI_STATE_SCHEMA_VERSION: u32 = 1;
@@ -137,6 +137,10 @@ struct StoredUiState {
     /// schema version and discarding the rest of the operator's state.
     #[serde(default)]
     pane_read_records: BTreeMap<String, PaneReadRecord>,
+    /// Absent in a store written before completions were kept; loads empty,
+    /// so a completion a restored server no longer reports is lost once.
+    #[serde(default)]
+    pane_completions: BTreeMap<String, PaneCompletion>,
     /// Absent in a store written before the request view; loads empty, and
     /// each row's wait starts over once.
     #[serde(default)]
@@ -410,6 +414,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             editor_text_scale: stored.editor_text_scale,
             conversation_pane_ids: Default::default(),
             pane_read_records: stored.pane_read_records,
+            pane_completions: stored.pane_completions,
             request_verbs: stored.request_verbs,
             agent_sleep_after_hours: stored
                 .agent_sleep_after_hours
@@ -520,6 +525,7 @@ pub fn save(
         pane_text_scales: state.pane_text_scales.clone(),
         editor_text_scale: state.editor_text_scale,
         pane_read_records: state.pane_read_records.clone(),
+        pane_completions: state.pane_completions.clone(),
         request_verbs: state.request_verbs.clone(),
         pane_terminal_sizes: pane_terminal_sizes.clone(),
         agent_sleep_after_hours: state.agent_sleep_after_hours,
@@ -745,6 +751,16 @@ mod tests {
                 }]
                 .into_iter()
                 .collect(),
+                server: Some("server-7".to_owned()),
+                unread: true,
+            },
+        );
+        state.pane_completions.insert(
+            "w1:p1".to_owned(),
+            crate::model::PaneCompletion {
+                session: Some("session-7".to_owned()),
+                server: Some("server-7".to_owned()),
+                state_change_seq: Some(7),
             },
         );
         // How long each row has waited survives too (PRD overview-request-view D-40).
@@ -761,6 +777,7 @@ mod tests {
         let (reloaded, _sizes, disposition) = load(&path);
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert_eq!(reloaded.pane_read_records, state.pane_read_records);
+        assert_eq!(reloaded.pane_completions, state.pane_completions);
         assert_eq!(reloaded.request_verbs, state.request_verbs);
     }
 
