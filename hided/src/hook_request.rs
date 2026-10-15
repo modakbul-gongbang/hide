@@ -175,7 +175,7 @@ pub(crate) fn memory(
     ask: &herdr_core::memory_hook::Ask,
 ) -> Result<Value, Failure> {
     let deadline = Instant::now() + herdr_core::memory_hook::WITHIN;
-    let scope = core.memory_scope(&cap.context).map_err(|reason| {
+    let scope = core.memory_scope(&cap.context, deadline).map_err(|reason| {
         herdr_core::diagnostic!(json!({"component":"memory","kind":"hook.unavailable","pane":cap.pane_id,"device":cap.context.device_id,"reason":reason}));
         ("memory_unavailable".to_owned(), "Continue without Project Memory")
     })?;

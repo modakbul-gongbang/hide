@@ -14,15 +14,16 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
     'ath-mark-n': {content: String(count), fill: kind === 'raised' ? '$--warning' : '$--agent-working'},
   });
   const provider = (id, kind = 'claude') => frame(id, 'Provider', {width:14,height:14,fill:{type:'image',enabled:true,url:`../web/src/assets/agent-${kind}.png`,mode:'contain'}}, []);
-  // The PR mark (web/src/components/pr-mark.tsx), a ref of Component / Agent tree parts: the state's icon and colour, the number, and `+N` for several (B22).
+  // The PR mark (web/src/components/pr-mark.tsx), a ref of Component / Agent tree parts: the state's icon and colour, then `#number` for one PR (with `+N` for an agent's other own PRs) or the bare count for a root standing for two or more (PRD session-record-redesign).
   const prChip = (id, {number, count, state, more = 0}) => {
     const [, glyph, fill] = PR_STATES.find(([key]) => key === state);
-    return themedXref(id, AGENT_TREE_MASTERS.prIcon, count === undefined ? `PR #${number}` : `PR ${count}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': {content: count === undefined ? `${number}` : `PR ${count}`}, 'ath-pr-more': more ? {enabled: true, content: `+${more}`} : {enabled: false}});
+    return themedXref(id, AGENT_TREE_MASTERS.prIcon, count === undefined ? `PR #${number}` : `PR ${count}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': {content: count === undefined ? `#${number}` : `${count}`}, 'ath-pr-more': more ? {enabled: true, content: `+${more}`} : {enabled: false}});
   };
   const chevron = (id, open) => frame(id, 'Chevron lane', {width:16,height:20,layout:'horizontal',justifyContent:'center',alignItems:'center'}, open === null ? [] : [icon(`${id}-g`, open ? 'chevron-down' : 'chevron-right', {size:12,fill:'$--muted-foreground'})]);
 
-  // A Sessions row (B30, B31): mark, provider, title, the folded descendant
-  // mark, PR mark and the age; a parent counts the distinct PRs in its tree.
+  // A Sessions row (B30, B31): mark, provider, title, the folded raised mark
+  // (`! N`; working descendants draw nothing), PR mark and the age; a parent
+  // counts the distinct PRs in its tree. Open missed work is not on the row.
   // The second line is the ask for Needs You and
   // otherwise the label line, absent when there is none. A child row steps one
   // indent per level down to the third (`rails` says which ancestor levels run
@@ -87,12 +88,16 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
         caption(`${id}-project`,'hide','$--foreground',{weight:'600',width:'fill_container'}),
         screenBadge(`${id}-all`,'모든 체크아웃'),screenBadge(`${id}-front`,'main만',{variant:'outline'}),
       ]),
+      // Open missed work of every session in scope, live or ended, folded above the groups.
+      frame(`${id}-missed`,'Missed work',{width:'fill_container',height:32,layout:'horizontal',gap:6,alignItems:'center',padding:[0,12],stroke:'$--border',strokeWidth:{bottom:1},strokeAlignment:'inner'},[
+        icon(`${id}-missed-g`,'flag',{size:12,fill:'$--warning'}),caption(`${id}-missed-t`,'놓친 일 5','$--warning'),
+      ]),
       group('needs','Needs You',[
         {title:'hide 에이전트 지원 PR 묶음 머지 조율',mark:'!',tone:'$--warning',open:false,age:'12m',ask:['승인','e2e 테스트 돌리던 중']},
       ]),
       group('working','Working',[
-        {title:'공통 후보 전체 검증과 PR 제출',open:false,desc:['working',1],pr:{number:874,state:'failed'},age:'4h',line:'sealed verify 다시 돌리는 중'},
-        {title:'Mac mini 연동 5단계 순차 구현',mark:'○',open:true,pr:{count:1,state:'pending'},age:'2m',line:'4단계 리뷰 지적 수정 중'},
+        {title:'공통 후보 전체 검증과 PR 제출',open:false,desc:['raised',1],pr:{count:2,state:'failed'},age:'4h',line:'sealed verify 다시 돌리는 중'},
+        {title:'Mac mini 연동 5단계 순차 구현',mark:'○',open:true,pr:{number:1188,state:'pending'},age:'2m',line:'4단계 리뷰 지적 수정 중'},
         {title:'Implementor',depth:1,open:true,pr:{number:1188,state:'pending'},age:'2m',branch:'feat/core-host-node-layer5',line:'NodeLink 호출 옮기는 중'},
         {title:'테스트 작성',depth:2,rails:[true],last:true,open:true,age:'1m',line:'e2e 스펙 두 개 추가 중'},
         {title:'fixture 정리',depth:3,rails:[true,false],last:true,open:true,age:'40s',branch:'fix/e2e-fixture-home-isolation',line:'HOME 격리 옮기는 중'},

@@ -133,6 +133,14 @@ pub fn shell_integration(home: &Path) -> PathBuf {
     hide_home(home).join("shell-integration")
 }
 
+/// What a node last measured of each repository's worktrees, one file a
+/// repository, so a restarted node reuses the facts of a worktree whose
+/// inputs did not move; its owner is the node's worktree reader
+/// (`hide_host::worktrees::Measured`).
+pub fn worktree_facts(state_dir: &Path) -> PathBuf {
+    state_dir.join("worktree-facts")
+}
+
 /// Where this machine's core runs when it is not here: present only on a
 /// node whose core a move placed on another machine; its owner is the
 /// daemon's start (`hided::placement`).

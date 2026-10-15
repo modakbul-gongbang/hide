@@ -2651,14 +2651,31 @@ fn execute_pane_focus_with_timeout(
     confirm_pane_focus_with_timeout(connector, pane_id, response_timeout)
 }
 
+/// Herdr's answer to whether a pane holds its focus.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FocusReadback {
+    /// The pane is focused in the tab its workspace shows.
+    Confirmed,
+    /// Herdr's focus is on another pane or tab, so the move the stream showed
+    /// is not Herdr's focus now.
+    Elsewhere,
+    /// Herdr could not be read; its reason.
+    Unread(String),
+}
+
 /// Read current focus without producing another focus effect. Herdr's pinned
 /// event stream has no ordering cursor, so an external move needs this same
 /// confirmation before an older queued layout can replace Hide's selection.
-pub(crate) fn confirm_pane_focus(
-    connector: &dyn ApiConnector,
-    pane_id: &str,
-) -> Result<PaneLayoutSnapshot, ControlFailure> {
-    confirm_pane_focus_with_timeout(connector, pane_id, Duration::from_secs(5))
+pub(crate) fn confirm_pane_focus(connector: &dyn ApiConnector, pane_id: &str) -> FocusReadback {
+    match read_pane_focus(connector, pane_id, Duration::from_secs(5)) {
+        Ok((layout, active_tab_id))
+            if layout.focused_pane_id == pane_id && active_tab_id == layout.tab_id =>
+        {
+            FocusReadback::Confirmed
+        }
+        Ok(_) => FocusReadback::Elsewhere,
+        Err(error) => FocusReadback::Unread(error.message().to_owned()),
+    }
 }
 
 fn confirm_pane_focus_with_timeout(
@@ -2666,6 +2683,23 @@ fn confirm_pane_focus_with_timeout(
     pane_id: &str,
     response_timeout: Duration,
 ) -> Result<PaneLayoutSnapshot, ControlFailure> {
+    let (layout, active_tab_id) = read_pane_focus(connector, pane_id, response_timeout)?;
+    if layout.focused_pane_id != pane_id || active_tab_id != layout.tab_id {
+        return Err(ControlFailure::Definite(format!(
+            "Herdr did not confirm pane {pane_id}: pane {} is focused in tab {}, and workspace {} shows tab {active_tab_id}",
+            layout.focused_pane_id, layout.tab_id, layout.workspace_id
+        )));
+    }
+    Ok(layout)
+}
+
+/// Herdr's layout of the tab holding `pane_id` and the tab its workspace
+/// shows.
+fn read_pane_focus(
+    connector: &dyn ApiConnector,
+    pane_id: &str,
+    response_timeout: Duration,
+) -> Result<(PaneLayoutSnapshot, String), ControlFailure> {
     let layout = request_small_response(
         connector,
         "pane.layout",
@@ -2682,13 +2716,7 @@ fn confirm_pane_focus_with_timeout(
     )
     .map_err(|error| format!("workspace.get failed: {error}"))?;
     let active_tab_id = wire::workspace_active_tab(workspace)?;
-    if layout.focused_pane_id != pane_id || active_tab_id != layout.tab_id {
-        return Err(ControlFailure::Definite(format!(
-            "Herdr did not confirm pane {pane_id}: pane {} is focused in tab {}, and workspace {} shows tab {active_tab_id}",
-            layout.focused_pane_id, layout.tab_id, layout.workspace_id
-        )));
-    }
-    Ok(layout)
+    Ok((layout, active_tab_id))
 }
 
 /// One worker runs the control lane: it sends a job, settles its result under
@@ -5885,7 +5913,14 @@ mod tests {
             // Checking a proposed stream move shares the confirmation
             // contract and must not produce another focus mutation.
             let readback = confirm_pane_focus(&herdr.connector(), "fixture:p2");
-            assert_eq!(readback.is_ok(), confirmed);
+            assert_eq!(
+                readback,
+                if confirmed {
+                    FocusReadback::Confirmed
+                } else {
+                    FocusReadback::Elsewhere
+                }
+            );
             assert_eq!(
                 herdr.methods(),
                 [
