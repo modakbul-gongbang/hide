@@ -95,6 +95,7 @@ const words = {
   "backlog.failure.queue_full": ["Too many waiting to be created", "만들 것이 너무 많이 밀려 있음", "作成待ちが多すぎます", "待创建的太多"],
   "backlog.failure.unconfirmed": ["Not confirmed by GitHub yet", "GitHub이 아직 확인하지 않음", "GitHubがまだ確認していません", "GitHub 尚未确认"],
   "backlog.failure.repository_changed": ["The project's repository changed", "프로젝트 저장소가 바뀜", "プロジェクトのリポジトリが変わりました", "项目的仓库已更改"],
+  "backlog.failure.unavailable": ["Hide could not read its record of this item", "Hide가 이 항목의 기록을 읽지 못함", "Hideがこの項目の記録を読めませんでした", "Hide 无法读取此项的记录"],
   "backlog.failure.refused": ["Could not be made", "만들 수 없음", "作成できません", "无法创建"],
   "backlog.panel.source": ["Source", "출처", "ソース", "来源"],
   "backlog.panel.created": ["Created", "만든 때", "作成日時", "创建时间"],

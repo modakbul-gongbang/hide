@@ -570,6 +570,45 @@ fn an_undo_whose_worker_panics_ends_failed_and_can_be_tried_again() {
 }
 
 #[test]
+fn an_undo_hide_cannot_check_its_record_for_can_be_tried_again() {
+    let gh = FakeGh::new();
+    let (shared, worker) = backlog_runtime(gh.clone());
+    add(&shared, "i-1", "w", "Ship it");
+    wait(&shared, "the made issue to be named", |runtime| {
+        runtime.snapshot.issue_work.made_keys == ["github:acme/project#41"]
+    });
+    // The ledger is closed, so whether Hide made the issue cannot be read.
+    drop(worker);
+    send(
+        &shared,
+        "backlog_undo",
+        serde_json::json!({"workspace_id": "w", "task_key": "github:acme/project#41"}),
+    );
+    wait(&shared, "the undo's answer", |runtime| {
+        runtime
+            .snapshot
+            .issue_work
+            .undo
+            .as_ref()
+            .is_some_and(|undo| undo.phase == "failed")
+    });
+    assert_eq!(
+        shared
+            .lock()
+            .unwrap()
+            .snapshot
+            .issue_work
+            .undo
+            .as_ref()
+            .unwrap()
+            .failure,
+        Some(BacklogFailure::Unavailable),
+        "a record that could not be read is not the final refusal"
+    );
+    assert!(gh.calls("issue close").is_empty());
+}
+
+#[test]
 fn a_started_item_cannot_be_undone() {
     let gh = FakeGh::new();
     let (shared, _worker) = backlog_runtime(gh);

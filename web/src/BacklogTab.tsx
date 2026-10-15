@@ -13,7 +13,7 @@ import { requireInterfaceLanguage } from "./i18n/locale";
 import { cn } from "./lib/utils";
 import { ageWords } from "./overviewLens";
 import { useBacklogOrigin } from "./backlogOrigin";
-import { backlogLabels, backlogOf, BACKLOG_SHOWN, backlogTitle, destinationOf, filterRows, pendingItems, startedKeys, titleLeft, type BacklogRow } from "./overviewBacklog";
+import { backlogLabels, backlogOf, BACKLOG_SHOWN, backlogTitle, destinationOf, filterRows, pendingItems, startedKeys, titleLeft, undoRetryable, type BacklogRow } from "./overviewBacklog";
 import { isMemoKey, itemToken, taskSections } from "./overviewTasks";
 import { issueDate, type BoardProject } from "./projectBoard";
 import { issueSourceChoices } from "./settings";
@@ -305,8 +305,7 @@ export function BacklogItemPanel({ panel, projects, actions }: { panel: Extract<
         </div>
         {undo?.phase === "failed" ? (
           <p role="status" className="flex items-center gap-xs pb-sm text-destructive" data-item-undo-failed={undo.failure ?? "refused"}>
-            {/* A refusal sent nothing anywhere and a retry would be refused again. */}
-            {!undo.failure || undo.failure === "refused" ? <span className="min-w-0 flex-1">{t("backlog.panel.undoRefused")}</span> : <>
+            {!undo.failure || !undoRetryable(undo.failure) ? <span className="min-w-0 flex-1">{t("backlog.panel.undoRefused")}</span> : <>
               <span className="min-w-0 flex-1">{t("backlog.panel.undoFailed", { reason: t(`backlog.failure.${undo.failure}`) })}</span>
               <Button size="sm" variant="ghost" onClick={() => actions.undoBacklog(project.id, task.key)}>{t("common.retry")}</Button>
             </>}

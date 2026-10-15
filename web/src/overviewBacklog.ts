@@ -4,7 +4,7 @@
 // (its `task_key`); it leaves the backlog and is counted as in progress.
 
 import type { BoardProject } from "./projectBoard";
-import type { BacklogItem, IssueLabel, Task, TaskSource, Workspace } from "./snapshot";
+import type { BacklogFailure, BacklogItem, IssueLabel, Task, TaskSource, Workspace } from "./snapshot";
 import { isMemoKey } from "./overviewTasks";
 
 /** A title's longest form (B29): the core refuses more. */
@@ -43,6 +43,15 @@ function rowOf(task: Task): BacklogRow {
     at: task.created_at_unix_ms ?? task.updated_at_unix_ms ?? null,
     local: isMemoKey(task.key),
   };
+}
+
+/**
+ * Whether a failed undo offers 다시 시도: only a refusal is final, since it
+ * sent nothing anywhere and would be refused again; Hide's record that could
+ * not be read, and every GitHub failure, may clear.
+ */
+export function undoRetryable(failure: BacklogFailure | null): boolean {
+  return failure !== null && failure !== "refused";
 }
 
 /** Whether a checkout of the project works on the item: the item is started (B28). */

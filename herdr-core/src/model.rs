@@ -3581,7 +3581,8 @@ pub enum BacklogPhase {
 
 /// The reason line a failed item shows: the four GitHub categories, a queue
 /// past its bound, an answer Hide could not confirm, a repository the item
-/// may no longer go to, and a store refusal.
+/// may no longer go to, Hide's own record that could not be read just now
+/// (worth trying again), and a refusal (final).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BacklogFailure {
@@ -3594,6 +3595,9 @@ pub enum BacklogFailure {
     /// The project's repository connection changed while the item was being
     /// made, or a missed line's session did not work in this repository.
     RepositoryChanged,
+    /// Hide could not read or reach its own record of the item just now: an
+    /// undo of it can be tried again.
+    Unavailable,
     Refused,
 }
 
@@ -6811,6 +6815,7 @@ mod wire_enum_tests {
             BacklogFailure::QueueFull,
             BacklogFailure::Unconfirmed,
             BacklogFailure::RepositoryChanged,
+            BacklogFailure::Unavailable,
             BacklogFailure::Refused,
         ];
         for variant in backlog_failures {
@@ -6822,6 +6827,7 @@ mod wire_enum_tests {
                 | BacklogFailure::QueueFull
                 | BacklogFailure::Unconfirmed
                 | BacklogFailure::RepositoryChanged
+                | BacklogFailure::Unavailable
                 | BacklogFailure::Refused => {}
             }
         }

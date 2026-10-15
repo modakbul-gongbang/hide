@@ -517,7 +517,7 @@ export type IssueWork = {
 };
 
 /** Why a backlog item was not made or not undone (`BacklogFailure`). */
-export type BacklogFailure = "not_installed" | "not_logged_in" | "no_github_remote" | "network_or_rate_limit" | "queue_full" | "unconfirmed" | "repository_changed" | "refused";
+export type BacklogFailure = "not_installed" | "not_logged_in" | "no_github_remote" | "network_or_rate_limit" | "queue_full" | "unconfirmed" | "repository_changed" | "unavailable" | "refused";
 
 /** One item the backlog add made or is making (`BacklogItemSnapshot`). */
 export type BacklogItem = {

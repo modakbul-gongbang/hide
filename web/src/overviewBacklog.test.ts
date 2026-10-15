@@ -4,10 +4,13 @@
 // what the input keeps of a title, and where an item goes. The expected
 // answers are the PRD's Behaviors.
 
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { BACKLOG_TITLE_LIMIT, backlogIntent, backlogLabels, backlogOf, backlogTitle, destinationOf, filterRows, pendingItems, titleLeft } from "./overviewBacklog";
+import { english } from "./i18n/catalogs";
+import { BACKLOG_TITLE_LIMIT, backlogIntent, backlogLabels, backlogOf, backlogTitle, destinationOf, filterRows, pendingItems, titleLeft, undoRetryable } from "./overviewBacklog";
 import type { BoardProject } from "./projectBoard";
-import type { BacklogItem, Task, TaskSource, Workspace } from "./snapshot";
+import type { BacklogFailure, BacklogItem, Task, TaskSource, Workspace } from "./snapshot";
 
 function task(key: string, id: string, extra: Partial<Task> = {}): Task {
   return { key, source: key.startsWith("local:") ? "local" : "github", id, url: null, title: `Title ${id}`, open: true, ...extra } as Task;
@@ -127,5 +130,19 @@ describe("an add's intent (D-34)", () => {
     const intents = new Set(Array.from({ length: 200 }, () => backlogIntent()));
     expect(intents.size).toBe(200);
     for (const intent of intents) expect(intent).toMatch(/^[A-Za-z0-9_-]{18}$/);
+  });
+});
+
+describe("a failed undo", () => {
+  const failures: BacklogFailure[] = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../contracts/snapshot-wire-enums.json"), "utf8")).backlog_failure;
+
+  it("offers 다시 시도 for every failure but a refusal (principle: only the policy refusal is final)", () => {
+    expect(failures.filter((failure) => !undoRetryable(failure))).toEqual(["refused"]);
+    expect(undoRetryable("unavailable")).toBe(true);
+    expect(undoRetryable(null)).toBe(false);
+  });
+
+  it("names every failure the core writes", () => {
+    expect(failures.filter((failure) => !(`backlog.failure.${failure}` in english))).toEqual([]);
   });
 });

@@ -954,7 +954,7 @@ impl Runtime {
                     })
                     .map_err(|code| {
                         crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.undo_unrecorded","code":code}));
-                        BacklogFailure::Refused
+                        BacklogFailure::Unavailable
                     })?;
                 if !matches!(made, LedgerAnswer::Made(true)) {
                     crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.undo_not_made"}));
@@ -1002,7 +1002,7 @@ impl Runtime {
             );
             if let Some(slot) = self.snapshot.issue_work.undo.as_mut() {
                 slot.phase = "failed".into();
-                slot.failure = Some(BacklogFailure::Refused);
+                slot.failure = Some(BacklogFailure::Unavailable);
             }
         }
         true
