@@ -323,6 +323,8 @@ class NamedPaths(unittest.TestCase):
             "site/index.html", "tools/t1-preflight/README.md", "spikes/web-shell/measure/summarize.py", "agents/prd/x/prd.md",
             ".gitignore", "web/.gitignore", "LICENSE", "NOTICE", ".github/pull_request_template.md", ".github/dependabot.yml",
             ".github/workflows/nightly.yml", ".github/workflows/herdr-update.yml", ".github/workflows/perf.yml",
+            ".github/ISSUE_TEMPLATE/bug.yml", ".github/DISCUSSION_TEMPLATE/ideas.yml", ".github/APPROVED_CONTRIBUTORS",
+            ".github/workflows/contribution-gate.yml",
             "scripts/tests/test_ci_plan.py", "scripts/check-harness-ignore-anchor.sh",
             "scripts/pen-system.mjs", "scripts/design-review.mjs", "scripts/web-shell-measure/run.sh",
             # The design contract's generators and checks, which `design-contract.yml` runs.
@@ -614,6 +616,241 @@ class Aggregate(unittest.TestCase):
         empty["plan"]["outputs"]["lanes"] = "[]"
         with self.assertRaises(ValueError):
             ci.aggregate(empty)
+
+
+class PullRequest:
+    """A repository with a main and a pull request branch, merged the way GitHub checks one out."""
+
+    def __init__(self, directory):
+        self.repo = Path(directory)
+        self.git("init", "-q", "-b", "main")
+        self.git("config", "user.email", "ci@example.invalid")
+        self.git("config", "user.name", "ci")
+        self.git("config", "commit.gpgsign", "false")
+
+    def git(self, *args):
+        return subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+
+    def commit(self, branch, message, files):
+        # The first commit lands on the branch `init` named, which has none to check out.
+        if subprocess.run(["git", "symbolic-ref", "-q", "--short", "HEAD"], cwd=self.repo, capture_output=True,
+                          text=True).stdout.strip() != branch:
+            self.git("checkout", "-q", branch)
+        for name, text in files.items():
+            (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / name).write_text(text)
+        self.git("add", ".")
+        self.git("commit", "-qm", message)
+        return self.git("rev-parse", "HEAD")
+
+    def merge_main_into_topic(self, resolve=None):
+        """The author's `git merge main` on the branch, with the conflicted files written as `resolve` says."""
+        self.git("checkout", "-q", "topic")
+        if subprocess.run(["git", "merge", "-q", "--no-edit", "main"], cwd=self.repo, capture_output=True).returncode:
+            for name, text in (resolve or {}).items():
+                (self.repo / name).write_text(text)
+            self.git("add", ".")
+            self.git("commit", "-q", "--no-edit")
+        return self.git("rev-parse", "HEAD")
+
+    def check_out_merge(self):
+        """GitHub's merge commit: main first, the pull request's head second."""
+        self.git("checkout", "-q", "--detach", "main")
+        self.git("merge", "-q", "--no-ff", "-m", "merge", "topic")
+
+    def plan(self, last_green):
+        return ci.plan("pull_request", "HEAD^1", "HEAD", self.repo, CRATES, last_green=last_green)
+
+
+LINES = "".join(f"line {n}\n" for n in range(1, 21))
+
+
+class ReuseGreenRun(unittest.TestCase):
+    """A push whose change since the last green run no lane but `policy` reads plans `policy` alone."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.pr = PullRequest(directory.name)
+        base = self.pr.commit("main", "base", {"docs/a.md": LINES, "web/src/x.ts": LINES, "herdr-core/src/lib.rs": "one\n"})
+        self.pr.git("checkout", "-qb", "topic")
+        head = self.pr.commit("topic", "change", {
+            "web/src/x.ts": LINES.replace("line 2\n", "line two\n"),
+            "docs/a.md": LINES.replace("line 2\n", "line two\n"),
+        })
+        # The run whose lanes passed on this head over this main.
+        self.green = {"run": 101, "base": base, "head": head}
+
+    def assertRuns(self, result, why):
+        self.assertIn("web-e2e", result["lanes"])
+        self.assertIsNone(result["reuse"]["run"])
+        self.assertIn(why, result["reuse"]["why"])
+        self.assertNotIn("verified", result)
+
+    def test_a_push_that_only_merges_main_and_resolves_a_documentation_conflict_reuses_the_run(self):
+        # Main changed a file the pull request does not change, and the line
+        # of the guide the pull request changed.
+        self.pr.commit("main", "main moves", {"herdr-core/src/lib.rs": "two\n", "docs/a.md": LINES.replace("line 2\n", "line 2!\n")})
+        self.pr.merge_main_into_topic(resolve={"docs/a.md": LINES.replace("line 2\n", "line two!\n")})
+        self.pr.commit("topic", "guide", {"docs/b.md": "new\n"})
+        self.pr.check_out_merge()
+        result = self.pr.plan(lambda: self.green)
+        self.assertEqual(result["lanes"], ["policy"])
+        self.assertEqual(result["rust_packages"], [])
+        self.assertFalse(result["full"])
+        self.assertEqual(result["verified"], self.green)
+        self.assertIn("reuses run 101", result["reasons"]["policy"][0])
+        self.assertIn("[run 101](https://example.invalid/runs/101)", ci.summary(result, "https://example.invalid/runs/"))
+        # The next run compares with the run whose lanes ran, not with this one.
+        record = ci.plan_record(result, 7, 202)
+        self.assertEqual(record["verified"], self.green)
+        self.assertEqual(record["head"], self.pr.git("rev-parse", "HEAD^2"))
+        # Without the earlier run the same push needs its lanes.
+        self.assertIn("web-e2e", self.pr.plan(None)["lanes"])
+
+    def test_main_changing_a_file_the_pull_request_changes_runs_the_lanes(self):
+        # Pull request #1133: main's changes to the files it changed merged
+        # cleanly, and the lanes still have to see them together.
+        self.pr.commit("main", "main moves", {"web/src/x.ts": LINES.replace("line 19\n", "line nineteen\n")})
+        self.pr.merge_main_into_topic()
+        self.pr.check_out_merge()
+        self.assertRuns(self.pr.plan(lambda: self.green), "main changed web/src/x.ts")
+
+    def test_a_conflict_resolved_in_code_runs_the_lanes(self):
+        self.pr.commit("main", "main moves", {"web/src/x.ts": LINES.replace("line 2\n", "line 2!\n")})
+        self.pr.merge_main_into_topic(resolve={"web/src/x.ts": LINES.replace("line 2\n", "line two!\n")})
+        self.pr.check_out_merge()
+        self.assertRuns(self.pr.plan(lambda: self.green), "the pull request changed web/src/x.ts")
+
+    def test_a_code_change_since_the_run_runs_the_lanes(self):
+        self.pr.commit("topic", "more", {"web/src/x.ts": LINES.replace("line 2\n", "line 2?\n"), "docs/b.md": "new\n"})
+        self.pr.check_out_merge()
+        self.assertRuns(self.pr.plan(lambda: self.green), "the pull request changed web/src/x.ts")
+
+    def test_a_guide_a_test_reads_is_not_skipped_as_documentation(self):
+        self.pr.commit("topic", "guide", {"docs/UI_BEHAVIOR.md": "chords\n"})
+        self.pr.check_out_merge()
+        self.assertRuns(self.pr.plan(lambda: self.green), "the pull request changed docs/UI_BEHAVIOR.md")
+
+    def test_no_run_a_failed_lookup_or_an_unreadable_record_keeps_the_plan(self):
+        self.pr.commit("topic", "guide", {"docs/b.md": "new\n"})
+        self.pr.check_out_merge()
+        expected = self.pr.plan(None)["lanes"]
+
+        def raises(error):
+            def last_green():
+                raise error
+            return last_green
+        for last_green, why in (
+            (raises(ci.NotReused("this pull request has no earlier green run")), "no earlier green run"),
+            (raises(subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 502")), "HTTP 502"),
+            (raises(OSError("gh: not found")), "gh: not found"),
+            (raises(ValueError("Expecting value")), "Expecting value"),
+            # A record naming a commit this checkout lacks and cannot fetch.
+            (lambda: {**self.green, "head": "f" * 40}, "origin"),
+        ):
+            result = self.pr.plan(last_green)
+            self.assertEqual(result["lanes"], expected)
+            self.assertIsNone(result["reuse"]["run"])
+            self.assertIn(why, result["reuse"]["why"])
+            self.assertIn("No earlier green run stands for this one", ci.summary(result))
+            self.assertEqual(ci.plan_record(result, 7, 202)["verified"]["run"], 202)
+
+    def test_a_plan_that_is_already_policy_alone_looks_nothing_up(self):
+        self.pr.git("checkout", "-q", "main")
+        self.pr.git("branch", "-qf", "topic", "main")
+        self.pr.commit("topic", "guide", {"docs/b.md": "new\n"})
+        self.pr.check_out_merge()
+
+        def last_green():
+            raise AssertionError("looked up")
+        self.assertEqual(self.pr.plan(last_green)["lanes"], ["policy"])
+
+
+class LastGreenRun(unittest.TestCase):
+    """Which earlier run a pull request reads, and which plan records it accepts."""
+
+    HEAD = "a" * 40
+    VERIFIED = {"run": 7, "base": "b" * 40, "head": "c" * 40}
+
+    def gh(self, runs, record):
+        calls = []
+
+        def gh(*args):
+            calls.append(args)
+            if args[0] == "api":
+                return json.dumps({"workflow_runs": runs})
+            if record is None:
+                raise ci.NotReused("`gh run download` failed: no artifact matches")
+            directory = Path(args[args.index("--dir") + 1])
+            (directory / ci.RECORD_FILE).write_text(json.dumps(record))
+            return ""
+        return gh, calls
+
+    def run_(self, run_id, created, repo="o/r", head=HEAD):
+        return {"id": run_id, "created_at": created, "head_sha": head, "head_repository": {"full_name": repo}}
+
+    def test_the_newest_green_run_of_this_head_repository_is_read(self):
+        record = {"version": 1, "pr": 5, "head": self.HEAD, "verified": self.VERIFIED}
+        runs = [
+            self.run_(1, "2026-10-15T01:00:00Z", head="d" * 40),
+            self.run_(2, "2026-10-15T02:00:00Z"),
+            # A fork's branch of the same name, and this run itself.
+            self.run_(3, "2026-10-15T03:00:00Z", repo="fork/r"),
+            self.run_(9, "2026-10-15T04:00:00Z"),
+        ]
+        gh, calls = self.gh(runs, record)
+        self.assertEqual(ci.last_green_run("o/r", 5, "o/r", "topic", 9, gh=gh), self.VERIFIED)
+        query = calls[0]
+        self.assertIn("repos/o/r/actions/workflows/pr.yml/runs", query)
+        self.assertIn("status=success", query)
+        self.assertIn("branch=topic", query)
+        self.assertEqual(calls[1][:3], ("run", "download", "2"))
+        self.assertIn(ci.RECORD_ARTIFACT, calls[1])
+
+    def test_a_record_that_does_not_belong_or_cannot_be_read_is_refused(self):
+        good = {"version": 1, "pr": 5, "head": self.HEAD, "verified": self.VERIFIED}
+        for runs, record, why in (
+            ([], good, "no earlier green run"),
+            ([self.run_(2, "2026-10-15T02:00:00Z")], good, "head repository is gone"),
+            ([self.run_(2, "2026-10-15T02:00:00Z", repo="fork/r")], good, "no earlier green run"),
+            ([self.run_(2, "2026-10-15T02:00:00Z")], None, "no artifact"),
+            ([self.run_(2, "2026-10-15T02:00:00Z")], {**good, "version": 2}, "cannot read"),
+            ([self.run_(2, "2026-10-15T02:00:00Z")], {**good, "pr": 6}, "not for this pull request"),
+            ([self.run_(2, "2026-10-15T02:00:00Z", head="d" * 40)], good, "not for this pull request"),
+            ([self.run_(2, "2026-10-15T02:00:00Z")], {**good, "verified": None}, "recorded no commits"),
+            # A commit is passed to git, so it has to be one.
+            ([self.run_(2, "2026-10-15T02:00:00Z")], {**good, "verified": {**self.VERIFIED, "head": "--upload-pack=x"}},
+             "recorded no commits"),
+        ):
+            gh, _ = self.gh(runs, record)
+            with self.assertRaises(ci.NotReused) as caught:
+                ci.last_green_run("o/r", 5, None if why == "head repository is gone" else "o/r", "topic", 9, gh=gh)
+            self.assertIn(why, str(caught.exception))
+
+    def test_only_a_path_no_lane_but_policy_reads_is_left_out_of_the_comparison(self):
+        for name in ("docs/ARCHITECTURE.md", "CONTRIBUTING.md", "design/hide-ui.lib.pen", "site/index.html",
+                     "scripts/tests/test_ci_plan.py"):
+            self.assertTrue(ci.reads_no_lane("M", name, CRATES, ROOT), name)
+        for name in ("docs/UI_BEHAVIOR.md", "AGENTS.md", "hided/README.md", "web/src/App.tsx", "Cargo.lock",
+                     "contracts/herdr-bundle.json", "web/e2e/cmdk.spec.ts", "unknown/file"):
+            self.assertFalse(ci.reads_no_lane("M", name, CRATES, ROOT), name)
+        self.assertFalse(ci.reads_no_lane("T", "docs/ARCHITECTURE.md", CRATES, ROOT))
+
+    def test_the_plan_job_reads_earlier_runs_and_keeps_its_record(self):
+        workflow = (ROOT / ".github/workflows/pr.yml").read_text()
+        plan_job = workflow[workflow.index("\n  plan:\n"):workflow.index("\n  policy:\n")]
+        self.assertIn("      actions: read\n", plan_job)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", plan_job)
+        record = re.search(r"--record (\S+)", plan_job).group(1)
+        self.assertEqual(Path(record).name, ci.RECORD_FILE)
+        upload = plan_job[plan_job.index("actions/upload-artifact"):]
+        self.assertIn(f"name: {ci.RECORD_ARTIFACT}\n", upload)
+        self.assertIn(f"path: {record}\n", upload)
+        # A rerun replaces its own record; a record that fails to upload
+        # leaves the next run to plan its lanes, not this one red.
+        self.assertIn("overwrite: true", upload)
+        self.assertIn("continue-on-error: true", plan_job)
 
 
 class ReverseDependencies(unittest.TestCase):

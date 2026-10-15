@@ -19,6 +19,9 @@ function stageBundle(root: string): string {
   const contents = path.join(root, "Hide.app", "Contents");
   fs.mkdirSync(path.join(contents, "MacOS"), { recursive: true });
   fs.renameSync(build, path.join(contents, "Resources"));
+  // The app's Herdr is the file the test's server runs, not the build's copy
+  // a device would get.
+  fs.rmSync(path.join(contents, "Resources", "herdr"));
   fs.symlinkSync(herdrBinary(), path.join(contents, "Resources", "herdr"));
   fs.writeFileSync(path.join(contents, "Info.plist"), "<plist><dict><key>CFBundleExecutable</key><string>hide</string></dict></plist>\n");
   fs.writeFileSync(path.join(contents, "MacOS", "hide"), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} "$@"\n`, { mode: 0o755 });

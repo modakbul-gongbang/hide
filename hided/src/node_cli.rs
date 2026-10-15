@@ -30,6 +30,9 @@ pub fn run(args: &[OsString]) -> Result<(), String> {
             // The link that started this node is where its records are read:
             // a device's own stderr reaches no log.
             hide_node::diagnostics::install(hide_node::terminal::device::forward_diagnostic);
+            // After each kit pass the node brings the device's Herdr server
+            // to the build's pinned copy (PRD device-herdr-update D-07).
+            hide_host::kit::set_herdr_updater(crate::herdr_handoff::device_update);
             let input = BufReader::new(io::stdin().lock());
             // The node's terminals ride the same link (PRD
             // core-host-node-terminal D-18).

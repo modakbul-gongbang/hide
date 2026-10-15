@@ -107,6 +107,7 @@ describe("native held cycle delivery", () => {
   it("freezing a held native page gives its remaining input to the same focused shell", () => {
     const { page, shellFocus, windowFocus } = candidate();
     const origin = page("origin"), other = page("other");
+    other.focus(false);
     other.show(false);
     expect(shellFocus).not.toHaveBeenCalled();
     origin.input();
@@ -120,6 +121,21 @@ describe("native held cycle delivery", () => {
     windowFocus(false);
     origin.show(false);
     expect(shellFocus).toHaveBeenCalledTimes(2);
+  });
+  it("a page hidden while it holds the keyboard hands it to the shell, whose layer over the page hid it", () => {
+    const { page, shellFocus, windowFocus } = candidate();
+    const quiet = page("quiet"), typing = page("typing");
+    quiet.focus(false);
+    quiet.show(false);
+    expect(shellFocus).not.toHaveBeenCalled();
+    typing.show(false);
+    expect(shellFocus).toHaveBeenCalledOnce();
+    expect(shellFocus.mock.invocationCallOrder[0]).toBeGreaterThan(typing.visibility.mock.invocationCallOrder[0]!);
+    // A window in the background takes no keyboard at all.
+    typing.show(true);
+    windowFocus(false);
+    typing.show(false);
+    expect(shellFocus).toHaveBeenCalledOnce();
   });
   it("hands off a still-visible origin once and orders a quick shell release after the undelivered start", () => {
     const { page, shellFocus, shellInput, forwarded } = candidate();

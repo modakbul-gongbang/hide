@@ -33,6 +33,7 @@
   "factory_diagnosis_source": ["user_turn", "last_answer", "screen"],
   "factory_task_state": ["drafting", "waiting", "running", "paused", "blocked", "verifying", "merge_waiting", "landed", "done", "stopped", "relanding", "outside", "cancelled"],
   "factory_waiting_for": ["predecessors", "slot", "environment", "answer"],
+  "herdr_behind_cause": ["cannot_hand_off", "handoff_failed"],
   "kit_agent_availability": ["available", "not_installed", "unsupported_system"],
   "codex_daemon_off_failure": ["codex_missing", "codex_refused", "timed_out", "unreachable", "stop_failed"],
   "kit_check_failure": ["read_failed"],
@@ -63,5 +64,7 @@
   "memory_analysis_state": ["idle", "analyzing", "ai_not_ready", "checking", "check_budget_exhausted"],
   "memory_promotion_state": ["running", "pr_open", "merged", "failed", "unconfirmed", "building", "unbuilt"],
   "memory_start_failure_code": ["shell_starting", "agent_not_started", "card_not_processed", "other"],
-  "memory_action": ["enable", "disable", "delete", "forget", "undo", "promote", "dismiss", "card_right", "doc_right"]
+  "memory_action": ["enable", "disable", "delete", "forget", "undo", "promote", "dismiss", "card_right", "doc_right"],
+  "view_feedback_send_state": ["sending", "sent", "waiting", "reopening", "failed"],
+  "view_feedback_send_reason": ["attachments_full", "letter_unsaved", "letters_full", "shot_copy", "reopen_failed", "closed"]
 }

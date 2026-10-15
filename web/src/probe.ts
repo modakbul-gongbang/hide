@@ -9,6 +9,7 @@
 // plain `term.write(data)`.
 
 import type { Terminal } from "@xterm/xterm";
+import type { InputRequest } from "./snapshot";
 import { useShellStore } from "./store";
 
 export type EchoSample = { arrival_ms: number; write_ms: number };
@@ -27,6 +28,8 @@ export type Probe = {
   arrivals: () => number;
   /** Closes the live socket the way a server drop would; the shell reconnects on its own. */
   dropSocket: () => void;
+  /** The key-holding requests the core lists now (`terminal.input_requests`). */
+  inputRequests: () => InputRequest[];
   /** Pane ids whose terminal session the core reports as not released (the attach window). */
   attachedPanes: () => string[];
   /** Pane ids that hold an xterm instance right now, shown or parked (D-05). */
@@ -96,6 +99,7 @@ export function installProbe(
 ): void {
   window.__hideProbe = {
     diagnostics: () => useShellStore.getState().diagnostics,
+    inputRequests: () => useShellStore.getState().rest?.terminal?.input_requests ?? [],
     paneId,
     dropSocket,
     attachedPanes,

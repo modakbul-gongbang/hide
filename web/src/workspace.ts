@@ -50,6 +50,8 @@ export type WorkspaceView = {
   layout?: ViewLayoutSnapshot;
   /** Null on a device this core dials, whose Herdr shows one tab. */
   agent_layout?: import("./agentLayout").AgentLayout | null;
+  /** The operator's comments on this checkout's Views; absent while there are none and no Send to say. */
+  feedback?: import("./snapshot").ViewFeedback;
 };
 
 /** The pixel sizes the body is laid out with, read from their tokens. */

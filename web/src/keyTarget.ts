@@ -10,9 +10,12 @@
 // core reports the request discarded, or when the core has no row for it: one
 // it listed and then dropped, or one it never listed within
 // `UNSEEN_REQUEST_LIMIT_MS` (the event never reached it, or the daemon was
-// replaced). A fork's pane holds the keyboard before its agent has started:
-// the core names it as the row's `held_for`, the mark stays while that pane
-// has the keyboard, and it ends once the request is ready.
+// replaced). A fork's pane holds the keyboard before its agent has started,
+// and a new tab's or split's before its shell reads keys itself: the core
+// names it as the row's `held_for`, the mark stays while that pane has the
+// keyboard, and it ends once the request is ready and that pane has the
+// keyboard. Keys typed into a pane a pending request is held for go against
+// that request even with no mark, so they wait behind the keys it holds.
 
 import type { InputRequest } from "./snapshot";
 import { useShellStore } from "./store";
@@ -62,7 +65,15 @@ export function armedKeyRequest(): string | null {
 export function keyPayload(paneId: string, bytesBase64: string, now: number = Date.now()): { pane_id: string; bytes_base64: string } | { pending_request: string; bytes_base64: string } {
   if (armed && !armed.seen && now - armed.armedAt > UNSEEN_REQUEST_LIMIT_MS) armed = null;
   if (armed) return { pending_request: armed.requestId, bytes_base64: bytesBase64 };
+  const holding = heldRequestOf(paneId);
+  if (holding) return { pending_request: holding, bytes_base64: bytesBase64 };
   return { pane_id: paneId, bytes_base64: bytesBase64 };
+}
+
+/** The pending request that holds keys for `paneId`, if the core lists one. */
+function heldRequestOf(paneId: string): string | null {
+  const rows = useShellStore.getState().rest?.terminal?.input_requests;
+  return rows?.find((request) => request.state === "pending" && request.held_for === paneId)?.request_id ?? null;
 }
 
 /**
@@ -106,9 +117,11 @@ export function observeInputRequests(requests: InputRequest[] | undefined) {
     return;
   }
   if (row.state === "discarded") armed = null;
-  // Keys after a fork's start go to its pane as any keys do; those already
-  // sent against the request reach it first, in order.
-  else if (row.state === "ready" && armed.heldFor) armed = null;
+  // Keys after the held pane can take them go to it as any keys do once it
+  // has the keyboard; those already sent against the request reach it first,
+  // in order. Until the keyboard gets there, keys typed where the request was
+  // made still follow the request to that pane.
+  else if (row.state === "ready" && armed.heldFor && focusedTerminalPane() === armed.heldFor) armed = null;
   else {
     armed.seen = true;
     if (row.state === "pending" && row.held_for) armed.heldFor = row.held_for;

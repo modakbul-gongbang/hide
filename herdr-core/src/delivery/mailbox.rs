@@ -540,6 +540,10 @@ mod tests {
             let mut sender = actor("sender");
             sender.name = example["sender"].as_str().unwrap().into();
             sender.kind = example["sender_kind"].as_str().unwrap().into();
+            // The operator's letter is made by the core's own identity.
+            if example["operator"].as_bool() == Some(true) {
+                sender = Actor::operator("local");
+            }
             let letter = send(
                 &mut ledger,
                 &sender,

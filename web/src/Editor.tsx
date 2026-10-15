@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { adoptNodeDrafts, allBuffers, bufferDecision, bufferFor, claimLegacyBuffer, deleteBuffer, draftStorageHold, flushBuffer, identity, MAX_STORED_BYTES, queueBuffer, tabBufferKey, type BufferKey } from "./buffers";
 import { useInterfaceTranslation } from "./i18n/client";
@@ -17,6 +17,9 @@ import { FileViewer } from "./viewers/FileViewer";
 import { useFileSource } from "./viewers/useFileBytes";
 import { commandLabel } from "./shortcutLabels";
 import { absolutePathRoot } from "./terminalLinks";
+import { RegionCommentButton } from "./ViewComments";
+import { isVideoPath } from "./viewers/video";
+import type { ViewWorkspace } from "./viewLayout";
 
 // The document surface (PRD B3-B7; S7 B4, B5, A9, A10). The core owns the
 // documents and the displays that show them; this draws one display - its
@@ -221,7 +224,7 @@ export function DocumentKeeper({ tabId, actions }: { tabId: string; actions: Act
  * and scroll it had in that document come back with it, and a preview
  * retargeted to another document starts that one at its own place.
  */
-export function DisplayEditor({ display, placeKey, actions }: { display: ViewDisplaySnapshot; placeKey: string; actions: Actions }) {
+export function DisplayEditor({ display, workspace, placeKey, actions }: { display: ViewDisplaySnapshot; workspace: ViewWorkspace; placeKey: string; actions: Actions }) {
   const tab = useShellStore((s) => editorTabFor(s.editor, display.tab_id));
   const document = useShellStore((s) => (display.tab_id ? (s.documents[display.tab_id] ?? null) : null));
   const scaleValue = useShellStore((s) => s.rest?.ui_state?.editor_text_scale);
@@ -232,9 +235,9 @@ export function DisplayEditor({ display, placeKey, actions }: { display: ViewDis
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-editor={tab.id} data-editor-kind={display.kind} data-editor-display={display.id}>
       <EditorHeader display={display} tab={tab} document={document} actions={actions} />
       {display.kind === "diff" ? (
-        <DiffBody display={display} wrap={tab.wrap} scale={scale} />
+        <DiffBody display={display} workspace={workspace} wrap={tab.wrap} scale={scale} actions={actions} />
       ) : (
-        <FileBody display={display} tab={tab} document={document} placeKey={placeKey} scale={scale} actions={actions} />
+        <FileBody display={display} workspace={workspace} tab={tab} document={document} placeKey={placeKey} scale={scale} actions={actions} />
       )}
     </div>
   );
@@ -246,7 +249,7 @@ export function DisplayEditor({ display, placeKey, actions }: { display: ViewDis
  * or its own reason there is none; the page's sentence is only for a display
  * the core sent nothing for.
  */
-function DiffBody({ display, wrap, scale }: { display: ViewDisplaySnapshot; wrap: boolean; scale: number }) {
+function DiffBody({ display, workspace, wrap, scale, actions }: { display: ViewDisplaySnapshot; workspace: ViewWorkspace; wrap: boolean; scale: number; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const changes = useShellStore((s) => changesFor(s.changes, s.rest?.navigator?.changes_root_path ?? null));
   if (!changes) return <Notice text={t("documents.readingDiff")} state="diff-loading" />;
@@ -263,7 +266,7 @@ function DiffBody({ display, wrap, scale }: { display: ViewDisplaySnapshot; wrap
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-diff-path={display.path} data-diff-group={committed ? "committed" : "working"}>
       {diff.notice ? <div className="border-b border-border px-md py-xs text-caption text-warning" data-diff-notice="true">{diff.notice}</div> : null}
-      {diff.text ? <PatchView text={diff.text} wrap={wrap} scale={scale} /> : <div className="min-h-0 flex-1" data-diff-empty="true" />}
+      {diff.text ? <PatchView text={diff.text} wrap={wrap} scale={scale} comments={{ display, workspace, actions }} /> : <div className="min-h-0 flex-1" data-diff-empty="true" />}
     </div>
   );
 }
@@ -331,6 +334,9 @@ function EditorHeader({
           </Button>
         </Hint>
       ) : null}
+      {file && (document?.document_kind === "image" || document?.document_kind === "pdf") && !isVideoPath(display.path) ? (
+        <RegionCommentButton displayId={display.id} kind={document.document_kind} />
+      ) : null}
       {file ? (
         <Hint label={t("documents.findHint")} shortcut={commandLabel("find_in_pane")}>
           <Button variant="ghost" size="sm" className="text-muted-foreground" disabled={!editable} onClick={() => actions.requestEditorFind(display.id)}>
@@ -351,6 +357,7 @@ function EditorHeader({
 
 function FileBody({
   display,
+  workspace,
   tab,
   document,
   placeKey,
@@ -358,6 +365,7 @@ function FileBody({
   actions,
 }: {
   display: ViewDisplaySnapshot;
+  workspace: ViewWorkspace;
   tab: EditorTabSnapshot;
   document: EditorDocumentSnapshot | null;
   placeKey: string;
@@ -365,6 +373,7 @@ function FileBody({
   actions: Actions;
 }) {
   const { t } = useInterfaceTranslation();
+  const viewerComments = useMemo(() => ({ workspace, actions }), [workspace, actions]);
   const findRequest = useUiStore((s) => s.editorFindRequest);
   const findTarget = useUiStore((s) => s.editorFindDisplay === display.id);
   // A draft store that refused a write holds every other clean document
@@ -377,7 +386,7 @@ function FileBody({
     return <Notice text={t("common.loading")} state="loading" />;
   }
   if (document.document_kind !== "text" && document.document_kind !== "markdown") {
-    return <FileViewer document={document} displayId={display.id} />;
+    return <FileViewer document={document} displayId={display.id} comments={viewerComments} />;
   }
   // A bare browser cannot prove that the daemon is on the viewer's machine,
   // even when its URL is localhost through an SSH tunnel (D-12).
@@ -419,6 +428,7 @@ function FileBody({
         held={hold === "held"}
         onDraft={(contents) => draftEdited(tab.id, contents, actions)}
         onSave={() => actions.saveFile(tab.id)}
+        comments={{ display, workspace, actions }}
       />
     </div>
   );

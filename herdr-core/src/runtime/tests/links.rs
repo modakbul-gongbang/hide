@@ -67,6 +67,7 @@ fn native_lineage_reaches_the_ledger_on_remote_and_cross_device_sessions() {
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
             issue_links: Default::default(),
+            herdr_version: None,
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),

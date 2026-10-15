@@ -5,10 +5,12 @@ import type { Actions } from "./actions";
 import { refusalText, submitFiles } from "./attachments";
 import { AgentMark } from "./AgentMark";
 import { agentProductName } from "./agentAdapters";
+import { PaneLetterButton } from "./components/letter-mark";
 import { StatusMark } from "./components/status-mark";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { PaneForkMark, PaneHeaderBand, PanePrChip } from "./PaneHeaderBand";
+import { PaneViews } from "./ViewComments";
 import { PaneConnectionChip } from "./PaneConnection";
 import { AncestorPath, usePaneMenu, type TerminalMenuContext } from "./PaneRelations";
 import { chordLabel, commandLabel } from "./shortcutLabels";
@@ -143,6 +145,7 @@ export const PaneView = memo(function PaneView({
   agentKind,
   markSymbol,
   markTone,
+  lettersWaiting = 0,
   paneCount,
   zoomed,
   local = true,
@@ -157,6 +160,8 @@ export const PaneView = memo(function PaneView({
   agentKind: string | null;
   markSymbol: string | null;
   markTone: string;
+  /** Letters the core shows waiting on this pane for a possible draft; 0 draws no pill. */
+  lettersWaiting?: number;
   /** Panes in the tab, a zoomed pane's hidden siblings included. */
   paneCount: number;
   /** The tab is zoomed, so this pane is the only one drawn. */
@@ -306,7 +311,9 @@ export const PaneView = memo(function PaneView({
         </span>
         </Hint>
         {agentKind ? <PaneForkMark pane={pane} actions={actions} /> : null}
+        {agentKind && lettersWaiting > 0 ? <PaneLetterButton paneId={paneId} letters={lettersWaiting} onDeliver={actions.deliverLettersNow} /> : null}
         {agentKind ? <PanePrChip paneId={paneId} actions={actions} /> : null}
+        {agentKind ? <PaneViews paneId={paneId} name={title} actions={actions} /> : null}
         <span className="flex-1" />
         <PaneConnectionChip pane={pane} actions={actions} local={local} />
         {zoomed ? (

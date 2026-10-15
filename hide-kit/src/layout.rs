@@ -120,6 +120,22 @@ pub fn usage_store(state_dir: &Path) -> PathBuf {
     state_dir.join(USAGE_STORE)
 }
 
+/// Screenshots of the operator's View comments, staged by the screen's
+/// node when a comment is left and read when it is sent (PRD
+/// view-opener-feedback D-23); its owner is that node's
+/// `hide_host::feedback`.
+pub fn view_feedback_shots(state_dir: &Path) -> PathBuf {
+    state_dir.join("view-feedback")
+}
+
+/// The attachments of the operator's feedback letters, one owner-only folder
+/// per letter on the recipient agent's machine, removed with the letter
+/// (PRD view-opener-feedback D-16); its owner is that node's
+/// `hide_host::feedback`.
+pub fn letter_attachments(state_dir: &Path) -> PathBuf {
+    state_dir.join("letter-attachments")
+}
+
 /// The Software Factory store: Factories, Tasks, questions, records and
 /// events; its owner is the core's Factory engine thread.
 pub fn factory_store(state_dir: &Path) -> PathBuf {

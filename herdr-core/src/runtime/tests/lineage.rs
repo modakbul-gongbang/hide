@@ -49,6 +49,7 @@ fn remote_lineage_session(agents: Vec<SidebarAgentSnapshot>) -> RemoteSessionSna
         pane_hook_tokens: Default::default(),
         issue_tokens: Default::default(),
         issue_links: Default::default(),
+        herdr_version: None,
     }
 }
 
@@ -1848,6 +1849,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
             codex_daemon_running: None,
             codex_daemon_unreadable: None,
             codex_daemon_off: None,
+            herdr: None,
         },
     );
     let local = |runtime: &Runtime| {
@@ -1892,6 +1894,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
             codex_daemon_running: None,
             codex_daemon_unreadable: None,
             codex_daemon_off: None,
+            herdr: None,
         },
     );
     assert!(!local(&runtime).busy);

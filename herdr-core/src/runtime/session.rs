@@ -1873,8 +1873,20 @@ impl Runtime {
     pub fn ingest_remote_session(
         &mut self,
         target_id: &str,
-        mut fetched: Result<RemoteSessionSnapshot, SessionFetchError>,
+        fetched: Result<RemoteSessionSnapshot, SessionFetchError>,
     ) -> bool {
+        // The server's own answer names its version; the status read the
+        // connection made once does not follow a live handoff (PRD
+        // device-herdr-update B3).
+        let live_herdr_version = match &fetched {
+            Ok(session) => session.herdr_version.clone(),
+            Err(error) => error
+                .protocol_details()
+                .and_then(|(_, _, version)| version.map(str::to_owned)),
+        };
+        // A device's server on an older protocol is the device's to update
+        // or hand over, never this machine's to stop (D-15).
+        let mut fetched = fetched.map_err(SessionFetchError::for_device);
         // A remote projection is built off the runtime, so it cannot see the
         // read ledger; without this every stopped remote pane published `Done`
         // and demanded a close confirmation. Hide never focuses a remote pane,
@@ -1969,10 +1981,22 @@ impl Runtime {
                 ),
             );
         }
-        let herdr_version = self
-            .remote_connections
-            .get(target_id)
-            .and_then(|connection| connection.transport.device().cached_herdr_version());
+        // The row's line holds only while the server it is about still
+        // answers with the release it was left on: a server restarted on
+        // another release ends it without waiting for the next kit pass (B8).
+        if let Some(live) = live_herdr_version.as_deref()
+            && self
+                .device_herdr_behind
+                .get(target_id)
+                .is_some_and(|behind| behind.server_version != live)
+        {
+            self.device_herdr_behind.remove(target_id);
+        }
+        let herdr_version = live_herdr_version.or_else(|| {
+            self.remote_connections
+                .get(target_id)
+                .and_then(|connection| connection.transport.device().cached_herdr_version())
+        });
         let status = &mut self.snapshot.status.remote[status_index];
 
         let mut changed = read_changed;
@@ -3865,8 +3889,9 @@ impl Runtime {
                 // The creation is settled here; the chosen agent starts on the
                 // same worker afterwards and reports on its own axis.
                 operation.agent_phase = operation.agent_kind.as_ref().map(|_| "starting".into());
-                // Keys typed for a plain terminal tab follow it now; for an
-                // agent they wait for its start (`ingest_task_agent_result`).
+                // Keys typed for a plain terminal tab follow it once its shell
+                // reads them; for an agent they wait for its start
+                // (`ingest_task_agent_result`).
                 let input_ready = operation.agent_phase.is_none().then(|| pane_id.clone());
                 if should_focus {
                     self.snapshot.terminal.pane_id = Some(pane_id.clone());
@@ -3879,7 +3904,7 @@ impl Runtime {
                 let origin = super::terminal_input::InputOrigin::Task(id);
                 match input_ready {
                     _ if !should_focus => self.discard_input_request(&origin, "not_shown"),
-                    Some(pane_id) => self.resolve_input_request(&origin, &pane_id),
+                    Some(pane_id) => self.resolve_input_request_at_shell(&origin, &pane_id),
                     None => {}
                 }
                 let normalized = workspace::comparison_by_names(Path::new(&path));
@@ -5007,13 +5032,14 @@ impl Runtime {
                     self.persist_current_ui_state();
                 }
                 // Keys typed since the tab was asked for follow it only when
-                // it takes the screen; a tab that waits in the strip (the
-                // operator chose another since) gets none of them.
+                // it takes the screen, once its shell reads them; a tab that
+                // waits in the strip (the operator chose another since) gets
+                // none of them.
                 if let Some(id) = admission {
                     let origin = super::terminal_input::InputOrigin::TabCreate(id);
                     match created_pane_id.as_deref() {
                         Some(pane_id) if can_show_created => {
-                            self.resolve_input_request(&origin, pane_id)
+                            self.resolve_input_request_at_shell(&origin, pane_id)
                         }
                         _ => self.discard_input_request(&origin, "not_shown"),
                     }
@@ -5340,6 +5366,14 @@ impl Runtime {
             self.settle_reveal_path(&payload, None);
             return true;
         }
+        if let Some(key) = self.workspace_key(&payload.workspace_id, &payload.checkout_id) {
+            self.expect_view_opener(
+                &key,
+                &payload.path,
+                crate::view_layout::DisplayKind::File,
+                payload.opener_pane.as_deref(),
+            );
+        }
         // A revealed file opens into a display, so a Workspace at its display
         // cap refuses it before it is read.
         if self.separate_view_areas()
@@ -5411,6 +5445,7 @@ impl Runtime {
             workspace_id: workspace_id.to_owned(),
             checkout_id: checkout_id.to_owned(),
             is_directory: false,
+            opener_pane: None,
         };
         self.settle_reveal_path(&payload, prepared);
     }

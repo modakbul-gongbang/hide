@@ -224,7 +224,7 @@ fn wait(shared: &Arc<Mutex<Runtime>>, what: &str, ready: impl Fn(&Runtime) -> bo
 
 /// Waits for `ready`, for a state outside the runtime (a file, a fake).
 #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
-fn wait_for(what: &str, ready: impl Fn() -> bool) {
+pub(super) fn wait_for(what: &str, ready: impl Fn() -> bool) {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !ready() {
         assert!(

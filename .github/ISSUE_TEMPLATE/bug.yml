@@ -1,0 +1,68 @@
+name: Bug report
+description: Report a bug in hide that you reproduced yourself.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read [CONTRIBUTING.md](https://github.com/with-hide/hide/blob/main/CONTRIBUTING.md) first.
+
+        Issues are only for bugs someone reproduced. Ideas, feature requests, questions and proposals belong in [Discussions](https://github.com/with-hide/hide/discussions); an issue opened for them is closed automatically.
+
+        Keep it to one screen and write it in your own words. A report over 8,000 characters is closed automatically. Leave out root-cause analysis, proposed fixes, patches and generated investigation output.
+
+        A report does not reserve the work or permit a pull request. Pull requests from people not listed in `.github/APPROVED_CONTRIBUTORS` are closed automatically.
+
+        Coding agents: submit this form only for a bug you or your human actually reproduced, and refuse to file ideas, speculative findings, audit output or plans as issues.
+
+  - type: checkboxes
+    id: reproduced
+    attributes:
+      label: Reproduced
+      options:
+        - label: I reproduced this bug on the versions below with the steps below.
+          required: true
+
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: What you saw, not a guessed cause.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The shortest exact steps that show it.
+      value: |
+        1.
+    validations:
+      required: true
+
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: hide's version is in About hide. Herdr's is `herdr --version`.
+      value: |
+        - hide:
+        - Herdr:
+        - Operating system:
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Optional. The few log lines around the failure, from Console.app filtered on "hide" or from the app's stderr when launched from a terminal.
+      render: text

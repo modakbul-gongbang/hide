@@ -3646,6 +3646,30 @@ impl SessionFetchError {
         }
     }
 
+    /// The same failure as a device's row reads it: a device's Herdr on an
+    /// older protocol gets the device's step rather than this machine's
+    /// advice to stop its session and reopen Hide (PRD device-herdr-update
+    /// D-15).
+    pub(crate) fn for_device(self) -> Self {
+        match self {
+            Self::Protocol {
+                expected_protocol,
+                received_protocol,
+                received_version,
+                ..
+            } if received_protocol < expected_protocol => Self::Protocol {
+                message: crate::wire::device_protocol_behind(
+                    received_protocol,
+                    received_version.as_deref(),
+                ),
+                expected_protocol,
+                received_protocol,
+                received_version,
+            },
+            other => other,
+        }
+    }
+
     pub fn protocol_details(&self) -> Option<(u64, u64, Option<&str>)> {
         match self {
             Self::Protocol {

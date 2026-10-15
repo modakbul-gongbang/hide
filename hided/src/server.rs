@@ -78,6 +78,9 @@ pub struct AppState {
     pub pane_capabilities: Arc<Registry>,
     pub browser_routes: Arc<crate::browser_routes::BrowserRoutes>,
     pub browser_control: Arc<crate::browser_control::BrowserControl>,
+    /// The operator's Comment mode on browser Views (PRD
+    /// view-opener-feedback B9).
+    pub browser_comments: Arc<crate::browser_page::comment::CommentSessions>,
     pub herdr_socket: Option<PathBuf>,
     pub allowed_origins: Arc<HashSet<String>>,
     pub clients: Arc<AtomicUsize>,
@@ -875,6 +878,9 @@ async fn screen_loop(
     // come back through `device_bytes`, at most two ranges ahead of the
     // socket, and every read ends with the connection.
     let (device_bytes_tx, mut device_bytes) = tokio::sync::mpsc::channel::<Message>(2);
+    // The operator's comments and Sends from this screen, in the order it
+    // made them, off the socket loop; started by the first one.
+    let mut feedback: Option<FeedbackQueue> = None;
     let mut device_reads: std::collections::VecDeque<DeviceRead> =
         std::collections::VecDeque::new();
     let daemon = json!({"type": "daemon", "payload": state.daemon_info.as_ref()});
@@ -1093,7 +1099,7 @@ async fn screen_loop(
                             }
                             continue;
                         }
-                        match handle_client_text(&state, &text, connection, desktop) {
+                        match handle_client_text(&state, &text, connection, desktop, renderer) {
                             Ok(ClientAction::FileBytes(event)) => {
                                 if let Some(device) = event_device(&state.boundary, &event) {
                                     let slot = relay.as_ref().map(RelayScreen::slot);
@@ -1133,6 +1139,40 @@ async fn screen_loop(
                                     }
                                 }
                             }
+                            Ok(ClientAction::BrowserComment(event)) => {
+                                // A linked node's screen shows pages its own
+                                // machine's window holds, which this daemon's
+                                // gateway does not reach (docs/INSTALL.md).
+                                let refused = if relay.is_some() {
+                                    Some("comment_unavailable_here".to_owned())
+                                } else {
+                                    let context = crate::browser_page::comment::Context {
+                                        control: Arc::clone(&state.browser_control),
+                                    };
+                                    match state.browser_comments.handle(context, connection, &event, device_frames_tx.clone()) {
+                                        Ok(Some(added)) => {
+                                            let job = FeedbackJob { event: added.event, png: added.png };
+                                            if let Some(refusal) = queue_feedback(&state, &mut feedback, job, &device_frames_tx)
+                                                && socket.send(Message::Text(refusal.into())).await.is_err()
+                                            {
+                                                break;
+                                            }
+                                            None
+                                        }
+                                        Ok(None) => None,
+                                        Err(reason) => Some(reason),
+                                    }
+                                };
+                                if let Some(reason) = refused {
+                                    let frame = json!({"type": "browser_comment", "payload": {
+                                        "workspace": event.pointer("/payload/workspace"),
+                                        "display_id": event.pointer("/payload/display_id"), "on": false, "reason": reason,
+                                    }});
+                                    if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }
                             Ok(ClientAction::DeviceListing(event)) => {
                                 let slot = relay.as_ref().map(RelayScreen::slot);
                                 if matches!(slot, Some(None)) {
@@ -1142,6 +1182,14 @@ async fn screen_loop(
                                     continue;
                                 }
                                 spawn_device_listing(&state, event, device_frames_tx.clone(), slot.flatten());
+                            }
+                            Ok(ClientAction::Feedback(event)) => {
+                                let job = FeedbackJob { event, png: None };
+                                if let Some(refusal) = queue_feedback(&state, &mut feedback, job, &device_frames_tx)
+                                    && socket.send(Message::Text(refusal.into())).await.is_err()
+                                {
+                                    break;
+                                }
                             }
                             outcome => {
                                 let replies = match outcome {
@@ -1835,6 +1883,11 @@ enum ClientAction {
     CoreMove(Value),
     /// A `file_list` for a checkout on an SSH device, answered by its helper.
     DeviceListing(Value),
+    /// Comment mode on a browser View, answered when its page is ready.
+    BrowserComment(Value),
+    /// The operator's comment or Send, which the screen's feedback queue
+    /// hands the core in order.
+    Feedback(Value),
     Replies(Vec<Message>),
 }
 
@@ -1870,6 +1923,7 @@ fn handle_client_text(
     text: &str,
     connection: u64,
     desktop: bool,
+    renderer: bool,
 ) -> Result<ClientAction, String> {
     let value: Value =
         serde_json::from_str(text).map_err(|error| format!("client json: {error}"))?;
@@ -1979,6 +2033,20 @@ fn handle_client_text(
                 });
             return Ok(ClientAction::Replies(Vec::new()));
         }
+        // The operator's comments and their Send, which writes a letter in
+        // the operator's name, belong to a window the operator works in
+        // (PRD view-opener-feedback D-17); a pane's scoped connection has no
+        // such event at all.
+        Some("view_comment" | "view_feedback_send") if !renderer => {
+            return Err("View feedback is an operator window's".to_owned());
+        }
+        Some("view_comment" | "view_feedback_send") => return Ok(ClientAction::Feedback(event)),
+        Some("browser_comment") => {
+            if !renderer {
+                return Err("View feedback is an operator window's".to_owned());
+            }
+            return Ok(ClientAction::BrowserComment(event));
+        }
         // The daemon owns this flag from its renderer count; a window that
         // sent it would pause the readers every other window draws.
         Some("ui_attached") => return Err("ui_attached is sent by the daemon only".to_owned()),
@@ -2022,6 +2090,179 @@ fn handle_client_text(
         .core
         .dispatch(bytes)
         .map(|()| ClientAction::Replies(Vec::new()))
+}
+
+/// One of the operator's comments or Sends, with the screenshot a page's
+/// pick took for it.
+struct FeedbackJob {
+    event: Value,
+    png: Option<Vec<u8>>,
+}
+
+impl FeedbackJob {
+    /// Whether it carries a screenshot: a page's pick, or a screen's crop.
+    fn shot(&self) -> bool {
+        self.png.is_some() || self.event.pointer("/payload/shot_png").is_some()
+    }
+}
+
+/// Comments and Sends a screen may have waiting. A View moves its line
+/// comments as one relocate each, at most 50 per View, so a burst of them
+/// fits.
+const FEEDBACK_QUEUE: usize = 256;
+/// Of those, the ones with a screenshot, each of up to 16 MiB.
+const FEEDBACK_SHOTS: usize = 4;
+
+/// The screen's feedback queue: what it holds, in the order the screen made
+/// it, and how many of those carry a screenshot.
+struct FeedbackQueue {
+    jobs: tokio::sync::mpsc::Sender<FeedbackJob>,
+    shots: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl FeedbackQueue {
+    fn new() -> (Self, tokio::sync::mpsc::Receiver<FeedbackJob>) {
+        let (jobs, receiver) = tokio::sync::mpsc::channel(FEEDBACK_QUEUE);
+        let shots = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        (Self { jobs, shots }, receiver)
+    }
+
+    /// Takes `job` behind those waiting, or refuses it: the queue is full, or
+    /// it holds as many screenshots as it may.
+    fn push(&self, job: FeedbackJob) -> Result<(), ()> {
+        use std::sync::atomic::Ordering;
+        let shot = job.shot();
+        if shot && self.shots.fetch_add(1, Ordering::SeqCst) >= FEEDBACK_SHOTS {
+            self.shots.fetch_sub(1, Ordering::SeqCst);
+            return Err(());
+        }
+        self.jobs.try_send(job).map_err(|_| {
+            if shot {
+                self.shots.fetch_sub(1, Ordering::SeqCst);
+            }
+        })
+    }
+}
+
+/// Hands one comment or Send to the screen's feedback queue, which starts
+/// with the first. A full queue is refused, and the answer says so.
+fn queue_feedback(
+    state: &AppState,
+    feedback: &mut Option<FeedbackQueue>,
+    job: FeedbackJob,
+    frames: &tokio::sync::mpsc::Sender<String>,
+) -> Option<String> {
+    let queue = feedback.get_or_insert_with(|| spawn_feedback(state, frames.clone()));
+    queue.push(job).err().map(|()| {
+        json!({"type": "error", "payload": {"kind": "view_feedback", "reason": "busy"},
+            "message": "Too many comments are still being saved; try again."})
+        .to_string()
+    })
+}
+
+/// The screen's feedback queue: one task that stages each comment's
+/// screenshot (a decode of up to 16 MiB, a staging scan and an fsync) on a
+/// blocking thread and then hands it to the core, one after another, so a
+/// Send made after a comment reaches the core after it. It ends with the
+/// screen, when the socket loop drops its sender. A refusal reaches that
+/// screen as an error.
+fn spawn_feedback(state: &AppState, frames: tokio::sync::mpsc::Sender<String>) -> FeedbackQueue {
+    let (queue, mut jobs) = FeedbackQueue::new();
+    let shots = Arc::clone(&queue.shots);
+    let attachments = Arc::clone(&state.attachments);
+    let core = Arc::clone(&state.core);
+    let boundary = Arc::clone(&state.boundary);
+    let roots = Arc::clone(&state.roots);
+    tokio::spawn(async move {
+        while let Some(job) = jobs.recv().await {
+            let shot = job.shot();
+            let (attachments, core, boundary, roots) = (
+                Arc::clone(&attachments),
+                Arc::clone(&core),
+                Arc::clone(&boundary),
+                Arc::clone(&roots),
+            );
+            let outcome = tokio::task::spawn_blocking(move || {
+                let FeedbackJob { mut event, png } = job;
+                match png {
+                    Some(png) => {
+                        stage_page_shot(&attachments, core.node().as_str(), &mut event, &png)
+                    }
+                    None if event.pointer("/payload/shot_png").is_some() => {
+                        stage_comment_shot(&attachments, core.node().as_str(), &mut event)?
+                    }
+                    None => {}
+                }
+                if let Some(reply) = admit_event(&boundary, &mut event, || roots_current(&roots)) {
+                    return Ok(Some(reply.to_string()));
+                }
+                let bytes =
+                    serde_json::to_vec(&event).map_err(|error| format!("event encode: {error}"))?;
+                core.dispatch(bytes).map(|()| None)
+            })
+            .await
+            .unwrap_or_else(|error| Err(format!("comment failed: {error}")));
+            if shot {
+                shots.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            let frame = match outcome {
+                Ok(None) => continue,
+                Ok(Some(reply)) => reply,
+                Err(error) => json!({"type": "error", "payload": {}, "message": error}).to_string(),
+            };
+            if frames.send(frame).await.is_err() {
+                break;
+            }
+        }
+    });
+    queue
+}
+
+/// A page comment's screenshot, taken as its place was picked: staged, and
+/// its name put on the add. A page that gave none, or one that could not be
+/// staged, leaves the comment without one, as the diagnostic log says.
+fn stage_page_shot(
+    attachments: &crate::attachments::Attachments,
+    node: &str,
+    event: &mut Value,
+    png: &[u8],
+) {
+    match attachments.stage_view_shot(png) {
+        Ok(name) => event["payload"]["shot"] = json!({"node": node, "name": name}),
+        Err(error) => herdr_core::diagnostic!(json!({
+            "component": "browser_comment",
+            "kind": "shot.stage_failed",
+            "display_id": event.pointer("/payload/display_id"),
+            "error": error,
+        })),
+    }
+}
+
+/// Replaces a `view_comment` add's `shot_png` (base64) with the staged
+/// screenshot's node and name.
+fn stage_comment_shot(
+    attachments: &crate::attachments::Attachments,
+    node: &str,
+    event: &mut Value,
+) -> Result<(), String> {
+    use base64::Engine;
+    let payload = event
+        .get_mut("payload")
+        .and_then(Value::as_object_mut)
+        .ok_or("view_comment has no payload")?;
+    let encoded = payload
+        .remove("shot_png")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .ok_or("view_comment.shot_png must be base64 text")?;
+    if encoded.len() > 22 * 1024 * 1024 {
+        return Err("The screenshot is larger than 16 MiB.".to_owned());
+    }
+    let png = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|_| "view_comment.shot_png is not base64".to_owned())?;
+    let name = attachments.stage_view_shot(&png)?;
+    payload.insert("shot".to_owned(), json!({"node": node, "name": name}));
+    Ok(())
 }
 
 /// Lists one folder of a device checkout on a blocking task and hands the
@@ -3724,6 +3965,7 @@ fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool)
         state.desktop_renderers.fetch_sub(1, Ordering::SeqCst);
     }
     state.attachments.release(connection);
+    state.browser_comments.release(connection);
     state.mobile.release(connection);
     state.desktop_notices.release(connection);
     for (pane, size) in state.pane_sizes.left(connection) {
@@ -3916,6 +4158,43 @@ pub fn allowed_origins(port: u16, vite: Option<&str>) -> HashSet<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_screens_feedback_keeps_its_order_and_holds_at_most_four_screenshots() {
+        let (queue, mut jobs) = super::FeedbackQueue::new();
+        let job = |kind: &str, shot: bool| super::FeedbackJob {
+            event: json!({"kind": kind}),
+            png: shot.then(Vec::new),
+        };
+        for _ in 0..super::FEEDBACK_SHOTS {
+            assert!(queue.push(job("add", true)).is_ok());
+        }
+        assert!(
+            queue.push(job("add", true)).is_err(),
+            "a fifth screenshot waits for none"
+        );
+        // A burst of relocates behind them still fits.
+        for _ in 0..50 {
+            assert!(queue.push(job("relocate", false)).is_ok());
+        }
+        assert!(queue.push(job("send", false)).is_ok());
+        let kinds: Vec<String> = std::iter::from_fn(|| jobs.try_recv().ok())
+            .map(|job| job.event["kind"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(kinds.len(), super::FEEDBACK_SHOTS + 51);
+        assert_eq!(
+            kinds.last().map(String::as_str),
+            Some("send"),
+            "the Send comes after every comment"
+        );
+        for _ in 0..super::FEEDBACK_QUEUE {
+            assert!(queue.push(job("relocate", false)).is_ok());
+        }
+        assert!(
+            queue.push(job("relocate", false)).is_err(),
+            "a full queue refuses"
+        );
+    }
+
     use super::*;
 
     /// A pane id a screen sends straight to a node is refused past the

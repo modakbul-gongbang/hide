@@ -5,7 +5,8 @@
     { "first_line": "Hide letter letter-1 from build reviewer (codex) [block]", "id": "letter-1", "sender": "build reviewer", "sender_kind": "codex", "kind": "block" },
     { "first_line": "Hide letter letter-1 from CI (nightly) (opencode) [report]", "id": "letter-1", "sender": "CI (nightly)", "sender_kind": "opencode", "kind": "report" },
     { "first_line": "Hide letter letter-1 from 배포 담당 (claude) [reply]", "id": "letter-1", "sender": "배포 담당", "sender_kind": "claude", "kind": "reply" },
-    { "first_line": "Hide letter letter-1 from observer (codex) [watch]", "id": "letter-1", "sender": "observer", "sender_kind": "codex", "kind": "watch" }
+    { "first_line": "Hide letter letter-1 from observer (codex) [watch]", "id": "letter-1", "sender": "observer", "sender_kind": "codex", "kind": "watch" },
+    { "first_line": "Hide letter letter-1 from operator (operator) [report]", "id": "letter-1", "sender": "operator", "sender_kind": "operator", "kind": "report", "operator": true }
   ],
   "batch": {
     "letters": [
