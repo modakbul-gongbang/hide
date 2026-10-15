@@ -158,8 +158,6 @@ const VALUE_OPTIONS: &[&str] = &[
     "--file",
     "--regexp",
     "--threads",
-    "-v",
-    "-F",
 ];
 
 /// Whether word `at` of a command, or its `--name=value` value when `value`,
@@ -207,11 +205,11 @@ fn text_word(program: &str, words: &[String], at: usize, value: bool) -> bool {
                 if !word.starts_with('-') || word == "-" {
                     return index == at;
                 }
-                index += if VALUE_OPTIONS.contains(&word.as_str()) {
-                    2
-                } else {
-                    1
-                };
+                // awk's `-v name=value` and `-F sep` take a value; grep's
+                // `-v` and `-F` do not.
+                let valued = VALUE_OPTIONS.contains(&word.as_str())
+                    || (program == "awk" && matches!(word.as_str(), "-v" | "-F"));
+                index += if valued { 2 } else { 1 };
             }
             false
         }
