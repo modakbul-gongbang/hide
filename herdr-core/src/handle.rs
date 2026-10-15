@@ -252,13 +252,7 @@ impl Core {
         )));
         let notifier = ChangeNotifier::new();
         lock_recover(&runtime).install_worker_context(Arc::downgrade(&runtime), notifier.clone());
-        // This machine's hooks follow a core on the account's own state
-        // folder; one on a relocated folder writes nothing under `~/.hide`.
-        let own_file = options.home.as_deref().is_some_and(|home| {
-            std::path::Path::new(&options.app_state_path).parent()
-                == Some(hide_kit::layout::default_state_dir(std::path::Path::new(home)).as_path())
-        });
-        lock_recover(&runtime).set_guardrails_own_file(own_file);
+        lock_recover(&runtime).set_guardrails_own_file(options.account_state_folder);
         lock_recover(&runtime).publish_own_guardrail_policy();
         lock_recover(&runtime).set_terminals(terminals);
         // Started before anything can attach, so no report waits on it.

@@ -160,6 +160,12 @@ impl ProjectSettings {
             next.base_branch = Some(base);
         }
         if let Some(rules) = patch.guardrails {
+            // The shell this daemon serves names only the protections it
+            // knows; a field kept for a newer build comes from a record, never
+            // from a change, and would grow the policy every hook reads.
+            if !rules.unknown.is_empty() {
+                return Err("project_settings_invalid_guardrails");
+            }
             rules.validate().map_err(PathRefusal::code)?;
             next.guardrails = Some(rules);
             next.version = VERSION;

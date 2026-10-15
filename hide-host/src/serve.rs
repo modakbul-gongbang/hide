@@ -1200,8 +1200,8 @@ pub fn handle_with_progress(
             let mut applied = APPLIED
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if applied.get(&home).is_some_and(|last| sequence < *last) {
-                return Ok(Value::Null);
+            if let Some(last) = applied.get(&home).filter(|last| sequence < **last) {
+                return Ok(serde_json::json!({ "superseded_by": last }));
             }
             hide_agent_hooks::guardrails::write_policy(&home, &policy)
                 .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?;

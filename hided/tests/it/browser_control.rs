@@ -48,6 +48,7 @@ async fn desktop_registration_requires_daemon_auth_and_local_origin() {
         herdr_socket_path: None,
         herdr_bin_path: None,
         legacy_state_dir: None,
+        account_state_folder: false,
         keep_alive: true,
         vite_origin: None,
         bind: "127.0.0.1:0".parse().unwrap(),

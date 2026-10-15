@@ -105,7 +105,7 @@ fn a_protection_is_saved_only_after_its_machine_has_the_policy() {
             rules: files_rules(),
         }])
     );
-    assert!(runtime.guardrail_policy_answered(crate::node::TEST_NODE, job, Ok(())));
+    assert!(runtime.guardrail_policy_answered(crate::node::TEST_NODE, job, Ok(None)));
     // Delivered: now the state writer takes it, and its save settles it.
     let saved = runtime.ui_state_to_save();
     assert_eq!(saved.project_settings[&id()].version, 2);
@@ -115,6 +115,28 @@ fn a_protection_is_saved_only_after_its_machine_has_the_policy() {
         runtime.snapshot.ui_state.project_settings[&id()].guardrails,
         Some(files_rules())
     );
+}
+
+#[test]
+fn a_node_holding_a_newer_write_is_written_again_above_it_and_the_save_waits() {
+    let mut runtime = held(fixture());
+    change(&mut runtime, "files-on", files_on());
+    let job = runtime
+        .take_guardrail_publication(crate::node::TEST_NODE)
+        .unwrap();
+    // Another core's write, or this machine's clock set back.
+    let newer = job.sequence() + 60_000;
+    assert!(!runtime.guardrail_policy_answered(crate::node::TEST_NODE, job, Ok(Some(newer))));
+    assert_eq!(receipt(&runtime), (WriteState::Pending, None));
+    let again = runtime
+        .take_guardrail_publication(crate::node::TEST_NODE)
+        .expect("written again");
+    assert!(again.sequence() > newer);
+    assert_eq!(job_policy(&again).projects.len(), 1);
+    assert!(runtime.guardrail_policy_answered(crate::node::TEST_NODE, again, Ok(None)));
+    let saved = runtime.ui_state_to_save();
+    assert!(runtime.acknowledge_project_settings_save(&saved, true));
+    assert_eq!(receipt(&runtime), (WriteState::Saved, None));
 }
 
 #[test]
@@ -279,6 +301,20 @@ fn a_path_list_past_its_limits_is_refused_with_its_reason() {
         );
         assert_eq!(receipt(&runtime), (WriteState::Failed, Some(code.into())));
     }
+    // A protection this build does not know is no change the shell makes.
+    let mut runtime = held(fixture());
+    change(
+        &mut runtime,
+        "unknown",
+        serde_json::json!({"guardrails": {"files": true, "later": "x".repeat(1024)}}),
+    );
+    assert_eq!(
+        receipt(&runtime),
+        (
+            WriteState::Failed,
+            Some("project_settings_invalid_guardrails".into())
+        )
+    );
 }
 
 #[test]
@@ -318,7 +354,7 @@ fn a_removed_registration_takes_its_project_out_of_the_policy() {
     let job = runtime
         .take_guardrail_publication(crate::node::TEST_NODE)
         .unwrap();
-    runtime.guardrail_policy_answered(crate::node::TEST_NODE, job, Ok(()));
+    runtime.guardrail_policy_answered(crate::node::TEST_NODE, job, Ok(None));
     let saved = runtime.ui_state_to_save();
     runtime.acknowledge_project_settings_save(&saved, true);
     assert!(
@@ -353,7 +389,7 @@ fn a_save_on_its_way_cannot_bring_a_removed_projects_protections_back() {
         .id
         .clone();
     assert!(runtime.retire_workspace_registration(&registration));
-    runtime.guardrail_policy_answered(crate::node::TEST_NODE, job, Ok(()));
+    runtime.guardrail_policy_answered(crate::node::TEST_NODE, job, Ok(None));
     let saved = runtime.ui_state_to_save();
     assert_eq!(saved.project_settings[&id()].guardrails, None);
 }

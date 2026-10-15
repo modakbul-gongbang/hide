@@ -90,6 +90,10 @@ impl Publication {
     pub(crate) fn policy(&self) -> &Policy {
         &self.policy
     }
+
+    pub(crate) fn sequence(&self) -> u64 {
+        self.sequence
+    }
 }
 
 impl Runtime {
@@ -289,7 +293,7 @@ impl Runtime {
                     };
                     let answer = match &job.link {
                         Err(reason) => Err((*reason).to_owned()),
-                        Ok(None) => Ok(()),
+                        Ok(None) => Ok(None),
                         Ok(Some(link)) => crate::node_access::call_as::<serde_json::Value>(
                             link.as_ref(),
                             hide_node_link::protocol::Call::GuardrailPolicy {
@@ -298,7 +302,11 @@ impl Runtime {
                             },
                             PUBLISH_TIMEOUT,
                         )
-                        .map(|_| ())
+                        .map(|answer| {
+                            answer
+                                .get("superseded_by")
+                                .and_then(serde_json::Value::as_u64)
+                        })
                         .map_err(|error| error.to_string()),
                     };
                     let Some(core) = runtime.upgrade() else {
@@ -369,10 +377,29 @@ impl Runtime {
         &mut self,
         device: &str,
         job: Publication,
-        answer: Result<(), String>,
+        answer: Result<Option<u64>, String>,
     ) -> bool {
         match answer {
-            Ok(()) => {
+            // The node holds a write with a higher sequence than any this
+            // core made: another core's, or this one's from before a clock
+            // set back. The sequence moves past it and the policy is written
+            // again, its saves still waiting.
+            Ok(Some(newer)) if newer >= self.guardrails.sequence => {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "guardrails",
+                    "kind": "policy.superseded",
+                    "device_id": device,
+                    "sequence": job.sequence,
+                    "superseded_by": newer,
+                }));
+                self.guardrails.sequence = newer;
+                self.guardrails.published.remove(device);
+                self.guardrails.queued.insert(device.to_owned());
+                self.start_guardrails_worker(device);
+                false
+            }
+            // Applied, or overtaken by this core's own newer write.
+            Ok(_) => {
                 crate::diagnostic!(serde_json::json!({
                     "component": "guardrails",
                     "kind": "policy.published",

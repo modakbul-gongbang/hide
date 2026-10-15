@@ -19,6 +19,7 @@ fn test_env(keep_alive: bool) -> (tempfile::TempDir, Env) {
         herdr_bin_path: None,
         state_dir: dir.path().to_path_buf(),
         legacy_state_dir: None,
+        account_state_folder: false,
         keep_alive,
         vite_origin: None,
         bind: "127.0.0.1:0".parse().unwrap(),

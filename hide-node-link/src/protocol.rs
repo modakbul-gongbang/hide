@@ -329,8 +329,10 @@ pub enum Call {
     /// with `policy`, the projects of this machine with a protection on
     /// (`hide_agent_hooks::guardrails::write_policy`); answers `null` once
     /// the file is in place. A `sequence` below the last one this node
-    /// applied is a write that outlived its caller's wait, and is answered
-    /// without touching the newer file.
+    /// applied leaves the newer file alone and is answered
+    /// `{"superseded_by": <that sequence>}`: a write that outlived its
+    /// caller's wait, or a caller whose sequence fell behind (another core,
+    /// a clock set back), which writes again above it.
     GuardrailPolicy {
         policy: hide_agent_hooks::guardrails::Policy,
         sequence: u64,

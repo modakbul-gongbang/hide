@@ -1560,6 +1560,7 @@ fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
         local_issues_path: None,
         effects_held: false,
         machine_name: None,
+        account_state_folder: false,
     };
     assert!(
         crate::Core::create(

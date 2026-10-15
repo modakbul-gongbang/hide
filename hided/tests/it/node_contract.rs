@@ -943,7 +943,8 @@ fn a_published_guardrail_policy_is_what_the_devices_hooks_read() {
     )
     .unwrap();
     assert_eq!(read_policy(&device.home), Ok(none.clone()));
-    // A write that outlived its caller's wait does not land over a newer one.
+    // A write that outlived its caller's wait does not land over a newer one,
+    // and says which sequence the node holds.
     let late: Value = call_as(
         &*device.link,
         Call::GuardrailPolicy {
@@ -953,7 +954,7 @@ fn a_published_guardrail_policy_is_what_the_devices_hooks_read() {
         TIMEOUT,
     )
     .unwrap();
-    assert_eq!(late, Value::Null);
+    assert_eq!(late, serde_json::json!({ "superseded_by": 11 }));
     assert_eq!(read_policy(&device.home), Ok(none));
 }
 

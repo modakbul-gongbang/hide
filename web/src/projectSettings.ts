@@ -49,7 +49,7 @@ function guardPathShaped(path: string): boolean {
 export function refusedForGood(code: string | null | undefined): boolean {
   return code === "project_settings_paths_limit" || code === "project_settings_path_too_long" || code === "project_settings_path_duplicate"
     || code === "project_settings_path_invalid" || code === "project_settings_not_git" || code === "project_settings_base_unknown"
-    || code === "project_settings_invalid_repository" || code === "project_settings_newer_version";
+    || code === "project_settings_invalid_repository" || code === "project_settings_newer_version" || code === "project_settings_invalid_guardrails";
 }
 
 /** The branch the base protection guards: the chosen one, or the remote's default for Auto; null when the project names none (B17). */
