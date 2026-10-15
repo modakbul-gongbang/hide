@@ -10,6 +10,7 @@ mod ai;
 mod changes;
 mod checkout_owner;
 mod codex_launch;
+mod composer_store;
 pub mod coordination;
 pub mod delivery;
 mod device_catalog;
