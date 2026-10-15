@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="desktop/resources/hide-icon-1024.png" width="132" alt="hide owl app icon">
+  <img src="design/brand/hide-icon-blinking.svg" width="132" alt="hide owl app icon">
 </p>
 
 <h1 align="center">hide</h1>
