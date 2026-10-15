@@ -47,10 +47,14 @@ pub fn bundled_kit_dir(executable: &Path) -> Option<PathBuf> {
 }
 
 /// Whether `dir` holds a desktop package's runtime: its `hided` beside the
-/// shell archive. Read from what the folder holds rather than from the
-/// names around it, so a package renamed aside (`hide.app.bak`) or moved to
-/// the Trash after a newer one replaced it still counts.
+/// shell archive, or a build's runtime copy, which leaves the archive in the
+/// package (`crate::runtime`). Read from what the folder holds rather than
+/// from the names around it, so a package renamed aside (`hide.app.bak`) or
+/// moved to the Trash after a newer one replaced it still counts.
 pub fn holds_package_runtime(dir: &Path) -> bool {
+    if crate::runtime::is_runtime_copy(dir) {
+        return true;
+    }
     dir.join("app.asar").is_file()
         && dir
             .join(format!("hided{}", std::env::consts::EXE_SUFFIX))

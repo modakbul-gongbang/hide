@@ -318,6 +318,10 @@ mod tests {
             !first.dir.join("app.asar").exists(),
             "the window's code stays in the package"
         );
+        assert!(
+            crate::holds_package_runtime(&first.dir),
+            "a Herdr running from the copy is still Hide's"
+        );
         let again = prepare(&resources, &home, "0.4.0-aaaaaaaaaaaa").unwrap();
         assert!(!again.copied, "a finished copy is found, not made again");
         assert_eq!(again.pruned, Pruned::default());
