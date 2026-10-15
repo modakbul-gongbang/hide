@@ -1,17 +1,17 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { LoaderCircleIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import { ChevronRightIcon, LoaderCircleIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { isHtmlFile } from "./browserViews";
 import { holdShellDrag } from "./shellDrag";
 import { EntryPointMenu } from "./components/entry-menu";
+import { FileMark } from "./components/file-mark";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { useEscapeLayer } from "./components/ui/layer";
 import { Input } from "./components/ui/input";
 import { Hint } from "./components/ui/tooltip";
 import {
-  disclosureMark,
   explorerMenuItems,
   explorerRows,
   filteredRows,
@@ -80,6 +80,26 @@ export function displayRows(rows: ExplorerRow[], draft: ExplorerDraft | null): D
 function rowHeight(): number {
   const value = getComputedStyle(document.documentElement).getPropertyValue("--size-pane-child-row");
   return Number.parseFloat(value) || 24;
+}
+
+/** Where a row of `depth` starts its chevron: the tree's inset, then one
+ * indent per level, VS Code's twistie column. */
+function rowInset(depth: number): string {
+  return `calc(var(--spacing-sm) + var(--size-tree-indent) * ${depth})`;
+}
+
+/** One hairline per ancestor level, under that ancestor's chevron, so a deep
+ * row shows which folder it sits in; each row draws its own segment. */
+function IndentGuides({ depth }: { depth: number }) {
+  return Array.from({ length: depth }, (_, level) => (
+    <span
+      key={level}
+      aria-hidden="true"
+      data-explorer-guide={level}
+      className="pointer-events-none absolute inset-y-0 w-(--size-hairline) bg-border"
+      style={{ left: `calc(${rowInset(level)} + var(--size-tree-mark) / 2)` }}
+    />
+  ));
 }
 
 function baseName(path: string): string {
@@ -653,10 +673,11 @@ function DraftRowView({
   };
   return (
     <div
-      className="absolute inset-x-0 flex items-center pr-md text-body"
+      className="absolute inset-x-0 flex items-center pr-md text-subhead"
       data-explorer-draft={rename ? "rename" : "create"}
-      style={{ top: 0, height: "var(--size-pane-child-row)", paddingLeft: `calc(var(--size-lineage-indent) * ${depth})`, transform: `translateY(${top}px)` }}
+      style={{ top: 0, height: "var(--size-pane-child-row)", paddingLeft: `calc(${rowInset(depth)} + var(--size-tree-mark))`, transform: `translateY(${top}px)` }}
     >
+      <IndentGuides depth={depth} />
       <Input
         autoFocus
         value={value}
@@ -776,13 +797,13 @@ function ExplorerRowView({
       data-selected={selected ? "true" : "false"}
       data-decoration={row.decoration?.status ?? ""}
       data-drop={over ? "true" : "false"}
-      className={`absolute inset-x-0 flex cursor-default items-center gap-xs pr-md text-body ${
-        selected ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent"
+      className={`absolute inset-x-0 flex cursor-default items-center gap-xs pr-md text-subhead text-foreground ${
+        selected ? "bg-secondary" : "hover:bg-accent"
       } ${over ? "bg-secondary" : ""}`}
       style={{
         top: 0,
         height: "var(--size-pane-child-row)",
-        paddingLeft: `calc(var(--size-lineage-indent) * ${row.depth})`,
+        paddingLeft: rowInset(row.depth),
         transform: `translateY(${top}px)`,
       }}
       onPointerDown={(event) => {
@@ -814,13 +835,12 @@ function ExplorerRowView({
       }}
       onDragEnd={() => setOver(false)}
     >
-      <span className="w-[var(--size-lineage-chevron)] shrink-0 text-center text-caption text-muted-foreground" aria-hidden="true">
-        {disclosureMark(row)}
+      <IndentGuides depth={row.depth} />
+      <span className="flex size-(--size-tree-mark) shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true">
+        {row.isDirectory ? <ChevronRightIcon className={`size-(--size-tree-mark) ${row.expanded ? "rotate-90" : ""}`} /> : null}
       </span>
-      <span className={`shrink-0 ${row.icon.color}`} style={{ fontFamily: "seti" }} aria-hidden="true">
-        {row.icon.glyph}
-      </span>
-      <span className="min-w-0 flex-1 truncate">{row.name}</span>
+      <FileMark icon={row.icon} className="size-(--size-tree-mark)" />
+      <span className={`min-w-0 flex-1 truncate ${!row.isDirectory && row.decoration ? gitBadgeColor(row.decoration.status) : ""}`}>{row.name}</span>
       {needsRefresh ? (
         <Hint label={t("explorer.unwatched")}>
           <Button
