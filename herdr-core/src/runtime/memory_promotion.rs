@@ -165,10 +165,10 @@ pub(super) struct HomeAttempt {
 /// turn.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct HomePull {
-    number: u64,
-    draft: bool,
-    checks: PullRequestChecks,
-    changes_requested: bool,
+    pub(super) number: u64,
+    pub(super) draft: bool,
+    pub(super) checks: PullRequestChecks,
+    pub(super) changes_requested: bool,
 }
 
 impl HomePull {
@@ -443,19 +443,25 @@ impl Runtime {
             tracking.retiring = retiring;
             tracking.converged |= converged;
         }
-        // A row's home turn moves only with these facts or the agent's own
-        // activity, so the lineage is rebuilt here only when they changed.
-        if let Some(homes) = homes
-            && self.project_memory.promotions.homes != homes
-        {
-            self.project_memory.promotions.homes = homes;
-            if !self.hide_started.agents.is_empty() {
-                self.refresh_agent_lineage();
-                self.refresh_agent_scopes();
-            }
+        if let Some(homes) = homes {
+            self.apply_homes(homes);
         }
         if again {
             self.track_memory_promotions();
+        }
+    }
+
+    /// Takes the followed attempts' home facts. A row's home turn moves only
+    /// with these facts or the agent's own activity, so the lineage is
+    /// rebuilt here only when they changed and a Hide AI row exists.
+    pub(super) fn apply_homes(&mut self, homes: HashMap<String, HomeAttempt>) {
+        if self.project_memory.promotions.homes == homes {
+            return;
+        }
+        self.project_memory.promotions.homes = homes;
+        if !self.hide_started.agents.is_empty() {
+            self.refresh_agent_lineage();
+            self.refresh_agent_scopes();
         }
     }
 
