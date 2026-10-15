@@ -28,7 +28,9 @@ import { hostLog, isolate, launch, screenshot, shellPage, test } from "./fixture
 const executable = process.env.HIDE_E2E_UPDATE_APP;
 const feed = process.env.HIDE_E2E_UPDATE_FEED;
 const next = process.env.HIDE_E2E_UPDATE_VERSION ?? "";
-test.describe.configure({ timeout: 360_000 });
+// No retry: the first attempt changes the installed version, so a retry
+// would start from N+1 and test nothing.
+test.describe.configure({ timeout: 360_000, retries: 0 });
 test.skip(!executable || !feed || !next, "an installed app and a feed with its next version are required");
 test.skip(process.platform === "darwin", "a macOS update needs two Developer ID builds");
 
