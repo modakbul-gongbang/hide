@@ -383,7 +383,8 @@ export function FeedbackRow({ display, workspace, actions }: { display: ViewDisp
   const sendHere = sendDisplay(send, sentFrom, displayIds, firstOfRecipient ?? (group ? display.id : null)) === display.id;
   const until = send?.state === "sent" ? send.at_unix_ms + SHOWN_MS : deletedFrom ? deletedFrom.at + SHOWN_MS : null;
   const now = useNow(until);
-  const showSend = sendHere && sendShown(send, now) && send!.reason !== "reopen_failed" && send!.reason !== "closed";
+  // A failed Send's line lasts while its View still holds comments to retry.
+  const showSend = sendHere && sendShown(send, now) && send!.reason !== "reopen_failed" && send!.reason !== "closed" && (send!.state !== "failed" || (group?.comments ?? 0) > 0);
   const deleted = deletedHere(feedback, deletedFrom, display.id, now, browserOn);
   const late = group && group.comments > 0 && group.not_delivered === group.comments;
 
