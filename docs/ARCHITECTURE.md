@@ -2757,7 +2757,7 @@ The table below is written in macOS chords; Windows and Linux press each one thr
 | Toggle Tools | - | ⌘E | ⌘E |
 | Toggle File Tree | - | ⌘⇧E | ⌘⇧E |
 | Split right / down | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D |
-| Zoom pane | ⌘⌥↩ | ⌘⌥↩ | ⌘⌥↩ |
+| Zoom pane (Expand while the keyboard is in the right lane) | ⌘⌥↩ | ⇧⌘↩ | ⇧⌘↩ |
 | Close pane | ⌘⇧W | ⌥⇧W (moved: Chrome reserves ⌘⇧W) | ⌘⇧W |
 | Larger / smaller / reset text | ⌘= / ⌘- / ⌘0 | same chords; while an image or PDF display holds the keyboard they zoom it in Chrome's steps and ⌘0 returns it to its fit | same chords, and the same for an image or PDF; while a browser display's page holds the keyboard they zoom that page in Chrome's steps and it keeps the keyboard, and ⌘+ (⌘⇧=) zooms it in too (`docs/BROWSER_DISPLAYS.md`) |
 | Move to Trash | ⌘⌫ (Explorer tree only) | not intercepted; a terminal gets ^U | same as the browser |
