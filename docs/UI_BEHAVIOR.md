@@ -1082,6 +1082,12 @@ A card row carries no chevron and no descendant mark.
 
 Web owner: `web/src/ExplorerTree.tsx`, `web/src/explorer.ts`. Core owner: `herdr-core/src/changes.rs`.
 
+A row reads as it does in VS Code: one indent per level with a hairline under each ancestor's chevron, a chevron on a folder that turns down while it is open, the item's mark, then its name.
+The mark is the one the Material Icon Theme draws for that name (`web/src/fileIcons.ts`): a whole file name such as `package.json` first, then its longest extension, then a plain file; a folder has its own mark, open or closed, and a plain folder one otherwise.
+Under the light theme a mark the theme draws differently on a light background takes that variant.
+The same marks stand beside a file in ⌘P, on a View tab and on a History row.
+A changed file's name takes its status mark's color; a folder's name stays plain and its dot carries the state.
+
 The tree's context menu on a file row is Open to the side (and Open in Browser for an HTML file), a separator, the reveal, a separator, Rename, a separator, Move to Trash.
 A folder row has New File and New Folder in place of the opens; the empty area below the rows stands for the root and offers only the two creations.
 The item set the menu offers is a presentation decision a test can check directly (`explorerMenuItems` in `web/src/explorer.ts`), not something the platform decides implicitly.
