@@ -92,6 +92,10 @@ enum SightedRead {
 /// is a reported shortfall, not a larger number.
 const GITHUB_PROJECT_LIMIT: usize = 64;
 
+/// How long a merge Hide saw succeed reads as merged without GitHub's list
+/// saying so.
+const MERGED_HERE_LIFETIME_MS: u64 = 10 * 60 * 1000;
+
 fn herdr_version_supports_purpose(version: Option<&str>) -> bool {
     parse_herdr_version(version.unwrap_or_default())
         .is_some_and(|version| version >= MINIMUM_PURPOSE_HERDR_VERSION)
@@ -950,6 +954,10 @@ impl Runtime {
                 workspace,
                 link_summaries.and_then(|summaries| summaries.get(&workspace.id)),
             );
+            super::links::associate_pr_sessions(
+                &mut workspace.pull_requests,
+                link_summaries.and_then(|summaries| summaries.get(&workspace.id)),
+            );
             // Git refreshes the persistent purpose sources. Restore the
             // agent/PR fallback in this same projection before publishing it.
             crate::sidebar::sync_checkout_purposes(
@@ -1128,6 +1136,7 @@ impl Runtime {
         self.github_remotes.retain(|path, _| known(path));
         self.github_read_generation.retain(|path, _| known(path));
         self.github_settled.retain(known);
+        self.merged_here.retain(|(path, _), _| known(path));
         // A sighting that grew old while its project's answer was owed (no
         // window attached, no read) sets off nothing when the answer lands.
         self.github_sighted
@@ -1503,6 +1512,7 @@ impl Runtime {
         }
         let mut merged = github;
         keep_previous_reads(&mut merged, &self.github);
+        self.read_merges_made_here(&mut merged);
         if self.github == merged {
             // Nothing to show changed, but a project that returned nothing
             // stops loading.
@@ -1520,6 +1530,48 @@ impl Runtime {
         // A promoted card's pull request may have opened, merged or closed.
         self.track_memory_promotions();
         true
+    }
+
+    /// Marks the pull requests Hide merged as merged in `github` until a read
+    /// says so itself: Hide knows its own merge went through, so the pull
+    /// request leaves Needs You at once instead of waiting in an unknown merge
+    /// state for the next poll. The time shown is the one the merge was seen.
+    /// An entry is let go when a fresh read of its project shows the pull
+    /// request merged, closed or gone, and after `MERGED_HERE_LIFETIME_MS`
+    /// whatever the reads say, so a merge GitHub did not complete (a queue
+    /// that ejected it) does not read as merged for good. A read that failed
+    /// carries the previous list, overlay included, and releases nothing.
+    pub(super) fn read_merges_made_here(&mut self, github: &mut crate::model::GithubSnapshot) {
+        let now = unix_milliseconds();
+        self.merged_here.retain(|(root, number), merged_at| {
+            if now.saturating_sub(*merged_at) > MERGED_HERE_LIFETIME_MS {
+                return false;
+            }
+            let Some(project) = github.projects.iter_mut().find(|p| &p.root_path == root) else {
+                return true;
+            };
+            let fresh = !project.status.stale && project.status.unavailable_reason.is_none();
+            let Some(pull_request) = project
+                .pull_requests
+                .iter_mut()
+                .find(|p| p.number == *number)
+            else {
+                return !fresh;
+            };
+            if fresh
+                && matches!(
+                    pull_request.badge,
+                    crate::model::PullRequestBadge::Merged | crate::model::PullRequestBadge::Closed
+                )
+            {
+                return false;
+            }
+            pull_request.badge = crate::model::PullRequestBadge::Merged;
+            pull_request.review = None;
+            pull_request.merged_at_unix_ms = Some(*merged_at);
+            pull_request.closed_at_unix_ms = Some(*merged_at);
+            true
+        });
     }
 
     fn bump_github_generation(&mut self, project_path: &str) {
@@ -3365,7 +3417,7 @@ impl Runtime {
                 workspace.home_issues = home_issues;
                 changed = true;
             }
-            let pull_requests = match project {
+            let mut pull_requests = match project {
                 Some(project) if workspace.is_git && workspace.remote_target_id.is_none() => {
                     super::pull_requests::shown_pull_requests(
                         &project.pull_requests,
@@ -3375,6 +3427,12 @@ impl Runtime {
                 }
                 _ => Vec::new(),
             };
+            // The sessions are attached before the comparison, so a pass that
+            // read nothing new compares equal and publishes nothing.
+            super::links::associate_pr_sessions(
+                &mut pull_requests,
+                link_summaries.and_then(|summaries| summaries.get(&workspace.id)),
+            );
             if workspace.pull_requests != pull_requests {
                 workspace.pull_requests = pull_requests;
                 changed = true;

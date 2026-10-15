@@ -34,7 +34,7 @@ test("hidden by default, a menu that checks the core's value, and logos that ret
   const sent = countSent(page);
   try {
     await open(page, daemon);
-    await showTool(page, "agent_sessions");
+    await showTool(page, "work");
     await expect(sidebarRow(page)).toBeVisible();
     // B4: nothing draws a logo until it is chosen.
     await expect(marks(page)).toHaveCount(0);

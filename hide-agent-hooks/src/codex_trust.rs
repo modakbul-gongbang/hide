@@ -422,7 +422,7 @@ struct Target {
 ///   a managed file can name the same command and are not Hide's write);
 /// - its event, handler type, command and matcher are, byte for byte, one
 ///   Hide writes for that event with this kit's helper (a command hook; the
-///   matcher `Bash|request_user_input` for `PreToolUse`, none for the rest), or one the kit
+///   matcher `Bash|request_user_input|request_user_input_async` for `PreToolUse`, none for the rest), or one the kit
 ///   recorded Herdr's own integration install writing (the one other tool
 ///   whose entries are here, and only through that record);
 /// - Codex does not trust it yet (`untrusted`, or `modified` after a change).
@@ -1070,7 +1070,9 @@ mod tests {
             select(&[hook])
         };
         assert_eq!(
-            with(Some("Bash|request_user_input|apply_patch|Edit|Write")),
+            with(Some(
+                "Bash|request_user_input|request_user_input_async|apply_patch|Edit|Write"
+            )),
             ["guard"]
         );
         // Codex hashes the matcher into the key, so an entry that runs Hide's
@@ -1081,6 +1083,8 @@ mod tests {
         assert!(with(None).is_empty());
         assert!(with(Some("*")).is_empty());
         assert!(with(Some("apply_patch")).is_empty());
+        // The matcher written before Codex 0.162.1's async question tool.
+        assert!(with(Some("Bash|request_user_input")).is_empty());
     }
 
     #[test]

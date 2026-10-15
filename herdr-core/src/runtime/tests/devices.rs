@@ -148,7 +148,7 @@ fn removing_devices_retires_only_their_pane_reads_and_rejects_late_publications(
         };
         ledger.agents.push(crate::coordination::AgentRecord {
             id: format!("agent-{}", ledger.next_id),
-            name: child.name.clone(),
+            name: Some(child.name.clone()),
             machine: id.clone(),
             host_scope: "fixture-scope".into(),
             native_machine: format!("fixture-machine-{index}"),

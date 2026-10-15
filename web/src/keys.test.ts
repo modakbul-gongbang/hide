@@ -34,6 +34,10 @@ describe("terminalKey on macOS", () => {
 
   it("skips mappings while composing and leaves plain keys alone", () => {
     expect(terminalKey(event({ key: "Enter", shiftKey: true }), "mac", false, true)).toBeNull();
+    // A key the input method is still processing reads 229 even when
+    // Chromium reports `isComposing` false.
+    expect(terminalKey(event({ key: "Enter", shiftKey: true, keyCode: 229 }), "mac", false)).toBeNull();
+    expect(terminalKey(event({ key: "Backspace", metaKey: true, keyCode: 229 }), "mac", false)).toBeNull();
     expect(terminalKey(event({ key: "Enter" }), "mac", false)).toBeNull();
     expect(terminalKey(event({ key: "a" }), "mac", false)).toBeNull();
   });

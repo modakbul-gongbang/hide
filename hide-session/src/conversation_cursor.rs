@@ -690,6 +690,9 @@ struct LargeRecord {
     tool_capacity: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     payload_question: bool,
+    /// The payload's tool is `request_user_input_async`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    payload_async: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     payload_call: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -875,7 +878,8 @@ impl LargeRecord {
                     } else if token.field == "name" {
                         match token.scope {
                             Scope::Payload => {
-                                self.payload_question = token.value == "request_user_input"
+                                self.payload_question = token.value == "request_user_input";
+                                self.payload_async = token.value == "request_user_input_async"
                             }
                             Scope::Block => {
                                 if let Some(frame) = self.frames.last_mut() {
@@ -1144,6 +1148,11 @@ impl LargeRecord {
                     Ok(None) => Err(SkipReason::UserTurnInvalid),
                     Err(reason) => Err(reason),
                 }
+            }
+            // How many questions a call this large asked is not known, so
+            // which replies end the wait is not either.
+            ("response_item", "function_call") if self.payload_async => {
+                Ok(Some(TurnMark::Unreadable))
             }
             ("response_item", "function_call_output") => {
                 bounded(self.payload_call.clone()).map(|call| {

@@ -37,6 +37,7 @@ fn pull_request(number: u32, branch: &str, badge: PullRequestBadge) -> PullReque
         closed_at_unix_ms: Some(3),
         head_oid: Some(format!("{number:040x}")),
         cross_repository: false,
+        work: Default::default(),
     }
 }
 
@@ -1103,6 +1104,11 @@ fn a_repository_without_a_remote_asks_gh_nothing_until_a_remote_is_added() {
     let node = Arc::new(Machine {
         gh: Mutex::new(Vec::new()),
         answers: &[
+            ("api user", "operator"),
+            (
+                "api graphql",
+                r#"{"data":{"repository":{"pullRequests":{"nodes":[]}}}}"#,
+            ),
             ("pr list", "[]"),
             ("repo view", r#"{"nameWithOwner":"acme/app","id":"R_1"}"#),
             ("issue list", "[]"),
@@ -1168,7 +1174,9 @@ fn a_repository_without_a_remote_asks_gh_nothing_until_a_remote_is_added() {
     let project = runtime.github.project(&root).expect("answered");
     assert_eq!(
         project.read_outcome(),
-        crate::model::GithubReadOutcome::Read
+        crate::model::GithubReadOutcome::Read,
+        "{:?} {asked:?}",
+        project.status.unavailable_reason
     );
     assert_eq!(project.issues.repository.as_deref(), Some("acme/app"));
 }

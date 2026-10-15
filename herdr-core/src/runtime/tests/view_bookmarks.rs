@@ -704,7 +704,7 @@ fn each_tab_keeps_its_own_list_and_the_lane_stays_the_workspaces() {
     open(&mut runtime, &checkout, &directory, "b.md");
     view_event(
         &mut runtime,
-        serde_json::json!({"tool": "agent_sessions", "pinned": true, "lane_width": 444}),
+        serde_json::json!({"tool": "work", "pinned": true, "lane_width": 444}),
     );
     let b = presentation(&runtime);
     focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
@@ -717,11 +717,7 @@ fn each_tab_keeps_its_own_list_and_the_lane_stays_the_workspaces() {
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
     assert_eq!(
         (view.tool, view.pinned, view.lane_width),
-        (
-            Some(crate::workspace_views::Tool::AgentSessions),
-            true,
-            Some(444)
-        ),
+        (Some(crate::workspace_views::Tool::Work), true, Some(444)),
         "the lane is the Workspace's, so another tab keeps it"
     );
     assert!(
@@ -1617,4 +1613,189 @@ fn a_device_workspace_restores_when_its_visible_tab_changes() {
         runtime.snapshot.workspace_view.as_ref().unwrap().tool,
         Some(crate::workspace_views::Tool::Files)
     );
+}
+
+/// The Workspace is not the one in front of the operator's window and has
+/// never been: Herdr reports its tabs, but no tab owns the layout yet.
+fn setup_never_front(name: &str) -> (Runtime, PathBuf) {
+    let (runtime, _checkout_id, directory) = live_checkout(name);
+    let mut runtime = with_new_views(runtime, name);
+    runtime.snapshot.status.herdr.state = "connected".to_owned();
+    for file in ["a.md", "b.md", "c.md", "d.md"] {
+        std::fs::write(directory.join(file), format!("{file}\n")).expect("fixture");
+    }
+    // The operator looks at another Workspace.
+    runtime.snapshot.navigator.focused_workspace_id = Some("workspace:elsewhere".to_owned());
+    runtime.snapshot.navigator.focused_checkout_id = Some("checkout:elsewhere".to_owned());
+    runtime.ingest_session(Ok(tab_order_payload(
+        &directory.to_string_lossy(),
+        &TABS,
+        &TABS,
+        TABS[0],
+    )));
+    runtime.sync_workspace_view();
+    let store = runtime.workspace_views.as_ref().unwrap();
+    assert_eq!(store.front, None, "this Workspace is not in front");
+    assert_eq!(
+        store
+            .views
+            .get(crate::node::TEST_NODE, &directory.to_string_lossy())
+            .and_then(|entry| entry.view_owner.clone()),
+        None,
+        "no tab owns the checkout-level layout"
+    );
+    (runtime, directory)
+}
+
+/// `hide file open <name>` from `caller`, answering what the CLI prints.
+fn open_file_result(
+    runtime: &mut Runtime,
+    caller: &str,
+    directory: &Path,
+    name: &str,
+    suffix: &str,
+) -> crate::workspace_control::ActionResult {
+    let action = Action::OpenFile {
+        path: directory.join(name).to_string_lossy().into_owned(),
+        beside: false,
+        reveal: false,
+    };
+    let expected = runtime
+        .workspace_control_query(crate::node::TEST_NODE, caller, Query::Info)
+        .unwrap()
+        .context;
+    let id = format!("{}-{suffix}", unix_milliseconds());
+    let crate::workspace_control::ActionPreparation::Read(source) = runtime
+        .workspace_control_prepare_action(crate::node::TEST_NODE, caller, &expected, &id, &action)
+        .unwrap()
+    else {
+        panic!("a file needs a host read");
+    };
+    let material = source.read().unwrap();
+    runtime
+        .workspace_control_action(
+            crate::node::TEST_NODE,
+            caller,
+            &expected,
+            &id,
+            action,
+            Ok(Some(material)),
+        )
+        .unwrap()
+}
+
+fn listed(runtime: &Runtime, caller: &str) -> Vec<String> {
+    runtime
+        .workspace_control_query(crate::node::TEST_NODE, caller, Query::ViewList)
+        .unwrap()
+        .views
+        .unwrap()
+        .into_iter()
+        .map(|view| view.view_id)
+        .collect()
+}
+
+/// Live report: seven agents in tabs t2..t8 of a Workspace that is not in
+/// front. `hide file open` answers a view id, but `hide view list` (and so
+/// `hide view status`) does not show it, while `hide view close` finds it.
+#[test]
+fn a_view_opened_from_a_background_tab_of_a_workspace_not_in_front_is_listed_to_that_tab() {
+    let (mut runtime, directory) = setup_never_front("qa-behind-front");
+    // Herdr's active tab is t1; the caller sits in t2.
+    let caller = "w-order:t2:p";
+    let opened = open_file_result(&mut runtime, caller, &directory, "a.md", "behind-open");
+    assert!(opened.changed, "step 1: the open applied");
+    let id = opened.view_id.clone();
+    let entry = runtime
+        .workspace_views
+        .as_ref()
+        .unwrap()
+        .views
+        .get(crate::node::TEST_NODE, &directory.to_string_lossy())
+        .unwrap();
+    assert!(
+        entry.view_presentations[TABS[1]]
+            .layout
+            .display(&id)
+            .is_some(),
+        "the commit stored the view in t2's presentation"
+    );
+    assert_eq!(entry.view_owner, None, "the commit left no owner");
+    assert_eq!(
+        listed(&runtime, caller),
+        std::slice::from_ref(&id),
+        "step 2: the caller's own view list shows the view it just opened"
+    );
+}
+
+/// The caller reads the tab it wrote, for every read it makes: list, select
+/// and close act on the view it opened, a page opened there is listed as
+/// `pending` (the hidden tab's page waits until the tab is shown), and the
+/// operator's tab and another background tab see none of it.
+#[test]
+fn a_background_tab_reads_its_own_views_and_no_other_tab_does() {
+    let (mut runtime, directory) = setup_never_front("qa-behind-front-reads");
+    let caller = "w-order:t2:p";
+    let other = "w-order:t3:p";
+    let operator = "w-order:t1:p";
+    let opened = open_file_result(&mut runtime, caller, &directory, "a.md", "behind-open");
+    let page = control(
+        &mut runtime,
+        caller,
+        open_page("http://127.0.0.1:1/", false),
+        "page",
+    );
+    let page_view = runtime
+        .workspace_control_query(crate::node::TEST_NODE, caller, Query::ViewList)
+        .unwrap()
+        .views
+        .unwrap()
+        .into_iter()
+        .find(|view| view.view_id == page.view_id)
+        .expect("the page is listed to the tab that opened it");
+    assert_eq!(
+        page_view
+            .page
+            .expect("a browser view reports its page")
+            .state,
+        "pending"
+    );
+    assert_eq!(
+        listed(&runtime, caller),
+        [opened.view_id.clone(), page.view_id.clone()]
+    );
+    assert!(listed(&runtime, other).is_empty(), "another background tab");
+    assert!(
+        listed(&runtime, operator).is_empty(),
+        "the Workspace's active tab"
+    );
+    let select = control(
+        &mut runtime,
+        caller,
+        Action::Select {
+            view_id: opened.view_id.clone(),
+            reveal: false,
+            expected_browser_area: None,
+        },
+        "select",
+    );
+    assert_eq!(select.view_id, opened.view_id);
+    let close = |runtime: &mut Runtime, view_id: &str, suffix: &str| {
+        control(
+            runtime,
+            caller,
+            Action::Close {
+                view_id: view_id.to_owned(),
+                expected_browser_area: None,
+            },
+            suffix,
+        )
+    };
+    let unknown = close(&mut runtime, "d999", "close-unknown");
+    assert!(
+        !unknown.changed,
+        "closing an unknown view is ok, changed:false"
+    );
+    assert!(close(&mut runtime, &opened.view_id, "close-known").changed);
+    assert_eq!(listed(&runtime, caller), [page.view_id]);
 }

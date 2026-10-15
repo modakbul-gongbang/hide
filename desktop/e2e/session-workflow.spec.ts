@@ -43,12 +43,12 @@ test("Sessions and raised-child pane bands preserve native terminal geometry in 
       await captureNativeWindow(app, `session-children-${theme}`, facts);
       await page.keyboard.press("Escape");
       await expect(treeButton).toBeFocused();
-      await showTool(page, "agent_sessions");
+      await showTool(page, "work");
       // The raised child asks through its root's row (agent-hierarchy-screens B1, B2).
       await expect(page.locator(`[data-session-group="needs_you"] [data-session-row="${parent}"]`)).toContainText("Approve");
       await expect(page.locator(`[data-session-row="${child}"]`)).toHaveCount(0);
       await captureNativeWindow(app, `sessions-${theme}`, facts);
-      await page.locator('[data-lane-tool="agent_sessions"]').click();
+      await page.locator('[data-lane-tool="work"]').click();
       await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
     }
     await setFixtureLifecycle(herdr, child, "working");

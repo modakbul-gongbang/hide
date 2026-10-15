@@ -1029,9 +1029,11 @@ fn a_failed_lookup_keeps_the_pull_requests_it_could_not_refresh() {
         closed_at_unix_ms: None,
         head_oid: None,
         cross_repository: false,
+        work: Default::default(),
     };
     runtime.ingest_github(GithubSnapshot {
         projects: vec![GithubProjectSnapshot {
+            viewer: None,
             issues: Default::default(),
             root_path: "/tmp/hide".to_owned(),
             status: GithubStatusSnapshot {
@@ -1047,6 +1049,7 @@ fn a_failed_lookup_keeps_the_pull_requests_it_could_not_refresh() {
 
     runtime.ingest_github(GithubSnapshot {
         projects: vec![GithubProjectSnapshot {
+            viewer: None,
             root_path: "/tmp/hide".to_owned(),
             status: GithubStatusSnapshot {
                 available: true,
@@ -1067,6 +1070,7 @@ fn a_failed_lookup_keeps_the_pull_requests_it_could_not_refresh() {
     assert_eq!(project.status.last_success_at_unix_ms, Some(1_000));
     runtime.ingest_github(GithubSnapshot {
         projects: vec![GithubProjectSnapshot {
+            viewer: None,
             root_path: "/tmp/hide".to_owned(),
             status: GithubStatusSnapshot {
                 available: false,
@@ -1085,6 +1089,7 @@ fn a_failed_lookup_keeps_the_pull_requests_it_could_not_refresh() {
     fresh_pr.number = 8;
     runtime.ingest_github(GithubSnapshot {
         projects: vec![GithubProjectSnapshot {
+            viewer: None,
             root_path: "/tmp/hide".into(),
             pull_requests: vec![fresh_pr.clone()],
             pull_requests_read: true,

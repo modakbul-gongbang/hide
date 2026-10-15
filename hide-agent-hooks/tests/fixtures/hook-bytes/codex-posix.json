@@ -75,7 +75,7 @@
             "timeout": 8
           }
         ],
-        "matcher": "Bash|request_user_input|apply_patch|Edit|Write"
+        "matcher": "Bash|request_user_input|request_user_input_async|apply_patch|Edit|Write"
       }
     ]
   }

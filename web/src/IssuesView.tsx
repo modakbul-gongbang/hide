@@ -63,7 +63,8 @@ export function IssuesView({
       onPanel(card.task.key);
     },
     openGitHub: (url, deviceId) => actions.openPullRequest(url, deviceId, true),
-    openPullRequestRow: (owner, number) => actions.openPullRequestRow(owner.id, number),
+    openPrCard: (owner, number) => actions.openPrCard(owner.id, number),
+    openWorkPrs: () => actions.openWorkPrs(),
   };
   const boardPage = { panel: open ? panel : null, focusedPaneId };
   const view =

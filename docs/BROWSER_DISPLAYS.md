@@ -30,6 +30,7 @@ Only checkouts in the current connected catalog contribute to that inventory; a 
   `disconnected` means a native page existed for that load but was removed or its desktop renderer disconnected; `unsupported` means no desktop renderer was available for a pending page.
   A background pane open updates its own Agent tab with independent display and area identities, leaving the operator's same-URL page and load unchanged.
   A new hidden page can stay pending until that tab is shown.
+  An agent reads its own tab's Views (`hide view list`, `hide view status`, select, close, `--wait`) even when that tab is not its Workspace's active tab and the Workspace was never in front: with no tab owning the Workspace's layout yet, the tab Herdr reports active is the projected one, for the open and for every read, so such a page is listed as `pending` rather than missing.
   `--reveal` selects the actual caller tab; pane-less callers use the current checkout presentation.
   `--wait` polls that state for at most ten seconds and returns a failure if the page fails, disconnects, or remains pending; it does not reveal a hidden View.
   If a later status query fails, the refusal still carries the applied open request ID and View ID for reconciliation.

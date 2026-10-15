@@ -74,14 +74,14 @@ pub enum CommandKind {
     },
     /// `hide links`: a read of the link record (PRD link-graph D-19).
     Links(herdr_core::links::query::LinksQuery),
-    /// `hide memory show|search|add|forget|undo|placed|outdated|skipped` (PRD project-memory-v2 D-03,
+    /// `hide memory show|search|add|forget|undo|placed|building|unbuilt|outdated|skipped` (PRD project-memory-v2 D-03,
     /// D-11).
     Memory(herdr_core::memory_command::MemoryCommand),
 }
 
 const LINKS_USAGE: &str = "usage: hide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]";
 
-const MEMORY_USAGE: &str = "usage: hide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | outdated <card> <reason> | skipped <card> <reason>";
+const MEMORY_USAGE: &str = "usage: hide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | building <card> <branch> <path> | unbuilt <card> <reason> | outdated <card> <reason> | skipped <card> <reason>";
 
 const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>] | connect [--display <id>] | help | <command> <display> ... (see hide browser help)";
 
@@ -241,18 +241,21 @@ fn parse_memory<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Comman
                 path: (*path).to_owned(),
             })
         }
-        (Some(verb @ ("outdated" | "skipped")), [card, reason @ ..]) if !reason.is_empty() => {
+        (Some("building"), [card, branch, path]) => herdr_core::memory_command::parse_card(card)
+            .map(|number| MemoryCommand::Building {
+                number,
+                branch: (*branch).to_owned(),
+                path: (*path).to_owned(),
+            }),
+        (Some(verb @ ("outdated" | "skipped" | "unbuilt")), [card, reason @ ..])
+            if !reason.is_empty() =>
+        {
             herdr_core::memory_command::parse_card(card).map(|number| {
-                if verb == "skipped" {
-                    MemoryCommand::Skipped {
-                        number,
-                        reason: reason.join(" "),
-                    }
-                } else {
-                    MemoryCommand::Outdated {
-                        number,
-                        reason: reason.join(" "),
-                    }
+                let reason = reason.join(" ");
+                match verb {
+                    "skipped" => MemoryCommand::Skipped { number, reason },
+                    "unbuilt" => MemoryCommand::Unbuilt { number, reason },
+                    _ => MemoryCommand::Outdated { number, reason },
                 }
             })
         }
@@ -486,7 +489,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         println!("{}", crate::agent_cli::USAGE);
         println!("{}", hide_factory::command::USAGE);
         println!(
-            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | outdated <card> <reason> | skipped <card> <reason>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads, adds to and forgets from the caller's Project Memory, which the core keeps in one store for the Projects of its own machine and every registered linked device with a Memory reader."
+            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | building <card> <branch> <path> | unbuilt <card> <reason> | outdated <card> <reason> | skipped <card> <reason>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads, adds to and forgets from the caller's Project Memory, which the core keeps in one store for the Projects of its own machine and every registered linked device with a Memory reader."
         );
         return Ok(());
     }
@@ -629,9 +632,15 @@ fn memory(env: &Env, command: &herdr_core::memory_command::MemoryCommand) -> Res
         let reason = match command {
             MemoryCommand::Add { .. } => "memory_text_too_long",
             MemoryCommand::Placed { .. } => "memory_path_not_found",
-            MemoryCommand::Outdated { .. } | MemoryCommand::Skipped { .. } => {
-                "memory_reason_invalid"
+            MemoryCommand::Building { branch, .. }
+                if !herdr_core::memory_command::branch_name(branch) =>
+            {
+                "memory_branch_not_found"
             }
+            MemoryCommand::Building { .. } => "memory_building_path_not_found",
+            MemoryCommand::Outdated { .. }
+            | MemoryCommand::Skipped { .. }
+            | MemoryCommand::Unbuilt { .. } => "memory_reason_invalid",
             _ => "invalid_request",
         };
         return workspace_refusal(reason, next_action(reason));
@@ -756,6 +765,16 @@ fn memory_text(
             "{} points at {} once its pull request merges.\n",
             text(&result["card"]),
             text(&result["path"])
+        ),
+        MemoryCommand::Building { .. } => format!(
+            "{} goes into {} with the pull request of {}; this attempt ends without one.\n",
+            text(&result["card"]),
+            text(&result["path"]),
+            text(&result["branch"])
+        ),
+        MemoryCommand::Unbuilt { .. } => format!(
+            "{} returns to To ask as not built yet, with its reason; this attempt ends without a pull request.\n",
+            text(&result["card"])
         ),
         MemoryCommand::Outdated { .. } => format!(
             "{} is marked outdated; Hide checks it again and this attempt ends without a pull request.\n",
@@ -2732,6 +2751,30 @@ mod tests {
                 path: "docs/TESTING.md".into()
             }))
         );
+        assert_eq!(
+            parse(&[
+                "hide",
+                "memory",
+                "building",
+                "m5",
+                "feat/overview",
+                "docs/UI_BEHAVIOR.md"
+            ]),
+            Ok(CommandKind::Memory(MemoryCommand::Building {
+                number: 5,
+                branch: "feat/overview".into(),
+                path: "docs/UI_BEHAVIOR.md".into()
+            }))
+        );
+        assert_eq!(
+            parse(&[
+                "hide", "memory", "unbuilt", "m5", "no", "branch", "builds", "it"
+            ]),
+            Ok(CommandKind::Memory(MemoryCommand::Unbuilt {
+                number: 5,
+                reason: "no branch builds it".into()
+            }))
+        );
         for bad in [
             &["hide", "memory", "forget"][..],
             &["hide", "memory", "undo", "5x"],
@@ -2742,6 +2785,8 @@ mod tests {
             &["hide", "memory", "add", " "],
             &["hide", "memory", "edit", "m1"],
             &["hide", "memory", "placed", "m1"],
+            &["hide", "memory", "building", "m1", "feat/overview"],
+            &["hide", "memory", "unbuilt", "m1"],
         ] {
             assert_eq!(parse(bad), Err(MEMORY_USAGE.to_owned()), "{bad:?}");
         }
@@ -2791,6 +2836,17 @@ mod tests {
                 &serde_json::json!({"card":"m6","outcome":"skipped"})
             ),
             "m6 returns to To ask with its reason. Other cards stay in the shared pull request; retry continues the same branch.\n"
+        );
+        assert_eq!(
+            memory_text(
+                &MemoryCommand::Building {
+                    number: 6,
+                    branch: "feat/overview".into(),
+                    path: "docs/UI_BEHAVIOR.md".into()
+                },
+                &serde_json::json!({"card":"m6","outcome":"building","branch":"feat/overview","path":"docs/UI_BEHAVIOR.md"})
+            ),
+            "m6 goes into docs/UI_BEHAVIOR.md with the pull request of feat/overview; this attempt ends without one.\n"
         );
         assert_eq!(
             memory_text(&search, &serde_json::json!({"cards": []})),

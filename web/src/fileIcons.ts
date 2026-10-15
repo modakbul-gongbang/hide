@@ -1,146 +1,94 @@
-// The Seti mark a file row draws, resolved from the name alone, the catalog
-// the removed native outline used. Colours are the tokens the design system owns,
-// never literals: scripts/check-web-tokens.mjs refuses a hex colour in web/src.
-//
-// The font is the subset the app ships (MIT, notice at
-// desktop/resources/THIRD_PARTY_NOTICES/seti-ui-MIT.txt) at
-// web/src/assets/seti-subset.woff, loaded as "seti" by index.css. The
-// codepoints below are the private-use range that subset carries.
-
-type FileColor =
-  | "text-file-neutral"
-  | "text-file-document"
-  | "text-file-blue"
-  | "text-file-green"
-  | "text-file-orange"
-  | "text-file-yellow"
-  | "text-file-purple";
+// The mark a file or folder row draws: the Material Icon Theme, the file icon
+// theme most VS Code users run (MIT, notice at
+// desktop/resources/THIRD_PARTY_NOTICES/material-icon-theme-MIT.txt), resolved
+// from the name the way VS Code applies that theme's manifest. The package is a
+// pinned dependency read at build time: its manifest is bundled, and each SVG
+// is its own asset, fetched only when a row draws it.
+import {
+  file,
+  fileExtensions,
+  fileNames,
+  folder,
+  folderExpanded,
+  folderNames,
+  folderNamesExpanded,
+  iconDefinitions,
+  light,
+} from "material-icon-theme/dist/material-icons.json";
 
 export type FileIcon = {
-  /** The private-use codepoint the seti subset draws. */
-  glyph: string;
-  /** The class the --file-* token backs, so no row writes a colour. */
-  color: FileColor;
+  /** The picture the dark theme draws. */
+  url: string;
+  /** The picture the light theme draws: the theme's own light variant where
+   * it has one (a mark that would vanish on a light background), else `url`. */
+  lightUrl: string;
 };
 
-const NEUTRAL = "text-file-neutral";
-const DOCUMENT = "text-file-document";
-const BLUE = "text-file-blue";
-const GREEN = "text-file-green";
-const ORANGE = "text-file-orange";
-const YELLOW = "text-file-yellow";
-const PURPLE = "text-file-purple";
+/** The manifest's lookup tables; the light overlay carries only the names
+ * whose mark changes on a light background. */
+type Table = {
+  fileNames?: Record<string, string>;
+  fileExtensions?: Record<string, string>;
+  folderNames?: Record<string, string>;
+  folderNamesExpanded?: Record<string, string>;
+};
 
-/** The one deliberate generic: a plain document, at the same size and colour
- * as every other row rather than a missing glyph or an empty cell. */
-const FALLBACK: FileIcon = { glyph: "\ue023", color: DOCUMENT };
+const BASE: Table = { fileNames, fileExtensions, folderNames, folderNamesExpanded };
+const DARK: Table[] = [BASE];
+// A light entry outranks a base entry of the same kind and nothing more: a
+// base file name still beats a light extension, as VS Code's rules rank them.
+const LIGHT: Table[] = [light, BASE];
 
-function table(names: string[], icon: FileIcon): Record<string, FileIcon> {
-  return Object.fromEntries(names.map((name) => [name, icon]));
+const ASSETS = import.meta.glob<string>("../node_modules/material-icon-theme/icons/*.svg", {
+  query: "?no-inline",
+  import: "default",
+  eager: true,
+});
+
+/** The asset an icon id names. An id the manifest points at is always shipped
+ * in the same package, so a miss is a broken dependency, not a missing mark. */
+function assetUrl(id: string): string {
+  const path = iconDefinitions[id]?.iconPath;
+  const url = path ? ASSETS[`../node_modules/material-icon-theme/icons/${path.slice(path.lastIndexOf("/") + 1)}`] : undefined;
+  if (!url) throw new Error(`material-icon-theme has no picture for icon id ${id}`);
+  return url;
 }
 
-// Whole names first: a name carrying no extension, or nothing but a leading
-// dot, never reaches the extension table.
-const NAMED: Record<string, FileIcon> = {
-  ...table(
-    [".gitignore", ".gitattributes", ".gitmodules", ".gitconfig", ".gitkeep", ".mailmap"],
-    { glyph: "\ue034", color: NEUTRAL },
-  ),
-  ...table([".dockerignore"], { glyph: "\ue025", color: BLUE }),
-  ...table(
-    ["makefile", "gnumakefile", "cmakelists.txt", "justfile", "rakefile", "gemfile", "procfile", "brewfile"],
-    { glyph: "\ue05f", color: ORANGE },
-  ),
-  ...table(
-    [
-      ".zshrc", ".zshenv", ".zprofile", ".zlogin", ".zlogout",
-      ".bashrc", ".bash_profile", ".bash_logout", ".profile",
-      ".inputrc", ".hushlogin", ".envrc",
-    ],
-    { glyph: "\ue089", color: GREEN },
-  ),
-  ...table(
-    [
-      ".editorconfig", ".npmrc", ".nvmrc", ".yarnrc", ".tool-versions",
-      ".ruby-version", ".node-version", ".python-version",
-      ".npmignore", ".eslintignore", ".prettierignore", ".swiftformat",
-    ],
-    { glyph: "\ue019", color: NEUTRAL },
-  ),
-  ...table(["package-lock.json", "yarn.lock", "pnpm-lock.yaml"], { glyph: "\ue05d", color: GREEN }),
-};
-
-const LICENSE_PREFIXES = ["license", "licence", "copying"];
-
-const EXTENSIONS: Record<string, FileIcon> = {
-  swift: { glyph: "\ue092", color: ORANGE },
-  rs: { glyph: "\ue082", color: NEUTRAL },
-  ts: { glyph: "\ue099", color: BLUE },
-  tsx: { glyph: "\ue07d", color: BLUE },
-  jsx: { glyph: "\ue07d", color: BLUE },
-  js: { glyph: "\ue051", color: YELLOW },
-  mjs: { glyph: "\ue051", color: YELLOW },
-  cjs: { glyph: "\ue051", color: YELLOW },
-  md: { glyph: "\ue060", color: BLUE },
-  markdown: { glyph: "\ue060", color: BLUE },
-  json: { glyph: "\ue055", color: YELLOW },
-  jsonc: { glyph: "\ue055", color: YELLOW },
-  jsonl: { glyph: "\ue055", color: YELLOW },
-  toml: { glyph: "\ue019", color: NEUTRAL },
-  ini: { glyph: "\ue019", color: NEUTRAL },
-  cfg: { glyph: "\ue019", color: NEUTRAL },
-  conf: { glyph: "\ue019", color: NEUTRAL },
-  config: { glyph: "\ue019", color: NEUTRAL },
-  env: { glyph: "\ue019", color: NEUTRAL },
-  plist: { glyph: "\ue019", color: NEUTRAL },
-  yaml: { glyph: "\ue0a7", color: PURPLE },
-  yml: { glyph: "\ue0a7", color: PURPLE },
-  sh: { glyph: "\ue089", color: GREEN },
-  bash: { glyph: "\ue089", color: GREEN },
-  zsh: { glyph: "\ue089", color: GREEN },
-  fish: { glyph: "\ue089", color: GREEN },
-  py: { glyph: "\ue07b", color: BLUE },
-  pyw: { glyph: "\ue07b", color: BLUE },
-  png: { glyph: "\ue04c", color: PURPLE },
-  jpg: { glyph: "\ue04c", color: PURPLE },
-  jpeg: { glyph: "\ue04c", color: PURPLE },
-  gif: { glyph: "\ue04c", color: PURPLE },
-  webp: { glyph: "\ue04c", color: PURPLE },
-  tiff: { glyph: "\ue04c", color: PURPLE },
-  heic: { glyph: "\ue04c", color: PURPLE },
-  avif: { glyph: "\ue04c", color: PURPLE },
-  svg: { glyph: "\ue091", color: PURPLE },
-  html: { glyph: "\ue048", color: ORANGE },
-  htm: { glyph: "\ue048", color: ORANGE },
-  css: { glyph: "\ue01d", color: BLUE },
-  scss: { glyph: "\ue01d", color: BLUE },
-  sass: { glyph: "\ue01d", color: BLUE },
-  less: { glyph: "\ue01d", color: BLUE },
-  txt: { glyph: "\ue023", color: DOCUMENT },
-  log: { glyph: "\ue023", color: DOCUMENT },
-};
-
-/** The extension Foundation would report, which is what the original catalog
- * reads: a leading dot is not an extension, so .env resolves as a name. */
-function extensionOf(lowercased: string): string {
-  const dot = lowercased.lastIndexOf(".");
-  if (dot <= 0 || dot === lowercased.length - 1) return "";
-  return lowercased.slice(dot + 1);
+function first(tables: Table[], kind: keyof Table, key: string): string | undefined {
+  for (const table of tables) {
+    const id = table[kind]?.[key];
+    if (id) return id;
+  }
+  return undefined;
 }
 
-export function fileIcon(name: string): FileIcon {
-  const lowercased = name.toLowerCase();
-  const named = NAMED[lowercased];
+/** A whole name first, then every extension the name carries, longest first:
+ * `app.test.tsx` is `test.tsx` before `tsx`, and `.bashrc` is `bashrc`. */
+function fileId(lowercased: string, tables: Table[]): string {
+  const named = first(tables, "fileNames", lowercased);
   if (named) return named;
-  if (lowercased.startsWith("readme")) return { glyph: "\ue04d", color: BLUE };
-  if (LICENSE_PREFIXES.some((prefix) => lowercased.startsWith(prefix))) return { glyph: "\ue05a", color: YELLOW };
-  if (lowercased.startsWith("dockerfile")) return { glyph: "\ue025", color: BLUE };
-  if (lowercased.startsWith(".env")) return { glyph: "\ue019", color: NEUTRAL };
-  // A dot-name ending in rc is a tool's run-control file whatever the tool is,
-  // so the class is claimed rather than each new tool's name.
-  if (lowercased.startsWith(".") && lowercased.endsWith("rc")) return { glyph: "\ue019", color: NEUTRAL };
-  if (lowercased.endsWith(".lock")) return { glyph: "\ue05d", color: GREEN };
-  return EXTENSIONS[extensionOf(lowercased)] ?? FALLBACK;
+  for (let dot = lowercased.indexOf("."); dot !== -1; dot = lowercased.indexOf(".", dot + 1)) {
+    const id = first(tables, "fileExtensions", lowercased.slice(dot + 1));
+    if (id) return id;
+  }
+  return file;
 }
 
-export { FALLBACK as fallbackFileIcon };
+function folderId(lowercased: string, expanded: boolean, tables: Table[]): string {
+  return first(tables, expanded ? "folderNamesExpanded" : "folderNames", lowercased) ?? (expanded ? folderExpanded : folder);
+}
+
+/** The last name of a path; paths between machines always separate with `/`. */
+function nameOf(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1).toLowerCase();
+}
+
+export function fileIcon(path: string): FileIcon {
+  const name = nameOf(path);
+  return { url: assetUrl(fileId(name, DARK)), lightUrl: assetUrl(fileId(name, LIGHT)) };
+}
+
+export function folderIcon(path: string, expanded: boolean): FileIcon {
+  const name = nameOf(path);
+  return { url: assetUrl(folderId(name, expanded, DARK)), lightUrl: assetUrl(folderId(name, expanded, LIGHT)) };
+}

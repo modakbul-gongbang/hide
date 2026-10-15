@@ -35,16 +35,14 @@
 }
 
 /*
- * The Seti glyph subset the file rows draw (MIT, notice at
- * desktop/resources/THIRD_PARTY_NOTICES/seti-ui-MIT.txt) and the codepoints
- * fileIcons.ts resolves. block rather than swap: the glyphs
- * are private-use codepoints, so a fallback face would draw tofu for every row
- * until the font landed.
+ * A file or folder mark (components/file-mark.tsx): the picture fileIcons.ts
+ * resolved, and the light theme's own where the icon theme draws one.
  */
-@font-face {
-  font-family: "seti";
-  src: url("./assets/seti-subset.woff") format("woff");
-  font-display: block;
+[data-file-mark] {
+  background: var(--file-mark) center / contain no-repeat;
+}
+.light [data-file-mark] {
+  background-image: var(--file-mark-light);
 }
 
 @layer base {
@@ -96,6 +94,16 @@
    shows it, so it takes the terminal's background in either theme. */
 .xterm .xterm-viewport {
   background-color: var(--background);
+}
+
+/* xterm's own sheet draws the syllable an input method is composing white on
+   black; it takes the terminal's colours, underlined as the system draws it.
+   Like the viewport rule above, it wins by coming after xterm's sheet, which
+   `main.tsx` imports (through `App`) before this file. */
+.xterm .composition-view {
+  background-color: var(--background);
+  color: var(--foreground);
+  text-decoration: underline;
 }
 
 /*

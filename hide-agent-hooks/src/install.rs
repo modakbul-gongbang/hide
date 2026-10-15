@@ -70,7 +70,8 @@ pub enum HookStatus {
     /// Hide's entries are present at the current version.
     Installed { version: u32 },
     /// Hide's entries are present at an older version, or are missing from
-    /// some of the events Hide registers.
+    /// some of the events Hide registers, or select other tools than the
+    /// ones Hide writes today.
     Outdated { version: u32 },
     /// The runtime is here and carries no entry of Hide's.
     NotInstalled,
@@ -121,9 +122,17 @@ pub fn status(runtime: AgentRuntime, home: &Path) -> HookStatus {
     let mut lowest: Option<u32> = None;
     let mut missing_event = false;
     for event in HookEvent::ALL {
-        let version = hooks
-            .get(event.name())
-            .and_then(Value::as_array)
+        let groups = hooks.get(event.name()).and_then(Value::as_array);
+        // An entry of Hide's that selects other tools than the ones Hide
+        // writes today is outdated whatever its version says: the file does
+        // not hold what an install would write.
+        missing_event |= groups.is_some_and(|groups| {
+            groups.iter().any(|group| {
+                group_marker_version(group).is_some()
+                    && group.get("matcher").and_then(Value::as_str) != hook_matcher(runtime, event)
+            })
+        });
+        let version = groups
             .map(|groups| owned_versions(groups))
             .and_then(|versions| versions.into_iter().min());
         match version {
@@ -270,14 +279,17 @@ fn hook_group(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value {
 /// (PRD agent-guardrails D-12): Claude Code 2.1.300's `Edit`, `Write`,
 /// `MultiEdit`, `NotebookEdit` and `Read`, and Codex 0.162.1's `apply_patch`,
 /// which its `Edit` and `Write` aliases also select. Pinned Codex 0.160.1
-/// sends real plan-mode request_user_input through PreToolUse as well.
+/// sends real plan-mode request_user_input through PreToolUse as well, and
+/// 0.162.1 asks with `request_user_input_async`. Codex matches a tool by its
+/// whole name (a hook on `request_user_input` stayed silent for the async
+/// tool, measured 2026-10-15), so each question tool is named.
 pub(crate) fn hook_matcher(runtime: AgentRuntime, event: HookEvent) -> Option<&'static str> {
     match (runtime, event) {
         (AgentRuntime::ClaudeCode, HookEvent::PreToolUse) => {
             Some("Bash|AskUserQuestion|ExitPlanMode|Edit|Write|MultiEdit|NotebookEdit|Read")
         }
         (AgentRuntime::Codex, HookEvent::PreToolUse) => {
-            Some("Bash|request_user_input|apply_patch|Edit|Write")
+            Some("Bash|request_user_input|request_user_input_async|apply_patch|Edit|Write")
         }
         _ => None,
     }
@@ -1053,7 +1065,9 @@ mod tests {
                 AgentRuntime::ClaudeCode => {
                     "Bash|AskUserQuestion|ExitPlanMode|Edit|Write|MultiEdit|NotebookEdit|Read"
                 }
-                AgentRuntime::Codex => "Bash|request_user_input|apply_patch|Edit|Write",
+                AgentRuntime::Codex => {
+                    "Bash|request_user_input|request_user_input_async|apply_patch|Edit|Write"
+                }
             };
             assert_eq!(group["matcher"], expected, "{runtime:?}");
             let hook = &group["hooks"][0];
@@ -1120,6 +1134,48 @@ mod tests {
                 status(runtime, fixture.home()),
                 HookStatus::Installed { .. }
             ));
+        }
+    }
+
+    #[test]
+    fn an_entry_written_with_an_earlier_matcher_reads_outdated_until_it_is_rewritten() {
+        // What every Codex machine that installed Hide before
+        // `request_user_input_async` has: Codex matches a tool by its whole
+        // name (measured 2026-10-15, codex-cli 0.162.1), so `request_user_input`
+        // never selects the async tool.
+        for runtime in AgentRuntime::ALL {
+            let fixture = Fixture::new("matcher-upgrade");
+            let path = helper(&fixture);
+            install(runtime, fixture.home(), &path).unwrap();
+            let mut document = fixture.read(runtime);
+            let current = hook_matcher(runtime, HookEvent::PreToolUse).unwrap();
+            let earlier = match runtime {
+                AgentRuntime::ClaudeCode => current.to_owned(),
+                AgentRuntime::Codex => "Bash|request_user_input".to_owned(),
+            };
+            document["hooks"]["PreToolUse"][0]["matcher"] = Value::from(earlier.clone());
+            fixture.write(runtime, &serde_json::to_string_pretty(&document).unwrap());
+            let stale = earlier != current;
+            assert_eq!(
+                matches!(
+                    status(runtime, fixture.home()),
+                    HookStatus::Outdated { version } if version == crate::runtime::HOOK_VERSION
+                ),
+                stale,
+                "{runtime:?}"
+            );
+            install(runtime, fixture.home(), &path).unwrap();
+            assert!(
+                matches!(
+                    status(runtime, fixture.home()),
+                    HookStatus::Installed { .. }
+                ),
+                "{runtime:?}"
+            );
+            assert_eq!(
+                fixture.read(runtime)["hooks"]["PreToolUse"][0]["matcher"],
+                current
+            );
         }
     }
 

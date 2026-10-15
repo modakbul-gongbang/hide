@@ -1,6 +1,6 @@
 // The right lane's boards in `Screen / Workspace` (PRD right-lane B25, D-17):
 // the approved v3 states, closed, over the agents, pinned, the tree on over
-// the agents, the tree alone, expanded, Sessions pinned and a narrow window,
+// the agents, the tree alone, expanded, Work pinned and a narrow window,
 // each a whole window with its measure line, in one theme. The rail, the lane
 // header, the pin, the tree button, the document header and the dividers are
 // refs of `Component / Workspace columns` in design/hide-ui.lib.pen; the
@@ -91,9 +91,14 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
   }
 
   // -- the rail: icons alone, each tool's name in its hint --
-  const TOOLS = ['files', 'changes', 'sessions', 'memory'];
+  const TOOLS = ['work', 'memory', 'files', 'changes'];
+  // What needs the operator in Work, as the rail's warning badge draws it (PRD work-tab-pr-lens B4).
+  const WORK_COUNT = '3';
   function rail(id, active) {
-    const descendants = {};
+    const descendants = {
+      'lane-rail-work/lane-tool-badge': {enabled: true, fill: '$--warning'},
+      'lane-rail-work/lane-tool-badge-t': {content: WORK_COUNT},
+    };
     for (const key of TOOLS) {
       if (key !== active) continue;
       descendants[`lane-rail-${key}`] = {fill: '$--secondary'};
@@ -107,7 +112,9 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
   function header(id, tool, scope, {pinned, expanded}) {
     return themedXref(id, 'lane-header', 'Lane header', {width: 'fill_container'}, {
       'lane-header-tool': {content: tool},
-      'lane-header-scope': {content: ` · ${scope}`},
+      'lane-header-scope': {content: scope},
+      // The scope's icon: a folder for the Project's tools, the default branch glyph for the checkout's (PRD work-tab-pr-lens D-37).
+      ...(tool === 'Work' ? {'lane-header-scope-glyph': {icon: 'folder'}} : {}),
       ...(pinned ? {'lane-header-pin': {fill: '$--secondary'}, 'lane-header-pin/lane-pin-glyph': {fill: '$--primary', stroke: '$--primary'}} : {}),
       ...(expanded ? {'lane-header-expand': {fill: '$--secondary'}, 'lane-header-expand/ZIZFR': {icon: 'minimize-2', fill: '$--foreground'}} : {}),
     });
@@ -146,17 +153,32 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
       frame(`${id}-code`, 'Code block', {width: 'fill_container', layout: 'vertical', gap: 3, padding: [10, 12], fill: '$--secondary', cornerRadius: '$--radius-md'}, DOC.code.map((line, index) => cap(`${id}-code${index}`, line, '$--subtle-foreground', {mono: true}))),
     ]);
   }
+  // The Explorer's rows as the shell draws them: a chevron column per folder,
+  // an indent per level with a hairline under each ancestor's chevron, then the
+  // mark. The shell's marks are Material Icon Theme SVGs, which Pen fills only
+  // from a raster, so lucide glyphs in the theme's hues stand in for them here.
   const TREE = [
-    {depth: 0, folder: true, name: 'settings-ui'}, {depth: 1, folder: true, name: 'docs'}, {depth: 2, kind: 'MD', name: '설정검토.md'}, {depth: 2, kind: 'MD', name: '작업계획.md'},
-    {depth: 1, folder: true, name: 'web / src'}, {depth: 2, kind: 'TS', name: 'SettingsPanel.tsx'}, {depth: 2, kind: 'CSS', name: 'lane.css'},
+    {depth: 0, folder: 'open', name: 'settings-ui'}, {depth: 1, folder: 'open', name: 'docs', mark: 'folder-open', fill: '$--file-blue'}, {depth: 2, mark: 'file-text', fill: '$--file-blue', name: '설정검토.md'}, {depth: 2, mark: 'file-text', fill: '$--file-blue', name: '작업계획.md'},
+    {depth: 1, folder: 'open', name: 'web', mark: 'folder-open', fill: '$--file-blue'}, {depth: 2, folder: 'open', name: 'src', mark: 'folder-open', fill: '$--success'},
+    {depth: 3, folder: 'closed', name: 'components', mark: 'folder', fill: '$--file-yellow'}, {depth: 3, mark: 'atom', fill: '$--file-blue', name: 'SettingsPanel.tsx'}, {depth: 3, mark: 'file-code', fill: '$--file-purple', name: 'lane.css'},
   ];
-  const KIND_FILL = {MD: '$--file-document', TS: '$--file-blue', CSS: '$--file-purple'};
+  const INDENT = n('--size-tree-indent');
+  const MARK = n('--size-tree-mark');
+  const INSET = n('--spacing-sm');
   function tree(id, width, {only}) {
     const selected = only ? null : '설정검토.md';
-    const row = (entry, index) => frame(`${id}-r${index}`, entry.name, {width: 'fill_container', height: 26, layout: 'horizontal', gap: 6, alignItems: 'center', padding: [0, 8, 0, 10 + entry.depth * 14], ...(entry.name === selected ? {fill: '$--color-selected', stroke: '$--primary', strokeWidth: {left: 2}, strokeAlignment: 'inner'} : {})}, [
-      entry.folder ? icon(`${id}-r${index}-g`, 'chevron-down', {size: 10, fill: '$--muted-foreground'}) : mic(`${id}-r${index}-k`, entry.kind, KIND_FILL[entry.kind], {mono: true, weight: '600'}),
-      body(`${id}-r${index}-t`, entry.name, '$--foreground', {weight: entry.folder ? '500' : '400'}),
+    const guide = (rowId, level) => frame(`${rowId}-i${level}`, 'Indent', {width: INDENT, height: n('--size-pane-child-row'), layout: 'none'}, [
+      frame(`${rowId}-i${level}-l`, 'Guide', {x: MARK / 2, y: 0, width: 1, height: n('--size-pane-child-row'), fill: '$--border'}, []),
     ]);
+    const row = (entry, index) => {
+      const rowId = `${id}-r${index}`;
+      return frame(rowId, entry.name, {width: 'fill_container', height: n('--size-pane-child-row'), layout: 'horizontal', gap: n('--spacing-xs'), alignItems: 'center', padding: [0, 8, 0, INSET], ...(entry.name === selected ? {fill: '$--secondary'} : {})}, [
+        frame(`${rowId}-in`, 'Indent guides', {height: n('--size-pane-child-row'), layout: 'horizontal'}, Array.from({length: entry.depth}, (_, level) => guide(rowId, level))),
+        frame(`${rowId}-c`, 'Chevron', {width: MARK, height: MARK, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, entry.folder ? [icon(`${rowId}-g`, entry.folder === 'open' ? 'chevron-down' : 'chevron-right', {size: MARK, fill: '$--muted-foreground'})] : []),
+        icon(`${rowId}-k`, entry.mark ?? 'folder-open', {size: MARK, fill: entry.fill ?? '$--file-neutral'}),
+        sub(`${rowId}-t`, entry.name, '$--foreground'),
+      ]);
+    };
     return frame(id, only ? 'Tree (only)' : 'Tree column', {width, height: 'fill_container', layout: 'vertical', fill: '$--sidebar', ...(only ? {} : {stroke: '$--border', strokeWidth: {right: 1}, strokeAlignment: 'inner'})}, [
       frame(`${id}-find`, 'Find row', {width: 'fill_container', layout: 'vertical', padding: [8, 8, 4, 8]}, [
         frame(`${id}-find-f`, 'Find field', {width: 'fill_container', height: 28, layout: 'horizontal', gap: 8, alignItems: 'center', padding: [0, 8], fill: '$--background', stroke: '$--border', strokeWidth: 1, strokeAlignment: 'inner', cornerRadius: '$--radius-sm'}, [
@@ -164,7 +186,7 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
         ]),
       ]),
       frame(`${id}-hintrow`, 'Hint', {width: 'fill_container', padding: [0, 10, 6, 10]}, [mic(`${id}-hint`, only ? '열린 문서 없음 · 트리만' : '한 번 클릭 미리보기 · 두 번 클릭 고정')]),
-      frame(`${id}-rows`, 'Rows', {width: 'fill_container', height: 'fill_container', layout: 'vertical', padding: [0, 4]}, TREE.map(row)),
+      frame(`${id}-rows`, 'Rows', {width: 'fill_container', height: 'fill_container', layout: 'vertical'}, TREE.map(row)),
       frame(`${id}-foot`, 'Foot', {width: 'fill_container', height: 28, layout: 'horizontal', alignItems: 'center', padding: [0, 10], stroke: '$--border', strokeWidth: {top: 1}, strokeAlignment: 'inner'}, [mic(`${id}-foot-t`, only ? '파일을 고르면 옆에 열림' : '끌 때까지 남음 · ⌘⇧E')]),
     ]);
   }
@@ -176,7 +198,10 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
   function sessions(id) {
     const MARK = {ask: '$--warning', work: '$--agent-working', done: '$--success'};
     const chip = (key, label, on) => frame(`${id}-chip-${key}`, label, {height: 20, layout: 'horizontal', alignItems: 'center', padding: [0, 8], cornerRadius: 999, stroke: '$--border', strokeWidth: 1, strokeAlignment: 'inner', ...(on ? {fill: '$--secondary'} : {})}, [cap(`${id}-chip-${key}-t`, label, on ? '$--foreground' : '$--muted-foreground', {weight: on ? '600' : '400'})]);
-    return frame(id, 'Sessions list', {width: 'fill_container', height: 'fill_container', layout: 'vertical', padding: [8, 6]}, [
+    // Work's two bases (PRD work-tab-pr-lens B2): Sessions pressed here, the dot where something needs the operator.
+    const basis = (key, label, on) => frame(`${id}-basis-${key}`, label, {width: 'fill_container', height: 24, layout: 'horizontal', gap: 4, alignItems: 'center', justifyContent: 'center', cornerRadius: '$--radius-sm', ...(on ? {fill: '$--secondary'} : {})}, [cap(`${id}-basis-${key}-t`, label, on ? '$--foreground' : '$--muted-foreground', {weight: on ? '600' : '400'}), dot(`${id}-basis-${key}-d`, '$--warning', 5)]);
+    return frame(id, 'Work list · Sessions basis', {width: 'fill_container', height: 'fill_container', layout: 'vertical', padding: [8, 6]}, [
+      frame(`${id}-basis`, 'Sessions | PRs', {width: 'fill_container', height: 30, layout: 'horizontal', alignItems: 'center', padding: 3, margin: [0, 0, 6, 0], fill: '$--background', stroke: '$--border', strokeWidth: 1, strokeAlignment: 'inner', cornerRadius: '$--radius-md'}, [basis('sessions', 'Sessions', true), basis('prs', 'PRs', false)]),
       frame(`${id}-chips`, 'Scope chips', {layout: 'horizontal', gap: 6, padding: [0, 6, 6, 6]}, [chip('all', 'All checkouts', true), chip('main', 'main only', false)]),
       ...SESSIONS.flatMap(([group, fill, rows], groupIndex) => [
         frame(`${id}-g${groupIndex}`, group, {width: 'fill_container', height: 28, layout: 'horizontal', gap: 6, alignItems: 'center', padding: [0, 6]}, [cap(`${id}-g${groupIndex}-t`, group, fill, {weight: '600'}), cap(`${id}-g${groupIndex}-n`, String(rows.length))]),
@@ -189,9 +214,9 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
   // A lane over the agents is set apart by a shadow and its left border (B3).
   const SHADOW = {type: 'shadow', shadowType: 'outer', offset: {x: -16, y: 0}, blur: 40, spread: 0, color: suffix === 'l' ? '#00000052' : '#000000f0'};
   function lane(id, {tool, tree: treeMode = 'off', pinned, expanded = false, overlay, width}) {
-    const head = tool === 'sessions' ? header(`${id}-head`, '세션', 'hide 전체', {pinned, expanded}) : header(`${id}-head`, '파일', 'settings-ui', {pinned, expanded});
+    const head = tool === 'work' ? header(`${id}-head`, 'Work', 'hide 전체', {pinned, expanded}) : header(`${id}-head`, '파일', 'settings-ui', {pinned, expanded});
     let content;
-    if (tool === 'sessions') content = sessions(`${id}-ses`);
+    if (tool === 'work') content = sessions(`${id}-ses`);
     else if (treeMode === 'only') content = tree(`${id}-tree`, 'fill_container', {only: true});
     else {
       const documentWidth = treeMode === 'on' ? width - TREE_W : width;
@@ -293,12 +318,12 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
       measures: [['터미널', '540px'], ['View', '520px · 핀'], ['트리', '520px · 트리만']], caption: '파일을 고르면 문서가 옆에 열림'},
     {key: 'expanded', no: 6, title: '확대', name: 'expanded', lane: {tool: 'files', tree: 'on', pinned: false, expanded: true, overlay: true, width: LANE_W},
       measures: [['터미널', '1068px · 아래에서 그대로'], ['View', '1068px · 확대'], ['트리', '240px · 켬']], caption: '다시 누르거나 Esc로 이전 배치'},
-    {key: 'sessions', no: 7, title: '세션 도구 · 핀', name: 'sessions, pinned', lane: {tool: 'sessions', pinned: true, overlay: false, width: LANE_W},
-      measures: [['터미널', '540px'], ['View', '520px · 핀'], ['범위', 'hide 전체']], caption: '핀은 도구를 바꿔도 그대로'},
+    {key: 'work', no: 7, title: 'Work 도구 · 핀 · Sessions 기준', name: 'work, pinned', lane: {tool: 'work', pinned: true, overlay: false, width: LANE_W},
+      measures: [['터미널', '540px'], ['View', '520px · 핀'], ['범위', 'hide 전체'], ['Work 숫자', '3']], caption: '핀은 도구를 바꿔도 그대로 · PR 카드는 파일 도구에서 열림'},
     {key: 'narrow', no: 8, title: '좁은 창 · 핀을 켰지만 겹침', name: 'narrow 1040', width: 1040, lane: {tool: 'files', pinned: true, overlay: true, width: LANE_W}, tooltip: {label: '핀 · 폭이 부족해 겹쳐 열림', dx: 262, y: 4},
       measures: [['터미널', '652px · 유지'], ['View', '520px · 겹침'], ['남는 터미널 폭', '124px < 480px']], caption: '핀 켬 · 480px이 남지 않아 겹쳐 열림, 터미널을 눌러도 남음'},
   ];
-  const toolOf = spec => spec.lane ? (spec.lane.tool === 'sessions' ? 'sessions' : 'files') : null;
+  const toolOf = spec => spec.lane ? (spec.lane.tool === 'work' ? 'work' : 'files') : null;
   return STATES.map(spec => board(`rl-${spec.key}-${suffix}`, {
     no: spec.no, title: spec.title, measures: spec.measures, caption: spec.caption,
     win: window(`rl-${spec.key}-${suffix}-win`, {name: spec.name, width: spec.width, lane: spec.lane, tooltip: spec.tooltip, tool: toolOf(spec)}),

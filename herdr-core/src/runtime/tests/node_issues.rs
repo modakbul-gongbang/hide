@@ -477,6 +477,7 @@ fn a_node_s_github_project_lists_its_repository_s_issues_and_links_its_checkouts
         &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
+                viewer: None,
                 pull_requests_read: true,
                 issues_read: true,
                 issues: crate::issues::ProjectIssuesSnapshot {
@@ -530,6 +531,7 @@ fn a_node_s_github_project_lists_its_repository_s_issues_and_links_its_checkouts
         &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
+                viewer: None,
                 root_path: repo.root.clone(),
                 status: crate::model::GithubStatusSnapshot {
                     available: true,
@@ -608,6 +610,7 @@ fn a_node_project_says_when_this_machine_s_gh_is_signed_out() {
         &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
+                viewer: None,
                 root_path: repo.root.clone(),
                 status: crate::model::GithubStatusSnapshot {
                     available: false,
@@ -754,6 +757,7 @@ fn a_node_project_is_named_and_searched_by_the_repository_the_node_read() {
         &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
+                viewer: None,
                 root_path: repo.root.clone(),
                 status: crate::model::GithubStatusSnapshot {
                     available: false,
@@ -786,6 +790,7 @@ fn a_new_github_issue_for_a_node_project_is_made_by_repository_name_here() {
             &Default::default(),
             crate::model::GithubSnapshot {
                 projects: vec![crate::model::GithubProjectSnapshot {
+                    viewer: None,
                     pull_requests_read: true,
                     issues_read: true,
                     issues: crate::issues::ProjectIssuesSnapshot {
@@ -1619,6 +1624,7 @@ fn ingest_node_pull_request(runtime: &mut Runtime, repo: &Repo) {
         &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
+                viewer: None,
                 pull_requests_read: true,
                 issues_read: true,
                 issues: crate::issues::ProjectIssuesSnapshot {
@@ -1649,6 +1655,7 @@ fn ingest_node_pull_request(runtime: &mut Runtime, repo: &Repo) {
                     closed_at_unix_ms: None,
                     head_oid: None,
                     cross_repository: false,
+                    work: Default::default(),
                 }],
             }],
         },
@@ -1948,6 +1955,7 @@ fn ingest_node_issues(runtime: &mut Runtime, repo: &Repo, numbers: &[u32]) {
         &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
+                viewer: None,
                 pull_requests_read: true,
                 issues_read: true,
                 issues: crate::issues::ProjectIssuesSnapshot {

@@ -149,6 +149,7 @@ fn settled_worktree(badge: crate::model::PullRequestBadge) -> CheckoutSnapshot {
         closed_at_unix_ms: None,
         head_oid: None,
         cross_repository: false,
+        work: Default::default(),
     };
     CheckoutSnapshot {
         agent_scope: Default::default(),
