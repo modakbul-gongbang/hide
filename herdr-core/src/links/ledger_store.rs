@@ -55,9 +55,81 @@ INSERT INTO ledger_requests(device,agent,id,offset,at,text,author)
  FROM sessions WHERE last_request IS NOT NULL AND trim(last_request)!='';
 ";
 
+pub(super) const ORIGIN_SCHEMA: &str = "
+CREATE TABLE ledger_project_connections(project TEXT PRIMARY KEY, repository TEXT, since_at INTEGER NOT NULL, epoch INTEGER NOT NULL);
+CREATE TABLE ledger_session_origins(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL,
+ project TEXT, repository TEXT, PRIMARY KEY(device,agent,id));
+INSERT INTO ledger_session_origins(device,agent,id) SELECT device,agent,id FROM sessions;
+";
+
+/// One immutable, nullable identity per retained session. A first discovery
+/// of old history is not evidence of the repository connected today.
+pub(super) fn capture_session_origin(
+    tx: &Transaction<'_>,
+    session: &SessionIdentity,
+    cwd: Option<&str>,
+    started_at: Option<u64>,
+) -> Result<(), String> {
+    if tx
+        .query_row(
+            "SELECT 1 FROM ledger_session_origins WHERE device=?1 AND agent=?2 AND id=?3",
+            params![session.device_id, session.agent, session.session_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(failed)?
+        .is_some()
+    {
+        return Ok(());
+    }
+    let mut statement = tx.prepare("SELECT DISTINCT p.root,c.repository,c.since_at,p.root FROM projects p JOIN ledger_project_connections c ON c.project=p.key WHERE p.device=?1 UNION SELECT DISTINCT p.root,c.repository,c.since_at,w.path FROM projects p JOIN ledger_project_connections c ON c.project=p.key JOIN worktrees w ON w.project=p.key WHERE p.device=?1 LIMIT ?2").map_err(failed)?;
+    let candidates = statement
+        .query_map(
+            params![session.device_id, (LEDGER_QUEUE_LIMIT + 1) as i64],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, u64>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .map_err(failed)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(failed)?;
+    if candidates.len() > LEDGER_QUEUE_LIMIT {
+        return Err("ledger_project_capacity".into());
+    }
+    let owner = candidates
+        .into_iter()
+        .filter(|(_, _, _, path)| cwd.is_some_and(|cwd| super::within(cwd, path)))
+        .max_by_key(|(_, _, _, path)| path.len());
+    let (project, repository) = owner.map_or((None, None), |(root, repository, since, _)| {
+        if started_at.is_some_and(|at| at >= since) {
+            (Some(root), repository)
+        } else {
+            (None, None)
+        }
+    });
+    tx.execute(
+        "INSERT INTO ledger_session_origins VALUES(?1,?2,?3,?4,?5)",
+        params![
+            session.device_id,
+            session.agent,
+            session.session_id,
+            project,
+            repository
+        ],
+    )
+    .map_err(failed)?;
+    Ok(())
+}
+
 /// The backlog (PRD overview-device-tasks D-13, D-34): which item a missed
-/// line became, and the typed items' durable GitHub attempts.
-pub(super) const SCHEMA_V3: &str = "
+/// line became, and the typed items' durable GitHub attempts. Version 4,
+/// after the session origins of version 3.
+pub(super) const BACKLOG_SCHEMA: &str = "
 ALTER TABLE ledger_missed ADD COLUMN backlog_key TEXT;
 CREATE TABLE ledger_backlog(intent TEXT PRIMARY KEY, device TEXT NOT NULL, project TEXT NOT NULL,
  workspace TEXT NOT NULL, repo TEXT NOT NULL, title TEXT NOT NULL, started_at INTEGER NOT NULL,
@@ -967,41 +1039,7 @@ impl LinkStore {
     pub fn ledger_record(&self, session: &SessionIdentity) -> Result<SessionRecord, String> {
         let mut visited = BTreeSet::new();
         let mut budget = REQUEST_LIMIT;
-        let mut record = self.record_tree(session, &mut visited, 0, &mut budget, true)?;
-        let row = self
-            .session(&key(session))?
-            .ok_or("ledger_session_missing")?;
-        let projects = self.projects()?;
-        if projects.len() > LEDGER_QUEUE_LIMIT {
-            return Err("ledger_project_capacity".into());
-        }
-        let mut owner = None;
-        for project in projects {
-            let specificity = self
-                .project_paths(&project)?
-                .iter()
-                .filter(|(device, path)| {
-                    *device == row.key.device
-                        && row
-                            .cwd
-                            .as_deref()
-                            .is_some_and(|cwd| super::within(cwd, path))
-                })
-                .map(|(_, path)| path.len())
-                .max();
-            if let Some(specificity) = specificity
-                && owner
-                    .as_ref()
-                    .is_none_or(|(length, _)| specificity > *length)
-            {
-                owner = Some((specificity, project));
-            }
-        }
-        if let Some((_, project)) = owner {
-            record.project = Some(project.root);
-            record.repository = project.name;
-        }
-        Ok(record)
+        self.record_tree(session, &mut visited, 0, &mut budget, true)
     }
 
     fn record_tree(
@@ -1031,6 +1069,13 @@ impl LinkStore {
             ended_at_unix_ms: row.ended_at,
             ..SessionRecord::default()
         };
+        let origin: Option<(Option<String>, Option<String>)> = self.connection.query_row(
+            "SELECT project,repository FROM ledger_session_origins WHERE device=?1 AND agent=?2 AND id=?3",
+            params![session.device_id,session.agent,session.session_id], |row| Ok((row.get(0)?,row.get(1)?))).optional().map_err(failed)?;
+        if let Some((project, repository)) = origin {
+            record.project = project;
+            record.repository = repository;
+        }
         let titles:Option<(Option<String>,Option<String>,Option<String>)>=self.connection.query_row(
             "SELECT native_title,manual_title,state FROM ledger_titles WHERE device=?1 AND agent=?2 AND id=?3",
             params![session.device_id,session.agent,session.session_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(failed)?;

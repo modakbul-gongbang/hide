@@ -1,5 +1,6 @@
 /* Generated from design/tokens.json by scripts/gen-tokens.mjs. Do not edit. */
 @custom-variant agent-tab-count-room (@container tab-title (min-width: 48px));
+@custom-variant overview-narrow (@media (width < 1280px));
 
 @theme static {
   --color-*: initial;
@@ -268,6 +269,7 @@
   --size-settings-sheet-w: 880px;
   --size-settings-nav-w: 200px;
   --size-settings-sheet-h: 560px;
+  --size-project-settings-sheet-h: 640px;
   --size-settings-sheet-h-max: 800px;
   --size-settings-sheet-window-inset: 40px;
   --size-overview-sheet-w: 1440px;
@@ -290,6 +292,7 @@
   --size-onboarding-dialog-w: 640px;
   --size-onboarding-tile: 112px;
   --size-agent-logo: 40px;
+  --size-overview-panel-breakpoint: 1280px;
   --size-pane-parent-breakpoint: 640px;
   --size-pane-state-example: 144px;
   --size-usage-cell: 12px;

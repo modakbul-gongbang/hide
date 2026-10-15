@@ -90,20 +90,17 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
     ]);
   }
 
-  // -- the rail, its labels as the Korean interface reads them --
-  const TOOLS = [['files', '파일'], ['changes', '변경'], ['work', 'Work'], ['memory', '기억']];
+  // -- the rail: icons alone, each tool's name in its hint --
+  const TOOLS = ['files', 'changes', 'work', 'memory'];
   // What needs the operator in Work, as the rail's warning badge draws it (PRD work-tab-pr-lens B4).
   const WORK_COUNT = '3';
   function rail(id, active) {
-    const descendants = {};
-    for (const [key, label] of TOOLS) {
-      const on = key === active;
-      descendants[`lane-rail-${key}/lane-tool-label`] = {content: label, ...(on ? {fill: '$--foreground', fontWeight: '500'} : {})};
-      if (key === 'work') {
-        descendants['lane-rail-work/lane-tool-badge'] = {enabled: true, fill: '$--warning'};
-        descendants['lane-rail-work/lane-tool-badge-t'] = {content: WORK_COUNT};
-      }
-      if (!on) continue;
+    const descendants = {
+      'lane-rail-work/lane-tool-badge': {enabled: true, fill: '$--warning'},
+      'lane-rail-work/lane-tool-badge-t': {content: WORK_COUNT},
+    };
+    for (const key of TOOLS) {
+      if (key !== active) continue;
       descendants[`lane-rail-${key}`] = {fill: '$--secondary'};
       descendants[`lane-rail-${key}/lane-tool-bar`] = {enabled: true};
       descendants[`lane-rail-${key}/lane-tool-glyph`] = {fill: '$--foreground'};

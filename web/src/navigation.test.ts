@@ -223,6 +223,18 @@ describe("an open from Main or an Overview", () => {
     expect(openingProgress({ ...accepted, navigator: rest("c1").navigator }, opening)).toBeNull();
   });
 
+  it("waits for the requested tool on the target checkout and device", () => {
+    const opening = { target: { workspaceId: "w", checkoutId: "c2", deviceId: "local", path: "/w2", tool: "memory" as const }, errorBefore: null, failure: null };
+    const arrived = { ...rest("c2"), workspace_view: { device_id: "local", path: "/w2", tool: "memory", pinned: false, tree: false, lane_width: null, tree_width: null, lane_called: 0, lane_calls: 0 } } as SnapshotRest;
+    expect(openingProgress(rest("c2"), opening)).toBeNull();
+    expect(openingProgress({ ...arrived, workspace_view: { ...arrived.workspace_view!, tool: null } }, opening)).toBeNull();
+    expect(openingProgress({ ...arrived, workspace_view: { ...arrived.workspace_view!, tool: "files" } }, opening)).toBeNull();
+    expect(openingProgress({ ...arrived, workspace_view: { ...arrived.workspace_view!, device_id: "other" } }, opening)).toBeNull();
+    expect(openingProgress({ ...arrived, workspace_view: { ...arrived.workspace_view!, path: "/w" } }, opening)).toBeNull();
+    expect(openingProgress({ ...arrived, navigator: rest("c1").navigator }, opening)).toBeNull();
+    expect(openingProgress(arrived, opening)).toBe("landed");
+  });
+
   it("silently cancels a vanished local row, with or without agents", () => {
     for (const expanded of [true, undefined]) {
       const opening = { target: { workspaceId: "w", checkoutId: "gone", deviceId: "local", path: "/gone", expanded }, errorBefore: null, failure: null };

@@ -1313,7 +1313,15 @@ pub fn handle_with_progress(
                 ));
             }
             let home = env.home("links_home_unavailable")?;
-            to_value(hide_session::links::read(Path::new(&home), &requests))
+            let mut answers = hide_session::links::read(Path::new(&home), &requests);
+            // Agent records carry this node's native cwd. Catalog paths use
+            // wire spelling; only the owning node may convert between them.
+            for answer in &mut answers {
+                if let Some(cwd) = answer.facts.cwd.as_mut() {
+                    *cwd = hide_platform::path::to_wire_lossy(Path::new(cwd));
+                }
+            }
+            to_value(answers)
         }
         Call::WorktreeRemove { removal } => {
             absolute(&removal.repository_root)?;

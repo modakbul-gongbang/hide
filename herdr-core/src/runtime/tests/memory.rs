@@ -489,7 +489,12 @@ fn turning_memory_on_updates_the_hooks_first_and_then_turns_it_on() {
             hide_kit::ComponentId::CodexHook
         ])))
     );
-    assert_eq!(pending(&guard), None, "Memory waits for the hooks");
+    assert_eq!(
+        pending(&guard),
+        Some(MemoryAction::Enable),
+        "Memory waits for the hooks"
+    );
+    assert!(opened(&guard).unwrap().preparing_hooks);
 
     guard.ingest_hook_diagnosis(diagnosis(hide_agent_hooks::HookStatus::Installed {
         version: hide_agent_hooks::HOOK_VERSION,
@@ -664,4 +669,33 @@ fn a_registered_device_project_keeps_its_memory_scope_while_the_link_is_down() {
 
     assert!(runtime.open_project_memory(Some("remote:mini:workspace:w".into())));
     assert_eq!(opened(&runtime).unwrap().unavailable, None);
+}
+
+#[test]
+fn memory_enable_and_disable_failures_stay_with_the_requested_project() {
+    let (mut runtime, workspace) = opened_project();
+    // The press waits for the first hook read; that read failing refuses it.
+    runtime.apply_memory_action(action(&workspace, MemoryAction::Enable));
+    assert_eq!(opened(&runtime).unwrap().action_failure, None);
+    assert!(runtime.hook_diagnosis_failed());
+    assert_eq!(
+        opened(&runtime).unwrap().action_failure,
+        Some(MemoryAction::Enable)
+    );
+    assert_eq!(opened(&runtime).unwrap().pending_action, None);
+    runtime.apply_memory_action(action(&workspace, MemoryAction::Disable));
+    assert_eq!(
+        opened(&runtime).unwrap().action_failure,
+        Some(MemoryAction::Disable)
+    );
+    assert_eq!(opened(&runtime).unwrap().pending_action, None);
+    runtime.open_project_memory(Some("another-project".into()));
+    runtime.sync_project_memory();
+    assert_eq!(opened(&runtime).unwrap().action_failure, None);
+    runtime.open_project_memory(Some(workspace));
+    runtime.sync_project_memory();
+    assert_eq!(
+        opened(&runtime).unwrap().action_failure,
+        Some(MemoryAction::Disable)
+    );
 }

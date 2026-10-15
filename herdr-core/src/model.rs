@@ -2588,6 +2588,8 @@ pub struct ProjectMemorySnapshot {
     /// The operator's Memory action still running for this Project; another
     /// waits for it.
     pub pending_action: Option<MemoryAction>,
+    pub preparing_hooks: bool,
+    pub action_failure: Option<MemoryAction>,
     /// The one card shown in full (`memory_expand`).
     pub expanded: Option<MemoryCardSnapshot>,
     /// The matcher's answer to the shell's `memory_search`.
@@ -2641,6 +2643,8 @@ pub struct MemoryPromotionSnapshot {
     /// The agent putting the card in the repository, while it runs.
     pub agent: Option<MemoryPromotionAgentSnapshot>,
     pub pr_number: Option<u64>,
+    /// The durable original target, absent when legacy provenance is unknown.
+    pub pr_url: Option<String>,
     /// The repository-relative file the card went into, once the agent said.
     pub target_path: Option<String>,
     /// Why GitHub could not say whether an `unconfirmed` attempt's pull
@@ -3051,6 +3055,13 @@ pub struct UiStateSnapshot {
     pub expanded_inactive_project_device_ids: Vec<String>,
     #[serde(default)]
     pub project_base_branches: BTreeMap<String, String>,
+    /// Private choices keyed by machine plus canonical main-worktree root.
+    /// Missing fields retain legacy path-based issue/base behavior.
+    #[serde(default)]
+    pub project_settings: BTreeMap<String, crate::project_settings::ProjectSettings>,
+    /// Bounded transient write receipts; never restored or saved as choices.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub project_settings_writes: BTreeMap<String, crate::project_settings::WriteStatus>,
     /// Agent panes whose descendants the operator opened in the sidebar tree.
     /// Absence is the default folded state, so a row with children starts
     /// folded and shows its descendant badge until the operator opens it.
@@ -3456,7 +3467,8 @@ pub enum BacklogPhase {
 }
 
 /// The reason line a failed item shows: the four GitHub categories, a queue
-/// past its bound, an answer Hide could not confirm, and a store refusal.
+/// past its bound, an answer Hide could not confirm, a repository the item
+/// may no longer go to, and a store refusal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BacklogFailure {
@@ -3466,6 +3478,9 @@ pub enum BacklogFailure {
     NetworkOrRateLimit,
     QueueFull,
     Unconfirmed,
+    /// The project's repository connection changed while the item was being
+    /// made, or a missed line's session did not work in this repository.
+    RepositoryChanged,
     Refused,
 }
 
@@ -3767,6 +3782,8 @@ pub struct PrChangeRequest {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PrFeedbackSnapshot {
     pub request_id: String,
+    pub device_id: String,
+    pub root: String,
     pub pr_number: u32,
     /// `reading`, `ready` or `failed`.
     pub phase: String,
@@ -3807,6 +3824,8 @@ impl Default for UiStateSnapshot {
             expanded_inactive_checkout_project_paths: Vec::new(),
             expanded_inactive_project_device_ids: Vec::new(),
             project_base_branches: BTreeMap::new(),
+            project_settings: BTreeMap::new(),
+            project_settings_writes: BTreeMap::new(),
             expanded_agent_pane_ids: Vec::new(),
             sessions_expanded_agent_pane_ids: Vec::new(),
             selected_path: None,
@@ -6675,6 +6694,7 @@ mod wire_enum_tests {
             BacklogFailure::NetworkOrRateLimit,
             BacklogFailure::QueueFull,
             BacklogFailure::Unconfirmed,
+            BacklogFailure::RepositoryChanged,
             BacklogFailure::Refused,
         ];
         for variant in backlog_failures {
@@ -6685,6 +6705,7 @@ mod wire_enum_tests {
                 | BacklogFailure::NetworkOrRateLimit
                 | BacklogFailure::QueueFull
                 | BacklogFailure::Unconfirmed
+                | BacklogFailure::RepositoryChanged
                 | BacklogFailure::Refused => {}
             }
         }

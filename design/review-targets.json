@@ -1513,6 +1513,94 @@
       "Do the tab lines (the manual name, and Tab 3 for the unnamed tab) read as quiet heads inside the guide, their glyph on the status-mark column and their name on the title column, and do neutral selection, Korean titles and trailing metadata match the approved Pen in both themes?"
     ]
   },
+  "project-settings": {
+    "description": "Approved separate Project Settings dialog and its pages.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-project-settings",
+    "scene": "project-settings",
+    "selector": "[data-gallery-scene=\"project-settings\"]",
+    "frames": [
+      {
+        "node": "ps-settings-dark",
+        "referenceNode": "QdXlV",
+        "theme": "dark",
+        "width": 1000,
+        "scale": 1,
+        "content": "reference",
+        "state": "connections"
+      },
+      {
+        "node": "ps-settings-light",
+        "referenceNode": "UTLMs",
+        "theme": "light",
+        "width": 1000,
+        "scale": 1,
+        "content": "reference",
+        "state": "connections"
+      },
+      {
+        "node": "ps-settings-work",
+        "referenceNode": "C6dPm",
+        "theme": "dark",
+        "width": 1000,
+        "scale": 1,
+        "content": "reference",
+        "state": "work"
+      },
+      {
+        "node": "ps-settings-memory",
+        "referenceNode": "WfAuD",
+        "theme": "dark",
+        "width": 1000,
+        "scale": 1,
+        "content": "reference",
+        "state": "memory"
+      }
+    ],
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        1000,
+        720
+      ],
+      "contents": [
+        "reference",
+        "long"
+      ],
+      "scales": [
+        1,
+        1.3076923076923077
+      ]
+    },
+    "states": {
+      "connections": "Repository and issue source.",
+      "work": "Defaults and honest unsupported protection rows.",
+      "memory": "Confirmed memory and navigation."
+    },
+    "rules": {
+      "noSidewaysOverflow": true,
+      "noOverlap": true
+    },
+    "judgment": [
+      "880 by 640 dialog, 200 navigation and independent body scrolling follow the approved layout.",
+      "Future Linear and protection examples become disabled unsupported rows under sealed PRD D-08 and D-12.",
+      "Actual Korean, long mixed paths and large type remain readable."
+    ],
+    "readySelector": "[data-gallery-scene=\"project-settings\"][data-scene-ready]",
+    "measurement": "web/e2e/project-settings-geometry.mjs",
+    "urlStates": [
+      "connections",
+      "work",
+      "memory",
+      "memory-off",
+      "pending",
+      "failed",
+      "unavailable"
+    ]
+  },
   "right-lane": {
     "description": "The right lane (PRD right-lane): Agent Views fill the body and one lane of four tools (Files, Changes, Work, Memory) opens from the rail, over the agents or pinned beside them, with the file tree as its own column.",
     "file": "design/hide-screens.pen",

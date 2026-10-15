@@ -11,8 +11,9 @@ use hide_node_link::gh::{GhAnswer, GithubFailureCategory};
 use hide_node_link::protocol::Call;
 use std::sync::Condvar;
 
-/// `gh` for one repository, `acme/project`: creates are numbered from 41
-/// and wait while the gate is shut; anything not scripted fails as offline.
+/// `gh` for one checkout, whose repository is `acme/project`, and for any
+/// repository named outright: creates are numbered from 41 and wait while the
+/// gate is shut; anything not scripted fails as offline.
 struct FakeGh {
     calls: Mutex<Vec<String>>,
     open: Mutex<bool>,
@@ -51,11 +52,12 @@ impl FakeGh {
             .collect()
     }
 
-    fn answer(&self, args: &[String]) -> GhAnswer {
+    fn answer(&self, args: &[String], repository: Option<&str>) -> GhAnswer {
         let line = args.join(" ");
         let output = |stdout: String| GhAnswer::Output { stdout };
         if line.starts_with("repo view") {
-            return output(r#"{"nameWithOwner":"acme/project"}"#.into());
+            let name = repository.unwrap_or("acme/project");
+            return output(serde_json::json!({ "nameWithOwner": name }).to_string());
         }
         if line.starts_with("issue create") {
             let mut open = self.open.lock().unwrap();
@@ -103,12 +105,15 @@ impl FakeGh {
 
 impl NodeLink for FakeGh {
     fn call(&self, call: Call, _timeout: Duration) -> Result<LinkAnswer, LinkError> {
-        let Call::Gh { args, .. } = call else {
+        let Call::Gh {
+            args, repository, ..
+        } = call
+        else {
             return Err(LinkError::NotConnected("only gh is scripted".into()));
         };
         self.calls.lock().unwrap().push(args.join(" "));
         Ok(LinkAnswer::Parsed(
-            serde_json::to_value(self.answer(&args)).unwrap(),
+            serde_json::to_value(self.answer(&args, repository.as_deref())).unwrap(),
         ))
     }
 }
@@ -116,6 +121,15 @@ impl NodeLink for FakeGh {
 /// A Git project `/repo` (workspace `w`) whose issues are on GitHub, and a
 /// folder `/notes` (workspace `n`) whose issues are memos.
 fn backlog_runtime(gh: Arc<FakeGh>) -> (SharedRuntime, crate::links::worker::LinkWorker) {
+    backlog_runtime_with(gh, |_| {})
+}
+
+/// `backlog_runtime`, with `prepare` run before the link worker opens its
+/// store.
+fn backlog_runtime_with(
+    gh: Arc<FakeGh>,
+    prepare: impl FnOnce(&mut Runtime),
+) -> (SharedRuntime, crate::links::worker::LinkWorker) {
     let mut runtime = runtime();
     let mut project = workspace(
         "w",
@@ -137,6 +151,7 @@ fn backlog_runtime(gh: Arc<FakeGh>) -> (SharedRuntime, crate::links::worker::Lin
     runtime.snapshot.navigator.workspaces = vec![project, notes];
     runtime.local_issues = Ok(Default::default());
     runtime.own_node = gh;
+    prepare(&mut runtime);
     let shared = SharedRuntime::new(runtime);
     shared
         .lock()
@@ -374,4 +389,152 @@ fn a_started_item_cannot_be_undone() {
             .issue(None, "/notes", 1)
             .is_some()
     );
+}
+
+fn failure(runtime: &Runtime, intent: &str) -> Option<(BacklogPhase, Option<BacklogFailure>)> {
+    phases(runtime)
+        .into_iter()
+        .find(|row| row.0 == intent)
+        .map(|row| (row.1, row.2))
+}
+
+#[test]
+fn a_create_in_flight_when_the_repository_changes_is_not_published_and_its_retry_makes_none() {
+    let gh = FakeGh::new();
+    gh.gate(false);
+    let (shared, _worker) = backlog_runtime(gh.clone());
+    add(&shared, "i-1", "w", "Moved repository");
+    wait(&shared, "the create to reach gh", |_| {
+        !gh.calls("issue create").is_empty()
+    });
+    send(
+        &shared,
+        "project_settings_set",
+        serde_json::json!({
+            "device_id": crate::node::TEST_NODE, "root": "/repo", "request_id": "move",
+            "patch": {"repository": {"mode": "repository", "repository": "acme/other"}},
+        }),
+    );
+    let id = crate::project_settings::key(crate::node::TEST_NODE, "/repo");
+    wait(&shared, "the saved connection", |runtime| {
+        runtime
+            .snapshot
+            .ui_state
+            .project_settings_writes
+            .get(&id)
+            .is_some_and(|write| write.state == crate::project_settings::WriteState::Saved)
+    });
+    gh.gate(true);
+    wait(&shared, "the old create's answer", |runtime| {
+        failure(runtime, "i-1").is_some_and(|row| row.0 == BacklogPhase::Failed)
+    });
+    {
+        let runtime = shared.lock().unwrap();
+        assert_eq!(
+            failure(&runtime, "i-1"),
+            Some((
+                BacklogPhase::Failed,
+                Some(BacklogFailure::RepositoryChanged)
+            ))
+        );
+        assert!(row_key(&runtime, "i-1").is_none());
+        assert!(
+            runtime
+                .github
+                .projects
+                .iter()
+                .all(|project| project.issues.issues.is_empty()),
+            "the old repository's issue is not shown under the new one"
+        );
+    }
+
+    // The attempt is bound to the repository it was reserved for.
+    send(
+        &shared,
+        "backlog_retry",
+        serde_json::json!({"intent": "i-1"}),
+    );
+    wait(&shared, "the retry's answer", |runtime| {
+        failure(runtime, "i-1").is_some_and(|row| row.0 == BacklogPhase::Failed)
+    });
+    assert_eq!(
+        failure(&shared.lock().unwrap(), "i-1"),
+        Some((
+            BacklogPhase::Failed,
+            Some(BacklogFailure::RepositoryChanged)
+        ))
+    );
+    assert_eq!(
+        gh.calls("issue create").len(),
+        1,
+        "no create for the new repository"
+    );
+}
+
+#[test]
+fn a_missed_line_whose_session_origin_repository_is_unknown_makes_no_issue() {
+    use crate::links::ledger::SessionIdentity;
+    let gh = FakeGh::new();
+    let session = SessionIdentity {
+        device_id: crate::node::TEST_NODE.into(),
+        agent: "codex".into(),
+        session_id: "s-1".into(),
+    };
+    let (shared, _worker) = backlog_runtime_with(gh.clone(), |runtime| {
+        runtime.ai_settings = Some(hide_ai::settings::AiSettings {
+            enabled: true,
+            chosen: true,
+            agent_summary: true,
+            ..Default::default()
+        });
+        // The session is first read now, as old history: no repository is
+        // proved for it.
+        let store = hide_kit::layout::links_store(runtime.state_path.parent().unwrap());
+        let (mut store, _) = crate::links::store::LinkStore::open(&store).unwrap();
+        store
+            .apply_answer(
+                &session.device_id,
+                &hide_session::links::ReadAnswer {
+                    agent: hide_session::Agent::from_kind("codex").unwrap(),
+                    path: "/fixture/s-1.jsonl".into(),
+                    checkpoint: None,
+                    has_more: false,
+                    rescanned: true,
+                    error: None,
+                    facts: hide_session::links::LinkFacts {
+                        session_id: Some(session.session_id.clone()),
+                        cwd: Some("/repo".into()),
+                        first_at_unix_ms: Some(1),
+                        last_at_unix_ms: Some(1),
+                        ..Default::default()
+                    },
+                },
+                "history",
+            )
+            .unwrap();
+        assert_eq!(store.ledger_record(&session).unwrap().repository, None);
+    });
+    for (intent, session_id) in [("m-1", "s-1"), ("m-2", "unknown")] {
+        send(
+            &shared,
+            "backlog_add",
+            serde_json::json!({
+                "intent": intent, "workspace_id": "w", "title": "Missed follow-up",
+                "missed": {"session": {"device_id": session.device_id, "agent": "codex", "session_id": session_id}, "id": "x"},
+            }),
+        );
+        wait(&shared, "the missed line's answer", |runtime| {
+            failure(runtime, intent).is_some_and(|row| row.0 == BacklogPhase::Failed)
+        });
+    }
+    let runtime = shared.lock().unwrap();
+    assert_eq!(
+        failure(&runtime, "m-1").unwrap().1,
+        Some(BacklogFailure::RepositoryChanged)
+    );
+    assert_eq!(
+        failure(&runtime, "m-2").unwrap().1,
+        Some(BacklogFailure::Refused)
+    );
+    assert!(gh.calls("issue create").is_empty());
 }

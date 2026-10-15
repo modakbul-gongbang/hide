@@ -486,3 +486,110 @@ fn a_device_worktree_asked_for_before_its_repository_is_read_says_so() {
             .is_some_and(|worktrees| worktrees.projects.contains_key(&repo.root))
     });
 }
+
+struct BaseReads {
+    host: Arc<FakeDevice>,
+    bases: Mutex<Vec<Option<String>>>,
+}
+
+impl crate::node_access::NodeLink for BaseReads {
+    fn call(
+        &self,
+        call: hide_node_link::protocol::Call,
+        timeout: Duration,
+    ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+        if let hide_node_link::protocol::Call::Worktrees { base_override, .. } = &call {
+            self.bases.lock().unwrap().push(base_override.clone());
+        }
+        crate::node_access::NodeLink::call(self.host.as_ref(), call, timeout)
+    }
+}
+
+#[test]
+fn scoped_remote_base_reaches_real_git_facts_and_obsolete_read_is_discarded() {
+    let repo = repo();
+    let host = Arc::new(BaseReads {
+        host: FakeDevice::new(),
+        bases: Mutex::new(Vec::new()),
+    });
+    let shared = device_runtime_with_host(&repo, host.clone());
+    let id = crate::project_settings::key(DEVICE, &repo.root);
+    {
+        let mut runtime = shared.lock().unwrap();
+        runtime
+            .snapshot
+            .ui_state
+            .device_registrations
+            .push(crate::model::DeviceRegistration {
+                id: DEVICE.into(),
+                label: "Fixture".into(),
+                origin: crate::model::LinkOrigin::Inbound,
+                herdr_socket_path: None,
+                host_consent: None,
+            });
+        runtime
+            .snapshot
+            .status
+            .remote
+            .iter_mut()
+            .find(|row| row.target_id == DEVICE)
+            .unwrap()
+            .catalog
+            .state = "ready".into();
+    }
+    let change = |request: &str, choice: serde_json::Value| {
+        // This worktree-only fixture has no pane catalog reader. Admit the
+        // same branches the actual node Worktrees call just returned.
+        let mut runtime = shared.lock().unwrap();
+        let branches = runtime.device_worktrees[DEVICE].projects[&repo.root]
+            .branches
+            .clone();
+        let status = runtime
+            .snapshot
+            .status
+            .remote
+            .iter_mut()
+            .find(|row| row.target_id == DEVICE)
+            .unwrap();
+        status.catalog.state = "ready".into();
+        status.session.as_mut().unwrap().workspaces[0].branches = branches;
+        runtime.dispatch_json(&serde_json::to_vec(&serde_json::json!({"schema_version": SCHEMA_VERSION, "kind": "project_settings_set", "payload": {"device_id": DEVICE, "root": repo.root, "request_id": request, "patch": {"base_branch": choice}}})).unwrap());
+    };
+    change(
+        "parked",
+        serde_json::json!({"mode": "branch", "branch": "parked"}),
+    );
+    wait(&shared, "remote parked comparison", |runtime| {
+        runtime.device_worktrees[DEVICE].projects[&repo.root]
+            .base_branch
+            .as_deref()
+            == Some("parked")
+    });
+    assert!(host.bases.lock().unwrap().contains(&Some("parked".into())));
+    host.host.hold();
+    shared
+        .lock()
+        .unwrap()
+        .request_device_worktrees(DEVICE, true);
+    change("auto", serde_json::json!({"mode": "auto"}));
+    wait(&shared, "confirmed automatic base", |runtime| {
+        runtime
+            .snapshot
+            .ui_state
+            .project_settings
+            .get(&id)
+            .is_some_and(|record| {
+                record.base_branch == Some(crate::project_settings::BaseBranchChoice::Auto)
+            })
+    });
+    assert!(shared.lock().unwrap().device_worktrees[DEVICE].discard_answer);
+    host.host.release();
+    wait(&shared, "fresh automatic comparison", |runtime| {
+        runtime.device_worktrees[DEVICE].in_flight.is_none()
+            && runtime.device_worktrees[DEVICE].projects[&repo.root]
+                .base_branch
+                .as_deref()
+                == Some("main")
+    });
+    assert_eq!(host.bases.lock().unwrap().last(), Some(&None));
+}

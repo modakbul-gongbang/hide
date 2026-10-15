@@ -535,7 +535,10 @@ impl Runtime {
             created: true,
             ..link
         });
-        if let Ok((_, workspace, pull_request)) = &target {
+        if let Ok((_, workspace, pull_request)) = &target
+            && crate::links::repository_of(&pull_request.url).as_deref()
+                == Some(reference.repository.as_str())
+        {
             self.link_pr_branch(workspace, pull_request, &reference);
         }
         let written = written.unwrap_or_else(|| Err("PR 본문을 쓰지 않았습니다".to_owned()));
@@ -576,10 +579,11 @@ impl Runtime {
                 Some(node) => self.device_github.get_mut(node),
             };
             if let Some(project) = github.and_then(|github| {
-                github
-                    .projects
-                    .iter_mut()
-                    .find(|project| project.root_path == workspace.path)
+                github.projects.iter_mut().find(|project| {
+                    project.root_path == workspace.path
+                        && project.issues.repository.as_deref()
+                            == Some(reference.repository.as_str())
+                })
             }) {
                 for pull_request in &mut project.pull_requests {
                     if pull_request.number == link.pr_number
@@ -607,6 +611,8 @@ impl Runtime {
     pub(super) fn read_pr_feedback(&mut self, payload: PrFeedbackReadPayload) -> bool {
         let mut slot = PrFeedbackSnapshot {
             request_id: payload.request_id,
+            device_id: String::new(),
+            root: String::new(),
             pr_number: payload.pr_number,
             phase: "reading".into(),
             body: None,
@@ -617,6 +623,10 @@ impl Runtime {
         let place = self
             .open_pull_request(&payload.workspace_id, payload.pr_number)
             .and_then(|(machine, workspace, _)| {
+                slot.device_id = machine
+                    .clone()
+                    .unwrap_or_else(|| self.node.as_str().to_owned());
+                slot.root = workspace.path.clone();
                 self.github_place(machine.as_deref(), &workspace.path)
             });
         let place = match place {
@@ -723,6 +733,7 @@ impl Runtime {
             }),
             None => self.start_worktree_task(
                 CreateWorktreePayload {
+                    request_id: None,
                     device_id: machine,
                     repository_root: workspace.path.clone(),
                     branch: pull_request.head_branch.clone(),

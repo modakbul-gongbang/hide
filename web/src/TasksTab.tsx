@@ -13,7 +13,7 @@ import { useInterfaceTranslation } from "./i18n/client";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { cn } from "./lib/utils";
 import { ageWords } from "./overviewLens";
-import { cardChangedAt, cardItems, cardLine, cardPulls, cardQuestion, taskSections, taskTitle, type CardLine, type TaskSection } from "./overviewTasks";
+import { cardChangedAt, cardItems, isMemoKey, cardLine, cardPulls, cardQuestion, taskSections, taskTitle, type CardLine, type TaskSection } from "./overviewTasks";
 import { backlogOf } from "./overviewBacklog";
 import { PR_LOOK } from "./prMark";
 import type { BoardProject } from "./projectBoard";
@@ -216,7 +216,7 @@ function TaskCardView({ card, project, rows, deviceId, actions }: { card: TaskCa
           ))}
           {items.map((item) => (
             <button key={item.key} type="button" className={cn(CHIP, "font-mono text-subtle-foreground")} onClick={(event) => { stop(event); useUiStore.getState().setOverview({ panel: { kind: "item", workspaceId: project.id, taskKey: item.key } }); useUiStore.getState().setMainView("backlog"); }} data-task-item={item.token}>
-              {item.key.startsWith("local:") ? <FileTextIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <CircleDotIcon aria-hidden="true" className="size-(--size-icon-sm)" />}
+              {isMemoKey(item.key) ? <FileTextIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <CircleDotIcon aria-hidden="true" className="size-(--size-icon-sm)" />}
               {item.token}
             </button>
           ))}

@@ -39,6 +39,8 @@ export function generate(root = process.cwd()) {
   const tokens = readTokens(root);
   const smallControl = tokens['--size-control-sm'];
   if (smallControl?.type !== 'number') throw new Error('Expected numeric --size-control-sm');
+  const overviewPanel = tokens['--size-overview-panel-breakpoint'];
+  if (overviewPanel?.type !== 'number') throw new Error('Expected numeric --size-overview-panel-breakpoint');
   const theme = [], mapped = [], light = [], dark = [], rest = [], fixed = [];
   for (const [name, token] of Object.entries(tokens)) {
     if (token.type === 'color') {
@@ -67,6 +69,8 @@ export function generate(root = process.cwd()) {
     // Container query conditions need a compiled length, not a var() expression.
     // Reserve two existing small controls' worth of title room for the count.
     `@custom-variant agent-tab-count-room (@container tab-title (min-width: ${smallControl.value * 2}px));`,
+    // Below this window width the Overview's side panel opens over the tabs (PRD overview-device-tasks B65).
+    `@custom-variant overview-narrow (@media (width < ${overviewPanel.value}px));`,
     '',
     '@theme static {',
     '  --color-*: initial;',

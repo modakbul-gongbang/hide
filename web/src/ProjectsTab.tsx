@@ -2,7 +2,6 @@ import { AlertTriangleIcon, ArrowRightIcon, ChevronRightIcon, CircleDotIcon, Ext
 import { useEffect, useMemo } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
 import { Hint } from "./components/ui/tooltip";
 import { layerLines } from "./diskCleanup";
 import { LAYER_DOT, openDiskCleanup } from "./DiskCleanupSheet";
@@ -16,7 +15,7 @@ import { diskSummary, orderedRows, projectRows, type NowCounts, type ProjectRowM
 import { backlogOf } from "./overviewBacklog";
 import type { BoardProject } from "./projectBoard";
 import { machineName } from "./screenMachine";
-import { issueSourceChoices } from "./settings";
+import { settingsTarget } from "./projectSettings";
 import { useShellStore } from "./store";
 import { useUiStore, type OverviewPanel } from "./ui";
 import { primaryCheckout } from "./workspaceManage";
@@ -203,11 +202,9 @@ export function ProjectPanel({ panel, projects, actions }: { panel: Extract<Over
   const { t, i18n } = useInterfaceTranslation();
   const language = requireInterfaceLanguage(i18n.language);
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
-  const stored = useShellStore((s) => {
-    const path = projects.find(({ workspace }) => workspace.id === panel.workspaceId)?.workspace.path;
-    return path ? s.rest?.ui_state?.project_issue_sources?.[path] : undefined;
-  });
   const row = useMemo(() => projectRows(projects.filter(({ workspace }) => workspace.id === panel.workspaceId))[0] ?? null, [projects, panel.workspaceId]);
+  // The panel states worktrees, merged ones and how far main is behind (B57): it reads the project's worktrees again when it opens.
+  useEffect(() => actions.refreshProjectOverview(panel.workspaceId), [actions, panel.workspaceId]);
   const close = () => useUiStore.getState().setOverview({ panel: null });
   const head = (title: string) => (
     <div className="flex shrink-0 items-center gap-xs px-sm py-xs">
@@ -223,7 +220,6 @@ export function ProjectPanel({ panel, projects, actions }: { panel: Extract<Over
   const behind = primaryCheckout(project)?.worktree?.behind_upstream ?? null;
   const branch = primaryCheckout(project)?.branch ?? project.default_branch ?? "main";
   const cleans = readsHere(project, devices);
-  const { value, options } = issueSourceChoices(project, stored, t);
   const activity = project.last_activity_unix_ms ?? null;
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-project-panel={project.id}>
@@ -283,16 +279,7 @@ export function ProjectPanel({ panel, projects, actions }: { panel: Extract<Over
         ) : null}
         {behind !== null && behind > 0 ? <p className="text-warning">{t("overviewProjects.panel.behind", { branch, count: behind })}</p> : null}
         <div className="flex flex-wrap gap-xs border-t border-border pt-md">
-          {options.length > 1 ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild><Button size="sm" variant="outline">{t("overviewProjects.panel.settings")}</Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                <DropdownMenuRadioGroup value={value} onValueChange={(choice) => actions.setIssueSource(project.path, choice as "auto" | "github" | "local")}>
-                  {options.map((option) => <DropdownMenuRadioItem key={option.id} value={option.id}>{option.label}</DropdownMenuRadioItem>)}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : null}
+          <Button size="sm" variant="outline" onClick={(event) => useUiStore.getState().openProjectSettings(settingsTarget(project), event.currentTarget)} data-project-panel-settings={project.id}>{t("overviewProjects.panel.settings")}</Button>
           <Button size="sm" variant="ghost" className="text-destructive" onClick={() => useUiStore.getState().setWorkspaceDialog({ kind: "remove_project", workspaceId: project.id })}>{t("overviewProjects.panel.unregister")}</Button>
         </div>
       </div>

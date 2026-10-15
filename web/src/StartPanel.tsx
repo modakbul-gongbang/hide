@@ -17,6 +17,10 @@ import { useUiStore } from "./ui";
 import { useInterfaceTranslation } from "./i18n/client";
 import { notSignedIn } from "./firstRun";
 import { Status } from "./components/settings-rows";
+import { Input } from "./components/ui/input";
+import { catalogWorkspaces } from "./snapshot";
+import { projectBaseBranch } from "./projectSettings";
+import { branchProblem } from "./workspaceManage";
 
 // The start panel (PRD home-device-rail D-17..D-21, B23-B31): ⌘K's position
 // and width, no backdrop, the keyboard in the text box. What is written is the
@@ -37,10 +41,11 @@ const ANSWER_TIMEOUT_MS = 90_000;
  */
 function useStartAnswer() {
   const request = useStartPanel((s) => s.request);
+  const requestKind = useStartPanel((s) => s.requestKind);
   useEffect(() => {
     if (!request) return undefined;
     const settle = (): boolean => {
-      const answer = startAnswer(useShellStore.getState().rest, request);
+      const answer = startAnswer(useShellStore.getState().rest, request, requestKind);
       const panel = useStartPanel.getState();
       if (answer.phase === "pending") return false;
       if (answer.phase === "refused" || answer.phase === "failed") {
@@ -68,7 +73,7 @@ function useStartAnswer() {
       unsubscribe();
       window.clearTimeout(timer);
     };
-  }, [request]);
+  }, [request, requestKind]);
 }
 
 /**
@@ -101,7 +106,7 @@ export function StartPanelHost({ actions }: { actions: Actions }) {
 }
 
 function TargetIcon({ target, node }: { target: StartTarget; node: string }) {
-  if (target.kind === "checkout") return <FolderIcon aria-hidden="true" />;
+  if (target.kind !== "home") return <FolderIcon aria-hidden="true" />;
   return target.deviceId === node ? <HomeIcon aria-hidden="true" /> : <ServerIcon aria-hidden="true" />;
 }
 
@@ -120,6 +125,11 @@ function StartPanel({ actions }: { actions: Actions }) {
   const overviewProjectId = preset?.projectId ?? frontProjectId;
   const targets = useMemo(() => startTargets(rest, screen, t, overSettings, overviewProjectId), [rest, screen, t, overSettings, overviewProjectId]);
   const target = resolveTarget(targets, chosen);
+  const worktreeProject = target?.kind === "worktree" ? catalogWorkspaces(rest).find((workspace) => workspace.device_id === target.deviceId && workspace.path === target.repositoryRoot) ?? null : null;
+  const initialBase = worktreeProject ? projectBaseBranch(rest, worktreeProject) : null;
+  const [worktreeBranch, setWorktreeBranch] = useState("");
+  const [worktreeBase, setWorktreeBase] = useState<{ project: string; branch: string } | null>(null);
+  const base = worktreeBase && worktreeBase.project === target?.key ? worktreeBase.branch : initialBase?.branch ?? "";
   const [selection, setSelection] = useState<AgentSelection>(() => {
     const start = useShellStore.getState().rest?.ui_state?.agent_start;
     return preset?.kind ? selectKind(preset.kind, start) : rememberedSelection(start);
@@ -149,11 +159,15 @@ function StartPanel({ actions }: { actions: Actions }) {
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
   }, []);
 
-  const canStart = target !== null && selection.kind !== "terminal" && !working;
+  const canStart = target !== null && selection.kind !== "terminal" && !working && (target.kind !== "worktree" || (worktreeProject !== null && branchProblem(worktreeBranch) === null));
   const start = () => {
     if (!canStart || !target || selection.kind === "terminal") return;
     const id = startRequestId();
-    useStartPanel.getState().begin(id);
+    useStartPanel.getState().begin(id, target.kind === "worktree" ? "worktree_create" : "agent_start");
+    if (target.kind === "worktree") {
+      actions.createWorktree({ requestId: id, deviceId: target.deviceId, repositoryRoot: target.repositoryRoot, branch: worktreeBranch.trim(), baseBranch: base || null, agentKind: selection.kind, model: modelToSend(selection), prompt: text.trim() || null, purpose: null });
+      return;
+    }
     actions.startAgent({
       target: target.kind === "home" ? { home: true } : { checkoutPath: target.checkoutPath },
       deviceId: target.deviceId,
@@ -194,6 +208,13 @@ function StartPanel({ actions }: { actions: Actions }) {
           {"key" in failure ? t(failure.key) : failure.message}
         </p>
       ) : null}
+      {target?.kind === "worktree" ? <div className="flex flex-col gap-sm px-md py-sm" data-start-worktree="true">
+        <p className="text-caption text-muted-foreground">{t("projectSettings.confirmWorktree")}</p>
+        <label className="text-body">{t("workspace.branch")}<Input value={worktreeBranch} disabled={working} onChange={(event) => setWorktreeBranch(event.target.value)} aria-label={t("workspace.branch")} /></label>
+        {worktreeBranch && branchProblem(worktreeBranch) ? <p role="alert" className="text-caption text-destructive">{t(branchProblem(worktreeBranch)!)}</p> : null}
+        <Select value={base} disabled={working || !worktreeProject} onValueChange={(branch) => setWorktreeBase({ project: target.key, branch })}><SelectTrigger aria-label={t("projectSettings.base")}><SelectValue /></SelectTrigger><SelectContent>{worktreeProject?.branches?.map((branch) => <SelectItem key={branch} value={branch}>{branch}</SelectItem>)}</SelectContent></Select>
+        {initialBase?.missing ? <p className="text-caption text-warning">{t("projectSettings.branchMissing", { branch: initialBase.missing, fallback: initialBase.branch })}</p> : null}
+      </div> : null}
       <div className="flex items-center gap-xs border-t border-border px-sm py-sm">
         <Select value={target?.key ?? ""} disabled={working || targets.groups.length === 0} onValueChange={(key) => useStartPanel.getState().setTarget(key)}>
           <SelectTrigger aria-label={t("common.target")} className="min-w-0 flex-1" data-start-target={target?.key ?? ""}>

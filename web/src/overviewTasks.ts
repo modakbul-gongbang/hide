@@ -45,6 +45,11 @@ export function everyAgent(rest: SnapshotRest | null, local: readonly AgentRow[]
   return rows;
 }
 
+/** Whether a backlog key names a folder memo (`local:<path>#N`) rather than a GitHub issue. */
+export function isMemoKey(key: string): boolean {
+  return key.startsWith("local:");
+}
+
 /**
  * What an issue or memo is called on a chip (`#N`, `L-N`): the id its source
  * shows, else read from its key (`local:<path>#N`, `github:owner/repo#N`).
@@ -54,7 +59,7 @@ export function itemToken(key: string, project: Pick<Workspace, "tasks">): strin
   if (listed) return listed;
   const number = key.slice(key.lastIndexOf("#") + 1);
   if (!/^\d+$/.test(number)) return null;
-  return key.startsWith("local:") ? `L-${number}` : key.startsWith("github:") ? `#${number}` : null;
+  return isMemoKey(key) ? `L-${number}` : key.startsWith("github:") ? `#${number}` : null;
 }
 
 /** A task's name: its root session's label (B8). */

@@ -94,6 +94,7 @@ const words = {
   "backlog.failure.network_or_rate_limit": ["Network or rate limit", "네트워크 또는 사용량 제한", "ネットワークまたはレート制限", "网络或速率限制"],
   "backlog.failure.queue_full": ["Too many waiting to be created", "만들 것이 너무 많이 밀려 있음", "作成待ちが多すぎます", "待创建的太多"],
   "backlog.failure.unconfirmed": ["Not confirmed by GitHub yet", "GitHub이 아직 확인하지 않음", "GitHubがまだ確認していません", "GitHub 尚未确认"],
+  "backlog.failure.repository_changed": ["The project's repository changed", "프로젝트 저장소가 바뀜", "プロジェクトのリポジトリが変わりました", "项目的仓库已更改"],
   "backlog.failure.refused": ["GitHub refused it", "GitHub이 거절함", "GitHubに拒否されました", "GitHub 拒绝了"],
   "backlog.panel.source": ["Source", "출처", "ソース", "来源"],
   "backlog.panel.created": ["Created", "만든 때", "作成日時", "创建时间"],

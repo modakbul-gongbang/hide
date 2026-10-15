@@ -31,6 +31,7 @@ pub(super) struct LinksWork {
     generation: u64,
     record_generation: u64,
     search_generation: u64,
+    pub(super) connection_epochs: BTreeMap<String, u64>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -313,6 +314,13 @@ impl Runtime {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         for workspace in self.link_lineage_workspaces() {
             (&workspace.id, &workspace.path, &workspace.device_id).hash(&mut hasher);
+            self.links_work
+                .connection_epochs
+                .get(&hide_project::project_id(
+                    &workspace.device_id,
+                    Path::new(&workspace.path),
+                ))
+                .hash(&mut hasher);
             for checkout in &workspace.checkouts {
                 (
                     &checkout.path,
@@ -363,6 +371,15 @@ impl Runtime {
                         .and_then(|project| project.issues.repository.as_deref())
                         .map(str::to_ascii_lowercase),
                     repository_id: project.and_then(|project| project.issues.repository_id.clone()),
+                    connection_epoch: self
+                        .links_work
+                        .connection_epochs
+                        .get(&hide_project::project_id(
+                            &workspace.device_id,
+                            Path::new(&workspace.path),
+                        ))
+                        .copied()
+                        .unwrap_or(0),
                     worktrees: workspace
                         .checkouts
                         .iter()

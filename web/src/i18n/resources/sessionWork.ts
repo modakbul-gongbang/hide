@@ -2,10 +2,6 @@ import type { Catalogs } from "../schema";
 
 const words = {
   "sessionWork.createIssue": ["Create issue", "이슈 만들기", "Issueを作成", "创建议题"],
-  "sessionWork.issue_draft_unavailable": ["Couldn't read the draft. Retry from this item.", "초안을 읽지 못함 · 이 항목에서 다시 시도", "下書きを読み取れません。再試行してください", "无法读取草稿，请重试"],
-  "sessionWork.issue_draft_ai_unavailable": ["Drafting is unavailable. Only the missed item's title is filled in.", "초안을 쓸 수 없어 놓친 일의 제목만 채움", "下書きを作成できないためタイトルのみ入力済み", "无法起草，仅填写了遗漏工作的标题"],
-  "sessionWork.issue_draft_context_unavailable": ["Couldn't read this turn or its template. Only the title is filled in.", "원래 턴이나 템플릿을 읽지 못해 제목만 채움", "元のターンまたはテンプレートを読み取れないためタイトルのみ入力済み", "无法读取原始对话或模板，仅填写标题"],
-  "sessionWork.issue_draft_github_unavailable": ["Couldn't read GitHub. Retry to check the connection; your edits stay here.", "GitHub를 읽지 못함 · 다시 시도로 연결 확인 · 수정한 내용은 유지", "GitHubを読み取れません。再試行で接続を確認し、編集内容は保持します", "无法读取 GitHub，请重试连接，编辑内容将保留"],
   "sessionWork.record": ["Record", "기록", "記録", "记录"],
   "sessionWork.back": ["Back to Sessions", "Sessions로 돌아가기", "Sessionsに戻る", "返回 Sessions"],
   "sessionWork.failed": ["Couldn't read the record", "기록을 읽지 못함", "記録を読み取れません", "无法读取记录"],

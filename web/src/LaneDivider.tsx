@@ -11,8 +11,9 @@ type Landing = { lane_width?: number; tree_width?: number };
 
 /**
  * A divider of the lane (PRD right-lane B6, B10; `Component / Side panel
- * grip`): `lane`, left of a docked lane, sets the document's width against
- * Agent Views; `tree`, between the tree and the document, trades width
+ * grip`): `lane`, at the lane's left edge, sets the document's width, against
+ * Agent Views when docked and over them otherwise (`edge`, hung outside the
+ * lane's box); `tree`, between the tree and the document, trades width
  * between the two. Nothing at rest, and on hover, keyboard focus and while
  * dragging a hairline with a ⇆ pill at its middle. A drag moves a guide and
  * lands once on release, so no terminal or page resizes during it and every
@@ -20,7 +21,7 @@ type Landing = { lane_width?: number; tree_width?: number };
  * event per press, each step measured from the last one the core has not yet
  * confirmed.
  */
-export function LaneDivider({ kind, label, workspace, acknowledged, frame, origin, sizes, setGuide, actions }: { kind: "lane" | "tree"; label: string; workspace: string; acknowledged: string | null; frame: LaneFrame; origin: HTMLElement | null; sizes: LaneSizes; setGuide: (x: number | null) => void; actions: Actions }) {
+export function LaneDivider({ kind, label, workspace, acknowledged, frame, origin, sizes, setGuide, actions, edge = false }: { kind: "lane" | "tree"; label: string; workspace: string; acknowledged: string | null; frame: LaneFrame; origin: HTMLElement | null; sizes: LaneSizes; setGuide: (x: number | null) => void; actions: Actions; edge?: boolean }) {
   const cancelDrag = useRef<(() => void) | null>(null);
   const [keySession] = useState(() => crypto.randomUUID());
   const keyIntent = useRef<{ frame: LaneFrame; published: LaneFrame; extent: number; request: string; observed: string | null } | null>(null);
@@ -95,7 +96,8 @@ export function LaneDivider({ kind, label, workspace, acknowledged, frame, origi
   };
   const value = kind === "lane" ? frame.document : frame.tree ?? 0;
   const min = kind === "lane" ? sizes.laneMin : sizes.treeMin;
-  const spare = kind === "lane" ? frame.agents - sizes.agentMin : frame.document - sizes.laneMin;
+  // Docked, the lane grows into what Agent Views can spare; over them, to the body's edge.
+  const spare = kind === "lane" ? (frame.mode === "overlay" ? frame.agents - frame.width - sizes.divider : frame.agents - sizes.agentMin) : frame.document - sizes.laneMin;
   return (
     <div
       role="separator"
@@ -106,7 +108,8 @@ export function LaneDivider({ kind, label, workspace, acknowledged, frame, origi
       aria-valuemax={value + Math.max(0, spare)}
       tabIndex={0}
       data-lane-divider={kind}
-      className="group relative z-10 flex w-sm shrink-0 cursor-col-resize justify-center bg-background outline-none"
+      className={`group z-10 flex w-sm shrink-0 cursor-col-resize justify-center outline-none ${edge ? "absolute inset-y-0" : "relative bg-background"}`}
+      style={edge ? { left: -sizes.divider } : undefined}
       onPointerDown={drag}
       onBlur={() => { keyIntent.current = null; }}
       onKeyDown={(event) => {

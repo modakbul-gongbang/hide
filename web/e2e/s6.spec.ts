@@ -12,7 +12,7 @@ import path from "node:path";
 import { declareParent, herdrHasFocus, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { chooseLane, countSent, screenshot, showExplorer } from "./wire";
-import { chord, commandLabel } from "./chords";
+import { chord } from "./chords";
 import { openOverview, projectRow } from "./overview-entry";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { quietFor, unchangedForFrames } from "./wait";
@@ -103,34 +103,34 @@ test("Main, Overview and a Workspace with its lane, tools and delegated child", 
     const toolbarBox = (await page.locator("[data-workspace-toolbar]").boundingBox())!;
     expect(toolbarBox.y + toolbarBox.height).toBeLessThanOrEqual(bodyBox.y + 1);
 
-    // B1, B20: each rail icon names itself and its scope with its chord in
-    // the tooltip, and reads pressed only while the lane shows its tool.
+    // B1, B20: each rail icon names itself and its scope in its hint, and
+    // reads pressed only while the lane shows its tool.
     const filesIcon = page.locator('[data-lane-tool="files"]');
     const sessionsIcon = page.locator('[data-lane-tool="work"]');
     await expect(filesIcon).toHaveAttribute("aria-pressed", "false");
     await sessionsIcon.hover();
     await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("Work");
-    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText(commandLabel("toggle_explorer"));
     await filesIcon.hover();
     await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("Files");
-    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText(commandLabel("toggle_right_panel"));
     await page.mouse.move(bodyBox.x + 40, bodyBox.y + 40);
 
-    // ⌘E opens the lane on Sessions over the agents, the path's menu closes
-    // it, and the rail swaps the one tool it holds (B2, B20, D-01).
+    // The Sessions icon opens the lane on Sessions over the agents, the path's
+    // menu closes it, ⌘E brings a closed lane back on Files, and the rail swaps
+    // the one tool it holds (B2, B20, D-01).
     const lane = page.locator("[data-lane-frame]");
     const agentArea = page.locator("[data-agent-area]");
-    await page.keyboard.press(chord("toggle_explorer"));
+    await sessionsIcon.click();
     await expect(workspace).toHaveAttribute("data-lane-shows", "work");
     await expect(workspace).toHaveAttribute("data-lane-mode", "overlay");
     await expect.poll(() => last.get("workspace_view")).toEqual({ tool: "work" });
     await expect(sessionsIcon).toHaveAttribute("aria-pressed", "true");
     const laneIdeal = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--size-lane-ideal")));
     expect((await lane.boundingBox())!.width).toBeCloseTo(laneIdeal, 0);
-    await chooseLane(page, "work");
+    await chooseLane(page);
     await expect(workspace).toHaveAttribute("data-lane-mode", "closed");
     await expect.poll(() => last.get("workspace_view")).toEqual({ tool: null });
-    await page.keyboard.press(chord("toggle_explorer"));
+    await page.keyboard.press(chord("toggle_lane"));
+    await expect(workspace).toHaveAttribute("data-lane-shows", "files");
     await page.locator('[data-lane-tool="changes"]').click();
     await expect.poll(() => last.get("workspace_view")).toEqual({ tool: "changes" });
     await expect(page.locator('[data-lane="changes"]')).toBeVisible();
@@ -186,13 +186,13 @@ test("Main, Overview and a Workspace with its lane, tools and delegated child", 
     await page.keyboard.press("Escape");
     await screenshot(page, "s6-lane-docked");
 
-    // ⌘⇧B closes the lane without closing a view; the Files icon counts the
+    // ⌘E closes the lane without closing a view; the Files icon counts the
     // views it keeps, and the keyboard that was in the lane goes back to the
     // focused pane (B2, B7, B17). Opening it brings the same tabs, docked.
     await settled();
     const resizesBeforeClose = resizes();
     await lane.locator("[data-editor-body] .cm-content").click();
-    await page.keyboard.press(chord("toggle_right_panel"));
+    await page.keyboard.press(chord("toggle_lane"));
     await expect(workspace).toHaveAttribute("data-lane-mode", "closed");
     await expect.poll(() => last.get("workspace_view")).toEqual({ tool: null });
     await expect(filesIcon).toHaveAttribute("aria-pressed", "false");

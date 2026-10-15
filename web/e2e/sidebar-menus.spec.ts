@@ -126,9 +126,10 @@ test("the project row's menu lists the board's items, and Pin registers and pins
     await expect(page.locator('[data-section="pinned"]')).toHaveCount(0);
     // B1, B3: in the board's order. A browser tab has no OS file manager, so
     // its reveal is absent; a row Herdr shows without a registration still
-    // offers Pin and Remove project….
+    // offers both Pin and removal. Project Settings B4 adds the settings
+    // entry to this same project menu without removing its existing actions.
     let menu = await openMenu(page, projectRow, "repo actions");
-    expect(await menuLines(menu)).toEqual(["New worktree…", `New tab in main ${commandLabel("new_tab")}`, "─", "Copy path", "Issue source", "─", "Pin", "Remove project…"]);
+    expect(await menuLines(menu)).toEqual(["Project settings", "New worktree…", `New tab in main ${commandLabel("new_tab")}`, "─", "Copy path", "Issue source", "─", "Pin", "Remove project…"]);
     await screenshot(page, "sidebar-menus-project-dark");
     await menu.locator('[data-menu-item="pin"]').click();
     await expect(menu).toHaveCount(0);

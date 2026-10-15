@@ -164,6 +164,15 @@ pub(super) struct CreateTabPayload {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ProjectMemoryNavigatePayload {
+    pub(super) device_id: String,
+    pub(super) workspace_id: String,
+    pub(super) checkout_id: String,
+    pub(super) request_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct FocusCheckoutPayload {
     /// Sidebar row disclosure, committed with checkout focus. Omitted by other open entrypoints.
     #[serde(default)]
@@ -811,6 +820,8 @@ pub(super) struct GitWorktreeSetBasePayload {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateWorktreePayload {
+    #[serde(default)]
+    pub(super) request_id: Option<String>,
     /// The device that holds the repository; this machine when absent.
     #[serde(default)]
     pub(super) device_id: Option<String>,
@@ -1415,6 +1426,7 @@ pub(super) enum Event {
     ArchiveOpen(ArchiveOpenPayload),
     MemoryAction(MemoryActionPayload),
     MemoryOpen(MemoryOpenPayload),
+    ProjectMemoryNavigate(ProjectMemoryNavigatePayload),
     MemoryExpand(MemoryExpandPayload),
     MemorySearch(MemorySearchPayload),
     RetryConnect(RetryConnectPayload),
@@ -1448,6 +1460,7 @@ pub(super) enum Event {
     GitWorktreeSetBase(GitWorktreeSetBasePayload),
     CreateWorktree(CreateWorktreePayload),
     IssueSourceSet(IssueSourceSetPayload),
+    ProjectSettingsSet(super::project_settings::SetPayload),
     IssueSettingsSet(IssueSettingsSetPayload),
     IssueCreate(IssueCreatePayload),
     IssueDetailRequest(IssueDetailRequestPayload),
@@ -1654,6 +1667,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "archive_open" => decode!(ArchiveOpenPayload, ArchiveOpen),
         "memory_action" => decode!(MemoryActionPayload, MemoryAction),
         "memory_open" => decode!(MemoryOpenPayload, MemoryOpen),
+        "project_memory_navigate" => decode!(ProjectMemoryNavigatePayload, ProjectMemoryNavigate),
         "memory_expand" => decode!(MemoryExpandPayload, MemoryExpand),
         "memory_search" => decode!(MemorySearchPayload, MemorySearch),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
@@ -1694,6 +1708,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "git_worktree_set_base" => decode!(GitWorktreeSetBasePayload, GitWorktreeSetBase),
         "create_worktree" => decode!(CreateWorktreePayload, CreateWorktree),
         "issue_source_set" => decode!(IssueSourceSetPayload, IssueSourceSet),
+        "project_settings_set" => decode!(super::project_settings::SetPayload, ProjectSettingsSet),
         "issue_settings_set" => decode!(IssueSettingsSetPayload, IssueSettingsSet),
         "issue_create" => decode!(IssueCreatePayload, IssueCreate),
         "issue_detail_request" => decode!(IssueDetailRequestPayload, IssueDetailRequest),
@@ -1755,6 +1770,7 @@ impl Runtime {
             Event::CreateTab(payload) => payload.request_id.clone(),
             Event::CreatePane(payload) => payload.request_id.clone(),
             Event::AgentStartInCheckout(payload) => payload.request_id.clone(),
+            Event::CreateWorktree(payload) => payload.request_id.clone(),
             Event::ForkPane(payload) => payload.request_id.clone(),
             _ => None,
         };
@@ -1874,6 +1890,7 @@ impl Runtime {
             }
             Event::MemoryAction(payload) => self.apply_memory_action(payload),
             Event::MemoryOpen(payload) => self.open_project_memory(payload.workspace_id),
+            Event::ProjectMemoryNavigate(payload) => self.navigate_project_memory(payload),
             Event::MemoryExpand(payload) => {
                 self.expand_memory_card(&payload.workspace_id, payload.number)
             }
@@ -3633,6 +3650,7 @@ impl Runtime {
             Event::CreateWorktree(payload) => self.create_project_worktree(payload),
             Event::SetCheckoutIssue(payload) => self.set_checkout_issue(payload),
             Event::IssueSourceSet(payload) => self.set_issue_source(payload),
+            Event::ProjectSettingsSet(payload) => self.set_project_settings(payload),
             Event::IssueSettingsSet(payload) => self.set_issue_settings(payload),
             Event::IssueCreate(payload) => self.create_issue(payload),
             Event::IssueDetailRequest(payload) => self.request_issue_detail(payload),
@@ -3884,6 +3902,8 @@ impl Runtime {
                     expanded_inactive_project_device_ids: current
                         .expanded_inactive_project_device_ids,
                     project_base_branches: current.project_base_branches,
+                    project_settings: current.project_settings,
+                    project_settings_writes: current.project_settings_writes,
                     expanded_agent_pane_ids: current.expanded_agent_pane_ids,
                     sessions_expanded_agent_pane_ids: current.sessions_expanded_agent_pane_ids,
                     selected_path: payload.selected_path,

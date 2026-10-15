@@ -1,4 +1,6 @@
 import { ChevronDownIcon, ChevronRightIcon, FileIcon, LoaderCircleIcon, MoreHorizontalIcon, SettingsIcon, SparklesIcon, Trash2Icon, Undo2Icon, UserIcon } from "lucide-react";
+import { useUiStore } from "./ui";
+import { sameGithubPullRequest } from "./pullRequestIdentity";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { AgentLogo } from "./components/agent-logo";
@@ -60,8 +62,10 @@ export function MemoryTab({ actions }: { actions: Actions }) {
  * when its window comes forward after another window named another one, so
  * two windows never take it from each other in a loop.
  */
-export function useMemoryProject(actions: Actions) {
-  const projectId = useShellStore((state) => frontCheckout(state.rest)?.workspace_id ?? null);
+export function useMemoryProject(actions: Actions, requested?: string | null) {
+  const settingsOpen = useUiStore((state) => state.overlay === "project_settings");
+  const frontId = useShellStore((state) => frontCheckout(state.rest)?.workspace_id ?? null);
+  const projectId = requested !== undefined ? requested : settingsOpen ? null : frontId;
   const live = useShellStore((state) => state.connection === "live");
   const opened = useShellStore((state) => projectId !== null && state.memory?.project?.workspace_id === projectId);
   const openedRef = useRef(opened);
@@ -198,6 +202,15 @@ function Header({ project, actions, busy }: { project: ProjectMemory; actions: A
   );
 }
 
+/** Same action and consent as Tools; only the settings owner can claim this read slot. */
+export function MemorySettings({ project, actions, disabled }: { project: ProjectMemory; actions: Actions; disabled: boolean }) {
+  const { t } = useInterfaceTranslation();
+  const failed = project.action_failure === "enable" || project.action_failure === "disable" ? project.action_failure : null;
+  if (project.unavailable) return <div className="flex flex-col items-start gap-sm"><p role="alert" className="text-body text-muted-foreground">{t(project.unavailable.reason === "unregistered" ? "memory.unregistered" : "memory.unreadable")}</p><Button size="sm" variant="ghost" disabled={disabled} onClick={() => actions.memoryOpen(project.workspace_id)}>{t("memory.readAgain")}</Button></div>;
+  if (project.loading) return <p role="status" className="text-body text-muted-foreground">{t("memory.reading")}</p>;
+  return <div className="flex min-w-0 flex-col gap-sm"><Header project={project} actions={actions} busy={disabled || project.pending_action !== null} />{!project.enabled ? <p className="break-words text-body text-muted-foreground">{t("memory.disclosure")}</p> : null}{project.consent_required ? <p className="text-body text-muted-foreground">{t("memory.reconsent")}</p> : null}{project.pending_action !== null ? <p role="status" className="text-body text-muted-foreground">{t(project.preparing_hooks ? "projectSettings.memoryPreparing" : "projectSettings.pending")}</p> : null}{failed ? <div role="alert" className="flex flex-wrap items-center gap-sm"><p className="text-body text-destructive">{t("projectSettings.memoryFailed")}</p><Button size="sm" variant="ghost" disabled={disabled || project.pending_action !== null} onClick={() => actions.memoryAction(project.workspace_id, failed!)}>{t("projectSettings.retry")}</Button></div> : null}</div>;
+}
+
 function Questions({ project, actions, busy }: { project: ProjectMemory; actions: Actions; busy: boolean }) {
   const { t } = useInterfaceTranslation();
   const workspace = useShellStore((state) => catalogWorkspaces(state.rest).find((row) => row.id === project.workspace_id));
@@ -223,7 +236,7 @@ function Questions({ project, actions, busy }: { project: ProjectMemory; actions
           <Button size="sm" disabled={busy} onClick={() => actions.memoryAction(project.workspace_id, "promote", null, selected)} data-memory-open-batch="true">{t("memory.batch.open")}</Button>
         </div>
       ) : null}
-      {groups.map((group) => <ProgressRow key={group.key} group={group} pull={pulls.find((pull) => pull.number === group.pr)} agents={agents} project={project} actions={actions} />)}
+      {groups.map((group) => <ProgressRow key={group.key} group={group} pull={pulls.find((pull) => pull.number === group.pr && sameGithubPullRequest(pull.url, group.url))} agents={agents} project={project} actions={actions} />)}
     </section>
   );
 }
@@ -260,7 +273,7 @@ function ProgressRow({ group, pull, agents, project, actions }: { group: MemoryP
         {group.cards.length > 1 ? <span className="shrink-0 text-caption text-muted-foreground">+{group.cards.length - 1}</span> : null}
       </div>
       <div className="col-start-2 flex min-w-0 items-center gap-sm text-caption" data-memory-running={promotion?.state === "running" ? first.number : undefined} data-memory-unconfirmed={promotion?.state === "unconfirmed" ? "true" : undefined}>
-        {group.pr !== null ? <button type="button" className="pointer-events-auto shrink-0 text-subtle-foreground hover:text-foreground" onClick={() => actions.openPrCard(project.workspace_id, group.pr!)} data-memory-open-pr={group.pr}>{t("memory.progress.pr", { number: String(group.pr) })}</button> : null}
+        {group.pr !== null ? <button type="button" disabled={!group.url} className="pointer-events-auto shrink-0 text-subtle-foreground hover:text-foreground disabled:opacity-50" onClick={() => group.url && actions.openSessionPullRequest({ workspace_id: project.workspace_id, number: group.pr!, url: group.url })} data-memory-open-pr={group.pr}>{t("memory.progress.pr", { number: String(group.pr) })}</button> : null}
         <span className={cn("min-w-0 flex-1 truncate", status.tone)} title={reason}>{reason}</span>
         {promotion?.state === "running" && group.pr === null ? <Elapsed since={promotion.started_at_unix_ms} className="shrink-0 text-muted-foreground" data-memory-elapsed={first.number} /> : null}
         {status.agentLink && pane ? <button type="button" className="pointer-events-auto shrink-0 text-subtle-foreground hover:text-foreground" onClick={() => actions.openAgent(pane)} data-memory-agent={first.number}>{t("memory.progress.agent")}</button> : null}
@@ -273,7 +286,7 @@ function ProgressRow({ group, pull, agents, project, actions }: { group: MemoryP
         {row.body_preview ? <p className="line-clamp-2 whitespace-pre-wrap break-words text-caption text-muted-foreground">{row.body_preview}</p> : null}
       </div>)}
       <div className="flex flex-wrap items-center gap-sm">
-        {group.pr !== null ? <Button size="sm" variant="outline" onClick={() => actions.openPrCard(project.workspace_id, group.pr!)} data-memory-open-pr={group.pr}>{t("memory.openPr", { number: String(group.pr) })}</Button> : null}
+        {group.pr !== null ? <Button size="sm" variant="outline" disabled={!group.url} onClick={() => group.url && actions.openSessionPullRequest({ workspace_id: project.workspace_id, number: group.pr!, url: group.url })} data-memory-open-pr={group.pr}>{t("memory.openPr", { number: String(group.pr) })}</Button> : null}
         {pane ? <Button size="sm" variant="ghost" onClick={() => actions.openAgent(pane)} data-memory-open-agent={first.number}>{t("memory.progress.openAgent")}</Button> : null}
       </div>
     </div> : null}
@@ -510,7 +523,7 @@ function CardRow({ row, project, actions, busy }: { row: MemoryRow; project: Pro
         ) : null}
         {row.promotion?.state === "pr_open" && row.promotion.pr_number !== null ? (
           <span className="flex items-center gap-sm text-caption text-subtle-foreground">
-            <button type="button" aria-label={t("memory.openPr", { number: String(row.promotion.pr_number) })} className="rounded-xs outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring" onClick={() => actions.openPrCard(project.workspace_id, row.promotion!.pr_number!)}>
+            <button type="button" disabled={!row.promotion.pr_url} aria-label={t("memory.openPr", { number: String(row.promotion.pr_number) })} className="rounded-xs outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring" onClick={() => row.promotion?.pr_url && actions.openSessionPullRequest({ workspace_id: project.workspace_id, number: row.promotion.pr_number!, url: row.promotion.pr_url })}>
               <PrMark state="pending" number={row.promotion.pr_number} />
             </button>
             {t("memory.prOpen")}

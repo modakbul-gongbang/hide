@@ -63,15 +63,21 @@ describe("the right lane (PRD right-lane)", () => {
     }
   });
 
-  it("draws a pinned lane over Agent Views and keeps it up where docking would leave Agent Views under 480, and docks it again once the body widens (D-07, B19)", () => {
-    // A document of 520 and a tree of 240 with their divider, beside the lane's divider and 480, need 1256.
-    const narrow = frame({ tool: "files", pinned: true, tree: true, body: 1255 });
-    expect(narrow).toMatchObject({ mode: "overlay", narrowPin: true, agents: 1255, width: 768 });
+  it("docks a pinned lane wherever its minimums fit beside Agent Views' 480, giving up its own width first, and draws it over them only below that (D-07, B19)", () => {
+    // A document of 520 and a tree of 240 with their divider, beside the lane's divider and 480, want 1256; in 1255 the lane gives up 1px.
+    const squeezed = frame({ tool: "files", pinned: true, tree: true, body: 1255 });
+    expect(squeezed).toMatchObject({ mode: "docked", narrowPin: false, agents: 480, width: 767, tree: 240, document: 519 });
     const wide = frame({ tool: "files", pinned: true, tree: true, body: 1256 });
     expect(wide).toMatchObject({ mode: "docked", narrowPin: false, agents: 480, width: 768 });
-    // Shrinking the window while pinned goes back over Agent Views, never hiding the lane.
-    expect(frame({ tool: "files", pinned: true, body: 1007 })).toMatchObject({ mode: "overlay", narrowPin: true });
-    expect(frame({ tool: "files", pinned: true, body: 1008 })).toMatchObject({ mode: "docked", agents: 480 });
+    // Down to its minimums, 360 and 180 with their divider, the lane stays docked; one pixel less draws it over the agents.
+    expect(frame({ tool: "files", pinned: true, tree: true, body: 1036 })).toMatchObject({ mode: "docked", agents: 480, width: 548, document: 360, tree: 180 });
+    expect(frame({ tool: "files", pinned: true, tree: true, body: 1035 })).toMatchObject({ mode: "overlay", narrowPin: true, agents: 1035, width: 768 });
+    // Without the tree the same holds at 360.
+    expect(frame({ tool: "files", pinned: true, body: 1007 })).toMatchObject({ mode: "docked", agents: 480, width: 519 });
+    expect(frame({ tool: "files", pinned: true, body: 848 })).toMatchObject({ mode: "docked", agents: 480, width: 360 });
+    expect(frame({ tool: "files", pinned: true, body: 847 })).toMatchObject({ mode: "overlay", narrowPin: true });
+    // Widening again brings the stored width back: nothing narrow is stored.
+    expect(frame({ tool: "files", pinned: true, body: 1600 })).toMatchObject({ mode: "docked", width: 520 });
   });
 
   it("opens the lane at any width, a body narrower than it giving up document width before tree width (B19)", () => {
@@ -98,6 +104,13 @@ describe("the right lane (PRD right-lane)", () => {
     // With the tree beside the document, the tree keeps its width.
     const tree = frame({ tool: "files", pinned: true, tree: true, body: 1600 });
     expect(laneLanding({ x: 1600 - 768 - 8 - 32, body: 1600, frame: tree, sizes })).toEqual({ lane_width: 552 });
+    // Over the agents the same drag lands the same width, and the lane may
+    // reach the body's edge: nothing beside it keeps a minimum.
+    const over = frame({ tool: "files", shown: true, body: 1600 });
+    expect(over.mode).toBe("overlay");
+    expect(laneLanding({ x: 1600 - 520 - 8 - 100, body: 1600, frame: over, sizes })).toEqual({ lane_width: 620 });
+    expect(laneLanding({ x: 0, body: 1600, frame: over, sizes })).toEqual({ lane_width: 1600 - 8 });
+    expect(laneLanding({ x: 1590, body: 1600, frame: over, sizes })).toEqual({ lane_width: 360 });
   });
 
   it("trades width between the tree and the document, so the lane and Agent Views keep theirs (B10)", () => {

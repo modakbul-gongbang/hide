@@ -86,15 +86,14 @@ describe("shortcut registry", () => {
       ...(FACTORY_OPEN ? { factory_open: "⇧⌘F" } : {}),
       sidebar_projects: "⇧⌘P",
       toggle_device_rail: "",
-      toggle_explorer: "⌘E",
+      toggle_lane: "⌘E",
       toggle_file_tree: "⇧⌘E",
-      toggle_right_panel: "⇧⌘B",
       find_in_pane: "⌘F",
       save_file: "⌘S",
       keep_open: "⇧⌘K",
       split_right: "⌘D",
       split_down: "⇧⌘D",
-      toggle_zoom: "⌥⌘↩",
+      toggle_zoom: "⇧⌘↩",
       close_pane: "⇧⌘W",
       text_larger: "⌘=",
       text_smaller: "⌘-",
@@ -189,14 +188,14 @@ describe("shortcut registry", () => {
   });
 
   it("runs each host's own stored set and never the other's", () => {
-    const uiState = { browser_shortcut_bindings: { split_right: "alt+KeyR" }, shortcut_bindings: { toggle_zoom: "command+shift+return" } };
+    const uiState = { browser_shortcut_bindings: { split_right: "alt+KeyR" }, shortcut_bindings: { toggle_zoom: "command+option+return" } };
     const browser = hostRegistry(uiState, "browser", "mac").registry;
     const desktop = hostRegistry(uiState, "electron", "mac").registry;
     expect(matchHost({ code: "KeyR", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, browser, "browser")?.id).toBe("split_right");
     expect(matchHost({ code: "KeyR", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, desktop, "electron")).toBeNull();
     expect(matchHost({ code: "KeyD", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false }, desktop, "electron")?.id).toBe("split_right");
-    expect(matchHost({ code: "Enter", metaKey: true, altKey: false, shiftKey: true, ctrlKey: false }, desktop, "electron")?.id).toBe("toggle_zoom");
-    expect(matchHost({ code: "Enter", metaKey: true, altKey: false, shiftKey: true, ctrlKey: false }, browser, "browser")).toBeNull();
+    expect(matchHost({ code: "Enter", metaKey: true, altKey: true, shiftKey: false, ctrlKey: false }, desktop, "electron")?.id).toBe("toggle_zoom");
+    expect(matchHost({ code: "Enter", metaKey: true, altKey: true, shiftKey: false, ctrlKey: false }, browser, "browser")).toBeNull();
     expect(hostRegistry({}, "electron", "mac").registry).toBe(REGISTRY);
   });
 
@@ -297,6 +296,15 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
     expect(displayCommand("shrink_agent_area", "electron", desktop.registry, "mac")).toBe("⌥⌘H");
   });
 
+  it("ignores a saved Agents overview chord, a command that no longer exists, without losing the other saved chords", () => {
+    for (const host of ["browser", "electron"] as const) {
+      const resolved = effectiveRegistry({ sidebar_agents: host === "browser" ? "meta+shift+KeyA" : "command+shift+a", split_right: host === "browser" ? "meta+alt+KeyR" : "command+option+r" }, host, "mac");
+      expect(resolved.diagnostic).toMatch(/retired/);
+      expect(displayCommand("split_right", host, resolved.registry, "mac")).toBe("⌥⌘R");
+      expect(displayCommand("add_backlog", host, resolved.registry, "mac")).toBe(host === "browser" ? "⌥⇧M" : "⇧⌘M");
+    }
+  });
+
   it("ignores the retired sidebar toggle without losing the other saved chords", () => {
     for (const host of ["browser", "electron"] as const) {
       const resolved = effectiveRegistry({ toggle_sidebar_view: "invalid", split_right: host === "browser" ? "meta+alt+KeyR" : "command+option+r" }, host, "mac");
@@ -342,7 +350,7 @@ describe("the desktop app's macOS pane chords (user decision 2026-09-26)", () =>
     expect(matchHost(press("Enter", { meta: true, alt: true }), registry, "electron")).toBeNull();
     expect(displayCommand("text_larger", "electron", registry, "mac")).toBe("⌘=");
     // The browser column is untouched by the macOS set.
-    expect(registry.find((command) => command.id === "toggle_zoom")?.browser).toEqual({ code: "Enter", meta: true, alt: true });
+    expect(registry.find((command) => command.id === "toggle_zoom")?.browser).toEqual({ code: "Enter", meta: true, shift: true });
   });
 
   it("keeps the surfaceless Toggle Conversation in the set without running it", () => {
@@ -403,9 +411,8 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
       ...(FACTORY_OPEN ? { factory_open: "Alt+Shift+F" } : {}),
       sidebar_projects: "Alt+Shift+P",
       toggle_device_rail: "",
-      toggle_explorer: "Ctrl+Shift+E",
+      toggle_lane: "Ctrl+Shift+E",
       toggle_file_tree: "Alt+Shift+E",
-      toggle_right_panel: "Alt+Shift+B",
       find_in_pane: "Ctrl+Shift+F",
       save_file: "Ctrl+Shift+S",
       keep_open: "Alt+Shift+K",

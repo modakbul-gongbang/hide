@@ -21,7 +21,7 @@ The picker shows each real bind address and port, preserves IPv4/IPv6 scope, and
 An empty, loading, disconnected, failed or stale catalog gives small feedback in the same popover; a remote Workspace explicitly has no local discovery.
 Discovery never starts or stops a server, and an opened page retains the Browser View’s own connection failure and recovery controls.
 Hovering or focusing an icon shows its name in a tooltip; `Open server` has no chord.
-A right-click or the menu key on the path offers Show or Hide Files, Show or Hide Sessions, and Copy Workspace path.
+A right-click or the menu key on the path offers Show or Hide right lane and Copy Workspace path.
 An empty Agent area offers New tab.
 The area is empty only when the checkout has no tab: a checkout whose only tab holds delegated children keeps that tab off the strip and still draws it on the canvas, so the agent chosen from the sidebar there opens on its pane.
 
@@ -52,11 +52,10 @@ Only when the window's frame itself cannot draw does the line take the whole win
 ### The right lane
 
 The Workspace body, under the top row, is Agent Views (the Agent area), one right lane, and the tool rail, 48px wide, at the window's right edge.
-The rail lists Files, Changes, Sessions and Memory from the top, each an icon with its name under it, and the lane shows one of them at a time: Files (the View areas and the file tree), Changes (History), Sessions, and Memory.
+The rail lists Files, Changes, Work and Memory from the top, each an icon alone (files, a file diff, conversations, a brain) whose name and scope are its hint on hover and its accessible name, and the lane shows one of them at a time: Files (the View areas and the file tree), Changes (History), Work (Sessions and PRs), and Memory.
 A rail icon is drawn pressed, with a primary bar at the rail's edge, while the lane shows its tool; pressing it opens the lane on that tool, and pressing the pressed one closes the lane.
-Each icon's tooltip names the tool, its scope and its chord (`Files · settings-ui ⇧⌘B`, `Sessions · all of hide ⌘E`), with a rebound chord shown as bound.
+Each icon's hint names the tool and its scope (`Files · settings-ui`, `Sessions · all of hide`); the tools have no chords of their own.
 While the lane does not show Files, its icon carries a badge counting the views open, also given as its accessible description; Memory's carries a dot while its Project has questions waiting.
-The rail's names stay whole on one line in all four languages; Japanese sets them with proportional kana.
 The rail's `…` menu holds Toggle File Tree with its chord, Pin or Unpin, and Expand.
 A Workspace seen for the first time shows Agent Views alone, its lane closed.
 The lane's header names its tool and scope, `Files · <checkout>`, `Changes · <checkout>`, `Sessions · all of <project>` and `Memory · <project>`, with Pin, Expand and Close at its right; a new checkout in front renames the Files and Changes scopes and leaves Sessions and Memory as they are.
@@ -67,8 +66,9 @@ A lane put away keeps its documents, tabs, scroll, previews and searches, and it
 Another Workspace coming in front, from this window or another, starts with its unpinned lane put away unless an open or a reveal brought it there.
 Pinned (a filled pin; an empty one says `Pin · keep it beside the agents`), the lane docks beside Agent Views, which narrow by its width once, and it stays through a terminal click; unpinned (`Unpin · back over the agents`), Agent Views take their width back and the lane is over them again.
 The pin is the lane's, whatever tool it shows, and a pinned lane closed and opened again comes back docked.
-A window that would leave Agent Views less than 480px beside a pinned lane opens the lane over them as if unpinned, though it stays through a terminal click; the pin stays filled and its tooltip says `Pin · too narrow, drawn over`, and widening the window docks the lane again.
+A pinned lane docks in any window where its minimums (360px of documents, 180px of tree) fit beside 480px of Agent Views, giving up its own width first and taking its stored width back as the window widens; a window too narrow for even that opens the lane over them as if unpinned, though it stays through a terminal click, with the pin still filled and its tooltip saying `Pin · too narrow, drawn over`.
 Expand gives the lane the whole body between the sidebar and the rail, with the file tree as a column beside the documents; Expand again or Escape returns to the pin, widths and terminal layout as they were, no terminal resizes meanwhile, and Agent Views under an expanded lane take no pointer or keyboard.
+While the keyboard is in the lane, a document, a page or the tool, the Zoom pane chord (⇧⌘↩, Alt+Shift+Enter on Windows and Linux) is Expand and Expand again, so one key fills the window with whatever the operator works in; anywhere else it zooms the focused pane, and the Expand tooltip shows the chord.
 Close (the header's ×, the pressed rail icon, or the tool's chord) closes the lane and turns the file tree off; it closes no view, and the Files badge counts what stays open.
 
 The files tool shows the View areas below, with their tabs, splits, previews and browser displays, each page inside its area's bounds.
@@ -77,13 +77,13 @@ The tree button or ⌘⇧E (`Toggle File Tree`) turns the file tree, the Explore
 On, the tree is a column left of the documents and the lane widens by its width, so the documents keep theirs: over Agent Views it covers more of them, and docked, Agent Views give up the tree's width as well.
 The tree stays on when a file is picked, when the lane is put away and comes back, and when another tool shows and Files comes back; only the tree button, ⌘⇧E and closing the lane turn it off.
 With no document open, the files tool shows the tree across the lane, its head saying `No open document · tree only`; a file picked there, or anything opened meanwhile (⌘P, a terminal link, a page, `hide` from the front tab), opens beside the tree, which goes back to its own width and stays on, and ⌘⇧E there changes nothing.
-Closing the last view leaves the lane on Files in that state, and ⌘⇧B on a Workspace with no view opens to it; nothing opens a blank page in its place and the lane is never empty, while a View area's New tab still opens a browser display (see Browser displays).
+Closing the last view leaves the lane on Files in that state, and ⌘E on a Workspace with no view opens to it; nothing opens a blank page in its place and the lane is never empty, while a View area's New tab still opens a browser display (see Browser displays).
 
 Opening a file, a diff or a page from the tree, Changes, ⌘P, a terminal link, Open in Browser or Open server opens the lane on Files, over the agents or docked as its pin says, with the opened tab in its active View area; another tool showing gives way to Files.
 Select in File Tree, a reveal, or a terminal link that names a folder opens Files with the tree on and the row unfolded and selected.
-⌘⇧B (`Toggle File Views`) opens and closes the lane on Files, and ⌘E (`Toggle Tools`) on Work; the desktop app's View menu names those two and `Toggle File Tree`, and a chord bound to any of them in Settings, Shortcuts keeps doing the same.
+⌘E (`Toggle right lane`) closes the lane while it shows and otherwise brings it back on the tool it holds, Files when it holds none; the desktop app's View menu names it and `Toggle File Tree`, and a chord bound to either in Settings, Shortcuts keeps doing the same.
 Each sends the value the lane should end at, so the same command arriving twice lands where it did once.
-A right-click or the menu key on the Workspace's path offers Show or Hide Files and Show or Hide Sessions with the same effect.
+A right-click or the menu key on the Workspace's path offers Show or Hide right lane with the same effect.
 A file read opens the files tool when its document is ready, in the Agent tab that requested it.
 Choosing another Agent tab while it reads keeps that tab's presentation intact, and closing a requesting tab drops only that tab's pending open.
 When several tabs request the same file during its read, they share the read and document buffer while each keeps its own display request.
@@ -101,13 +101,13 @@ The sidebar is one list with no mode strip.
 ⌘⇧P shows and focuses it.
 `Toggle device rail` has no default chord either and is bound the same way; it shows or hides the device rail.
 
-A docked lane has a divider at its left edge, and the tree a divider between it and the documents; a lane over the agents has no divider at its edge.
+The lane has a divider at its left edge, docked or over the agents, and the tree a divider between it and the documents.
 A divider shows its grip on hover, keyboard focus and while dragging; a drag moves a guide with the pointer and lands once on release, and a focused divider moves one 32px step per arrow key, each a separator that reports its width.
 Fast arrow presses retain every step before the preceding width has been confirmed, and reloading restores the final width.
-The tree's divider trades width between the tree and the documents, so the lane and Agent Views keep theirs; the lane's divider changes the documents' width against Agent Views.
-The documents are never narrower than 360px and start at 520px, the tree never narrower than 180px and starts at 240px, and Agent Views keep 480px beside a docked lane; both widths are the Workspace's and the same over the agents and docked.
+The tree's divider trades width between the tree and the documents, so the lane and Agent Views keep theirs; the lane's divider changes the documents' width, against Agent Views when docked, and over them otherwise, where it may reach the body's left edge.
+The documents are never narrower than 360px and start at 520px, the tree never narrower than 180px and starts at 240px, and Agent Views keep 480px beside a docked lane; both widths are the Workspace's and the same over the agents and docked, so a width dragged over the agents is the width the pin docks at.
 The pin turning on or off, a docked lane opening or closing, a docked divider landing, and the tree turning on or off beside a docked lane resize the agents' terminals once.
-A lane over the agents opening, going away, coming back, expanding or closing, a drag in progress, and anything inside the lane, an open, a close, a tab change, a split or a drag of a view, resize nothing.
+A lane over the agents opening, going away, coming back, expanding or closing, its divider landing, a drag in progress, and anything inside the lane, an open, a close, a tab change, a split or a drag of a view, resize nothing.
 Changing Workspace or lane geometry during a divider drag cancels its guide without saving a width, and releasing the old pointer cannot change the new Workspace.
 The lane's tool, pin, tree, and both widths are stored per Workspace and survive a restart: a pinned lane comes back docked, an unpinned one put away until asked, and neither expanded.
 A Workspace stored with the earlier File Views and Tools columns comes back once on Files where File Views was on, else on the tool Tools showed, unpinned (see View states).
@@ -364,14 +364,14 @@ In a plain browser tab the view keeps its address on the toolbar row, level with
 ### Narrow windows
 
 Whether a pinned lane docks depends on the Workspace body's width, not the window's, so hiding the sidebar with ⌘B can dock it again.
-A pinned lane docks while Agent Views keep their 480px minimum beside it and its divider; in a narrower body it opens over Agent Views with its pin still filled and stays through a terminal click, and widening the body docks it again.
+A pinned lane docks while its minimums and Agent Views' 480px fit side by side with its divider, the lane narrowing first; in a body too narrow for even those it opens over Agent Views with its pin still filled and stays through a terminal click, and widening the body docks it again.
 The lane opens at any width: in a body narrower than the lane it takes the whole body, giving up document width down to its 360px minimum first and tree width after.
 When the View areas cannot all have their minimum, only the active area shows, with an area switcher to the others.
 Widening the window brings back what the Workspace stores, the lane's tool, pin, tree, widths and the area sizes, because none of these narrow arrangements is stored, and another Workspace's lane never changes while one is narrow.
 
 ### Library masters
 
-PRD right-lane B25 draws the lane, rail, pin and tree parts of its approved v3 boards in `Component / Workspace columns`, and the closed, over-the-agents, docked, tree-on, tree-only, expanded, Sessions and narrow states in `Screen / Workspace`.
+PRD right-lane B25 draws the lane, rail, pin and tree parts of its approved v3 boards in `Component / Workspace columns`, and the closed, over-the-agents, docked, tree-on, tree-only, expanded, Work and narrow states in `Screen / Workspace`.
 Delivery compares the board with actual captures in both themes through `scripts/design-review.mjs` and the `right-lane` target of `design/review-targets.json`.
 The View area masters in `design/hide-ui.lib.pen` are `Component / View tab`, `Component / View insertion line`, `Component / View split overlay`, `Component / View tab menu`, and `Component / View area message`.
 Their sheets draw every state as refs: the View tab sheet draws preview, pinned, hover, active-in-the-active-area, active-in-another-area, dirty, unavailable, diff, a long title, and the floating drag copy; the placement sheet draws a reorder, a move into another area, a right and a down split, and an ineligible target; the tab menu sheet draws a preview's menu and a pinned view's menu with a disabled Split and its reason; the area states sheet draws each view's opening, waiting, and unavailable states.
@@ -673,8 +673,7 @@ It opens as a centered modal over a mounted Workspace, as large as the window al
 Its head is the title `Overview` and the device switch: every connected device as its rail tile and name, the rail's front device marked `rail`, a device that does not answer marked `연결 안 됨`, and every other device's tooltip carrying `Needs You N` (B2).
 Choosing a device changes only what the Overview shows; the rail, the sidebar and the Workspace in front stay, and a project chip that was set clears.
 The tab row is `Tasks · 백로그 · Projects` and, at its end, `Usage`: Tasks carries its task count, its Needs You count in the warning colour and a thin bar of the share that needs the operator, works, waits and rests; 백로그 carries its open items and Projects its project count (B3).
-A device that does not answer dims the tabs, and the body holds only `<device>가 응답하지 않는다 · <reason>` and `다시 연결`; when it answers again the body fills in place (B4).
-The connection row carries no time the device stopped answering, so the line says why rather than since when.
+A device that does not answer dims the tabs, and the body holds only `<device>가 응답하지 않는다 · <언제부터>` and `다시 연결`; the age is the core's `unreachable_since_unix_ms` on that device's status row, set when it first stopped answering, and the reason is the line's tooltip; when it answers again the body fills in place (B4).
 Tasks and 백로그 carry the project chip at the row's right (`모든 프로젝트 ▾`); choosing a project makes that tab show it alone, the chip names it while it filters, and changing the device clears it (B5).
 Each tab's controls sit at the row's right end beside the chip: Tasks' state chips and search, and 백로그's label chips and search.
 
@@ -742,6 +741,7 @@ The input empties and keeps the keyboard for the next title; an empty or blank E
 A GitHub issue made here, by the quick add or by `백로그로` carries the title alone: no request, answer or body leaves the device.
 A failed GitHub create keeps its row with one line of why (`gh가 없음`, `GitHub에 로그인 안 됨`, `GitHub 원격 없음`, `네트워크 또는 사용량 제한`), `다시 시도` and `지우기` (B30).
 `다시 시도` names the same add, so an issue the first try made is joined rather than made again, even after a restart; past eight waiting creates a new add fails at once with `만들 것이 너무 많이 밀려 있음`.
+A GitHub create is made only in the repository the project was connected to when it was asked; when Connections changes meanwhile, the create stops before the issue exists, fails with `프로젝트 저장소가 바뀜`, and its `다시 시도` makes nothing in the new repository.
 
 Only unstarted items are listed: an item a checkout works on leaves the list, adds one to `진행 중 N`, and shows as its chip on the Tasks card (B28).
 A GitHub row is `#N`, the title, a flag when it came from missed work, its labels, its age, `↗` (GitHub) and `▷ 시작`; a memo row is `L-N`, the title, the flag, its age and `▷ 시작` (B27).
@@ -873,6 +873,7 @@ A missed item sits directly under the task whose turn found it: open ones in the
 `백로그로` makes the item at once, in the backlog of the project the session works in on the device it runs on: a GitHub issue titled with the missed sentence and nothing else, or a memo (B44).
 Meanwhile the line ends in `만드는 중`; once made it dims with `· 백로그 #N` (`· 백로그 L-N`), which opens the item in the Overview's 백로그, or its Tasks card once started.
 A failure leaves one line of why and `다시 시도`, and one missed item makes one issue however often it is pressed, a restart included (B45).
+A missed item goes to the repository the session started in: when the project's connection now names another repository, or the session's original one is not known, it fails with `프로젝트 저장소가 바뀜` and makes nothing.
 `무시` is as before; a session on a device the core dials, which keeps no backlog, has `무시` alone (B46).
 Closed ones are one muted line that says how they closed (`· 처리됨`, `· 무시함`) or their backlog number, with `되돌리기` or `다시 열기` while the pointer or focus is on the line.
 Missed work from a turn that was not a task, from a turn no longer in the record, and from a descendant (with that descendant's name) comes last.
@@ -1179,16 +1180,15 @@ Groups stay separated by `--spacing-sm` (8px), without a card or border.
 The first group hangs `--spacing-xxs` (2px) under its checkout row, only so the checkout's fill and a selected row's never merge, and the last group ends with the same 8px before the next row, so every agent stands nearer its own checkout than the one below it.
 Root status marks share one axis on the checkout name's column, to the right of the checkout's kind glyph, so no agent row's leftmost ink stands left of its checkout's glyph and a `?` or `!` is scanned on one line.
 Lineage children keep their `--size-lineage-indent` (18px) step and elbow rails from that axis, and a root's lineage disclosure stays in the reserved trailing slot.
-Each group draws a 1px vertical guide centered under the checkout's kind glyph (a plain folder's folder glyph) and spanning the group's rows; the gap between two guides is the tab boundary, and a single-agent tab is a short segment with no line.
-A tab with two or more recognized agent panes opens with one quiet line at its head, a sidebar line and a hairline high, standing inside the guide like a row: the guide runs past it unbroken, the tab glyph stands on the status-mark column and the tab's name in 11px subtle text starts on the title column, so the tab reads as part of its checkout and never as a row beside the checkout's own glyph.
+A tab with two or more recognized agent panes draws a 1px vertical guide centered under the checkout's kind glyph (a plain folder's folder glyph) and spanning the group's rows, and opens with one quiet line at its head, a sidebar line and a hairline high, standing inside the guide like a row: the guide runs past it unbroken, the tab glyph stands on the status-mark column and the tab's name in 11px subtle text starts on the title column, so the tab reads as part of its checkout and never as a row beside the checkout's own glyph.
 The name is the tab's manual name, or localized `Tab N` from the core's stable number when it has none.
 Shell panes are not counted, children in other tabs do not inflate their parent's count, and a tab without a sidebar root draws no segment.
 Pointer or keyboard focus on the line shows its hint, the same name and its agent count.
 The line is a button with that accessible name: click, Enter and Space open the real tab without read-state or process effects, and it is a stop in the Arrow Up/Down and Home/End traversal, ahead of its segment's rows.
 The existing tab Rename still sets or clears the manual name; automatic tabbar titles remain independent.
-A single-agent tab draws no line even when named.
+A single-agent tab draws no guide and no line even when named: its row alone is the segment, and the 8px gap between segments is the tab boundary.
 A tab has no disclosure and the sidebar saves nothing about it; a stored fold choice from an earlier version is ignored on load and dropped on the next write.
-When two agents become one the segment keeps its guide and loses the line, and a second agent brings it back with the name the tab still has.
+When two agents become one the segment loses its guide and line, and a second agent brings them back with the name the tab still has.
 At a 240px sidebar width, its 8px list inset puts the checkout's kind glyph at x28 with the guide centered on x35, root status marks starting at x46 and titles at x62, and a tab line's glyph centered on the status-mark column at x52 with its name at x62; quiet agent rows are 28px high, using the existing 20px line and 4px vertical padding, and a tab line is 22px.
 Focused sidebar agent and checkout rows use the neutral `--secondary` fill.
 Root shortcuts follow the same physical grouping order and deduplicate raised occurrences, with no numbers for tab lines or children.
@@ -1211,7 +1211,7 @@ Overview shows its glyph, label, Needs You count and current shortcut; zero, an 
 The top row's Overview icon has an accessible Overview name and count description, a Needs You dot above zero and a tooltip with its current shortcut.
 The top row's icons are Overview and Open server; the Files badge is on the rail.
 ⌘⇧P shows and focuses the sidebar, closing Overview first.
-Retired `toggle_sidebar_view` and `project_home` stored bindings are ignored without losing other valid bindings, with a diagnostic.
+Retired `toggle_sidebar_view`, `project_home` and `sidebar_agents` (the removed Agents overview) stored bindings are ignored without losing other valid bindings, with a diagnostic.
 
 A device that is not connected shows the top row and its reconnect view with no tab strip.
 The list shows the device's Needs You and Done and projects with their operator-owned roots.
@@ -1798,6 +1798,7 @@ A query with a GitHub project the core reads (its own or a node's that dials it)
 A pull request's row, held or found on GitHub, leads with its PR mark without the number and says its state in the muted word; a found one's state is the core's (`pr_state`), as a held one's is.
 The query's words match like a search box, and a query is capped at 200 characters.
 The same query already searching is not started again, and an answer for an older query is dropped.
+Search targets use confirmed project repository choices and valid catalog repository names; an unknown or malformed local name is resolved by the worker, while a node project without a valid name is left out.
 Choosing a GitHub result opens it in the browser.
 
 ### Keys and results
@@ -1847,6 +1848,46 @@ Keys typed right after New tab or a split go to the new pane once Herdr names it
 Keyboard focus follows the core's answer, not the drawing, so a second ⌘D pressed before Herdr confirms the first splits the original pane again, as Herdr does.
 Keys typed after a click go to the pane clicked last, whatever order snapshots arrive in: the header may briefly follow an older snapshot, but keyboard focus does not leave the last-clicked pane until the core has answered that click, and a focus move the core makes afterwards (Herdr's own move, or a refused click) is followed.
 Unread weight is never reused to mean parent, child, delegated, or selected.
+
+## Project settings
+
+A Git project or plain folder's gear, project menu and the Overview's project panel (Projects tab) open the same Project settings dialog without selecting or folding that project.
+Home has no project settings entry.
+The gear shares the reserved action space with New work and More, appears on hover, keyboard focus or an open menu, and stays visible on devices without hover.
+Closing the dialog with Escape or its close button restores the opener's focus and leaves the screen, selected device and checkout unchanged.
+
+The dialog is 880 by 640 when the window permits it, with a fixed 200-wide navigation list for Connections, Working style and Memory; only the page scrolls.
+Choices are scoped to the owning device and canonical main-worktree root, shared by all of that project's checkouts.
+Each change saves immediately through the core's existing state writer, shows pending, saved or failed beside its row, and keeps the last confirmed value until durable acknowledgment.
+Closing does not cancel a save, and reopening preserves the failed intent's Retry.
+A later window's save does not turn an already completed change back into Pending.
+An unavailable device or missing project retains its last observed values read-only, with a retry at that surface; a newer settings version is also read-only with an update reason.
+
+Connections shows the actual GitHub repository or why none was detected, with automatic detection or an explicit owner/repository override, and the existing Auto, GitHub and Local issue choices.
+An invalid repository has an inline reason and is not saved.
+Changing the connection does not change Git remotes, account login or permissions; provider failures stay with the provider rather than silently switching to Local.
+Linear is a disabled Coming soon row.
+Previously linked issues and recorded issue, pull-request and session addresses keep their original repository identity, including an unchanged legacy bare issue token.
+
+Working style chooses the initial location for project-scoped New work: an existing checkout or a new worktree.
+A new-worktree start asks for its branch and actual base before starting and preserves the task, agent and model on failure.
+An explicit checkout, issue or pull-request start, CLI target, resume, wake, fork and running agent keep their existing behavior.
+The base branch is also the project's existing Git comparison and merge base; an absent saved branch falls back to an existing branch with a reason.
+Plain folders cannot select worktree creation or a Git base.
+Original-checkout branch protection and main file-write blocking are separate unsupported rows.
+
+Memory uses the existing consent and kit; its row shows hook preparation, pending writes and project-scoped failure with Retry, while retaining the confirmed value.
+That Retry applies only to enabling or disabling Memory; card actions stay in the Memory tool with their existing confirmations.
+Memory promotion PR rows retain their original repository-qualified link after Connections changes; checks, status and agent identity join only that exact URL.
+A legacy promotion whose original repository cannot be proven shows PR verification unavailable and keeps its PR button disabled.
+Turning it off keeps existing cards.
+While the dialog is open its project owns the daemon's single Memory read slot, and the tool rail's project is restored when it closes.
+Open project Memory is one scoped navigation intent that closes the dialog and opens that project's usable checkout with the right lane on its Memory tool; a delayed remote focus changes the lane only on arrival, and refusal leaves the earlier checkout's lane unchanged.
+The shell waits for both the target checkout and its Memory tool; the core's lane call then brings the lane forward, over the agents in a narrow window.
+A newer explicit navigation cancels the delayed Memory choice so its later arrival cannot take the screen back.
+Without a usable checkout it gives a local recovery reason.
+All pages use the four interface languages, existing settings rows, system controls, dialog keyboard containment and theme tokens.
+`web/src/ProjectSettingsSheet.tsx` owns the dialog and `web/src/projectSettings.ts` reads its confirmed scoped choices.
 
 ## Settings: each machine's install kit
 
@@ -2167,15 +2208,14 @@ The sheet carries no row or explanation for a command the removed native app alo
 | Focus sidebar | `⇧⌘P` | `Alt+Shift+P` | `⇧⌘P` | `Alt+Shift+P` |
 | Toggle left sidebar | `⌘B` | `Ctrl+Shift+B` | `⌘B` | `Ctrl+Shift+B` |
 | Toggle device rail | none | none | none | none |
-| Toggle Tools | `⌘E` | `Ctrl+Shift+E` | `⌘E` | `Ctrl+Shift+E` |
+| Toggle right lane | `⌘E` | `Ctrl+Shift+E` | `⌘E` | `Ctrl+Shift+E` |
 | Toggle File Tree | `⇧⌘E` | `Alt+Shift+E` | `⇧⌘E` | `Alt+Shift+E` |
-| Toggle File Views | `⇧⌘B` | `Alt+Shift+B` | `⇧⌘B` | `Alt+Shift+B` |
 | Find in pane | `⌘F` | `Ctrl+Shift+F` | `⌘F` | `Ctrl+Shift+F` |
 | Save file | `⌘S` | `Ctrl+Shift+S` | `⌘S` | `Ctrl+Shift+S` |
 | Keep open | `⇧⌘K` | `Alt+Shift+K` | `⇧⌘K` | `Alt+Shift+K` |
 | Split right | `⌘D` | `Ctrl+Shift+D` | `⌘D` | `Ctrl+Shift+D` |
 | Split down | `⇧⌘D` | `Alt+Shift+D` | `⇧⌘D` | `Alt+Shift+D` |
-| Zoom pane | `⌥⌘↩` | `Alt+Shift+Enter` | `⌥⌘↩` | `Alt+Shift+Enter` |
+| Zoom pane | `⇧⌘↩` | `Alt+Shift+Enter` | `⇧⌘↩` | `Alt+Shift+Enter` |
 | Close pane | `⇧⌘W` | `Alt+Shift+W` | `⌥⇧W` | `Alt+Shift+W` |
 | Larger text (exception) | `⌘=` | `Ctrl+=` | `⌘=` | `Ctrl+=` |
 | Smaller text (exception) | `⌘-` | `Ctrl+-` | `⌘-` | `Ctrl+-` |

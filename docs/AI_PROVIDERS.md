@@ -2,7 +2,6 @@
 
 `hide-ai/` is the one boundary through which a Hide feature asks a language model for something in the background.
 Its consumers are the core's agent label analyzer (`herdr-core/src/labels/analyzer.rs`), Project Memory extraction under `hide-memory/`, the Software Factory's judgments (see [The Factory's judgments](#the-factorys-judgments)), and the Start dialog's worktree name; later features reuse the same boundary rather than a provider client of their own.
-The Sessions missed-work preview is another consumer, owned by `herdr-core/src/ai.rs` and `runtime/session_work.rs`.
 This guide owns the boundary's rules; the code under `hide-ai/src/` and the tests under `hide-ai/tests/` are its executable authority.
 
 ## Ownership split

@@ -109,7 +109,7 @@ export function MainScreen({ actions, deviceId }: { actions: Actions; deviceId: 
           </div>
           {panel && view !== "usage" ? (
             <aside
-              className="flex w-(--size-lane-min) shrink-0 flex-col border-l border-border bg-background max-[1279px]:absolute max-[1279px]:inset-y-0 max-[1279px]:right-0 max-[1279px]:z-10 max-[1279px]:shadow-lg"
+              className="flex w-(--size-lane-min) shrink-0 flex-col border-l border-border bg-background overview-narrow:absolute overview-narrow:inset-y-0 overview-narrow:right-0 overview-narrow:z-10 overview-narrow:shadow-lg"
               data-overview-panel={panel.kind}
             >
               {panel.kind === "task" || panel.kind === "record" ? (

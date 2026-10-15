@@ -12,6 +12,7 @@ use crate::links::ledger::{
 use crate::links::worker::LinkClient;
 use crate::model::{BacklogFailure, BacklogItemSnapshot, BacklogPhase};
 use crate::node_access::NodeLink;
+use hide_ai::CancelToken;
 use hide_node_link::protocol::Call;
 use serde::Deserialize;
 use std::collections::{HashMap, VecDeque};
@@ -36,11 +37,24 @@ struct Job {
     missed: Option<MissedSource>,
 }
 
+/// A create in flight: the repository target and connection epoch it was
+/// admitted under, and the token a connection change cancels it with. Its
+/// answer is published only while the project still names that target.
+struct Admission {
+    device: String,
+    project: String,
+    target: crate::github::Where,
+    epoch: u64,
+    cancel: CancelToken,
+}
+
 #[derive(Default)]
 pub(super) struct BacklogWork {
     jobs: HashMap<String, Job>,
     /// The device each running create is for.
     running: HashSet<String>,
+    /// Each running create's admission, by intent.
+    admitted: HashMap<String, Admission>,
     waiting: HashMap<String, VecDeque<String>>,
     undo_generation: u64,
     origin_generation: u64,
@@ -360,6 +374,17 @@ impl Runtime {
             row.phase = BacklogPhase::Creating;
             row.failure = None;
         }
+        let cancel = CancelToken::new();
+        self.backlog_work.admitted.insert(
+            intent.clone(),
+            Admission {
+                device: job.device.clone(),
+                project: job.project.clone(),
+                target: place.clone(),
+                epoch: self.connection_epoch(&job.device, &job.project),
+                cancel: cancel.clone(),
+            },
+        );
         self.backlog_work.running.insert(job.device.clone());
         let key = match &job.missed {
             Some(source) => AttemptKey::Missed(source.clone()),
@@ -375,7 +400,7 @@ impl Runtime {
         let intent_for_refusal = intent.clone();
         let spawned = self.spawn_issue_worker(
             "backlog-issue",
-            move || create_once(&client, &key, own.as_ref(), &place, &title),
+            move || create_once(&client, &key, own.as_ref(), &place, &title, &cancel),
             move |runtime, result| runtime.ingest_backlog_issue(&intent, result),
         );
         if let Err(code) = spawned {
@@ -383,6 +408,7 @@ impl Runtime {
                 serde_json::json!({"component":"backlog","kind":"backlog.worker_unavailable","code":code})
             );
             self.backlog_work.running.remove(&job.device);
+            self.backlog_work.admitted.remove(&intent_for_refusal);
             if let Some(row) = self.backlog_row(&intent_for_refusal) {
                 row.phase = BacklogPhase::Failed;
                 row.failure = Some(BacklogFailure::Refused);
@@ -399,6 +425,18 @@ impl Runtime {
             return false;
         };
         self.backlog_work.running.remove(&job.device);
+        // An answer for a repository the project no longer names is not
+        // published: a retry reconciles the attempt against the old target.
+        let current = self
+            .backlog_work
+            .admitted
+            .remove(intent)
+            .is_some_and(|admission| self.admission_current(&job, &admission));
+        let result = if current {
+            result
+        } else {
+            Err(BacklogFailure::RepositoryChanged)
+        };
         match result {
             Ok(issue) => {
                 let key = crate::tasks::github_key(&issue.reference);
@@ -749,6 +787,35 @@ impl Runtime {
     }
 }
 
+impl Runtime {
+    fn connection_epoch(&self, device: &str, project: &str) -> u64 {
+        self.links_work
+            .connection_epochs
+            .get(&hide_project::project_id(device, Path::new(project)))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn admission_current(&self, job: &Job, admission: &Admission) -> bool {
+        !admission.cancel.is_cancelled()
+            && self
+                .github_place(job.node.as_deref(), &job.project)
+                .is_ok_and(|target| target == admission.target)
+            && self.connection_epoch(&admission.device, &admission.project) == admission.epoch
+    }
+
+    /// A project's repository connection changed: every create in flight for
+    /// it stops before it reserves or runs `gh issue create`, and one already
+    /// past that point is not published (`ingest_backlog_issue`).
+    pub(super) fn invalidate_backlog_repository(&mut self, device: &str, root: &str) {
+        for admission in self.backlog_work.admitted.values() {
+            if admission.device == device && admission.project == root {
+                admission.cancel.cancel();
+            }
+        }
+    }
+}
+
 fn failure_of(failure: crate::github::CreateFailure) -> BacklogFailure {
     match failure {
         crate::github::CreateFailure::Gh(failure) => failure.category.into(),
@@ -758,14 +825,25 @@ fn failure_of(failure: crate::github::CreateFailure) -> BacklogFailure {
 
 /// One title-only issue under a durable attempt: an attempt that already
 /// names its issue returns it, one left uncertain is looked for first, and
-/// only then is `gh issue create` run.
+/// only then is `gh issue create` run. A missed line's issue goes only to the
+/// repository its session worked in, which the ledger fixed when it first
+/// saw the session; the checkout's repository today grants no authority over
+/// it. `cancel` is the project's connection changing.
 fn create_once(
     client: &LinkClient,
     key: &AttemptKey,
     node: &dyn NodeLink,
     place: &crate::github::Where,
     title: &str,
+    cancel: &CancelToken,
 ) -> Result<crate::issues::IssueSnapshot, BacklogFailure> {
+    let changed = || {
+        cancel
+            .is_cancelled()
+            .then_some(BacklogFailure::RepositoryChanged)
+            .map_or(Ok(()), Err)
+    };
+    changed()?;
     let repository = crate::github::issue_repository(node, place).map_err(|code| {
         crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.repository_unread","code":code}));
         BacklogFailure::NetworkOrRateLimit
@@ -773,9 +851,30 @@ fn create_once(
     let ledger = |call: LedgerCall| {
         client.call(call).map_err(|code| {
             crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.ledger_refused","code":code}));
-            BacklogFailure::Refused
+            if code == "ledger_issue_repository_changed" {
+                BacklogFailure::RepositoryChanged
+            } else {
+                BacklogFailure::Refused
+            }
         })
     };
+    if let AttemptKey::Missed(source) = key {
+        let LedgerAnswer::Record(record) = ledger(LedgerCall::Record(source.session.clone()))?
+        else {
+            return Err(BacklogFailure::Refused);
+        };
+        if record
+            .repository
+            .as_deref()
+            .is_none_or(|original| !original.eq_ignore_ascii_case(&repository))
+        {
+            crate::diagnostic!(
+                serde_json::json!({"component":"backlog","kind":"backlog.missed_repository_mismatch","known":record.repository.is_some()})
+            );
+            return Err(BacklogFailure::RepositoryChanged);
+        }
+    }
+    changed()?;
     let LedgerAnswer::Attempt(attempt) = ledger(LedgerCall::ReserveIssue {
         key: key.clone(),
         repository: repository.clone(),
@@ -824,6 +923,7 @@ fn create_once(
             crate::github::Where::Checkout(_) => place,
             _ => &approved,
         };
+        changed()?;
         crate::github::create_issue_failing(node, place, title, "").map_err(failure_of)
     })();
     let issue = match made {

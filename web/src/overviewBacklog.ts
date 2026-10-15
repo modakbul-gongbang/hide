@@ -5,6 +5,7 @@
 
 import type { BoardProject } from "./projectBoard";
 import type { BacklogItem, IssueLabel, Task, TaskSource, Workspace } from "./snapshot";
+import { isMemoKey } from "./overviewTasks";
 
 /** A title's longest form (B29): the core refuses more. */
 export const BACKLOG_TITLE_LIMIT = 256;
@@ -40,7 +41,7 @@ function rowOf(task: Task): BacklogRow {
     url: task.url,
     labels: task.labels ?? [],
     at: task.created_at_unix_ms ?? task.updated_at_unix_ms ?? null,
-    local: task.key.startsWith("local:"),
+    local: isMemoKey(task.key),
   };
 }
 

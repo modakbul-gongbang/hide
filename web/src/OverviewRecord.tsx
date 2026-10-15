@@ -40,7 +40,6 @@ export function TaskRecordPanel({ panel, rows, actions }: { panel: Extract<Overv
   useEffect(() => {
     if (session) actions.readSessionRecord(session);
     // The read follows the session's identity, not each snapshot's copy of it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actions, key]);
   const close = () => useUiStore.getState().setOverview({ panel: null });
   const project = owner?.project ?? null;

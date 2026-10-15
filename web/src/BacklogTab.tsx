@@ -13,9 +13,10 @@ import { requireInterfaceLanguage } from "./i18n/locale";
 import { cn } from "./lib/utils";
 import { ageWords } from "./overviewLens";
 import { backlogLabels, backlogOf, BACKLOG_SHOWN, backlogTitle, destinationOf, filterRows, pendingItems, startedKeys, titleLeft, type BacklogRow } from "./overviewBacklog";
-import { itemToken, taskSections } from "./overviewTasks";
+import { isMemoKey, itemToken, taskSections } from "./overviewTasks";
 import { issueDate, type BoardProject } from "./projectBoard";
 import { issueSourceChoices } from "./settings";
+import { projectIssueSource, settingsTarget } from "./projectSettings";
 import type { BacklogItem, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { IssueLabelDot, IssueLabelView } from "./issueMarks";
@@ -54,7 +55,7 @@ function DialedSection({ project }: { project: Workspace }) {
 /** The project's Issue source menu, as the sidebar's (B34). */
 function SourceChip({ project, actions }: { project: Workspace; actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const stored = useShellStore((s) => s.rest?.ui_state?.project_issue_sources?.[project.path]);
+  const stored = useShellStore((s) => projectIssueSource(s.rest, project));
   const { value, options } = issueSourceChoices(project, stored, t);
   const github = project.tasks?.source?.kind === "github";
   return (
@@ -67,7 +68,7 @@ function SourceChip({ project, actions }: { project: Workspace; actions: Actions
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
-        <DropdownMenuRadioGroup value={value} onValueChange={(choice) => actions.setIssueSource(project.path, choice as "auto" | "github" | "local")}>
+        <DropdownMenuRadioGroup value={value} onValueChange={(choice) => actions.setProjectSettings(settingsTarget(project), { issue_source: choice as "auto" | "github" | "local" }, crypto.randomUUID())}>
           {options.map((option) => <DropdownMenuRadioItem key={option.id} value={option.id} data-backlog-source-choice={option.id}>{option.label}</DropdownMenuRadioItem>)}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
@@ -202,7 +203,7 @@ function ItemRow({ row, project }: { row: BacklogRow; project: Workspace }) {
       <span className="pointer-events-none min-w-(--size-control-lg) shrink-0 font-mono text-muted-foreground">{row.token ?? ""}</span>
       <span className="pointer-events-none min-w-0 flex-1 truncate text-foreground">{row.title}</span>
       {fromMissed ? <Hint label={t("backlog.fromMissed")}><FlagIcon aria-label={t("backlog.fromMissed")} className="relative size-(--size-icon-sm) shrink-0 text-warning" data-backlog-missed="true" /></Hint> : null}
-      {row.labels.slice(0, 3).map((label) => <span key={label.name} className="pointer-events-none hidden shrink-0 min-[1100px]:inline-flex"><IssueLabelView label={label} /></span>)}
+      {row.labels.slice(0, 3).map((label) => <span key={label.name} className="pointer-events-none inline-flex shrink-0 overview-narrow:hidden"><IssueLabelView label={label} /></span>)}
       {row.at !== null ? <span className="pointer-events-none shrink-0 font-mono text-micro text-muted-foreground" title={issueDate(row.at, language)}>{ageWords(language, Date.now() - row.at, t)}</span> : null}
       {row.url && !row.local ? (
         <Hint label={t("backlog.openOnGithub")}>
@@ -277,7 +278,7 @@ export function BacklogItemPanel({ panel, projects, actions }: { panel: Extract<
     return <div className="flex min-h-0 flex-1 flex-col" data-backlog-item="missing">{head}<p role="status" className="px-md py-sm text-caption text-muted-foreground">{t("backlog.panel.missing")}</p></div>;
   }
   const started = startedKeys(project).has(task.key);
-  const local = task.key.startsWith("local:");
+  const local = isMemoKey(task.key);
   const at = task.created_at_unix_ms ?? task.updated_at_unix_ms ?? null;
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-backlog-item={task.key}>

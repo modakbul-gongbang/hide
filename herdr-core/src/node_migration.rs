@@ -378,6 +378,12 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
     ),
     (
         CORE_STATE,
+        "/project_settings/{key}",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
+    (
+        CORE_STATE,
         "/expanded_inactive_checkout_project_paths/*",
         Mechanism::Owned,
         Moves::Stays,
@@ -1350,6 +1356,12 @@ mod tests {
                 "expanded_paths": [root],
                 "project_base_branches": {root.clone(): "main"},
                 "project_issue_sources": {root.clone(): "github"},
+                "project_settings": {
+                    crate::project_settings::key(NODE, &root): {
+                        "version": 1, "device_id": NODE, "root": root,
+                        "repository": {"mode": "auto"}, "new_work": "worktree"
+                    }
+                },
                 "expanded_inactive_checkout_project_paths": [root],
                 "selected_path": root,
                 "focused_checkout_id": "workspace:a",

@@ -8,6 +8,420 @@ fn session() -> SessionIdentity {
     }
 }
 
+fn origin_project(device: &str, repository: &str, epoch: u64) -> crate::links::ProjectFacts {
+    crate::links::ProjectFacts {
+        key: hide_project::project_id(device, std::path::Path::new("/repo")),
+        device_id: device.into(),
+        root: "/repo".into(),
+        repository: Some(repository.into()),
+        connection_epoch: epoch,
+        ..Default::default()
+    }
+}
+
+fn origin_native(store: &mut LinkStore, identity: &SessionIdentity, cwd: &str, at: u64) {
+    // Native-reader boundary facts: the initial file read witnessed its first
+    // timestamp. Incremental ledger Requests alone are not this witness.
+    store
+        .apply_answer(
+            &identity.device_id,
+            &hide_session::links::ReadAnswer {
+                agent: hide_session::Agent::from_kind(&identity.agent).unwrap(),
+                path: format!("/fixture/{}.jsonl", identity.session_id),
+                checkpoint: None,
+                has_more: false,
+                rescanned: true,
+                error: None,
+                facts: hide_session::links::LinkFacts {
+                    session_id: Some(identity.session_id.clone()),
+                    cwd: Some(cwd.into()),
+                    first_at_unix_ms: Some(at),
+                    last_at_unix_ms: Some(at),
+                    ..Default::default()
+                },
+            },
+            "initial-native",
+        )
+        .unwrap();
+}
+
+fn origin_request(store: &mut LinkStore, identity: &SessionIdentity, at: u64) {
+    origin_native(store, identity, "/repo", at);
+    store
+        .apply_ledger_update(&LedgerUpdate::Requests {
+            session: identity.clone(),
+            cwd: "/repo".into(),
+            path: None,
+            requests: vec![RecordedRequest {
+                offset: 1,
+                at_unix_ms: at,
+                text: "Keep the original repository".into(),
+                author: WorkAuthor::Operator,
+                task_ids: vec![],
+                chapter_id: None,
+                judged: false,
+            }],
+        })
+        .unwrap();
+}
+
+#[test]
+fn native_node_paths_identify_fresh_original_work_but_not_history_or_a_sibling() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path().join("repository");
+    std::fs::create_dir(&root).unwrap();
+    let root = std::fs::canonicalize(root).unwrap();
+    let wire_root = hide_platform::path::to_wire(&root).unwrap();
+    let transcripts = home.path().join(hide_session::CLAUDE_SESSIONS);
+    std::fs::create_dir_all(&transcripts).unwrap();
+    let env = hide_host::serve::Env::standalone(Some(home.path().to_owned()));
+    let (mut store, _) = LinkStore::open(&home.path().join("links.sqlite3")).unwrap();
+    store
+        .apply_project(
+            &crate::links::ProjectFacts {
+                key: "original".into(),
+                device_id: "device-a".into(),
+                root: wire_root.clone(),
+                repository: Some("acme/original".into()),
+                ..Default::default()
+            },
+            1_000,
+        )
+        .unwrap();
+    for (id, cwd, timestamp, expected) in [
+        (
+            "fresh",
+            root.clone(),
+            "1970-01-01T00:00:02Z",
+            Some("acme/original"),
+        ),
+        ("historical", root.clone(), "1970-01-01T00:00:00.999Z", None),
+        (
+            "sibling",
+            root.with_file_name("repository-other"),
+            "1970-01-01T00:00:02Z",
+            None,
+        ),
+    ] {
+        let file = transcripts.join(format!("{id}.jsonl"));
+        // Native agents write the owning OS's cwd, including Windows '\\'.
+        // The node answer must relate it to catalog paths without changing
+        // the immutable birth window or accepting a prefix-only sibling.
+        let record = serde_json::json!({
+            "type": "user", "sessionId": id, "cwd": cwd,
+            "timestamp": timestamp, "entrypoint": "cli",
+            "origin": {"kind": "human"},
+            "message": {"role": "user", "content": "Keep the original repository"}
+        });
+        std::fs::write(&file, format!("{record}\n")).unwrap();
+        let answers: Vec<hide_session::links::ReadAnswer> = serde_json::from_value(
+            hide_host::serve::handle_in(
+                hide_node_link::protocol::Call::LinkRead {
+                    requests: vec![hide_session::links::ReadRequest {
+                        agent: hide_session::Agent::Claude,
+                        path: file.to_string_lossy().into_owned(),
+                        checkpoint: None,
+                    }],
+                },
+                &env,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let answer = &answers[0];
+        assert_eq!(answer.error, None);
+        assert_eq!(
+            answer.facts.cwd.as_deref(),
+            Some(hide_platform::path::to_wire(&cwd).unwrap().as_str())
+        );
+        store
+            .apply_answer_observed("device-a", answer, id, Some(3_000))
+            .unwrap();
+        let record = store
+            .ledger_record(&SessionIdentity {
+                device_id: "device-a".into(),
+                agent: "claude".into(),
+                session_id: id.into(),
+            })
+            .unwrap();
+        assert_eq!(record.repository.as_deref(), expected, "{id}");
+        assert_eq!(
+            record.project.as_deref(),
+            expected.map(|_| wire_root.as_str()),
+            "{id}"
+        );
+    }
+}
+
+#[test]
+fn repository_changes_preserve_original_session_identity_and_refuse_historical_guessing() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("links.sqlite3");
+    let (mut store, _) = LinkStore::open(&path).unwrap();
+    store
+        .apply_project(&origin_project("device-a", "acme/original", 0), 1_000)
+        .unwrap();
+    origin_request(&mut store, &session(), 2_000);
+    store
+        .apply_project(&origin_project("device-a", "acme/changed", 1), 3_000)
+        .unwrap();
+    assert_eq!(
+        store
+            .ledger_record(&session())
+            .unwrap()
+            .repository
+            .as_deref(),
+        Some("acme/original")
+    );
+    let historical = SessionIdentity {
+        session_id: "historical".into(),
+        ..session()
+    };
+    origin_request(&mut store, &historical, 2_000);
+    assert_eq!(store.ledger_record(&historical).unwrap().repository, None);
+    let fresh = SessionIdentity {
+        session_id: "fresh".into(),
+        ..session()
+    };
+    origin_request(&mut store, &fresh, 4_000);
+    assert_eq!(
+        store.ledger_record(&fresh).unwrap().repository.as_deref(),
+        Some("acme/changed")
+    );
+    let other = SessionIdentity {
+        device_id: "device-b".into(),
+        session_id: "fresh".into(),
+        ..session()
+    };
+    origin_request(&mut store, &other, 4_000);
+    assert_eq!(store.ledger_record(&other).unwrap().repository, None);
+    drop(store);
+    let (mut store, _) = LinkStore::open(&path).unwrap();
+    store
+        .apply_project(&origin_project("device-a", "acme/changed", 1), 5_000)
+        .unwrap();
+    assert_eq!(
+        store
+            .ledger_record(&session())
+            .unwrap()
+            .repository
+            .as_deref(),
+        Some("acme/original")
+    );
+    assert_eq!(store.ledger_record(&historical).unwrap().repository, None);
+    let gap = SessionIdentity {
+        session_id: "during-stopped-writer".into(),
+        ..session()
+    };
+    origin_request(&mut store, &gap, 4_500);
+    assert_eq!(store.ledger_record(&gap).unwrap().repository, None);
+}
+
+#[test]
+fn an_unknown_origin_is_not_filled_by_later_catalog_or_replayed_requests() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    origin_request(&mut store, &session(), 1_000);
+    store
+        .apply_project(&origin_project("device-a", "acme/today", 0), 2_000)
+        .unwrap();
+    origin_request(&mut store, &session(), 3_000);
+    let record = store.ledger_record(&session()).unwrap();
+    assert_eq!(record.repository, None);
+    assert_eq!(record.project, None);
+}
+
+#[test]
+fn recent_requests_before_historical_native_ingestion_cannot_prove_original_repository() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    store
+        .apply_project(&origin_project("device-a", "acme/today", 0), 2_000)
+        .unwrap();
+    request(&mut store, 3, "recent request from an old session");
+    assert_eq!(store.ledger_record(&session()).unwrap().repository, None);
+    origin_native(&mut store, &session(), "/repo", 1_000);
+    assert_eq!(store.ledger_record(&session()).unwrap().repository, None);
+}
+
+#[test]
+fn a_pruned_native_session_resuming_from_its_cursor_does_not_inherit_todays_repository() {
+    pruned_native_session_resumes(false);
+}
+
+#[test]
+fn a_pruned_native_session_replaced_under_the_same_identity_keeps_unknown_origin() {
+    pruned_native_session_resumes(true);
+}
+
+fn pruned_native_session_resumes(replaced: bool) {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    let native_dir = directory.path().join(".claude/projects/repo");
+    std::fs::create_dir_all(&native_dir).unwrap();
+    let file = native_dir.join("history.jsonl");
+    let line = |at: u64| {
+        serde_json::json!({"type":"user","sessionId":"history","cwd":"/repo","timestamp":jiff::Timestamp::from_millisecond(at as i64).unwrap().to_string(),"message":{"role":"user","content":"Historical work"}}).to_string()+"\n"
+    };
+    std::fs::write(&file, line(2_000)).unwrap();
+    store
+        .apply_project(&origin_project("device-a", "acme/original", 0), 1_000)
+        .unwrap();
+    let read = |checkpoint| {
+        hide_session::links::read(
+            directory.path(),
+            &[hide_session::links::ReadRequest {
+                agent: hide_session::Agent::Claude,
+                path: file.to_string_lossy().into(),
+                checkpoint,
+            }],
+        )
+        .remove(0)
+    };
+    let first = read(None);
+    assert!(first.error.is_none());
+    assert!(first.checkpoint.is_some());
+    store.apply_answer("device-a", &first, "first").unwrap();
+    let identity = SessionIdentity {
+        agent: "claude".into(),
+        session_id: "history".into(),
+        ..session()
+    };
+    assert_eq!(
+        store
+            .ledger_record(&identity)
+            .unwrap()
+            .repository
+            .as_deref(),
+        Some("acme/original")
+    );
+    let now = 3 * crate::links::DAY_MS;
+    assert_eq!(
+        store
+            .prune(&|_| Some(1), "device-a", &mut |_| Ok(BTreeSet::new()), now)
+            .unwrap(),
+        1
+    );
+    assert!(store.ledger_record(&identity).is_err());
+    store
+        .apply_project(&origin_project("device-a", "acme/today", 1), now)
+        .unwrap();
+    if replaced {
+        let replacement = native_dir.join("replacement.jsonl");
+        std::fs::write(&replacement, line(now + 1_000)).unwrap();
+        std::fs::rename(replacement, &file).unwrap();
+    } else {
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&file)
+            .unwrap()
+            .write_all(line(now + 1_000).as_bytes())
+            .unwrap();
+    }
+    let resumed = read(first.checkpoint);
+    assert_eq!(resumed.rescanned, replaced);
+    assert!(resumed.facts.first_at_unix_ms.is_some_and(|at| at > now));
+    store.apply_answer("device-a", &resumed, "resumed").unwrap();
+    assert_eq!(store.ledger_record(&identity).unwrap().repository, None);
+}
+
+#[test]
+fn native_birth_at_or_after_read_start_cannot_certify_a_repository() {
+    for first_at in [2_000, 2_001] {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+        store
+            .apply_project(&origin_project("device-a", "acme/original", 0), 1_000)
+            .unwrap();
+        let answer = hide_session::links::ReadAnswer {
+            agent: hide_session::Agent::Codex,
+            path: "/fixture/session-a.jsonl".into(),
+            checkpoint: None,
+            has_more: false,
+            rescanned: true,
+            error: None,
+            facts: hide_session::links::LinkFacts {
+                session_id: Some("session-a".into()),
+                cwd: Some("/repo".into()),
+                first_at_unix_ms: Some(first_at),
+                last_at_unix_ms: Some(first_at),
+                ..Default::default()
+            },
+        };
+        store
+            .apply_answer_observed("device-a", &answer, "read", Some(2_000))
+            .unwrap();
+        assert_eq!(store.ledger_record(&session()).unwrap().repository, None);
+        store
+            .apply_answer_observed("device-a", &answer, "replay", Some(3_000))
+            .unwrap();
+        assert_eq!(store.ledger_record(&session()).unwrap().repository, None);
+    }
+}
+
+#[test]
+fn a_return_to_the_same_repository_keeps_the_connection_edit_fence() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    store
+        .apply_project(&origin_project("device-a", "acme/original", 0), 1_000)
+        .unwrap();
+    store
+        .apply_project(&origin_project("device-a", "acme/original", 2), 3_000)
+        .unwrap();
+    origin_request(&mut store, &session(), 2_000);
+    assert_eq!(store.ledger_record(&session()).unwrap().repository, None);
+}
+
+#[test]
+fn a_v2_store_keeps_unknown_original_identity_after_current_project_discovery() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("links.sqlite3");
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute_batch(super::super::SCHEMA).unwrap();
+    connection.execute_batch(SCHEMA).unwrap();
+    connection.execute_batch("PRAGMA user_version=2; INSERT INTO sessions(device,agent,id,cwd,started_at) VALUES('device-a','codex','session-a','/repo',1000);").unwrap();
+    drop(connection);
+    let (mut store, _) = LinkStore::open(&path).unwrap();
+    store
+        .apply_project(&origin_project("device-a", "acme/today", 0), 2_000)
+        .unwrap();
+    origin_request(&mut store, &session(), 3_000);
+    assert_eq!(store.ledger_record(&session()).unwrap().repository, None);
+}
+
+#[test]
+fn a_v3_store_keeps_its_session_origins_when_the_backlog_arrives() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("links.sqlite3");
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute_batch(super::super::SCHEMA).unwrap();
+    connection.execute_batch(SCHEMA).unwrap();
+    connection.execute_batch("INSERT INTO sessions(device,agent,id,cwd,started_at) VALUES('device-a','codex','session-a','/repo',1000);").unwrap();
+    connection.execute_batch(ORIGIN_SCHEMA).unwrap();
+    connection.execute_batch("PRAGMA user_version=3; UPDATE ledger_session_origins SET project='/repo',repository='acme/first';").unwrap();
+    drop(connection);
+    let (mut store, opened) = LinkStore::open(&path).unwrap();
+    assert_eq!(opened, super::super::Opened::Existing);
+    assert_eq!(
+        store
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .unwrap(),
+        super::super::SCHEMA_VERSION
+    );
+    assert_eq!(
+        store
+            .ledger_record(&session())
+            .unwrap()
+            .repository
+            .as_deref(),
+        Some("acme/first")
+    );
+    assert!(store.ledger_call(LedgerCall::MissedKeys).is_ok());
+}
+
 fn request(store: &mut LinkStore, offset: u64, text: &str) {
     store
         .apply_ledger_update(&LedgerUpdate::Requests {
@@ -613,6 +1027,7 @@ fn issue_sightings_outside_the_projects_repository_are_not_read() {
         root: "/repo".into(),
         repository: None,
         repository_id: None,
+        connection_epoch: 0,
         worktrees: Vec::new(),
         prs: Vec::new(),
         prs_read: true,
@@ -983,24 +1398,43 @@ fn late_parent_retracts_judgments_and_refuses_in_flight_operator_work() {
 fn nested_repository_ownership_uses_the_deepest_path_on_the_sessions_device() {
     let directory = tempfile::tempdir().unwrap();
     let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
-    request(&mut store, 1, "inner work");
-    store
-        .connection
-        .execute("UPDATE sessions SET cwd='/repo/tool/task'", [])
-        .unwrap();
+    // B13: establish the connection before the native work starts, rather
+    // than assigning today's catalog to an already existing historical row.
     for (key, device, root, repo) in [
         ("a-outer", "device-a", "/repo", "owner/outer"),
         ("b-inner", "device-a", "/repo/tool", "owner/inner"),
         ("c-other", "device-b", "/repo/tool/task", "owner/other"),
     ] {
         store
-            .connection
-            .execute(
-                "INSERT INTO projects VALUES(?1,?2,?3,?4,?4,1000)",
-                params![key, device, root, repo],
+            .apply_project(
+                &crate::links::ProjectFacts {
+                    key: key.into(),
+                    device_id: device.into(),
+                    root: root.into(),
+                    repository: Some(repo.into()),
+                    ..Default::default()
+                },
+                500,
             )
             .unwrap();
     }
+    origin_native(&mut store, &session(), "/repo/tool/task", 1_000);
+    store
+        .apply_ledger_update(&LedgerUpdate::Requests {
+            session: session(),
+            cwd: "/repo/tool/task".into(),
+            path: None,
+            requests: vec![RecordedRequest {
+                offset: 1,
+                at_unix_ms: 1_000,
+                text: "inner work".into(),
+                author: WorkAuthor::Operator,
+                task_ids: vec![],
+                chapter_id: None,
+                judged: false,
+            }],
+        })
+        .unwrap();
     let record = store.ledger_record(&session()).unwrap();
     assert_eq!(record.project.as_deref(), Some("/repo/tool"));
     assert_eq!(record.repository.as_deref(), Some("owner/inner"));

@@ -7,7 +7,7 @@ import { frontDeviceId } from "./devices";
 import { useInterfaceTranslation } from "./i18n/client";
 import { boardProjects } from "./navigation";
 import { backlogTitle, destinationOf } from "./overviewBacklog";
-import { cardOfPane, everyAgent, itemToken, overviewDeviceOf } from "./overviewTasks";
+import { cardOfPane, everyAgent, isMemoKey, itemToken, overviewDeviceOf } from "./overviewTasks";
 import { cycleIndex, quickAddChoice } from "./quickAddChoice";
 import { catalogWorkspaces, frontCheckout } from "./snapshot";
 import { useShellStore } from "./store";
@@ -97,7 +97,7 @@ function QuickAddDialog({ actions }: { actions: Actions }) {
           <p className="text-caption text-muted-foreground" data-quick-add-none="true">{t("quickAdd.none")}</p>
         ) : made ? (
           <p className="flex min-w-0 items-center gap-sm text-body" role="status" data-quick-add-made={made}>
-            <span className="min-w-0 truncate">{t(made.startsWith("local:") ? "quickAdd.madeMemo" : "quickAdd.madeIssue", { project: project.label, token: itemToken(made, project) ?? "" })}</span>
+            <span className="min-w-0 truncate">{t(isMemoKey(made) ? "quickAdd.madeMemo" : "quickAdd.madeIssue", { project: project.label, token: itemToken(made, project) ?? "" })}</span>
             <Button size="sm" variant="ghost" onClick={view} data-quick-add-view="true">{t("quickAdd.view")}</Button>
           </p>
         ) : (

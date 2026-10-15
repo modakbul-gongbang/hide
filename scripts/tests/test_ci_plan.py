@@ -316,7 +316,7 @@ class NamedPaths(unittest.TestCase):
         for path in (
             "site/index.html", "tools/t1-preflight/README.md", "spikes/web-shell/measure/summarize.py", "agents/prd/x/prd.md",
             ".gitignore", "web/.gitignore", ".github/pull_request_template.md", ".github/dependabot.yml",
-            ".github/workflows/nightly.yml", ".github/workflows/herdr-update.yml",
+            ".github/workflows/nightly.yml", ".github/workflows/herdr-update.yml", ".github/workflows/perf.yml",
             "scripts/tests/test_ci_plan.py", "scripts/check-harness-ignore-anchor.sh",
             "scripts/pen-system.mjs", "scripts/design-review.mjs", "scripts/web-shell-measure/run.sh",
             "scripts/premerge-check.py", "contracts/README.md", "site/README.md",

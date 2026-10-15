@@ -1,12 +1,32 @@
 import { expect, test } from "@playwright/test";
 import fs from "node:fs";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { continueFixtureTranscript, setFixtureLifecycle, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { FIRST_GOAL, MISSED, NEXT_GOAL, nextWork, seedFirstWork, workFixture } from "./session-work-fixture";
-import { enterWorkspace, showTool } from "./wire";
+import { FIRST_GOAL, MISSED, NEXT_GOAL, nextWork, seedFirstWork, workFixture, workRepositoryReady } from "./session-work-fixture";
+import { enterWorkspace, showProjectRow, showTool } from "./wire";
 import { chord } from "./chords";
 
 test.describe.configure({ timeout: 180_000 });
+
+async function connectRepository(page: import("@playwright/test").Page, repository: string) {
+  const gear = page.locator('[data-project]', { hasText: "fixture" }).locator('[data-row-settings]').first();
+  await (await showProjectRow(page, gear)).click();
+  const sheet = page.locator('[data-project-settings]');
+  await sheet.getByRole("combobox", { name: "GitHub repository", exact: true }).click();
+  await page.getByRole("option", { name: "Choose repository", exact: true }).click();
+  await sheet.getByRole("textbox", { name: "owner/repository" }).fill(repository);
+  await sheet.getByRole("button", { name: "Apply", exact: true }).click();
+  await expect(sheet).toContainText("Saved");
+  await page.keyboard.press("Escape");
+}
+
+function originalRepository(stateDir: string, session: string) {
+  const db = new DatabaseSync(path.join(stateDir,"links.sqlite3"),{readOnly:true});
+  try { return db.prepare("SELECT repository FROM ledger_session_origins WHERE id=?").get(session)?.repository; }
+  finally { db.close(); }
+}
 
 test("@platform a native session keeps its chapters, child outputs and reversible missed work through search and summaries off", async ({ page }) => {
   const herdr = await startHerdr();
@@ -15,6 +35,7 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     const github = workFixture(herdr);
     daemon = await startHided(herdr, "session-work-ledger", undefined, github.env);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await workRepositoryReady(daemon.stateDir);
     await enterWorkspace(page, "fixture");
     await showTool(page, "work");
     const first = Date.now();
@@ -87,6 +108,7 @@ test("@platform 백로그로 makes one title-only issue, a lost create response 
     const github = workFixture(herdr, true);
     daemon = await startHided(herdr, "session-backlog-retry", undefined, github.env);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await workRepositoryReady(daemon.stateDir);
     await enterWorkspace(page, "fixture");
     await showTool(page, "work");
     const first = Date.now();
@@ -132,6 +154,7 @@ test("@platform ⌘⇧M adds a backlog issue from the terminal and hands the key
     const github = workFixture(herdr);
     daemon = await startHided(herdr, "quick-add", undefined, github.env);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await workRepositoryReady(daemon.stateDir);
     await enterWorkspace(page, "fixture");
     const terminal = page.locator(`[data-pane-view="${herdr.panes[0]}"] .xterm-helper-textarea`);
     await terminal.focus();
@@ -159,5 +182,131 @@ test("@platform ⌘⇧M adds a backlog issue from the terminal and hands the key
     const creates = fs.readFileSync(github.calls, "utf8").trim().split("\n").map((line) => JSON.parse(line) as string[]).filter((args) => args[0] === "issue" && args[1] === "create");
     expect(creates).toHaveLength(1);
     expect(creates[0]![creates[0]!.indexOf("--title") + 1]).toBe("빠른 추가 두 번째 줄");
+  } finally { daemon?.stop(); herdr.stop(); }
+});
+
+/** What the fixture `gh` was asked to create, by the repository each create named. */
+function createdIn(contexts: string): (string | null)[] {
+  if (!fs.existsSync(contexts)) return [];
+  return fs.readFileSync(contexts, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { args: string[]; repository: string | null })
+    .filter((call) => call.args[0] === "issue" && call.args[1] === "create").map((call) => call.repository);
+}
+
+async function openRecord(page: import("@playwright/test").Page, pane: string, goal: string) {
+  const root = page.locator(`[data-session-row="${pane}"]`);
+  await expect(root).toContainText(goal, { timeout: 45_000 });
+  await root.hover();
+  await page.locator(`[data-session-record-button="${pane}"]`).click();
+  const missed = page.locator("[data-session-record]").locator("[data-missed-work]", { hasText: MISSED });
+  await expect(missed).toBeVisible({ timeout: 45_000 });
+  return missed;
+}
+
+test("@platform 백로그로 keeps a session's original repository after a connection edit, and a session started after it creates in the new one", async ({ page }) => {
+  const herdr = await startHerdr();
+  let daemon: Daemon | undefined;
+  try {
+    const github = workFixture(herdr);
+    daemon = await startHided(herdr, "backlog-repository-edit", undefined, github.env);
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await workRepositoryReady(daemon.stateDir);
+    await enterWorkspace(page, "fixture");
+    await showTool(page, "work");
+    const original = seedFirstWork(herdr, Date.now()).session;
+    let missed = await openRecord(page, herdr.panes[0]!, FIRST_GOAL);
+    await expect.poll(() => originalRepository(daemon!.stateDir, original), { timeout: 30_000 }).toBe("acme/repo");
+    await connectRepository(page, "acme/override");
+    await workRepositoryReady(daemon.stateDir, "acme/override");
+    // The session started in acme/repo; its missed line makes nothing in acme/override.
+    await missed.locator("[data-missed-backlog-add]").click();
+    await expect(missed.locator('[data-missed-failed="repository_changed"]')).toBeVisible({ timeout: 30_000 });
+    expect(createdIn(github.contexts)).toEqual([]);
+    expect(originalRepository(daemon.stateDir, original)).toBe("acme/repo");
+    // A session that starts after the edit belongs to acme/override.
+    const fresh = seedFirstWork(herdr, Date.now(), NEXT_GOAL).session;
+    await page.locator("[data-session-record]").getByRole("button", { name: "Back to Sessions" }).click();
+    await expect.poll(() => originalRepository(daemon!.stateDir, fresh), { timeout: 45_000 }).toBe("acme/override");
+    missed = await openRecord(page, herdr.panes[0]!, NEXT_GOAL);
+    await missed.locator("[data-missed-backlog-add]").click();
+    await expect(missed.locator('[data-missed-backlog="#77"]')).toBeVisible({ timeout: 30_000 });
+    expect(createdIn(github.contexts)).toEqual(["acme/override"]);
+    expect(originalRepository(daemon.stateDir, original)).toBe("acme/repo");
+  } finally { daemon?.stop(); herdr.stop(); }
+});
+
+test("@platform a 백로그로 create in flight across an A-to-B-to-A connection edit makes nothing, and its retry makes one", async ({ page }) => {
+  const herdr = await startHerdr();
+  let daemon: Daemon | undefined;
+  try {
+    const github = workFixture(herdr);
+    daemon = await startHided(herdr, "backlog-repository-epoch", undefined, github.env);
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await workRepositoryReady(daemon.stateDir);
+    await enterWorkspace(page, "fixture");
+    await showTool(page, "work");
+    const { session } = seedFirstWork(herdr, Date.now());
+    const missed = await openRecord(page, herdr.panes[0]!, FIRST_GOAL);
+    await expect.poll(() => originalRepository(daemon!.stateDir, session), { timeout: 30_000 }).toBe("acme/repo");
+    const callsBefore = fs.readFileSync(github.calls, "utf8").trim().split("\n").length;
+    fs.writeFileSync(github.repositoryGate, "hold the external repository read");
+    await missed.locator("[data-missed-backlog-add]").click();
+    await expect.poll(() => fs.readFileSync(github.calls, "utf8").trim().split("\n").slice(callsBefore)
+      .some((line) => { const args = JSON.parse(line) as string[]; return args[0] === "repo" && args[1] === "view"; }), { timeout: 30_000 }).toBe(true);
+    try {
+      await connectRepository(page, "acme/temporary");
+      await connectRepository(page, "acme/repo");
+    } finally { fs.rmSync(github.repositoryGate, { force: true }); }
+    // The connection came back to the same name, but the create was asked under the first one.
+    const failed = missed.locator('[data-missed-failed="repository_changed"]');
+    await expect(failed).toBeVisible({ timeout: 30_000 });
+    expect(createdIn(github.contexts)).toEqual([]);
+    await failed.getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(missed.locator('[data-missed-backlog="#77"]')).toBeVisible({ timeout: 30_000 });
+    expect(createdIn(github.contexts)).toEqual(["acme/repo"]);
+  } finally { daemon?.stop(); herdr.stop(); }
+});
+
+test("@platform a migrated session's unknown original repository refuses 백로그로 in today's repository", async ({ page }) => {
+  const herdr = await startHerdr();
+  let daemon: Daemon | undefined;
+  try {
+    const github = workFixture(herdr);
+    daemon = await startHided(herdr, "backlog-repository-legacy", undefined, github.env);
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await workRepositoryReady(daemon.stateDir);
+    await enterWorkspace(page, "fixture");
+    await showTool(page, "work");
+    const identity = seedFirstWork(herdr, Date.now()).session;
+    await openRecord(page, herdr.panes[0]!, FIRST_GOAL);
+    // This migration starts from completed, durable native work. Windows
+    // fixture shutdown is forced; a rendered goal is not a saved label.
+    const savedLabels = path.join(daemon.stateDir, "labels.json");
+    const node = daemon.node;
+    await expect.poll(() => {
+      if (!fs.existsSync(savedLabels)) return null;
+      const saved = JSON.parse(fs.readFileSync(savedLabels, "utf8")) as {
+        targets?: Record<string, Record<string, { native_session_id?: string; goal?: string; end?: string }>>;
+      };
+      const label = saved.targets?.[node]?.[herdr.panes[0]!];
+      return { session: label?.native_session_id, goal: label?.goal, end: label?.end };
+    }, { message: "completed native label reached disk before migration restart", timeout: 30_000 })
+      .toEqual({ session: identity, goal: FIRST_GOAL, end: "done" });
+    // Emulate the version 2 store while this owned daemon is stopped.
+    daemon = await daemon.restart((stateDir) => {
+      const db = new DatabaseSync(path.join(stateDir, "links.sqlite3"));
+      try { db.exec("DROP TABLE ledger_session_origins; DROP TABLE ledger_project_connections; DROP TABLE ledger_backlog; ALTER TABLE ledger_missed DROP COLUMN backlog_key; PRAGMA user_version=2;"); }
+      finally { db.close(); }
+    });
+    await page.goto("about:blank");
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    await showTool(page, "work");
+    const back = page.getByRole("button", { name: "Back to Sessions", exact: true });
+    if (await back.isVisible()) await back.click();
+    const missed = await openRecord(page, herdr.panes[0]!, FIRST_GOAL);
+    await missed.locator("[data-missed-backlog-add]").click();
+    await expect(missed.locator('[data-missed-failed="repository_changed"]')).toBeVisible({ timeout: 30_000 });
+    expect(originalRepository(daemon.stateDir, identity)).toBeNull();
+    expect(createdIn(github.contexts)).toEqual([]);
   } finally { daemon?.stop(); herdr.stop(); }
 });

@@ -158,6 +158,9 @@ node scripts/pen-transplant.mjs --from <branch-file> --into <main-file> --sheet 
 - Run `node scripts/gen-pen.mjs` and `node scripts/check-design-contract.mjs` against the result before committing; a transplant that leaves stale Foundations or an unrecognized sheet name fails the same checks a normal edit would.
 - Never resolve a `hide-screens.pen` conflict by hand-merging JSON; re-run the transplant with the correct `--sheet` list instead.
 
+For an owned screen regeneration, `node scripts/gen-screens.mjs --sheet <sheet-id>` generates the candidate and uses the same node-identity transplant internally, keeping every other sheet byte-for-byte and refreshing the shared local token variables.
+Omitting `--sheet` still regenerates all screens.
+
 ## Web screen list
 
 The Projects Sidebar screen and production gallery draw tabs as segments, not depth: one root status axis on the checkout name's column, a 1px guide per tab centered under the checkout's kind glyph, and for a tab of two or more agents one quiet line inside the guide, its glyph on the status-mark column and its manual name or `Tab N` on the title column.
