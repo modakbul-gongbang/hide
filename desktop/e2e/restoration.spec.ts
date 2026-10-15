@@ -27,7 +27,7 @@ test("failed terminals remain legible and keyboard reachable in a narrow native 
       if (windows.length !== 1) throw new Error("expected exactly one candidate window");
       return { pid: process.pid, executable: process.execPath, window: windows[0]!.getMediaSourceId() };
     });
-    await enterWorkspace(page);
+    await enterWorkspace(page, "fixture");
     await page.locator(`[data-tab="${made.result.tab.tab_id}"]`).click();
     const failed = page.locator("[data-pane-restore-failed]");
     await expect(failed).toHaveCount(1);
