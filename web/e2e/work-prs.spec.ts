@@ -185,9 +185,10 @@ test("the list and the card read without sideways scrolling in each language and
       await page.keyboard.press("Escape");
       await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
       // One tool shows at a time: the card in the files tool, then the list in Work.
-      await page.locator('[data-lane-tool="files"]').click();
+      // A press on the tool the lane already shows would close it, so the tools are shown, not clicked.
+      await showTool(page, "files");
       await expect.poll(() => overflow(review)).toBeLessThanOrEqual(0);
-      await page.locator('[data-lane-tool="work"]').click();
+      await showTool(page, "work");
       await expect(work.locator('[data-prs-view="board"]')).toBeVisible();
       await expect.poll(() => overflow(work.locator('[data-prs-view="board"]'))).toBeLessThanOrEqual(0);
       await screenshot(page, `work-prs-${language}-${theme}`);
