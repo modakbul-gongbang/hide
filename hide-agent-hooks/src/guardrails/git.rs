@@ -13,8 +13,10 @@ use super::facts::{Checkout, Located, Place};
 use super::{Dirty, Facts, Refusal, Rule, absolute, protected};
 use crate::spawn_guard::{command_words, shell_line};
 
-/// The most words of one call checked against the protected paths.
-const WORD_LIMIT: usize = 512;
+/// The most words of one call checked against the protected paths; past it
+/// the words are left unchecked and the log says so, while every later
+/// `git` and `gh` command is still judged.
+pub(super) const WORD_LIMIT: usize = 512;
 
 pub(super) fn shell(
     facts: &Facts<'_>,
@@ -32,8 +34,14 @@ pub(super) fn shell(
         };
         let program = program(first);
         if matches!(program.as_str(), "cd" | "pushd") {
-            if let Some(target) = args.iter().find(|arg| !arg.starts_with('-')) {
-                dir = absolute(&facts.home, &dir, Path::new(target));
+            // A bare `cd` goes home; `cd -` goes where this line cannot see.
+            match args.iter().find(|arg| !arg.starts_with('-') || *arg == "-") {
+                Some(target) if target != "-" => {
+                    dir = absolute(&facts.home, &dir, Path::new(target));
+                }
+                Some(_) => {}
+                None if program == "cd" => dir = facts.home.clone(),
+                None => {}
             }
             continue;
         }
@@ -50,17 +58,30 @@ pub(super) fn shell(
             .iter()
             .filter(|(command, _)| *command == index)
             .map(|(_, target)| target);
-        for word in words.iter().chain(targets) {
+        for (word, target) in words
+            .iter()
+            .map(|word| (word, false))
+            .chain(targets.map(|target| (target, true)))
+        {
             for candidate in path_words(word) {
                 if checked >= WORD_LIMIT {
-                    return None;
+                    facts.word_limit.set(true);
+                    break;
+                }
+                let path = absolute(&facts.home, &dir, Path::new(candidate));
+                // A word with a space in it is prose (a commit message, a
+                // title) unless it names something that is there, or a
+                // redirect writes it.
+                if !target
+                    && candidate.chars().any(char::is_whitespace)
+                    && std::fs::symlink_metadata(&path).is_err()
+                {
+                    continue;
                 }
                 checked += 1;
-                if let Some(refusal) = protected(
-                    facts,
-                    &dir,
-                    &absolute(&facts.home, &dir, Path::new(candidate)),
-                ) {
+                // The agent's own project lists the home paths, wherever a
+                // `cd` in the line went.
+                if let Some(refusal) = protected(facts, cwd, &path) {
                     return Some(refusal);
                 }
             }
@@ -75,9 +96,11 @@ fn program(word: &str) -> String {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    match name.len().checked_sub(4) {
-        Some(stem) if name[stem..].eq_ignore_ascii_case(".exe") => name[..stem].to_owned(),
-        _ => name,
+    // `.exe` is four ASCII bytes, so cutting them keeps a character whole.
+    if name.to_ascii_lowercase().ends_with(".exe") {
+        name[..name.len() - 4].to_owned()
+    } else {
+        name
     }
 }
 
@@ -163,8 +186,10 @@ fn git(facts: &Facts<'_>, dir: &Path, args: &[String], dirty: Dirty<'_>) -> Opti
     let rest = &args[at + 1..];
     let target = match place(facts, &dir) {
         Where::Outside => return None,
+        // Only a command a protection that is on judges needs the checkout;
+        // `git status` or `git log` runs.
         Where::Unreadable(project) => {
-            let rule = first_rule(project)?;
+            let rule = judging_rule(project, subcommand)?;
             return Some(Refusal::unread(rule, "the checkout this command runs in"));
         }
         Where::Git(target) => target,
@@ -174,7 +199,7 @@ fn git(facts: &Facts<'_>, dir: &Path, args: &[String], dirty: Dirty<'_>) -> Opti
     if rules.worktree_folder && checkout.original() {
         let switches = match subcommand {
             "switch" => !has(rest, &["-h", "--help"]),
-            "checkout" => checkout_switches(rest, &dir),
+            "checkout" => checkout_switches(rest, &dir, checkout),
             _ => false,
         };
         if switches {
@@ -187,7 +212,19 @@ fn git(facts: &Facts<'_>, dir: &Path, args: &[String], dirty: Dirty<'_>) -> Opti
     if rules.base_branch {
         let commits = match subcommand {
             "commit" => true,
-            "merge" => !has(rest, &["--abort", "--quit", "--ff-only"]),
+            // A fast-forward merge lands a branch unreviewed as surely as a
+            // merge commit; only `pull --ff-only` takes the remote's own.
+            "merge" => !has(rest, &["--abort", "--quit"]),
+            "rebase" => !has(
+                rest,
+                &[
+                    "--abort",
+                    "--quit",
+                    "--skip",
+                    "--edit-todo",
+                    "--show-current-patch",
+                ],
+            ),
             "cherry-pick" | "revert" => !has(rest, &["--abort", "--quit", "--skip"]),
             "am" => !has(
                 rest,
@@ -199,7 +236,7 @@ fn git(facts: &Facts<'_>, dir: &Path, args: &[String], dirty: Dirty<'_>) -> Opti
         let pushes = subcommand == "push";
         if commits || pushes {
             let Some(base) = facts.base(target.project, checkout) else {
-                return Some(Refusal::unread(Rule::BaseBranch, "the base branch"));
+                return Some(Refusal::base_unknown());
             };
             if commits && checkout.branch.as_deref() == Some(base.as_str()) {
                 return Some(Refusal::new(
@@ -239,7 +276,7 @@ fn git(facts: &Facts<'_>, dir: &Path, args: &[String], dirty: Dirty<'_>) -> Opti
         }
         let discards = match subcommand {
             "reset" => has(rest, &["--hard"]),
-            "checkout" => checkout_discards(rest, &dir),
+            "checkout" => checkout_discards(rest, &dir, checkout),
             "restore" => restore_discards(rest),
             "clean" => {
                 (has(rest, &["--force"]) || has_short(rest, 'f'))
@@ -249,7 +286,7 @@ fn git(facts: &Facts<'_>, dir: &Path, args: &[String], dirty: Dirty<'_>) -> Opti
             _ => false,
         };
         if discards {
-            match dirty(&checkout.root) {
+            match dirty(&checkout.root, subcommand == "clean") {
                 Some(true) => {
                     return Some(Refusal::new(
                         Rule::GitCommands,
@@ -270,12 +307,20 @@ fn git(facts: &Facts<'_>, dir: &Path, args: &[String], dirty: Dirty<'_>) -> Opti
 }
 
 fn gh(facts: &Facts<'_>, dir: &Path, args: &[String]) -> Option<Refusal> {
-    let words: Vec<&str> = args
-        .iter()
-        .map(String::as_str)
-        .filter(|arg| !arg.starts_with('-'))
-        .take(2)
-        .collect();
+    // The command's first two words, past `-R`/`--repo` and their value.
+    let mut words: Vec<&str> = Vec::new();
+    let mut rest = args.iter().map(String::as_str);
+    while words.len() < 2
+        && let Some(arg) = rest.next()
+    {
+        match arg {
+            "-R" | "--repo" => {
+                rest.next();
+            }
+            flag if flag.starts_with('-') => {}
+            word => words.push(word),
+        }
+    }
     let (merge, checkout) = match words.as_slice() {
         ["pr", "merge"] => (true, false),
         ["pr", "checkout"] | ["pr", "co"] => (false, true),
@@ -315,60 +360,89 @@ fn gh(facts: &Facts<'_>, dir: &Path, args: &[String]) -> Option<Refusal> {
     None
 }
 
-/// The first protection that is on, for a refusal whose fact was unreadable.
-fn first_rule(project: &super::ProjectPolicy) -> Option<Rule> {
+/// The protection that is on and judges `git <subcommand>`, for a refusal
+/// whose checkout could not be read; `None` when none does.
+fn judging_rule(project: &super::ProjectPolicy, subcommand: &str) -> Option<Rule> {
     let rules = &project.rules;
-    if rules.worktree_folder {
+    let judged = |names: &[&str]| names.contains(&subcommand);
+    if rules.worktree_folder && judged(&["switch", "checkout"]) {
         Some(Rule::WorktreeFolder)
-    } else if rules.base_branch {
+    } else if rules.base_branch
+        && judged(&[
+            "commit",
+            "merge",
+            "rebase",
+            "cherry-pick",
+            "revert",
+            "am",
+            "pull",
+            "push",
+        ])
+    {
         Some(Rule::BaseBranch)
-    } else if rules.git_commands {
+    } else if rules.git_commands
+        && judged(&[
+            "push", "commit", "reset", "checkout", "restore", "clean", "switch",
+        ])
+    {
         Some(Rule::GitCommands)
     } else {
         None
     }
 }
 
-/// The first word `git checkout` reads as a branch or a path, with whether
-/// a `--` came first. `-b`, `-B`, `--orphan`, `--detach` and `-` choose a
-/// branch outright (`Some(None)`).
-fn checkout_operand(args: &[String]) -> Option<Option<&str>> {
+/// What `git checkout <args>` does, read as Git reads it.
+#[derive(Debug, PartialEq, Eq)]
+enum CheckoutForm {
+    /// It moves `HEAD`: a branch, a commit, `-b`, `--orphan`, `--detach`, `-`.
+    Switch,
+    /// It writes paths from the index or a tree (`-- <paths>`, `<tree> --
+    /// <paths>`, `.`, or a word that is a path and no branch).
+    Paths,
+    /// Nothing to judge (no operand).
+    Neither,
+}
+
+fn checkout_form(args: &[String], dir: &Path, checkout: &Checkout) -> CheckoutForm {
+    let mut operand = None;
     for arg in args {
         match arg.as_str() {
-            "--" => return None,
-            "-b" | "-B" | "--orphan" | "--detach" | "-" => return Some(None),
-            other if other.starts_with("--orphan=") => return Some(None),
+            // Whatever came before it names a tree, and what follows paths.
+            "--" => return CheckoutForm::Paths,
+            "-b" | "-B" | "--orphan" | "--detach" | "-" => return CheckoutForm::Switch,
+            other if other.starts_with("--orphan=") => return CheckoutForm::Switch,
             other if other.starts_with('-') => {}
-            other => return Some(Some(other)),
+            other => {
+                operand.get_or_insert(other);
+            }
         }
     }
-    None
-}
-
-fn exists(dir: &Path, word: &str) -> bool {
-    word == "." || std::fs::symlink_metadata(dir.join(word)).is_ok()
-}
-
-/// Whether `git checkout <args>` changes the branch: it names a branch or a
-/// commit rather than a path (D-14).
-fn checkout_switches(args: &[String], dir: &Path) -> bool {
-    match checkout_operand(args) {
-        Some(None) => true,
-        Some(Some(word)) => !exists(dir, word),
-        None => false,
+    match operand {
+        None => CheckoutForm::Neither,
+        // Git takes a local branch over a path of the same name.
+        Some(word) if checkout.has_branch(word) => CheckoutForm::Switch,
+        Some(word) if word == "." || std::fs::symlink_metadata(dir.join(word)).is_ok() => {
+            CheckoutForm::Paths
+        }
+        Some(_) => CheckoutForm::Switch,
     }
+}
+
+/// Whether `git checkout <args>` changes the branch (D-14).
+fn checkout_switches(args: &[String], dir: &Path, checkout: &Checkout) -> bool {
+    checkout_form(args, dir, checkout) == CheckoutForm::Switch
 }
 
 /// Whether `git checkout <args>` overwrites the working tree's changes: a
-/// path form (`-- <path>`, `.`, an existing path) or `-f`.
-fn checkout_discards(args: &[String], dir: &Path) -> bool {
+/// path form or `-f`.
+fn checkout_discards(args: &[String], dir: &Path, checkout: &Checkout) -> bool {
     if has(args, &["-f", "--force"]) {
         return true;
     }
     if let Some(at) = args.iter().position(|arg| arg == "--") {
         return args.len() > at + 1;
     }
-    matches!(checkout_operand(args), Some(Some(word)) if exists(dir, word))
+    checkout_form(args, dir, checkout) == CheckoutForm::Paths
 }
 
 /// `git restore` touches the working tree unless it names only the index.
@@ -438,7 +512,12 @@ impl Push {
                 }
                 "--force" => push.force = true,
                 "--no-verify" => push.no_verify = true,
-                "--all" | "--branches" | "--mirror" => push.every_branch = true,
+                // A mirror push force-updates every ref the remote has.
+                "--mirror" => {
+                    push.every_branch = true;
+                    push.force = true;
+                }
+                "--all" | "--branches" => push.every_branch = true,
                 "--delete" => push.delete = true,
                 "--repo" | "-o" | "--push-option" | "--receive-pack" | "--exec" => {
                     words.next();
@@ -488,10 +567,19 @@ impl Push {
                     None => refspec,
                 }
             };
-            destination
+            let destination = destination
                 .strip_prefix("refs/heads/")
-                .unwrap_or(destination)
-                == base
+                .unwrap_or(destination);
+            // A pattern refspec (`refs/heads/*:refs/heads/*`) reaches every
+            // branch its one `*` matches.
+            match destination.split_once('*') {
+                Some((before, after)) => {
+                    base.len() >= before.len() + after.len()
+                        && base.starts_with(before)
+                        && base.ends_with(after)
+                }
+                None => destination == base,
+            }
         })
     }
 }

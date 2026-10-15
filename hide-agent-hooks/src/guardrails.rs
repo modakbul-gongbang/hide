@@ -17,14 +17,15 @@
 //! What fails, and how (D-27):
 //!
 //! - the policy file is missing, unreadable or not this version: the call
-//!   runs and [`Outcome::PolicyUnreadable`] carries why, for a throttled
-//!   diagnostic; the core writes the file, empty when no protection is on, at
+//!   runs and [`record_unreadable`] writes why, one line per ten minutes; the core writes the file, empty when no protection is on, at
 //!   every start and device connection (D-28), so a missing one is a fault;
 //! - a fact a protection that is on needs cannot be read (the checkout's
 //!   repository, its branch, the base branch, whether it has uncommitted
 //!   changes): the call is refused and the reason says so;
-//! - a panic or a hook timeout is the runtime's own default, which the caller
-//!   leaves alone.
+//! - a panic, or a payload that does not arrive in time, lets the call run
+//!   and records a throttled `guard.failed` line ([`record_failure`]); a
+//!   hook the runtime kills at its own timeout is that runtime's default and
+//!   leaves no line, since the process is gone.
 
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -44,12 +45,14 @@ use facts::{Facts, Located};
 /// an older helper never applies a newer core's rules by a guess.
 pub const POLICY_VERSION: u32 = 1;
 
-/// The most paths one project protects, and the longest one (D-17).
+/// The most paths one project protects, and the longest one in characters
+/// (D-17).
 pub const PATH_LIMIT: usize = 32;
 pub const PATH_LENGTH_LIMIT: usize = 200;
 
-/// The largest policy file read: 256 projects of 32 paths of 200 bytes fit.
-const POLICY_SIZE_LIMIT: u64 = 4 * 1024 * 1024;
+/// The largest policy file read: 256 projects of 32 paths of 200 four-byte
+/// characters fit.
+const POLICY_SIZE_LIMIT: u64 = 8 * 1024 * 1024;
 
 /// The paths a project protects until the operator changes the list (B15).
 pub const DEFAULT_PATHS: [&str; 5] = [".env", ".env.*", "*.pem", "*.key", "~/.ssh/"];
@@ -72,9 +75,11 @@ fn default_paths() -> Vec<String> {
 }
 
 /// One project's protections, as Project Settings stores them and the policy
-/// file carries them. Every switch starts off (D-13).
+/// file carries them. Every switch starts off (D-13). A field a newer build
+/// added is kept in [`Rules::unknown`], so a record that build wrote loses
+/// nothing when this one saves it again; the policy file's own version keeps
+/// such a field from ever being judged by a guess.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Rules {
     /// 작업 폴더 지키기: the original checkout keeps its branch, and an agent
     /// writes only in its own checkout of the repository (D-14).
@@ -95,6 +100,8 @@ pub struct Rules {
     pub files: bool,
     #[serde(default = "default_paths")]
     pub paths: Vec<String>,
+    #[serde(flatten, default)]
+    pub unknown: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Default for Rules {
@@ -106,6 +113,7 @@ impl Default for Rules {
             git_commands: false,
             files: false,
             paths: default_paths(),
+            unknown: serde_json::Map::new(),
         }
     }
 }
@@ -139,13 +147,13 @@ impl Rules {
 
     /// Whether the list can be saved: at most [`PATH_LIMIT`] entries, each a
     /// gitignore pattern relative to the project or a `~/` path of at most
-    /// [`PATH_LENGTH_LIMIT`] bytes, none twice (B16).
+    /// [`PATH_LENGTH_LIMIT`] characters, none twice (B16).
     pub fn validate(&self) -> Result<(), PathRefusal> {
         if self.paths.len() > PATH_LIMIT {
             return Err(PathRefusal::TooMany);
         }
         for (index, path) in self.paths.iter().enumerate() {
-            if path.len() > PATH_LENGTH_LIMIT {
+            if path.chars().count() > PATH_LENGTH_LIMIT {
                 return Err(PathRefusal::TooLong);
             }
             validate_path(path)?;
@@ -363,18 +371,27 @@ impl Refusal {
         }
     }
 
+    /// The base branch is the operator's to name when the repository names
+    /// none (no `origin/HEAD` for Auto), so the reason says where.
+    fn base_unknown() -> Self {
+        Self::unread(Rule::BaseBranch, "the base branch")
+    }
+
     /// The reason the agent reads: English, the protection's name, what the
     /// call did and what to do instead (D-19).
     pub fn reason(&self) -> String {
+        let next = match (self.unread, self.rule) {
+            (true, Rule::BaseBranch) => {
+                "Ask the operator to choose the base branch in Project Settings > Working style."
+            }
+            (true, _) => "Try again in a moment, or ask the operator.",
+            (false, rule) => rule.next_step(),
+        };
         format!(
             "Not run: the \"{}\" protection is on for this project in Hide. {}. {}",
             self.rule.title(),
             self.why,
-            if self.unread {
-                "Try again in a moment, or ask the operator."
-            } else {
-                self.rule.next_step()
-            }
+            next
         )
     }
 }
@@ -387,11 +404,13 @@ pub enum Outcome {
     PolicyUnreadable(PolicyFailure),
 }
 
-/// Whether the checkout at a path has uncommitted changes; `None` when Git
-/// could not say. Asked only for a command that would discard them.
-pub type Dirty<'a> = &'a dyn Fn(&Path) -> Option<bool>;
+/// Whether the checkout at a path has uncommitted changes, untracked files
+/// counted when the flag says so; `None` when Git could not say. Asked only
+/// for a command that would discard them.
+pub type Dirty<'a> = &'a dyn Fn(&Path, bool) -> Option<bool>;
 
 /// The decision for `action`, run in `cwd`, under the policy file in `home`.
+#[cfg(test)]
 pub fn decide(home: &Path, cwd: &Path, action: &Action, dirty: Dirty<'_>) -> Outcome {
     let policy = match read_policy(home) {
         Ok(policy) => policy,
@@ -422,6 +441,9 @@ pub fn decide_with(
             .iter()
             .find_map(|path| protected(&facts, &cwd, &absolute(home, &cwd, Path::new(path)))),
     };
+    if facts.word_limit.get() {
+        record_word_limit(home);
+    }
     refusal.map_or(Outcome::Allow, Outcome::Refuse)
 }
 
@@ -477,7 +499,7 @@ fn write(facts: &Facts<'_>, cwd: &Path, target: &Path) -> Option<Refusal> {
                         ));
                     }
                     Some(_) => {}
-                    None => return Some(Refusal::unread(Rule::BaseBranch, "the base branch")),
+                    None => return Some(Refusal::base_unknown()),
                 }
             }
         }
@@ -500,23 +522,24 @@ fn protected(facts: &Facts<'_>, cwd: &Path, target: &Path) -> Option<Refusal> {
     for place in [&located, &own] {
         if let Some(project) = place.project(facts)
             && project.policy.rules.files
+            && !home_rules.contains(&project.policy)
         {
-            if let Located::Unreadable = place.place {
-                return Some(Refusal::unread(
-                    Rule::Files,
-                    "the repository of the path it names",
-                ));
-            }
-            if !home_rules.contains(&project.policy) {
-                home_rules.push(project.policy);
-            }
+            home_rules.push(project.policy);
         }
     }
-    if let (Some(project), Located::In(checkout)) = (located.project(facts), &located.place)
+    // A path is matched against its checkout's root; one in a repository
+    // that cannot be read, against its project's root, which is known.
+    let checkout_root = match &located.place {
+        Located::In(checkout) => Some(checkout.root.as_path()),
+        Located::Unreadable => facts.project_root(&located),
+        Located::Outside => None,
+    };
+    if let (Some(project), Some(root)) = (located.project(facts), checkout_root)
         && project.policy.rules.files
-        && let Ok(relative) = target.strip_prefix(&checkout.root)
+        && let Ok(relative) = target.strip_prefix(root)
         && matches(
-            &checkout.root,
+            facts,
+            root,
             &project.policy.rules.paths,
             relative,
             target,
@@ -527,7 +550,14 @@ fn protected(facts: &Facts<'_>, cwd: &Path, target: &Path) -> Option<Refusal> {
     }
     if let Ok(relative) = target.strip_prefix(&facts.home) {
         for project in home_rules {
-            if matches(&facts.home, &project.rules.paths, relative, target, true) {
+            if matches(
+                facts,
+                &facts.home,
+                &project.rules.paths,
+                relative,
+                target,
+                true,
+            ) {
                 return Some(refusal());
             }
         }
@@ -536,9 +566,18 @@ fn protected(facts: &Facts<'_>, cwd: &Path, target: &Path) -> Option<Refusal> {
 }
 
 /// Whether `relative`, below `root`, is matched by the project's relative
-/// patterns (`home` false) or its `~/` patterns (`home` true).
-fn matches(root: &Path, paths: &[String], relative: &Path, target: &Path, home: bool) -> bool {
+/// patterns (`home` false) or its `~/` patterns (`home` true), with case or
+/// without as the folder compares names (B24).
+fn matches(
+    facts: &Facts<'_>,
+    root: &Path,
+    paths: &[String],
+    relative: &Path,
+    target: &Path,
+    home: bool,
+) -> bool {
     let mut builder = ignore::gitignore::GitignoreBuilder::new(root);
+    let _ = builder.case_insensitive(!facts.case_sensitive(root));
     let mut any = false;
     for path in paths {
         let line = match (path.strip_prefix("~/"), home) {
@@ -550,9 +589,12 @@ fn matches(root: &Path, paths: &[String], relative: &Path, target: &Path, home: 
             continue;
         }
         any = true;
+        // An example the operator listed stays protected.
         if !home && path == ".env.*" {
             for example in ENV_EXAMPLES {
-                let _ = builder.add_line(None, &format!("!{example}"));
+                if !paths.iter().any(|listed| listed == example) {
+                    let _ = builder.add_line(None, &format!("!{example}"));
+                }
             }
         }
     }
@@ -597,16 +639,26 @@ fn absolute(home: &Path, cwd: &Path, path: &Path) -> PathBuf {
 /// inside the hook entry's eight seconds.
 const STATUS_BUDGET: Duration = Duration::from_secs(2);
 
-/// Whether the checkout at `root` has uncommitted changes, untracked files
-/// included, from `git status`: the one Git process the guardrails start,
-/// and only for a command that would discard changes (D-16). `None` when Git
-/// did not answer in time or at all.
-pub fn git_dirty(root: &Path) -> Option<bool> {
+/// Whether the checkout at `root` has uncommitted changes, from `git
+/// status`: the one Git process the guardrails start, and only for a command
+/// that would discard changes (D-16). Untracked files count only for `git
+/// clean`, the one such command that removes them. It takes no lock a
+/// concurrent `git add` would meet. `None` when Git did not answer in time
+/// or at all.
+pub fn git_dirty(root: &Path, untracked: bool) -> Option<bool> {
     let mut command = Command::new("git");
     command
-        .arg("-C")
+        .args(["--no-optional-locks", "-C"])
         .arg(root)
-        .args(["status", "--porcelain", "--untracked-files=normal"])
+        .args([
+            "status",
+            "--porcelain",
+            if untracked {
+                "--untracked-files=normal"
+            } else {
+                "--untracked-files=no"
+            },
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -643,6 +695,21 @@ pub fn record_refusal(home: &Path, runtime: &str, pane: Option<&str>, refusal: &
     let _ = crate::spawn_guard::append_line(&crate::spawn_guard::log_path(home), &line);
 }
 
+/// A shell call named more words than the files protection checks, so the
+/// rest went unchecked: one line per ten minutes, to the log only.
+fn record_word_limit(home: &Path) {
+    if crate::delivery::claim(home, "guardrails_words") {
+        let line = serde_json::json!({
+            "component": "guardrails",
+            "kind": "guard.word_limit",
+            "limit": git::WORD_LIMIT,
+            "at_unix_ms": crate::spawn_guard::now_ms(),
+        })
+        .to_string();
+        let _ = crate::spawn_guard::append_line(&crate::spawn_guard::log_path(home), &line);
+    }
+}
+
 /// The policy file could not be read, so the call ran: one line per ten
 /// minutes, to the log only (B21; the core writes the file again at its next
 /// start or device connection).
@@ -652,6 +719,26 @@ pub fn record_unreadable(home: &Path, runtime: &str, failure: PolicyFailure) {
             "component": "guardrails",
             "kind": "policy.unreadable",
             "cause": failure.code(),
+            "runtime": runtime,
+            "at_unix_ms": crate::spawn_guard::now_ms(),
+        })
+        .to_string();
+        let _ = crate::spawn_guard::append_line(&crate::spawn_guard::log_path(home), &line);
+    }
+}
+
+/// The hook failed before it judged a call (`cause`: `panic`, or
+/// `payload_deadline` when the payload did not arrive in time), so the call
+/// ran: one line per ten minutes, only while some project has a protection
+/// on, since nothing was there to judge otherwise (B21).
+pub fn record_failure(home: &Path, runtime: &str, cause: &str) {
+    let on = read_policy(home)
+        .is_ok_and(|policy| policy.projects.iter().any(|project| project.rules.any()));
+    if on && crate::delivery::claim(home, "guardrails_failed") {
+        let line = serde_json::json!({
+            "component": "guardrails",
+            "kind": "guard.failed",
+            "cause": cause,
             "runtime": runtime,
             "at_unix_ms": crate::spawn_guard::now_ms(),
         })
@@ -681,7 +768,16 @@ pub fn refusal_for(
     }
     let call = call()?;
     let cwd = call.cwd.or_else(|| std::env::current_dir().ok())?;
-    match decide_with(&policy, home, &cwd, &call.action, &git_dirty) {
+    // One `git status` per checkout and question, however many commands of
+    // the call would discard changes there.
+    let asked = std::cell::RefCell::new(std::collections::HashMap::new());
+    let dirty = |root: &Path, untracked: bool| {
+        *asked
+            .borrow_mut()
+            .entry((root.to_path_buf(), untracked))
+            .or_insert_with(|| git_dirty(root, untracked))
+    };
+    match decide_with(&policy, home, &cwd, &call.action, &dirty) {
         Outcome::Refuse(refusal) => {
             record_refusal(home, runtime, pane, &refusal);
             Some(refusal.reason())

@@ -79,16 +79,20 @@ const REMINDER_TAG = /<(\s*\/?\s*system-reminder)/gi;
 // counts live here, and the main session's binding reports them.
 const shared = { children: new Map(), publish: null, rootSession: null };
 
-function managed(env) {
-  if (env.HERDR_ENV !== "1" || !env.HERDR_PANE_ID || !env.HERDR_SOCKET_PATH) return false;
-  // omp marks every shell it starts with OMPCODE=1 and Pi with PI_SESSION_ID: an agent started there is not
-  // the pane's agent, and its prompts must not take the pane's letters.
-  if (env.OMPCODE === "1" || env.PI_SESSION_ID) return false;
+function helperPresent() {
   try {
     return statSync(HELPER).isFile();
   } catch {
     return false;
   }
+}
+
+function managed(env) {
+  if (env.HERDR_ENV !== "1" || !env.HERDR_PANE_ID || !env.HERDR_SOCKET_PATH) return false;
+  // omp marks every shell it starts with OMPCODE=1 and Pi with PI_SESSION_ID: an agent started there is not
+  // the pane's agent, and its prompts must not take the pane's letters.
+  if (env.OMPCODE === "1" || env.PI_SESSION_ID) return false;
+  return helperPresent();
 }
 
 /** The helper's answer, or null when it failed, timed out or said nothing usable. */
@@ -390,16 +394,17 @@ async function onTool(state, event, ctx) {
   let request;
   if (tool === "bash") {
     const command = event?.input?.command;
-    // Every shell call comes here: one asks the helper while a guardrail is on, or when it can start an agent
-    // through Herdr.
+    // Every shell call comes here: one asks the helper while a guardrail is on, or, in the pane's own agent, when
+    // it can start an agent through Herdr.
     if (typeof command !== "string") return null;
-    if (!(command.includes("herdr") || command.includes("HERDR_BIN_PATH")) && !guardrailsOn()) return null;
+    const launch = !state.guardOnly && (command.includes("herdr") || command.includes("HERDR_BIN_PATH"));
+    if (!launch && !guardrailsOn()) return null;
     const cwd = typeof event.input.cwd === "string" && event.input.cwd ? event.input.cwd : ctx?.cwd;
     request = { tool, command, cwd };
   } else if (FILE_TOOLS.has(tool)) {
     if (!guardrailsOn()) return null;
     request = { tool, args: fileArgs(event?.input), cwd: ctx?.cwd };
-  } else if (tool === "ask" && AGENT === "omp") {
+  } else if (tool === "ask" && AGENT === "omp" && !state.guardOnly) {
     // The core knows the pane by the root session Herdr's integration reports, also for a subagent's call.
     const session = root(ctx) ? sessionFile(ctx) : shared.rootSession;
     if (!session) return null;
@@ -449,7 +454,13 @@ function quiet(handler) {
 }
 
 export default function hide(pi) {
-  if (!managed(process.env) || typeof pi?.on !== "function") return;
+  if (typeof pi?.on !== "function") return;
+  // Outside the pane's own agent Hide has no letters, counts or guidance for the session, but a guarded project's
+  // protections hold there too (PRD agent-guardrails B22).
+  if (!managed(process.env)) {
+    if (helperPresent()) guardOnly(pi);
+    return;
+  }
   const state = {
     running: new Set(),
     lost: 0,
@@ -522,4 +533,32 @@ export default function hide(pi) {
       }
     }
   });
+}
+
+/** The extension outside the pane's own agent: the guardrails' tool check and nothing else. */
+function guardOnly(pi) {
+  const state = { running: new Set(), lost: 0, closed: false, guardOnly: true };
+  try {
+    pi.on(
+      "tool_call",
+      quiet(async (event, ctx) => {
+        let reason = null;
+        try {
+          reason = await onTool(state, event, ctx);
+        } catch {}
+        return reason ? { block: true, reason } : undefined;
+      }),
+    );
+    pi.on(
+      "session_shutdown",
+      quiet(() => {
+        state.closed = true;
+        for (const running of state.running) {
+          try {
+            running.kill("SIGKILL");
+          } catch {}
+        }
+      }),
+    );
+  } catch {}
 }

@@ -158,12 +158,30 @@ async function written(host, message) {
   await host.emit("message_end", sample("message_end.assistant").event, context("message_end.assistant"));
 }
 
-test("outside a Herdr pane, in another agent's shell, or with its helper gone the extension registers nothing", async () => {
+test("outside a Herdr pane or in another agent's shell the extension only guards, and with its helper gone it registers nothing", async () => {
   answer({});
-  for (const env of [{}, { HERDR_ENV: "1" }, { ...HERDR, HERDR_ENV: "0" }, { ...HERDR, OMPCODE: "1" }, { ...HERDR, PI_SESSION_ID: "abc" }]) {
+  const outside = [{}, { HERDR_ENV: "1" }, { ...HERDR, HERDR_ENV: "0" }, { ...HERDR, OMPCODE: "1" }, { ...HERDR, PI_SESSION_ID: "abc" }];
+  for (const env of outside) {
     const host = await extension(env);
-    assert.deepEqual(host.names, [], JSON.stringify(env));
+    assert.deepEqual(host.names, ["tool_call", "session_shutdown"], JSON.stringify(env));
+    // No protection on: nothing starts, not even for a launch through Herdr.
+    const launch = { ...sample("tool_call.bash").event, input: { command: "herdr agent start x --kind claude" } };
+    assert.equal(await host.emit("tool_call", launch, context("tool_call.bash")), undefined);
   }
+  await sleep(100);
+  assert.deepEqual(calls(), []);
+  policy({ files: true, paths: [".env"] });
+  try {
+    const host = await extension({});
+    answer({ tool: { deny: "Not run: guarded" } });
+    const read = { ...sample("tool_call.bash").event, toolName: "read", input: { path: ".env" } };
+    assert.deepEqual(await host.emit("tool_call", read, context("tool_call.bash")), { block: true, reason: "Not run: guarded" });
+    const [call] = await until("tool");
+    assert.equal(call.input.tool, "read");
+  } finally {
+    policy({});
+  }
+  rmSync(LOG, { force: true });
   const helperPath = process.env.HIDE_EXTENSION_HELPER;
   renameSync(helperPath, `${helperPath}.gone`);
   try {

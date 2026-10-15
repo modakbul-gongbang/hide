@@ -91,7 +91,7 @@ impl Fixture {
     }
 
     fn decide_in(&self, cwd: &Path, action: Action, dirty: Option<bool>) -> Outcome {
-        decide(&self.home, cwd, &action, &move |_| dirty)
+        decide(&self.home, cwd, &action, &move |_, _| dirty)
     }
 
     fn shell(&self, cwd: &Path, command: &str) -> Option<Rule> {
@@ -177,6 +177,24 @@ fn the_original_checkout_keeps_its_branch() {
     }
     let away = format!("cd {} && git switch topic", fixture.worktree.display());
     assert_eq!(fixture.shell(repo, &away), None);
+    // A branch named like a folder is the branch, as Git reads it, and a
+    // tree's paths after `--` are paths.
+    git(repo, &["branch", "src"]);
+    assert_eq!(
+        fixture.shell(repo, "git checkout src"),
+        Some(Rule::WorktreeFolder)
+    );
+    for command in [
+        "git checkout HEAD -- a.txt",
+        "git checkout feature -- src/lib.rs",
+    ] {
+        assert_eq!(fixture.shell(repo, command), None, "{command}");
+    }
+    // A command named in another script before it is still read.
+    assert_eq!(
+        fixture.shell(repo, "./스크립트.sh && 日本語 && git switch topic"),
+        Some(Rule::WorktreeFolder)
+    );
 }
 
 #[test]
@@ -237,6 +255,8 @@ fn the_base_branch_takes_no_writes_commits_or_pushes() {
         "git cherry-pick abc",
         "git revert abc",
         "git am patch.mbox",
+        "git rebase feature",
+        "git merge --ff-only feature",
         "git pull",
         "git push",
         "git push origin",
@@ -252,8 +272,8 @@ fn the_base_branch_takes_no_writes_commits_or_pushes() {
     for command in [
         "git fetch",
         "git pull --ff-only",
-        "git merge --ff-only origin/main",
         "git merge --abort",
+        "git rebase --abort",
         "git status",
         "git push origin feature",
     ] {
@@ -268,6 +288,7 @@ fn the_base_branch_takes_no_writes_commits_or_pushes() {
         "git push --mirror origin",
         "git push origin --delete main",
         "git push origin :main",
+        "git push origin refs/heads/*:refs/heads/*",
     ] {
         assert_eq!(
             fixture.shell(worktree, command),
@@ -341,6 +362,8 @@ fn merging_a_pull_request_is_refused_only_with_the_option() {
         "gh pr merge 12 --auto --squash",
         "gh pr merge",
         "gh pr merge --repo o/r 3",
+        "gh pr -R o/r merge 12",
+        "gh --repo o/r pr merge 12",
     ] {
         assert_eq!(
             fixture.shell(&fixture.worktree, command),
@@ -424,6 +447,40 @@ fn risky_git_commands_are_refused_and_their_safe_forms_run() {
             "{command}"
         );
     }
+    // Untracked files are what `git clean` removes; the other commands are
+    // asked about tracked changes only.
+    let asked = std::cell::RefCell::new(Vec::new());
+    for command in ["git reset --hard", "git restore a.txt", "git clean -f"] {
+        decide(
+            &fixture.home,
+            worktree,
+            &Action::Shell(command.into()),
+            &|_, untracked| {
+                asked.borrow_mut().push((command, untracked));
+                Some(false)
+            },
+        );
+    }
+    assert_eq!(
+        asked.into_inner(),
+        [
+            ("git reset --hard", false),
+            ("git restore a.txt", false),
+            ("git clean -f", true)
+        ]
+    );
+    // Words past the files protection's limit leave a later command judged.
+    let many = (0..700)
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert_eq!(
+        fixture.shell(
+            worktree,
+            &format!("git add {many} && git push --force origin feature")
+        ),
+        Some(Rule::GitCommands)
+    );
     // Whether the checkout has changes could not be read: refused.
     let outcome = fixture.decide_in(worktree, Action::Shell("git reset --hard".into()), None);
     assert!(matches!(
@@ -472,9 +529,32 @@ fn protected_files_are_refused_to_tools_and_shell_words() {
     ] {
         assert_eq!(fixture.shell(repo, command), Some(Rule::Files), "{command}");
     }
-    for command in ["cat .env.example", "cat a.txt 2>&1", "echo .env-free", "ls"] {
+    for command in [
+        "cat .env.example",
+        "cat a.txt 2>&1",
+        "echo .env-free",
+        "ls",
+        // Prose that ends like a protected name is not a path.
+        "git commit -m 'remove api.key'",
+        "gh pr create --title 'rotate server.pem' --body x",
+    ] {
         assert_eq!(fixture.shell(repo, command), None, "{command}");
     }
+    // A quoted path with a space that is there is still a path.
+    std::fs::write(repo.join("my api.key"), "x").unwrap();
+    assert_eq!(fixture.shell(repo, "cat 'my api.key'"), Some(Rule::Files));
+    assert_eq!(
+        fixture.shell(repo, "cd && cat .ssh/id_ed25519"),
+        Some(Rule::Files),
+        "a bare cd goes home"
+    );
+    // An example the operator lists stays protected beside `.env.*`.
+    let mut listed = rules(|rules| rules.files = true);
+    listed.paths = vec![".env.example".into(), ".env.*".into()];
+    fixture.policy(listed, None);
+    assert_eq!(fixture.read(repo, ".env.example"), Some(Rule::Files));
+    assert_eq!(fixture.read(repo, ".env.local"), Some(Rule::Files));
+    fixture.policy(rules(|rules| rules.files = true), None);
     // A home path is protected only for an agent in a project that lists it.
     let outside = tempfile::tempdir().unwrap();
     assert_eq!(fixture.read(outside.path(), "~/.ssh/id_ed25519"), None);
@@ -491,17 +571,59 @@ fn a_path_is_compared_by_the_filesystems_own_rule_for_case() {
         fixture.read(&fixture.repo, ".ENV"),
         ignores_case.then_some(Rule::Files)
     );
+    // A stored name in capitals matches its pattern the same way.
+    std::fs::write(fixture.repo.join("Key.PEM"), "x").unwrap();
+    assert_eq!(
+        fixture.read(&fixture.repo, "Key.PEM"),
+        ignores_case.then_some(Rule::Files)
+    );
 }
 
 #[test]
 fn a_repository_that_cannot_be_read_refuses_what_needs_it() {
     let fixture = Fixture::new();
-    fixture.policy(rules(|rules| rules.worktree_folder = true), Some("main"));
-    let broken = fixture.repo.join("vendor");
+    fixture.policy(
+        rules(|rules| {
+            rules.worktree_folder = true;
+            rules.files = true;
+        }),
+        Some("main"),
+    );
+    // A nested `.git` the reader refuses, as a submodule's is, belongs to the
+    // checkout around it: no lockout, and that checkout's rules hold.
+    let nested = fixture.repo.join("vendor");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(nested.join(".git"), "gitdir: ../.git/modules/vendor").unwrap();
+    std::fs::write(nested.join(".env"), "x").unwrap();
+    assert_eq!(fixture.write(&nested, &nested.join("x.rs")), None);
+    assert_eq!(fixture.shell(&nested, "git status"), None);
+    assert_eq!(fixture.shell(&nested, "ls"), None);
+    assert_eq!(fixture.read(&nested, ".env"), Some(Rule::Files));
+    assert_eq!(
+        fixture.write(&fixture.worktree, &nested.join("x.rs")),
+        Some(Rule::WorktreeFolder),
+        "a write from another checkout into the one around it"
+    );
+    // A project whose own repository cannot be read refuses only what a
+    // protection needs the repository for.
+    let broken = fixture.home.join("broken");
     std::fs::create_dir_all(&broken).unwrap();
     std::fs::write(broken.join(".git"), "not a pointer").unwrap();
+    std::fs::write(broken.join(".env"), "x").unwrap();
+    write_policy(
+        &fixture.home,
+        &Policy::new(vec![ProjectPolicy {
+            root: broken.to_string_lossy().into_owned(),
+            base: Some("main".into()),
+            rules: rules(|rules| {
+                rules.worktree_folder = true;
+                rules.files = true;
+            }),
+        }]),
+    )
+    .unwrap();
     let outcome = fixture.decide_in(
-        &fixture.worktree,
+        &broken,
         Action::Write(vec![broken.join("x.rs").to_string_lossy().into_owned()]),
         Some(false),
     );
@@ -509,6 +631,13 @@ fn a_repository_that_cannot_be_read_refuses_what_needs_it() {
         panic!("{outcome:?}")
     };
     assert!(refusal.unread, "{refusal:?}");
+    assert_eq!(fixture.shell(&broken, "git status"), None);
+    assert_eq!(
+        fixture.shell(&broken, "git switch main"),
+        Some(Rule::WorktreeFolder)
+    );
+    assert_eq!(fixture.read(&broken, "/etc/hosts"), None);
+    assert_eq!(fixture.read(&broken, ".env"), Some(Rule::Files));
     // Outside every project, the same breakage is not Hide's to judge.
     let outside = tempfile::tempdir().unwrap();
     std::fs::write(outside.path().join(".git"), "not a pointer").unwrap();
@@ -553,7 +682,7 @@ fn nothing_is_refused_with_every_protection_off_or_outside_a_project() {
 fn a_missing_corrupt_or_newer_policy_lets_the_call_run_and_says_why() {
     let fixture = Fixture::new();
     let action = Action::Shell("git push --force".to_owned());
-    let decide = || decide(&fixture.home, &fixture.repo, &action, &|_| Some(false));
+    let decide = || decide(&fixture.home, &fixture.repo, &action, &|_, _| Some(false));
     assert_eq!(decide(), Outcome::PolicyUnreadable(PolicyFailure::Missing));
     std::fs::create_dir_all(policy_path(&fixture.home).parent().unwrap()).unwrap();
     std::fs::write(policy_path(&fixture.home), "{not json").unwrap();
@@ -578,6 +707,24 @@ fn the_reason_names_the_protection_and_what_to_do() {
     assert!(reason.contains("worktree"), "{reason}");
     assert!(reason.contains("Project Settings"), "{reason}");
     assert!(!reason.contains('\u{2014}'), "no em dash");
+    // With no base branch to read, the reason says who names one and where.
+    fixture.policy(rules(|rules| rules.base_branch = true), None);
+    let Outcome::Refuse(refusal) = fixture.decide_in(
+        &fixture.repo,
+        Action::Shell("git commit -m x".into()),
+        Some(false),
+    ) else {
+        panic!("refused")
+    };
+    let reason = refusal.reason();
+    assert!(
+        reason.contains("could not read the base branch"),
+        "{reason}"
+    );
+    assert!(
+        reason.contains("choose the base branch in Project Settings"),
+        "{reason}"
+    );
 }
 
 #[test]
@@ -594,6 +741,11 @@ fn a_path_list_is_saved_only_within_its_limits() {
     over.push("one-more".into());
     assert_eq!(with(over).validate(), Err(PathRefusal::TooMany));
     assert_eq!(with(vec!["a".repeat(PATH_LENGTH_LIMIT)]).validate(), Ok(()));
+    assert_eq!(
+        with(vec!["경".repeat(PATH_LENGTH_LIMIT)]).validate(),
+        Ok(()),
+        "characters, not bytes"
+    );
     assert_eq!(
         with(vec!["a".repeat(PATH_LENGTH_LIMIT + 1)]).validate(),
         Err(PathRefusal::TooLong)
@@ -770,6 +922,15 @@ fn a_payload_cut_at_the_limit_still_names_its_file() {
             action: Action::Write(vec!["/r/.env".into()]),
             cwd: Some("/r".into())
         })
+    );
+    // A patch cut inside its text names each file whose line arrived whole.
+    let patch = format!(
+        r#"{{"cwd":"/r","tool_name":"apply_patch","tool_input":{{"command":"*** Begin Patch\n*** Update File: a.txt\n+{content}\n*** Add File: .env\n+{content}\n*** Add File: b.txt\n+x"}}}}"#
+    );
+    let cut = &patch.as_bytes()[..patch.len() - 2048];
+    assert_eq!(
+        payload::read_hook(cut, true, HookDialect::Codex).map(|call| call.action),
+        Some(Action::Write(vec![".env".into(), "a.txt".into()]))
     );
     let shell = format!(r#"{{"tool_name":"Bash","tool_input":{{"command":"echo {content}"}}}}"#);
     assert_eq!(

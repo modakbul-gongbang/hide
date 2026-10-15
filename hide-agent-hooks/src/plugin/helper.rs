@@ -293,9 +293,7 @@ fn confirm(home: &Path, input: Input, deadline: Instant) -> Value {
 /// Codex guards do.
 fn tool(home: &Path, agent: &Agent, input: Input, deadline: Instant) -> Value {
     let runtime = agent.runtime();
-    let Some(pane) = pane() else {
-        return json!({});
-    };
+    let pane = pane();
     let call = || {
         let tool = input.tool.as_deref()?;
         let args = input.args.clone().or_else(|| {
@@ -309,9 +307,14 @@ fn tool(home: &Path, agent: &Agent, input: Input, deadline: Instant) -> Value {
             cwd: input.cwd.clone(),
         })
     };
-    if let Some(reason) = guardrails::refusal_for(home, runtime, Some(&pane), call) {
+    // The guardrails hold in any session of a guarded project, a Herdr pane
+    // or not (PRD agent-guardrails B22); the guards after them only in one.
+    if let Some(reason) = guardrails::refusal_for(home, runtime, pane.as_deref(), call) {
         return json!({ "deny": reason });
     }
+    let Some(pane) = pane else {
+        return json!({});
+    };
     let Some(program) = workspace_context::cli_program() else {
         return json!({});
     };

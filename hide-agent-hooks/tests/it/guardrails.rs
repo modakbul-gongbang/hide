@@ -180,18 +180,28 @@ fn a_protected_file_is_refused_in_each_runtimes_shape_and_its_example_runs() {
 }
 
 #[test]
-fn with_no_protection_on_or_outside_a_pane_nothing_is_refused_or_logged() {
+fn with_no_protection_on_nothing_is_refused_and_outside_a_pane_the_project_is_still_guarded() {
     let machine = Machine::new("registered");
     let env = machine.checkout.join(".env");
     let write = claude(&machine, "Write", json!({"file_path": env, "content": "X"}));
     // The policy the core writes when no protection is on.
-    let run = machine.run_event("claude-code", "PreToolUse", &write, Some(PANE), &[]);
-    assert_eq!(claude_reason(&run), None);
-    // On, but the agent runs outside a Herdr pane.
+    for pane in [Some(PANE), None] {
+        let run = machine.run_event("claude-code", "PreToolUse", &write, pane, &[]);
+        assert_eq!(claude_reason(&run), None);
+    }
+    assert_eq!(machine.guard_log(), "");
+    // On, and the agent runs outside a Herdr pane: the project's protection
+    // holds there too (B22), and the daemon is not asked.
     files_on(&machine);
     let run = machine.run_event("claude-code", "PreToolUse", &write, None, &[]);
-    assert_eq!(claude_reason(&run), None);
-    assert_eq!(machine.guard_log(), "");
+    assert!(
+        claude_reason(&run).is_some_and(|reason| reason.contains("Guard files")),
+        "{run:?}"
+    );
+    let lines = log(&machine);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["kind"], "guard.refused");
+    assert_eq!(lines[0]["pane"], serde_json::Value::Null);
     assert!(machine.calls().is_empty(), "no protection asks the daemon");
 }
 

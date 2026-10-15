@@ -1,4 +1,4 @@
-// hide-opencode-plugin@2 sha256=50bbc660bc6ce6d84a2b87bb6bb46bd411cedc3e9a512a023b1f5e32ce796d1b
+// hide-opencode-plugin@2 sha256=c70175ebf390207fcb9cf90a07f9cee550c0d09151c44c1972300da9553aba83
 // Hide's OpenCode plugin, written by Hide's install kit (hide-agent-hooks).
 // An edit is kept and shown as edited in Settings; Reinstall puts Hide's back.
 // Outside a Herdr pane Hide manages, or when its helper is gone, it does nothing.
@@ -71,13 +71,16 @@ function fileArgs(args) {
   return named;
 }
 
-function managed(env) {
-  if (env.HERDR_ENV !== "1" || !env.HERDR_PANE_ID || !env.HERDR_SOCKET_PATH) return false;
+function helperPresent() {
   try {
     return statSync(HELPER).isFile();
   } catch {
     return false;
   }
+}
+
+function managed(env) {
+  return env.HERDR_ENV === "1" && Boolean(env.HERDR_PANE_ID) && Boolean(env.HERDR_SOCKET_PATH) && helperPresent();
 }
 
 /** The helper's answer, or null when it failed, timed out or said nothing usable. */
@@ -378,16 +381,17 @@ async function onTool(state, sessionID, directory, input, output) {
   let request;
   if (tool === "bash") {
     const command = output?.args?.command;
-    // Every shell call comes here: one asks the helper while a guardrail is on, or when it can start an agent
-    // through Herdr.
+    // Every shell call comes here: one asks the helper while a guardrail is on, or, in a Herdr pane, when it can
+    // start an agent through Herdr.
     if (typeof command !== "string") return null;
-    if (!(command.includes("herdr") || command.includes("HERDR_BIN_PATH")) && !guardrailsOn()) return null;
+    const launch = !state.guardOnly && (command.includes("herdr") || command.includes("HERDR_BIN_PATH"));
+    if (!launch && !guardrailsOn()) return null;
     const workdir = output.args.workdir;
     request = { session_id: sessionID, tool, command, cwd: typeof workdir === "string" && workdir ? workdir : directory };
   } else if (FILE_TOOLS.has(tool)) {
     if (!guardrailsOn()) return null;
     request = { session_id: sessionID, tool, args: fileArgs(output?.args), cwd: directory };
-  } else if (tool === "question") {
+  } else if (tool === "question" && !state.guardOnly) {
     // The core knows the pane by the root session Herdr's integration reports, also for a subagent's call.
     request = { session_id: rootOf(state, sessionID) ?? sessionID, tool };
   } else {
@@ -398,7 +402,9 @@ async function onTool(state, sessionID, directory, input, output) {
 }
 
 export const HidePlugin = async ({ client, directory }) => {
-  if (!managed(process.env)) return {};
+  // Outside a Herdr pane Hide has no letters, counts or guidance for the session, but a guarded project's
+  // protections hold there too (PRD agent-guardrails B22).
+  if (!managed(process.env)) return helperPresent() ? guardOnly(directory) : {};
   const state = {
     running: new Set(),
     lost: 0,
@@ -450,3 +456,22 @@ export const HidePlugin = async ({ client, directory }) => {
     },
   };
 };
+
+/** The plugin outside a Herdr pane: the guardrails' tool check and nothing else. */
+function guardOnly(directory) {
+  const state = { running: new Set(), lost: 0, closed: false, guardOnly: true };
+  return {
+    "tool.execute.before": async (input, output) => {
+      let reason = null;
+      try {
+        reason = await onTool(state, input?.sessionID, directory, input, output);
+      } catch {}
+      if (reason) throw new Error(reason);
+    },
+    dispose: async () => {
+      state.closed = true;
+      for (const child of state.running) child.kill("SIGKILL");
+      state.running.clear();
+    },
+  };
+}

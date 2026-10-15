@@ -2,7 +2,7 @@
 //! from the repository's own files (`hide_project::git`), and the policy
 //! project it belongs to. No Git process runs here.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -23,6 +23,30 @@ pub(super) struct Checkout {
 impl Checkout {
     pub fn git(&self) -> bool {
         self.common_dir.is_some()
+    }
+
+    /// Whether the repository has a local branch `name`, from its own ref
+    /// files: a loose ref, or a line of `packed-refs` (read up to 8 MiB).
+    pub fn has_branch(&self, name: &str) -> bool {
+        use std::io::Read;
+        let Some(common) = &self.common_dir else {
+            return false;
+        };
+        if name.is_empty() || name.split('/').any(|part| part.is_empty() || part == "..") {
+            return false;
+        }
+        if common.join("refs/heads").join(name).is_file() {
+            return true;
+        }
+        let mut packed = String::new();
+        let read = std::fs::File::open(common.join("packed-refs"))
+            .and_then(|file| file.take(PACKED_REFS_LIMIT).read_to_string(&mut packed));
+        let wanted = format!("refs/heads/{name}");
+        read.is_ok()
+            && packed
+                .lines()
+                .filter_map(|line| line.split_once(' '))
+                .any(|(_, reference)| reference == wanted)
     }
 
     /// The original checkout: the repository's main worktree.
@@ -58,6 +82,9 @@ impl Place {
     }
 }
 
+/// The most of `packed-refs` read for one branch lookup.
+const PACKED_REFS_LIMIT: u64 = 8 * 1024 * 1024;
+
 pub(super) struct Facts<'a> {
     policy: &'a Policy,
     pub home: PathBuf,
@@ -65,6 +92,10 @@ pub(super) struct Facts<'a> {
     /// gone, so nothing is matched against it.
     roots: Vec<Option<PathBuf>>,
     places: RefCell<HashMap<PathBuf, Place>>,
+    /// Whether a folder tells `Name` from `name`, by folder, for this call.
+    cases: RefCell<HashMap<PathBuf, bool>>,
+    /// Set when a shell call named more words than are checked.
+    pub word_limit: Cell<bool>,
 }
 
 impl<'a> Facts<'a> {
@@ -86,7 +117,31 @@ impl<'a> Facts<'a> {
                 })
                 .collect(),
             places: RefCell::new(HashMap::new()),
+            cases: RefCell::new(HashMap::new()),
+            word_limit: Cell::new(false),
         }
+    }
+
+    /// The root of the project `place` belongs to, as the filesystem spells it.
+    pub fn project_root(&self, place: &Place) -> Option<&Path> {
+        self.roots.get(place.project?)?.as_deref()
+    }
+
+    /// Whether names under `folder` compare with their case (B24), judged by
+    /// what the folder holds so the hook writes nothing there; a folder that
+    /// cannot say is taken as ignoring case, which protects more.
+    pub fn case_sensitive(&self, folder: &Path) -> bool {
+        if let Some(known) = self.cases.borrow().get(folder) {
+            return *known;
+        }
+        let sensitive = hide_platform::fs::identity::case_sensitive_by_entries(folder)
+            .ok()
+            .flatten()
+            .unwrap_or(false);
+        self.cases
+            .borrow_mut()
+            .insert(folder.to_path_buf(), sensitive);
+        sensitive
     }
 
     /// The checkout and project that hold `path`, which need not exist yet.
@@ -106,6 +161,13 @@ impl<'a> Facts<'a> {
             .roots
             .iter()
             .position(|root| root.as_ref().is_some_and(|root| spelled.starts_with(root)));
+        // A repository nested in a project's checkout, a submodule or a clone,
+        // is a folder of the checkout around it; so is one whose `.git` the
+        // reader refuses, such as a submodule's, which has no `commondir`.
+        let enclosing = |holder: &Path| match holder.parent() {
+            Some(parent) => self.read(path, parent),
+            None => self.folder(under),
+        };
         match hide_project::git::discover_checked(existing) {
             Ok(Some(repository)) => {
                 let (Ok(root), Ok(main_root)) = (
@@ -115,8 +177,7 @@ impl<'a> Facts<'a> {
                     return self.unreadable(under);
                 };
                 let Some(project) = self.root_index(&main_root) else {
-                    // A repository nested in a folder project is the folder's.
-                    return self.folder(under);
+                    return enclosing(&repository.root);
                 };
                 Place {
                     place: Located::In(Checkout {
@@ -129,8 +190,16 @@ impl<'a> Facts<'a> {
                 }
             }
             Ok(None) => self.folder(under),
-            Err(_) => self.unreadable(under),
+            Err(_) => match git_holder(existing) {
+                Some(holder) if !self.is_root(&holder) => enclosing(&holder),
+                _ => self.unreadable(under),
+            },
         }
+    }
+
+    fn is_root(&self, folder: &Path) -> bool {
+        hide_platform::fs::identity::canonical(folder)
+            .is_ok_and(|folder| self.root_index(&folder).is_some())
     }
 
     fn root_index(&self, main_root: &Path) -> Option<usize> {
@@ -186,6 +255,13 @@ impl<'a> Facts<'a> {
             .strip_prefix("refs/remotes/origin/")?;
         (!branch.is_empty()).then(|| branch.to_owned())
     }
+}
+
+/// The nearest folder at or above `path` that holds a `.git`.
+fn git_holder(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|folder| std::fs::symlink_metadata(folder.join(".git")).is_ok())
+        .map(Path::to_path_buf)
 }
 
 /// The deepest ancestor of `path` that exists (itself when it does), and

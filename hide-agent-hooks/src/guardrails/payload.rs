@@ -162,11 +162,14 @@ fn read_cut(payload: &[u8], dialect: HookDialect) -> Option<ToolCall> {
     if SHELL_TOOLS.contains(&tool.as_str()) {
         return None;
     }
-    let paths: Vec<String> = PATH_KEYS
+    let mut paths: Vec<String> = PATH_KEYS
         .iter()
         .filter_map(|key| string_after(payload, key))
         .filter(|path| !path.is_empty())
         .collect();
+    // A patch is cut inside its own text, so its file lines are read from
+    // the escaped bytes, each one that ended before the cut.
+    paths.extend(cut_patch_paths(payload));
     let action = if WRITE_TOOLS.contains(&tool.as_str()) && !paths.is_empty() {
         Action::Write(paths)
     } else if READ_TOOLS.contains(&tool.as_str()) && !paths.is_empty() {
@@ -180,6 +183,42 @@ fn read_cut(payload: &[u8], dialect: HookDialect) -> Option<ToolCall> {
             .filter(|cwd| !cwd.is_empty())
             .map(PathBuf::from),
     })
+}
+
+/// The file lines of a patch inside a JSON string that may be cut short:
+/// each marker's path up to the escaped newline (`\n`) or the string's end.
+fn cut_patch_paths(payload: &[u8]) -> Vec<String> {
+    let mut paths = Vec::new();
+    for marker in [
+        "*** Add File: ",
+        "*** Update File: ",
+        "*** Delete File: ",
+        "*** Move to: ",
+    ] {
+        let marker = marker.as_bytes();
+        let mut from = 0;
+        while let Some(at) = payload[from..]
+            .windows(marker.len())
+            .position(|window| window == marker)
+        {
+            let start = from + at + marker.len();
+            let rest = &payload[start..];
+            let Some(end) = rest
+                .windows(2)
+                .position(|pair| pair == b"\\n" || pair[0] == b'"')
+            else {
+                break;
+            };
+            if let Ok(path) = std::str::from_utf8(&rest[..end]) {
+                let path = path.trim();
+                if !path.is_empty() {
+                    paths.push(path.to_owned());
+                }
+            }
+            from = start + end;
+        }
+    }
+    paths
 }
 
 /// The whole JSON string value of the first `"key":` in `bytes`.

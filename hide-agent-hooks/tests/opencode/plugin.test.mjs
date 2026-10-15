@@ -88,14 +88,31 @@ async function prompt(hooks, input = sample("chat.message").input, parts) {
   return output;
 }
 
-test("outside a Herdr pane the plugin registers no hook and starts nothing", async () => {
-  answer({});
+test("outside a Herdr pane the plugin only guards a protected project's tools", async () => {
+  answer({ tool: { deny: "Not run: guarded" } });
   for (const env of [{}, { HERDR_ENV: "1" }, { ...HERDR, HERDR_ENV: "0" }]) {
     const hooks = await plugin(env);
-    assert.deepEqual(Object.keys(hooks), []);
+    assert.deepEqual(Object.keys(hooks), ["tool.execute.before", "dispose"]);
+    // No protection on: nothing starts, even for a launch through Herdr.
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_a" }, { args: { command: "herdr agent start x" } });
+    await hooks["tool.execute.before"]({ tool: "read", sessionID: "ses_a" }, { args: { filePath: ".env" } });
+    await hooks["tool.execute.before"]({ tool: "question", sessionID: "ses_a" }, { args: {} });
   }
   await sleep(100);
   assert.deepEqual(calls(), []);
+  policy({ files: true, paths: [".env"] });
+  try {
+    const hooks = await plugin({});
+    await assert.rejects(
+      hooks["tool.execute.before"]({ tool: "read", sessionID: "ses_a" }, { args: { filePath: ".env" } }),
+      /Not run: guarded/,
+    );
+    const [call] = await until("tool");
+    assert.deepEqual(call.input.args, { filePath: ".env" });
+    assert.equal(call.env.HERDR_PANE_ID, undefined);
+  } finally {
+    policy({});
+  }
 });
 
 test("a new root session's first prompt carries the guidance and the letters, which are confirmed once OpenCode stored it", async () => {

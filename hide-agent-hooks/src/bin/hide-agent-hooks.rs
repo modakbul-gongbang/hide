@@ -109,7 +109,9 @@ fn main() -> ExitCode {
                 // the call runs (PRD herdr-spawn-guard D-04). A panic is one
                 // such failure, and it must not end the hook with a code the
                 // agent reads as a refusal.
-                let _ = std::panic::catch_unwind(|| run_spawn_guard(&arguments, started));
+                if std::panic::catch_unwind(|| run_spawn_guard(&arguments, started)).is_err() {
+                    guard_failed(&arguments, "panic");
+                }
             } else if event.as_deref() == Some(HookEvent::UserPromptSubmit.name()) {
                 run_prompt_hook(&arguments, started + PROMPT_BUDGET);
             } else {
@@ -210,8 +212,12 @@ fn run_basic_hook(agent: GuidanceAgent, arguments: &[String], started: Instant) 
         ),
         _ => None,
     })
-    .ok()
-    .flatten();
+    .unwrap_or_else(|_| {
+        if event == HookEvent::PreToolUse {
+            guard_failed(arguments, "panic");
+        }
+        None
+    });
     let answer = match answer {
         None if dialect == HookDialect::Cursor && basic::cursor_permission_event(event) => {
             Some(basic::CURSOR_ALLOW.to_owned())
@@ -297,6 +303,15 @@ fn run_spawn_guard(arguments: &[String], started: Instant) {
     }
 }
 
+/// The hook failed before it judged a tool call (`cause`: `panic`), so the
+/// call runs as the agent's default; the guardrails' log says so (B21).
+fn guard_failed(arguments: &[String], cause: &str) {
+    let runtime = argument_value("--runtime", arguments).unwrap_or_default();
+    if let Some(home) = home_directory() {
+        hide_agent_hooks::guardrails::record_failure(&home, &runtime, cause);
+    }
+}
+
 /// The guards' decision for one tool call: the reason it is refused, or
 /// `None` to let it run. The project's guardrails refuse what a protection
 /// that is on names; the spawn guard refuses a launch through Herdr (not a
@@ -307,22 +322,30 @@ fn run_spawn_guard(arguments: &[String], started: Instant) {
 fn guard_refusal(dialect: HookDialect, runtime_id: &str, started: Instant) -> Option<String> {
     use hide_agent_hooks::spawn_guard::{self as guard, Registration};
 
-    // Outside a Herdr pane there is nothing to redirect, and no agent of
-    // Hide's to guard.
     let pane = std::env::var("HERDR_PANE_ID")
         .ok()
-        .filter(|value| !value.is_empty())?;
-    let (payload, truncated) = read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)?;
-    // The project's guardrails come first: they read only local files, and
-    // a call they refuse never reaches the daemon (PRD agent-guardrails).
-    if let Some(home) = home_directory()
+        .filter(|value| !value.is_empty());
+    let home = home_directory();
+    let Some((payload, truncated)) = read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)
+    else {
+        if let Some(home) = &home {
+            hide_agent_hooks::guardrails::record_failure(home, runtime_id, "payload_deadline");
+        }
+        return None;
+    };
+    // The project's guardrails come first, in any session of a guarded
+    // project, a Herdr pane or not (PRD agent-guardrails B22): they read only
+    // local files, and a call they refuse never reaches the daemon.
+    if let Some(home) = &home
         && let Some(reason) =
-            hide_agent_hooks::guardrails::refusal_for(&home, runtime_id, Some(&pane), || {
+            hide_agent_hooks::guardrails::refusal_for(home, runtime_id, pane.as_deref(), || {
                 hide_agent_hooks::guardrails::payload::read_hook(&payload, truncated, dialect)
             })
     {
         return Some(reason);
     }
+    // Outside a Herdr pane there is nothing to redirect.
+    let pane = pane?;
     // Question tools have no shell command and take their own readonly route,
     // for an agent whose question tools are confirmed to reach this hook
     // (Grok's are not yet, so its questions stay native).
