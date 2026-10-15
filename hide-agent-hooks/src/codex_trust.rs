@@ -1070,11 +1070,15 @@ mod tests {
             select(&[hook])
         };
         assert_eq!(
-            with(Some("Bash|request_user_input|request_user_input_async")),
+            with(Some(
+                "Bash|request_user_input|request_user_input_async|apply_patch|Edit|Write"
+            )),
             ["guard"]
         );
         // Codex hashes the matcher into the key, so an entry that runs Hide's
-        // command on fewer tools, every tool, or another one is not what Hide wrote.
+        // command on fewer tools, every tool, or another one is not what Hide
+        // wrote: the version before the guardrails' file tools included.
+        assert!(with(Some("Bash|request_user_input")).is_empty());
         assert!(with(Some("Bash")).is_empty());
         assert!(with(None).is_empty());
         assert!(with(Some("*")).is_empty());

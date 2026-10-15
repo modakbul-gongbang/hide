@@ -1,4 +1,4 @@
-//! P9 D-05: the version-seven installation command contract.
+//! P9 D-05: the version-eight installation command contract.
 //! These fixtures pin all six commands, matchers, markers and file ordering.
 //! A command change would invalidate Codex trust even if its meaning stayed the same.
 

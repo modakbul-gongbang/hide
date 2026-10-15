@@ -228,10 +228,13 @@ struct Diagnostics {
 
 /// The fixed causes a hook may record: the delivery intake's eight, the
 /// spawn guard's one (`guard`: the daemon could not be asked), OpenCode's
-/// plugin's one (`plugin`: it skipped or gave up on a helper call) and
+/// plugin's one (`plugin`: it skipped or gave up on a helper call),
 /// Memory's two (`crate::memory`: the core could not be asked, or did not
-/// answer in time).
-const CAUSES: [&str; 13] = [
+/// answer in time) and the guardrails' three (`guardrails`: the policy file
+/// could not be read; `guardrails_words`: a shell call named more words than
+/// are checked; `guardrails_failed`: the hook failed or ran out of time
+/// before it judged a call).
+const CAUSES: [&str; 16] = [
     "cli",
     "deadline",
     "format",
@@ -245,6 +248,9 @@ const CAUSES: [&str; 13] = [
     "memory_unavailable",
     "memory_deadline",
     "memory_panicked",
+    "guardrails",
+    "guardrails_words",
+    "guardrails_failed",
 ];
 
 /// Fixed causes ([`CAUSES`]), private storage and a nonblocking cross-process lock.

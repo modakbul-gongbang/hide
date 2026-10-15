@@ -60,6 +60,7 @@ fn restart(path: &str) -> Runtime {
             local_issues_path: None,
             effects_held: false,
             machine_name: None,
+            account_state_folder: false,
         },
         environment::EnvironmentReport {
             statuses: Vec::new(),

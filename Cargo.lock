@@ -1220,6 +1220,7 @@ dependencies = [
  "hide-memory",
  "hide-platform",
  "hide-project",
+ "ignore",
  "libc",
  "rusqlite",
  "serde",

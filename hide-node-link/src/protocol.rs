@@ -123,13 +123,17 @@ use crate::error::HostError;
 /// recipient's machine (PRD view-opener-feedback D-16). An older helper would
 /// refuse it as unknown, so a Send to its agents could never carry a
 /// screenshot; it is refused at Hello and upgraded.
-/// 34: `session_work_turn` answers the one turn a backlog item came from and
+/// 34: `guardrail_policy` writes the project guardrails' policy the agent
+/// hooks of the node's account read (PRD agent-guardrails D-11). A node on 33
+/// would refuse it as unknown, and a protection saved for a project there
+/// would not reach its agents, so it is refused at Hello and reinstalled.
+/// 35: `session_work_turn` answers the one turn a backlog item came from and
 /// replaces `session_work_context`, whose issue templates fed the removed AI
 /// issue draft, and a disk row carries its volume's size. The session search
 /// index reads (`session_index_read`, `session_stamps`) and the `search`
-/// reader feature left with the Conversation history screen. A helper on 33
+/// reader feature left with the Conversation history screen. A helper on 34
 /// does not know the new call and is upgraded.
-pub const PROTOCOL_VERSION: u32 = 34;
+pub const PROTOCOL_VERSION: u32 = 35;
 
 /// How a pane's shell is started so that it marks its first prompt
 /// ([`Call::ShellIntegration`]): the command the pane runs, the shell and
@@ -332,6 +336,18 @@ pub enum Call {
     /// Whether the node's account has Hide's agent hooks in place, read from
     /// that account's own configuration (`hide_agent_hooks::Diagnosis`).
     HookDiagnosis,
+    /// Replaces the project guardrails' policy file under the node's home
+    /// with `policy`, the projects of this machine with a protection on
+    /// (`hide_agent_hooks::guardrails::write_policy`); answers `null` once
+    /// the file is in place. A `sequence` below the last one this node
+    /// applied leaves the newer file alone and is answered
+    /// `{"superseded_by": <that sequence>}`: a write that outlived its
+    /// caller's wait, or a caller whose sequence fell behind (another core,
+    /// a clock set back), which writes again above it.
+    GuardrailPolicy {
+        policy: hide_agent_hooks::guardrails::Policy,
+        sequence: u64,
+    },
     /// Every worktree Git registers for the repository at `root`, the main
     /// one first (`worktrees::Registered`).
     WorktreesRegistered {
@@ -764,6 +780,7 @@ impl Call {
             | Self::WorktreeRemovalCheck { .. }
             | Self::Kit { .. }
             | Self::HookDiagnosis
+            | Self::GuardrailPolicy { .. }
             | Self::WorktreesRegistered { .. }
             | Self::IgnoredRepository { .. }
             | Self::ProjectCreate { .. }

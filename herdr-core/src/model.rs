@@ -64,6 +64,12 @@ pub struct CoreOptions {
     /// B2); absent where the system names none.
     #[serde(default)]
     pub machine_name: Option<String>,
+    /// The embedder runs on the state folder this account's hide picks by
+    /// default; only such a core writes this machine's guardrails policy,
+    /// which every hook of the account reads (PRD agent-guardrails D-11). A
+    /// test daemon on a relocated folder writes nothing under `~/.hide`.
+    #[serde(default)]
+    pub account_state_folder: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]

@@ -2596,6 +2596,9 @@ impl Runtime {
         if before == self.snapshot.ui_state.workspace_registrations.len() {
             return false;
         }
+        if let Some((device_id, path)) = &registered {
+            self.forget_project_guardrails(device_id, path);
+        }
         let asleep = crate::project_context::asleep_fold_key(workspace_id);
         self.snapshot
             .ui_state

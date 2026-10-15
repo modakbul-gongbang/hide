@@ -1317,6 +1317,7 @@ mod tests {
             herdr_bin_path: None,
             state_dir: directory.path().to_path_buf(),
             legacy_state_dir: None,
+            account_state_folder: false,
             keep_alive: true,
             vite_origin: None,
             bind: "127.0.0.1:0".parse().unwrap(),

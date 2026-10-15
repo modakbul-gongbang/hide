@@ -164,7 +164,7 @@ The shared `BackgroundRead` has one in-flight request and observes the latest de
 ## The spawn guard hook on a shell call
 
 The `Bash` branch of the `PreToolUse` matcher runs `hide-agent-hooks` before every shell call a Claude Code or Codex agent makes, so it is a high-frequency path that every agent pays and no operator sees (PRD herdr-spawn-guard B13).
-Per input it adds one process start: the helper reads the payload (at most 256 KiB, waiting at most 0.5 seconds), runs a byte test for `herdr` or `HERDR_BIN_PATH` over the whole payload (its `cwd` and transcript path too, so under a checkout whose path contains `herdr` every call also pays the JSON parse and the lexer, microseconds that start nothing), and exits with no output when neither is there, before it parses JSON, reads a file or starts a child.
+Per input it adds one process start: the helper reads the payload (at most 256 KiB, waiting at most 0.5 seconds), runs a byte test for `herdr` or `HERDR_BIN_PATH` over the whole payload (its `cwd` and transcript path too, so under a checkout whose path contains `herdr` every call also pays the JSON parse and the lexer, microseconds that start nothing), and exits with no output when neither is there, before it parses JSON or starts a child; the [project guardrails](#the-guardrails-on-a-pre-tool-call) read their policy file first.
 A call that mentions `herdr` without launching an agent (`pane split`, `agent list`) pays one JSON parse and the shell lexer, and still starts nothing.
 Only a launch in a Herdr pane starts a child: one `hide workspace bootstrap`, owned through `hide_platform::process` with the guard's 2.5 second deadline, a 16 KiB output cap, and an end of the child on success, failure and timeout alike.
 The guard keeps no state, runs no timer or worker, takes no lock of the runtime, publishes nothing and fans out no notification; the daemon sees one `bootstrap` request per refused launch, the call `SessionStart` already makes.
@@ -186,6 +186,18 @@ The ordinary shell-call, Herdr-mention, stand-in refusal and real-daemon refusal
 Helper return time does not prove the agent's time to first token or its runtime's hook scheduling latency.
 Observe the actual supported runtimes separately when claiming native behavior.
 Regression owners are `hide-agent-hooks/tests/it/spawn_guard.rs` (nothing spawned for a payload without `herdr`, a slow `hide` stays under the budget) and the parser tests in `src/spawn_guard.rs`.
+
+
+## The guardrails on a pre-tool call
+
+The project guardrails run in the same helper, before the spawn guard, on every shell call and, from matcher version eight, on every file tool call of Claude Code, Codex, Grok and Cursor (PRD agent-guardrails B27, [agent-hooks.md](agent-hooks.md#project-guardrails)); a file call that started no helper before now starts one.
+Per input they add one read of the policy file (at most 8 MiB, a few hundred bytes in practice), in any agent session, a Herdr pane or not, and, when no project of the machine has a protection on, nothing more: no JSON parse of the payload, no Git read, no child.
+With a protection on, the call pays one JSON parse, the shell lexer for a shell call, and reads of the repository's own files (`hide_project::git`, no process) for each path it names; only a command that would discard changes starts `git --no-optional-locks status`, once per checkout and call, owned through `hide_platform::process` with a 2 second budget and a 4 KiB output cap; at most 512 words of one shell call are matched against the protected paths.
+OpenCode's plugin and the Pi and omp extension read the policy in their own process, again when its file changes, and start no helper for a file tool while nothing is on.
+The guardrails keep no state, run no timer or worker and publish nothing; the retained data is the shared refusal log and one `policy.unreadable` line per ten minutes.
+
+Measure it as the spawn guard is measured, with the helper's own CPU time (`getrusage` of the child) beside wall time, because on a loaded machine wall time measures the scheduler: each runtime's file call and shell call, under an empty policy and under a policy whose only project is elsewhere, against `/usr/bin/true` measured the same way.
+B27's bar is the no-protection call's p95 at or under 15 ms on macOS; report the load average with it, and treat a run whose `/usr/bin/true` p95 is above that bar as not measuring the helper.
 
 ## Resident work cost review
 

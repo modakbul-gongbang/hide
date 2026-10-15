@@ -11,7 +11,9 @@
 // HIDE_EXTENSION_HELPER_ANSWERS set.
 
 import assert from "node:assert/strict";
-import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
@@ -24,6 +26,18 @@ const ANSWERS = process.env.HIDE_EXTENSION_HELPER_ANSWERS;
 const HERDR = { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_SOCKET_PATH: "/tmp/herdr-fixture.sock" };
 const NESTED = ["OMPCODE", "PI_SESSION_ID"];
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Writes the guardrails policy the core would publish, with `rules` on the fixture project, or removes it. */
+function policy(rules) {
+  const file = path.join(homedir(), ".hide", "agent-hooks", "guardrails.json");
+  if (!rules) return rmSync(file, { force: true });
+  mkdirSync(path.dirname(file), { recursive: true });
+  const all = { worktree_folder: false, base_branch: false, agent_merge: false, git_commands: false, files: false, paths: [] };
+  writeFileSync(file, JSON.stringify({ version: 1, projects: [{ root: "/checkouts/fixture", base: null, rules: { ...all, ...rules } }] }));
+}
+
+// The policy the core writes at its start: no protection on.
+policy({});
 const sample = (name) => structuredClone(SAMPLES[name]);
 // The shell call `settled` runs to order the helper calls before it.
 const BARRIER = "herdr --barrier";
@@ -144,12 +158,37 @@ async function written(host, message) {
   await host.emit("message_end", sample("message_end.assistant").event, context("message_end.assistant"));
 }
 
-test("outside a Herdr pane, in another agent's shell, or with its helper gone the extension registers nothing", async () => {
+test("outside a Herdr pane or in another agent's shell the extension only guards, and with its helper gone it registers nothing", async () => {
   answer({});
-  for (const env of [{}, { HERDR_ENV: "1" }, { ...HERDR, HERDR_ENV: "0" }, { ...HERDR, OMPCODE: "1" }, { ...HERDR, PI_SESSION_ID: "abc" }]) {
+  const outside = [{}, { HERDR_ENV: "1" }, { ...HERDR, HERDR_ENV: "0" }, { ...HERDR, OMPCODE: "1" }, { ...HERDR, PI_SESSION_ID: "abc" }];
+  for (const env of outside) {
     const host = await extension(env);
-    assert.deepEqual(host.names, [], JSON.stringify(env));
+    assert.deepEqual(host.names, ["tool_call", "session_shutdown"], JSON.stringify(env));
+    // No protection on: nothing starts, not even for a launch through Herdr.
+    const launch = { ...sample("tool_call.bash").event, input: { command: "herdr agent start x --kind claude" } };
+    assert.equal(await host.emit("tool_call", launch, context("tool_call.bash")), undefined);
   }
+  // A missing or unreadable policy starts no helper outside a pane either.
+  for (const write of [() => policy(null), () => writeFileSync(path.join(homedir(), ".hide", "agent-hooks", "guardrails.json"), "{")]) {
+    write();
+    const host = await extension({});
+    const read = { ...sample("tool_call.bash").event, toolName: "read", input: { path: ".env" } };
+    assert.equal(await host.emit("tool_call", read, context("tool_call.bash")), undefined);
+  }
+  await sleep(100);
+  assert.deepEqual(calls(), []);
+  policy({ files: true, paths: [".env"] });
+  try {
+    const host = await extension({});
+    answer({ tool: { deny: "Not run: guarded" } });
+    const read = { ...sample("tool_call.bash").event, toolName: "read", input: { path: ".env" } };
+    assert.deepEqual(await host.emit("tool_call", read, context("tool_call.bash")), { block: true, reason: "Not run: guarded" });
+    const [call] = await until("tool");
+    assert.equal(call.input.tool, "read");
+  } finally {
+    policy({});
+  }
+  rmSync(LOG, { force: true });
   const helperPath = process.env.HIDE_EXTENSION_HELPER;
   renameSync(helperPath, `${helperPath}.gone`);
   try {
@@ -191,7 +230,7 @@ test("a new session's first prompt carries the guidance and the letters in one h
   // `lost` counts calls an earlier budget gave up on; a loaded machine may add it. Letters know the session by its
   // file, as Herdr does; Memory by the host's own id, which its session reader keys a receipt by.
   const { lost: _lost, ...input } = call.input;
-  assert.deepEqual(input, { session_id: file, native_session: id, prompt: "Fix the failing parser test", cwd: "/checkouts/fixture", first: true, memory_first: true, version: 3 });
+  assert.deepEqual(input, { session_id: file, native_session: id, prompt: "Fix the failing parser test", cwd: "/checkouts/fixture", first: true, memory_first: true, version: 4 });
   assert.equal(call.env.HERDR_PANE_ID, "w1:p1");
 
   // Once the host wrote it, the session's guidance is given.
@@ -388,11 +427,39 @@ test("a shell call that starts an agent through Herdr is refused with the helper
   assert.deepEqual(await host.emit("tool_call", launch, context("tool_call.bash")), { block: true, reason: "Use hide agent spawn --parent here" });
   const [call] = await until("tool");
   const { lost: _lost, ...input } = call.input;
-  assert.deepEqual(input, { tool: "bash", command: "herdr agent start helper --kind claude", cwd: "/checkouts/fixture", version: 3 });
+  assert.deepEqual(input, { tool: "bash", command: "herdr agent start helper --kind claude", cwd: "/checkouts/fixture", version: 4 });
 
   assert.equal(await host.emit("tool_call", sample("tool_call.bash").event, context("tool_call.bash")), undefined);
   await settled(host);
   assert.equal(made("tool").length, 1, "an ordinary shell call starts no helper");
+});
+
+
+test("while a project has a protection on, file and shell calls ask the helper with paths only", async () => {
+  const host = await extension();
+  await started(host, "");
+  policy({ files: true, paths: [".env"] });
+  try {
+    answer({ tool: { deny: "Not run: Guard files is on" } });
+    const write = { ...sample("tool_call.bash").event, toolName: "write", input: { path: "/checkouts/fixture/.env", content: "SECRET=1" } };
+    assert.deepEqual(await host.emit("tool_call", write, context("tool_call.bash")), { block: true, reason: "Not run: Guard files is on" });
+    const shell = { ...sample("tool_call.bash").event, input: { command: "cat .env" } };
+    assert.deepEqual(await host.emit("tool_call", shell, context("tool_call.bash")), { block: true, reason: "Not run: Guard files is on" });
+    const sent = (await until("tool", 2)).map(({ input: { lost: _lost, ...input } }) => input);
+    assert.deepEqual(sent[0], { tool: "write", args: { path: "/checkouts/fixture/.env" }, cwd: "/checkouts/fixture", version: 4 });
+    assert.equal(sent[1].command, "cat .env");
+
+    // Every protection off again: no file or shell call starts the helper (B27).
+    policy({});
+    answer({ tool: {} });
+    const before = made("tool").length;
+    assert.equal(await host.emit("tool_call", write, context("tool_call.bash")), undefined);
+    assert.equal(await host.emit("tool_call", shell, context("tool_call.bash")), undefined);
+    await settled(host);
+    assert.equal(made("tool").length, before);
+  } finally {
+    policy({});
+  }
 });
 
 test("a helper that fails or is late lets the shell call run, as Claude Code's guard does", async () => {
@@ -416,7 +483,7 @@ if (AGENT === "omp") {
     assert.deepEqual(await host.emit("tool_call", ask.event, context("tool_call.ask")), { block: true, reason: "Ask with hide factory ask" });
     const [call] = await until("tool");
     const { lost: _lost, ...input } = call.input;
-    assert.deepEqual(input, { session_id: ask.ctx.sessionFile, tool: "ask", version: 3 });
+    assert.deepEqual(input, { session_id: ask.ctx.sessionFile, tool: "ask", version: 4 });
     answer({ tool: {} });
     assert.equal(await host.emit("tool_call", ask.event, context("tool_call.ask")), undefined, "outside a worker the question shows");
 

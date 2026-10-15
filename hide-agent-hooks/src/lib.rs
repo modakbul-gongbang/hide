@@ -24,6 +24,7 @@ pub mod codex_trust;
 pub mod counters;
 pub mod delivery;
 pub mod diagnosis;
+pub mod guardrails;
 pub mod guidance;
 pub mod install;
 mod lossless_json;

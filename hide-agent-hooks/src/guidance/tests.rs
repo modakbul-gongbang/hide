@@ -253,7 +253,7 @@ fn cursor_augment_and_junie_write_the_shapes_their_documentation_gives() {
     let command = entry["command"].as_str().unwrap();
     assert!(command.contains("--runtime cursor"), "{command}");
     assert!(command.contains("--event PreToolUse "), "{command}");
-    assert_eq!(entry["matcher"].as_str(), Some("Shell"));
+    assert_eq!(entry["matcher"].as_str(), Some("Shell|Read|Write|Delete"));
     assert_eq!(entry["timeout"], 8);
 
     let fixture = Fixture::new(GuidanceAgent::Augment);
@@ -663,7 +663,7 @@ fn grok_writes_its_own_file_of_the_events_its_documentation_names() {
     }
     assert_eq!(
         grok["hooks"]["PreToolUse"][0]["matcher"],
-        "Bash|ask_user_question|exit_plan_mode"
+        "Bash|ask_user_question|exit_plan_mode|Read|Edit|Write|read_file|search_replace|write"
     );
     assert!(grok["hooks"]["Stop"][0].get("matcher").is_none());
     assert_eq!(
@@ -733,7 +733,7 @@ fn a_missing_event_or_an_edited_entry_is_not_current() {
     let path = GuidanceAgent::Cursor.config_path(fixture.home());
     let edited = fs::read_to_string(&path)
         .unwrap()
-        .replace("\"Shell\"", "\"Shell|Read\"");
+        .replace("\"Shell|Read|Write|Delete\"", "\"Shell|Read\"");
     fs::write(&path, edited).unwrap();
     assert!(!matches_install(
         GuidanceAgent::Cursor,

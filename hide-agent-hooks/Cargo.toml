@@ -17,6 +17,8 @@ hide-herdr-client = { path = "../hide-herdr-client" }
 hide-memory = { path = "../hide-memory" }
 hide-platform = { path = "../hide-platform" }
 hide-project = { path = "../hide-project" }
+# Gitignore-style matching of the guardrails' protected paths.
+ignore = "=0.4.33"
 serde = { version = "=1.0.229", features = ["derive"] }
 # Keep key order and borrow exact source spans while editing owned entries.
 serde_json = { version = "=1.0.151", features = ["preserve_order", "raw_value"] }

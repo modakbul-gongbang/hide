@@ -28,6 +28,7 @@ fn env(dir: &Path, tailscale: &Path) -> Env {
         herdr_bin_path: None,
         state_dir: dir.join("state"),
         legacy_state_dir: None,
+        account_state_folder: false,
         keep_alive: true,
         vite_origin: None,
         bind: "127.0.0.1:0".parse().unwrap(),

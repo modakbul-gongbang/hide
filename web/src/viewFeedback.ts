@@ -154,8 +154,12 @@ export type NoteForm = {
   revision?: string | null;
 };
 
-/** A browser View's Comment mode as hided last answered it. */
-export type BrowserComment = { on: boolean; reason: string | null };
+/**
+ * A browser View's Comment mode as hided last answered it. `starting` is a
+ * turn-on this window asked for that hided has not answered yet: the page is
+ * not held and takes its own clicks until it does.
+ */
+export type BrowserComment = { on: boolean; reason: string | null; starting?: true };
 
 /** A place in a page as fractions of its viewport, which the window scales to the page's slot. */
 export type PagePlace = { left: number; top: number; width: number; height: number };

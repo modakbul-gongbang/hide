@@ -377,6 +377,7 @@ Pressing it brings the agent's pane forward with the keyboard, leaving the View 
 A pane whose agent opened Views that are open shows `N views` after its PR mark, a list of each View's kind mark, name, address or path and unsent comment count, counted once however many tabs show it; a row brings that View forward.
 
 Comments: a page's toolbar Comment button turns Comment mode on, with `Click an element or drag an area · Esc` over the page, an outline on the element under the pointer, and the page's clicks taken as comment targets until Comment or Esc turns it off.
+The button shows on only once the page is held for Comment; until then the page still takes its own clicks, and a second press takes the turn-on back.
 A file or a diff takes a comment from the `+` on the line under the pointer or the cursor, a drag down the gutter or the line numbers for a range, or ⇧⌘. (Ctrl+Shift+. on Windows and Linux) on selected text; a range of removed diff rows is on the old side, any other on the new.
 An image or a PDF takes one from an area dragged while its toolbar's Comment is on, which is disabled, with the reason in its hint, while the file cannot be read; a PDF comment names its page, and an area stays on the same content at any zoom.
 A note opens under its last line (beside an area), with `⌘↩ to add`, Add and Cancel; Esc cancels, an empty note cannot be added, and a View with 50 comments shows `50 / 50` and why in the note's place.
@@ -1970,7 +1971,16 @@ A new-worktree start asks for its branch and actual base before starting and pre
 An explicit checkout, issue or pull-request start, CLI target, resume, wake, fork and running agent keep their existing behavior.
 The base branch is also the project's existing Git comparison and merge base; an absent saved branch falls back to an existing branch with a reason.
 Plain folders cannot select worktree creation or a Git base.
-Original-checkout branch protection and main file-write blocking are separate unsupported rows.
+
+Below the base branch, the Guardrails group (보호) holds four switches, each with one line on what it stops: Guard working folders, Guard the base branch, Block risky Git commands and Guard files (PRD agent-guardrails B1).
+Every switch starts off, and a record saved before the group existed reads with all four off (B2, B30).
+Guard the base branch shows the checkbox Block agents from merging pull requests only while it is on (B10), and Guard files shows its path chips only while it is on: `.env`, `.env.*`, `*.pem`, `*.key` and `~/.ssh/` at first, each with its own remove button, and Add path takes a gitignore-style pattern or a `~/` path (B15, B16).
+A path past 32 entries, past 200 characters, already listed or not a valid pattern is not saved, and its reason shows under the field, which keeps what was typed and offers no Try again, since the same path would be refused again; the field stays open until the path is saved, Escape closes it without closing the dialog, and focus returns to Add path after a path is added or removed.
+Each change sends the whole set of protections and shows saving, then saved, beside the control that moved; saved appears only once the machine that owns the project has the new policy, so a failed delivery shows failed with Try again and keeps the last confirmed values (B3, B4, B31).
+A plain folder keeps the three Git switches off and unavailable with the existing Git project reason, once, and Guard files stays usable; a Git project whose base branch is Automatic with no remote default cannot turn on Guard the base branch and says to choose a base branch first (B17).
+When an agent installed on the project's machine is switched off in Hide or has a Hook that is not in place, Codex's untrusted hook included, one line under the group names those agents, says the guardrails do not apply to them and links to Settings > Agents; with every agent covered the line is absent (B25).
+A refusal reaches only the agent, as an English reason naming the protection and what to do instead; the operator's screen shows no alert, banner or badge for it (B18), and [agent-hooks.md](agent-hooks.md#project-guardrails) owns what each protection stops.
+The group promises a guardrail, not security (B28).
 
 Memory uses the existing consent and kit; its row shows hook preparation, pending writes and project-scoped failure with Retry, while retaining the confirmed value.
 That Retry applies only to enabling or disabling Memory; card actions stay in the Memory tool with their existing confirmations.

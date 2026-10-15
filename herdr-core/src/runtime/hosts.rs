@@ -669,6 +669,9 @@ impl Runtime {
                     Err(reason) => self.terminals.terminals_unstarted(device_id, &reason),
                 }
                 self.settle_device_saves(device_id);
+                // The device's hooks read the protections this core holds
+                // for its projects, whatever its file said before (D-28).
+                self.publish_guardrail_policy(device_id);
                 self.reread_device_facts(device_id);
                 self.relist_remote_files(device_id);
                 // A device Workspace in front waited for this helper to
@@ -838,6 +841,7 @@ impl Runtime {
         self.codex_daemon_off_running.remove(device_id);
         self.device_first_run_choice.remove(device_id);
         self.kit_states.remove(device_id);
+        self.forget_guardrails_device(device_id);
     }
 
     /// The link to the machine this core runs on.

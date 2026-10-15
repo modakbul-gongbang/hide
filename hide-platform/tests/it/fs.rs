@@ -1439,6 +1439,13 @@ fn a_folder_is_known_to_tell_case_apart_or_not_by_asking_the_folder() {
     }
     assert_eq!(names(&holding), ["Readme.md"]);
     assert!(fs::read_dir(&named).unwrap().next().is_none());
+    // Asked to write nothing, the empty folder has no answer.
+    assert_eq!(
+        identity::case_sensitive_by_entries(&holding).unwrap(),
+        Some(really_case_sensitive(&holding))
+    );
+    assert_eq!(identity::case_sensitive_by_entries(&named).unwrap(), None);
+    assert!(fs::read_dir(&named).unwrap().next().is_none());
 }
 
 // ---- own and regular files -----------------------------------------------

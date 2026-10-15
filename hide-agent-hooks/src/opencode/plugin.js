@@ -4,7 +4,9 @@
 
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
 
 const HELPER = __HIDE_HELPER__;
 
@@ -26,13 +28,64 @@ const REMINDER_TAG = /<(\s*\/?\s*system-reminder)/gi;
 const PENDING_LIMIT = 16;
 const PENDING_AGE_MS = 10 * 60 * 1000;
 
-function managed(env) {
-  if (env.HERDR_ENV !== "1" || !env.HERDR_PANE_ID || !env.HERDR_SOCKET_PATH) return false;
+// The project guardrails' policy, which Hide's core writes for this machine (`guardrails::policy_path`). A tool
+// call reaches the helper for them only while some project has a protection on, read again when the file changes,
+// so a machine with none starts no helper for a file tool (PRD agent-guardrails B27).
+const POLICY = path.join(homedir(), ".hide", "agent-hooks", "guardrails.json");
+const FILE_TOOLS = new Set(["read", "edit", "write", "apply_patch", "multiedit"]);
+// The arguments that name a file; the rest of a write (its content) is not sent.
+const PATH_ARGS = ["filePath", "path", "file_path"];
+const policy = { mtimeMs: -1, size: -1, on: null };
+
+/** Whether a tool call asks the helper for the guardrails. A policy that is missing or unreadable (`on` is null)
+ * does in a Herdr pane, where the helper records why; a session outside one starts no helper for it. */
+function guardrailsOn(state) {
+  const on = policyOn();
+  return on ?? !state.guardOnly;
+}
+
+function policyOn() {
+  let stat;
+  try {
+    stat = statSync(POLICY);
+  } catch {
+    return null;
+  }
+  if (stat.mtimeMs === policy.mtimeMs && stat.size === policy.size) return policy.on;
+  let on = null;
+  try {
+    const read = JSON.parse(readFileSync(POLICY, "utf8"));
+    if (read?.version === 1 && Array.isArray(read.projects)) {
+      on = read.projects.some((project) => {
+        const rules = project?.rules;
+        return Boolean(rules?.worktree_folder || rules?.base_branch || rules?.git_commands || rules?.files);
+      });
+    }
+  } catch {}
+  Object.assign(policy, { mtimeMs: stat.mtimeMs, size: stat.size, on });
+  return on;
+}
+
+/** A file tool's arguments that name its files: its paths, and a patch's file lines. */
+function fileArgs(args) {
+  const named = {};
+  for (const key of PATH_ARGS) if (typeof args?.[key] === "string") named[key] = args[key];
+  if (typeof args?.patchText === "string") {
+    named.patchText = args.patchText.split("\n").filter((line) => line.startsWith("*** ")).join("\n");
+  }
+  return named;
+}
+
+function helperPresent() {
   try {
     return statSync(HELPER).isFile();
   } catch {
     return false;
   }
+}
+
+function managed(env) {
+  return env.HERDR_ENV === "1" && Boolean(env.HERDR_PANE_ID) && Boolean(env.HERDR_SOCKET_PATH) && helperPresent();
 }
 
 /** The helper's answer, or null when it failed, timed out or said nothing usable. */
@@ -333,22 +386,31 @@ async function onTool(state, sessionID, directory, input, output) {
   let request;
   if (tool === "bash") {
     const command = output?.args?.command;
-    // Every shell call comes here: only one that can start an agent through Herdr asks the helper.
-    if (typeof command !== "string" || !(command.includes("herdr") || command.includes("HERDR_BIN_PATH"))) return null;
+    // Every shell call comes here: one asks the helper while a guardrail is on, or, in a Herdr pane, when it can
+    // start an agent through Herdr.
+    if (typeof command !== "string") return null;
+    const launch = !state.guardOnly && (command.includes("herdr") || command.includes("HERDR_BIN_PATH"));
+    if (!launch && !guardrailsOn(state)) return null;
     const workdir = output.args.workdir;
     request = { session_id: sessionID, tool, command, cwd: typeof workdir === "string" && workdir ? workdir : directory };
-  } else if (tool === "question") {
+  } else if (FILE_TOOLS.has(tool)) {
+    if (!guardrailsOn(state)) return null;
+    request = { session_id: sessionID, tool, args: fileArgs(output?.args), cwd: directory };
+  } else if (tool === "question" && !state.guardOnly) {
     // The core knows the pane by the root session Herdr's integration reports, also for a subagent's call.
     request = { session_id: rootOf(state, sessionID) ?? sessionID, tool };
   } else {
     return null;
   }
-  const answer = await helper(state, "tool", request, TOOL_BUDGET_MS);
+  // A guard-only session asks for the guardrails alone, whatever pane its shell inherited.
+  const answer = await helper(state, "tool", state.guardOnly ? { ...request, guard_only: true } : request, TOOL_BUDGET_MS);
   return typeof answer?.deny === "string" && answer.deny ? answer.deny : null;
 }
 
 export const HidePlugin = async ({ client, directory }) => {
-  if (!managed(process.env)) return {};
+  // Outside a Herdr pane Hide has no letters, counts or guidance for the session, but a guarded project's
+  // protections hold there too (PRD agent-guardrails B22).
+  if (!managed(process.env)) return helperPresent() ? guardOnly(directory) : {};
   const state = {
     running: new Set(),
     lost: 0,
@@ -400,3 +462,22 @@ export const HidePlugin = async ({ client, directory }) => {
     },
   };
 };
+
+/** The plugin outside a Herdr pane: the guardrails' tool check and nothing else. */
+function guardOnly(directory) {
+  const state = { running: new Set(), lost: 0, closed: false, guardOnly: true };
+  return {
+    "tool.execute.before": async (input, output) => {
+      let reason = null;
+      try {
+        reason = await onTool(state, input?.sessionID, directory, input, output);
+      } catch {}
+      if (reason) throw new Error(reason);
+    },
+    dispose: async () => {
+      state.closed = true;
+      for (const child of state.running) child.kill("SIGKILL");
+      state.running.clear();
+    },
+  };
+}

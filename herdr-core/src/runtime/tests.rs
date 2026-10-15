@@ -45,6 +45,7 @@ mod factory_screen;
 mod first_run;
 #[path = "tests/github_reads.rs"]
 mod github_reads;
+mod guardrails;
 #[path = "tests/home.rs"]
 mod home;
 #[path = "tests/inbound.rs"]
@@ -470,6 +471,7 @@ pub(super) fn runtime() -> Runtime {
         local_issues_path: None,
         effects_held: false,
         machine_name: None,
+        account_state_folder: false,
     };
     let mut runtime = Runtime::new(
         options,

@@ -240,7 +240,9 @@ test(`A note written over a page takes the keyboard from the page and gives it b
   await expect.poll(() => pageHasKeyboard(url)).toBe(true);
 
   // The page hides behind its still while the note is open, and a hidden page takes no keys: the note does.
+  // Comment shows on only once hided's overlay is in the page, so the press is a pick, never the page's.
   await pressGo(url);
+  expect(await inPage<string>(url, "document.title")).toBe("Sign in");
   await expect(shell.locator('[data-page-note="pick"] [data-view-note-field]')).toBeFocused();
   await expect.poll(shellHasKeyboard).toBe(true);
 
