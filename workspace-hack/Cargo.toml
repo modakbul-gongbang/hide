@@ -20,6 +20,8 @@ bitflags = { version = "2", default-features = false, features = ["serde"] }
 bytes = { version = "1" }
 crossbeam-utils = { version = "0.8" }
 futures-channel = { version = "0.3", features = ["sink"] }
+futures-sink = { version = "0.3" }
+futures-task = { version = "0.3", default-features = false, features = ["std"] }
 futures-util = { version = "0.3", features = ["channel", "io", "sink"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 hashbrown-582f2526e08bb6a0 = { package = "hashbrown", version = "0.14", default-features = false, features = ["ahash", "inline-more", "raw"] }
@@ -39,7 +41,6 @@ serde_json = { version = "1", features = ["float_roundtrip", "preserve_order", "
 smallvec = { version = "1", default-features = false, features = ["const_new"] }
 subtle = { version = "2", features = ["const-generics"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
-tokio-util = { version = "0.7", default-features = false, features = ["io", "rt"] }
 tracing = { version = "0.1", default-features = false, features = ["log", "std"] }
 typenum = { version = "1", default-features = false, features = ["const-generics"] }
 
@@ -50,11 +51,10 @@ once_cell = { version = "1" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
 schemars = { version = "0.8", features = ["preserve_order"] }
-semver = { version = "1", features = ["serde"] }
 serde = { version = "1", features = ["alloc", "derive"] }
 serde_core = { version = "1", features = ["alloc"] }
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order", "raw_value"] }
-syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["full"] }
+syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["extra-traits", "full"] }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "full", "visit-mut"] }
 
 [target.aarch64-apple-darwin.dependencies]
