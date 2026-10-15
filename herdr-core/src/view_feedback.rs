@@ -745,7 +745,7 @@ mod tests {
                 LetterItem {
                     comment: &page,
                     view: Some("d7"),
-                    shot: Some("/home/a/.hide-letter-attachments/x/c3.png"),
+                    shot: Some("/state/letter-attachments/x/c3.png"),
                 },
             ],
         );
@@ -759,7 +759,7 @@ mod tests {
             "2. Page http://localhost:5173/login (View d7; read it with `hide browser snapshot d7`)"
         ));
         assert!(text.contains("   Element: button.submit \"Continue\""));
-        assert!(text.contains("   Screenshot: /home/a/.hide-letter-attachments/x/c3.png"));
+        assert!(text.contains("   Screenshot: /state/letter-attachments/x/c3.png"));
         assert!(text.contains("   Comment: Too big.\n            Match the input height."));
     }
 
