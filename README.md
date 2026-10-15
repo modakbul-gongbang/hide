@@ -177,8 +177,10 @@ These are one machine's numbers on macOS, taken without quiescing it: they leave
 
 ## Contributing
 
-hide is built in the open, and every change lands through a pull request that the `verify` workflow gates.
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for the gates and their local commands, and [AGENTS.md](AGENTS.md) for the rules every change follows.
+hide is built in the open.
+Report a bug you reproduced with the [bug form](https://github.com/with-hide/hide/issues/new?template=bug.yml) and bring ideas to [Discussions](https://github.com/with-hide/hide/discussions/categories/ideas).
+Pull requests are open only to maintainers and the people in [`.github/APPROVED_CONTRIBUTORS`](.github/APPROVED_CONTRIBUTORS); others are closed automatically.
+[CONTRIBUTING.md](CONTRIBUTING.md) owns that policy and lists the `verify` gates and their local commands, and [AGENTS.md](AGENTS.md) holds the rules every change follows.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -212,8 +214,9 @@ pnpm --dir desktop dev              # the desktop app, unpackaged, against this 
 
 ## Community and support
 
-- **Questions and ideas:** [GitHub Discussions](https://github.com/with-hide/hide/discussions)
-- **Bugs:** [GitHub issues](https://github.com/with-hide/hide/issues)
+- **Questions:** [Discussions Q&A](https://github.com/with-hide/hide/discussions/categories/q-a)
+- **Ideas and feature requests:** [Discussions Ideas](https://github.com/with-hide/hide/discussions/categories/ideas)
+- **Bugs you reproduced:** [the bug form](https://github.com/with-hide/hide/issues/new?template=bug.yml); issues are only for reproduced bugs
 - **Security:** report privately as [SECURITY.md](SECURITY.md) describes, never in a public issue
 - **Teams and everything else:** [hello@withhide.dev](mailto:hello@withhide.dev)
 

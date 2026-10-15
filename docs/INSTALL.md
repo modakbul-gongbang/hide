@@ -25,7 +25,7 @@ pnpm --version
 
 ## Install a release
 
-Open the [hide Releases page](https://github.com/modakbul-gongbang/hide/releases).
+Open the [hide Releases page](https://github.com/with-hide/hide/releases).
 If it says there are no releases, continue with [Build and install from source](#build-and-install-from-source).
 
 Download both files for the same version:
@@ -139,6 +139,7 @@ Not supported is a gap, never a design choice.
 | Device node (a remote machine's files and Git) | supported | not supported: no device runs the Windows `hided` yet, so from Windows a device's files and Git stay unavailable | supported |
 | The Herdr server follows an app update ([Update](#update)) | supported | not supported: Herdr hands a running server to another Herdr on Unix only, so the server keeps the previous package's Herdr until it is stopped; changes when Herdr supports live handoff on Windows | supported (the remote mailbox lane hands a pinned server over) |
 | Move the core to another machine ([Move the core](#move-the-core-to-another-mac)) | supported | not supported: the core's login item is written for launchd only (`hide_platform::user_agents`), with no Windows or systemd form yet | not supported: same as Windows |
+| Comments on a page in Comment mode ([BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md#comment-mode)) | supported, from the window on the machine whose daemon holds the page; a screen of a linked node answers `comment_unavailable_here` because its daemon relays the core and cannot reach the page's gateway; changes when the node relays the gateway too | same as macOS (unverified: the overlay is the same Chromium code, not yet run on a Windows CI lane) | same as macOS (unverified on Linux the same way) |
 
 Unverified on Windows and Linux (the macOS assumptions below are left as they are, and no check on those systems has proved them):
 
@@ -163,7 +164,7 @@ You can also call the command by its full path without changing PATH.
 Clone the repository and build the release bundle:
 
 ```sh
-git clone https://github.com/modakbul-gongbang/hide.git
+git clone https://github.com/with-hide/hide.git
 cd hide
 pnpm install --frozen-lockfile
 HIDE_VERSION=<version> pnpm --dir desktop package

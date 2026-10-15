@@ -3,7 +3,7 @@
 `assets/pet-theme/<theme-id>/theme.json` is the source of truth for the
 pose-to-asset mapping. There is no pet window in the current app, and no
 asset loader reads this manifest today; the pet window is tracked as
-[backlog issue #184](https://github.com/modakbul-gongbang/hide/issues/184).
+[backlog issue #184](https://github.com/with-hide/hide/issues/184).
 This file documents the contract a future pet reads.
 `herdr-core/src/pet.rs` (`herdr_core::pet::pose`) is the core-side owner of
 the pose a loader would draw; it computes the pose without drawing anything.

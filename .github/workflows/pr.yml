@@ -13,6 +13,13 @@
 # request left out. Nightly's call plans every lane too, and a lane it fails
 # opens a `nightly-failure` issue, which a failed push run does not.
 #
+# A pull request whose last green run still stands plans `policy` alone: what
+# it adds to main changed since that run only in paths no lane but `policy`
+# reads, and main changed none of the paths it changes that a lane reads. The
+# plan job finds that run and the plan record each pull request run keeps as
+# the `ci-plan` artifact, which is why it reads actions; a lookup, fetch or
+# comparison that fails plans as usual.
+#
 # A draft pull request runs the `plan` job and `verify` only: the lanes wait
 # for the pull request to be marked ready for review, and `verify` fails with
 # "draft: lanes not run" until then. It must fail rather than be skipped: a
@@ -89,6 +96,10 @@ jobs:
     name: plan
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      # This pull request's earlier runs and the plan records they kept.
+      actions: read
     outputs:
       lanes: ${{ steps.plan.outputs.lanes }}
       full: ${{ steps.plan.outputs.full }}
@@ -97,12 +108,28 @@ jobs:
       - uses: actions/checkout@v7
         with:
           # A pull request checks out its merge commit, whose first parent is
-          # the base it merges into; the plan compares the two.
+          # the base it merges into; the plan compares the two, and fetches
+          # the history it needs to compare with an earlier green run.
           fetch-depth: 2
       - name: Choose the lanes this change needs
         id: plan
         # The crate graph comes from `cargo metadata`, which needs no build.
-        run: python3 scripts/ci-plan.py plan --event "$GITHUB_EVENT_NAME" --draft "${{ github.event.pull_request.draft || false }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci-plan.py plan --event "$GITHUB_EVENT_NAME" --draft "${{ github.event.pull_request.draft || false }}" --record ci-plan.json
+      # The commits this run's lanes checked, for the pull request's next run.
+      # Without it the next run plans its lanes as usual, so a failed upload
+      # leaves this run's plan standing.
+      - name: Keep the plan record
+        if: github.event_name == 'pull_request' && steps.plan.outputs.draft != 'true'
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-plan
+          path: ci-plan.json
+          if-no-files-found: error
+          overwrite: true
 
   policy:
     name: policy checks

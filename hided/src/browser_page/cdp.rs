@@ -81,6 +81,9 @@ pub struct Cdp {
     pending: HashMap<u64, String>,
     /// The display's page session, whose calls are never held back.
     top: Option<String>,
+    /// Events a long-lived client reads beside `KEPT` (the operator's
+    /// Comment mode, `comment`).
+    listened: &'static [&'static str],
     /// A JavaScript dialog the page opened while this client listened.
     pub dialog: Option<Value>,
 }
@@ -94,7 +97,31 @@ impl Cdp {
             event_bytes: 0,
             pending: HashMap::new(),
             top: None,
+            listened: &[],
             dialog: None,
+        }
+    }
+
+    /// A client that also keeps `events`, which `next_event` hands out.
+    pub fn listening(socket: WorkspaceSocket, events: &'static [&'static str]) -> Self {
+        Self {
+            listened: events,
+            ..Self::new(socket)
+        }
+    }
+
+    /// The next event this client keeps, waiting as long as it takes: the
+    /// connection closing ends the wait with its error. Cancelling the wait
+    /// loses nothing: a message read is kept before the wait returns.
+    pub async fn next_event(&mut self) -> Result<Event, CdpError> {
+        loop {
+            if let Some((event, bytes)) = self.events.pop_front() {
+                self.event_bytes -= bytes;
+                return Ok(event);
+            }
+            let deadline = Instant::now() + Duration::from_secs(24 * 60 * 60);
+            let (value, bytes) = self.next_message(deadline).await?;
+            self.note(&value, bytes);
         }
     }
 
@@ -347,7 +374,10 @@ impl Cdp {
         let Some(method) = value["method"].as_str() else {
             return false;
         };
-        if method != "Page.javascriptDialogOpening" && !KEPT.contains(&method) {
+        if method != "Page.javascriptDialogOpening"
+            && !KEPT.contains(&method)
+            && !self.listened.contains(&method)
+        {
             return false;
         }
         let event = Event {

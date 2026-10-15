@@ -96,6 +96,16 @@
   background-color: var(--background);
 }
 
+/* xterm's own sheet draws the syllable an input method is composing white on
+   black; it takes the terminal's colours, underlined as the system draws it.
+   Like the viewport rule above, it wins by coming after xterm's sheet, which
+   `main.tsx` imports (through `App`) before this file. */
+.xterm .composition-view {
+  background-color: var(--background);
+  color: var(--foreground);
+  text-decoration: underline;
+}
+
 /*
  * A shell drag (`shellDrag.ts`; a View tab drag, PRD S7 B8): the pointer says
  * whether the place under it would land, whatever it passes over, and no text

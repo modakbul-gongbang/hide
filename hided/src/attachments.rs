@@ -152,6 +152,9 @@ fn make_room(
 pub struct Attachments {
     dir: PathBuf,
     clipboard_root: PathBuf,
+    /// The account's state folder, where a View comment's screenshot is
+    /// staged (`hide_host::feedback`).
+    state_dir: PathBuf,
     state: Mutex<State>,
 }
 
@@ -200,8 +203,33 @@ impl Attachments {
         Self {
             dir,
             clipboard_root,
+            state_dir: state_dir.to_owned(),
             state: Mutex::new(State::default()),
         }
+    }
+
+    /// Stages one View comment's screenshot under a name Hide makes and
+    /// answers that name; only the name reaches the core (PRD
+    /// view-opener-feedback D-23). Blocks on the disk.
+    pub fn stage_view_shot(&self, png: &[u8]) -> Result<String, String> {
+        if !png.starts_with(b"\x89PNG\r\n\x1a\n") {
+            return Err("The screenshot is not a PNG image.".to_owned());
+        }
+        let mut id = [0u8; 16];
+        getrandom::getrandom(&mut id).map_err(|_| "No name for the screenshot.".to_owned())?;
+        id[6] = (id[6] & 0x0f) | 0x40;
+        id[8] = (id[8] & 0x3f) | 0x80;
+        let hex: String = id.iter().map(|byte| format!("{byte:02x}")).collect();
+        let name = format!(
+            "shot-{}-{}-{}-{}-{}.png",
+            &hex[0..8],
+            &hex[8..12],
+            &hex[12..16],
+            &hex[16..20],
+            &hex[20..32]
+        );
+        hide_host::feedback::stage_shot(&self.state_dir, &name, png)?;
+        Ok(name)
     }
 
     /// Opens one stage: a file of `size` bytes the client will upload. The
@@ -544,6 +572,22 @@ impl Attachments {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_comment_screenshot_is_staged_under_a_name_hide_makes_and_only_a_png_is() {
+        let (dir, service) = attachments();
+        let png = b"\x89PNG\r\n\x1a\nrest of the image";
+        let name = service.stage_view_shot(png).unwrap();
+        assert!(hide_node_link::feedback::valid_shot_name(&name), "{name}");
+        let staged = hide_kit::layout::view_feedback_shots(dir.path()).join(&name);
+        assert_eq!(std::fs::read(staged).unwrap(), png);
+        assert!(service.stage_view_shot(b"<svg/>").is_err());
+        assert_ne!(
+            service.stage_view_shot(png).unwrap(),
+            name,
+            "each shot is its own file"
+        );
+    }
 
     fn attachments() -> (tempfile::TempDir, Attachments) {
         let dir = tempfile::tempdir().unwrap();

@@ -261,7 +261,9 @@ test("an editor open during a theme switch is drawn like one opened after it", a
     // editor. The switch swaps that class on the open editor, and what it
     // swaps in, and out, has to match an editor opened after the switch.
     const editor = (text: string) => page.locator("[data-editor-codemirror] .cm-editor", { hasText: text });
-    const classes = async (text: string) => new Set((await editor(text).getAttribute("class"))?.split(/\s+/) ?? []);
+    // Focus is not the theme's: whichever editor holds it when a class list
+    // is read carries `cm-focused`, and that moves with the keyboard.
+    const classes = async (text: string) => new Set((await editor(text).getAttribute("class"))?.split(/\s+/).filter((name) => name !== "cm-focused") ?? []);
     await page.locator(`[data-explorer-row="${toPage(repo)}/open.ts"]`).dblclick();
     await expect(editor("open = 1")).toBeVisible();
     const dark = await classes("open = 1");

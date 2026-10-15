@@ -97,7 +97,7 @@ Herdr 0.9.1 reads a built-in slash picker such as `/model` or `/resume` as `done
 Hide therefore does not take the Enter that opens a picker for a submission: the pane holds as a draft, and stays held after `/clear`, `/model` or `/help` until the next real prompt runs its hook.
 The same holds after an Esc or Ctrl-C that interrupts a turn, since no prompt hook runs for it.
 Two residuals remain: a turn the operator did not start (a scheduled wake or a finished subagent) moves the pane to `working` and clears a half-typed draft, a prompt queued while the pane works leaves it held after its turn until the next prompt submitted from rest (its hook runs while `working` and clears nothing).
-A letter that cannot be belled waits, and the reason is logged as `doorbell.held` once per change with the letter and pane ids, never with its body and never on screen.
+A letter that cannot be belled waits, and the reason is logged as `doorbell.held` once per change with the letter and pane ids, never with its body and never on screen; the one hold that does not end on its own, a possible draft, is shown on the pane once it has rested ([Delivering a held letter now](#delivering-a-held-letter-now)).
 The verdict's reasons are `working`, `blocked`, `awaiting_operator`, `session_unread`, `draft`, `quiet_period`, `kind_not_belled`, `session_changed`, `pane_unavailable`, `status_not_at_rest` and `core_pending` (a core on a move's copy types into no pane until the move's link commits it, [ARCHITECTURE.md](ARCHITECTURE.md#moving-the-core)).
 Between the verdict and the input the doorbell asks Herdr again and checks its own memory last, and each refusal there has its own reason: `launch_pending` and `not_ready` (Herdr's readiness), `identity_changed` (Herdr's agent in the pane has another name, kind or native session), `sequence_moved` (Herdr's status or state sequence moved), `input_after_verdict` (hide routed input to the pane) and `letter_changed` (the letter was confirmed, cancelled, expired or reserved meanwhile).
 A letter refused there is tried again in the same pane episode after 5 seconds, then 10, 20, 40 and 80, then every two minutes, because readiness and the letter are facts the pane episode does not carry; a change of the pane's status, sequence, input or session tries it at once.
@@ -190,6 +190,25 @@ A person who types `🔔` and the same words before the doorbell saved them, a b
 Once the line is saved, submitting it in that pane takes the letter whoever pressed Enter: the prompt then names the letter it brings.
 A second bell for the same letter saves its own line, so a hook of the first one that arrives after it is an ordinary prompt too.
 The ledger refuses a saved line longer than 512 bytes or holding a control character.
+
+### Delivering a held letter now
+
+A draft is the one hold that does not end on its own: an idle pane whose composer may hold the operator's half-written prompt keeps its letters until its next real prompt, for up to the 60-minute deadline.
+So the core shows it, and nothing else about a hold reaches the screen.
+A pane's letters are shown waiting when the doorbell's last reason for a pending letter there is `draft`, the pane still holds that draft, and the pane has rested for two minutes: no input hide routed and no change of Herdr status since (`doorbell::letters_waiting`, `WAITING_MARK_REST_MS`).
+Every other hold (working, the quiet period, a launch, a menu) ends on its own and shows nothing.
+The count is every letter held there, which the bell turn brings together, and a pane whose held letters have all spent their three bells shows nothing, since pressing could ring none.
+The core decides on each doorbell pass, under the short lock the pass already takes to publish its holds, and keeps the answer on the pane's agent row (`letters_waiting`), so the mark costs one publish when it appears and one when it goes, never one per pass; each change logs `letter_mark.shown` with the pane and count, or `letter_mark.cleared`.
+A key typed into the pane restarts the two minutes, so the mark leaves while the operator works there.
+
+Deliver now is one event, `deliver_letters_now {pane_id}`.
+The press is the operator saying the composer holds nothing of theirs: the pane's observation records the input it releases (`released_input_at_unix_ms`), so input up to it is no draft, the pane's composer mark is removed, and the mark leaves at once.
+The doorbell's next pass then rings with every guard it always applies (Herdr's readiness, the reservation, the last memory check) and types the same line ([The bell line](#the-bell-line)); the prompt hook takes the letters as it does for any bell turn.
+Nothing warns about a possible draft, because the mark sits right above the composer: a draft that is there is sent with the bell line after it.
+Input after the press is a draft again and holds the letter as before.
+A press the mark no longer stands for changes nothing and logs `deliver_now.refused` with `no_letter_waiting` (the doorbell has not shown it, or it left), `pane_unavailable`, or `pane_not_at_rest` (a key reached the pane or its status changed since the last pass); an accepted press logs `deliver_now.released` with the pane and count.
+Neither reaches the screen, and nothing changes on the sender's side.
+[UI_BEHAVIOR.md](UI_BEHAVIOR.md#agent-panes-and-the-agents-explorer) owns the pane header pill and the sidebar row's envelope that draw it.
 
 ### A menu Herdr reads as a stop
 
@@ -312,6 +331,20 @@ A receipt from before the task existed has none, and its agent and checkout are 
 The kind is a closed set in code (`TaskKind`), and each known kind names its home, the screen that shows its work (`TaskKind::home`, today `memory_promote` to the Memory tab); a new kind cannot be added without naming one.
 A kind this build does not know loads from the ledger as it was written, so a record a newer build wrote never fails the load or loses the rest of the ledger, and its agent stays an operator's row.
 A new spawn of a kind with no home is refused `task_kind_unknown`, and the first time an agent of such a kind is seen the diagnostic log records `hide_ai.task_kind_unknown` once.
+
+## The operator's View feedback
+
+The operator is a third code-owned identity, `operator` of kind `operator` (`Actor::operator`), the sender of the letter a View feedback Send makes ([UI_BEHAVIOR.md](UI_BEHAVIOR.md#view-openers-and-comments), PRD view-opener-feedback D-17).
+Only the core constructs it, and only for an operator's screen's `view_feedback_send`, which hided accepts from a desktop or web window whose connection its token proved; no pane's scoped connection, `hide` command or page script can represent that event, and a pane or agent name that is `operator` or starts with `operator:` is refused at registration like `factory:` and `hide:`.
+It has no pane and reads no letters; its letter is a `report`, so it waits for no answer, and its first line reads `Hide letter <id> from operator (operator) [report]` (`contracts/delivery-envelope.json`), which `hide_session::envelope_from_operator` recognizes, so the agent reads it as the operator's own prompt and starts working.
+The letter rings the recipient's doorbell and waits for rest exactly as any letter does.
+Its body lists each comment in its recipient's order: a page's URL, View id, selector, element text, source location when known and screenshot path; a file's or diff's path, line range, quoted lines and note; an image's or PDF's path, page, area and screenshot path.
+What a page wrote (its selector, element text and source attribute) is kept to one line of plain words, and a path, address or quoted line has its newlines and control characters as spaces, so nothing but the operator's own note can start a line in the operator's letter.
+A body over the 16 KiB letter cap is written whole to an attachment file and the letter carries a summary and its path.
+Screenshots and that file are attachments: they travel over the recipient device's existing link (node protocol 33's `feedback` call), land in an owner-only folder per letter under the recipient machine's `letter-attachments`, and are removed with the letter; hided sweeps orphans at start, and one machine's attachments are capped at 256 MiB, past which the Send is refused with its reason.
+A Send to a device whose link is down waits like a letter and says so on the View's line.
+The comments leave their View only once the letter is stored; the ledger's outcome decides the rest: delivered drops them, expired returns them marked `Not delivered`.
+A Send names its own request id, and Retry names only that id (`to` `retry`): the core sends again to the agent and Views the Send asked for, so a retried Send converges on the same letter, and a moving core holds it behind its effect hold ([ARCHITECTURE.md](ARCHITECTURE.md#moving-the-core)).
 
 ## Names on the wire and on screen
 

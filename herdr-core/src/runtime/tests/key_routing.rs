@@ -8,8 +8,9 @@
 //! what the snapshot says of it; the node's own tests
 //! (`hide-node/src/terminal/{input,tests}.rs`) assert where the keys go.
 //! The fake Herdr records what left over the socket and each test hands the
-//! runtime Herdr's answer itself, so the order under test never depends on
-//! the scheduler (docs/TESTING.md).
+//! runtime Herdr's answer, and the end of the wait for a new pane's shell to
+//! read keys, itself, so the order under test never depends on the scheduler
+//! (docs/TESTING.md).
 
 use super::*;
 
@@ -124,6 +125,32 @@ fn request_state(runtime: &Runtime, request_id: &str) -> Option<crate::model::In
         .map(|row| row.state)
 }
 
+/// The pane the request's keys wait for, as the shell's mark reads it.
+fn held_for(runtime: &Runtime, request_id: &str) -> Option<String> {
+    runtime
+        .snapshot()
+        .terminal
+        .input_requests
+        .iter()
+        .find(|row| row.request_id == request_id)
+        .and_then(|row| row.held_for.clone())
+}
+
+/// The wait for `pane`'s shell to read keys ended with `outcome`; whether a
+/// row changed.
+fn shell_wait_ends(
+    runtime: &mut Runtime,
+    request_id: &str,
+    pane: &str,
+    outcome: super::terminal_input::ShellWait,
+) -> bool {
+    let origin = runtime
+        .input_requests
+        .origin_of(request_id)
+        .expect("the creation opened its key request");
+    runtime.ingest_shell_wait(&origin, pane, outcome, Duration::from_millis(40))
+}
+
 fn split_answer(runtime: &mut Runtime, answer: Result<PaneControlOutcome, String>) {
     runtime.ingest_pane_control_result(
         PaneControlAction::Split {
@@ -136,9 +163,9 @@ fn split_answer(runtime: &mut Runtime, answer: Result<PaneControlOutcome, String
     );
 }
 
-/// B9: a split opens its request at once, and Herdr's answer names the new
-/// pane to the node holding the keys typed meanwhile; the request reads
-/// ready.
+/// B9: a split opens its request at once; Herdr's answer names the new pane
+/// the keys wait for, and once its shell reads keys the node is told to
+/// write them there and the request reads ready.
 #[test]
 fn keys_typed_before_a_split_answers_reach_only_the_new_pane() {
     let herdr = fake_herdr("key-routing-split");
@@ -156,6 +183,21 @@ fn keys_typed_before_a_split_answers_reach_only_the_new_pane() {
             created_pane_id: Some(SPLIT_PANE.to_owned()),
         }),
     );
+    // The new pane's shell is still starting: the keys wait for it, and the
+    // shell's mark stays on the request while that pane has the keyboard.
+    assert_eq!(
+        request_state(&runtime, "r-split"),
+        Some(crate::model::InputRequestState::Pending)
+    );
+    assert_eq!(held_for(&runtime, "r-split").as_deref(), Some(SPLIT_PANE));
+    assert_eq!(request_controls(&terminals), Vec::<TerminalControl>::new());
+
+    assert!(shell_wait_ends(
+        &mut runtime,
+        "r-split",
+        SPLIT_PANE,
+        super::terminal_input::ShellWait::Reading
+    ));
     assert_eq!(
         request_state(&runtime, "r-split"),
         Some(crate::model::InputRequestState::Ready)
@@ -163,6 +205,35 @@ fn keys_typed_before_a_split_answers_reach_only_the_new_pane() {
     assert_eq!(
         request_controls(&terminals),
         [resolve("r-split", SPLIT_PANE)]
+    );
+}
+
+/// A shell that does not read keys within the wait (no line editor, or a
+/// slow startup file) still gets them: nothing typed is lost to the wait.
+#[test]
+fn keys_for_a_split_whose_shell_never_reads_still_reach_it() {
+    let herdr = fake_herdr("key-routing-shell-timeout");
+    let (mut runtime, terminals) = runtime_on(&herdr);
+    runtime.dispatch_json(&split("r-slow"));
+    split_answer(
+        &mut runtime,
+        Ok(PaneControlOutcome::Acknowledged {
+            created_pane_id: Some(SPLIT_PANE.to_owned()),
+        }),
+    );
+    assert!(shell_wait_ends(
+        &mut runtime,
+        "r-slow",
+        SPLIT_PANE,
+        super::terminal_input::ShellWait::Timeout
+    ));
+    assert_eq!(
+        request_state(&runtime, "r-slow"),
+        Some(crate::model::InputRequestState::Ready)
+    );
+    assert_eq!(
+        request_controls(&terminals),
+        [open("r-slow"), resolve("r-slow", SPLIT_PANE)]
     );
 }
 
@@ -204,8 +275,49 @@ fn a_split_refused_before_herdr_answers_its_request_as_discarded() {
     );
 }
 
-/// B1, B9 for a new tab: the answer names the created tab's pane to the
-/// node holding the keys typed for ⌘T.
+/// The wait is bounded from the request's opening, about when its first key
+/// was typed: a creation Herdr answers after that bound gives its keys to the
+/// pane at once rather than make the oldest too old to be written, while one
+/// answered inside it waits for the shell.
+#[test]
+fn keys_for_a_creation_answered_after_the_wait_s_bound_reach_its_pane_at_once() {
+    let herdr = fake_herdr("key-routing-late-answer");
+    let (mut runtime, terminals) = runtime_on(&herdr);
+    let late = super::terminal_input::InputOrigin::TabCreate(41);
+    let opened_long_ago = std::time::Instant::now()
+        .checked_sub(Duration::from_secs(3))
+        .expect("the clock reaches three seconds back");
+    runtime
+        .input_requests
+        .open("r-late-answer", late.clone(), opened_long_ago);
+    runtime.resolve_input_request_at_shell(&late, "w-order:t9:p");
+    assert_eq!(
+        request_state(&runtime, "r-late-answer"),
+        Some(crate::model::InputRequestState::Ready)
+    );
+
+    let timely = super::terminal_input::InputOrigin::TabCreate(42);
+    runtime
+        .input_requests
+        .open("r-timely-answer", timely.clone(), std::time::Instant::now());
+    runtime.resolve_input_request_at_shell(&timely, "w-order:t10:p");
+    assert_eq!(
+        request_state(&runtime, "r-timely-answer"),
+        Some(crate::model::InputRequestState::Pending)
+    );
+    assert_eq!(
+        request_controls(&terminals),
+        [
+            open("r-late-answer"),
+            resolve("r-late-answer", "w-order:t9:p"),
+            open("r-timely-answer"),
+        ]
+    );
+}
+
+/// B1, B9 for a new tab: the answer names the created tab's pane the keys
+/// typed for ⌘T wait for, and the node is told to write them there once its
+/// shell reads keys.
 #[test]
 fn keys_typed_before_a_new_tab_answers_reach_its_pane() {
     let herdr = fake_herdr("key-routing-tab");
@@ -254,9 +366,17 @@ fn keys_typed_before_a_new_tab_answers_reach_its_pane() {
         &["w-order:t1", "w-order:t9"],
         "w-order:t9",
     )));
+    assert_eq!(request_controls(&terminals), [open("r-tab")]);
+    assert_eq!(held_for(&runtime, "r-tab").as_deref(), Some("w-order:t9:p"));
+    assert!(shell_wait_ends(
+        &mut runtime,
+        "r-tab",
+        "w-order:t9:p",
+        super::terminal_input::ShellWait::Reading
+    ));
     assert_eq!(
         request_controls(&terminals),
-        [open("r-tab"), resolve("r-tab", "w-order:t9:p")]
+        [resolve("r-tab", "w-order:t9:p")]
     );
 }
 
@@ -324,6 +444,16 @@ fn keys_for_a_new_tab_survive_an_update_before_herdr_lays_out_its_pane() {
         "the request or its pane was given up before Herdr laid it out: {controls:?}"
     );
     assert_eq!(
+        held_for(&runtime, "r-late").as_deref(),
+        Some("w-order:t9:p")
+    );
+    assert!(shell_wait_ends(
+        &mut runtime,
+        "r-late",
+        "w-order:t9:p",
+        super::terminal_input::ShellWait::Reading
+    ));
+    assert_eq!(
         request_state(&runtime, "r-late"),
         Some(crate::model::InputRequestState::Ready)
     );
@@ -362,7 +492,7 @@ fn session_with_split_pane(laid_out: bool) -> SessionSnapshotPayload {
 
 /// D-11: once the split's pane has been laid out and then left, the request
 /// is discarded, so keys sent against it reach no pane, even one Herdr later
-/// gives that id.
+/// gives that id; a wait for its shell that ends afterwards writes nothing.
 #[test]
 fn keys_for_a_split_whose_pane_left_reach_no_pane_that_reuses_its_id() {
     let herdr = fake_herdr("key-routing-pane-gone");
@@ -377,7 +507,7 @@ fn keys_for_a_split_whose_pane_left_reach_no_pane_that_reuses_its_id() {
     runtime.ingest_session(Ok(session_with_split_pane(true)));
     assert_eq!(
         request_state(&runtime, "r-gone"),
-        Some(crate::model::InputRequestState::Ready)
+        Some(crate::model::InputRequestState::Pending)
     );
     assert!(
         !request_controls(&terminals)
@@ -395,4 +525,11 @@ fn keys_for_a_split_whose_pane_left_reach_no_pane_that_reuses_its_id() {
             .iter()
             .any(|control| is_discard(control, "r-gone"))
     );
+    assert!(!shell_wait_ends(
+        &mut runtime,
+        "r-gone",
+        SPLIT_PANE,
+        super::terminal_input::ShellWait::Reading
+    ));
+    assert_eq!(request_controls(&terminals), Vec::<TerminalControl>::new());
 }
