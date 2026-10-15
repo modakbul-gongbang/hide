@@ -30,6 +30,7 @@ function readable() {
     '--card': color('#000000', '#FFFFFF'),
     '--muted-foreground': color('#FFFFFF', '#000000'),
     '--subtle-foreground': {type: 'alias', value: '--muted-foreground'},
+    '--status-seen': color('#FFFFFF', '#000000'),
   };
   for (const name of ANSI) {
     tokens[`--terminal-${name}`] = color('#FFFFFF', '#000000');
@@ -56,6 +57,7 @@ test('a secondary grey is checked on the background, the sidebar and a card', ()
   const tokens = readable();
   tokens['--card'] = color('#000000', '#444444');
   const found = failures(tokens);
-  assert.equal(found.length, 4, found.join('\n'));
+  // Three greys (muted, subtle, the Seen mark's) in Neutral and Hide Light.
+  assert.equal(found.length, 6, found.join('\n'));
   assert.ok(found.every(line => line.includes('light') && line.includes('on --card')), found.join('\n'));
 });

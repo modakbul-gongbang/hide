@@ -19,7 +19,7 @@ const BACKGROUND_ONLY = {
   dark: ['--terminal-black'],
   light: ['--terminal-white', '--terminal-bright-white'],
 };
-const SECONDARY_TEXT = ['--muted-foreground', '--subtle-foreground'];
+const SECONDARY_TEXT = ['--muted-foreground', '--subtle-foreground', '--status-seen'];
 const SURFACES = ['--background', '--sidebar', '--card'];
 
 function channel(byte) {

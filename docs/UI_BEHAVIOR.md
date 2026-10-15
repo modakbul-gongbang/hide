@@ -1919,6 +1919,7 @@ Color theme chooses the palette every window draws in, Hide or Neutral, as a seg
 Hide is the landing page's Owl Field palette and the default, including for an install that never chose; Neutral is the grey chrome.
 Both have their own sixteen terminal colors, each readable at 4.5:1 on its background, and the choice changes the sidebar, tabs, pane headers, terminals, editors, sheets and popovers at once, keeping a terminal's content, scroll position, half-typed line and selection.
 Status colors, the accent choices and what uses them, the destructive color, and the diff, PR and file icon colors are the same in both.
+A quiet status mark (Seen, Idle, stopped, and the badge's ○ and ◐) is one grey in both, `--status-seen`, while quiet text beside it, such as a read request line, follows the palette's `--subtle-foreground`.
 Mode is the former Theme row unchanged: System, Light or Dark, each color theme having both.
 The choice is the core's, one for every window attached to it, and survives a restart of the app or of hided; the first paint, the desktop window before the page draws and the host status page are Hide Dark, and a paired phone draws the operator's color theme in its own light or dark.
 A stored value this build does not know opens Hide with only the `ui_state.color_theme_unknown` diagnostic.

@@ -317,7 +317,7 @@ Every surface draws the mark in one box of one size: `●` and `○` as a filled
 | No demand, stopped, no completion | `○` | Gray | Idle; a newly opened agent is ready for its first instruction |
 | No demand, working | `●` | Blue | Working |
 | No demand, stopped, and waiting on children, a proven background task or a reply (`wait`) | `○` | Blue ring | Waiting; Working group until nothing it waits for is left |
-| No demand, stopped, read | `○` | Gray | Idle; a read completion is not another unread Done |
+| No demand, stopped, read | `○` | Gray (`--status-seen`, the same in both color themes) | Idle; a read completion is not another unread Done |
 | No demand, unknown activity | `~` | Gray | Unknown; never silently labeled Idle |
 | Owning server unavailable | `⊘` | Gray | Disconnected; current agent activity is unavailable |
 | Hide ended the agent and holds its conversation | `☾` (moon) | Gray | `sleeping`, `waking` or `sleep_failed` (`Sleeping · resumes when opened`, `Waking…`, `Sleeping · couldn’t resume`); stays in Seen |
