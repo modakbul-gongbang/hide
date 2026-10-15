@@ -61,6 +61,25 @@ async function daemonsEnded(pids) {
   if (running.length > 0) throw new Error(`hided still running 10 seconds after hide stop (its files are in the scratch folder): pid ${running.join(", ")}`);
 }
 
+/**
+ * Copies a package folder file by file, links as links. fs.cpSync left the
+ * installed Windows package's resources/app.asar behind on the package lane,
+ * so the copy is spelled out and every step that fails throws.
+ */
+function copyTree(source, target) {
+  fs.mkdirSync(target, { recursive: true });
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    const from = path.join(source, entry.name);
+    const to = path.join(target, entry.name);
+    if (entry.isSymbolicLink()) fs.symlinkSync(fs.readlinkSync(from), to);
+    else if (entry.isDirectory()) copyTree(from, to);
+    else if (entry.isFile()) {
+      fs.copyFileSync(from, to);
+      fs.chmodSync(to, fs.statSync(from).mode & 0o7777);
+    } else throw new Error(`${from} is neither a file, a folder nor a link`);
+  }
+}
+
 /** A program's stdout; a non-zero exit, a timeout or a spawn failure throws with its stderr. */
 const output = (file, args, env) => execFileSync(file, args, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 }).trim();
 
@@ -175,9 +194,12 @@ try {
   // changes the production build hash without a second release build.
   const upgraded = path.join(scratch, "new 한글 package");
   check("prepare a second complete package", () => {
-    fs.cpSync(app, upgraded, { recursive: true, verbatimSymlinks: true });
+    copyTree(app, upgraded);
     for (const file of ["app.asar", ...["hide", "hided", "hide-agent-hooks", "herdr"].map((name) => `${name}${exe}`)]) {
-      if (!fs.statSync(path.join(upgraded, "resources", file), { throwIfNoEntry: false })?.isFile()) throw new Error(`second package is missing resources/${file}`);
+      if (!fs.statSync(path.join(upgraded, "resources", file), { throwIfNoEntry: false })?.isFile()) {
+        const holds = (dir) => (fs.existsSync(path.join(dir, "resources")) ? fs.readdirSync(path.join(dir, "resources")).join(", ") : "no resources folder");
+        throw new Error(`second package is missing resources/${file}; its resources hold: ${holds(upgraded)}; the installed package's hold: ${holds(app)}`);
+      }
     }
     fs.appendFileSync(path.join(upgraded, "resources", `hided${exe}`), "\nHide package smoke next-build fixture\n");
   });
