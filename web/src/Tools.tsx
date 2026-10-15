@@ -23,7 +23,7 @@ import type { MessageKey } from "./i18n/catalogs";
 
 // The right lane and its tool rail (PRD right-lane D-01, D-05, D-08, D-09):
 // one lane shows one tool at a time, Files (the View areas, with the file
-// tree as a column of its own), Changes (History), Sessions and Memory, and
+// tree as a column of its own), Changes (History), Work and Memory, and
 // the rail at the body's right edge opens, switches and closes it. The tool,
 // the pin, the tree and the widths are the front Workspace's, kept by the
 // core; whether an unpinned lane is up and whether it is expanded are this
@@ -31,7 +31,6 @@ import type { MessageKey } from "./i18n/catalogs";
 
 const TOOL_NAMES = { files: "panes.lane.files", changes: "panes.lane.changes", work: "work.title", memory: "panes.lane.memory" } as const satisfies Record<Tool, MessageKey>;
 const TOOL_ICONS: Record<Tool, LucideIcon> = { files: FilesIcon, changes: FileDiffIcon, work: SquareKanbanIcon, memory: BrainIcon };
-/** The chord that opens and closes the lane on a tool, where one does (D-12). */
 
 /** Whether a lane drawn this way is on screen. */
 export function laneUp(mode: LaneFrame["mode"]): boolean {
@@ -39,19 +38,23 @@ export function laneUp(mode: LaneFrame["mode"]): boolean {
 }
 
 /**
- * What a tool's scope reads as (D-08, B14): the front checkout for Files and
- * Changes, the Project for Sessions and Memory.
+ * What a tool's scope reads as (D-08, B14, D-37): the front checkout for the
+ * checkout's tools (Files, Changes), the Project for the Project's (Work,
+ * Memory), with Work naming all of it.
  */
 function useScope(checkout: Checkout | null): (tool: Tool) => string {
   const { t } = useInterfaceTranslation();
   const project = useShellStore((s) => (checkout ? catalogWorkspaces(s.rest).find((row) => row.checkouts.some((candidate) => candidate.id === checkout.id)) ?? null : null));
   const name = checkout ? (checkout.branch ?? checkout.label) : "";
   const projectName = project?.label ?? name;
-  return (tool) => (tool === "work" ? t("panes.lane.scopeProject", { project: projectName }) : tool === "memory" ? projectName : name);
+  return (tool) => {
+    const base = TOOL_SCOPES[tool] === "project" ? projectName : name;
+    return tool === "work" ? t("panes.lane.scopeProject", { project: base }) : base;
+  };
 }
 
 /**
- * The tool rail (B1, B2, B23): one icon per tool, its name under it, pressed
+ * The tool rail (B1, B2, B23): one icon per tool, its name in its hint, pressed
  * while the lane shows that tool; pressing it opens the lane on that tool,
  * or closes the lane when it already shows it. The Files icon counts the
  * views open while the lane does not show them (B17), and Memory's dot says
@@ -180,7 +183,8 @@ export function Lane({ view, tool, frame, sizes, checkout, actions }: { view: Wo
       <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-xxs border-b border-border pl-md pr-xs text-caption" data-lane-header="true">
         <span className="min-w-0 flex-1 truncate" data-lane-scope={scope(tool)} data-lane-scope-kind={TOOL_SCOPES[tool]}>
           <span className="font-semibold text-foreground">{t(TOOL_NAMES[tool])}</span>
-          {/* The scope's icon, Project or checkout, stands where the dot was (D-37). */}
+          {/* The icon replaces the dot to the eye; the dot stays for a reader, so the text still says `name · scope` (B54). */}
+          <span className="sr-only"> · </span>
           <span className="ml-xs text-subtle-foreground">
             {TOOL_SCOPES[tool] === "project" ? <FolderIcon aria-hidden="true" className="mr-xs inline size-(--size-icon-sm) align-middle" /> : <GitBranchIcon aria-hidden="true" className="mr-xs inline size-(--size-icon-sm) align-middle" />}
             {scope(tool)}
