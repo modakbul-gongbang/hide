@@ -347,7 +347,10 @@ export MEASURE_CDP_PORT="$(head -n 1 "$port_file")"
 wait_url "http://127.0.0.1:$MEASURE_CDP_PORT/json/list"
 printf '%s' "$page_url" | node "$measure_dir/navigate.mjs" "$MEASURE_CDP_PORT"
 # A first run opens on Main (PRD S6 D-11). Open the one fixture checkout
-# through the Projects sidebar once its checkout row appears.
+# through the Projects sidebar once its checkout row appears. At a scale
+# the other projects have agents and the fixture's has none, so its row is
+# folded under No agents (PRD sidebar-titlebar-refresh B1) until that fold
+# is opened, once: the fold is the core's, and a second click closes it.
 if [[ "$scenario" == remote-core ]]; then
   export MEASURE_HIDED_PORT="$hided_port" MEASURE_HIDED_TOKEN="$hided_token" MEASURE_SCREEN_NODE="$screen_node"
   note "remote-core: bringing this machine's checkout to the front on the core"
@@ -355,7 +358,7 @@ if [[ "$scenario" == remote-core ]]; then
   screen_pane="remote:$screen_node:pane:$MEASURE_PANE_ID"
   echo "screen_pane=$screen_pane" >> "$MEASURE_RUN_DIR/identity.txt"
 fi
-wait_js "(() => { if (document.querySelector('[data-workspace-screen]')) return true; const projects = document.querySelector('[data-sidebar-mode=\"projects\"]'); if (projects && projects.getAttribute('aria-selected') !== 'true') { projects.click(); return false; } const checkout = document.querySelector('[data-checkout-kind=\"branch\"]:not([disabled])'); if (checkout) { if (!window.__measureCheckoutOpened) { window.__measureCheckoutOpened = true; checkout.click(); } return false; } document.querySelector('[data-project-toggle][aria-expanded=\"false\"]')?.click(); return false; })()"
+wait_js "(() => { if (document.querySelector('[data-workspace-screen]')) return true; const projects = document.querySelector('[data-sidebar-mode=\"projects\"]'); if (projects && projects.getAttribute('aria-selected') !== 'true') { projects.click(); return false; } const checkout = document.querySelector('[data-checkout-kind=\"branch\"]:not([disabled])'); if (checkout) { if (!window.__measureCheckoutOpened) { window.__measureCheckoutOpened = true; checkout.click(); } return false; } const noAgents = document.querySelector('[data-no-agent-projects][aria-expanded=\"false\"]'); if (noAgents && !window.__measureNoAgentsOpened) { window.__measureNoAgentsOpened = true; noAgents.click(); return false; } document.querySelector('[data-project-toggle][aria-expanded=\"false\"]')?.click(); return false; })()"
 echo_pane="${screen_pane:-$MEASURE_PANE_ID}"
 wait_js "window.__hideProbe?.paneId() === '$echo_pane'"
 sleep 2
