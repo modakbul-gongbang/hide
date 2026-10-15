@@ -196,6 +196,7 @@ mod tests {
             spawned_from_machine_id: None,
             declared_parent_session: None,
             lineage_session: None,
+            server_mark: None,
             delegated: false,
             descendant_counts: crate::model::DescendantCountsSnapshot::default(),
             direct_child_counts: crate::model::DescendantCountsSnapshot::default(),

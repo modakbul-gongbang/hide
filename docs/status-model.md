@@ -44,41 +44,64 @@ Its own documentation is explicit: focusing a tab, or targeting it with pane foc
 Three finished agents side by side in one tab therefore cleared together on a single click, which is the bug this model exists to fix.
 
 So Hide keeps its own record instead.
-A pane is read when it has held Hide's keyboard focus since its last state change, and within one answering Herdr connection a state change is Herdr's `state_change_seq` moving **or** the derived demand and activity pair changing.
+A pane is read when it has held Hide's keyboard focus since its last state change, and on the Herdr server the record was read on, a state change is Herdr's `state_change_seq` moving **or** the derived demand and activity pair changing.
 The pair matters because Herdr's sequence does not move when only the core's own label changes: an analysis that reads a question at the end of a turn arrives after the agent stopped, so the demand appears with the sequence where it was.
-`state_change_seq` is process-local, so the first projection after a connection bootstrap reconciles a saved record only when the sequence moved backwards and the agent session id, demand and activity still match before adopting the new sequence.
-A sequence that moved forward is new work completed while Hide was disconnected and remains unread.
-A different known agent session or a different demand or activity also remains unread; a matching restored agent remains read when a restarted server reset the sequence.
-An older saved record with no session identity is migrated on that same backwards-sequence and matching-state proof, then persists the detected identity for later restarts.
-The reconciliation stays pending for a saved pane until agent detection catches up, because restored pane topology can arrive before the restored agent list.
-
 The record is `pane_read_records` in the persisted UI state, keyed by pane id, so it survives a restart.
 A record is dropped only when the authoritative pane layout stops reporting that pane, scoped to the namespace that pass owns, so a temporarily incomplete agent list and a local sync can never drop a restored or remote pane's record.
+The same pass drops the descendant signals other records keep for that pane and the pane's saved completion.
 A corrupt store loads as an empty record, which reads as everything unread, and says so in a diagnostic; it is never silently treated as read.
 
 Nothing reads Herdr's `done` versus `idle` split to decide the read axis.
 This is enforced by `INV-herdr-unseen-token`.
 
+### Across a Herdr restart
+
+`state_change_seq` is Herdr's own count for one server process: a cold restart and a live handoff both start the count again and keep none of a pane's tokens.
+A restored server also reports each pane in steps, measured on the pinned 0.9.3: first at sequence 0, then `unknown` while it detects the agent again, then settled at a sequence of its own, which may land below, at or above the one before.
+So a sequence is compared only with one read on the same server, and no sequence value is taken as a restart signal.
+
+Each record names the server it was read on (`PaneReadRecord::server`).
+Every connection Hide makes to a Herdr server, this machine's or a device's, starts with a fresh mark, and once a saved record or completion names that mark the lineage writer writes it on the pane as the `hide_server` token (`wire::SERVER_MARK_TOKEN`).
+A pane that carries a mark is on the server that mark names; a pane that carries none is on the server Hide is connected to now, because Herdr drops the mark with its server.
+So a hided restart against a running server finds its old mark and keeps comparing sequences, and a turn the agent finished while Hide was away is news.
+
+A record saved on another server is carried over instead of compared.
+Each record holds its verdict (`PaneReadRecord::unread`), saved whenever it flips, and until the pane settles on the new server the row keeps that verdict.
+The first time the pane settles on the connection, a read record moves to the new server unless the pane shows something the operator had not read: another known agent session, a demand it did not have, or a change between working and stopped.
+A completion the restored server reports again is the one the record held, so a restored agent that reports `done` again stays read.
+An unread record stays unread through the restore and is decided again only when the operator reads the pane.
+Running the same pass twice changes nothing, and a second restart starts from the records the first one left.
+A record saved while its pane was still being restored (the operator looked during those steps) is carried the same way once the pane settles.
+Records written before this rule name no server, so Hide cannot tell which server they were read on; each is judged by sequence as before the first time its pane settles and then names that server.
+Reading such a record as read on a guess would lose news, so an upgrade whose first connection reaches a restored server (an app update hands Herdr's server over before the new daemon starts) can show a read row unread once.
+
+Regression owners: `a_read_pane_stays_read_through_a_restored_servers_steps`, `a_restored_pane_reporting_done_again_stays_read`, `a_pane_unread_before_a_restart_stays_unread`, `a_restored_pane_showing_something_new_is_unread`, `a_hide_restart_on_the_same_server_shows_work_done_while_away`, `a_childs_signal_through_a_restore_lights_its_parent_only_when_new` and `a_record_saved_before_servers_were_named_is_judged_by_sequence_once` in `sidebar.rs`, `a_device_pane_read_before_its_server_restarts_stays_read` for a device, `a_server_mark_is_written_once_and_rides_with_lineage_keys` for the writer, and `web/e2e/read-across-restart.spec.ts` against a real cold restart and live handoff.
+
 ## Completion is separate from stopped
 
 An agent can be stopped because it has completed a turn or because a newly opened pane is ready for its first instruction.
-Only `agent_status: done` reports a completion.
-An `idle` lifecycle reports a ready stopped pane and does not put it in Done, even though a missing read record still makes its read axis unread.
+A completion is `agent_status: done`, or `idle` with a `completion_seq`: Herdr turns `done` into `idle` when it marks the pane's tab seen and keeps `completion_seq` until the agent works again.
+An `idle` lifecycle with no `completion_seq` reports a ready stopped pane and does not put it in Done, even though a missing read record still makes its read axis unread.
+Because Herdr's seen keeps the completion, an unread finished pane in a tab Herdr marked seen stays Done until the operator reads it in Hide.
 The completion fact is part of the pane read fingerprint, so a ready-to-completed transition becomes unread even when Herdr's process-local sequence does not move.
 Herdr's done/idle distinction supplies completion evidence only; Hide's own pane record remains the sole read authority.
 
 A completion is news only when it appears.
-Herdr drops a finished pane from `done` to `idle` at the same sequence when it marks the pane's tab seen, and that can land after the operator's focus has left the pane.
-A record that holds a completion the row no longer shows still covers the row, so a demand the operator read stays read through Herdr's own bookkeeping, and the next projection trims the record to no completion.
-The trim is what makes a completion that appears again at the same sequence news again, as a descendant's signal is after it went away.
+A record that holds a completion the row no longer shows still covers the row: a completion goes away only when the agent works again, which its own change already says, or when a restored server no longer reports it.
 Any other change to the fingerprint (the agent working again, a state change between two looks, another session in the pane) still turns the row unread.
 Regression owners: `a_read_demand_stays_read_when_herdr_marks_its_tab_seen_after_focus_left` and `a_read_demand_turns_unread_again_only_for_news` in `sidebar.rs`, and `web/e2e/blocked-state.spec.ts`, which holds Herdr's focus at the socket so its seen lands after the operator moved on.
+
+A restored server reports neither `done` nor a `completion_seq` for a pane whose completion it lost; a restored Claude pane comes back `idle`.
+So Hide keeps the completions it saw (`pane_completions` in the persisted UI state, keyed by pane), each with the agent session, server mark and sequence it was last seen at.
+A saved completion keeps showing while the same session has not changed since: on its own server while the pane's sequence is the one it was saved at, and on a restored server when the pane first settles stopped.
+It is kept before the lineage is built, so an ancestor sees the same descendant completion it saw before the restart.
 
 ## A descendant's change turns its ancestors unread
 
 The fingerprint carries one more element: the outstanding demands and reported completions of the row's live descendants, each keyed by the descendant's pane (`PaneReadRecord::descendant_signals`).
 A descendant entering a question, approval or error, moving between those three, or finishing a turn adds a signal the record does not hold, and every ancestor row becomes unread through the same comparison its own state change would use; there is no second store, timer or event.
 A signal that goes away does not turn anything on: a question being answered, a finished child starting new work, or a child pane closing is trimmed from the record on the next projection, so the same descendant is news again the next time it asks or finishes.
+A signal is trimmed only when the descendant is settled and no longer sends it: while a restored server has not settled the descendant, or has not got its lineage tokens back, the record keeps it.
 Reading the ancestor records the signals it shows at that moment and nothing more.
 
 A descendant's signal never puts an ancestor in Needs You: a child's question leaves a working root in Working.
@@ -148,7 +171,7 @@ Regression owners: `a_turn_end_is_not_a_stop_until_its_session_read_lands`, `a_r
 
 ## Where each axis comes from
 
-Activity and completion come only from Herdr's `agent_status`: `working` is Working, `idle` and `done` are stopped, `done` alone reports a completion, and any other value reads as unknown rather than idle.
+Activity and completion come only from Herdr's `agent_status` and `completion_seq`: `working` is Working, `idle` and `done` are stopped, `done` or `idle` with a `completion_seq` reports a completion, and any other value reads as unknown rather than idle.
 No pane token is read for either.
 Demand has these sources:
 
@@ -244,6 +267,7 @@ The operating-system identity is the platform UUID on macOS and the machine-id o
 `hide agent register`, delegated `hide agent spawn` and Hide's fork record the relationship, or for a fork its provenance, in the core's coordination ledger.
 A delegated `hide agent spawn --machine <device id>` child is a remote child of a local parent: its tokens are written on the device's pane and `parent_machine` names the spawner's machine, the same resolution as any cross-machine relationship above.
 The existing one-second agent refresh writes only panes whose tokens differ, with a complete reconciliation on startup or reconnect and an immediate write after spawn.
+The same writer writes the read axis's server mark ([Across a Herdr restart](#across-a-herdr-restart)), in the pane's lineage report when it has one.
 `wire.rs` and `agent_state/axes.rs` remain the readers of this contract.
 A connected device's immutable machine identity comes from its consented helper's connection greeting, outside the runtime mutex; an unavailable identity leaves the parent unresolved and records a diagnostic.
 A declaration whose machine cannot be matched stays a root and records one diagnostic for that pane instead of guessing.
@@ -264,7 +288,8 @@ Regression owners: `a_parent_declared_as_a_pane_token_is_the_lineage`, `a_child_
 ## The descendant mark and the tree popover
 
 `agent_state/escalation.rs::lift` gives each row one `descendant_mark` over its whole subtree (PRD D-40): `raised` with the number of raised descendants if there are any, else `working` with the number of working descendants, else none.
-The shell draws it as `! N` in the warning colour or `● N` in the working colour, and only where those descendants are hidden: a folded sidebar parent, a Sessions row whose tree is closed, and a Factory card.
+The shell draws only the `raised` kind, as `! N` in the warning colour, and only where those descendants are hidden: a folded sidebar parent, a Sessions row whose tree is closed, and a Factory card.
+The `working` kind is still computed and draws nowhere: a parent waiting on its children shows its blue ring and the working child's line, and the operator did not read `● N` (PRD session-record-redesign D-04).
 Idle, done and unknown descendants add nothing, so a mark never says only that children exist.
 `row.state.tree_rank` orders siblings in every tree: asking or raised, itself or below it, first; then working; then finished and unread; then the rest.
 The sidebar tree under an opened root is `agent_scope.sidebar_tree.visible_rows` from `agent_state/tally/lineage.rs::sidebar_tree`: children and grandchildren wherever they work, two levels only, with the digit shortcuts on roots alone.
@@ -391,7 +416,7 @@ Collapsing does not change the selected pane, tab, agent read state, running pro
 `collapsed_checkout_ids` persists across launches.
 The web shell starts every checkout open and keeps explicit collapses in `session_collapsed_checkout_ids`, changed by `checkout_agents_toggle` and the admitted `focus_checkout` event.
 The older `expanded_checkout_ids` and `collapsed_checkout_ids` records do not determine web checkout disclosure.
-Inside an open checkout, actual tabs group complete root subtrees as segments of one list: every root stands on one status axis, a guide per tab marks the boundary, and the tab glyph at a segment's head appears only when the tab holds at least two recognized agent panes and has a sidebar root.
+Inside an open checkout, actual tabs group complete root subtrees as segments of one list: every root stands on one status axis, a guide per tab marks the boundary, and the tab line at a segment's head appears only when the tab holds at least two recognized agent panes and has a sidebar root.
 The glyph's count describes physical agents in that tab, independently of root ownership or child disclosure; raised groups and sleeping sessions retain their existing positions.
 Tab names use the core's explicit manual-name and stable-number metadata rather than an automatic task label, and no tab fold is saved.
 Raised Needs You and Done rows remain available, while number shortcuts skip hidden tree rows.
@@ -717,8 +742,12 @@ Regression owners: `runtime::tests::session_state`, `request_view::tests`, and `
 
 ### The Sessions work record
 
-Sessions rows keep their live group and navigation and add a record action and a warning-coloured flag for open missed work.
-The record's title follows the same summary/native/manual rules, with the current status, own task verdict, created outputs, missed work, own chapters and expandable children in that order.
+Sessions rows keep their live group and navigation and add a record action; they carry no missed-work flag.
+The record's title follows the same summary/native/manual rules, with the current status, the PRs the session and every descendant created, the assigned work as a checklist with each task's missed work under it, and expandable children in that order.
+The PRs come from the record's `outputs`, which already hold every descendant's PR with its source session and name; no wire field was added.
+The checklist lists tasks first-asked first with the finished count over the total.
+A missed item belongs to the task of its turn: the turn starts at the request whose offset is the item's `turn_offset`, and that request carries the `task_ids`; items whose turn is not a task or is gone, and descendants' items, follow the checklist.
+The operator's words show behind a UI-only toggle and are never stored; the newest request not yet judged shows as `지금` while the session works.
 An assigned task is Done only after its last END is Done and all assigned PRs are merged; review, failed CI, unfinished, blocked and question remain distinct states, while waiting uses Doing.
 Descendant results can hold the parent's assigned task open, but do not duplicate the child's chapters or requests in the parent's own work.
 Children show three visual indentation levels, five siblings initially and a More action for the rest.
@@ -727,14 +756,14 @@ A missed item is work nobody holds once the session closes: a problem the agent 
 Measuring, checking or verifying the assigned task's result, even when the agent calls it a follow-up, the task's own remainder, merge, install and app replacement steps stay with the task verdict, the pull request and CI, and are not missed work; neither is anything already recorded in an issue or pull request by number or link.
 Records written before `context_label.v10` may still hold such an item with the `leftover` kind.
 Missed items are durable Open, Resolved, Issue or Dismissed records.
-Dismiss can be undone, a resolved item reopened, and every closed status sits under `닫힘 N` until expanded.
-The Sessions top group includes open missed work as soon as a session is resolved, or once it leaves the list under the existing 24-hour rule, within the project's Copied history window (90 days by default).
-It is folded by default, scoped with the visible checkout, project or Home, and renewed live activity returns the item to its live session row.
+Dismiss can be undone and a resolved item reopened; a closed item stays in the record as one muted line under its task with its status word.
+The Sessions top group holds every open missed item in the visible checkout, project or Home, of live and ended sessions, within the project's Copied history window (90 days by default).
+It is folded by default, newest first, and a session that works again keeps its items in the group.
 
-With summaries Off, the same record shows native/manual title, native status, outputs, children and every saved raw request newest first.
+With summaries Off, the same record shows native/manual title, native status, outputs, children and every saved raw request oldest first, the last five open and the earlier ones behind `이전 요청 N`.
 It hides verdicts, chapters, tasks, END labels, missed items and their actions; turning summaries on restores old judgments and leaves the Off-period requests unjudged.
 This record does not change the phone surface or the live Sessions grouping rules.
-Regression owners: `links::store::ledger::tests`, `labels::tests`, `runtime::tests::session_work`, `web/src/sessionWork.test.ts`, and the isolated session-work-ledger browser and desktop flows.
+Regression owners: `links::store::ledger::tests`, `labels::tests`, `runtime::tests::session_work`, `web/src/sessionWork.test.ts`, `web/src/SessionRecord.test.tsx`, the command-record tests in `hide-session/tests/it/conversation_cursor.rs`, and the isolated session-work-ledger browser and desktop flows.
 
 ### Delegated escalation
 

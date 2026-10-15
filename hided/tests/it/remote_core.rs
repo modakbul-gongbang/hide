@@ -40,6 +40,7 @@ fn identity(fixture: &Fixture) -> Result<NodeIdentity> {
         herdr_bin: std::env::var_os("HIDE_E2E_HERDR_BIN")
             .map(std::path::PathBuf::from)
             .context("HIDE_E2E_HERDR_BIN")?,
+        worktree_facts: None,
     })
 }
 

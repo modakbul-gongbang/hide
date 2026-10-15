@@ -30,9 +30,9 @@ test("roots stay in one sidebar, open their children in place, and the header's 
     const childRow = page.locator(`nav[data-sidebar] [data-pane="${child}"]`);
     await expect(parentRow).toHaveAttribute("data-waiting", "children", { timeout: 20_000 });
     await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
-    // Folded, the root wears one mark for its working descendants (B10, B17).
+    // Folded, a root whose descendants only work wears no mark: its waiting ring says it (B10, B17).
     await expect(childRow).toHaveCount(0);
-    await expect(parentRow.locator('[data-descendant-mark="working"]')).toContainText("1");
+    await expect(parentRow.locator('[data-descendant-mark]')).toHaveCount(0);
     continueFixtureTranscript(herdr, childSession, { task: LONG_TITLE, reply: QUESTION, question: true });
     await setFixtureLifecycle(herdr, child, "idle");
     // An ordinary question keeps the root waiting, never raised, and a quiet child adds no mark.

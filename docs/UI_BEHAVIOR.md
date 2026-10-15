@@ -93,7 +93,7 @@ Choosing an agent or a tab from the sidebar, the palette, a tab cycle or the tab
 Sessions follows the project of the checkout in front, with All checkouts and a chip for that checkout alone.
 At Home it shows the selected device's projects together.
 Its core-selected groups are the sidebar's own, Needs You, Working, Done, Idle and Resolved, with empty groups absent and Resolved folded initially.
-A row carries its status mark, title, own PR mark, descendant mark while closed and elapsed time, then its ask or line; there is no counts row.
+A row carries its status mark, title, own PR mark, `! N` descendant mark while closed and elapsed time, then its ask or line; there is no counts row and no missed-work flag.
 Selecting a row opens its Workspace, tab and pane, and its chevron opens its children, whose own chevrons open theirs (see Sessions: the task list).
 Sessions is a separate tool from Memory and does not start Memory's reader.
 The sidebar is one list with no mode strip.
@@ -184,7 +184,9 @@ A drag keeps its original tab in place and changes no terminal size until a vali
 Dropping on a tab bar reorders or moves the tab; dropping on a content edge highlights the new half with Split left/right/up/down and creates another area on release.
 Moving the last tab out collapses its area, as does closing it or its disappearance from Herdr.
 Closing a tab, or its only pane, takes the tab out of its area the moment the close is approved, without waiting for Herdr: the area shows the tab it showed before it, or collapses when the tab was its last, and when the closed tab held the keyboard the keyboard goes to what is now shown in its place (the area's next tab, or the neighbouring area's), never to the next tab in Herdr's order.
-A close Herdr refuses, or one that fails before it is sent, puts the tab back where it stood, and the keyboard with it when nothing has moved since; a close whose result is unknown shows the tab again until the status check settles it.
+When that close leaves the checkout in front with no tab at all, the operator is done there: in the same frame the screen goes back to the most recent checkout of this machine they were in before it that still holds a tab and is not being removed, as choosing it from the sidebar would, and a reload opens there.
+With no such checkout, the screen stays and the area shows its empty state; a tab off the strip (a delegated child's) still keeps the checkout, and a close Hide makes on its own (an agent's sleep) never moves the screen.
+A close Herdr refuses, or one that fails before it is sent, puts the tab back where it stood, and the operator and the keyboard with it, to that checkout too, when nothing has moved since; a close whose result is unknown shows the tab again until the status check settles it.
 A pane closing inside a tab that keeps other panes leaves the canvas the moment the close is approved, and its neighbours take its space as Herdr will lay them out; its sidebar row stays until Herdr confirms the close, and a close Herdr refuses or cannot answer draws the pane back where it stood.
 A split, a zoom or unzoom and a pane resize Hide asked for are drawn at once, a split as soon as Herdr names the new pane, without waiting for Herdr's layout; a new tab appears in its area as soon as Herdr answers its creation.
 While such a change is drawn ahead of Herdr, each terminal keeps its grid and draws it inside its new rectangle, and its rows and columns change only once Herdr has applied the change, so a change Herdr lays out differently never reflows a terminal twice.
@@ -386,7 +388,7 @@ Only a plain shell and an agent Hide does not support draw the neutral `>_`.
 A logo drawn dark on a transparent ground (Grok, Cursor) sits on the light plate so it stays visible on the dark theme; the others are drawn as published ([BRAND.md](BRAND.md#third-party-agent-marks)).
 A child pane's ancestor path names each ancestor from the root to its parent, `›` between them, and each name opens that pane; a root has none.
 The names drop before current identity or actions when the pane narrows, leaving `›` with its accessible name.
-The PR mark is the one the Sessions row of the same agent draws (below): a pane without children shows its own PRs, and a parent shows the worst state's icon and `PR N` over itself and every descendant, pressing which lists each PR with who holds it, so a child's pull request is seen from the pane that delegated it.
+The PR mark is the one the Sessions row of the same agent draws (below): a pane without children shows its own PRs, and a parent shows the worst state's icon and the count of PRs over itself and every descendant (the `#number` when that is one PR), pressing which lists each PR with who holds it, so a child's pull request is seen from the pane that delegated it.
 The fork mark, a small fork icon after the title, is drawn only on a pane Fork agent made; its tooltip and accessible name read `Forked from <source name>` while the source still runs the conversation it was forked from, and the mark is then a button, reachable by keyboard, that opens the source; once the source closed or moved on to another conversation it reads `Forked from another pane` and opens nothing (`web/src/PaneHeaderBand.tsx`, `PaneForkMark`; the fact is the core's, `PaneForkSnapshot.forked_from`).
 A delegated child and a handed-off root have none, and neither does a fork made while forks were children (PRD fork-operator-root B20, B21).
 A device's pane header wears the mark too, as its rows do, although a device's pane offers no fork.
@@ -458,14 +460,15 @@ What to do is the core's `detail`: the label's reply, else the first line of a n
 An idle or done parent still owns its children, and a closed pane or ended parent agent makes them orphan roots.
 A parent waiting on a working or asking descendant stays Working.
 A root with direct children has a chevron at its left and starts folded; the opened roots persist across launches and device reconnects.
-Folded, it wears its descendant mark, `! N` for raised descendants or else `● N` for working ones, and nothing when its descendants are idle or done.
+Folded, it wears its descendant mark, `! N` for raised descendants, and nothing when its descendants are working, idle or done: a parent waiting on its children already shows its blue ring and the working child's line, and the operator did not read a `● N` (PRD session-record-redesign D-04).
+The core still computes the working mark; no surface draws it.
 Opened, its children follow most urgent first, joined to it by rails, and a child with children has its own chevron; grandchildren are one step further in, and a grandchild with children opens the tree popover from its chevron.
 Past five siblings the rest wait behind `N개 더`, which opens them in place.
 A tree row is one line with no branch line; a child on another device names that device on a second line, dimmed with `연결 안 됨` and not openable while it is not connected, and a child working in another worktree is not drawn again under that worktree.
 A worktree whose unresolved agents are all delegated children has no checkout line, no purpose line and no fold, because the children are reached from the root that owns them; the project badge still counts them.
 An agent counts as a root when the core marks it so (`agent.state.root`): an orphan whose parent ended is a root, and a Factory worker is one too, since its spawn parent is the Factory's own identity and no pane in the list, so its worktree keeps its line.
 The primary, the focused checkout, a dirty or unpushed worktree and an Inactive or Cleanup one keep the line or fold they had.
-Each row with its own PRs carries the PR mark (Purpose, pinning, and PR chrome) with the worst PR's state and number and `+N` for the others, dimmed while GitHub cannot be read; its hover shows the PR card for one PR, and for several lists each PR with its state and title, any of which opens, with the last read time while GitHub cannot be read.
+Each row with its own PRs carries the PR mark (Purpose, pinning, and PR chrome) with the worst PR's state and `#number` and `+N` for the others, dimmed while GitHub cannot be read; its hover shows the PR card for one PR, and for several lists each PR with its state and title, any of which opens, with the last read time while GitHub cannot be read.
 A tree row that asks draws its verb and what on a second line until answered, and an AI question leaves that line once read; a blocked tree row draws its cause there instead, read or not.
 A raised row outside the tree keeps its request line until answered, dimmed after reading an AI question; an unread result line stays bright until read.
 Quiet detail lives in the tooltip, and no progress value is invented.
@@ -493,7 +496,7 @@ Web owners: `web/src/hideAiOrigin.ts` (the words, the place line and the split o
 
 Hide draws no count of the subagents an agent runs inside its own session, on any surface: not on a sidebar row, in a pane header, in Sessions, in an Overview line, in ⌘K and not in Settings (operator decision on issue #810).
 A subagent has no pane of its own, so it is not a delegated child: it has no row to open and the operator can neither enter it nor act on it, so the number is not a state they would act on (design principle 13).
-The child marks on screen mean only the agents Hide started, which have their own panes and tree rows: the descendant mark `● N` on a row, the tree button with its `자식 에이전트 N` tooltip, and the child popover.
+The child marks on screen mean only the agents Hide started, which have their own panes and tree rows: the descendant mark `! N` on a row, the tree button with its `자식 에이전트 N` tooltip, and the child popover.
 A subagent count beside them would give "child" two meanings on one row.
 The count reaches the core and is used off the screen.
 Hide's hook keeps a `working` and a `done` count per pane and reports them as the Herdr pane tokens `hide_sub_working` and `hide_sub_done`; the core reads them in `PaneHookTokens`, projects them as `PaneChildren.subagents` beside `instrumented`, which no web code reads, and sums `working` for the pet's badge (docs/status-model.md, The subagent badge; the desktop app draws no pet today).
@@ -542,13 +545,14 @@ Web owner: `web/src/close.ts` (which sheet, which panes and descendants, and the
 A terminal pane links what its program prints, whichever program it is: an http(s) URL, a path, and a link the program marked itself (OSC 8).
 A plain-text path is a link only where it names something on this Mac, so a word that merely looks like a path draws nothing; the check runs when the pointer reaches a row, never per frame.
 A relative path is looked for under the pane's folder and then under its checkout's root, `~/` names the home folder, and a location written after it (`:12`, `:12:5`, `#L12`, `(12,5)`) is where the file opens.
-The original spelling is checked before treating punctuation, a Korean particle or a location as context: if `docs/a.md)에`, `docs/a.md)` or `src/a.ts:12:5` is itself a file name, that complete name wins.
-Composite punctuation, particles and locations also preserve grammar-only literal names such as `(src/a.ts:12:5)` before dropping their leading or closing punctuation or interpreting the location.
+The original spelling is checked before treating punctuation, attached prose or a location as context: if `docs/a.md)에`, `docs/a.md)` or `src/a.ts:12:5` is itself a file name, that complete name wins.
+Composite punctuation, prose and locations also preserve prose-only literal names such as `(src/a.ts:12:5)` before dropping their leading or closing punctuation or interpreting the location.
 Among the bounded interpretations, the longest existing path wins; a failed or budget-skipped longer check never establishes a shorter link.
 In Korean prose such as `보드 보기 (docs/README.md)에 C안을 추가했습니다.`, only `docs/README.md` is underlined and clickable when that is the actual path.
-Grammar is interpreted only after a closing parenthesis, square/curly bracket or quotation mark: 에, 에서, 에게, 께, 으로, 로, 와, 과, 을, 를, 은, 는, 이, 가, 의, 도, 만, 부터, 까지, optionally followed by one of 도, 만, 는 or 은.
-An unsupported word, an unbounded particle chain, or Hangul attached without that closing boundary is never shortened.
-A URL takes the same boundary, and since a URL cannot be checked, a particle after its closing mark is always prose: in `PR #682 (https://github.com/o/r/pull/682)이 끝났습니다`, only `https://github.com/o/r/pull/682` is the link.
+Korean, Japanese and Chinese attach the next word to a path without a space, and Claude Code draws a backticked path without its backticks, so `view-mode.html에` reaches the pane as one word.
+The run of Hangul, kana or Han characters at a word's end is that attached prose, and it is cut once, where the script changes: `view-mode.html에`, `docs/a.md)에서도` and `view-mode.htmlに` link `view-mode.html`, `docs/a.md` and `view-mode.html`, with no list of particles.
+A run that starts right after `/` is a folder entry's own name and is never cut, so `docs/회의록에` is checked only as written; a word in another script attached to a path is not prose either.
+A URL cannot be checked, so its attached prose is cut only after a closing mark, where it is always prose: in `PR #682 (https://github.com/o/r/pull/682)이 끝났습니다`, only `https://github.com/o/r/pull/682` is the link, while `https://ko.wikipedia.org/wiki/서울이` links all of it.
 Ranges follow the terminal's actual cells, including wide glyphs, combining sequences and wrapped rows.
 A path or URL the terminal wrapped at its last column, or a TUI broke at its own margin and indented, is one link across its rows; a URL spans rows only where the terminal wrapped it, because it cannot be checked.
 Under the pointer a link is underlined and the pointer becomes a hand; a click on it is the link's and never reaches the program, and a drag across it selects its text and opens nothing.
@@ -728,8 +732,8 @@ A fork is a root row of its own, never a child under its source; ⌘K, the Agent
 Every row, a child and a resolved row included, ends in the Resolve button's slot, so the times of the panel stand in one column as in the sidebar.
 There is no checkout name, front-checkout bar or status word on a root row.
 Its second line is the ask on Needs You, the label line on Working (or the line of the most recently changed working descendant while it waits on them), the finished turn's line on Done, and on Idle only the remaining work of an unfinished turn after `◐`; with no label line there is no second line.
-The PR mark on a child or a root without descendants shows one own PR as its state's icon and number, and several as the worst PR's (`924 +1`).
-A root with descendants instead shows the worst state's icon and `PR N`, counting distinct PR URLs held by itself and every descendant, including folded trees and siblings behind `N개 더`.
+The PR mark on a child or a root without descendants shows one own PR as its state's icon and `#number`, and several as the worst PR's (`#924 +1`).
+A root with descendants shows the worst state's icon and `#number` when itself and its descendants hold one PR, and otherwise only the count of distinct PR URLs they hold (`2`, no `PR` letters), including folded trees and siblings behind `N개 더`: `#` means a number, digits alone mean how many.
 The core's own PR projection decides which PRs count; a closed PR is not counted.
 Each mark dims while a contributing GitHub read is stale, with that read's last time in the tooltip; a tree uses the oldest stale contributing read.
 Pressing the mark lists each PR with its mark and title, worst first; a tree's list also names the sessions that hold each PR, and repeated sightings of one URL share one entry.
@@ -763,14 +767,22 @@ No undo or close is added to Resolve.
 An empty scope has the quiet existing nothing-to-do line; an unlabelled row keeps its shape without an invented task sentence.
 An unavailable device keeps current connection reasoning and disables actions.
 
-Each Sessions row adds a record button and an open-missed-work flag; the flag opens the same record with its missed work in view.
-The record replaces the list inside Tools, with `Sessions로 돌아가기`, the title, status and child count, then verdict, outputs, missed work, own work by goal chapter and expandable children.
-Task disclosures show the saved original requests and output numbers; child disclosures show that child's own work instead of mixing it into the parent's chapters.
-Open missed items show `이슈로` and `무시`, and closed items are folded under `닫힘 N`, with Undo or Reopen where applicable.
-At narrow Tools widths, Korean missed-work text and the first line of a raw request wrap between words; titles truncate with their full text in a tooltip.
-The folded missed-work group above live Sessions includes open missed work as soon as a session is resolved, or once it leaves the list under the existing 24-hour rule, within the current scope and Copied history period.
+Each Sessions row adds a record button, shown under the pointer or focus, and no missed-work flag: missed work lives in the record and in the group above the list.
+The record replaces the list inside Tools, with `Sessions로 돌아가기`, the title with its logo, a line of status and child count, then the PRs, the assigned work and the children.
+`PR N` heads every PR the session and all its descendants made, worst state first: the PR mark with its `#number`, the title (ellipsized, in full in its tooltip) and, for a descendant's PR, that descendant's name at the row's end; it opens the PR panel, and an issue the session made follows as an issue mark.
+A session with no outputs has neither the head nor the list.
+`시킨 일 2/3` heads the assigned work as a checklist, first-asked first, with the finished count over the total and no progress box: one task a line, its state an icon in its colour and nothing written (✓ done in a muted name, a blue ◐ working, a green ◐ review pending, a yellow ◐ left unfinished, blocked and your turn as their marks), the state's name in the icon's tooltip and accessible name, and the task's PRs as PR marks at the line's end, a failed CI being the mark's red.
+A goal title `목표 · 09:00` heads a chapter only when the record holds two or more goals; a task outside every chapter leads without one.
+A missed item sits directly under the task whose turn found it: open ones in the warning colour with `이슈로` and `무시` and the drafting, failed and not-connected states they had, closed ones as one muted line that says how it closed (`· 처리됨`, `· 무시함`) or its issue number, with `되돌리기` or `다시 열기` while the pointer or focus is on the line.
+Missed work from a turn that was not a task, from a turn no longer in the record, and from a descendant (with that descendant's name) comes last.
+A speech-bubble icon button with no text sits at the right of the head, pressed state filled, named `내 말 보기` (`받은 요청 보기` when a parent made the requests): off by default, it adds each task's words as bubbles of up to two lines under the task, above its missed work, and the words that belong to no task under `그 밖의 말`, each behind a quiet person icon (a parent's words have none); a bubble that overflows opens to the whole text with `접기`.
+The button's state stays across records and Back while the app runs and is not stored.
+The newest request not yet judged shows as `지금` with a turning mark and its first line at the end of the checklist while the session works, whatever the button says, and leaves when it is judged or the session stops.
+A child opens to its own checklist by these rules, its PRs being in the list above and its missed work last in its parent's list; its row is the title and status only.
+At narrow Tools widths, Korean text in a task, a bubble and a missed item wraps between words; titles truncate with their full text in a tooltip.
+The folded missed-work group above Sessions lists every open missed item in the current scope, of live and ended sessions, newest first, and a session that works again keeps its items there; with Hide AI off there is no group.
 Untitled records use the same agent-name fallback as Sessions, including with summaries Off and after the pane ends; native session ids remain identity keys.
-With summaries Off, records retain native/manual titles, statuses, outputs, children and saved raw requests newest first, and hide every generated judgment and missed-work action.
+With summaries Off, a record shows the title, the status with child and request counts, the PRs, `요청 N` and the saved raw requests oldest first with the last five open and the earlier ones behind `이전 요청 N`, and the children; it has no checklist, no button, no judgment and no missed-work action.
 A first record read uses a small skeleton; a failed read shows Retry, and a disconnected device retains the last read dimmed until reconnection refreshes it.
 GitHub values that cannot be refreshed stay dimmed with their last-read time in the tooltip; failure is never a false zero.
 While Sessions is visible it shares the existing request-view observation so the core re-reads only projects with running checks, once a minute.
@@ -1218,21 +1230,22 @@ Checkouts start open, and `session_collapsed_checkout_ids` keeps only the checko
 Within an open checkout or plain folder, every operator root stands at one depth whatever tab holds it: tabs make no depth and, unless named, no row.
 The sidebar keeps each root and its complete lineage subtree together under the root's actual tab, in checkout tab order and then the core's root order.
 Groups stay separated by `--spacing-sm` (8px), without a card or border.
+The first group hangs `--spacing-xxs` (2px) under its checkout row, only so the checkout's fill and a selected row's never merge, and the last group ends with the same 8px before the next row, so every agent stands nearer its own checkout than the one below it.
 Root status marks share one axis on the checkout name's column, to the right of the checkout's kind glyph, so no agent row's leftmost ink stands left of its checkout's glyph and a `?` or `!` is scanned on one line.
 Lineage children keep their `--size-lineage-indent` (18px) step and elbow rails from that axis, and a root's lineage disclosure stays in the reserved trailing slot.
-Each group draws a 1px vertical guide centered under the checkout's kind glyph (a plain folder's folder glyph) and spanning the group's rows; the gap between two guides is the tab boundary, and a single-agent tab is a short segment with no glyph.
-A tab with two or more recognized agent panes wears the tab glyph at the head of its guide, on the guide's column and its first row's line, and the guide continues below it; the head adds no row.
+Each group draws a 1px vertical guide centered under the checkout's kind glyph (a plain folder's folder glyph) and spanning the group's rows; the gap between two guides is the tab boundary, and a single-agent tab is a short segment with no line.
+A tab with two or more recognized agent panes opens with one quiet line at its head, a sidebar line and a hairline high, standing inside the guide like a row: the guide runs past it unbroken, the tab glyph stands on the status-mark column and the tab's name in 11px subtle text starts on the title column, so the tab reads as part of its checkout and never as a row beside the checkout's own glyph.
+The name is the tab's manual name, or localized `Tab N` from the core's stable number when it has none.
 Shell panes are not counted, children in other tabs do not inflate their parent's count, and a tab without a sidebar root draws no segment.
-Pointer or keyboard focus on the glyph shows its hint, the tab's manual name or localized `Tab N` from the core's stable number, and its agent count.
-The glyph is a button with that accessible name: click, Enter and Space open the real tab without read-state or process effects, and it is a stop in the Arrow Up/Down and Home/End traversal, ahead of its segment's rows.
-A tab with two or more agents and a manual name also gets one quiet line at its head, a sidebar line and a hairline high: the tab glyph on the guide's column and the name in 11px subtle text starting on the status-mark column.
-The line opens the tab as the glyph does, and the existing tab Rename still sets or clears the name; automatic tabbar titles remain independent.
-An unnamed tab never draws `Tab N` text, and a single-agent tab draws no glyph and no line even when named.
+Pointer or keyboard focus on the line shows its hint, the same name and its agent count.
+The line is a button with that accessible name: click, Enter and Space open the real tab without read-state or process effects, and it is a stop in the Arrow Up/Down and Home/End traversal, ahead of its segment's rows.
+The existing tab Rename still sets or clears the manual name; automatic tabbar titles remain independent.
+A single-agent tab draws no line even when named.
 A tab has no disclosure and the sidebar saves nothing about it; a stored fold choice from an earlier version is ignored on load and dropped on the next write.
-When two agents become one the segment keeps its guide and loses the glyph and line, and a second agent brings them back with the name the tab still has.
-At a 240px sidebar width, its 8px list inset puts the checkout's kind glyph at x28 with the guide centered on x35, tab glyphs on the same center, root status marks starting at x46 and titles at x62; quiet agent rows are 28px high, using the existing 20px line and 4px vertical padding, and the head adds none.
+When two agents become one the segment keeps its guide and loses the line, and a second agent brings it back with the name the tab still has.
+At a 240px sidebar width, its 8px list inset puts the checkout's kind glyph at x28 with the guide centered on x35, root status marks starting at x46 and titles at x62, and a tab line's glyph centered on the status-mark column at x52 with its name at x62; quiet agent rows are 28px high, using the existing 20px line and 4px vertical padding, and a tab line is 22px.
 Focused sidebar agent and checkout rows use the neutral `--secondary` fill.
-Root shortcuts follow the same physical grouping order and deduplicate raised occurrences, with no numbers for tab glyphs or children.
+Root shortcuts follow the same physical grouping order and deduplicate raised occurrences, with no numbers for tab lines or children.
 A closed checkout draws its status badge and still shows questioning or blocked Needs You rows.
 A status badge counts agents under the mark each agent's own row draws, one mark and count per state, worst first (`▲ ! ? ● ◐ ✓ ○`), with idle agents included and zero states left out (docs/status-model.md, Workspace aggregation).
 A web project row opens its device's last focused usable checkout, falling back to the primary checkout and then the first usable checkout.
@@ -1290,7 +1303,7 @@ Any project row can be pinned from its right-click menu: a row Herdr shows witho
 The pin lives on the project's registration and survives a relaunch; removing the registration takes the pin with it.
 A pinned project is exempt from its device's inactive fold whatever its activity; its own stale worktrees still fold behind their own `Inactive N` row.
 PR state colour is a semantic-colour exception to otherwise neutral chrome, one colour per state on every surface, including during hover and selection (docs/status-model.md, Pull request visual states; operator approval, 2026-10-10): failed red, pending amber, mergeable green, draft grey, merged purple with the merge icon, and closed dim.
-Every surface draws a pull request as the one PR mark (`web/src/components/pr-mark.tsx`): the state's icon in its colour and the bare number `N` in the text colour (the icon already says pull request; `#N` stays where a number stands without the icon, such as a PR card's header or a tooltip), `+N` after it for an agent row's other PRs, with no border and no glyph; a pressable mark fills under the pointer, a mark whose GitHub read is stale dims with the last read time in its tooltip, and where the row already names the pull request (a checkout's glyph, a graph head, a search row) the mark drops the number.
+Every surface draws a pull request as the one PR mark (`web/src/components/pr-mark.tsx`): the state's icon in its colour and `#N` in the text colour, `+N` after it for an agent row's other PRs, or, for a root standing for several PRs, the bare count after the icon, with no border and no glyph; a pressable mark fills under the pointer, a mark whose GitHub read is stale dims with the last read time in its tooltip, and where the row already names the pull request (a checkout's glyph, a graph head, a search row) the mark drops the number.
 Only a change request keeps a word beside the mark, `변경 요청` in red, as failed checks are; the Overview chip, Issues, the graph box and the PRs row draw no separate checks mark.
 On the web a checkout row whose glyph is a pull request's mark makes that glyph a button (PRD checkout-pr-glyph-card): a ring in the state's colour under the pointer and the pointer cursor say so, a click opens the pull request as a browser display of the Workspace in front (an address the Workspace already shows is brought forward instead), and ⌘-click opens it in the default browser.
 While no Workspace is in front (the shared Overview page) or the checkout is an SSH device's, the click opens the default browser too.

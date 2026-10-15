@@ -2970,35 +2970,34 @@ function buildProjectsSidebar(tokens) {
 
   // A tab is a segment of its checkout's agent list, not a level: a 1px guide
   // centered under the checkout's kind glyph spans the segment's rows, and the
-  // gap between two guides is the tab boundary. A tab of two or more agents wears
-  // the tab glyph at the head of its guide, on the first row's line; a manual name
-  // adds one quiet 22px line carrying that glyph and the name, starting on the
-  // status-mark column (sidebar.tsx's TabSegmentHead).
-  function segment(id, {name = null, glyph = false, rows}) {
-    const line = num(tokens, '--size-sidebar-line');
-    const tabLine = line + num(tokens, '--spacing-xxs');
+  // gap between two guides is the tab boundary. A tab of two or more agents opens
+  // with one quiet 22px line inside the guide, the tab glyph on the status-mark
+  // column and its name (the manual one, else `Tab N`) on the title column
+  // (sidebar.tsx's TabSegmentHead); `name` is set exactly for such a tab.
+  function segment(id, {name = null, rows}) {
+    const tabLine = num(tokens, '--size-sidebar-line') + num(tokens, '--spacing-xxs');
     const glyphSize = num(tokens, '--size-icon-sm');
-    const kind = num(tokens, '--size-checkout-icon');
-    const air = num(tokens, '--spacing-xxs');
-    const named = glyph && name !== null;
-    const glyphX = glyphColumn + (kind - glyphSize) / 2;
-    const guideX = glyphColumn + (kind - 1) / 2;
-    const guideTop = !glyph ? xs : named ? tabLine / 2 + glyphSize / 2 + air : xs + line / 2 + glyphSize / 2 + air;
-    const head = named
-      ? [frame(`${id}-line`, 'Tab line', {width: row, height: tabLine, layout: 'horizontal', alignItems: 'center', gap: nameColumn - glyphX - glyphSize, padding: [0, xs, 0, glyphX]}, [
-        icon(`${id}-glyph`, 'panels-top-left', {size: glyphSize, fill: '$--subtle-foreground'}),
-        text(`${id}-name`, name, {size: '$--text-caption', fill: '$--subtle-foreground', width: 'fill_container'}),
-      ])]
-      : glyph ? [{...icon(`${id}-glyph`, 'panels-top-left', {size: glyphSize, fill: '$--subtle-foreground'}), layoutPosition: 'absolute', x: glyphX, y: xs + (line - glyphSize) / 2}] : [];
-    const total = (named ? tabLine : 0) + rows.reduce((sum, node) => sum + treeHeights.get(node), 0);
-    const guide = frame(`${id}-guide`, 'Tab guide', {layoutPosition: 'absolute', x: guideX, y: guideTop, width: 1, height: total - guideTop - xs, fill: '$--lineage-rail'}, []);
+    const mark = num(tokens, '--size-agent-mark');
+    const guideX = glyphColumn + (num(tokens, '--size-checkout-icon') - 1) / 2;
+    const markX = nameColumn + (mark - glyphSize) / 2;
+    const head = name === null ? [] : [frame(`${id}-line`, 'Tab line', {width: row, height: tabLine, layout: 'horizontal', alignItems: 'center', gap: nameColumn + mark + xs - markX - glyphSize, padding: [0, xs, 0, markX]}, [
+      icon(`${id}-glyph`, 'panels-top-left', {size: glyphSize, fill: '$--subtle-foreground'}),
+      text(`${id}-name`, name, {size: '$--text-caption', fill: '$--subtle-foreground', width: 'fill_container'}),
+    ])];
+    const total = (name === null ? 0 : tabLine) + rows.reduce((sum, node) => sum + treeHeights.get(node), 0);
+    const guide = frame(`${id}-guide`, 'Tab guide', {layoutPosition: 'absolute', x: guideX, y: xs, width: 1, height: total - 2 * xs, fill: '$--lineage-rail'}, []);
     return frame(id, 'Tab segment', {width: row, layout: 'vertical'}, [...head, ...rows, guide]);
   }
 
-  // An opened checkout and its unboxed tab segments, 8px apart.
+  // An opened checkout and its unboxed tab segments, 8px apart: the segments hang
+  // 2px under the checkout row, and the group's end carries the same 8px before
+  // the next row (sidebar.tsx's OpenAgentRows).
   function group(id, rows) {
     const [checkout, ...segments] = rows;
-    return frame(id, 'Opened checkout', {width: row, layout: 'vertical', gap: '$--spacing-sm'}, [checkout, ...segments]);
+    return frame(id, 'Opened checkout', {width: row, layout: 'vertical', gap: '$--spacing-xxs', padding: [0, 0, sm, 0]}, [
+      checkout,
+      frame(`${id}-segments`, 'Tab segments', {width: row, layout: 'vertical', gap: '$--spacing-sm'}, segments),
+    ]);
   }
 
   function fold(id, label, level) {
@@ -3190,7 +3189,7 @@ function buildProjectsSidebar(tokens) {
         // main opened (PRD agent-hierarchy-screens D-12, D-38, B35): one line, its agents as a tree.
         group(`psb-g-main-${s}`, [
           checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, expanded: true}),
-          segment(`psb-seg-main-${s}`, {glyph: true, rows: [
+          segment(`psb-seg-main-${s}`, {name: 'Tab 1', rows: [
             tree(`psb-t0-${s}`, {title: '사이드바 가독성 개선', status: 'approval', age: '12m', chevron: 'open', pr: {state: 'mergeable', number: 180}, bright: true}),
             tree(`psb-t1-${s}`, {title: 'P8 읽기 전용 준비', status: 'waiting', age: '19h', depth: 1, chevron: 'open', pr: {state: 'failed', number: 214}}),
             tree(`psb-t2-${s}`, {title: '테스트 작성', status: 'approval', age: '12m', depth: 2, rail: true}),
@@ -3465,28 +3464,28 @@ function buildProjectsSidebar(tokens) {
     return frame(`psb-hover-${s}`, 'Checkout row under the pointer, with its card', {width: width + gap + cardW, height: listH}, [{...list, x: 0, y: 0}, card]);
   }
   // The approved 240px cutout: the production rows at the narrowest width, a named
-  // tab (its line), a one-agent tab and an unnamed tab of two (its glyph).
+  // tab, a one-agent tab (no line) and an unnamed tab of two (its line reads Tab 3).
   function atRow(inner, draw) {
     const saved = row;
     row = inner;
     try { return draw(); } finally { row = saved; }
   }
   function statusAxis(s) {
-    return atRow(240 - 2 * sm, () => frame(`psb-axis-${s}`, 'Approved tab segments · 240 px', {width: 240, layout: 'vertical', gap: '$--spacing-sm', padding: sm, fill: '$--sidebar', clip: true}, [
+    return atRow(240 - 2 * sm, () => frame(`psb-axis-${s}`, 'Approved tab segments · 240 px', {width: 240, layout: 'vertical', padding: [sm, sm, 0, sm], fill: '$--sidebar', clip: true}, [group(`psb-axis-g-${s}`, [
       checkoutRow(`psb-axis-checkout-${s}`, {name: 'main', kind: 'primary', age: '8m', marks: {working: 4, idle: 1}, expanded: true}),
-      segment(`psb-axis-a-${s}`, {glyph: true, name: '아주 긴 한국어 탭 이름과 작업…', rows: [
+      segment(`psb-axis-a-${s}`, {name: '아주 긴 한국어 탭 이름과 작업…', rows: [
         tree(`psb-axis-one-${s}`, {title: '탭 경계·여백 정리', status: 'working', age: '1m', selected: true}),
         tree(`psb-axis-two-${s}`, {title: '왼쪽 pane 검토', status: 'working', age: '8m'}),
       ]}),
       segment(`psb-axis-single-${s}`, {rows: [tree(`psb-axis-three-${s}`, {title: '세션 기록 동기화', status: 'working', age: '2s'})]}),
-      segment(`psb-axis-b-${s}`, {glyph: true, rows: [
+      segment(`psb-axis-b-${s}`, {name: 'Tab 3', rows: [
         tree(`psb-axis-four-${s}`, {title: 'PR 질문 표시 개선', status: 'working', age: '6m'}),
         tree(`psb-axis-five-${s}`, {title: '탐색 개선', status: 'seen', age: '11m'}),
       ]}),
-    ]));
+    ])]));
   }
   const approvedBuild = suffix => [...build(suffix), statusAxis(suffix)];
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx and core agent_state (session-first-ui B1-B10; agent-hierarchy-screens D-12, D-37 to D-42): one sidebar follows the selected device, under the window’s top row that names it after the traffic lights (PRD sidebar-titlebar-refresh D-15): the Search row, the Overview row, bounded Needs You and Done groups and default-open project checkouts, with no Home row (D-06). Pinned leads with the pin and Projects ends in Add project; both headers stick to the list’s top with a hairline (D-05). A project’s name is 600 while an agent there works and 400 otherwise, a project whose agents all sleep is folded behind a moon cell with its age, projects with no agents fold behind No agents N (D-01 to D-03), and under the pointer + and ⋯ stand over the badge (D-04). The footer adds Help before the gear (D-11, D-12), and checkout and folder menus carry Open in VS Code before the reveal (D-13). A Needs You row’s second line is the verb and what to do. Roots and orphans head an opened checkout; a root the operator opened draws its children and grandchildren as one-line tree rows with elbow rails and a chevron lane, five siblings and then N개 더, each row with its own PR icon and, folded, its descendant mark; an opened checkout is one line. Every root stands on one status axis right of the checkout glyph whatever tab holds it: a hairline guide under that glyph spans each tab’s rows with a gap between tabs, a tab of two or more agents wears the tab glyph at the head of its guide, and a manual name adds one quiet line. A plain folder’s glyph and name stand on the project row’s columns. A grandchild’s chevron opens its tree popover, and the popover’s last line opens the Overview Agents graph. Clean worktrees without agents start in No agents; closed agent worktrees and missing paths start in Cleanup. Explicit checkout folds persist and retain Needs You rows. Project and checkout menus, glyphs, age columns, the device rail and usage footer retain their existing behavior.', approvedBuild, approvedBuild);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx and core agent_state (session-first-ui B1-B10; agent-hierarchy-screens D-12, D-37 to D-42): one sidebar follows the selected device, under the window’s top row that names it after the traffic lights (PRD sidebar-titlebar-refresh D-15): the Search row, the Overview row, bounded Needs You and Done groups and default-open project checkouts, with no Home row (D-06). Pinned leads with the pin and Projects ends in Add project; both headers stick to the list’s top with a hairline (D-05). A project’s name is 600 while an agent there works and 400 otherwise, a project whose agents all sleep is folded behind a moon cell with its age, projects with no agents fold behind No agents N (D-01 to D-03), and under the pointer + and ⋯ stand over the badge (D-04). The footer adds Help before the gear (D-11, D-12), and checkout and folder menus carry Open in VS Code before the reveal (D-13). A Needs You row’s second line is the verb and what to do. Roots and orphans head an opened checkout; a root the operator opened draws its children and grandchildren as one-line tree rows with elbow rails and a chevron lane, five siblings and then N개 더, each row with its own PR icon and, folded, its descendant mark; an opened checkout is one line. Every root stands on one status axis right of the checkout glyph whatever tab holds it: a hairline guide under that glyph spans each tab’s rows with a gap between tabs, and a tab of two or more agents opens with one quiet line inside the guide, the tab glyph on the status-mark column and its manual name or Tab N on the title column. A plain folder’s glyph and name stand on the project row’s columns. A grandchild’s chevron opens its tree popover, and the popover’s last line opens the Overview Agents graph. Clean worktrees without agents start in No agents; closed agent worktrees and missing paths start in Cleanup. Explicit checkout folds persist and retain Needs You rows. Project and checkout menus, glyphs, age columns, the device rail and usage footer retain their existing behavior.', approvedBuild, approvedBuild);
 }
 
 // -- Screen / Mobile ---------------------------------------------------------------
@@ -4045,8 +4044,8 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Factory', build: () => buildFactory(tokens)},
     {name: 'Screen / Core move', build: () => buildCoreMove(tokens, root)},
     {name: 'Screen / Session record', build: () => {
-      const build = sessionWorkScreens({frame,text,icon,screenButton});
-      return screenSheet('screen-session-record','Screen / Session record','Sessions work record: verdict, outputs, missed work, own chapters and delegated children. Approved session-work-ledger D-10, D-18, D-20; production SessionRecord and NewIssueDialog.',build,build);
+      const build = sessionWorkScreens({frame,text,icon,screenButton,themedXref});
+      return screenSheet('screen-session-record','Screen / Session record','Sessions work record (PRD session-record-redesign): every PR the session and its descendants made, assigned work as a checklist with missed work under its task, the operator\'s words behind 내 말, summaries off, and states. Production SessionRecord and NewIssueDialog.',build,build);
     }},
   ];
 }
