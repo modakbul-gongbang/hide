@@ -174,8 +174,21 @@ pub enum ToolTurnMark {
         call: String,
         content: Option<UserTurnContent>,
     },
+    /// A question whose tool returns at once while the agent goes on (Codex
+    /// `request_user_input_async`): its tool result answers nothing, and each
+    /// of its `questions` waits for its own [`ToolTurnMark::Replied`].
+    AskedAsync {
+        call: String,
+        questions: u32,
+        content: Option<UserTurnContent>,
+    },
     Answered {
         call: String,
+    },
+    /// The operator's reply to question number `question` of an async call.
+    Replied {
+        call: String,
+        question: u32,
     },
 }
 
@@ -227,6 +240,15 @@ struct QuestionCall {
     call: String,
     content: Option<UserTurnContent>,
     answered: bool,
+    /// For an async call, the numbers of its questions still waiting for a
+    /// reply; its tool result is not an answer. `None` for a call its own
+    /// result answers.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_unreplied"
+    )]
+    unreplied: Option<Vec<u32>>,
 }
 
 /// The last turn of a session as far as it has been read. Byte offsets
@@ -294,6 +316,47 @@ fn is_zero(value: &u64) -> bool {
 struct PlanHold {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     content: Option<UserTurnContent>,
+}
+
+/// A restored checkpoint is peer or store data: an async call holds at most
+/// [`QUESTION_CALL_LIMIT`] waiting questions, as the parser admits no more,
+/// and the sequence is refused before it is retained past that.
+fn deserialize_unreplied<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Vec<u32>>, D::Error> {
+    struct Waiting;
+    impl<'de> serde::de::Visitor<'de> for Waiting {
+        type Value = Option<Vec<u32>>;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(formatter, "at most {QUESTION_CALL_LIMIT} waiting questions")
+        }
+        fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_some<D: serde::Deserializer<'de>>(
+            self,
+            deserializer: D,
+        ) -> Result<Self::Value, D::Error> {
+            deserializer.deserialize_seq(self)
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut sequence: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut waiting = Vec::new();
+            while waiting.len() < QUESTION_CALL_LIMIT {
+                let Some(question) = sequence.next_element()? else {
+                    return Ok(Some(waiting));
+                };
+                waiting.push(question);
+            }
+            if sequence.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                return Err(serde::de::Error::custom("user_turn_capacity"));
+            }
+            Ok(Some(waiting))
+        }
+    }
+    deserializer.deserialize_option(Waiting)
 }
 
 fn deserialize_calls<'de, D: serde::Deserializer<'de>>(
@@ -529,7 +592,10 @@ impl TurnTracker {
                 {
                     return;
                 }
-                self.questions.clear();
+                // An async question outlives the turn that asked it: only its
+                // reply, a person's message or an abort ends it.
+                self.questions
+                    .retain(|question| question.unreplied.is_some() && !question.answered);
                 self.question_capacity = false;
                 self.unreadable = false;
                 self.last = Some(Turn {
@@ -555,28 +621,41 @@ impl TurnTracker {
                 for mark in marks {
                     match mark {
                         ToolTurnMark::Asked { call, content } => {
-                            if self.questions.iter().any(|known| known.call == *call) {
-                                continue;
-                            }
-                            if self.questions.len() == QUESTION_CALL_LIMIT
-                                || call.len() > NATIVE_ID_LIMIT_BYTES
-                            {
-                                self.question_capacity = true;
-                                self.questions.clear();
+                            if !self.ask(call, content, None) {
                                 break;
                             }
-                            self.questions.push(QuestionCall {
-                                call: call.clone(),
-                                content: content.clone(),
-                                answered: false,
-                            });
+                        }
+                        ToolTurnMark::AskedAsync {
+                            call,
+                            questions,
+                            content,
+                        } => {
+                            if !self.ask(call, content, Some((0..*questions).collect())) {
+                                break;
+                            }
                         }
                         ToolTurnMark::Answered { call } => {
-                            if let Some(question) =
-                                self.questions.iter_mut().find(|known| known.call == *call)
+                            if let Some(question) = self
+                                .questions
+                                .iter_mut()
+                                .find(|known| known.call == *call && known.unreplied.is_none())
                             {
                                 question.answered = true;
                                 question.content = None;
+                            }
+                        }
+                        ToolTurnMark::Replied { call, question } => {
+                            if let Some(known) = self
+                                .questions
+                                .iter_mut()
+                                .find(|known| known.call == *call && known.unreplied.is_some())
+                            {
+                                let unreplied = known.unreplied.as_mut().expect("checked above");
+                                unreplied.retain(|waiting| waiting != question);
+                                if unreplied.is_empty() {
+                                    known.answered = true;
+                                    known.content = None;
+                                }
                             }
                         }
                     }
@@ -634,6 +713,31 @@ impl TurnTracker {
             TurnMark::Unreadable => self.unreadable = true,
             TurnMark::Wake(_) => unreachable!("wake marks are folded before the turn offset guard"),
         }
+    }
+
+    /// Opens a question call; `false` when the bound is crossed, which fails
+    /// the read instead of dropping a pending question.
+    fn ask(
+        &mut self,
+        call: &str,
+        content: &Option<UserTurnContent>,
+        unreplied: Option<Vec<u32>>,
+    ) -> bool {
+        if self.questions.iter().any(|known| known.call == call) {
+            return true;
+        }
+        if self.questions.len() == QUESTION_CALL_LIMIT || call.len() > NATIVE_ID_LIMIT_BYTES {
+            self.question_capacity = true;
+            self.questions.clear();
+            return false;
+        }
+        self.questions.push(QuestionCall {
+            call: call.to_owned(),
+            content: content.clone(),
+            answered: false,
+            unreplied,
+        });
+        true
     }
 
     fn clear_questions(&mut self) {

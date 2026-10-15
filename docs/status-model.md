@@ -201,11 +201,15 @@ Demand has these sources:
 
 - A question is the core's label verdict on the agent's last message (`label.question`, see Task identity below).
   It exists only while the label is proven for the pane's current session, and it ends when the agent starts working again or a turn ran between two looks at a stopped agent, so a question never outlives the turn that asked it.
-- A native unanswered Claude `AskUserQuestion`, Codex `request_user_input`, Grok `ask_user_question`, omp `ask` or OpenCode `question` is a question even with summaries off.
+- A native unanswered Claude `AskUserQuestion`, Codex `request_user_input` or `request_user_input_async`, Grok `ask_user_question`, omp `ask` or OpenCode `question` is a question even with summaries off.
   A Grok session whose `plan_mode.json` is `Active` and awaiting plan approval is a plan approval, with `plan.md` as its bounded content, until that file says otherwise.
   The current-session/current-state read carries the optional `user_turn` row fact, with `kind: question|plan_approval` and optional `content: {text, choices, truncated}`.
   Text is capped at 8 KiB, choices at eight and each choice at 256 UTF-8 bytes; cuts preserve character boundaries and set `truncated`.
   A correlated native result, a later human turn or an abort clears the pending question.
+  Codex 0.162.1 asks with `request_user_input_async`, whose tool returns `{"accepted":true}` at once while Codex keeps working, so that result answers nothing: the question stays open, as an unread Question in Needs You even while Herdr says the agent works (the demand axis does not read the activity), until a reply names it.
+  The reply is a user message `<send_user_message_question_reply>` carrying `questionItemId`, a JSON array `[tool, call, question number]`; each question of the call waits for its own reply, and the match is on that id, never on the question or answer text.
+  That message is scaffolding like the other injected prefixes, so it is not a human turn and feeds no label as a request; a person's own message still ends the wait, and a turn that starts without one does not (the question outlives the turn that asked it).
+  A reply whose id cannot be placed, or an async call whose arguments cannot be read, leaves the wait unknown rather than nothing.
   Missing content remains absent, and a failed, incomplete or older-state read publishes no structured fact; the independent letter hold stays unknown rather than assuming an answer.
   Native calls are bounded to eight per turn with 256-byte identities; exceeding the bound fails the read instead of dropping a pending question.
 - Approval is Herdr's `blocked` lifecycle, whether or not the operator has read it.
