@@ -151,8 +151,10 @@ fn the_original_checkout_keeps_its_branch() {
         );
     }
     // From the worktree, a command aimed at the original checkout is refused,
-    // and its own branch changes are not.
-    let aimed = format!("git -C {} switch topic", repo.display());
+    // and its own branch changes are not. A path is quoted as a POSIX shell
+    // (Git Bash on Windows) needs it: unquoted, `C:\repo`'s backslashes are
+    // escapes there, and the hook reads the words as that shell runs them.
+    let aimed = format!("git -C '{}' switch topic", repo.display());
     assert_eq!(
         fixture.shell(&fixture.worktree, &aimed),
         Some(Rule::WorktreeFolder)
@@ -175,7 +177,7 @@ fn the_original_checkout_keeps_its_branch() {
     ] {
         assert_eq!(fixture.shell(repo, command), None, "{command}");
     }
-    let away = format!("cd {} && git switch topic", fixture.worktree.display());
+    let away = format!("cd '{}' && git switch topic", fixture.worktree.display());
     assert_eq!(fixture.shell(repo, &away), None);
     // A branch named like a folder is the branch, as Git reads it, and a
     // tree's paths after `--` are paths.
