@@ -7,6 +7,9 @@ use super::*;
 /// One model's tokens from one attempt, already checked and dated.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AiPart {
+    /// First in a contiguous attempt's model parts. Its call is credited to
+    /// the first part actually stored, even if the row cap refuses this one.
+    pub starts_attempt: bool,
     pub day: String,
     pub provider: String,
     pub feature: String,
@@ -40,7 +43,26 @@ pub struct AiRow {
     pub model: String,
     pub feature: String,
     pub totals: Totals,
+    /// Backend attempts, independent of the per-model calls used for pricing.
+    pub attempts: u64,
     pub unknown: u64,
+}
+
+/// Extend only the Hide AI JSON. The session ledger's per-model pricing
+/// totals stay unchanged. Experimental rows without this field keep their
+/// old count; their original multi-model attempt boundaries were not saved.
+#[derive(Default, Serialize, Deserialize)]
+struct AiTotals {
+    #[serde(flatten)]
+    totals: Totals,
+    #[serde(default)]
+    attempts: Option<u64>,
+}
+
+impl AiTotals {
+    fn attempts(&self) -> u64 {
+        self.attempts.unwrap_or(self.totals.calls)
+    }
 }
 
 /// Changes the row of `key` (day, provider, model, feature), making it when
@@ -49,7 +71,7 @@ fn upsert(
     tx: &rusqlite::Transaction<'_>,
     key: [&str; 4],
     rows: &mut usize,
-    change: impl FnOnce(&mut Totals, &mut u64) -> Result<(), &'static str>,
+    change: impl FnOnce(&mut AiTotals, &mut u64) -> Result<(), &'static str>,
 ) -> Result<bool, &'static str> {
     let [day, provider, model, feature] = key;
     let found: Option<(String, u64)> = tx
@@ -61,11 +83,11 @@ fn upsert(
         .optional()
         .map_err(failed)?;
     let (mut totals, mut unknown) = match found {
-        Some((text, unknown)) => (decode::<Totals>(&text)?, unknown),
+        Some((text, unknown)) => (decode::<AiTotals>(&text)?, unknown),
         None if *rows >= AI_ROW_LIMIT => return Ok(false),
         None => {
             *rows += 1;
-            (Totals::default(), 0)
+            (AiTotals::default(), 0)
         }
     };
     change(&mut totals, &mut unknown)?;
@@ -110,7 +132,11 @@ impl Store {
             .map_err(failed)?;
         let mut outcome = AiRecorded::default();
         let mut earliest_refused: Option<String> = None;
+        let mut attempt_counted = false;
         for part in parts {
+            if part.starts_attempt {
+                attempt_counted = false;
+            }
             let key = [
                 part.day.as_str(),
                 &part.provider,
@@ -118,9 +144,16 @@ impl Store {
                 &part.feature,
             ];
             let written = upsert(&tx, key, &mut rows, |totals, _| {
-                totals.add_call(&part.tokens, None, part.lower_bound, None)
+                let mut attempts = totals.attempts();
+                plus(&mut attempts, u64::from(!attempt_counted))?;
+                totals.attempts = Some(attempts);
+                totals
+                    .totals
+                    .add_call(&part.tokens, None, part.lower_bound, None)
             })?;
-            if !written {
+            if written {
+                attempt_counted = true;
+            } else {
                 outcome.refused += 1;
                 note_earliest(&mut earliest_refused, &part.day);
             }
@@ -185,12 +218,15 @@ impl Store {
         }
         raw.into_iter()
             .map(|(day, provider, model, feature, totals, unknown)| {
+                let totals: AiTotals = decode(&totals)?;
+                let attempts = totals.attempts();
                 Ok(AiRow {
                     day,
                     provider,
                     model,
                     feature,
-                    totals: decode(&totals)?,
+                    totals: totals.totals,
+                    attempts,
                     unknown,
                 })
             })

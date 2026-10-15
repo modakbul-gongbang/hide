@@ -45,9 +45,10 @@ it("pins a day across hover exit, keeps thirty cells and removes the grid on unm
     const day = container.querySelector<HTMLButtonElement>('[data-usage-day="2026-10-11"]')!;
     await act(async () => day.click());
     expect(container.querySelector("[data-usage-date]")!.textContent).toContain("Oct 11");
-    expect(container.querySelector("[data-usage-total]")!.textContent).toBe("4M");
+    // Oct 11 is 4M of sessions and 300K of Hide AI.
+    expect(container.querySelector("[data-usage-total]")!.textContent).toBe("4.3M");
     await act(async () => day.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body })));
-    expect(container.querySelector("[data-usage-total]")!.textContent).toBe("4M");
+    expect(container.querySelector("[data-usage-total]")!.textContent).toBe("4.3M");
     expect(day.getAttribute("aria-pressed")).toBe("true");
   } finally { await act(async () => root.unmount()); }
   expect(container.querySelectorAll("[data-usage-day]")).toHaveLength(0);
@@ -132,6 +133,65 @@ it("marks a Hide AI amount that unknown calls make a lower bound", async () => {
   } finally { await view.unmount(); }
 });
 
+it("projects a day as the agents' sessions plus Hide AI, with the lower bound on the day and the period", async () => {
+  const node = scene("hide-unknown");
+  for (const range of [node.history!.popover.range, node.history!.year.range]) {
+    const counted = range.days.filter((day) => day.hide_ai);
+    expect(counted.length).toBeGreaterThan(0);
+    for (const day of counted) {
+      const sessions = day.agents.reduce((sum, agent) => sum + agent.new_tokens, 0);
+      expect(day.amount.new_tokens).toBeCloseTo(sessions + day.hide_ai!.amount.new_tokens, 5);
+      expect(day.amount.cost.partial).toBe(day.hide_ai!.unknown_calls > 0);
+    }
+    expect(counted.some((day) => day.hide_ai!.unknown_calls > 0)).toBe(true);
+    expect(range.amount.cost.partial).toBe(true);
+  }
+  const day = node.history!.popover.range.days.find((item) => item.hide_ai && item.hide_ai.unknown_calls > 0)!;
+  const view = await mount(node, "popover");
+  try {
+    await act(async () => view.container.querySelector<HTMLButtonElement>(`[data-usage-day="${day.date}"]`)!.click());
+    expect(view.container.querySelector("[data-usage-cost]")!.textContent).toMatch(/^≥ .*\*$/);
+    expect(view.container.querySelector("[data-usage-total]")!.textContent).toMatch(/^≥ .*\*$/);
+    expect(view.container.querySelector("[data-usage-period-tokens]")!.textContent).toMatch(/^≥ .*\*$/);
+  } finally { await view.unmount(); }
+});
+
+it("limits the token bound to the inspected day and selected period", async () => {
+  const node = scene("reference");
+  const day = node.history!.popover.range.days.find((item) => item.hide_ai && item.date < "2026-10-06")!;
+  // Only this older day has an unreported call; the most recent seven days are known.
+  day.hide_ai!.unknown_calls = 1;
+  day.hide_ai!.amount.cost.partial = true;
+  day.amount.cost.partial = true;
+  const view = await mount(node, "popover");
+  try {
+    await act(async () => view.container.querySelector<HTMLButtonElement>(`[data-usage-day="${day.date}"]`)!.click());
+    expect(view.container.querySelector("[data-usage-total]")!.textContent).toMatch(/^≥ .*\*$/);
+    expect(view.container.querySelector("[data-usage-period-tokens]")!.textContent).toMatch(/^≥ .*\*$/);
+    await act(async () => view.container.querySelector<HTMLButtonElement>('[data-usage-day="2026-10-11"]')!.click());
+    expect(view.container.querySelector("[data-usage-total]")!.textContent).toBe("4.3M");
+    expect(view.container.querySelector("[data-usage-period-tokens]")!.textContent).toMatch(/^≥ /);
+    await act(async () => view.container.querySelector<HTMLButtonElement>('button[aria-label="Last 7 days"]')!.click());
+    expect(view.container.querySelector("[data-usage-period-tokens]")!.textContent).not.toMatch(/≥|\*/);
+  } finally { await view.unmount(); }
+});
+
+it("keeps known tokens exact when only model prices are missing", async () => {
+  const node = scene("unpriced");
+  for (const surface of ["popover", "year"] as const) {
+    const view = await mount(node, surface);
+    try {
+      if (surface === "popover") await act(async () => view.container.querySelector<HTMLButtonElement>('[data-usage-day="2026-10-11"]')!.click());
+      expect(view.container.querySelector("[data-usage-cost]")!.textContent).toMatch(/^≥ /);
+      expect(view.container.querySelector("[data-usage-total]")!.textContent).not.toMatch(/≥|\*/);
+      if (surface === "popover") {
+        expect(view.container.querySelector("[data-usage-period-tokens]")!.textContent).not.toMatch(/≥|\*/);
+        expect(view.container.querySelector("[data-usage-hide-tokens]")!.textContent).not.toMatch(/≥|\*/);
+      }
+    } finally { await view.unmount(); }
+  }
+});
+
 it("says Hide AI was not counted before its first day and has no calls on a later day when nothing was counted", async () => {
   const node = scene("reference");
   const range = node.history!.popover.range;
@@ -169,9 +229,40 @@ it("lists Hide AI under an opened date of the full table, expands it into featur
     expect(view.container.querySelector(`[data-usage-unknown-row="${target.date}"]`)).not.toBeNull();
     expect(view.container.querySelector("[data-usage-hide-bound]")).not.toBeNull();
     // The period total is a lower bound too, and says so with the same mark.
-    expect(view.container.querySelector("tfoot")!.textContent).toContain("≥");
+    expect(view.container.querySelector("tfoot td:nth-child(3)")!.textContent).toMatch(/^≥ .*\*$/);
+    expect(view.container.querySelector("[data-usage-total]")!.textContent).toMatch(/^≥ .*\*$/);
+    await act(async () => view.container.querySelector<HTMLButtonElement>("[data-usage-exact]")!.click());
+    expect(view.container.querySelector("[data-usage-total]")!.textContent).toMatch(/^≥ [\d,]+ \*$/);
+    expect(view.container.querySelector("[data-usage-total]")!.textContent).toBe(view.container.querySelector("tfoot td:nth-child(3)")!.textContent);
     expect(view.container.querySelector("[data-usage-hide-since]")).not.toBeNull();
   } finally { await view.unmount(); }
+});
+
+it("retains the token bound for Hide AI alone and removes it for an agent's sessions", async () => {
+  const node = ledgerScene({ node: "local", agents: [{ agent: "claude", limits: { state: "unsupported" }, consumption: { state: "unsupported" } }], history: null }, "hide-unknown");
+  // jsdom cannot scroll a select's focused option into view.
+  const scrollIntoView = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = () => {};
+  const view = await mount(node, "year");
+  const choose = async (label: string) => {
+    await act(async () => view.container.querySelector<HTMLButtonElement>("[data-usage-agent-select]")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent === label)!;
+    expect(option).toBeDefined();
+    await act(async () => option.click());
+  };
+  try {
+    await choose("Hide AI");
+    expect(view.container.querySelector("[data-usage-total]")!.textContent).toMatch(/^≥ .*\*$/);
+    expect(view.container.querySelector("[data-usage-agent-row]")).toBeNull();
+    expect(view.container.querySelector("[data-usage-feature-row]")).not.toBeNull();
+    await choose("Claude Code");
+    expect(view.container.querySelector("[data-usage-total]")!.textContent).not.toMatch(/≥|\*/);
+    expect(view.container.querySelector("[data-usage-hide-bound]")).toBeNull();
+    expect(view.container.querySelector("[data-usage-feature-row]")).toBeNull();
+  } finally {
+    await view.unmount();
+    Element.prototype.scrollIntoView = scrollIntoView;
+  }
 });
 
 it("draws a day of only unreported calls as a count", async () => {

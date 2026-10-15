@@ -189,13 +189,14 @@ impl Availability {
 /// Failure classes a caller can branch on. Payloads carry diagnostics, never
 /// prompt or output content.
 ///
-/// Two families matter to the router. A refusal (`NotAuthenticated`,
-/// `UsageLimited`, `ProviderUnavailable`, `Transient`, `InvalidOutput`,
-/// `Unsupported`) means the provider never took the request, so asking
-/// again or asking another provider repeats nothing. A completion-unknown
-/// outcome (`Timeout`, `Cancelled`, `CompletionUnknown`) means the request
-/// was submitted and its fate is not known; it is final on that provider
-/// and is never re-run anywhere.
+/// A refusal (`NotAuthenticated`, `UsageLimited`, `ProviderUnavailable`,
+/// `Transient`, `Rejected`, `Unsupported`) means no model turn ran, so
+/// asking again or asking another provider repeats no model work.
+/// `InvalidOutput` may follow a model turn and is retried at most twice;
+/// each dispatch is counted even though its answer was unusable.
+/// A completion-unknown outcome (`Timeout`, `Cancelled`, `CompletionUnknown`)
+/// means the request was submitted and its fate is not known; it is final
+/// on that provider and is never re-run anywhere.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum AiError {
     /// Not retried until availability changes.
@@ -209,8 +210,8 @@ pub enum AiError {
     /// The deadline passed after the request was submitted.
     Timeout,
     Cancelled,
-    /// The connection or the child was lost after the request was
-    /// submitted, so whether it completed is unknown.
+    /// A submitted request ended without a reliable completion, such as a
+    /// lost connection or child, or an unclassified failure after turn start.
     CompletionUnknown(String),
     /// Schema mismatch or a message that is not the answer. The backend had
     /// the prompt, so a model turn may have run.
@@ -220,7 +221,7 @@ pub enum AiError {
     /// spent. It is retried and reported as `InvalidOutput` is, and is the
     /// one input failure the usage ledger does not count.
     Rejected(String),
-    /// A refusal that may clear on its own; nothing was submitted.
+    /// A refusal before model work that may clear on its own.
     Transient(String),
     /// The provider layer itself failed (a panicked request leader).
     Internal(String),

@@ -365,7 +365,7 @@ fn hide_view(
             now,
         )?;
         let mut sum = Sum {
-            calls: row.totals.calls,
+            calls: row.attempts,
             tokens: row.totals.tokens.clone(),
             cost: Cost {
                 micro_usd: resolved.micro_usd,

@@ -330,6 +330,7 @@ fn provider_capacity_refuses_instead_of_silently_omitting_provenance() {
 fn priced_table() -> prices::Table {
     prices::Table::parse(
         br#"{"claude-fixture": {"litellm_provider":"anthropic","input_cost_per_token":0.000003,"output_cost_per_token":0.000015,"cache_read_input_token_cost":0.0000003,"cache_creation_input_token_cost":0.00000375},
+            "claude-fixture-2": {"litellm_provider":"anthropic","input_cost_per_token":0.000003,"output_cost_per_token":0.000015,"cache_read_input_token_cost":0.0000003,"cache_creation_input_token_cost":0.00000375},
             "codex-fixture": {"litellm_provider":"openai","input_cost_per_token":0.000003,"output_cost_per_token":0.000015,"cache_read_input_token_cost":0.0000003,"cache_creation_input_token_cost":0.00000375}}"#,
         100,
     )
@@ -360,6 +361,7 @@ fn hide_row(date: &str, provider: &str, model: &str, feature: &str, calls: u64) 
         model: model.into(),
         feature: feature.into(),
         totals,
+        attempts: calls,
         unknown: 0,
     }
 }
@@ -371,6 +373,7 @@ fn unknown_row(date: &str, provider: &str, feature: &str, count: u64) -> AiRow {
         model: String::new(),
         feature: feature.into(),
         totals: Totals::default(),
+        attempts: 0,
         unknown: count,
     }
 }
@@ -390,6 +393,59 @@ fn project_with(rows: &[Daily], hide: &[AiRow], date: &str) -> Projection {
     )
     .unwrap()
     .unwrap()
+}
+
+#[test]
+fn one_multi_model_attempt_stays_one_call_after_storage_and_restart() {
+    use crate::usage_ledger::{ai_usage::AiUsageQueue, store::Store};
+    use hide_ai::{AiUsageSink, ModelTokens, ProviderId};
+
+    let queue = AiUsageQueue::new();
+    let models: Vec<_> = ["claude-fixture", "claude-fixture-2"]
+        .map(|model| ModelTokens {
+            model: model.into(),
+            input: 1000,
+            output: 100,
+            cache_read: 5000,
+            cache_write: 400,
+            cache_write_1h: 0,
+            reasoning: None,
+            lower_bound: false,
+        })
+        .into();
+    queue.attempt("context_label", ProviderId::CLAUDE, &models);
+    queue.attempt("context_label", ProviderId::CLAUDE, &models);
+    queue.attempt("project_memory", ProviderId::CLAUDE, &models[..1]);
+    queue.attempt("context_label", ProviderId::CLAUDE, &[]);
+    let mut batch = queue.take(&jiff::tz::TimeZone::UTC);
+    for part in &mut batch.parts {
+        part.day = "2026-10-14".into();
+    }
+    for unknown in &mut batch.unknown {
+        unknown.day = "2026-10-14".into();
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = hide_kit::layout::usage_store(dir.path());
+    Store::open(&path)
+        .unwrap()
+        .ai_record(&batch.parts, &batch.unknown)
+        .unwrap();
+    let rows = Store::open(&path).unwrap().ai_rows().unwrap();
+    let view = project_with(&[], &rows, "2026-10-14");
+    let day = view.year.all.days.last().unwrap();
+    let hide = day.hide_ai.as_ref().unwrap();
+    assert_eq!(
+        hide.amount.calls, 3,
+        "two multi-model and one single-model attempts"
+    );
+    assert_eq!(hide.unknown_calls, 1);
+    assert_eq!(hide.features[0].amount.calls, 2);
+    assert_eq!(hide.features[1].amount.calls, 1);
+    assert_eq!(hide.amount.new_tokens, 5 * 1500);
+    assert_eq!(hide.amount.cost.micro_usd, 5 * 7500);
+    assert_eq!(day.amount.calls, 3);
+    assert_eq!(view.year.all.amount.calls, 3);
+    assert_eq!(view.year.all.amount.new_tokens, 5 * 1500);
 }
 
 #[test]
@@ -492,6 +548,8 @@ fn unknown_calls_are_a_count_in_no_amount_and_make_the_day_a_lower_bound() {
     assert_eq!(day.amount.calls, 1);
     assert_eq!(day.amount.new_tokens, 1500);
     assert!(hide_ai.amount.cost.partial && day.amount.cost.partial);
+    // The period headline reads as a lower bound too, not only the day.
+    assert!(view.year.all.amount.cost.partial);
     // A day without unknown calls has no mark.
     let exact = project_with(
         &[],

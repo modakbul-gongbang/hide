@@ -6,7 +6,7 @@ import { useInterfaceTranslation } from "../i18n/client";
 import { requireInterfaceLanguage } from "../i18n/locale";
 import { compactTokens, sumUsageDays, usageDate, usagePeriodDays } from "../usageHistory";
 import { UsageCost, UsageStatus, UsageSummary } from "./usage-amount";
-import { HideAiLine } from "./usage-hide-ai";
+import { BoundedTokens, HideAiLine } from "./usage-hide-ai";
 import { UsageHistoryTable } from "./usage-history-table";
 import { Button } from "./ui/button";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
@@ -46,6 +46,7 @@ function CompactHistory({ node, outline, children, onHistory }: { node: NodeUsag
   const [period, setPeriod] = useState<7 | 30>(30);
   const days = useMemo(() => range ? usagePeriodDays(range, period) : [], [range, period]);
   const total = useMemo(() => sumUsageDays(days), [days]);
+  const totalLowerBound = days.some((day) => (day.hide_ai?.unknown_calls ?? 0) > 0);
   const [pinned, setPinned] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   if (!range) return children;
@@ -55,7 +56,7 @@ function CompactHistory({ node, outline, children, onHistory }: { node: NodeUsag
   return <section className="usage-history flex min-w-0 flex-col gap-md" data-usage-history="popover" data-surface="popover">
     <div data-usage-detail="true" className="flex flex-col gap-sm">
       <div className="flex items-center justify-between gap-xs text-caption text-muted-foreground"><span data-usage-date="true">{day.today ? t("usage.history.today") : usageDate(day.date, language, { month: "short", day: "numeric", weekday: "short" })}</span>{!selected.today ? <Button variant="ghost" size="sm" onClick={() => { setPinned(null); setPreview(null); }}>{t("usage.history.today")}</Button> : null}</div>
-      <UsageSummary amount={day.amount} pending={day.pending} announce />
+      <UsageSummary amount={day.amount} pending={day.pending} tokensLowerBound={(day.hide_ai?.unknown_calls ?? 0) > 0} announce />
       <HideAiLine day={day} since={range.hide_ai_since} />
       <details className="text-micro text-muted-foreground" data-usage-breakdown="true"><summary className="cursor-pointer">{t("usage.history.details")}</summary><div className="usage-token-detail"><span>{t("usage.history.input", { value: fmt(day.amount.tokens.input) })}</span><span>{t("usage.history.output", { value: fmt(day.amount.tokens.output) })}</span><span>{t("usage.history.cacheWrite", { value: fmt(day.amount.tokens.cache_write) })}</span><span>{t("usage.history.cacheRead", { value: fmt(day.amount.tokens.cache_read) })}</span></div></details>
     </div>
@@ -75,7 +76,7 @@ function CompactHistory({ node, outline, children, onHistory }: { node: NodeUsag
       <div className={period === 7 ? "flex flex-col gap-sm" : "flex items-center gap-lg"}>
         <DayChart days={days} period={period} selected={selected.date} outline={outline} onPreview={setPreview} onSelect={setPinned} />
         <div data-usage-period-total="true" aria-label={t("usage.history.periodTotal")} className={period === 7 ? "flex min-w-0 items-center justify-between gap-xs" : "flex min-w-0 flex-col gap-xs"}>
-          <span className="font-mono text-subhead font-semibold"><UsageCost amount={total} /></span><span className="font-mono text-caption text-muted-foreground">{fmt(total.new_tokens)}</span>
+          <span className="font-mono text-subhead font-semibold"><UsageCost amount={total} /></span><span className="font-mono text-caption text-muted-foreground" data-usage-period-tokens="true"><BoundedTokens text={fmt(total.new_tokens)} bounded={totalLowerBound} /></span>
           {period === 30 ? <span className="usage-legend" aria-hidden="true">{t("usage.history.less")}{[0, 1, 2, 3, 4].map((level) => <span key={level} className="usage-cell" data-level={level} />)}{t("usage.history.more")}</span> : null}
         </div>
       </div>

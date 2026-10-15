@@ -163,7 +163,10 @@ impl AiUsageQueue {
                 .map(|tokens| part(&day, provider, attempt.feature, tokens))
                 .collect();
             match parts {
-                Some(parts) if !parts.is_empty() => batch.parts.extend(parts),
+                Some(mut parts) if !parts.is_empty() => {
+                    parts[0].starts_attempt = true;
+                    batch.parts.extend(parts);
+                }
                 Some(_) => *unknown.entry((day, provider, attempt.feature)).or_default() += 1,
                 None => {
                     batch.invalid += 1;
@@ -194,6 +197,7 @@ fn part(day: &str, provider: &str, feature: Feature, tokens: &ModelTokens) -> Op
         return None;
     }
     Some(AiPart {
+        starts_attempt: false,
         day: day.to_owned(),
         provider: provider.to_owned(),
         feature: feature.id().to_owned(),

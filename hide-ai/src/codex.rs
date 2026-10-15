@@ -333,9 +333,7 @@ impl CodexAppServerBackend {
                             session,
                             params.pointer("/turn/error").unwrap_or(&Value::Null),
                         )),
-                        Some("interrupted") => {
-                            Err(AiError::Transient("turn_interrupted".to_owned()))
-                        }
+                        Some("interrupted") => Err(AiError::Cancelled),
                         other => Err(AiError::InvalidOutput(format!(
                             "turn_status_{}",
                             other.unwrap_or("unknown")
@@ -351,14 +349,17 @@ impl CodexAppServerBackend {
     /// message text is inspected: the enum is the contract.
     fn classify_turn_error(&self, session: &mut Session, error: &Value) -> AiError {
         let info = error.get("codexErrorInfo").unwrap_or(&Value::Null);
-        let http_status = [
-            "httpConnectionFailed",
-            "responseStreamConnectionFailed",
-            "responseStreamDisconnected",
-        ]
-        .iter()
-        .find_map(|key| info.pointer(&format!("/{key}/httpStatusCode")))
-        .and_then(Value::as_u64);
+        // A response stream existed, so model work may already have run.
+        // Its HTTP status cannot make this safe to submit a second time.
+        if info.get("responseStreamDisconnected").is_some() {
+            return AiError::CompletionUnknown("codex_response_stream_disconnected".to_owned());
+        }
+        let connection_failure = ["httpConnectionFailed", "responseStreamConnectionFailed"]
+            .iter()
+            .find_map(|key| info.get(key));
+        let http_status = connection_failure
+            .and_then(|failure| failure.get("httpStatusCode"))
+            .and_then(Value::as_u64);
         match (info.as_str(), http_status) {
             (Some("usageLimitExceeded" | "rateLimitExceeded"), _) | (_, Some(429)) => {
                 AiError::UsageLimited {
@@ -372,9 +373,12 @@ impl CodexAppServerBackend {
             (Some("sessionBudgetExceeded"), _) => {
                 AiError::InvalidOutput("codex_sessionBudgetExceeded".to_owned())
             }
-            (Some(code), _) => AiError::Transient(format!("codex_{code}")),
+            (Some(code), _) => AiError::CompletionUnknown(format!("codex_{code}")),
             (None, Some(status)) => AiError::Transient(format!("codex_http_{status}")),
-            (None, None) => AiError::Transient("codex_turn_failed".to_owned()),
+            (None, None) if connection_failure.is_some() => {
+                AiError::Transient("codex_connection_failed".to_owned())
+            }
+            (None, None) => AiError::CompletionUnknown("codex_turn_failed".to_owned()),
         }
     }
 }

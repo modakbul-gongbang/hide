@@ -138,7 +138,7 @@ The transcript never reaches an argument vector.
 | `grok` | `grok --prompt-file <f> --output-format json --json-schema <s> --system-prompt-override <sys> --tools "" --no-subagents --disable-web-search --max-turns 1 [--model <m>]` with `GROK_MEMORY=0` and `GROK_DISABLE_AUTOUPDATER=1` | transcript in a `0600` prompt file | no tool, no sub-agent, no web search, one turn | `grok models`: the `* default` line and `- <id>` lines | `grok models` printing "not authenticated" is `NeedsLogin` |
 | `pi` | `pi -p --no-tools --no-session --no-extensions --no-mcp --no-skills --no-prompt-templates --no-context-files --thinking off --system-prompt <sys+schema> [--model <m>] <instruction>` | transcript on stdin | no tool, no extension, no MCP, no session | `pi --list-models`, read tolerantly | `pi auth check --provider <p>` when the model is `provider/id` (exit 0 ready, 1 or 2 not), otherwise a non-empty model list |
 
-Gemini exit 42 (input error) and 53 (turn limit) are `InvalidOutput`.
+Gemini exit 42 (input error) is `Rejected`, so it adds no unknown call; exit 53 (turn limit) is `InvalidOutput`, because a model turn may have run.
 Grok's answer is `structured_output` when present and its `text` otherwise.
 Each CLI's own flags are the contract; a flag one of them stops accepting is a failed request that names the exit status, not a silent change of behaviour.
 
@@ -395,9 +395,12 @@ An agent pane that Hide starts (a Factory worker, a Memory promotion) is a nativ
 What counts is the attempt, not the request:
 
 - A response with usage is told with its per-model tokens, whether or not the answer then passes schema validation. A rejected answer cost the same tokens, and a retry or a fallback is its own attempt.
+  Several model entries still count as one backend attempt; only their tokens and costs are added separately.
 - Callers joined onto one in-flight request are told once.
 - A `Timeout`, a `CompletionUnknown`, a `Cancelled` or a backend-side `InvalidOutput` is told as an **unknown call**: the backend had the prompt, so a model turn may have run, and the error carries no usage.
   Each is its own attempt: the second of two `InvalidOutput` attempts is a second dispatch, told once more.
+  A Codex turn that reports `interrupted` is `Cancelled`, and `responseStreamDisconnected` is `CompletionUnknown` regardless of its optional HTTP status: both may follow model work, count once, and are never retried automatically.
+  After `turn/start`, a failed turn with missing or unfamiliar `codexErrorInfo` is also `CompletionUnknown`; only a typed refusal or a failure to establish the HTTP/response-stream connection can remain retryable without an unknown call.
 - A response that arrives without usage (Gemini CLI, Pi, Grok today) is also an unknown call.
 - A refusal before the prompt went out (`ProviderUnavailable`, `NotAuthenticated`, `UsageLimited`, `Unsupported`, `Transient`, `OverBudget`) and a `Rejected` request (the provider refused the request itself: an HTTP 4xx, a prompt that does not fit, a Gemini input error, a Codex bad request or full context window) are not told: they did no model work.
   Neither is a cancel that returns before a backend is asked, nor a caller joined onto another's flight that gives up, since neither dispatched anything.
@@ -417,6 +420,8 @@ The ledger worker owns the writes.
 A router thread only appends to a bounded in-memory queue (256 attempts) under its own mutex: no I/O, no runtime lock, no time zone lookup and no clock read beyond the attempt time.
 Past the bound the oldest attempt is dropped and counted by the quarter hour it was made in, and the worker dates it as an unknown call with an `ai_usage_queue_full` diagnostic.
 The worker drains the queue at most once a second and writes the batch in one transaction into `ai_daily(day, provider, model, feature)`, a table of the same `usage.sqlite3` that holds totals and an unknown count and nothing that names a request, prompt, subject or path.
+Each row's totals JSON also keeps an `attempts` count separate from the per-model call count used to price its tokens.
+One attempt increments only its first successfully stored model row, so an earlier model refused at the row cap cannot hide the call or the surviving day's tokens.
 Feature ids outside the closed list (labels, memory, factory, issue) are counted as `other` and named once in an `ai_usage_feature_unmapped` diagnostic, so a new feature is counted from its first call.
 A write that fails loses its batch with the transaction, so each failed write names the number of calls it lost in a diagnostic; a Hide AI table that cannot be read at open is named in a diagnostic and does not stop the session ledger.
 A usage report that contradicts itself (an invalid model name, one-hour writes above all writes, reasoning above output) makes that attempt one unknown call with an `ai_usage_tokens_invalid` diagnostic.
@@ -491,7 +496,7 @@ The snapshot carries `status.background_ai.usage_limit`, each agent row's `weekl
 ## Retry policy
 
 - `Transient`: exponential backoff, at most four attempts on the same provider.
-- `InvalidOutput`: at most two attempts, because the input is deterministic.
+- `InvalidOutput`, `Rejected`: at most two attempts, because the input is deterministic; a backend-side `InvalidOutput` may have spent tokens and is counted as an unknown call, while an answer rejected by schema validation keeps its reported usage.
 - `Timeout`, `Cancelled`, `CompletionUnknown`: no retry anywhere; the caller decides what to do with the turn.
 - `Internal`: the request's leader thread panicked; every caller waiting on the same intent receives this error, the intent's key is freed, and the next call starts fresh.
 - `NotAuthenticated`: no retry; availability is re-read after its cache window.
@@ -530,6 +535,7 @@ A backend's events are produced on the node; the node holds at most 256 of them 
 - Hide AI's counting is partial by design.
   An `InvalidOutput` or `Cancelled` attempt that did spend tokens (for example a result with no structured output or `error_max_structured_output_retries`, a Codex turn that completed with no JSON message) is counted as an unknown call, not with its tokens, because the error path carries no usage; an error frame's usage is not read.
   Gemini CLI, Pi and Grok report no usage the code reads, so their calls are only counts of unknown calls.
-  A call that ran several models is counted as one call per model entry, so the call count can exceed the attempts.
+  Unreleased experimental rows written before the separate `attempts` field keep their original per-model call count when read or extended; the original attempt boundaries cannot be reconstructed, so their historical count can exceed actual attempts.
+  New attempts add exactly one known call regardless of model count; no migration guesses a correction to older experiment data, and a downgrade to that experimental writer can discard this new count when it rewrites a row.
   Calls before this feature are not backfilled.
 - Weekly usage in the toolbar reads Codex's usage endpoint, with Codex session JSONL as an offline fallback only, and Claude Code's `/usage` text; the router's daily rollup is a log line, not a popover value.

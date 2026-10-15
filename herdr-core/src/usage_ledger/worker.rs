@@ -565,8 +565,12 @@ impl Engine {
             Err(code) => {
                 // The batch is gone with the failed transaction, so every
                 // failure names how many calls it lost.
-                let lost =
-                    batch.parts.len() as u64 + batch.unknown.iter().map(|u| u.count).sum::<u64>();
+                let lost = batch
+                    .parts
+                    .iter()
+                    .filter(|part| part.starts_attempt)
+                    .count() as u64
+                    + batch.unknown.iter().map(|u| u.count).sum::<u64>();
                 diagnostic(code, None, lost);
             }
         }

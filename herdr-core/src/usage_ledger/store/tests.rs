@@ -551,6 +551,7 @@ fn expired_key_cannot_reenter_after_timezone_moves_its_day_across_the_horizon() 
 
 fn ai_part(day: &str, model: &str, feature: &str, input: u64) -> AiPart {
     AiPart {
+        starts_attempt: true,
         day: day.into(),
         provider: "claude".into(),
         feature: feature.into(),
@@ -602,6 +603,7 @@ fn hide_ai_rows_survive_a_restart_and_leave_the_schema_version_alone() {
         .find(|r| r.feature == "labels" && !r.model.is_empty())
         .unwrap();
     assert_eq!((labels.totals.calls, labels.totals.tokens.input), (2, 15));
+    assert_eq!(labels.attempts, 2);
     // One call per part, the price band of its own prompt size, and no
     // recorded cost: the price table reads it like any other call.
     assert_eq!(labels.totals.missing_cost_calls, 2);
@@ -655,6 +657,29 @@ fn hide_ai_stops_making_rows_at_the_cap_and_says_so_until_that_day_expires() {
     assert_eq!(rows.len(), AI_ROW_LIMIT);
     let first = rows.iter().find(|r| r.model == "model-0").unwrap();
     assert_eq!(first.totals.calls, 2);
+
+    // The first model is refused, but two existing rows from that same
+    // attempt still land. Exactly one of those rows must own its call.
+    let mut second = ai_part(day, "model-0", "labels", 9);
+    second.starts_attempt = false;
+    let mut third = ai_part(day, "model-1", "labels", 11);
+    third.starts_attempt = false;
+    let outcome = store
+        .ai_record(
+            &[ai_part(day, "new-at-cap", "labels", 1), second, third],
+            &[],
+        )
+        .unwrap();
+    assert_eq!(outcome.refused, 1);
+    let rows = store.ai_rows().unwrap();
+    let first = rows.iter().find(|row| row.model == "model-0").unwrap();
+    let second = rows.iter().find(|row| row.model == "model-1").unwrap();
+    assert_eq!((first.attempts, first.totals.tokens.input), (3, 17));
+    assert_eq!((second.attempts, second.totals.tokens.input), (1, 12));
+    assert_eq!(
+        rows.iter().map(|row| row.attempts).sum::<u64>(),
+        AI_ROW_LIMIT as u64 + 2
+    );
     drop(store);
     assert!(Store::open(&path).unwrap().ai_limited().unwrap());
 
@@ -675,4 +700,41 @@ fn a_hide_ai_name_with_a_control_character_is_refused_not_stored() {
         Err("usage_field_invalid")
     );
     assert!(store.ai_rows().unwrap().is_empty());
+}
+
+#[test]
+fn experimental_rows_keep_their_old_count_and_new_attempts_add_only_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = hide_kit::layout::usage_store(dir.path());
+    let mut store = Store::open(&path).unwrap();
+    let mut old = Totals::default();
+    old.add_call(
+        &ai_part("2026-10-14", "m-1", "labels", 10).tokens,
+        None,
+        false,
+        None,
+    )
+    .unwrap();
+    // A pre-fix experimental row contains only per-model pricing totals.
+    store
+        .connection
+        .execute(
+            "INSERT INTO ai_daily VALUES('2026-10-14','claude','m-1','labels',?1,0)",
+            [encode(&old).unwrap()],
+        )
+        .unwrap();
+    assert_eq!(store.ai_rows().unwrap()[0].attempts, 1);
+    let mut second = ai_part("2026-10-14", "m-2", "labels", 30);
+    second.starts_attempt = false;
+    store
+        .ai_record(&[ai_part("2026-10-14", "m-1", "labels", 20), second], &[])
+        .unwrap();
+    drop(store);
+    let rows = Store::open(&path).unwrap().ai_rows().unwrap();
+    assert_eq!(rows.iter().map(|row| row.attempts).sum::<u64>(), 2);
+    assert_eq!(rows.iter().map(|row| row.totals.calls).sum::<u64>(), 3);
+    assert_eq!(
+        rows.iter().map(|row| row.totals.tokens.input).sum::<u64>(),
+        60
+    );
 }

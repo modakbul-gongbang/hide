@@ -1711,6 +1711,8 @@ No calls means No data, never a zero dollar amount; a known free price remains z
 Under the summary one quiet line reads `Of this, Hide AI` with its new tokens and its share of that day, with no money: Hide AI's own background calls (agent summaries, Memory, Factory, issues and worktrees) that no session file records.
 Hide AI is inside the headline totals, bars and grass, so the line explains part of the number above it.
 Unknown calls make the amount a lower bound, drawn `≥` with a mark and spoken as "at least"; a day with none says `No records`, a day before counting began says `Before counting`, and the line follows the inspected day.
+The same token mark appears in the inspected day's summary and the selected period's total, including the full-history summary, whenever that day or period contains unknown calls.
+A missing model price alone does not make known tokens a lower bound.
 
 Below the summary, a `7 days` / `30 days` segmented choice switches between seven daily bars and thirty 12-pixel contribution squares; thirty days is the initial view.
 The bars show the most recent seven civil dates, labeled by weekday with Today at the end, and scale new tokens against the largest day in that period.

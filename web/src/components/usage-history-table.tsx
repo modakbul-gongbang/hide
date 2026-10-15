@@ -54,7 +54,7 @@ export function UsageHistoryTable({ node }: { node: NodeUsage }) {
       <Select value={period} onValueChange={(next) => { setPeriod(next); reset(); }}><SelectTrigger size="sm" className="w-auto" aria-label={t("usage.history.period")} data-usage-period-select="true"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="7">{t("usage.history.last7")}</SelectItem><SelectItem value="30">{t("usage.history.last30")}</SelectItem><SelectItem value="year">{t("usage.history.lastYear")}</SelectItem></SelectContent></Select>
       <Button variant={exact ? "secondary" : "ghost"} size="sm" aria-pressed={exact} onClick={() => setExact((value) => !value)} data-usage-exact="true">{t("usage.history.exact")}</Button>
     </div></div>
-    <UsageSummary amount={total} exact={exact} />
+    <UsageSummary amount={total} exact={exact} tokensLowerBound={lowerBound} />
     {range ? <UsageStatus range={range} /> : null}
     <div className="usage-table-scroll" tabIndex={0} role="region" aria-label={t("usage.history.history")}>
       <table className="usage-table" data-usage-table="true"><thead><tr>{HEADINGS.map((key) => <th key={key} scope="col">{t(key)}</th>)}</tr></thead><tbody>
