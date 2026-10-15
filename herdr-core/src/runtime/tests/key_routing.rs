@@ -275,6 +275,46 @@ fn a_split_refused_before_herdr_answers_its_request_as_discarded() {
     );
 }
 
+/// The wait is bounded from the request's opening, about when its first key
+/// was typed: a creation Herdr answers after that bound gives its keys to the
+/// pane at once rather than make the oldest too old to be written, while one
+/// answered inside it waits for the shell.
+#[test]
+fn keys_for_a_creation_answered_after_the_wait_s_bound_reach_its_pane_at_once() {
+    let herdr = fake_herdr("key-routing-late-answer");
+    let (mut runtime, terminals) = runtime_on(&herdr);
+    let late = super::terminal_input::InputOrigin::TabCreate(41);
+    let opened_long_ago = std::time::Instant::now()
+        .checked_sub(Duration::from_secs(3))
+        .expect("the clock reaches three seconds back");
+    runtime
+        .input_requests
+        .open("r-late-answer", late.clone(), opened_long_ago);
+    runtime.resolve_input_request_at_shell(&late, "w-order:t9:p");
+    assert_eq!(
+        request_state(&runtime, "r-late-answer"),
+        Some(crate::model::InputRequestState::Ready)
+    );
+
+    let timely = super::terminal_input::InputOrigin::TabCreate(42);
+    runtime
+        .input_requests
+        .open("r-timely-answer", timely.clone(), std::time::Instant::now());
+    runtime.resolve_input_request_at_shell(&timely, "w-order:t10:p");
+    assert_eq!(
+        request_state(&runtime, "r-timely-answer"),
+        Some(crate::model::InputRequestState::Pending)
+    );
+    assert_eq!(
+        request_controls(&terminals),
+        [
+            open("r-late-answer"),
+            resolve("r-late-answer", "w-order:t9:p"),
+            open("r-timely-answer"),
+        ]
+    );
+}
+
 /// B1, B9 for a new tab: the answer names the created tab's pane the keys
 /// typed for ⌘T wait for, and the node is told to write them there once its
 /// shell reads keys.

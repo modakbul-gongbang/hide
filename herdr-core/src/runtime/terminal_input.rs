@@ -364,8 +364,10 @@ impl InputRequests {
 /// How long after its request opened a new shell pane's keys wait for its
 /// shell to read them. The node writes a held key only within
 /// `HELD_INPUT_MAX_AGE_MS` of receiving it, and the first key arrives about
-/// when the request opens, so the wait ends, every read in it included,
-/// with a second to spare: a wait that runs out still writes every key.
+/// when the request opens; every read is cut to what is left of the wait, so
+/// it ends with a second to spare for the core's own lag and a local socket's
+/// connect, and a wait that runs out still writes every key. A creation Herdr
+/// answers later than this gets no wait ([`ShellWait::Late`]).
 const SHELL_READING_WAIT: Duration = Duration::from_secs(2);
 const _: () = assert!(SHELL_READING_WAIT.as_millis() + 1_000 <= HELD_INPUT_MAX_AGE_MS as u128);
 /// Between two reads of the shell: also the longest a key waits after its
@@ -388,6 +390,10 @@ pub(super) enum ShellWait {
     /// The wait ran out while the pane's shell could not be read (its last
     /// read's failure); the keys go in as they are.
     Unreadable(String),
+    /// Herdr named the pane only after the wait's bound (a split behind
+    /// another operation, a Task's tab after its worktree): the keys go in
+    /// at once, since waiting would make the oldest too old to be written.
+    Late,
 }
 
 impl ShellWait {
@@ -396,6 +402,7 @@ impl ShellWait {
             Self::Reading => "reading",
             Self::Timeout => "timeout",
             Self::Unreadable(_) => "unreadable",
+            Self::Late => "late",
         }
     }
 }
@@ -414,21 +421,30 @@ fn reads_keys(group: &wire::PaneProcessGroup, input: LineInput) -> bool {
 
 /// Reads once whether the shell of `pane_id` reads keys itself, asking
 /// Herdr for the shell and `node`, the machine that runs it, for its
-/// terminal.
+/// terminal, each within what is left before `deadline`.
 fn shell_reads_keys(
     connector: &dyn ApiConnector,
     node: &dyn NodeLink,
     pane_id: &str,
-    timeout: Duration,
+    deadline: Instant,
 ) -> Result<bool, String> {
+    let left = || {
+        deadline
+            .saturating_duration_since(Instant::now())
+            .min(SHELL_READ_TIMEOUT)
+    };
     let params = wire::pane_process_info_params(pane_id)?;
-    let group = request_with_connector(connector, "pane.process_info", params, timeout)
+    let group = request_with_connector(connector, "pane.process_info", params, left())
         .map_err(|error| format!("pane.process_info failed: {error}"))
         .and_then(wire::pane_process_group)?;
     // A pane whose shell Herdr has not named yet is still starting.
     let Some(shell) = group.shell_pid else {
         return Ok(false);
     };
+    let timeout = left();
+    if timeout.is_zero() {
+        return Ok(false);
+    }
     let input =
         crate::node_access::call_as::<LineInput>(node, Call::LineInput { pid: shell }, timeout)
             .map_err(|error| format!("the shell's terminal could not be read: {error}"))?;
@@ -457,7 +473,7 @@ fn wait_for_shell_reading(
         if left.is_zero() {
             return Some(failure.map_or(ShellWait::Timeout, ShellWait::Unreadable));
         }
-        match shell_reads_keys(connector, node, pane_id, left.min(SHELL_READ_TIMEOUT)) {
+        match shell_reads_keys(connector, node, pane_id, deadline) {
             Ok(true) => return Some(ShellWait::Reading),
             Ok(false) => failure = None,
             Err(message) => failure = Some(message),
@@ -522,13 +538,23 @@ impl super::Runtime {
         let Some(live) = self.live.clone() else {
             return self.resolve_input_request(origin, pane_id);
         };
-        self.input_requests.hold_for(origin, pane_id);
-        let Some(opened) = self.input_requests.waiting(origin, pane_id) else {
+        let held = self.input_requests.hold_for(origin, pane_id);
+        // No request waits for this creation, or a repeated answer finds its
+        // wait already running.
+        let Some(opened) = self
+            .input_requests
+            .waiting(origin, pane_id)
+            .filter(|_| held)
+        else {
             return;
         };
-        self.sync_input_requests();
         let deadline = opened + SHELL_READING_WAIT;
         let started = Instant::now();
+        if started >= deadline {
+            self.ingest_shell_wait(origin, pane_id, ShellWait::Late, Duration::ZERO);
+            return;
+        }
+        self.sync_input_requests();
         let worker_origin = origin.clone();
         let pane = pane_id.to_owned();
         let spawned = thread::Builder::new()
@@ -874,6 +900,26 @@ mod tests {
         );
         assert_eq!(outcome, Some(ShellWait::Timeout));
         assert!(node.reads() >= 1, "the shell was read before the bound");
+    }
+
+    /// Only the last read's failure names the end: a shell read again after
+    /// a failed read, still starting at the bound, ends as a timeout.
+    #[test]
+    fn a_read_after_a_failure_ends_the_wait_as_a_timeout() {
+        let herdr = shell_pane("shell-wait-recovered");
+        let node = Terminal::answering(vec![
+            Err("controls no terminal".to_owned()),
+            Ok(LineInput::Lines { limit: 1024 }),
+        ]);
+        let outcome = wait_for_shell_reading(
+            &herdr.connector(),
+            &node,
+            "w1:p2",
+            Instant::now() + Duration::from_millis(150),
+            || true,
+        );
+        assert_eq!(outcome, Some(ShellWait::Timeout));
+        assert!(node.reads() >= 2);
     }
 
     #[test]
