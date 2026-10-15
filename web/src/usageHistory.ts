@@ -85,7 +85,30 @@ export function usageDays(range: UsageRange): UsageDay[] {
         tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0, cache_write_1h: 0, reasoning: null },
         cost: { micro_usd: 0, partial: false, waiting: false, stale: false, incomplete: false, unpriced_models: [], other_unpriced_models: 0 },
       },
-      agents: [], top_agents: [], other_agents: 0,
+      agents: [], top_agents: [], other_agents: 0, hide_ai: null,
     };
   });
+}
+
+/** Hide AI's part of one day as a reader draws it: the core's amount, or why there is none. */
+export type HideAiReading =
+  | { state: "before" | "none" }
+  | { state: "counted"; amount: UsageAmount; unknown: number; basisPoints: number };
+
+/** `since` is the first day the core counted Hide AI on; nothing earlier is, and nothing at all means no call yet. */
+export function hideAiReading(day: UsageDay, since: string | null): HideAiReading {
+  if (day.hide_ai) return { state: "counted", amount: day.hide_ai.amount, unknown: day.hide_ai.unknown_calls, basisPoints: day.hide_ai.share_basis_points };
+  return { state: since && day.date < since ? "before" : "none" };
+}
+
+/** Hide AI's days summed the way sessions are; unknown calls stay a count beside the amount. */
+export function sumHideAiDays(days: readonly UsageDay[]): { amount: UsageAmount; unknown: number } {
+  const counted = days.flatMap((day) => day.hide_ai ? [{ ...day, amount: day.hide_ai.amount }] : []);
+  return { amount: sumUsageDays(counted), unknown: days.reduce((sum, day) => sum + (day.hide_ai?.unknown_calls ?? 0), 0) };
+}
+
+/** The share is over the day's known new tokens; a share too small to see reads as below a tenth of a percent. */
+export function hideAiShare(basisPoints: number, language: InterfaceLanguage): string {
+  const percent = new Intl.NumberFormat(language, { style: "percent", maximumFractionDigits: basisPoints < 1000 ? 1 : 0 });
+  return basisPoints > 0 && basisPoints < 10 ? `<${percent.format(0.001)}` : percent.format(basisPoints / 10_000);
 }

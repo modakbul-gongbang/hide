@@ -28,9 +28,15 @@ fn row(agent: &str, date: &str, input: u64) -> Daily {
     }
 }
 
+const NO_HIDE: Hide<'static> = Hide {
+    rows: &[],
+    limited: false,
+};
+
 fn project(rows: &[Daily], progress: &[Progress], date: &str) -> Option<Projection> {
     prepare(
         rows,
+        &NO_HIDE,
         progress,
         None,
         "own",
@@ -278,7 +284,7 @@ fn local_calendar_and_retention_boundaries_do_not_reassign_stored_days() {
         .unwrap()
         .as_millisecond() as u64;
     let zone = jiff::tz::TimeZone::get("America/New_York").unwrap();
-    let view = prepare(&rows, &[], None, "own", time, &zone)
+    let view = prepare(&rows, &NO_HIDE, &[], None, "own", time, &zone)
         .unwrap()
         .unwrap();
     assert!(view.year.all.days.len() <= 371);
@@ -310,6 +316,7 @@ fn provider_capacity_refuses_instead_of_silently_omitting_provenance() {
     assert_eq!(
         prepare(
             &rows,
+            &NO_HIDE,
             &[],
             None,
             "own",
@@ -318,4 +325,285 @@ fn provider_capacity_refuses_instead_of_silently_omitting_provenance() {
         ),
         Err("usage_provider_capacity")
     );
+}
+
+fn priced_table() -> prices::Table {
+    prices::Table::parse(
+        br#"{"claude-fixture": {"litellm_provider":"anthropic","input_cost_per_token":0.000003,"output_cost_per_token":0.000015,"cache_read_input_token_cost":0.0000003,"cache_creation_input_token_cost":0.00000375},
+            "claude-fixture-2": {"litellm_provider":"anthropic","input_cost_per_token":0.000003,"output_cost_per_token":0.000015,"cache_read_input_token_cost":0.0000003,"cache_creation_input_token_cost":0.00000375},
+            "codex-fixture": {"litellm_provider":"openai","input_cost_per_token":0.000003,"output_cost_per_token":0.000015,"cache_read_input_token_cost":0.0000003,"cache_creation_input_token_cost":0.00000375}}"#,
+        100,
+    )
+    .unwrap()
+}
+
+fn hide_row(date: &str, provider: &str, model: &str, feature: &str, calls: u64) -> AiRow {
+    let mut totals = Totals::default();
+    for _ in 0..calls {
+        totals
+            .add_call(
+                &Tokens {
+                    input: 1000,
+                    output: 100,
+                    cache_write: 400,
+                    cache_read: 5000,
+                    ..Tokens::default()
+                },
+                None,
+                false,
+                None,
+            )
+            .unwrap();
+    }
+    AiRow {
+        day: date.into(),
+        provider: provider.into(),
+        model: model.into(),
+        feature: feature.into(),
+        totals,
+        attempts: calls,
+        unknown: 0,
+    }
+}
+
+fn unknown_row(date: &str, provider: &str, feature: &str, count: u64) -> AiRow {
+    AiRow {
+        day: date.into(),
+        provider: provider.into(),
+        model: String::new(),
+        feature: feature.into(),
+        totals: Totals::default(),
+        attempts: 0,
+        unknown: count,
+    }
+}
+
+fn project_with(rows: &[Daily], hide: &[AiRow], date: &str) -> Projection {
+    prepare(
+        rows,
+        &Hide {
+            rows: hide,
+            limited: false,
+        },
+        &[],
+        Some(&priced_table()),
+        "own",
+        now(date),
+        &jiff::tz::TimeZone::UTC,
+    )
+    .unwrap()
+    .unwrap()
+}
+
+#[test]
+fn one_multi_model_attempt_stays_one_call_after_storage_and_restart() {
+    use crate::usage_ledger::{ai_usage::AiUsageQueue, store::Store};
+    use hide_ai::{AiUsageSink, ModelTokens, ProviderId};
+
+    let queue = AiUsageQueue::new();
+    let models: Vec<_> = ["claude-fixture", "claude-fixture-2"]
+        .map(|model| ModelTokens {
+            model: model.into(),
+            input: 1000,
+            output: 100,
+            cache_read: 5000,
+            cache_write: 400,
+            cache_write_1h: 0,
+            reasoning: None,
+            lower_bound: false,
+        })
+        .into();
+    queue.attempt("context_label", ProviderId::CLAUDE, &models);
+    queue.attempt("context_label", ProviderId::CLAUDE, &models);
+    queue.attempt("project_memory", ProviderId::CLAUDE, &models[..1]);
+    queue.attempt("context_label", ProviderId::CLAUDE, &[]);
+    let mut batch = queue.take(&jiff::tz::TimeZone::UTC);
+    for part in &mut batch.parts {
+        part.day = "2026-10-14".into();
+    }
+    for unknown in &mut batch.unknown {
+        unknown.day = "2026-10-14".into();
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = hide_kit::layout::usage_store(dir.path());
+    Store::open(&path)
+        .unwrap()
+        .ai_record(&batch.parts, &batch.unknown)
+        .unwrap();
+    let rows = Store::open(&path).unwrap().ai_rows().unwrap();
+    let view = project_with(&[], &rows, "2026-10-14");
+    let day = view.year.all.days.last().unwrap();
+    let hide = day.hide_ai.as_ref().unwrap();
+    assert_eq!(
+        hide.amount.calls, 3,
+        "two multi-model and one single-model attempts"
+    );
+    assert_eq!(hide.unknown_calls, 1);
+    assert_eq!(hide.features[0].amount.calls, 2);
+    assert_eq!(hide.features[1].amount.calls, 1);
+    assert_eq!(hide.amount.new_tokens, 5 * 1500);
+    assert_eq!(hide.amount.cost.micro_usd, 5 * 7500);
+    assert_eq!(day.amount.calls, 3);
+    assert_eq!(view.year.all.amount.calls, 3);
+    assert_eq!(view.year.all.amount.new_tokens, 5 * 1500);
+}
+
+#[test]
+fn hide_ai_joins_the_headline_and_stays_out_of_an_agents_own_range() {
+    let sessions = [row("claude", "2026-10-14", 600)];
+    let hide = [
+        hide_row("2026-10-14", "claude", "claude-fixture", "labels", 2),
+        hide_row("2026-10-14", "claude", "claude-fixture", "memory", 1),
+    ];
+    let view = project_with(&sessions, &hide, "2026-10-14");
+    // Each call: 1000 input + 100 output + 400 cache write = 1500 new tokens.
+    let day = view.year.all.days.last().unwrap();
+    assert_eq!(day.date, "2026-10-14");
+    assert_eq!(day.amount.new_tokens, 600 + 3 * 1500);
+    assert_eq!(day.amount.calls, 1 + 3);
+    let claude = view
+        .year
+        .filtered
+        .iter()
+        .find(|range| range.agent == "claude")
+        .unwrap();
+    assert_eq!(claude.range.days.last().unwrap().amount.new_tokens, 600);
+    assert!(claude.range.days.last().unwrap().hide_ai.is_none());
+    assert!(claude.range.hide_ai_since.is_none());
+    assert_eq!(view.year.all.amount.new_tokens, 600 + 3 * 1500);
+}
+
+#[test]
+fn a_days_hide_ai_rows_add_up_and_a_feature_is_one_row_per_closed_group() {
+    let hide = [
+        hide_row("2026-10-14", "claude", "claude-fixture", "labels", 2),
+        hide_row("2026-10-14", "codex", "codex-fixture", "labels", 1),
+        hide_row("2026-10-14", "claude", "claude-fixture", "memory", 1),
+    ];
+    let view = project_with(&[row("claude", "2026-10-14", 600)], &hide, "2026-10-14");
+    let day = view.year.all.days.last().unwrap();
+    let hide_ai = day.hide_ai.as_ref().unwrap();
+    let ids: Vec<_> = hide_ai
+        .features
+        .iter()
+        .map(|f| f.feature.as_str())
+        .collect();
+    assert_eq!(ids, ["labels", "memory"]);
+    // B11: the feature rows add up to the Hide AI row, and the Hide AI row
+    // plus the agents' rows to the day.
+    let features: u64 = hide_ai.features.iter().map(|f| f.amount.new_tokens).sum();
+    assert_eq!(features, hide_ai.amount.new_tokens);
+    assert_eq!(hide_ai.amount.new_tokens, 4 * 1500);
+    let agents: u64 = day.agents.iter().map(|a| a.new_tokens).sum();
+    assert_eq!(agents + hide_ai.amount.new_tokens, day.amount.new_tokens);
+    let labels = &hide_ai.features[0];
+    assert_eq!(labels.amount.calls, 3);
+    assert_eq!(labels.providers, ["claude", "codex"]);
+    // The share is over the day's new tokens, in basis points.
+    assert_eq!(
+        u128::from(hide_ai.share_basis_points),
+        u128::from(hide_ai.amount.new_tokens) * 10_000 / u128::from(day.amount.new_tokens)
+    );
+    // The same price table reads it as any other call, per provider: input
+    // $3, output $15, cache read $0.30 and cache write $3.75 per million, so
+    // one call costs 3000 + 1500 + 1500 + 1500 micro-USD.
+    assert_eq!(hide_ai.amount.cost.micro_usd, 4 * 7500);
+    assert!(!hide_ai.amount.cost.partial);
+}
+
+#[test]
+fn an_agents_share_is_of_what_the_agents_used_not_of_hide_ai() {
+    let sessions = [row("claude", "2026-10-14", 600)];
+    let hide = [hide_row(
+        "2026-10-14",
+        "claude",
+        "claude-fixture",
+        "labels",
+        2,
+    )];
+    let view = project_with(&sessions, &hide, "2026-10-14");
+    let claude = view
+        .year
+        .shares
+        .iter()
+        .find(|share| share.contribution.agent == "claude")
+        .unwrap();
+    assert_eq!(claude.contribution.share_basis_points, 10_000);
+    let day = view.year.all.days.last().unwrap();
+    assert_eq!(day.agents[0].share_basis_points, 10_000);
+}
+
+#[test]
+fn unknown_calls_are_a_count_in_no_amount_and_make_the_day_a_lower_bound() {
+    let hide = [
+        hide_row("2026-10-14", "claude", "claude-fixture", "labels", 1),
+        unknown_row("2026-10-14", "claude", "labels", 2),
+        unknown_row("2026-10-14", "gemini-cli", "memory", 1),
+    ];
+    let view = project_with(&[], &hide, "2026-10-14");
+    let day = view.year.all.days.last().unwrap();
+    let hide_ai = day.hide_ai.as_ref().unwrap();
+    assert_eq!(hide_ai.unknown_calls, 3);
+    assert_eq!(hide_ai.amount.calls, 1);
+    assert_eq!(day.amount.calls, 1);
+    assert_eq!(day.amount.new_tokens, 1500);
+    assert!(hide_ai.amount.cost.partial && day.amount.cost.partial);
+    // The period headline reads as a lower bound too, not only the day.
+    assert!(view.year.all.amount.cost.partial);
+    // A day without unknown calls has no mark.
+    let exact = project_with(
+        &[],
+        &[hide_row(
+            "2026-10-14",
+            "claude",
+            "claude-fixture",
+            "labels",
+            1,
+        )],
+        "2026-10-14",
+    );
+    assert!(!exact.year.all.days.last().unwrap().amount.cost.partial);
+}
+
+#[test]
+fn a_day_of_only_unknown_calls_is_kept_and_hide_ai_starts_on_its_first_day() {
+    let hide = [
+        unknown_row("2026-10-12", "claude", "labels", 1),
+        hide_row("2026-10-14", "claude", "claude-fixture", "labels", 1),
+    ];
+    let view = project_with(&[row("claude", "2026-10-10", 5)], &hide, "2026-10-14");
+    let dates: Vec<_> = view.year.all.days.iter().map(|d| d.date.as_str()).collect();
+    assert_eq!(dates, ["2026-10-10", "2026-10-12", "2026-10-14"]);
+    let only_unknown = &view.year.all.days[1];
+    assert_eq!(only_unknown.amount.calls, 0);
+    assert_eq!(only_unknown.hide_ai.as_ref().unwrap().unknown_calls, 1);
+    assert_eq!(view.year.all.hide_ai_since.as_deref(), Some("2026-10-12"));
+    // A day before it has no Hide AI part at all.
+    assert!(view.year.all.days[0].hide_ai.is_none());
+}
+
+#[test]
+fn hide_ai_cap_loss_marks_the_headline_range_limited() {
+    let view = prepare(
+        &[row("claude", "2026-10-14", 5)],
+        &Hide {
+            rows: &[],
+            limited: true,
+        },
+        &[],
+        None,
+        "own",
+        now("2026-10-14"),
+        &jiff::tz::TimeZone::UTC,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(view.year.all.limited);
+    let claude = view
+        .year
+        .filtered
+        .iter()
+        .find(|r| r.agent == "claude")
+        .unwrap();
+    assert!(!claude.range.limited);
 }

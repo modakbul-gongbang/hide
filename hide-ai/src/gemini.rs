@@ -122,7 +122,7 @@ fn answer(run: &runner::Run) -> Result<AiResponse, AiError> {
         Some(0) => {}
         // Documented: a malformed input, and the turn limit. Both are settled
         // by the input, so asking again repeats them.
-        Some(42) => return Err(AiError::InvalidOutput("gemini_input_error".to_owned())),
+        Some(42) => return Err(AiError::Rejected("gemini_input_error".to_owned())),
         Some(53) => return Err(AiError::InvalidOutput("gemini_turn_limit".to_owned())),
         code => {
             // A failed run prints the CLI's JSON error object on stdout when
@@ -198,7 +198,7 @@ mod tests {
     fn the_documented_exit_codes_map_to_their_classes() {
         assert_eq!(
             answer(&run(42, json!({}), "")).unwrap_err(),
-            AiError::InvalidOutput("gemini_input_error".to_owned())
+            AiError::Rejected("gemini_input_error".to_owned())
         );
         assert_eq!(
             answer(&run(53, json!({}), "")).unwrap_err(),

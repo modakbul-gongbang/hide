@@ -7,6 +7,8 @@ use hide_session::{Agent, usage::Tokens};
 use jiff::{ToSpan, civil::Date};
 use serde::Serialize;
 
+use super::ai_usage::Feature;
+use super::store::AiRow;
 use super::{DAILY_DAYS, DAILY_LIMIT, local_day, prices, store::Daily, worker::Progress};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -36,6 +38,29 @@ pub struct Contribution {
     pub share_basis_points: u16,
 }
 
+/// One feature's known calls on a day. Calls that reported no usage are not
+/// here: they are a count on the day, never tokens.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct HideAiFeature {
+    pub feature: String,
+    pub amount: Amount,
+    /// Provider ids of the models that answered, for the row's marks.
+    pub providers: Vec<String>,
+}
+
+/// Hide's own background AI on one day, already part of the day's amount.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct HideAiDay {
+    /// The sum of `features`; a lower bound when `unknown_calls` is not zero.
+    pub amount: Amount,
+    /// Its share of the day's new tokens, over the known tokens only.
+    pub share_basis_points: u16,
+    pub features: Vec<HideAiFeature>,
+    /// Attempts that were submitted and reported no usage. A count of calls,
+    /// not tokens, so it is in no amount.
+    pub unknown_calls: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Day {
     pub date: String,
@@ -49,6 +74,9 @@ pub struct Day {
     pub top_agents: Vec<Contribution>,
     pub agents: Vec<Contribution>,
     pub other_agents: usize,
+    /// Only the all-agents range carries it; an agent's own range is that
+    /// agent's sessions.
+    pub hide_ai: Option<HideAiDay>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -75,6 +103,9 @@ pub struct Range {
     pub limited: bool,
     pub files_done: usize,
     pub files_total: usize,
+    /// The first retained day Hide AI was counted on; nothing before it is.
+    /// Only the all-agents range carries it.
+    pub hide_ai_since: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -167,17 +198,75 @@ impl Sum {
 
 type Days = BTreeMap<Date, BTreeMap<String, Sum>>;
 
+/// Hide AI's rows of one day grouped by feature.
+#[derive(Default)]
+struct HideDay {
+    features: BTreeMap<Feature, Sum>,
+    unknown: u64,
+}
+
+impl HideDay {
+    fn total(&self) -> Result<Sum, &'static str> {
+        let mut total = Sum::default();
+        for sum in self.features.values() {
+            total.merge(sum)?;
+        }
+        // Calls without a report make the known amounts a lower bound.
+        total.cost.partial |= self.unknown > 0;
+        Ok(total)
+    }
+
+    fn view(&self, day_new_tokens: u64) -> Result<HideAiDay, &'static str> {
+        let amount = self.total()?.amount()?;
+        Ok(HideAiDay {
+            share_basis_points: contribution("hide_ai", amount.new_tokens, day_new_tokens)
+                .share_basis_points,
+            amount,
+            features: self
+                .features
+                .iter()
+                .map(|(feature, sum)| {
+                    Ok(HideAiFeature {
+                        feature: feature.id().into(),
+                        amount: sum.amount()?,
+                        providers: sum.providers.iter().cloned().collect(),
+                    })
+                })
+                .collect::<Result<_, &'static str>>()?,
+            unknown_calls: self.unknown,
+        })
+    }
+}
+
+/// Hide AI's days and the facts about the whole retained history.
+#[derive(Default)]
+struct HideView {
+    days: BTreeMap<Date, HideDay>,
+    since: Option<Date>,
+    limited: bool,
+}
+
+/// Hide AI's stored rows as the projection reads them.
+pub struct Hide<'a> {
+    pub rows: &'a [AiRow],
+    pub limited: bool,
+}
+
 /// Only the own-node records enter the projection. Dates were assigned at
 /// ingestion; changing the current time zone never re-buckets those records.
 pub fn prepare(
     rows: &[Daily],
+    hide: &Hide<'_>,
     progress: &[Progress],
     table: Option<&prices::Table>,
     device: &str,
     now: u64,
     zone: &jiff::tz::TimeZone,
 ) -> Result<Option<Projection>, &'static str> {
-    if rows.len() > DAILY_LIMIT || progress.len() > 6 {
+    if rows.len() > DAILY_LIMIT
+        || hide.rows.len() > super::store::AI_ROW_LIMIT
+        || progress.len() > 6
+    {
         return Err("usage_projection_capacity");
     }
     let today: Date = local_day(now, zone)?
@@ -219,16 +308,82 @@ pub fn prepare(
             .merge(&sum)?;
         lifetime.entry(row.agent.clone()).or_default().merge(&sum)?;
     }
+    let hide = hide_view(hide, table, device, today, cutoff, now)?;
     let reading = progress.iter().any(|p| p.reading);
-    let Some(first) = days.keys().next().copied().or(reading.then_some(today)) else {
+    let first = days
+        .keys()
+        .chain(hide.days.keys())
+        .min()
+        .copied()
+        .or(reading.then_some(today));
+    let Some(first) = first else {
         return Ok(None);
     };
     // One stable calendar during backfill and across agent selections.
     let start = if reading { shift(today, -45)? } else { first };
     Ok(Some(Projection {
-        popover: surface(&days, &lifetime, progress, today, start, 20)?,
-        year: surface(&days, &lifetime, progress, today, start, 53)?,
+        popover: surface(&days, &hide, &lifetime, progress, today, start, 20)?,
+        year: surface(&days, &hide, &lifetime, progress, today, start, 53)?,
     }))
+}
+
+/// Groups Hide AI's rows by day and feature, priced by the same table as the
+/// sessions. A row with no model counts a provider's unknown calls.
+fn hide_view(
+    hide: &Hide<'_>,
+    table: Option<&prices::Table>,
+    device: &str,
+    today: Date,
+    cutoff: Date,
+    now: u64,
+) -> Result<HideView, &'static str> {
+    let mut view = HideView {
+        limited: hide.limited,
+        ..HideView::default()
+    };
+    for row in hide.rows {
+        let date: Date = row.day.parse().map_err(|_| "usage_day_invalid")?;
+        view.since = Some(view.since.map_or(date, |before| before.min(date)));
+        if date < cutoff || date > today {
+            continue;
+        }
+        let feature = Feature::parse(&row.feature).unwrap_or(Feature::Other);
+        let day = view.days.entry(date).or_default();
+        plus(&mut day.unknown, row.unknown)?;
+        if row.model.is_empty() {
+            continue;
+        }
+        let resolved = prices::cost(
+            &Daily {
+                device: device.into(),
+                agent: row.provider.clone(),
+                day: row.day.clone(),
+                model: row.model.clone(),
+                totals: row.totals.clone(),
+            },
+            table,
+            now,
+        )?;
+        let mut sum = Sum {
+            calls: row.attempts,
+            tokens: row.totals.tokens.clone(),
+            cost: Cost {
+                micro_usd: resolved.micro_usd,
+                partial: resolved.unpriced || resolved.waiting || resolved.incomplete,
+                waiting: resolved.waiting,
+                stale: resolved.stale,
+                incomplete: resolved.incomplete,
+                ..Cost::default()
+            },
+            providers: BTreeSet::from([row.provider.clone()]),
+            ..Sum::default()
+        };
+        if resolved.unpriced {
+            sum.unpriced.insert(row.model.clone());
+        }
+        day.features.entry(feature).or_default().merge(&sum)?;
+    }
+    Ok(view)
 }
 
 fn shift(day: Date, delta: i64) -> Result<Date, &'static str> {
@@ -242,6 +397,7 @@ fn sunday(day: Date) -> Result<Date, &'static str> {
 
 fn surface(
     days: &Days,
+    hide: &HideView,
     lifetime: &BTreeMap<String, Sum>,
     progress: &[Progress],
     today: Date,
@@ -249,15 +405,30 @@ fn surface(
     weeks: i64,
 ) -> Result<Surface, &'static str> {
     let start = sunday(start)?.max(shift(sunday(today)?, -(weeks - 1) * 7)?);
-    let all = range(days, progress, today, start, None)?;
+    let all = range(days, Some(hide), progress, today, start, None)?;
     let mut filtered = Vec::new();
-    let mut shares = Vec::new();
     for agent in Agent::supported().filter(|agent| *agent != Agent::Cursor) {
         let name = agent.as_str();
-        let range = range(days, progress, today, start, Some(name))?;
+        let range = range(days, None, progress, today, start, Some(name))?;
+        filtered.push(AgentRange {
+            agent: name.into(),
+            range,
+        });
+    }
+    // An agent's share is of what the agents used: Hide AI sits beside them
+    // in the headline, so it is not in their denominator.
+    let mut sessions = 0u64;
+    for agent in &filtered {
+        sessions = sessions
+            .checked_add(agent.range.amount.new_tokens)
+            .ok_or("usage_total_overflow")?;
+    }
+    let mut shares = Vec::new();
+    for agent in &filtered {
+        let name = agent.agent.as_str();
         if let Some(sum) = lifetime.get(name) {
             shares.push(Share {
-                contribution: contribution(name, range.amount.new_tokens, all.amount.new_tokens),
+                contribution: contribution(name, agent.range.amount.new_tokens, sessions),
                 since: days
                     .iter()
                     .find(|(_, values)| values.contains_key(name))
@@ -266,10 +437,6 @@ fn surface(
                 providers: sum.providers.iter().cloned().collect(),
             });
         }
-        filtered.push(AgentRange {
-            agent: name.into(),
-            range,
-        });
     }
     shares.sort_by(|a, b| {
         b.contribution
@@ -298,6 +465,7 @@ fn contribution(agent: &str, tokens: u64, total: u64) -> Contribution {
 
 fn range(
     source: &Days,
+    hide: Option<&HideView>,
     progress: &[Progress],
     today: Date,
     start: Date,
@@ -320,9 +488,12 @@ fn range(
         current_streak: 0,
         longest_streak: 0,
         reading,
-        limited: progress.iter().any(|p| p.limited),
+        limited: progress.iter().any(|p| p.limited) || hide.is_some_and(|hide| hide.limited),
         files_done: progress.iter().map(|p| p.files_done).sum(),
         files_total: progress.iter().map(|p| p.files_total).sum(),
+        hide_ai_since: hide
+            .and_then(|hide| hide.since)
+            .map(|date| date.to_string()),
     };
     let mut total = Sum::default();
     let mut date = start;
@@ -340,6 +511,12 @@ fn range(
                 sum.merge(value)?;
                 contributors.push((agent, value.new_tokens()?));
             }
+        }
+        // The agents' share is over their own tokens; Hide AI is not an agent.
+        let session_new_tokens = sum.new_tokens()?;
+        let hide_day = hide.and_then(|hide| hide.days.get(&date));
+        if let Some(hide_day) = hide_day {
+            sum.merge(&hide_day.total()?)?;
         }
         total.merge(&sum)?;
         let amount = sum.amount()?;
@@ -373,10 +550,13 @@ fn range(
         let count = contributors.len();
         let agents: Vec<_> = contributors
             .into_iter()
-            .map(|(agent, n)| contribution(agent, n, amount.new_tokens))
+            .map(|(agent, n)| contribution(agent, n, session_new_tokens))
             .collect();
         let top_agents = agents.iter().take(3).cloned().collect();
-        if amount.calls > 0 {
+        if amount.calls > 0 || hide_day.is_some_and(|day| day.unknown > 0) {
+            let hide_ai = hide_day
+                .map(|day| day.view(amount.new_tokens))
+                .transpose()?;
             range.days.push(Day {
                 date: date.to_string(),
                 week: day_index / 7,
@@ -389,6 +569,7 @@ fn range(
                 top_agents,
                 agents,
                 other_agents: count.saturating_sub(3),
+                hide_ai,
             });
         }
         date = shift(date, 1)?;

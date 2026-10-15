@@ -194,6 +194,7 @@ impl Runtime {
         let settings = self.ai_settings.clone().unwrap_or_default();
         let ai_usable = self.ai_active() && !self.usage_paused();
         let provider = self.own_node();
+        let usage = self.ai_usage();
         self.session_issue_work.generation += 1;
         let generation = self.session_issue_work.generation;
         let cancel = CancelToken::new();
@@ -220,7 +221,8 @@ impl Runtime {
         let requested = source.clone();
         let admission = cancel.clone();
         let spawned = self.spawn_issue_worker("session-issue-preview", move || {
-            read_draft(&client, &requested, &places, &node, &provider, ai_usable.then_some(&settings), &cancel)
+            let ai = DraftAi { provider, usage, settings: ai_usable.then_some(settings) };
+            read_draft(&client, &requested, &places, &node, &ai, &cancel)
         }, move |runtime, result| {
             if runtime.session_issue_work.generation != generation { return false; }
             runtime.session_issue_work.active = None;
@@ -367,13 +369,20 @@ impl Runtime {
     }
 }
 
+/// What drafting an issue asks Hide AI with: the node whose CLIs answer, where
+/// the attempt is counted, and the settings when AI is usable.
+struct DraftAi {
+    provider: Arc<dyn NodeLink>,
+    usage: Arc<dyn hide_ai::AiUsageSink>,
+    settings: Option<AiSettings>,
+}
+
 fn read_draft(
     client: &LinkClient,
     source: &MissedSource,
     places: &[Place],
     node: &Arc<dyn NodeLink>,
-    provider: &Arc<dyn NodeLink>,
-    settings: Option<&AiSettings>,
+    ai: &DraftAi,
     cancel: &CancelToken,
 ) -> Result<Draft, String> {
     let LedgerAnswer::Record(record) = client.call(LedgerCall::Record(source.session.clone()))?
@@ -435,7 +444,7 @@ fn read_draft(
             .is_err()
             .then(|| "issue_draft_github_unavailable".into()),
     };
-    let Some(settings) = settings else {
+    let Some(settings) = ai.settings.as_ref() else {
         draft
             .message
             .get_or_insert_with(|| "issue_draft_ai_unavailable".into());
@@ -466,8 +475,9 @@ fn read_draft(
     );
     match context {
         Ok(context) => match crate::ai::draft_session_issue(
-            provider,
+            &ai.provider,
             settings,
+            &ai.usage,
             &source.id,
             &missed.text,
             &context,

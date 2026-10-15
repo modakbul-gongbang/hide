@@ -3,12 +3,13 @@
 //! without a login or a network.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use hide_ai::{
-    AiBackend, AiError, AiRequest, Availability, CancelToken, CodexAppServerBackend, CodexConfig,
-    NoopLogSink, RequestId,
+    AiBackend, AiError, AiLogEvent, AiLogSink, AiRequest, AiRouter, AiUsageSink, Availability,
+    CancelToken, CodexAppServerBackend, CodexConfig, ModelTokens, NoopLogSink, ProviderId,
+    RequestId, RouterConfig,
 };
 use serde_json::json;
 
@@ -63,6 +64,32 @@ fn a_completed_turn_returns_the_message_as_json_with_usage() {
         assert_eq!(response.value["summary"], "fixture");
         assert_eq!(response.usage.output_tokens, Some(56));
         assert_eq!(response.usage.input_tokens, Some(1234));
+    });
+}
+
+/// The ledger counts the thread's running total with the cache categories
+/// taken out of `inputTokens`, under the model the server resolved.
+#[test]
+fn a_completed_turn_reports_the_thread_total_as_disjoint_ledger_tokens() {
+    with_mode("ok", || {
+        let response = backend()
+            .execute(&request(Duration::from_secs(10)), &CancelToken::new())
+            .unwrap();
+        let [tokens] = response.usage.models.as_slice() else {
+            panic!("{:?}", response.usage.models);
+        };
+        assert_eq!(tokens.model, "gpt-5.6-luna");
+        assert_eq!(
+            (
+                tokens.input,
+                tokens.output,
+                tokens.cache_read,
+                tokens.cache_write
+            ),
+            (1000, 56, 200, 34)
+        );
+        assert_eq!((tokens.cache_write_1h, tokens.reasoning), (0, Some(12)));
+        assert!(!tokens.lower_bound);
     });
 }
 
@@ -167,6 +194,90 @@ fn a_non_json_message_is_invalid_output() {
             .unwrap_err();
         assert!(matches!(error, AiError::InvalidOutput(_)), "{error:?}");
     });
+}
+
+#[derive(Debug, Default)]
+struct Attempts {
+    calls: Mutex<Vec<Vec<ModelTokens>>>,
+    started: Mutex<usize>,
+}
+
+impl AiUsageSink for Attempts {
+    fn attempt(&self, _: &str, _: ProviderId, models: &[ModelTokens]) {
+        self.calls.lock().unwrap().push(models.to_vec());
+    }
+}
+
+impl AiLogSink for Attempts {
+    fn log(&self, event: AiLogEvent) {
+        if event.event == "ai.attempt" {
+            *self.started.lock().unwrap() += 1;
+        }
+    }
+}
+
+#[test]
+fn a_started_turn_that_ends_without_an_answer_is_one_unknown_call_without_retry() {
+    for mode in [
+        "interrupted_after_usage",
+        "stream_disconnected",
+        "stream_disconnected_500",
+        "generic_failure",
+        "unknown_failure",
+    ] {
+        with_mode(mode, || {
+            let attempts = Arc::new(Attempts::default());
+            let router = AiRouter::new(
+                vec![Arc::new(backend())],
+                RouterConfig {
+                    priority: vec![ProviderId::CODEX],
+                    backoff_base: Duration::ZERO,
+                    usage_sink: Some(attempts.clone()),
+                    ..RouterConfig::default()
+                },
+                attempts.clone(),
+            );
+            let error = router
+                .execute(&request(Duration::from_secs(10)), &CancelToken::new())
+                .unwrap_err();
+            assert!(
+                matches!(error, AiError::Cancelled | AiError::CompletionUnknown(_)),
+                "{mode}: {error:?}"
+            );
+            assert_eq!(*attempts.started.lock().unwrap(), 1, "{mode}: retried");
+            let calls = attempts.calls.lock().unwrap();
+            assert_eq!(calls.len(), 1, "{mode}: unknown calls");
+            assert!(calls[0].is_empty(), "incomplete turn usage is not a total");
+        });
+    }
+}
+
+#[test]
+fn a_definite_input_or_pre_response_connection_refusal_spends_no_unknown_call() {
+    for (mode, expected_attempts) in [("bad_request", 2), ("connection_failed", 4)] {
+        with_mode(mode, || {
+            let attempts = Arc::new(Attempts::default());
+            let router = AiRouter::new(
+                vec![Arc::new(backend())],
+                RouterConfig {
+                    priority: vec![ProviderId::CODEX],
+                    backoff_base: Duration::ZERO,
+                    usage_sink: Some(attempts.clone()),
+                    ..RouterConfig::default()
+                },
+                attempts.clone(),
+            );
+            let error = router
+                .execute(&request(Duration::from_secs(10)), &CancelToken::new())
+                .unwrap_err();
+            match mode {
+                "bad_request" => assert!(matches!(error, AiError::Rejected(_)), "{error:?}"),
+                _ => assert!(matches!(error, AiError::Transient(_)), "{error:?}"),
+            }
+            assert_eq!(*attempts.started.lock().unwrap(), expected_attempts);
+            assert!(attempts.calls.lock().unwrap().is_empty(), "{mode}");
+        });
+    }
 }
 
 /// Losing the child before `turn/start` is written is a refusal; losing it

@@ -128,6 +128,8 @@ pub struct PreparedMemory {
     pub(crate) sessions_node: Arc<dyn NodeLink>,
     /// The core's own node, which asks the provider for an `add`.
     pub(crate) ai_node: Arc<dyn NodeLink>,
+    /// Where the provider boundary tells what an `add` spent.
+    pub(crate) ai_usage: Arc<dyn hide_ai::AiUsageSink>,
     pub(crate) database: PathBuf,
     pub(crate) checkout_path: String,
     /// The calling agent's Memory provider and session, when the caller is
@@ -147,7 +149,8 @@ impl PreparedMemory {
     /// [`next_action`] explains.
     pub fn run(self) -> Result<Value, String> {
         let node = Arc::clone(&self.ai_node);
-        self.run_with(|settings| crate::ai::memory_add_router(&node, settings))
+        let usage = Arc::clone(&self.ai_usage);
+        self.run_with(|settings| crate::ai::memory_add_router(&node, settings, &usage))
     }
 
     fn run_with(self, router: impl FnOnce(&AiSettings) -> AiRouter) -> Result<Value, String> {
@@ -700,6 +703,7 @@ mod tests {
                 node: crate::node::test_node(),
                 sessions_node: Arc::clone(&self.node),
                 ai_node: Arc::clone(&self.node),
+                ai_usage: crate::usage_ledger::ai_usage::AiUsageQueue::new(),
                 database: self.database.clone(),
                 checkout_path: self.root.clone(),
                 reader: Some(("claude".to_owned(), "caller-session".to_owned())),

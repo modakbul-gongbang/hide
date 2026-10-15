@@ -11,6 +11,10 @@ all of those children when its stdin reaches EOF (the owner's shutdown signal)
 so a killed owner leaves no survivors. FAKE_ARGS_FILE records the argument
 vector when set, and FAKE_STARTED_FILE is created once a slow turn has
 started and is waiting.
+interrupted_after_usage, stream_disconnected and stream_disconnected_500 end
+an already-started turn after it reported tokens without a usable answer.
+generic_failure and unknown_failure do the same with missing or unfamiliar
+error information; bad_request and connection_failed refuse before usage.
 """
 import atexit
 import json
@@ -103,12 +107,30 @@ for raw in sys.stdin:
             notify("turn/completed", {"threadId": "thread-1", "turn": {"id": active_turn, "status": "failed", "items": [],
                     "error": {"message": "limit", "codexErrorInfo": "usageLimitExceeded"}}})
             continue
+        if MODE in ("bad_request", "connection_failed"):
+            info = "badRequest" if MODE == "bad_request" else {"responseStreamConnectionFailed": {"httpStatusCode": None}}
+            notify("turn/completed", {"threadId": "thread-1", "turn": {"id": active_turn, "status": "failed", "items": [],
+                    "error": {"message": "refused", "codexErrorInfo": info}}})
+            continue
         text = "not json at all" if MODE == "garbage" else REPLY
         notify("item/completed", {"threadId": "thread-1", "turnId": active_turn,
                                   "item": {"type": "agentMessage", "id": "msg-1", "text": text, "phase": "final_answer"}})
         notify("thread/tokenUsage/updated", {"threadId": "thread-1", "turnId": active_turn,
                "tokenUsage": {"last": {"inputTokens": 1234, "outputTokens": 56, "cachedInputTokens": 0, "reasoningOutputTokens": 0, "totalTokens": 1290},
-                              "total": {"inputTokens": 1234, "outputTokens": 56, "cachedInputTokens": 0, "reasoningOutputTokens": 0, "totalTokens": 1290}}})
+                              "total": {"inputTokens": 1234, "outputTokens": 56, "cachedInputTokens": 200, "cacheWriteInputTokens": 34, "reasoningOutputTokens": 12, "totalTokens": 1290}}})
+        if MODE == "interrupted_after_usage":
+            notify("turn/completed", {"threadId": "thread-1", "turn": {"id": active_turn, "status": "interrupted", "items": []}})
+            continue
+        if MODE in ("stream_disconnected", "stream_disconnected_500"):
+            status = 500 if MODE == "stream_disconnected_500" else None
+            notify("turn/completed", {"threadId": "thread-1", "turn": {"id": active_turn, "status": "failed", "items": [],
+                    "error": {"message": "stream ended", "codexErrorInfo": {"responseStreamDisconnected": {"httpStatusCode": status}}}}})
+            continue
+        if MODE in ("generic_failure", "unknown_failure"):
+            info = None if MODE == "generic_failure" else "unfamiliarFailure"
+            notify("turn/completed", {"threadId": "thread-1", "turn": {"id": active_turn, "status": "failed", "items": [],
+                    "error": {"message": "failed", "codexErrorInfo": info}}})
+            continue
         notify("turn/completed", {"threadId": "thread-1", "turn": {"id": active_turn, "status": "completed", "items": []}})
     elif method == "turn/interrupt":
         result(rid, {})

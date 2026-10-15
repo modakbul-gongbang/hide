@@ -1305,6 +1305,9 @@ pub struct Runtime {
     /// judge each request by; written from the settings and the usage rows
     /// (`runtime/usage_limit.rs`).
     usage_limits: Arc<hide_ai::UsageLimits>,
+    /// Where every router tells what its attempts cost; the usage ledger
+    /// worker drains it (`runtime/usage_ledger.rs`).
+    ai_usage: Arc<crate::usage_ledger::ai_usage::AiUsageQueue>,
     /// Whether the diagnostic log last said the order is paused by the limit.
     usage_pause_announced: bool,
     recent_visible_tabs: Vec<String>,
@@ -2034,6 +2037,7 @@ impl Runtime {
             usage_popover_open: false,
             usage_popover_open_generation: 0,
             usage_limits: Arc::new(hide_ai::UsageLimits::new()),
+            ai_usage: crate::usage_ledger::ai_usage::AiUsageQueue::new(),
             usage_pause_announced: false,
             recent_visible_tabs: Vec::new(),
             pending_tab_rename: None,

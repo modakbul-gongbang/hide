@@ -73,6 +73,7 @@ impl LabelServices {
         node: &crate::node::NodeId,
         own_node: Arc<dyn NodeLink>,
         gate: Arc<hide_ai::UsageLimits>,
+        usage: Arc<dyn hide_ai::AiUsageSink>,
     ) -> Result<Self, String> {
         let store = Arc::new(LabelStore::open(state_dir, home.as_deref(), node.as_str()));
         let settings_home = home.clone();
@@ -83,6 +84,7 @@ impl LabelServices {
             Arc::clone(&standing),
             own_node,
             gate,
+            usage,
         )?;
         Ok(Self {
             ledger: Arc::default(),

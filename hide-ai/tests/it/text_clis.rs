@@ -247,7 +247,7 @@ fn gemini_failures_map_from_the_documented_exit_codes_and_errors() {
     for (rule, expected) in [
         (
             json!({"exit": 42, "stderr": "bad input"}),
-            AiError::InvalidOutput("gemini_input_error".into()),
+            AiError::Rejected("gemini_input_error".into()),
         ),
         (
             json!({"exit": 53, "stderr": "turn limit"}),

@@ -189,7 +189,7 @@ pub(super) fn reverify_pending(
         });
         let verdict = match verdict {
             Ok(verdict) => verdict,
-            Err(AiError::InvalidOutput(_)) => {
+            Err(AiError::InvalidOutput(_) | AiError::Rejected(_)) => {
                 checked.answered += 1;
                 spend_unusable(store, &card.item_id, project_id, card.number)?;
                 progress(None);
@@ -470,7 +470,7 @@ pub(super) fn check_before_suggestion(
         });
         let verdict = match verdict {
             Ok(verdict) => verdict,
-            Err(AiError::InvalidOutput(_)) => {
+            Err(AiError::InvalidOutput(_) | AiError::Rejected(_)) => {
                 checked.answered += 1;
                 spend_unusable(store, &item.id, project_id, item.number)?;
                 progress(None);
