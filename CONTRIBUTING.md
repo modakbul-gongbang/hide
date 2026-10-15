@@ -241,8 +241,8 @@ It never merges, because three Herdr behaviors the core relies on are covered by
 
 ## License of contributions
 
-hide is released under the MIT License ([LICENSE](LICENSE)).
-By submitting a contribution, you confirm that you have the right to submit it and agree that it is licensed under the same MIT License.
+hide is released under the Apache License 2.0 ([LICENSE](LICENSE)), and [NOTICE](NOTICE) carries its copyright notice.
+By submitting a contribution, you confirm that you have the right to submit it and agree that it is licensed under the same Apache License 2.0, as section 5 of the license provides.
 You keep the copyright in your contribution.
 
 ## Commit messages and attribution
