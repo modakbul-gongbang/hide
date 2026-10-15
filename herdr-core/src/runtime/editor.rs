@@ -1433,11 +1433,10 @@ impl Runtime {
         self.sync_terminal_intents();
         if request.failed_terminals.is_empty() {
             // A sleep's own close (not kept for reopen) is Hide's, not the
-            // operator's, and one that opens a replacement shell keeps its
-            // checkout busy, so neither may take the screen elsewhere.
-            let may_leave_checkout =
-                request.retain_for_reopen && !request.context.replacement_shell;
-            self.move_from_closing_target(&request.target, &tab, may_leave_checkout);
+            // operator's, so it never takes the screen elsewhere. One that
+            // opens a replacement shell keeps its tab (`leaving_tab`), so its
+            // checkout is never empty.
+            self.move_from_closing_target(&request.target, &tab, request.retain_for_reopen);
         }
         let selection_after = self.close_selection_state(restore_checkout_id.as_deref());
         if selection_before != selection_after
@@ -1522,29 +1521,34 @@ impl Runtime {
     /// delegated child's) is still a tab the sidebar reaches, so a checkout
     /// holding one is not empty.
     fn checkout_emptied_by_closes(&self, checkout_id: &str) -> bool {
-        let Some(checkout) = self
-            .snapshot
+        self.snapshot
             .navigator
             .workspaces
             .iter()
             .flat_map(|workspace| workspace.checkouts.iter())
             .find(|checkout| checkout.id == checkout_id)
-        else {
-            return false;
-        };
-        checkout.tabs.iter().all(|tab| {
-            self.close_operations
-                .values()
-                .any(|operation| operation.leaving_tab() == tab.id.as_deref())
+            .is_some_and(|checkout| !self.has_tab_left(checkout))
+    }
+
+    /// Whether the checkout holds a tab no running close is taking away.
+    fn has_tab_left(&self, checkout: &CheckoutSnapshot) -> bool {
+        checkout.tabs.iter().any(|tab| {
+            !tab.id.as_deref().is_some_and(|id| {
+                self.close_operations
+                    .values()
+                    .any(|operation| operation.leaving_tab() == Some(id))
+            })
         })
     }
 
     /// Brings back the checkout of this machine the operator was in before
     /// the one their close just emptied, the way choosing it from the
     /// sidebar does, so the screen never stands on a checkout with nothing
-    /// left in it (docs/UI_BEHAVIOR.md, Agent areas). With no such checkout,
-    /// or with another device in front, the screen stays and the Agent
-    /// area's empty state shows.
+    /// left in it (docs/UI_BEHAVIOR.md, Agent areas). A checkout with no tab
+    /// left is no place to go, which also passes over one whose worktree or
+    /// project is being removed, since a removal closes its tabs first. With
+    /// no such checkout, or with another device in front, the screen stays
+    /// and the Agent area's empty state shows.
     fn leave_emptied_checkout(&mut self, checkout_id: &str) {
         if !self.device_in_front(self.node.as_str()) {
             return;
@@ -1562,13 +1566,14 @@ impl Runtime {
                     .workspaces
                     .iter()
                     .filter(|workspace| workspace.device_id == node)
-                    .find(|workspace| {
+                    .find_map(|workspace| {
                         workspace
                             .checkouts
                             .iter()
-                            .any(|checkout| checkout.id == record.checkout_id)
+                            .find(|checkout| checkout.id == record.checkout_id)
+                            .filter(|checkout| self.has_tab_left(checkout))
+                            .map(|checkout| (workspace.id.clone(), checkout.id.clone()))
                     })
-                    .map(|workspace| (workspace.id.clone(), record.checkout_id.clone()))
             });
         let Some((workspace_id, previous)) = previous else {
             return;

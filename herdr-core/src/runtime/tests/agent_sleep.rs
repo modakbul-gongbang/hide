@@ -872,7 +872,7 @@ fn checking_an_uncertain_sent_sleep_keeps_live_topology_and_sends_no_mutation() 
 fn a_dormant_close_of_the_last_tab_in_front_never_moves_the_screen() {
     let (runtime, checkout) = live_tab_order_runtime(CHECKOUT);
     let mut runtime = super::workspace_view::with_new_views(runtime, "dormant-last-tab");
-    let elsewhere = super::agent_areas::register_elsewhere(&mut runtime);
+    let elsewhere = super::agent_areas::register_folder(&mut runtime, "elsewhere");
     let mut payload = session(Some(4));
     payload.tabs.retain(|tab| tab.tab_id == "w-order:t2");
     payload
@@ -881,6 +881,7 @@ fn a_dormant_close_of_the_last_tab_in_front_never_moves_the_screen() {
     payload.panes.retain(|pane| pane.pane_id == SLEEPER);
     payload.workspaces[0].active_tab_id = Some("w-order:t2".into());
     payload.focused_pane_id = Some(SLEEPER.into());
+    super::agent_areas::add_elsewhere_tab(&mut payload);
     runtime.ingest_session(Ok(payload));
     super::agent_areas::choose_checkout(&mut runtime, "workspace:elsewhere", &elsewhere);
     super::agent_areas::choose_checkout(&mut runtime, "workspace:order", &checkout);
