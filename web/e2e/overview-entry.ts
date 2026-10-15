@@ -26,3 +26,9 @@ export async function projectRow(page: Page, label: string) {
   await expect(row).toBeVisible({ timeout: 20_000 });
   return row;
 }
+
+/** Opens every folded group of the Tasks tab (`Resting N`, `To clean up N`), so every card is drawn (B7). */
+export async function openTaskFolds(page: Page) {
+  const folded = page.locator('[data-task-fold][aria-expanded="false"]');
+  while ((await folded.count()) > 0) await folded.first().click();
+}

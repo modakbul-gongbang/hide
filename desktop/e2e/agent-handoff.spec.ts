@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { herdrHasFocus, startHerdr } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
-import { openOverview } from "../../web/e2e/overview-entry";
+import { openOverview, openTaskFolds } from "../../web/e2e/overview-entry";
 import { HIDE_CLI, isolate, launchShell, screenshot, test } from "./fixture";
 import { captureNativeWindow } from "./native-window";
 import { installSpawnProvider, nativeSpawnCommand, waitForSpawnShell, type SpawnedAgent } from "./agent-spawn-fixture";
@@ -78,6 +78,7 @@ test("handoff roots have provenance without delegation or a focus change in eith
     await captureNativeWindow(app, "agent-handoff-roots-native", facts).catch((error) => failures.push(error));
     // Each handed-off root is its own task on the Overview's Tasks, not a member of the spawner's (PRD overview-device-tasks B8).
     await openOverview(page, "tasks");
+    await openTaskFolds(page);
     for (const pane of [parent, ...roots.map((root) => root.pane)]) await expect(page.locator(`[data-task-card="${pane}"]`)).toHaveCount(1);
     await expect(page.locator(`[data-task-card="${parent}"] [data-task-children]`)).toHaveCount(0);
     await screenshot(page, "agent-handoff-tasks");
