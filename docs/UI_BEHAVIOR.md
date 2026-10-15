@@ -542,13 +542,14 @@ Web owner: `web/src/close.ts` (which sheet, which panes and descendants, and the
 A terminal pane links what its program prints, whichever program it is: an http(s) URL, a path, and a link the program marked itself (OSC 8).
 A plain-text path is a link only where it names something on this Mac, so a word that merely looks like a path draws nothing; the check runs when the pointer reaches a row, never per frame.
 A relative path is looked for under the pane's folder and then under its checkout's root, `~/` names the home folder, and a location written after it (`:12`, `:12:5`, `#L12`, `(12,5)`) is where the file opens.
-The original spelling is checked before treating punctuation, a Korean particle or a location as context: if `docs/a.md)에`, `docs/a.md)` or `src/a.ts:12:5` is itself a file name, that complete name wins.
-Composite punctuation, particles and locations also preserve grammar-only literal names such as `(src/a.ts:12:5)` before dropping their leading or closing punctuation or interpreting the location.
+The original spelling is checked before treating punctuation, attached prose or a location as context: if `docs/a.md)에`, `docs/a.md)` or `src/a.ts:12:5` is itself a file name, that complete name wins.
+Composite punctuation, prose and locations also preserve prose-only literal names such as `(src/a.ts:12:5)` before dropping their leading or closing punctuation or interpreting the location.
 Among the bounded interpretations, the longest existing path wins; a failed or budget-skipped longer check never establishes a shorter link.
 In Korean prose such as `보드 보기 (docs/README.md)에 C안을 추가했습니다.`, only `docs/README.md` is underlined and clickable when that is the actual path.
-Grammar is interpreted only after a closing parenthesis, square/curly bracket or quotation mark: 에, 에서, 에게, 께, 으로, 로, 와, 과, 을, 를, 은, 는, 이, 가, 의, 도, 만, 부터, 까지, optionally followed by one of 도, 만, 는 or 은.
-An unsupported word, an unbounded particle chain, or Hangul attached without that closing boundary is never shortened.
-A URL takes the same boundary, and since a URL cannot be checked, a particle after its closing mark is always prose: in `PR #682 (https://github.com/o/r/pull/682)이 끝났습니다`, only `https://github.com/o/r/pull/682` is the link.
+Korean, Japanese and Chinese attach the next word to a path without a space, and Claude Code draws a backticked path without its backticks, so `view-mode.html에` reaches the pane as one word.
+The run of Hangul, kana or Han characters at a word's end is that attached prose, and it is cut once, where the script changes: `view-mode.html에`, `docs/a.md)에서도` and `view-mode.htmlに` link `view-mode.html`, `docs/a.md` and `view-mode.html`, with no list of particles.
+A run that starts right after `/` is a folder entry's own name and is never cut, so `docs/회의록에` is checked only as written; a word in another script attached to a path is not prose either.
+A URL cannot be checked, so its attached prose is cut only after a closing mark, where it is always prose: in `PR #682 (https://github.com/o/r/pull/682)이 끝났습니다`, only `https://github.com/o/r/pull/682` is the link, while `https://ko.wikipedia.org/wiki/서울이` links all of it.
 Ranges follow the terminal's actual cells, including wide glyphs, combining sequences and wrapped rows.
 A path or URL the terminal wrapped at its last column, or a TUI broke at its own margin and indented, is one link across its rows; a URL spans rows only where the terminal wrapped it, because it cannot be checked.
 Under the pointer a link is underlined and the pointer becomes a hand; a click on it is the link's and never reaches the program, and a drag across it selects its text and opens nothing.

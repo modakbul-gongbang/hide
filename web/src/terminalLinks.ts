@@ -215,14 +215,23 @@ const DOTFILE = /^\.[A-Za-z][\w.-]*$/u;
 
 type Interpretation = { text: string; lead: number; trail: number; target: LinkTarget; original: boolean };
 
-// A finite grammar boundary, never a loop that truncates arbitrary Hangul.
-// A base particle may take one of the four listed secondary particles.
-const GRAMMAR = /[)\]}>"'`](?:에서|에게|으로|부터|까지|에|께|로|와|과|을|를|은|는|이|가|의|도|만)(?:도|만|는|은)?$/u;
+// Korean, Japanese and Chinese prose attaches the next word to a name without
+// a space: `view-mode.html에`, `(docs/a.md)에서도`, `view-mode.htmlに`. That
+// prose is the run of those scripts' characters at the token's end, and where
+// the script changes is the one place the token is cut, so no word list is
+// needed and the cut adds one spelling, never a loop over shorter ones. A run
+// that starts right after `/` is a folder entry's own name (`docs/회의록`) and
+// is never cut.
+const ATTACHED_PROSE = /[\p{scx=Hangul}\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}]+$/u;
 
-/** The text up to and including the closing mark a Korean particle follows, or null when none does. */
-function withoutParticle(text: string): string | null {
-  const match = GRAMMAR.exec(text);
-  return match ? text.slice(0, match.index + 1) : null;
+/** The bracket or quotation mark a URL is closed with. */
+const CLOSING_MARK = /[)\]}>"'`]$/u;
+
+/** The text before the prose attached to its end, or null when none follows a name. */
+function withoutAttachedProse(text: string): string | null {
+  const match = ATTACHED_PROSE.exec(text);
+  if (!match || match.index === 0 || text[match.index - 1] === "/") return null;
+  return text.slice(0, match.index);
 }
 
 /** Six finite stages preserve literal punctuation and location before interpreting either. */
@@ -234,22 +243,22 @@ function interpretations(token: string): Interpretation[] {
     const parsed = parseToken(token);
     return parsed ? [{ ...parsed, original: true }] : [];
   }
-  // Grammar-only removal preserves both leading and closing punctuation.
+  // Prose-only removal preserves both leading and closing punctuation.
   // Apply it separately to raw and symbol-only spelling, never one character
   // at a time, so each literal stage can beat a shorter interpretation.
   // Existing outer sentence punctuation is context, but raw leading symbols
-  // remain part of this grammar-only literal stage.
-  const rawGrammarText = withoutParticle(token.slice(0, token.length - symbols.trail));
-  const grammarText = withoutParticle(symbols.text);
-  const grammar = grammarText === null ? { text: symbols.text, lead: 0, trail: 0 } : strip(grammarText);
-  const interpreted = parseTarget(grammar.text);
+  // remain part of this prose-only literal stage.
+  const rawProseless = withoutAttachedProse(token.slice(0, token.length - symbols.trail));
+  const proseless = withoutAttachedProse(symbols.text);
+  const bare = proseless === null ? { text: symbols.text, lead: 0, trail: 0 } : strip(proseless);
+  const interpreted = parseTarget(bare.text);
   const result: Interpretation[] = [];
   const add = (text: string, lead: number, trail: number, target: LinkTarget | null, original: boolean) => {
     if (!target || result.some((each) => each.text === text && JSON.stringify(each.target) === JSON.stringify(target))) return;
     result.push({ text, lead, trail, target, original });
   };
   const literal = (text: string): LinkTarget | null => {
-    // A recognized path's punctuation/grammar/location may be its real name.
+    // A recognized path's punctuation/prose/location may be its real name.
     // Validation still rejects arbitrary schemes, controls and shortened paths.
     if (!interpreted || interpreted.kind !== "path" || text.length > 1024 || text.includes("…") || /\p{Cc}/u.test(text)) return null;
     if (/^[A-Za-z][\w+-]*:/u.test(text) && !LOCATION.test(text)) return null;
@@ -257,12 +266,12 @@ function interpretations(token: string): Interpretation[] {
   };
   add(token, 0, 0, literal(token), true);
   add(symbols.text, symbols.lead, symbols.trail, literal(symbols.text), false);
-  if (rawGrammarText !== null) add(rawGrammarText, 0, token.length - rawGrammarText.length, literal(rawGrammarText), false);
-  if (grammarText !== null) add(grammarText, symbols.lead, token.length - symbols.lead - grammarText.length, literal(grammarText), false);
-  const lead = symbols.lead + grammar.lead;
-  const trail = token.length - lead - grammar.text.length;
-  add(grammar.text, lead, trail, literal(grammar.text), false);
-  add(grammar.text, lead, trail, interpreted, false);
+  if (rawProseless !== null) add(rawProseless, 0, token.length - rawProseless.length, literal(rawProseless), false);
+  if (proseless !== null) add(proseless, symbols.lead, token.length - symbols.lead - proseless.length, literal(proseless), false);
+  const lead = symbols.lead + bare.lead;
+  const trail = token.length - lead - bare.text.length;
+  add(bare.text, lead, trail, literal(bare.text), false);
+  add(bare.text, lead, trail, interpreted, false);
   return result;
 }
 
@@ -272,11 +281,12 @@ export function parseToken(token: string): { text: string; lead: number; trail: 
   if (symbols.text.length === 0) return null;
   const target = parseTarget(symbols.text);
   if (target?.kind !== "url") return target ? { ...symbols, target } : null;
-  // A URL cannot be checked the way a path is, so a particle after its
-  // closing mark is always prose: `(https://x/pull/682)이` links the address.
-  const prose = withoutParticle(symbols.text);
-  if (prose === null) return { ...symbols, target };
-  const bare = strip(prose);
+  // A URL cannot be checked the way a path is, so attached prose is cut only
+  // after its closing mark, where it is always prose: `(https://x/pull/682)이`
+  // links the address, `https://ko.wikipedia.org/wiki/서울이` all of it.
+  const proseless = withoutAttachedProse(symbols.text);
+  if (proseless === null || !CLOSING_MARK.test(proseless)) return { ...symbols, target };
+  const bare = strip(proseless);
   const url = parseTarget(bare.text);
   const lead = symbols.lead + bare.lead;
   return url ? { text: bare.text, lead, trail: token.length - lead - bare.text.length, target: url } : null;
