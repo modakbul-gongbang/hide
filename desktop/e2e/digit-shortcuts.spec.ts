@@ -202,13 +202,23 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
     const rows = page.locator("nav[data-sidebar] [data-pane]");
     await expect(rows).toHaveCount(2);
     const firstRow = rows.first();
-    const kept = [firstRow, firstRow.locator("[data-agent-title]"), firstRow.locator("[data-fold-slot]"), rows.nth(1)];
+    // The hold also draws the agent logo left of the title (agent-logo-view-mode
+    // B13), so the title moves right; its line (y, height) and the row, the
+    // fold slot and the next row do not.
+    const title = firstRow.locator("[data-agent-title]");
+    const kept = [firstRow, firstRow.locator("[data-fold-slot]"), rows.nth(1)];
+    const titleLine = async () => {
+      const box = await title.boundingBox();
+      return box ? [box.y, box.height].map(Math.round).join(",") : null;
+    };
     const rowsBefore = await boxes(kept);
+    const titleLineBefore = await titleLine();
     await page.keyboard.down("Alt");
     const rowCaps = page.locator("nav[data-sidebar] [data-keycap]");
     await expect(rowCaps).toHaveCount(2);
     await expect(rowCaps).toHaveText(["1", "2"]);
     expect(await boxes(kept)).toEqual(rowsBefore);
+    expect(await titleLine()).toBe(titleLineBefore);
     await capture(page, "digit-hints-agents-dark", source);
     await page.keyboard.up("Alt");
     await expect(page.locator("[data-keycap]")).toHaveCount(0);
