@@ -144,12 +144,17 @@ export function sessionStaleness(rest: SnapshotRest | null, pulls: SessionPull[]
   return { stale: stale.length > 0, lastRead: contributing.some((read) => read.lastRead === null) ? null : Math.min(...contributing.map((read) => read.lastRead!)) };
 }
 
-/** An agent row's mark: the worst PR's state and number and how many others it holds. */
-export function agentMark(agent: AgentRow): { state: PrState; number: number; more: number } | null {
-  const summary = agent.state.pr;
-  const worst = ownPulls(agent)[0];
-  if (!summary || !worst) return null;
-  return { state: summary.worst, number: worst.pull.number, more: summary.count - 1 };
+/** What a mark draws: one PR's state and number, or for several, how many of each state, worst first. */
+export type PrMarkParts = { state: PrState; number: number } | { counts: { state: PrState; count: number }[] };
+
+/** The mark of a row's own PRs or a root's family; null for none. */
+export function prMarkParts(pulls: readonly { pull: AgentPullRequest; state: PrState }[]): PrMarkParts | null {
+  const [first] = pulls;
+  if (!first) return null;
+  if (pulls.length === 1) return { state: first.state, number: first.pull.number };
+  const counts = new Map<PrState, number>();
+  for (const { state } of pulls) counts.set(state, (counts.get(state) ?? 0) + 1);
+  return { counts: [...counts].sort(([a], [b]) => PR_RANK[a] - PR_RANK[b]).map(([state, count]) => ({ state, count })) };
 }
 
 /** The GitHub read of the project that lists the row's own PRs, each row its own. */
