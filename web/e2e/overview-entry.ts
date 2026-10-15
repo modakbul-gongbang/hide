@@ -1,35 +1,34 @@
-// Content scenarios enter the shared Overview through its current scope. From
-// a Workspace the Overview row opens it as a layer over the Workspace
-// (sidebar-titlebar-refresh D-07), so that is how these helpers reach it; with
-// no Workspace in front the row leaves the page as it is.
-// Modal lifetime, focus and terminal preservation belong to overview-modal.spec.
+// The device Overview as the operator reaches it (PRD overview-device-tasks):
+// from a Workspace the sidebar's Overview row opens it as a layer over the
+// Workspace; with no Workspace in front it is the page itself. Modal
+// lifetime, focus and terminal preservation belong to overview-modal.spec.
 import { expect, type Page } from "@playwright/test";
-import { showProjectRow } from "./wire";
 
-export async function openProjectOverview(page: Page, label: string) {
-  await (await showProjectRow(page, page.locator("[data-project-row]", { hasText: new RegExp(`^${label}`) }))).click();
-  await openCurrentProjectOverview(page, label);
+export type OverviewTab = "tasks" | "backlog" | "projects";
+
+/** The Overview on one of its tabs, opened from the sidebar's Overview row when it is not on screen yet. */
+export async function openOverview(page: Page, tab: OverviewTab = "tasks") {
+  const overview = page.locator("[data-overview-page]");
+  if ((await overview.count()) === 0) await page.locator("[data-sidebar-overview]").click();
+  await expect(overview).toBeVisible();
+  await page.locator(`[data-main-tab="${tab}"]`).click();
+  await expect(page.locator(`[data-main-view="${tab}"]`)).toBeVisible();
 }
 
-/** #350 opens a Workspace first; #349 exposes its scope through shared Overview. */
-export async function openCurrentProjectOverview(page: Page, label: string) {
-  await expect(page.locator("[data-workspace-screen]")).toBeVisible();
-  await expect(page.locator("[data-overview-screen]")).toHaveCount(0);
-  await expect(page.locator("[data-project-overview]")).toHaveCount(0);
-  await openOverviewOn(page, label);
-  await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
+/** The Overview's Projects tab row of the project labelled `label`. */
+export async function projectRow(page: Page, label: string) {
+  await openOverview(page, "projects");
+  const row = page.locator("[data-projects-row]", { hasText: new RegExp(`^${label}`) });
+  // A resting project with nothing to clean up is folded under `Quiet projects N` (B50).
+  const quiet = page.locator('[data-projects-quiet][aria-expanded="false"]');
+  await expect(row.or(quiet).first()).toBeVisible({ timeout: 20_000 });
+  if (!(await row.isVisible())) await quiet.click();
+  await expect(row).toBeVisible({ timeout: 20_000 });
+  return row;
 }
 
-/** All projects from a Workspace as the operator opens it: the Overview row's layer, on its All projects tab (sidebar-titlebar-refresh D-07). */
-export async function openAllProjects(page: Page) {
-  await page.locator("[data-sidebar-overview]").click();
-  await page.getByRole("tab", { name: "All projects", exact: true }).click();
-  await expect(page.locator("[data-main-screen]")).toBeVisible();
-}
-
-/** The Overview on the tab of the project in front, which is the Overview the Workspace's toolbar opened before the top row. */
-export async function openOverviewOn(page: Page, label: string) {
-  await openAllProjects(page);
-  await page.getByRole("tab", { name: label, exact: true }).click();
-  await expect(page.locator("[data-overview-screen]")).toBeVisible();
+/** Opens every folded group of the Tasks tab (`Resting N`, `To clean up N`), so every card is drawn (B7). */
+export async function openTaskFolds(page: Page) {
+  const folded = page.locator('[data-task-fold][aria-expanded="false"]');
+  while ((await folded.count()) > 0) await folded.first().click();
 }

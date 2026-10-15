@@ -5,10 +5,6 @@ import type { Catalog, Catalogs } from "../schema";
 // the Sessions tab. The core sends codes; these are the words for them.
 
 export const linksEnglish = {
-  "links.panel": "PR #{{number}}",
-  "links.updated": "Updated {{age}}",
-  "links.mergedOn": "Merged {{date}}",
-  "links.closedOn": "Closed {{date}}",
   "links.connections": "Links",
   "links.noIssue": "No linked issue",
   "links.source.closes": "Closes",
@@ -18,7 +14,6 @@ export const linksEnglish = {
   "links.sessions": "Sessions",
   "links.sessionsCount": "Sessions {{count}}",
   "links.noSessions": "No session worked on this PR",
-  "links.noIssueSessions": "No session worked on this issue's PRs",
   "links.finding": "Finding sessions",
   "links.failed.default": "Couldn't read the link record",
   "links.failed.full": "The link record reached its size limit",
@@ -54,10 +49,6 @@ export const linksEnglish = {
 } as const;
 
 const ko = {
-  "links.panel": "PR #{{number}}",
-  "links.updated": "{{age}} 업데이트",
-  "links.mergedOn": "{{date}} 머지",
-  "links.closedOn": "{{date}} 닫힘",
   "links.connections": "연결",
   "links.noIssue": "연결된 이슈 없음",
   "links.source.closes": "Closes",
@@ -67,7 +58,6 @@ const ko = {
   "links.sessions": "세션",
   "links.sessionsCount": "세션 {{count}}",
   "links.noSessions": "이 PR에서 일한 세션이 없어요",
-  "links.noIssueSessions": "이 이슈의 PR에서 일한 세션이 없어요",
   "links.finding": "세션을 찾는 중",
   "links.failed.default": "연결 기록을 읽지 못했어요",
   "links.failed.full": "연결 기록이 용량 상한에 닿았어요",
@@ -103,10 +93,6 @@ const ko = {
 } satisfies Catalog<typeof linksEnglish>;
 
 const zhCN = {
-  "links.panel": "PR #{{number}}",
-  "links.updated": "{{age}}更新",
-  "links.mergedOn": "{{date}} 合并",
-  "links.closedOn": "{{date}} 关闭",
   "links.connections": "关联",
   "links.noIssue": "没有关联的议题",
   "links.source.closes": "Closes",
@@ -116,7 +102,6 @@ const zhCN = {
   "links.sessions": "会话",
   "links.sessionsCount": "会话 {{count}}",
   "links.noSessions": "没有会话处理过这个 PR",
-  "links.noIssueSessions": "没有会话处理过这个议题的 PR",
   "links.finding": "正在查找会话",
   "links.failed.default": "无法读取关联记录",
   "links.failed.full": "关联记录已达到容量上限",
@@ -152,10 +137,6 @@ const zhCN = {
 } satisfies Catalog<typeof linksEnglish>;
 
 const ja = {
-  "links.panel": "PR #{{number}}",
-  "links.updated": "{{age}}に更新",
-  "links.mergedOn": "{{date}} マージ",
-  "links.closedOn": "{{date}} クローズ",
   "links.connections": "つながり",
   "links.noIssue": "つながったイシューなし",
   "links.source.closes": "Closes",
@@ -165,7 +146,6 @@ const ja = {
   "links.sessions": "セッション",
   "links.sessionsCount": "セッション {{count}}",
   "links.noSessions": "この PR で作業したセッションはありません",
-  "links.noIssueSessions": "このイシューの PR で作業したセッションはありません",
   "links.finding": "セッションを探しています",
   "links.failed.default": "つながりの記録を読めませんでした",
   "links.failed.full": "つながりの記録が容量の上限に達しました",

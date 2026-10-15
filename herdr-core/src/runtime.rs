@@ -10,12 +10,14 @@ mod agent_close;
 mod agent_sleep;
 mod agents;
 mod attachments;
+mod backlog;
 mod clone;
 mod control_lane;
 pub(crate) mod core_move;
 pub(crate) mod delivery;
 mod device_catalog;
 mod devices;
+mod disk_sweep;
 mod documents;
 mod drawn_ahead;
 mod editor;
@@ -39,7 +41,6 @@ mod operations;
 mod pane_prediction;
 mod pane_reopen;
 pub(crate) mod project_memory;
-mod project_sessions;
 mod project_settings;
 mod projects;
 mod pull_requests;
@@ -48,9 +49,7 @@ mod recent_panes;
 mod rename;
 mod request_view;
 mod session;
-pub(crate) mod session_search;
 mod session_state;
-mod session_work;
 mod snapshot_delta;
 mod ssh_hosts;
 mod tab_focus;
@@ -1181,10 +1180,8 @@ pub struct Runtime {
     /// link; that device's panes carry them (PRD core-host-node-remote-core
     /// B13). An SSH device's listeners are not read, so its panes have none.
     device_ports: HashMap<String, Vec<crate::model::ListeningPortSnapshot>>,
-    /// What each node that dials this core measured of its own projects, and
-    /// the project a web Overview named for measuring there.
+    /// What each node that dials this core measured of its own projects.
     device_disk: HashMap<String, Vec<crate::model::DiskUsageSnapshot>>,
-    device_disk_project: HashMap<String, String>,
     /// The pull requests of each node that dials this core, read here by
     /// repository name, and when each of its repositories was last asked.
     device_github: HashMap<String, crate::model::GithubSnapshot>,
@@ -1446,13 +1443,9 @@ pub struct Runtime {
     memory_sessions_load_pending: bool,
     memory_sessions_load_generation: u64,
     archive_detail_load_generation: u64,
-    /// The reads behind `snapshot.project_sessions`.
-    project_sessions_work: project_sessions::ProjectSessionsWork,
-    search_client: Option<session_search::SearchClient>,
-    search_generation: u64,
     /// What the link worker was last handed, and its panel reads.
     links_work: links::LinksWork,
-    session_issue_work: session_work::SessionIssueWork,
+    backlog_work: backlog::BacklogWork,
     /// The minute the Work tab's PRs list was last judged against the clock
     /// (`runtime/request_view.rs`, `tick_work_clock`).
     work_clock_minute: u64,
@@ -1598,9 +1591,6 @@ pub struct Runtime {
     /// Each checkout's Local issue number, for a project that reads Local
     /// issues; `sync_issues` fills it from the same chain a GitHub link uses.
     local_issue_links: BTreeMap<String, u32>,
-    /// Ids for the `issue_work` slots, so a late answer for a replaced
-    /// request is recognised and dropped.
-    next_issue_work_id: u64,
     /// The summary hide-ai made of a pull request at a head commit, kept for
     /// that head (D-29). In memory, capped at [`PR_SUMMARY_CACHE_LIMIT`].
     pr_summaries: BTreeMap<(String, u32), (String, String)>,
@@ -1743,10 +1733,8 @@ pub struct Runtime {
     /// Bumped when visible Git rows must be measured again: section opening,
     /// explicit refresh, and opening the delete confirmation.
     disk_generation: u64,
-    /// The local Git project a web Overview named for measuring, by its
-    /// navigator path (`card_measure_disk` with a `workspace_id`). One for
-    /// every window of the daemon: naming another replaces it.
-    disk_project: Option<String>,
+    /// The Projects tab's disk sweep, per machine (`disk_sweep.rs`).
+    disk_sweeps: disk_sweep::Sweeps,
     cleanup: Option<live::cleanup::CleanupSnapshot>,
     /// The node whose session last carried `cleanup`, so a cleanup that
     /// replaces it on another project also leaves that node's rows.
@@ -2048,7 +2036,6 @@ impl Runtime {
             device_worktrees: HashMap::new(),
             device_ports: HashMap::new(),
             device_disk: HashMap::new(),
-            device_disk_project: HashMap::new(),
             device_github: HashMap::new(),
             device_github_reads: HashMap::new(),
             device_github_read_generation: HashMap::new(),
@@ -2152,11 +2139,8 @@ impl Runtime {
             memory_sessions_load_pending: false,
             memory_sessions_load_generation: 0,
             archive_detail_load_generation: 0,
-            project_sessions_work: project_sessions::ProjectSessionsWork::default(),
-            search_client: None,
-            search_generation: 0,
             links_work: links::LinksWork::default(),
-            session_issue_work: session_work::SessionIssueWork::default(),
+            backlog_work: backlog::BacklogWork::default(),
             work_clock_minute: 0,
             memory_work: Default::default(),
             project_memory: Default::default(),
@@ -2220,7 +2204,6 @@ impl Runtime {
             local_issues_save_pending: false,
             local_issues_save_active: false,
             local_issue_links: BTreeMap::new(),
-            next_issue_work_id: 0,
             pr_summaries: BTreeMap::new(),
             pr_summaries_asked: BTreeSet::new(),
             github_search: issues::GithubSearchWork::default(),
@@ -2263,7 +2246,7 @@ impl Runtime {
             github_over_limit: 0,
             github_store: None,
             disk_generation: 0,
-            disk_project: None,
+            disk_sweeps: Default::default(),
             cleanup: None,
             cleanup_published_node: None,
             next_cleanup_id: 0,
@@ -2917,7 +2900,6 @@ fn unix_milliseconds() -> u64 {
 
 impl Drop for Runtime {
     fn drop(&mut self) {
-        self.cancel_session_issue_draft();
         self.cancel_memory_pass();
     }
 }

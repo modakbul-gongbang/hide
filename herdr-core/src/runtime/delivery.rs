@@ -2427,6 +2427,7 @@ pub(crate) mod tests {
                     session: None,
                     files: crate::model::RemoteFileListSnapshot::idle(),
                     catalog: Default::default(),
+                    unreachable_since_unix_ms: None,
                 });
             let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[{"id":"remote-sender","pane_id":"sender","agent":"claude","agent_status":"working","state_change_seq":1,"lineage_session":"remote-session"}]})).unwrap();
             guard.observe_delivery("device", &payload, Some("fixture-device"), None);

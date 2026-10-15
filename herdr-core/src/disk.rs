@@ -62,13 +62,19 @@ impl DiskReader {
     /// answer with each checkout laid over it as soon as it is measured, so a
     /// slow project fills row by row (a partial answer never removes a row).
     pub fn read_if_due(&mut self, request: DiskRequest) -> Option<Vec<DiskUsageSnapshot>> {
+        self.poll(request).map(|(rows, _)| rows)
+    }
+
+    /// [`Self::read_if_due`], saying whether the rows are a finished read's
+    /// whole answer (`true`) or a running read's rows so far.
+    pub fn poll(&mut self, request: DiskRequest) -> Option<(Vec<DiskUsageSnapshot>, bool)> {
         if let Some(answer) = self.inner.poll(request) {
             self.finished
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .clear();
             self.current = answer.clone();
-            return Some(answer);
+            return Some((answer, true));
         }
         let arrived = std::mem::take(
             &mut *self
@@ -85,7 +91,7 @@ impl DiskReader {
                 None => self.current.push(row),
             }
         }
-        Some(self.current.clone())
+        Some((self.current.clone(), false))
     }
 }
 
@@ -188,6 +194,7 @@ fn snapshot(row: DiskUsage) -> DiskUsageSnapshot {
         unavailable_reason: row.unavailable_reason,
         layers: row.layers,
         volume_free_bytes: row.volume_free_bytes,
+        volume_total_bytes: row.volume_total_bytes,
         folders: row.folders,
     }
 }

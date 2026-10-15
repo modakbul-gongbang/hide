@@ -33,7 +33,12 @@ pub fn usage_nofollow(path: &Path) -> io::Result<Usage> {
 /// Bytes an unprivileged writer can still put on the volume holding `path`,
 /// after any quota the account has.
 pub fn free_bytes(path: &Path) -> io::Result<u64> {
-    sys::free_bytes(path)
+    sys::volume(path).map(|(free, _)| free)
+}
+
+/// The size of the volume holding `path`, in bytes.
+pub fn total_bytes(path: &Path) -> io::Result<u64> {
+    sys::volume(path).map(|(_, total)| total)
 }
 
 #[cfg(unix)]
@@ -55,9 +60,10 @@ mod sys {
         })
     }
 
+    /// Bytes free to an unprivileged writer, and the volume's size.
     // The block count is 32-bit on macOS and 64-bit elsewhere.
     #[allow(clippy::useless_conversion)]
-    pub(super) fn free_bytes(path: &Path) -> io::Result<u64> {
+    pub(super) fn volume(path: &Path) -> io::Result<(u64, u64)> {
         use std::os::unix::ffi::OsStrExt;
         let name = std::ffi::CString::new(path.as_os_str().as_bytes())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "a path holds a NUL"))?;
@@ -68,7 +74,11 @@ mod sys {
         }
         // SAFETY: the call succeeded and filled the structure.
         let stat = unsafe { stat.assume_init() };
-        Ok(u64::from(stat.f_bavail).saturating_mul(u64::from(stat.f_frsize)))
+        let block = u64::from(stat.f_frsize);
+        Ok((
+            u64::from(stat.f_bavail).saturating_mul(block),
+            u64::from(stat.f_blocks).saturating_mul(block),
+        ))
     }
 }
 
@@ -115,16 +125,18 @@ mod sys {
         })
     }
 
-    pub(super) fn free_bytes(path: &Path) -> io::Result<u64> {
+    /// Bytes free to the caller after its quota, and the volume's size.
+    pub(super) fn volume(path: &Path) -> io::Result<(u64, u64)> {
         let name = wide(path)?;
         let mut available = 0u64;
-        // SAFETY: `name` is NUL-terminated, `available` is writable, and the
-        // totals the call can also fill are not asked for.
-        if unsafe { GetDiskFreeSpaceExW(name.as_ptr(), &mut available, null_mut(), null_mut()) }
+        let mut total = 0u64;
+        // SAFETY: `name` is NUL-terminated, `available` and `total` are
+        // writable, and the volume's free total is not asked for.
+        if unsafe { GetDiskFreeSpaceExW(name.as_ptr(), &mut available, &mut total, null_mut()) }
             == 0
         {
             return Err(io::Error::last_os_error());
         }
-        Ok(available)
+        Ok((available, total))
     }
 }

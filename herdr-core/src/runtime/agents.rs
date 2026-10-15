@@ -1886,7 +1886,7 @@ impl Runtime {
             if !self.ai_settings.as_ref().is_some_and(|settings| {
                 settings.enabled && settings.chosen && settings.agent_summary
             }) {
-                self.cancel_session_issue_draft();
+                self.drop_missed_backlog();
             }
             self.drop_pr_summaries_if_inactive();
             self.refresh_background_ai();

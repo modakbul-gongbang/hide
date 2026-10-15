@@ -458,7 +458,7 @@ fn read_project_session(
     }
     let pi_before = (agent.requires_native_file_proof())
         .then(|| crate::confirm_session_file(home, agent, &path, Some(&id), cwd.to_str()));
-    let stamp = crate::search_read::stamp_at(&path);
+    let stamp = crate::stamp::stamp_at(&path);
     let (mut parsed, mut unavailable) = match (pi_before.as_ref(), metadata) {
         (Some(Err(reason)), _) => (None, Some(reason.to_string())),
         (_, Some(metadata)) if metadata.len() > SESSION_READ_LIMIT_BYTES => {

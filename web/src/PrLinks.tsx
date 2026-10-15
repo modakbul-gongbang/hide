@@ -8,10 +8,28 @@ import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
 import { cn } from "./lib/utils";
 import { folderName, sameIssue } from "./linkPanel";
-import type { LensHandlers } from "./OverviewLenses";
 import type { Checkout, LinkIssueSource, LinkPanel, Task, Workspace } from "./snapshot";
-import { TaskGlyph } from "./TaskBoards";
+import { TaskGlyph } from "./issueMarks";
 import { useUiStore } from "./ui";
+import type { Actions } from "./actions";
+
+/** Where the parts of a pull request's links go. */
+export type LinkHandlers = {
+  /** A checkout: its Workspace. */
+  openCheckout: (project: Workspace, checkout: Checkout) => void;
+  /** An issue of the project's source: its card or backlog item (PRD overview-device-tasks B60). */
+  openIssue: (project: Workspace, task: Task) => void;
+  /** A link out: the page on GitHub. */
+  openGitHub: (url: string, deviceId: string) => void;
+};
+
+export function linkHandlers(actions: Actions): LinkHandlers {
+  return {
+    openCheckout: (project, checkout) => actions.openWorkspace(project.device_id, checkout.workspace_id, checkout.id),
+    openIssue: (project, task) => actions.openBacklogItem(project.device_id, project.id, task.key),
+    openGitHub: (url, deviceId) => actions.openPullRequest(url, deviceId, true),
+  };
+}
 
 // What a pull request is linked to (PRD link-graph B4, B5; work-tab-pr-lens
 // D-06): its issues with where each link came from, the worktrees of its
@@ -35,7 +53,7 @@ function issueLabel(key: string): string {
  * the worktrees of its branch, a gone one dim with `Cleaned up`; with no issue,
  * `No linked issue` and Link issue.
  */
-export function PrLinks({ number, issue: boardIssue, checkout: boardCheckout, linkable, record, project, handlers, linking, onLinking }: { number: number; issue: { key: string } | null; checkout: Checkout | null; linkable: boolean; record: LinkPanel | null; project: Workspace; handlers: LensHandlers; linking: boolean; onLinking: (open: boolean) => void }) {
+export function PrLinks({ number, issue: boardIssue, checkout: boardCheckout, linkable, record, project, handlers, linking, onLinking }: { number: number; issue: { key: string } | null; checkout: Checkout | null; linkable: boolean; record: LinkPanel | null; project: Workspace; handlers: LinkHandlers; linking: boolean; onLinking: (open: boolean) => void }) {
   const { t } = useInterfaceTranslation();
   const tasks = project.tasks?.tasks ?? [];
   const issues: { key: string; source: LinkIssueSource | null }[] = [...(record?.pr?.issues ?? [])];
@@ -95,7 +113,7 @@ export function PrLinks({ number, issue: boardIssue, checkout: boardCheckout, li
 }
 
 /** One linked issue (B4): its panel on the Issues tab when the project lists it, else GitHub. */
-function IssueLine({ issueKey, source, task, project, handlers }: { issueKey: string; source: LinkIssueSource | null; task: Task | null; project: Workspace; handlers: LensHandlers }) {
+function IssueLine({ issueKey, source, task, project, handlers }: { issueKey: string; source: LinkIssueSource | null; task: Task | null; project: Workspace; handlers: LinkHandlers }) {
   const { t } = useInterfaceTranslation();
   const label = task ? `${task.id ?? issueLabel(issueKey)} ${task.title}` : issueLabel(issueKey);
   const url = task?.url ?? issueUrl(issueKey);

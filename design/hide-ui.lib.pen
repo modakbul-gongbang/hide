@@ -66524,6 +66524,10 @@
       "type": "number",
       "value": 180
     },
+    "--size-overview-panel-breakpoint": {
+      "type": "number",
+      "value": 1280
+    },
     "--status-seen": {
       "type": "color",
       "value": [

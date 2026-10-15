@@ -410,7 +410,7 @@ impl Runtime {
                 .saturating_add(1)
                 .max(unix_milliseconds());
             self.links_work.connection_epochs.insert(id, epoch);
-            self.invalidate_session_issue_repository(&after.device_id, &after.root);
+            self.invalidate_backlog_repository(&after.device_id, &after.root);
             // The one search slot spans repository targets. Keep its running
             // worker bounded, but refuse its old answer and queued old intent.
             self.github_search.pending = None;

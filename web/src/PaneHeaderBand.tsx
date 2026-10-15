@@ -1,6 +1,6 @@
 import { ChevronDownIcon, CircleAlertIcon, GitForkIcon, GitPullRequestIcon, ListTreeIcon, MoonIcon } from "lucide-react";
 import type { TFunction } from "i18next";
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { agentProductName } from "./agentAdapters";
 import { askWhat, VerbText } from "./components/agent-tree";
@@ -13,7 +13,7 @@ import { Hint } from "./components/ui/tooltip";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
 import { cn } from "./lib/utils";
-import type { PaneHeader, PaneRow, SnapshotRest, AgentRow } from "./snapshot";
+import { localDeviceId, type PaneHeader, type PaneRow, type SnapshotRest, type AgentRow } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { relationState } from "./lineage";
@@ -23,6 +23,7 @@ import { useRelationProgress } from "./PaneRelations";
 import { lineText } from "./agentRow";
 import { allAgents, agentsByPane } from "./paneAgents";
 import { paneChildren, type PaneChildren } from "./paneChildren";
+import { sessionOfAgentOn } from "./sessionWork";
 
 const LABELS: Record<string, MessageKey> = {
   sleeping: "panes.sleep.captionSleeping", waking: "panes.sleep.captionWaking", failed: "panes.sleep.captionFailed", restore_failed: "panes.restore.failed",
@@ -147,7 +148,7 @@ function AskBand({ paneId, band, navigation, unreachable, failed, actions, hasTr
     agents={agents}
     raised
     onOpenChild={(id, label) => actions.followRelation(paneId, id, label)}
-    onGraph={() => actions.openAgentsOverview()}
+    onTask={() => actions.openPaneTask(paneId)}
     returnFocus={() => document.querySelector<HTMLButtonElement>(`[data-pane-band-more="${paneId}"]`)?.focus()}
     triggerLabel={t("agentSessions.moreAsks", { count: band.more })}
     trigger={<button type="button" data-pane-band-more={paneId} className="shrink-0 rounded-xs px-xs py-xxs text-micro text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring">{t("agentSessions.moreAsks", { count: band.more })}</button>}
@@ -194,6 +195,38 @@ function usePaneChildren(paneId: string, agents: AgentRow[]): { children: PaneCh
 }
 
 /**
+ * The status mark, logo and title of an agent pane's head as one button once
+ * the pane's session is known (PRD overview-device-tasks B22-B24): it shows
+ * that session's record in the lane, and a press on the record already shown
+ * goes back to the list. A shell, or an agent whose session is not known yet,
+ * keeps the plain head. The press never takes the keyboard from the terminal.
+ */
+export function PaneRecordButton({ paneId, title, product, actions, children, plain }: { paneId: string; title: string; product: string; actions: Actions; children: ReactNode; plain: ReactNode }) {
+  const { t } = useInterfaceTranslation();
+  const agent = agentsByPane(usePaneAgents()).get(paneId);
+  // Only this machine's id, so the head redraws on its own pane's changes rather than on every snapshot.
+  const localId = useShellStore((s) => localDeviceId(s.rest));
+  const session = agent ? sessionOfAgentOn(agent, localId) : null;
+  if (!session) return <>{plain}</>;
+  return (
+    // The button names the agent as the plain head does, then what a press
+    // does; the hint reveals a title the head cuts short.
+    <Hint label={`${title}\n${product}\n${t("record.recordHint")}`} reveals>
+      <button
+        type="button"
+        className="flex min-w-0 items-center gap-sm rounded-sm px-xxs -mx-xxs outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+        aria-label={`${title}, ${product}, ${t("record.recordHint")}`}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => actions.togglePaneRecord(session)}
+        data-pane-record={session.session_id}
+      >
+        {children}
+      </button>
+    </Hint>
+  );
+}
+
+/**
  * The pane's PR mark after its title, as the Sessions row of the same agent
  * draws it: a pane without children shows its own PRs (B21, B22), and a
  * parent shows `PR N` over itself and every descendant, so the operator sees a
@@ -225,7 +258,7 @@ function PaneTreeButton({ paneId, children, agents, actions, compact = false, co
     agents={agents}
     raised={children.raised > 0}
     onOpenChild={(id, name) => actions.followRelation(paneId, id, name)}
-    onGraph={() => actions.openAgentsOverview()}
+    onTask={() => actions.openPaneTask(paneId)}
     returnFocus={() => document.querySelector<HTMLButtonElement>(`[data-pane-tree="${paneId}"]`)?.focus()}
     triggerLabel={label}
     trigger={<button type="button" aria-label={label} data-pane-tree={paneId} className="flex h-(--size-sidebar-line-detail) shrink-0 items-center gap-xxs rounded-xs border border-border bg-background px-xs outline-none hover:bg-popover focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-secondary">

@@ -2,12 +2,6 @@ import type { Catalogs } from "../schema";
 
 const words = {
   "sessionWork.createIssue": ["Create issue", "이슈 만들기", "Issueを作成", "创建议题"],
-  "sessionWork.issue_draft_unavailable": ["Couldn't read the draft. Retry from this item.", "초안을 읽지 못함 · 이 항목에서 다시 시도", "下書きを読み取れません。再試行してください", "无法读取草稿，请重试"],
-  "sessionWork.issue_draft_repository_unknown": ["The session's original repository is unknown. An issue cannot be created from this record.", "세션의 원래 저장소를 확인할 수 없어 이 기록에서 이슈를 만들 수 없음", "セッションの元のリポジトリが不明なため、この記録から Issue を作成できません", "无法确认会话的原始仓库，不能从此记录创建 Issue"],
-  "sessionWork.issue_draft_repository_changed": ["The repository connection changed. Restore the session's original repository and retry.", "저장소 연결이 변경됨 · 세션의 원래 저장소로 연결한 뒤 다시 시도", "リポジトリ接続が変更されました。元のリポジトリに戻して再試行してください", "仓库连接已更改，请恢复会话的原始仓库后重试"],
-  "sessionWork.issue_draft_ai_unavailable": ["Drafting is unavailable. Only the missed item's title is filled in.", "초안을 쓸 수 없어 놓친 일의 제목만 채움", "下書きを作成できないためタイトルのみ入力済み", "无法起草，仅填写了遗漏工作的标题"],
-  "sessionWork.issue_draft_context_unavailable": ["Couldn't read this turn or its template. Only the title is filled in.", "원래 턴이나 템플릿을 읽지 못해 제목만 채움", "元のターンまたはテンプレートを読み取れないためタイトルのみ入力済み", "无法读取原始对话或模板，仅填写标题"],
-  "sessionWork.issue_draft_github_unavailable": ["Couldn't read GitHub. Retry to check the connection; your edits stay here.", "GitHub를 읽지 못함 · 다시 시도로 연결 확인 · 수정한 내용은 유지", "GitHubを読み取れません。再試行で接続を確認し、編集内容は保持します", "无法读取 GitHub，请重试连接，编辑内容将保留"],
   "sessionWork.record": ["Record", "기록", "記録", "记录"],
   "sessionWork.back": ["Back to Sessions", "Sessions로 돌아가기", "Sessionsに戻る", "返回 Sessions"],
   "sessionWork.failed": ["Couldn't read the record", "기록을 읽지 못함", "記録を読み取れません", "无法读取记录"],
@@ -16,6 +10,7 @@ const words = {
   "sessionWork.received": ["Show requests received", "받은 요청 보기", "受けた依頼を表示", "显示收到的请求"],
   "sessionWork.otherWords": ["Other words", "그 밖의 말", "その他の発言", "其他的话"],
   "sessionWork.now": ["Now", "지금", "今", "现在"],
+  "sessionWork.lastWords": ["Last said", "마지막 말", "最後の発言", "最后说的"],
   "sessionWork.collapse": ["Collapse", "접기", "閉じる", "收起"],
   "sessionWork.earlier": ["Earlier requests {{count}}", "이전 요청 {{count}}", "以前の依頼 {{count}}", "更早的请求 {{count}}"],
   "sessionWork.tasks": ["Assigned work", "시킨 일", "依頼した仕事", "分配的工作"],

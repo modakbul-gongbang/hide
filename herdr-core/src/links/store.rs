@@ -24,7 +24,7 @@ use std::time::Duration;
 #[path = "ledger_store.rs"]
 mod ledger;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 const SCHEMA: &str = "
 CREATE TABLE projects(key TEXT PRIMARY KEY, device TEXT NOT NULL, root TEXT NOT NULL,
@@ -353,9 +353,40 @@ impl LinkStore {
         Ok(projects.len())
     }
 
-    /// Each project's Copied history days, read from the search index's
-    /// `policy` through a read-only ATTACH (D-22); a project with no row
-    /// keeps the default. No index yet is no policy.
+    /// Records that each `(old, new)` project id is now `new`, for the
+    /// retention the old session search file names under `old`. An alias
+    /// that pointed at `old` follows it to `new`. Answers how many aliases
+    /// changed; ids already recorded count none.
+    pub fn alias_retention(&mut self, pairs: &[(String, String)]) -> Result<usize, String> {
+        let tx = self.connection.transaction().map_err(failed)?;
+        let mut moved = 0;
+        for (old, new) in pairs.iter().filter(|(old, new)| old != new) {
+            moved += tx
+                .execute(
+                    "UPDATE retention_aliases SET new=?2 WHERE new=?1",
+                    [old, new],
+                )
+                .map_err(failed)?;
+            // A second conversion of the same ids changes nothing.
+            moved += tx
+                .execute(
+                    "INSERT INTO retention_aliases(old, new) VALUES(?1, ?2) \
+                     ON CONFLICT(old) DO UPDATE SET new=excluded.new \
+                     WHERE new != excluded.new",
+                    [old, new],
+                )
+                .map_err(failed)?;
+        }
+        tx.commit().map_err(failed)?;
+        Ok(moved)
+    }
+
+    /// Each project's Copied history days, read from the old session search
+    /// file's `policy` through a read-only ATTACH (D-22, D-20); a project
+    /// with no row keeps the default. The file is only ever read: no file,
+    /// or a file without the table, is no policy. A row under an id a
+    /// conversion or a move replaced (`retention_aliases`) is that project's
+    /// under its new id, unless the new id has a row of its own.
     pub fn policies(&self, search: &Path) -> Result<HashMap<String, u16>, String> {
         if !search.is_file() {
             return Ok(HashMap::new());
@@ -365,6 +396,15 @@ impl LinkStore {
             .execute("ATTACH DATABASE ?1 AS search", [uri])
             .map_err(|_| "links_policy_unreadable".to_owned())?;
         let read = (|| {
+            let has_table: bool = self.connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM search.sqlite_master \
+                 WHERE type='table' AND name='policy')",
+                [],
+                |row| row.get(0),
+            )?;
+            if !has_table {
+                return Ok(Vec::new());
+            }
             let mut statement = self
                 .connection
                 .prepare("SELECT project, days FROM search.policy")?;
@@ -378,10 +418,28 @@ impl LinkStore {
         let detached = self.connection.execute("DETACH DATABASE search", []);
         let rows = read.map_err(|_| "links_policy_unreadable".to_owned())?;
         detached.map_err(failed)?;
-        Ok(rows
-            .into_iter()
-            .map(|(project, days)| (project, u16::try_from(days).unwrap_or(u16::MAX)))
-            .collect())
+        let aliases: HashMap<String, String> = {
+            let mut statement = self
+                .connection
+                .prepare("SELECT old, new FROM retention_aliases")
+                .map_err(failed)?;
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .map_err(failed)?
+                .collect::<Result<_, _>>()
+                .map_err(failed)?
+        };
+        let days = |days: i64| u16::try_from(days).unwrap_or(u16::MAX);
+        let mut policies: HashMap<String, u16> = rows
+            .iter()
+            .map(|(project, value)| (project.clone(), days(*value)))
+            .collect();
+        for (project, value) in &rows {
+            if let Some(new) = aliases.get(project) {
+                policies.entry(new.clone()).or_insert(days(*value));
+            }
+        }
+        Ok(policies)
     }
 
     /// A project as the runtime knows it now: its repository, worktrees, and
@@ -1870,6 +1928,13 @@ fn deepest_checkout<'a>(checkouts: &'a [WorktreeFact], cwd: &str) -> Option<&'a 
         .max_by_key(|checkout| checkout.path.trim_end_matches('/').len())
 }
 
+/// The project ids a node conversion or a core move gave new ids, so the
+/// old session search file's `policy`, which is never written (D-20), still
+/// names each project's Copied history days. Version 4.
+const RETENTION_ALIAS_SCHEMA: &str = "
+CREATE TABLE retention_aliases(old TEXT PRIMARY KEY, new TEXT NOT NULL);
+";
+
 fn migrate(connection: &Connection) -> Result<(), OpenFailure> {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -1880,10 +1945,15 @@ fn migrate(connection: &Connection) -> Result<(), OpenFailure> {
     if version < SCHEMA_VERSION {
         let initial = if version == 0 { SCHEMA } else { "" };
         let work_ledger = if version < 2 { ledger::SCHEMA } else { "" };
+        let origins = if version < 3 {
+            ledger::ORIGIN_SCHEMA
+        } else {
+            ""
+        };
         connection
             .execute_batch(&format!(
-                "BEGIN IMMEDIATE; {initial} {work_ledger} {} PRAGMA user_version={SCHEMA_VERSION}; COMMIT;",
-                ledger::ORIGIN_SCHEMA
+                "BEGIN IMMEDIATE; {initial} {work_ledger} {origins} {} {RETENTION_ALIAS_SCHEMA} PRAGMA user_version={SCHEMA_VERSION}; COMMIT;",
+                ledger::BACKLOG_SCHEMA
             ))
             .map_err(|error| {
                 let _ = connection.execute_batch("ROLLBACK");

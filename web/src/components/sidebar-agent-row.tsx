@@ -63,7 +63,7 @@ export type SidebarTreeSlot = {
   open: boolean | null;
   onToggle: () => void;
   /** Set on a grandchild with children: its chevron opens the tree popover rooted on it. */
-  popover: { agents: AgentRow[]; onOpenChild: (paneId: string, label: string) => void; onGraph: () => void } | null;
+  popover: { agents: AgentRow[]; onOpenChild: (paneId: string, label: string) => void; onTask: () => void } | null;
 };
 
 /**
@@ -266,7 +266,7 @@ function RowChevron({ agent, tree, returnFocus }: { agent: AgentRow; tree: Sideb
   if (!tree.popover || tree.open === null) {
     return <TreeChevron name={agent.identity_label} open={tree.open} onToggle={tree.onToggle} hangs={tree.place.depth > 0} data-tree-chevron={agent.pane_id} />;
   }
-  const { agents, onOpenChild, onGraph } = tree.popover;
+  const { agents, onOpenChild, onTask } = tree.popover;
   const label = t("agentSessions.tree.expand", { name: agent.identity_label });
   return (
     <span className="relative w-(--size-lineage-chevron) shrink-0 self-stretch">
@@ -275,7 +275,7 @@ function RowChevron({ agent, tree, returnFocus }: { agent: AgentRow; tree: Sideb
         parent={agent}
         agents={agents}
         onOpenChild={onOpenChild}
-        onGraph={onGraph}
+        onTask={onTask}
         returnFocus={returnFocus}
         triggerLabel={label}
         trigger={

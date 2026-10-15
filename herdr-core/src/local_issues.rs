@@ -216,6 +216,20 @@ impl LocalIssueStore {
         Ok(true)
     }
 
+    /// Removes a memo the backlog just made (`되돌리기`, PRD
+    /// overview-device-tasks D-21). Its number is not given out again.
+    pub fn delete(&mut self, machine: Option<&str>, path: &str, number: u32) -> Result<(), String> {
+        let project = self
+            .project_mut(machine, path)
+            .ok_or_else(|| format!("로컬 이슈 {}가 없습니다.", display_id(number)))?;
+        let before = project.issues.len();
+        project.issues.retain(|issue| issue.number != number);
+        if project.issues.len() == before {
+            return Err(format!("로컬 이슈 {}가 없습니다.", display_id(number)));
+        }
+        Ok(())
+    }
+
     /// Opens or closes an issue; `false` when there is no such issue or it
     /// already is in that state.
     pub fn set_open(

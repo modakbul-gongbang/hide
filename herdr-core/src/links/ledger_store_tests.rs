@@ -391,6 +391,37 @@ fn a_v2_store_keeps_unknown_original_identity_after_current_project_discovery() 
     assert_eq!(store.ledger_record(&session()).unwrap().repository, None);
 }
 
+#[test]
+fn a_v3_store_keeps_its_session_origins_when_the_backlog_arrives() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("links.sqlite3");
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute_batch(super::super::SCHEMA).unwrap();
+    connection.execute_batch(SCHEMA).unwrap();
+    connection.execute_batch("INSERT INTO sessions(device,agent,id,cwd,started_at) VALUES('device-a','codex','session-a','/repo',1000);").unwrap();
+    connection.execute_batch(ORIGIN_SCHEMA).unwrap();
+    connection.execute_batch("PRAGMA user_version=3; UPDATE ledger_session_origins SET project='/repo',repository='acme/first';").unwrap();
+    drop(connection);
+    let (mut store, opened) = LinkStore::open(&path).unwrap();
+    assert_eq!(opened, super::super::Opened::Existing);
+    assert_eq!(
+        store
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .unwrap(),
+        super::super::SCHEMA_VERSION
+    );
+    assert_eq!(
+        store
+            .ledger_record(&session())
+            .unwrap()
+            .repository
+            .as_deref(),
+        Some("acme/first")
+    );
+    assert!(store.ledger_call(LedgerCall::BacklogKeys).is_ok());
+}
+
 fn request(store: &mut LinkStore, offset: u64, text: &str) {
     store
         .apply_ledger_update(&LedgerUpdate::Requests {
@@ -454,7 +485,7 @@ fn a_v1_store_keeps_its_sessions_and_links_through_migration() {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        3
+        super::super::SCHEMA_VERSION
     );
     assert_eq!(
         store
@@ -473,7 +504,9 @@ fn a_v1_store_keeps_its_sessions_and_links_through_migration() {
     );
     drop(store);
     let connection = rusqlite::Connection::open(&path).unwrap();
-    connection.pragma_update(None, "user_version", 4).unwrap();
+    connection
+        .pragma_update(None, "user_version", super::super::SCHEMA_VERSION + 1)
+        .unwrap();
     drop(connection);
     assert_eq!(LinkStore::open(&path).err().unwrap(), "links_store_newer");
 }
@@ -842,7 +875,7 @@ fn the_durable_issue_intent_keeps_the_original_attempt_and_closes_without_an_out
             .clone(),
     };
     let reserve = |title: &str, at| LedgerCall::ReserveIssue {
-        source: source.clone(),
+        key: AttemptKey::Missed(source.clone()),
         repository: "owner/repo".into(),
         title: title.into(),
         body: "본문".into(),
@@ -877,7 +910,7 @@ fn the_durable_issue_intent_keeps_the_original_attempt_and_closes_without_an_out
     );
     store
         .ledger_call(LedgerCall::FinishIssue {
-            source: source.clone(),
+            key: AttemptKey::Missed(source.clone()),
             number: 7,
             url: "https://github.com/owner/repo/issues/7".into(),
         })
@@ -885,8 +918,12 @@ fn the_durable_issue_intent_keeps_the_original_attempt_and_closes_without_an_out
     drop(store);
     let (mut store, _) = LinkStore::open(&path).unwrap();
     let record = store.ledger_record(&session()).unwrap();
-    assert_eq!(record.missed[0].status, MissedStatus::Issue);
+    assert_eq!(record.missed[0].status, MissedStatus::Backlog);
     assert_eq!(record.missed[0].issue_number, Some(7));
+    assert_eq!(
+        record.missed[0].backlog_key.as_deref(),
+        Some("github:owner/repo#7")
+    );
     assert!(
         record.outputs.is_empty(),
         "Hide-created issues attach to missed work, not session outputs (D-35)"
@@ -899,7 +936,7 @@ fn the_durable_issue_intent_keeps_the_original_attempt_and_closes_without_an_out
     assert!(
         store
             .ledger_call(LedgerCall::FinishIssue {
-                source,
+                key: AttemptKey::Missed(source),
                 number: 8,
                 url: "https://github.com/owner/repo/issues/8".into()
             })
@@ -1422,4 +1459,293 @@ fn nested_repository_ownership_uses_the_deepest_path_on_the_sessions_device() {
             .as_deref(),
         Some("owner/inner")
     );
+}
+
+/// `백로그로` on a Local project marks the line with the memo it made, the
+/// memo's origin reads the line back, and `되돌리기` opens the line again.
+#[test]
+fn a_memo_from_missed_work_marks_its_line_and_undo_opens_it_again() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    request(&mut store, 1, "구현해줘");
+    chapter(&mut store);
+    end(
+        &mut store,
+        1,
+        TurnJudgment {
+            missed: vec![NewMissedWork {
+                kind: MissedKind::FollowUp,
+                text: "문서 갱신".into(),
+            }],
+            ..Default::default()
+        },
+    );
+    let source = MissedSource {
+        session: session(),
+        id: store.ledger_record(&session()).unwrap().missed[0]
+            .id
+            .clone(),
+    };
+    let key = "local:/repo#3".to_owned();
+    store
+        .ledger_call(LedgerCall::BacklogLocal {
+            source: source.clone(),
+            backlog_key: key.clone(),
+        })
+        .unwrap();
+    let missed = &store.ledger_record(&session()).unwrap().missed[0];
+    assert_eq!(missed.status, MissedStatus::Backlog);
+    assert_eq!(missed.backlog_key.as_deref(), Some(key.as_str()));
+    let LedgerAnswer::BacklogKeys { missed: keys, .. } =
+        store.ledger_call(LedgerCall::BacklogKeys).unwrap()
+    else {
+        panic!("expected the missed lines' items")
+    };
+    assert_eq!(
+        keys,
+        std::slice::from_ref(&key),
+        "the backlog row's flag names the memo"
+    );
+    assert!(
+        store
+            .ledger_call(LedgerCall::BacklogLocal {
+                source,
+                backlog_key: "local:/repo#4".into(),
+            })
+            .is_err(),
+        "a line already in the backlog makes no second item"
+    );
+    let LedgerAnswer::Origin(Some(origin)) = store
+        .ledger_call(LedgerCall::BacklogOrigin {
+            backlog_key: key.clone(),
+        })
+        .unwrap()
+    else {
+        panic!("expected the memo's origin")
+    };
+    assert_eq!(origin.session, session());
+    assert_eq!(origin.missed.text, "문서 갱신");
+
+    store
+        .ledger_call(LedgerCall::ReleaseBacklog { backlog_key: key })
+        .unwrap();
+    let missed = &store.ledger_record(&session()).unwrap().missed[0];
+    assert_eq!(missed.status, MissedStatus::Open);
+    assert_eq!(missed.backlog_key, None);
+    let LedgerAnswer::BacklogKeys { missed: keys, .. } =
+        store.ledger_call(LedgerCall::BacklogKeys).unwrap()
+    else {
+        panic!("expected the missed lines' items")
+    };
+    assert!(keys.is_empty(), "an undone item is no longer flagged");
+}
+
+/// A typed item whose create was not confirmed is offered after a restart;
+/// a confirmed or put-away one is not.
+#[test]
+fn only_unconfirmed_typed_items_are_pending_after_a_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    let intent = |name: &str| BacklogIntent {
+        intent: name.into(),
+        device: "mac".into(),
+        project: "/repo".into(),
+        workspace_id: "w".into(),
+    };
+    for (name, at) in [("made", 1), ("lost", 2), ("dropped", 3)] {
+        store
+            .ledger_call(LedgerCall::ReserveIssue {
+                key: AttemptKey::Intent(intent(name)),
+                repository: "owner/repo".into(),
+                title: format!("{name} item"),
+                body: String::new(),
+                at_unix_ms: at,
+            })
+            .unwrap();
+    }
+    store
+        .ledger_call(LedgerCall::FinishIssue {
+            key: AttemptKey::Intent(intent("made")),
+            number: 5,
+            url: "https://github.com/owner/repo/issues/5".into(),
+        })
+        .unwrap();
+    store
+        .ledger_call(LedgerCall::UnknownIssue(AttemptKey::Intent(intent("lost"))))
+        .unwrap();
+    store
+        .ledger_call(LedgerCall::DismissBacklog {
+            intent: "dropped".into(),
+        })
+        .unwrap();
+    let LedgerAnswer::Pending(rows) = store.ledger_call(LedgerCall::PendingBacklog).unwrap() else {
+        panic!("expected pending rows")
+    };
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.intent.intent.as_str(), row.title.as_str()))
+            .collect::<Vec<_>>(),
+        [("lost", "lost item")]
+    );
+}
+
+/// `되돌리기` closes only an issue a completed create names, across a
+/// restart; once undone, the create names it no more (D-21).
+#[test]
+fn only_an_issue_hide_made_is_named_as_made_after_a_restart_until_it_is_undone() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("links.sqlite3");
+    let intent = |name: &str| BacklogIntent {
+        intent: name.into(),
+        device: "mac".into(),
+        project: "/repo".into(),
+        workspace_id: "w".into(),
+    };
+    {
+        let (mut store, _) = LinkStore::open(&path).unwrap();
+        for name in ["made", "lost"] {
+            store
+                .ledger_call(LedgerCall::ReserveIssue {
+                    key: AttemptKey::Intent(intent(name)),
+                    repository: "owner/repo".into(),
+                    title: format!("{name} item"),
+                    body: String::new(),
+                    at_unix_ms: 1,
+                })
+                .unwrap();
+        }
+        store
+            .ledger_call(LedgerCall::FinishIssue {
+                key: AttemptKey::Intent(intent("made")),
+                number: 5,
+                url: "https://github.com/owner/repo/issues/5".into(),
+            })
+            .unwrap();
+    }
+    let (mut store, _) = LinkStore::open(&path).unwrap();
+    let made = |store: &mut LinkStore, repository: &str, number: u32| {
+        matches!(
+            store
+                .ledger_call(LedgerCall::MadeIssue {
+                    repository: repository.into(),
+                    number,
+                })
+                .unwrap(),
+            LedgerAnswer::Made(true)
+        )
+    };
+    assert!(made(&mut store, "Owner/Repo", 5));
+    assert!(
+        !made(&mut store, "owner/repo", 6),
+        "an issue Hide never made"
+    );
+    assert!(
+        !made(&mut store, "other/repo", 5),
+        "the same number elsewhere"
+    );
+    let LedgerAnswer::BacklogKeys { made: keys, .. } =
+        store.ledger_call(LedgerCall::BacklogKeys).unwrap()
+    else {
+        panic!("expected the backlog keys")
+    };
+    assert_eq!(keys, ["github:owner/repo#5"]);
+
+    store
+        .ledger_call(LedgerCall::ReleaseBacklog {
+            backlog_key: "github:owner/repo#5".into(),
+        })
+        .unwrap();
+    assert!(
+        !made(&mut store, "owner/repo", 5),
+        "an undone issue is closed"
+    );
+}
+
+/// Undone typed items leave the ledger like confirmed ones, so a device
+/// that undid many items can still add one (engineering principle 15).
+#[test]
+fn undone_typed_items_are_pruned_and_never_fill_the_backlog_ledger() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    let intent = |index: usize| BacklogIntent {
+        intent: format!("i-{index}"),
+        device: "mac".into(),
+        project: "/repo".into(),
+        workspace_id: "w".into(),
+    };
+    for index in 0..=BACKLOG_INTENT_LIMIT {
+        store
+            .ledger_call(LedgerCall::ReserveIssue {
+                key: AttemptKey::Intent(intent(index)),
+                repository: "owner/repo".into(),
+                title: format!("item {index}"),
+                body: String::new(),
+                at_unix_ms: index as u64,
+            })
+            .unwrap_or_else(|code| panic!("item {index} refused: {code}"));
+        let number = index as u64 + 1;
+        store
+            .ledger_call(LedgerCall::FinishIssue {
+                key: AttemptKey::Intent(intent(index)),
+                number,
+                url: format!("https://github.com/owner/repo/issues/{number}"),
+            })
+            .unwrap();
+        store
+            .ledger_call(LedgerCall::ReleaseBacklog {
+                backlog_key: format!("github:owner/repo#{number}"),
+            })
+            .unwrap();
+    }
+}
+
+/// Unconfirmed typed items are never evicted: past what a restart offers
+/// back a new create is refused, and putting one away lets the next in.
+#[test]
+fn unconfirmed_typed_items_are_kept_and_a_create_past_them_is_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    let intent = |index: usize| BacklogIntent {
+        intent: format!("i-{index:02}"),
+        device: "mac".into(),
+        project: "/repo".into(),
+        workspace_id: "w".into(),
+    };
+    let reserve = |store: &mut LinkStore, index: usize| {
+        store.ledger_call(LedgerCall::ReserveIssue {
+            key: AttemptKey::Intent(intent(index)),
+            repository: "owner/repo".into(),
+            title: format!("item {index}"),
+            body: String::new(),
+            at_unix_ms: index as u64,
+        })
+    };
+    for index in 0..PENDING_BACKLOG_LIMIT {
+        reserve(&mut store, index).unwrap();
+        store
+            .ledger_call(LedgerCall::UnknownIssue(AttemptKey::Intent(intent(index))))
+            .unwrap();
+    }
+    assert_eq!(
+        reserve(&mut store, PENDING_BACKLOG_LIMIT).unwrap_err(),
+        "ledger_backlog_pending_capacity"
+    );
+    let LedgerAnswer::Pending(rows) = store.ledger_call(LedgerCall::PendingBacklog).unwrap() else {
+        panic!("expected pending rows")
+    };
+    assert_eq!(
+        rows.len(),
+        PENDING_BACKLOG_LIMIT,
+        "every one is still offered"
+    );
+    assert!(
+        matches!(reserve(&mut store, 0).unwrap(), LedgerAnswer::Attempt(attempt) if attempt.reconcile),
+        "the oldest one's retry still looks for what it made"
+    );
+    store
+        .ledger_call(LedgerCall::DismissBacklog {
+            intent: "i-00".into(),
+        })
+        .unwrap();
+    assert!(reserve(&mut store, PENDING_BACKLOG_LIMIT).is_ok());
 }

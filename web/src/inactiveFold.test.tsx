@@ -44,7 +44,6 @@ it("sends the project's path when the Inactive fold is clicked and draws the fol
   const catalog = (expanded: boolean) =>
     ({ navigator: { devices: [{ id: "local", label: "This Mac", kind: "local", state: "local" }], workspaces: [project(expanded)], agents: [], focused_device_id: "local" } }) as unknown as SnapshotRest;
   useShellStore.setState({ rest: catalog(false), agents: [], connection: "live" });
-  useUiStore.setState({ sidebarMode: "projects" });
   const events: Parameters<DispatchFn>[0][] = [];
   const actions = createActions((event) => { events.push(event); return true; });
   const container = document.createElement("div");

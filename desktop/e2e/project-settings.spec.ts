@@ -8,7 +8,7 @@ import { initGithubRepository } from "../../web/e2e/github-remote";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { fixtureProgram } from "../../web/e2e/platform-fixture";
 import { showProjectRow } from "../../web/e2e/wire";
-import { openProjectOverview } from "../../web/e2e/overview-entry";
+import { projectRow } from "../../web/e2e/overview-entry";
 import { animationsFinished, compositorPresents } from "../../web/e2e/wait";
 import { captureNativeWindow } from "./native-window";
 import { fitWindow, isolate, launch, screenshot, test } from "./fixture";
@@ -229,15 +229,14 @@ test("Project and Overview menus return Settings focus to their own trigger", as
     await expect(page.locator('[data-project-settings]')).toContainText("Automatic (Local)");
     await page.keyboard.press("Escape");
     await expect(more).toBeFocused();
-    await openProjectOverview(page, "sample");
-    const titleMore = page.locator('[data-overview-screen]').getByRole("button", { name: "Project settings", exact: true });
-    await titleMore.focus();
-    await page.keyboard.press("Enter");
-    await page.locator('[data-menu-item="project_settings"]').focus();
+    // The Overview's Projects tab: a project's panel carries Project settings.
+    await (await projectRow(page, "sample")).getByRole("button").first().click();
+    const panelSettings = page.locator("[data-overview-panel] [data-project-panel-settings]");
+    await panelSettings.focus();
     await page.keyboard.press("Enter");
     await expect(page.locator('[data-project-settings]')).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(titleMore).toBeFocused();
+    await expect(panelSettings).toBeFocused();
     await captureNativeWindow(app, "project-settings-overview-focus-native", { build: "worktree debug", daemonPid: run.daemonPid(), menuFocusReturned: true });
   } finally {
     if (app) await app.close();

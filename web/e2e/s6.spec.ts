@@ -13,7 +13,7 @@ import { declareParent, herdrHasFocus, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { chooseLane, countSent, screenshot, showExplorer } from "./wire";
 import { chord } from "./chords";
-import { openCurrentProjectOverview } from "./overview-entry";
+import { openOverview, projectRow } from "./overview-entry";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { quietFor, unchangedForFrames } from "./wait";
 
@@ -69,26 +69,26 @@ test("Main, Overview and a Workspace with its lane, tools and delegated child", 
     const sent = countSent(page, last);
     await open(page, daemon);
 
-    // A first run starts on Main (D-11), whose Projects view lists this
-    // machine's Project with real counts (B1).
+    // A first run starts on the device Overview (D-11; PRD overview-device-tasks
+    // D-02), whose Projects tab lists this machine's Project.
     const workspace = page.locator("[data-workspace-screen]");
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
     await expect(workspace).toHaveCount(0);
-    await page.locator('[data-main-tab="projects"]').click();
-    const project = page.locator("[data-main-project]", { hasText: "fixture" });
-    await expect(project).toBeVisible();
-    await expect(project.locator("[data-workspace-count]")).toHaveText(/1 workspace/);
+    await expect(await projectRow(page, "fixture")).toBeVisible();
     await screenshot(page, "s6-main");
 
-    // #350's project card opens its checkout. Shared Overview's scope
-    // opens on the Agents graph, whose rows list both agents, and an agent
-    // enters the Workspace at that pane (B2).
-    await project.click();
-    await openCurrentProjectOverview(page, "fixture");
-    await expect(page.locator('[data-overview-screen][data-overview-view="agents"]')).toBeVisible();
-    await expect(page.locator("[data-overview-screen] [data-graph-open]")).toHaveCount(2);
+    // Tasks folds the two resting agents under `Resting 2` (B7) until one
+    // is opened; a card opens its record beside the tabs, whose head enters
+    // the Workspace at the root's pane (B16, B17).
+    await openOverview(page, "tasks");
+    await page.locator('[data-task-fold][aria-expanded="false"]').click({ timeout: 20_000 });
+    await expect(page.locator("[data-task-card]")).toHaveCount(2, { timeout: 20_000 });
+    await page.locator(`[data-task-card-open="${parent}"]`).click();
+    await expect(page.locator("[data-overview-panel]")).toBeVisible();
+    // The head's Open link is set in the head's caption, not the heading's inherited size.
+    expect(await page.locator("[data-task-section] h2").first().evaluate((h2) => new Set([h2.querySelector("span + span"), h2.querySelector("[data-section-open]")].map((node) => node && getComputedStyle(node).fontSize)).size)).toBe(1);
     await screenshot(page, "s6-overview");
-    await page.locator(`[data-overview-screen] [data-graph-open="${parent}"]`).click();
+    await page.locator("[data-record-open-workspace]").click();
     await expect(workspace).toBeVisible();
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true");
     // A new Workspace shows Agent Views alone with its lane closed (PRD

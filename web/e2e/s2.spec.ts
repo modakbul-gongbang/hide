@@ -15,7 +15,7 @@ import { toPage } from "../../desktop/src/main/wirePath";
 import { altScreenProgram, bytesReceived } from "./alt-screen-program";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { openAllProjects } from "./overview-entry";
+import { projectRow } from "./overview-entry";
 import { FACTORY_OPEN } from "../src/factory/launch";
 import { countSent, screenshot, showProjectRow } from "./wire";
 import { chord, mod, SYSTEM } from "./chords";
@@ -193,7 +193,7 @@ async function splitShell(page: Page, flow: Flow): Promise<string> {
 }
 
 // @platform: The checkout rows and tabs a platform's Herdr creates, owned by the core's wire path (a Windows drive path included), and the Overview round trip.
-test("switching checkouts is one focus_checkout, and a plain folder's Overview opens from its row", { tag: "@platform" }, async ({ page }) => {
+test("switching checkouts is one focus_checkout, and a plain folder is a row of the Overview over its Workspace", { tag: "@platform" }, async ({ page }) => {
   const flow = await startFlow(page);
   try {
     const { herdr, beta, firstRow, sent } = flow;
@@ -210,13 +210,11 @@ test("switching checkouts is one focus_checkout, and a plain folder's Overview o
     await expect(page.locator("[data-pane-view]")).toHaveCount(1);
     await expect.poll(() => sent.get("focus_checkout")).toBe(focusEvents + 1);
 
-    // A plain folder's sidebar row opens its checkout, so its Overview is
-    // reached from All projects (S6 B1). It opens on its Agents graph, on
-    // its agents' boxes, and Escape returns to the Workspace under it.
+    // A plain folder's sidebar row opens its checkout; the Overview over it
+    // lists the folder on Projects (PRD overview-device-tasks B47), and
+    // Escape returns to the Workspace under it.
     await firstRow.click();
-    await openAllProjects(page);
-    await page.getByRole("tab", { name: "fixture", exact: true }).click();
-    await expect(page.locator('[data-overview-screen][data-overview-view="agents"] [data-graph-box]')).toHaveCount(1);
+    await expect(await projectRow(page, "fixture")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", herdr.tab);
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
@@ -593,7 +591,7 @@ test("a right-click focuses its pane and opens the terminal menu, whose Zoom pan
   }
 });
 
-// @platform: The shortcut sheet marks the chords a platform's browser keeps (Alt+Shift+A and the like), and ⌘F reaches the agent's own find through the platform's PTY.
+// @platform: The shortcut sheet marks the chords a platform's browser keeps (⌘⇧M and the like), and ⌘F reaches the agent's own find through the platform's PTY.
 test("the shortcut sheet marks the moved chords and ⌘F reaches the agent's own find, each without a stray key or find bar", { tag: "@platform" }, async ({ page }) => {
   const flow = await startFlow(page);
   try {
@@ -610,12 +608,12 @@ test("the shortcut sheet marks the moved chords and ⌘F reaches the agent's own
     // The two numbered families each fold into one row and have no browser chord;
     // they never carry a Chrome move note (electron-digit-shortcuts-hints B3).
     await expect(page.locator("[data-shortcut]")).toHaveCount(FACTORY_OPEN ? 48 : 47);
-    for (const title of ["Overview", "Focus sidebar", "Agents overview"]) await expect(page.locator("[data-shortcut-sheet]")).toContainText(title);
-    // #349's Agents chord also moves on PC: Chrome reserves Alt+Shift+A.
+    for (const title of ["Overview", "Focus sidebar", "Add to backlog"]) await expect(page.locator("[data-shortcut-sheet]")).toContainText(title);
+    // Add to backlog moves in a macOS browser, where Chrome keeps ⌘⇧M for its profiles; Alt+Shift+M is free on Windows and Linux.
     // Assert the exact moved commands, including the unchanged platform exceptions.
     const movedCommands = [
       "new_tab", "close_tab", "reopen_closed_tab", "recent_area_tab", "previous_recent_area_tab",
-      ...(SYSTEM === "mac" ? ["close_pane", "settings"] : ["sidebar_agents"]),
+      ...(SYSTEM === "mac" ? ["close_pane", "settings", "add_backlog"] : []),
     ];
     const movedRows = page.locator("[data-shortcut]").filter({ hasText: "moved for Chrome" });
     await expect(movedRows).toHaveCount(movedCommands.length);

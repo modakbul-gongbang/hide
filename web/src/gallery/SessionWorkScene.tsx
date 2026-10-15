@@ -3,9 +3,8 @@
 import { useLayoutEffect, useMemo } from "react";
 import { createActions } from "../actions";
 import { AgentSessions } from "../AgentSessions";
-import { NewIssueDialog } from "../IssueDialogs";
 import { Palette } from "../Palette";
-import { SessionRecord } from "../SessionRecord";
+import { LaneSessionRecord } from "../SessionRecord";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { useFollowInterfaceLanguage } from "../i18n/translator";
 import type { MissedWork, SessionRecord as RecordValue, WorkOutput, WorkRequest, WorkSession, WorkTask } from "../snapshot";
@@ -18,7 +17,7 @@ const SESSION: WorkSession = { device_id: "local", agent: "claude", session_id: 
 const CHILD_SESSION: WorkSession = { ...SESSION, agent: "claude", session_id: "child-example" };
 const task = (id: string, chapter: string, name: string, end: WorkTask["end"], done: boolean, at: number): WorkTask => ({ id, chapter_id: chapter, name, end, done, at_unix_ms: at, last_at_unix_ms: at + 1000 });
 const request = (offset: number, text: string, task_ids: string[], patch: Partial<WorkRequest> = {}): WorkRequest => ({ offset, text, at_unix_ms: AT + offset * 60_000, author: "operator", task_ids, chapter_id: "chapter-1", judged: true, ...patch });
-const missed = (id: string, text: string, turn_offset: number, status: MissedWork["status"]): MissedWork => ({ id, kind: "follow_up", text, status, at_unix_ms: AT, turn_offset, issue_repository: null, issue_number: null, creating: false });
+const missed = (id: string, text: string, turn_offset: number, status: MissedWork["status"]): MissedWork => ({ id, kind: "follow_up", text, status, at_unix_ms: AT, turn_offset, issue_repository: null, issue_number: null, creating: false, backlog_key: null });
 const pr = (number: number, title: string, state: string, source: WorkSession, sourceName: string, task_id: string | null): WorkOutput => ({ kind: "pr", repository: "example/hide", number, title, url: `https://example.invalid/pull/${number}`, state, stale: false, last_read_at_unix_ms: AT, created_at_unix_ms: AT + number, task_id, source, source_name: sourceName });
 // The approved record: one goal, three tasks, two PRs (one a child's), words behind the button.
 const BASE: RecordValue = {
@@ -69,7 +68,7 @@ export function SessionWorkScene({ params }: { params: URLSearchParams }) {
   const fixture = useMemo(() => {
     const base = sidebarScene("reference", REFERENCE_FOLDS, AT);
     const project = base.rest.navigator!.workspaces!.find((row) => row.id === "hide")!;
-    const record = recordFor(BASE, params.get("case") ?? (state === "draft" ? "open-missed" : null));
+    const record = recordFor(BASE, params.get("case"));
     record.cwd = project.checkouts[0]!.path;
     if (params.get("content") === "long") record.title += " - 긴 한국어 제목과 요청의 줄바꿈 확인";
     base.rest.status = { ...base.rest.status, background_ai: { provider: "claude", providers: [], unavailable_reason: null, enabled: state !== "off", chosen: true, agent_summary: true } };
@@ -89,8 +88,7 @@ export function SessionWorkScene({ params }: { params: URLSearchParams }) {
     document.documentElement.style.setProperty("--interface-scale", String(scale));
   }, [fixture, state, theme, scale, params]);
   return <TooltipProvider><div className="flex h-full min-w-0 flex-col bg-background text-foreground" data-gallery-scene="session-record">
-    {state === "ended" ? <AgentSessions actions={actions} /> : <SessionRecord actions={actions} target={SESSION} />}
-    {state === "draft" ? <NewIssueDialog actions={actions} workspace={fixture.project} draft={{ source: { session: SESSION, id: "missed-3" }, phase: "ready", workspace_id: fixture.project.id, repository: "example/hide", title: "재측정 전 설치본 버전 확인", body: "## 확인할 일\n긴 한국어 요청이 좁은 Tools 칸에서도 잘리지 않는지 확인합니다.\n\n## 완료 조건\nLight와 Dark에서 가로 넘침 없이 읽을 수 있습니다.", message: null }} onClose={() => {}} /> : null}
+    {state === "ended" ? <AgentSessions actions={actions} /> : <LaneSessionRecord actions={actions} target={SESSION} />}
     {state === "search" ? <Palette actions={actions} /> : null}
   </div></TooltipProvider>;
 }

@@ -38,9 +38,6 @@ export function workFixture(herdr: HerdrFixture, uncertainCreate = false) {
   git(["add", "README.md"]);
   git(["commit", "-m", "initial"]);
   git(["remote", "add", "origin", "https://github.com/acme/repo.git"]);
-  const templates = path.join(cwd, ".github", "ISSUE_TEMPLATE");
-  fs.mkdirSync(templates, { recursive: true });
-  fs.writeFileSync(path.join(templates, "bug.md"), "---\nname: Bug\nabout: Report a bug\n---\n## 확인할 동작\n\n## 재현 순서\n");
   const bin = path.join(herdr.root, "gh-bin");
   const calls = path.join(herdr.root, "gh-calls.jsonl");
   const contexts = path.join(herdr.root, "gh-contexts.jsonl");
@@ -48,8 +45,6 @@ export function workFixture(herdr: HerdrFixture, uncertainCreate = false) {
   const repositoryUnavailable = path.join(herdr.root, "repository-unavailable");
   const repositoryGate = path.join(herdr.root, "repository-gate");
   const clock = path.join(herdr.root, "work-clock.json");
-  const draft = path.join(herdr.root, "issue-draft.json");
-  fs.writeFileSync(draft, JSON.stringify({ title: "한국어 요청 줄바꿈 확인", body: "## 확인할 동작\n\n좁은 Tools 열에서 요청을 확인합니다.\n\n## 재현 순서\n\n1. 기록 화면을 엽니다." }));
   fs.writeFileSync(clock, JSON.stringify({ first: Date.now(), next: Date.now() }));
   fixtureProgram(bin, "gh", `
 const fs = require("node:fs");
@@ -77,7 +72,9 @@ if(a==="repo"&&b==="view") {
  }
  if(fs.existsSync(${JSON.stringify(repositoryUnavailable)})) {process.stderr.write("fixture GitHub unavailable\\n");process.exit(1);} out({nameWithOwner:repo,id:"R_"+repo.replaceAll("/","_")});process.exit(0);}
 if(a==="pr"&&b==="list") {out(pulls.filter(p=>args.includes("all")|| (args.includes("merged")?p.state==="MERGED":p.state==="OPEN")));process.exit(0);}
-if(a==="issue"&&b==="list") {out([tracked,...(created?[created]:[])]);process.exit(0);}
+const open=created&&created.state==="OPEN"?[created]:[];
+if(a==="issue"&&b==="list") {out([tracked,...open]);process.exit(0);}
+if(a==="issue"&&b==="close") {if(created){created.state="CLOSED";fs.writeFileSync(issueFile,JSON.stringify(created));}process.exit(0);}
 if(a==="issue"&&b==="create") {
  const title=args[args.indexOf("--title")+1];
  const value={number:77,title,url:"https://github.com/"+repo+"/issues/77",state:"OPEN",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),labels:[]};
@@ -87,7 +84,8 @@ if(a==="issue"&&b==="create") {
 }
 if(a==="api"&&b==="graphql") {
  const query=args.join(" ");
- if(query.includes("issues(first:100")) out({data:{repository:{issues:{nodes:created?[created]:[],pageInfo:{hasNextPage:false}}}}});
+ if(query.includes("states:[OPEN,CLOSED]")) out({data:{repository:{issues:{nodes:created?[{...created,viewerDidAuthor:true}]:[],pageInfo:{hasNextPage:false}}}}});
+ else if(query.includes("issues(first:100")) out({data:{repository:{issues:{nodes:open,pageInfo:{hasNextPage:false}}}}});
  else if(query.includes("issue(number:")) out({data:{r0:{issue:query.includes("77")?created:tracked}}});
  else out({data:{}});
  process.exit(0);
@@ -95,7 +93,7 @@ if(a==="api"&&b==="graphql") {
 if(a==="search") {out([]);process.exit(0);}
 process.stderr.write("unsupported fixture gh arguments\\n");process.exit(1);
 `);
-  const env = { PATH: `${bin}${path.delimiter}${herdr.fixturePath}`, HIDE_E2E_PROVIDER_ANSWER: draft };
+  const env = { PATH: `${bin}${path.delimiter}${herdr.fixturePath}` };
   const setClock = (first: number, next: number) => fs.writeFileSync(clock, JSON.stringify({ first, next }));
   return { env, calls, contexts, issue, repositoryUnavailable, repositoryGate, clock: setClock };
 }

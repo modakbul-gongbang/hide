@@ -14,10 +14,8 @@ import { translate } from "./i18n/client";
 import type { BoardProject } from "./projectBoard";
 import { projectsOf } from "./remote";
 import { machineName, registeredName } from "./screenMachine";
-import { entryBox } from "./agentGraph";
 import { hideAiPlace } from "./hideAiOrigin";
-import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, localDeviceId, type AgentRow, type Device, type HideAi, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
-import { entryLens, useUiStore, type OverviewLens } from "./ui";
+import { focusedRemoteDevice, frontCheckout, localDeviceId, type AgentRow, type Device, type HideAi, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
 import type { Tool } from "./workspace";
 
 export type AgentGroup = "needs_you" | "done" | "working" | "seen";
@@ -442,15 +440,3 @@ export function agentTree(listed: ListedAgent[], scope: AgentScope | null): Agen
 export function agentListRows(tree: AgentTree): TreeRow[] {
   return tree.sections.flatMap((section) => section.rows);
 }
-
-/**
- * A Project's Overview as every way in opens it (PRD overview-lenses-tiles-agents
- * D-04, D-17, B11, B12): the Agents graph with the box of the checkout in
- * front selected, or the primary checkout's when the front is elsewhere.
- * Only Recent Panels brings back a lens as it was left.
- */
-export function projectEntryLens(rest: SnapshotRest | null, projectId: string): OverviewLens {
-  const workspace = catalogWorkspaces(rest).find((row) => row.id === projectId);
-  return entryLens(entryBox(workspace, frontCheckout(rest)?.id), useUiStore.getState().tasksMode);
-}
-

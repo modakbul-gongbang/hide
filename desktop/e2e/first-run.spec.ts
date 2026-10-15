@@ -186,7 +186,7 @@ test("with every agent off, the first project closes the wizard and opens no sta
   await expect(wizard).toHaveAttribute("data-first-run", "project");
 
   // B50: no agent on, so no panel opens on the project. (The fixture's shared Herdr runs agents, so the
-  // Home here draws its graph; the empty Home with no agent is B28's own check.)
+  // Home here lists its tasks; the empty Home with no agent is B28's own check.)
   await stubPicker(app, [alpha]);
   await page.locator("[data-add-project-browse]").click();
   await expect(wizard).toHaveCount(0, { timeout: 20_000 });

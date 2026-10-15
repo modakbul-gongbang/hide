@@ -75,7 +75,7 @@ test("Memory compares sources, limits a batch and groups a confirmed PR", async 
     // no Overview opens.
     await expect.poll(() => sent.get("pr_open")).toMatchObject({ pr_number: 72 });
     await expect(page.locator('[data-lane="files"] [data-pr-card="72"]')).toBeVisible();
-    await expect(page.locator("[data-overview-screen]")).toHaveCount(0);
+    await expect(page.locator("[data-overview-page]")).toHaveCount(0);
     // Return to this Memory, then the light/narrow state.
     await (await showProjectRow(page, page.locator("[data-project]", { hasText: "sample" }).locator("[data-checkout]").first())).click();
     await showTool(page, "memory");

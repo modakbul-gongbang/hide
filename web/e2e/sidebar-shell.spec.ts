@@ -84,14 +84,13 @@ test("the Search row and the Overview row under the device, with no Home row and
       await screenshot(page, `sidebar-shell-search-${theme}`);
     }
 
-    // D-07: over a Workspace the Overview row opens All projects as a layer, and Escape returns to the Workspace.
+    // Over a Workspace the Overview row opens the device Overview as a layer, and Escape returns to the Workspace.
     await list.locator("[data-checkout]").first().click();
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await expect(overview).not.toHaveAttribute("aria-current", "page");
     await overview.click();
     const modal = page.getByRole("dialog", { name: "Overview", exact: true });
-    await modal.getByRole("tab", { name: "All projects", exact: true }).click();
-    await expect(modal.locator("[data-main-screen]")).toBeVisible();
+    await expect(modal.locator("[data-overview-page]")).toBeVisible();
     await expect(overview).toHaveAttribute("aria-current", "page");
     await page.keyboard.press("Escape");
     await expect(modal).toHaveCount(0);
@@ -103,11 +102,11 @@ test("the Search row and the Overview row under the device, with no Home row and
     await page.keyboard.press(chord("new_workspace", "electron"));
     await expect(page.locator("[data-add-project]")).toHaveCount(0);
 
-    // The direct commands focus this one list or open the Agents graph over the Workspace.
+    // The direct commands focus this one list or open the Overview's Tasks over the Workspace.
     await page.keyboard.press(chord("sidebar_projects"));
     await expect.poll(() => sidebar.evaluate((node) => node.contains(document.activeElement))).toBe(true);
-    await page.keyboard.press(chord("sidebar_agents"));
-    await expect(modal.locator('[data-main-view="agents"]')).toBeVisible();
+    await page.keyboard.press(chord("overview"));
+    await expect(modal.locator('[data-main-view="tasks"]')).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(sidebar).toHaveAttribute("data-sidebar", "projects");
     await expect(list).toBeVisible();
@@ -146,13 +145,14 @@ test("the window's top row names the device over the rail and the sidebar, and c
       await page.mouse.move(640, 600);
       await screenshot(page, `title-row-workspace-${theme}`);
     }
-    // B18: the checkout's right-click is the path's menu, and the project opens its Project Overview.
+    // B18: the checkout's right-click is the path's menu, and the project opens the Overview's Tasks filtered to it (PRD overview-device-tasks B60).
     await center.locator("[data-workspace-location]").click({ button: "right" });
     await expect(page.locator('[role="menu"] [data-menu-item="copy_path"]')).toBeVisible();
     await page.keyboard.press("Escape");
     await project.click();
     const modal = page.getByRole("dialog", { name: "Overview", exact: true });
-    await expect(modal.locator("[data-overview-screen]")).toBeVisible();
+    await expect(modal.locator('[data-main-view="tasks"]')).toBeVisible();
+    await expect(modal.locator("[data-overview-project-chip]")).toContainText("fixture");
     await page.keyboard.press("Escape");
     await expect(modal).toHaveCount(0);
 

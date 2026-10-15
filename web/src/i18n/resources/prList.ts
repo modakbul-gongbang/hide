@@ -10,7 +10,6 @@ export const prListEnglish = {
   "prList.searchIssues": "Search issues",
   "prList.newIssue": "Create new issue",
   "prList.delegate": "Assign",
-  "prList.cleanup": "Clean up",
   "prList.actions": "PR actions",
   "prList.copyBranch": "Copy branch name",
 } as const;
@@ -25,7 +24,6 @@ const ko = {
   "prList.searchIssues": "이슈 검색",
   "prList.newIssue": "새 이슈 만들기",
   "prList.delegate": "맡기기",
-  "prList.cleanup": "정리",
   "prList.actions": "PR 동작",
   "prList.copyBranch": "브랜치 이름 복사",
 } satisfies Catalog<typeof prListEnglish>;
@@ -40,7 +38,6 @@ const zhCN = {
   "prList.searchIssues": "搜索议题",
   "prList.newIssue": "创建新议题",
   "prList.delegate": "交给智能体",
-  "prList.cleanup": "清理",
   "prList.actions": "PR 操作",
   "prList.copyBranch": "复制分支名称",
 } satisfies Catalog<typeof prListEnglish>;
@@ -55,7 +52,6 @@ const ja = {
   "prList.searchIssues": "課題を検索",
   "prList.newIssue": "新しい課題を作成",
   "prList.delegate": "任せる",
-  "prList.cleanup": "整理",
   "prList.actions": "PR の操作",
   "prList.copyBranch": "ブランチ名をコピー",
 } satisfies Catalog<typeof prListEnglish>;

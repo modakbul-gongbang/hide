@@ -50,9 +50,9 @@ test('shared Overview covers native pages, retains work and restores the keyboar
     await expect(modal).toBeVisible();
     capture('native-overview-light-needs-you');
     await page.keyboard.press('Escape');
-    await app.evaluate(({Menu}) => Menu.getApplicationMenu()!.getMenuItemById('sidebar_agents')!.click());
+    await app.evaluate(({Menu}) => Menu.getApplicationMenu()!.getMenuItemById('overview')!.click());
     await expect(modal).toBeVisible();
-    await expect(modal.locator('[data-main-view="agents"] [data-graph="all"]')).toBeVisible();
+    await expect(modal.locator('[data-main-view="tasks"]')).toBeVisible();
     await app.evaluate(({Menu}) => Menu.getApplicationMenu()!.getMenuItemById('sidebar_projects')!.click());
     await expect(modal).toHaveCount(0);
     await app.evaluate(({Menu}) => Menu.getApplicationMenu()!.getMenuItemById('overview')!.click());

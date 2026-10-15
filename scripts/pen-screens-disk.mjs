@@ -99,7 +99,6 @@ export function diskCleanupRows(tokens, {themedXref, screenButton, screenDialogS
     });
   }
 
-  const dot = (id, fill) => frame(id, 'Swatch', {width: 8, height: 8, cornerRadius: 4, fill}, []);
   const tooltip = (id, content) => frame(id, 'Tooltip', {padding: ['$--spacing-xxs', '$--spacing-sm'], fill: '$--popover', cornerRadius: '$--radius-sm', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
     text(`${id}-t`, content, {size: '$--text-caption'}),
   ]);
@@ -134,54 +133,6 @@ export function diskCleanupRows(tokens, {themedXref, screenButton, screenDialogS
       ]),
       frame(`${id}-b`, 'Body', {layout: 'vertical', gap: '$--spacing-md', width, padding: ['$--spacing-md', '$--spacing-lg']}, body),
       ...(footer ? [rule(`${id}-fr`, width), frame(`${id}-f`, 'Footer', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'start', width, padding: ['$--spacing-md', '$--spacing-lg']}, footer)] : []),
-    ]);
-  }
-
-  // -- entry: the Overview's facts line (DiskEntrance.tsx) ---------------------------------
-
-  function fact(id, glyph, label, {fill = '$--subtle-foreground', underline = false} = {}) {
-    return frame(id, label, {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', ...(underline ? {padding: [0, 0, 1, 0], stroke: fill, strokeWidth: {bottom: HAIR}} : {})}, [
-      icon(`${id}-g`, glyph, {size: 12, fill}),
-      text(`${id}-t`, label, {size: '$--text-caption', fill, mono: true}),
-    ]);
-  }
-
-  // Lines in the app's order: caches, the source of the worktrees, other, the shared Git.
-  function breakdown(id, size, partial) {
-    const lines = [['build_cache', '빌드 캐시', 38.2], ['dependencies', '의존성', 7.9], ['source', '워크트리 소스', 5.6], ['other', '기타 · 지우지 않음', 3.9], ['shared_git', '공유 Git', 0.8]];
-    const head = frame(`${id}-h`, 'Head', {layout: 'horizontal', width: 220}, [text(`${id}-ht`, `할당 ${size} · 눌러서 정리`, {size: '$--text-caption', fill: '$--foreground'})]);
-    const warn = partial ? [frame(`${id}-w`, 'Partial', {layout: 'horizontal', width: 220}, [text(`${id}-wt`, '일부 체크아웃은 크기를 재지 못해 잰 것만 합했다', {size: '$--text-caption', fill: '$--warning', width: 220})])] : [];
-    return frame(id, 'Tooltip', {layout: 'vertical', gap: 2, padding: ['$--spacing-xs', '$--spacing-sm'], fill: '$--popover', cornerRadius: '$--radius-sm', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
-      head, ...warn,
-      ...lines.map(([key, label, gb], index) => frame(`${id}-${index}`, label, {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'center', width: 220}, [
-        frame(`${id}-${index}-l`, label, {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-          dot(`${id}-${index}-sw`, LAYERS[key].dot),
-          text(`${id}-${index}-t`, label, {size: '$--text-caption', fill: '$--foreground'}),
-        ]),
-        spacer(`${id}-${index}-sp`),
-        text(`${id}-${index}-v`, fmt(gb), {size: '$--text-caption', fill: '$--foreground', mono: true}),
-      ])),
-    ]);
-  }
-
-  // kind: 'plain' (tooltip on the number), 'partial' (a checkout could not be measured: `≥`), 'low' (the warning cell)
-  function entry(kind) {
-    const partial = kind === 'partial';
-    const size = `${partial ? '≥ ' : ''}${fmt(USAGE_TOTAL)}`;
-    const facts = [
-      fact(`en-${kind}-wt-${s}`, 'folder-git-2', '36 worktrees'),
-      fact(`en-${kind}-disk-${s}`, 'hard-drive', size, {underline: kind !== 'low'}),
-      ...(kind === 'low' ? [fact(`en-low-free-${s}`, 'triangle-alert', `여유 ${fmt(1.6)} · ${fmt(23)} 비울 수 있음`, {fill: '$--warning', underline: true})] : []),
-      fact(`en-${kind}-mg-${s}`, 'git-merge', '4 merged → 정리', {fill: '$--pr-merged'}),
-    ];
-    return frame(`en-${kind}-${s}`, `Entry: ${kind}`, {layout: 'vertical', gap: '$--spacing-sm', width: 560, padding: '$--spacing-md', fill: '$--background', cornerRadius: '$--radius-md', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
-      frame(`en-${kind}-title-${s}`, 'Title row', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-        text(`en-${kind}-c1-${s}`, 'Overview', {size: '$--text-caption', fill: '$--subtle-foreground'}),
-        text(`en-${kind}-c2-${s}`, '/', {size: '$--text-caption', fill: '$--muted-foreground'}),
-        text(`en-${kind}-c3-${s}`, 'hide', {size: '$--text-headline', weight: '600'}),
-      ]),
-      frame(`en-${kind}-facts-${s}`, 'Facts', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'center'}, facts),
-      ...(kind === 'low' ? [] : [frame(`en-${kind}-tipwrap-${s}`, 'Tooltip anchor', {padding: [0, 0, 0, 96]}, [breakdown(`en-${kind}-tip-${s}`, size, partial)])]),
     ]);
   }
 
@@ -526,11 +477,6 @@ export function diskCleanupRows(tokens, {themedXref, screenButton, screenDialogS
   const row = (id, children) => frame(id, 'Row', {layout: 'horizontal', gap: '$--spacing-xl', alignItems: 'start'}, children);
 
   return [frame(`dc-${s}`, 'Disk Cleanup', {layout: 'vertical', gap: '$--spacing-xl'}, [
-    row(`dc-r0-${s}`, [
-      labelled(`dc-l-en-${s}`, '입구 · 디스크 숫자 위에 올리면', '요약 줄의 디스크 숫자가 레이어별 내역을 툴팁으로 보여주고, 누르면 정리 시트가 열린다.', entry('plain'), 560),
-      labelled(`dc-l-ep-${s}`, '입구 · 재지 못한 체크아웃이 있을 때', '재지 못한 체크아웃이 있으면 잰 것만 합해 ≥ 로 적고 툴팁이 그렇게 말한다. 시스템이 만들 수 없는 총합은 적지 않는다.', entry('partial'), 560),
-      labelled(`dc-l-el-${s}`, '입구 · 디스크가 모자랄 때만', '볼륨 여유가 10 GB 미만일 때만 경고 칸이 생긴다. 비울 수 있는 양은 끝난 체크아웃의 캐시. 누르면 끝난 것 필터로 열린다.', entry('low'), 560),
-    ]),
     labelled(`dc-l-m1-${s}`, '시트 · 전체에서 손으로 고르기', '행 하나 통째, 칸 몇 개, 워크트리 하나를 고른 상태. 열 머리와 왼쪽 위는 일부만 골라서 가운데 줄. 쓰는 중인 행은 이유가 이름 옆에 선다. 워크트리 칸을 켜면 같은 행의 캐시 칸은 포함됨.', sheetMixed(), W),
     labelled(`dc-l-m2-${s}`, '시트 · 끝난 것 필터 + 왼쪽 위 체크', '가장 흔한 정리: 끝난 체크아웃의 빌드 캐시와 의존성을 클릭 두 번에. 워크트리는 켜지지 않는다.', sheetDone(), W),
     labelled(`dc-l-m3-${s}`, '시트 · 측정 중, 재지 못함, 쓰는 중', '측정 중인 칸은 skeleton과 비활성 체크박스, 재지 못한 행은 흐리고 비어 있다. 쓰는 중인 행은 캐시 칸이 비활성이고 이유는 멈추면 뜬다.', sheetStates(), W),

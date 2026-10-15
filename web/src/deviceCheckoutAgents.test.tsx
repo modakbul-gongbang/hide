@@ -77,7 +77,6 @@ it("starts both device checkouts open and offers the same persisted fold (sessio
     navigator: { devices: [LOCAL, MINI], workspaces: [local.workspace], agents: [local.agent], focused_device_id: "local" },
   } as unknown as SnapshotRest;
   useShellStore.setState({ rest: legacyRest(device, []), agents: [], connection: "live" });
-  useUiStore.setState({ sidebarMode: "projects" });
   const actions = createActions(() => true);
   const container = document.createElement("div");
   document.body.append(container);

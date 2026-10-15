@@ -79,9 +79,16 @@ test("roots stay in one sidebar, open their children in place, and the header's 
     await expect(treeButton).toBeFocused();
     await treeButton.click();
     await screenshot(page, "sessions-pane-child-popover");
-    await tree.locator("[data-agent-tree-graph]").click();
-    await expect(page.getByRole("dialog", { name: "Overview", exact: true })).toBeVisible();
+    // B59: the Overview opens on the parent's task card, its record beside it; Escape closes the panel, then the Overview.
+    await tree.locator("[data-agent-tree-task]").click();
+    const overview = page.getByRole("dialog", { name: "Overview", exact: true });
+    await expect(overview).toBeVisible();
+    await expect(overview.locator(`[data-task-card-open="${parent}"]`)).toHaveAttribute("aria-pressed", "true");
+    await expect(overview.locator("[data-overview-panel=task]")).toBeVisible();
     await page.keyboard.press("Escape");
+    await expect(overview.locator("[data-overview-panel]")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(overview).toHaveCount(0);
 
     // B16: when the child goes, the tree and its button go with it.
     await page.locator(`nav[data-sidebar] [data-pane="${parent}"] [data-agent-open="${parent}"]`).first().click();

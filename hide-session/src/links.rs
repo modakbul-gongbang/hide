@@ -684,7 +684,7 @@ fn read_one(home: &std::path::Path, request: &ReadRequest) -> ReadAnswer {
     } else {
         None
     };
-    let stamp = crate::search_read::stamp_at(&path);
+    let stamp = crate::stamp::stamp_at(&path);
     match cursor.read(request.agent, &path) {
         Ok(parsed) => {
             let mut facts = parsed.links;

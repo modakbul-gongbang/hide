@@ -21,7 +21,8 @@ use serde_json::{Map, Value};
 
 use super::{
     CORE_STATE, DELIVERY_LEDGER, FACTORY, KEYS, LABELS, LINKS, LOCAL_ISSUES, MARKER_FILE,
-    MARKER_VERSION, Marker, Moves, Refusal, WORKSPACE_VIEWS, read_json, read_marker, write,
+    MARKER_VERSION, Marker, Moves, Refusal, SESSION_SEARCH, WORKSPACE_VIEWS, read_json,
+    read_marker, write,
 };
 use crate::node::NodeId;
 
@@ -212,11 +213,35 @@ pub fn reown(staging: &Path, change: &OwnerChange, ids: &IdTable) -> Result<Reow
     }
 
     let links = staging.join(LINKS);
+    // Read before the link record's projects take their new keys.
+    let retention_pairs = if links.is_file() {
+        project_key_pairs(&links, change).map_err(|reason| refuse(&links, reason))?
+    } else {
+        Vec::new()
+    };
     if links.is_file() {
         match reown_links(&links, change).map_err(|reason| refuse(&links, reason))? {
             Links::Changed => outcome.files.push(LINKS.to_owned()),
             Links::Unchanged => {}
             Links::Unopened(reason) => outcome.links_unopened = Some(reason),
+        }
+    }
+
+    // The session search file is only ever read (D-20): the link record
+    // names which ids its retention rows now belong to.
+    if staging.join(SESSION_SEARCH).is_file()
+        && !retention_pairs.is_empty()
+        && outcome.links_unopened.is_none()
+    {
+        let (mut store, _) = crate::links::store::LinkStore::open(&links)
+            .map_err(|reason| refuse(&links, reason))?;
+        if store
+            .alias_retention(&retention_pairs)
+            .map_err(|reason| refuse(&links, reason))?
+            > 0
+            && !outcome.files.contains(&LINKS.to_owned())
+        {
+            outcome.files.push(LINKS.to_owned());
         }
     }
 
@@ -627,6 +652,50 @@ enum Links {
     Changed,
     Unchanged,
     Unopened(String),
+}
+
+/// Each project key of the two machines in the link record, with the key
+/// it takes once its machine has its new id: the keys record retention is
+/// kept under (`links::store::policies`). The record is only read here.
+fn project_key_pairs(path: &Path, change: &OwnerChange) -> Result<Vec<(String, String)>, String> {
+    let failed = |error: rusqlite::Error| error.to_string();
+    let store = rusqlite::Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(failed)?;
+    let has_table: bool = store
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='projects')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(failed)?;
+    if !has_table {
+        return Ok(Vec::new());
+    }
+    let mut statement = store
+        .prepare("SELECT key, device, root FROM projects WHERE device IN (?1, ?2)")
+        .map_err(failed)?;
+    let rows = statement
+        .query_map([&change.old_owner, &change.new_owner_was], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(failed)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(failed)?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(key, device, root)| {
+            let to = change.device(&device)?;
+            let new = hide_project::project_id(&to, Path::new(&root));
+            (new != key).then_some((key, new))
+        })
+        .collect())
 }
 
 fn reown_links(path: &Path, change: &OwnerChange) -> Result<Links, String> {
@@ -1555,6 +1624,61 @@ mod tests {
         );
         assert!(!links.has_device(C).unwrap());
         assert!(links.has_device(ALIAS).unwrap() && links.has_device(M).unwrap());
+    }
+
+    /// The old session search file's record retention moves with the
+    /// core (PRD overview-device-tasks D-20) without the file being
+    /// written: each project's days follow its link-record key to the key
+    /// its machine's new id gives it, and a project of a machine the move
+    /// does not touch keeps its row.
+    #[test]
+    fn record_retention_follows_each_project_to_its_new_key() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(MARKER_FILE),
+            serde_json::to_vec(&json!({"version": 1, "node": M})).unwrap(),
+        )
+        .unwrap();
+        drop(crate::links::store::LinkStore::open(&dir.path().join(LINKS)).unwrap());
+        let links = rusqlite::Connection::open(dir.path().join(LINKS)).unwrap();
+        let search = rusqlite::Connection::open(dir.path().join(SESSION_SEARCH)).unwrap();
+        search
+            .execute_batch("CREATE TABLE policy(project TEXT PRIMARY KEY, days INTEGER NOT NULL);")
+            .unwrap();
+        for (device, root, days) in [(M, M_ROOT, 30), (ALIAS, C_ROOT, 7), (X, X_ROOT, 0)] {
+            let key = hide_project::project_id(device, Path::new(root));
+            links
+                .execute(
+                    "INSERT INTO projects(key, device, root, seen_at) VALUES(?1, ?2, ?3, 0)",
+                    [&key, device, root],
+                )
+                .unwrap();
+            search
+                .execute(
+                    "INSERT INTO policy VALUES(?1, ?2)",
+                    rusqlite::params![key, days],
+                )
+                .unwrap();
+        }
+        drop((links, search));
+        let before = std::fs::read(dir.path().join(SESSION_SEARCH)).unwrap();
+
+        let outcome = reown(dir.path(), &forward(), &IdTable::default()).unwrap();
+        assert!(!outcome.files.contains(&SESSION_SEARCH.to_owned()));
+        assert_eq!(
+            std::fs::read(dir.path().join(SESSION_SEARCH)).unwrap(),
+            before,
+            "the session search file is never written (D-20)"
+        );
+        let (store, _) = crate::links::store::LinkStore::open(&dir.path().join(LINKS)).unwrap();
+        let policies = store.policies(&dir.path().join(SESSION_SEARCH)).unwrap();
+        for (device, root, days) in [(M, M_ROOT, 30), (C, C_ROOT, 7), (X, X_ROOT, 0)] {
+            assert_eq!(
+                policies.get(&hide_project::project_id(device, Path::new(root))),
+                Some(&days),
+                "{device}"
+            );
+        }
     }
 
     #[test]

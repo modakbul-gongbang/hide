@@ -352,14 +352,13 @@ fn authenticated_node_advertises_only_its_compiled_readers() {
             );
         }
     }
-    // Cursor's accepted reader contract includes conversation/search, while
+    // Cursor's accepted reader contract includes its conversation, while
     // its native records provide no title, Memory, link or structured turn.
     let features = device.link.reader_features().unwrap();
     for feature in [
         ReaderFeature::Identity,
         ReaderFeature::Labels,
         ReaderFeature::Conversation,
-        ReaderFeature::Search,
         ReaderFeature::Activity,
     ] {
         assert!(features.supports("cursor", feature), "cursor: {feature:?}");
@@ -519,21 +518,6 @@ fn a_retained_protocol24_node_keeps_legacy_readers_then_upgrades_normally() {
             )
             .unwrap();
             assert!(text.contains("요청 보기를 만들어줘"));
-            let indexed: hide_session::search::IndexStep = call_as(
-                device.link.as_ref(),
-                Call::SessionIndexRead {
-                    scope: None,
-                    agent,
-                    path: candidate.path.clone(),
-                    saved: None,
-                },
-                TIMEOUT,
-            )
-            .unwrap();
-            assert!(
-                matches!(indexed, hide_session::search::IndexStep::Read { messages, .. }
-                if messages.iter().any(|message| message.text.contains("요청 보기를 만들어줘")))
-            );
         }
     }
     for provider in ["pi", "omp", "grok", "cursor"] {

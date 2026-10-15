@@ -37,9 +37,11 @@ import { settingsCatalogs, settingsEnglish } from "./resources/settings";
 import { workspaceCatalogs, workspaceEnglish } from "./resources/workspace";
 import type { Catalogs } from "./schema";
 import { sessionWorkCatalogs, sessionWorkEnglish } from "./resources/sessionWork";
+import { deviceOverviewCatalogs, deviceOverviewEnglish } from "./resources/deviceOverview";
 
 export const english = {
   ...sessionWorkEnglish,
+  ...deviceOverviewEnglish,
   ...agentSessionsEnglish,
   ...shellEnglish,
   ...editorSearchEnglish,
@@ -85,6 +87,7 @@ export const catalogs = {
   en: english,
   ko: {
     ...sessionWorkCatalogs.ko,
+    ...deviceOverviewCatalogs.ko,
     ...agentSessionsCatalogs.ko,
     ...shellCatalogs.ko,
     ...editorSearchCatalogs.ko,
@@ -125,6 +128,7 @@ export const catalogs = {
   },
   "zh-CN": {
     ...sessionWorkCatalogs["zh-CN"],
+    ...deviceOverviewCatalogs["zh-CN"],
     ...agentSessionsCatalogs["zh-CN"],
     ...shellCatalogs["zh-CN"],
     ...editorSearchCatalogs["zh-CN"],
@@ -165,6 +169,7 @@ export const catalogs = {
   },
   ja: {
     ...sessionWorkCatalogs.ja,
+    ...deviceOverviewCatalogs.ja,
     ...agentSessionsCatalogs.ja,
     ...shellCatalogs.ja,
     ...editorSearchCatalogs.ja,

@@ -627,13 +627,36 @@ fn read_issues(
     root: &Where,
     links: &[crate::issues::IssueReference],
 ) -> Result<(crate::issues::ProjectIssuesSnapshot, Option<GhFailure>), GhFailure> {
-    let repository_json = gh_at(node, root, &["repo", "view", "--json", "nameWithOwner,id"])?;
+    let repository_json = gh_at(
+        node,
+        root,
+        &[
+            "repo",
+            "view",
+            "--json",
+            hide_node_link::gh::REPOSITORY_FIELDS,
+        ],
+    )?;
     let repository: serde_json::Value = serde_json::from_str(&repository_json)
         .map_err(|error| GhFailure::network(format!("GitHub repository response: {error}")))?;
     let repository_id = repository
         .get("id")
         .and_then(serde_json::Value::as_str)
         .map(str::to_owned);
+    // `PUBLIC`, `PRIVATE` or `INTERNAL`; anything else is not known (D-35).
+    let public = match repository
+        .get("visibility")
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("PUBLIC") => Some(true),
+        Some("PRIVATE" | "INTERNAL") => Some(false),
+        other => {
+            crate::diagnostic!(
+                serde_json::json!({"component":"github","kind":"repository.visibility_unknown","value":other})
+            );
+            None
+        }
+    };
     let repository = repository
         .get("nameWithOwner")
         .and_then(serde_json::Value::as_str)
@@ -719,6 +742,7 @@ fn read_issues(
             overflow,
             dependencies_failure,
             repository_id,
+            public,
         },
         warning,
     ))
@@ -929,33 +953,55 @@ pub(crate) fn read_linked_issue(
         .ok_or_else(|| "GitHub issue was not found".to_owned())
 }
 
-/// Creates an issue in the repository `place` names (Overview › 새 이슈,
-/// and a pull request's 새 이슈 만들기), one of Hide's two writes to GitHub
-/// with `write_closing_line`. `gh issue create` prints the new issue's URL,
-/// which names it.
+/// Creates an issue in the repository `place` names (the backlog's add, and
+/// a pull request's 새 이슈 만들기), one of Hide's writes to GitHub with
+/// `write_closing_line` and `close_issue`. `gh issue create` prints the new
+/// issue's URL, which names it.
 pub(crate) fn create_issue(
     node: &dyn NodeLink,
     place: &Where,
     title: &str,
     body: &str,
 ) -> Result<crate::issues::IssueSnapshot, String> {
+    create_issue_failing(node, place, title, body).map_err(|failure| match failure {
+        CreateFailure::Gh(failure) => failure.reason,
+        CreateFailure::Unreadable(reason) => reason,
+    })
+}
+
+/// Why a create did not name its issue: `gh` failed, or it answered with no
+/// issue Hide could read, which may still have been made.
+#[derive(Clone, Debug)]
+pub(crate) enum CreateFailure {
+    Gh(GhFailure),
+    Unreadable(String),
+}
+
+/// [`create_issue`] keeping why `gh` failed, which the backlog shows.
+pub(crate) fn create_issue_failing(
+    node: &dyn NodeLink,
+    place: &Where,
+    title: &str,
+    body: &str,
+) -> Result<crate::issues::IssueSnapshot, CreateFailure> {
     let output = gh_at(
         node,
         place,
         &["issue", "create", "--title", title, "--body", body],
     )
-    .map_err(|error| error.reason)?;
+    .map_err(CreateFailure::Gh)?;
     let url = output
         .lines()
         .map(str::trim)
         .rfind(|line| line.starts_with("https://github.com/"))
         .ok_or_else(|| {
-            format!(
+            CreateFailure::Unreadable(format!(
                 "gh issue create did not print the new issue's URL: {}",
                 output.trim()
-            )
+            ))
         })?;
-    let reference = crate::issues::IssueReference::parse(url, None)?;
+    let reference =
+        crate::issues::IssueReference::parse(url, None).map_err(CreateFailure::Unreadable)?;
     Ok(crate::issues::IssueSnapshot {
         reference,
         title: title.to_owned(),
@@ -993,6 +1039,7 @@ pub(crate) fn reconcile_issue_attempt(
     repository: &str,
     title: &str,
     since: u64,
+    claimed: &[u64],
 ) -> Result<Option<crate::issues::IssueSnapshot>, String> {
     let query =
         hide_node_link::gh::issue_attempt_query(repository).ok_or("issue_repository_invalid")?;
@@ -1031,7 +1078,18 @@ pub(crate) fn reconcile_issue_attempt(
             .and_then(parse_rfc3339_ms)
             .ok_or("issue_reconcile_invalid")?;
         oldest = oldest.min(created);
-        if created < since || node.get("title").and_then(serde_json::Value::as_str) != Some(title) {
+        let authored = node
+            .get("viewerDidAuthor")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or("issue_reconcile_invalid")?;
+        if created < since
+            || !authored
+            || node.get("title").and_then(serde_json::Value::as_str) != Some(title)
+            || node
+                .get("number")
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|number| claimed.contains(&number))
+        {
             continue;
         }
         let url = node
@@ -2202,9 +2260,25 @@ fn main_worktree(node: &dyn NodeLink, path: &Path) -> Option<PathBuf> {
 }
 
 #[derive(Clone, Debug)]
-struct GhFailure {
-    category: GithubFailureCategory,
-    reason: String,
+pub(crate) struct GhFailure {
+    pub(crate) category: GithubFailureCategory,
+    pub(crate) reason: String,
+}
+
+/// Closes the one issue the backlog made (`되돌리기`, PRD overview-device-tasks
+/// D-21). GitHub keeps a closed issue; Hide never deletes one.
+pub(crate) fn close_issue(
+    node: &dyn NodeLink,
+    place: &Where,
+    repository: &str,
+    number: u32,
+) -> Result<(), GhFailure> {
+    gh_at(
+        node,
+        place,
+        &["issue", "close", &number.to_string(), "--repo", repository],
+    )
+    .map(|_| ())
 }
 
 impl GhFailure {
@@ -2221,20 +2295,12 @@ impl GhFailure {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Where {
     Checkout(PathBuf),
-    DeviceRepository {
-        checkout: String,
-        repository: String,
-    },
     Repository(String),
 }
 
 fn gh_at(node: &dyn NodeLink, place: &Where, arguments: &[&str]) -> Result<String, GhFailure> {
     match place {
         Where::Checkout(root) => gh(node, Some(root), arguments),
-        Where::DeviceRepository {
-            checkout,
-            repository,
-        } => run_gh_call_at(node, Some(checkout), Some(repository), arguments),
         Where::Repository(repository) => run_gh_call(node, None, Some(repository), arguments),
     }
 }

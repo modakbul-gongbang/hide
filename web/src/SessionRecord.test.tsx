@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { SessionRecord } from "./SessionRecord";
+import { LaneSessionRecord } from "./SessionRecord";
 import type { MissedWork, SessionRecord as RecordValue, SnapshotRest, WorkOutput, WorkRequest, WorkSession, WorkTask } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -24,7 +24,7 @@ const SESSION: WorkSession = { device_id: "local", agent: "claude", session_id: 
 const CHILD: WorkSession = { device_id: "local", agent: "codex", session_id: "child" };
 const task = (id: string, name: string, at: number, done: boolean, end: WorkTask["end"] = "done"): WorkTask => ({ id, chapter_id: "c", name, at_unix_ms: at, last_at_unix_ms: at, end, done });
 const request = (offset: number, text: string, task_ids: string[], author: WorkRequest["author"] = "operator", judged = true): WorkRequest => ({ offset, at_unix_ms: AT + offset, text, author, task_ids, chapter_id: "c", judged });
-const missed = (id: string, text: string, turn_offset: number, status: MissedWork["status"] = "open"): MissedWork => ({ id, kind: "problem", text, status, at_unix_ms: AT, turn_offset, issue_repository: null, issue_number: null, creating: false });
+const missed = (id: string, text: string, turn_offset: number, status: MissedWork["status"] = "open"): MissedWork => ({ id, kind: "problem", text, status, at_unix_ms: AT, turn_offset, issue_repository: null, issue_number: null, creating: false, backlog_key: null });
 const output = (number: number, state: string, task_id: string | null, source: WorkSession): WorkOutput => ({ kind: "pr", repository: "acme/app", number, title: `PR title ${number}`, url: `https://example.invalid/pull/${number}`, state, stale: false, last_read_at_unix_ms: AT, created_at_unix_ms: AT, task_id, source, source_name: source.session_id });
 const child: RecordValue = { session: CHILD, title: "Child work", fallback_title: "Codex", native_title: null, manual_title: null, state: "idle", last_end: "done", cwd: null, path: null, started_at_unix_ms: AT, ended_at_unix_ms: null, chapters: [], tasks: [], requests: [], missed: [], outputs: [], children: [] };
 const BASE: RecordValue = {
@@ -47,7 +47,7 @@ async function mount(record: RecordValue, options: { summaries?: boolean; words?
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
-  await act(async () => root.render(<TooltipProvider><SessionRecord actions={createActions(() => true)} target={SESSION} /></TooltipProvider>));
+  await act(async () => root.render(<TooltipProvider><LaneSessionRecord actions={createActions(() => true)} target={SESSION} /></TooltipProvider>));
   return { container, unmount: async () => { await act(async () => root.unmount()); } };
 }
 
@@ -136,15 +136,28 @@ it("with Hide AI off shows the PRs and the requests oldest first, the newest fiv
   } finally { await unmount(); }
 });
 
-it("draws a descendant's missed item once, named, at the end of the top record, not again in the child's own checklist", async () => {
+it("draws a descendant's missed item once, named, at the end of the top record, where the child is a row to open rather than a second checklist", async () => {
   const withMissed = { ...BASE, children: [{ ...child, tasks: [task("ct", "Child task", AT, true)], missed: [missed("m-child", "Child found this", 99)] }] };
   const { container, unmount } = await mount(withMissed);
   try {
-    // Open the child's checklist: the item is still drawn only once.
-    await act(async () => container.querySelector<HTMLElement>("[data-record-child] > summary")!.click());
+    expect(container.querySelector('[data-record-child="child"]')?.tagName).toBe("BUTTON");
     const items = container.querySelectorAll('[data-missed-work="m-child"]');
     expect(items).toHaveLength(1);
     expect(items[0]!.closest("[data-record-other]")?.textContent).toContain("Child found this · Child work");
+  } finally { await unmount(); }
+});
+
+it("opens a child's record in place under `← <parent>`, and goes back one level per press (PRD overview-device-tasks B20)", async () => {
+  const { container, unmount } = await mount({ ...BASE, children: [child] });
+  try {
+    await act(async () => container.querySelector<HTMLElement>('[data-record-child="child"]')!.click());
+    expect(text(container.querySelector("h2"))).toContain("Child work");
+    const up = container.querySelector<HTMLElement>("[data-record-up]")!;
+    expect(text(up)).toContain(BASE.title);
+    await act(async () => up.click());
+    expect(container.querySelector("[data-record-up]")).toBeNull();
+    expect(container.querySelector("[data-record-back]")).not.toBeNull();
+    expect(text(container.querySelector("h2"))).toContain(BASE.title);
   } finally { await unmount(); }
 });
 
@@ -162,7 +175,17 @@ it("says so when the only requests were not tasks and the words button is off, a
   const { container, unmount } = await mount(noTasks);
   try {
     expect(text(container.querySelector("[data-record-work]"))).toContain("No recorded requests yet");
-    await act(async () => container.querySelector<HTMLElement>("[data-record-child] > summary")!.click());
     expect(text(container.querySelector("[data-record-child]"))).not.toContain("0/0");
+  } finally { await unmount(); }
+});
+
+it("ends an idle record with the last thing its agent said, and a working one with its Now line instead (B17)", async () => {
+  const { container, unmount } = await mount(BASE);
+  try {
+    await act(async () => useShellStore.setState({ agents: [{ pane_id: "w1:p1", session_id: "root", message: "Fix the header\nRan the tests\nAll green, ready for review" } as never] }));
+    expect(text(container.querySelector("[data-record-last-words]"))).toContain("All green, ready for review");
+    await act(async () => useShellStore.setState({ sessionRecord: { session: SESSION, loading: false, failure: null, record: { ...BASE, state: "working", requests: [...BASE.requests, request(99, "Keep going", [], "operator", false)] } } }));
+    expect(container.querySelector("[data-record-now]")).not.toBeNull();
+    expect(container.querySelector("[data-record-last-words]")).toBeNull();
   } finally { await unmount(); }
 });

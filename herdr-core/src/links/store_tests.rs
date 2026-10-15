@@ -938,23 +938,68 @@ fn the_store_file_is_private() {
     assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o077, 0);
 }
 
+/// The old session search file keeps setting record retention (D-20): its
+/// saved days are read, never written, and a file that is missing or holds
+/// no `policy` table is the default for every project.
 #[test]
-fn copied_history_days_are_read_from_the_search_index() {
+fn copied_history_days_are_read_from_the_old_search_file_and_never_written() {
     let state = tempfile::tempdir().unwrap();
     let search = state.path().join("session search.sqlite3");
-    let mut index = hide_session::search::SearchIndex::open(&search).unwrap();
-    index.set_days(PROJECT, 30).unwrap();
-    drop(index);
+    let written = rusqlite::Connection::open(&search).unwrap();
+    written
+        .execute_batch("CREATE TABLE policy(project TEXT PRIMARY KEY, days INTEGER NOT NULL);")
+        .unwrap();
+    written
+        .execute("INSERT INTO policy VALUES(?1, 30)", [PROJECT])
+        .unwrap();
+    drop(written);
+    let before = fs::read(&search).unwrap();
     let store = open(state.path());
 
     let policies = store.policies(&search).unwrap();
     assert_eq!(policies.get(PROJECT), Some(&30));
+    assert_eq!(fs::read(&search).unwrap(), before, "the file is only read");
     assert!(
         store
             .policies(&state.path().join("absent.sqlite3"))
             .unwrap()
             .is_empty()
     );
+    let tableless = state.path().join("tableless.sqlite3");
+    rusqlite::Connection::open(&tableless)
+        .unwrap()
+        .execute_batch("CREATE TABLE messages(id INTEGER PRIMARY KEY);")
+        .unwrap();
+    assert!(store.policies(&tableless).unwrap().is_empty());
+}
+
+/// A project whose id a conversion and then a move replaced keeps the days
+/// the search file names under its first id, unless its newest id has a row
+/// of its own.
+#[test]
+fn retention_follows_a_project_through_each_id_it_was_given() {
+    let state = tempfile::tempdir().unwrap();
+    let search = state.path().join("session-search.sqlite3");
+    let written = rusqlite::Connection::open(&search).unwrap();
+    written
+        .execute_batch(
+            "CREATE TABLE policy(project TEXT PRIMARY KEY, days INTEGER NOT NULL);\
+             INSERT INTO policy VALUES('first', 30), ('kept', 7), ('own', 1);",
+        )
+        .unwrap();
+    drop(written);
+    let mut store = open(state.path());
+    let pair = |old: &str, new: &str| (old.to_owned(), new.to_owned());
+    assert_eq!(
+        store
+            .alias_retention(&[pair("first", "second"), pair("kept", "own")])
+            .unwrap(),
+        2
+    );
+    store.alias_retention(&[pair("second", "third")]).unwrap();
+    let policies = store.policies(&search).unwrap();
+    assert_eq!(policies.get("third"), Some(&30));
+    assert_eq!(policies.get("own"), Some(&1), "its own row wins");
 }
 
 #[test]

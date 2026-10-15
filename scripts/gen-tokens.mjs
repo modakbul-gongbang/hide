@@ -45,6 +45,8 @@ export function generate(root = process.cwd()) {
   const tokens = readTokens(root);
   const smallControl = tokens['--size-control-sm'];
   if (smallControl?.type !== 'number') throw new Error('Expected numeric --size-control-sm');
+  const overviewPanel = tokens['--size-overview-panel-breakpoint'];
+  if (overviewPanel?.type !== 'number') throw new Error('Expected numeric --size-overview-panel-breakpoint');
   const paneBreakpoint = tokens['--size-pane-parent-breakpoint'];
   if (paneBreakpoint?.type !== 'number') throw new Error('Expected numeric --size-pane-parent-breakpoint');
   const theme = [], mapped = [], light = [], dark = [], hideLight = [], hideDark = [], rest = [], fixed = [];
@@ -82,6 +84,8 @@ export function generate(root = process.cwd()) {
     // Container query conditions need a compiled length, not a var() expression.
     // Reserve two existing small controls' worth of title room for the count.
     `@custom-variant agent-tab-count-room (@container tab-title (min-width: ${smallControl.value * 2}px));`,
+    // Below this window width the Overview's side panel opens over the tabs (PRD overview-device-tasks B65).
+    `@custom-variant overview-narrow (@media (width < ${overviewPanel.value}px));`,
     // A pane wide enough for its header to carry words beside its marks.
     `@custom-variant pane-wide (@container pane (min-width: ${paneBreakpoint.value}px));`,
     '',

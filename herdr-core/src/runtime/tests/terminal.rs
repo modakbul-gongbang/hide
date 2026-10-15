@@ -505,6 +505,7 @@ fn a_device_pane_is_searched_on_its_own_herdr() {
             session: None,
             files: RemoteFileListSnapshot::idle(),
             catalog: Default::default(),
+            unreachable_since_unix_ms: None,
         });
         runtime.install_remote_control(live::RemoteControlContext::new(
             "mini",

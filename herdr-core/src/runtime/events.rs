@@ -677,37 +677,12 @@ pub(super) struct SessionsFilterPayload {
     pub(super) query: String,
 }
 
-/// Without a `workspace_id` the refresh reads the focused checkout's Project
-/// for the right panel, as it always has. With one it names that
-/// catalog Project for a screen's Sessions (`project_sessions.rs`), whatever
-/// is focused, and reads its history again.
-#[derive(Debug, Default, Deserialize)]
-pub(super) struct SessionsRefreshPayload {
-    #[serde(default)]
-    pub(super) workspace_id: Option<String>,
-    #[serde(default)]
-    pub(super) device_id: Option<String>,
-}
-
-/// Without a `workspace_id` the measurement is the right panel's, the
-/// focused checkout's project. With one it names that local Git project for
-/// a web Overview's facts line, whatever is focused, and measures it again.
-#[derive(Debug, Default, Deserialize)]
-pub(super) struct CardMeasureDiskPayload {
-    #[serde(default)]
-    pub(super) workspace_id: Option<String>,
-}
-
 #[derive(Debug, Deserialize)]
 pub(super) struct ArchiveOpenPayload {
     pub(super) kind: String,
     pub(super) id: String,
     #[serde(default = "default_true")]
     pub(super) preview: bool,
-    /// The named Project whose Sessions the item opens beside; absent, it
-    /// opens as an editor tab in the focused checkout.
-    #[serde(default)]
-    pub(super) workspace_id: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -894,18 +869,6 @@ pub(super) struct IssueSettingsSetPayload {
     pub(super) ai_worktree_name: Option<bool>,
     #[serde(default)]
     pub(super) closes_instruction: Option<bool>,
-}
-
-/// `issue_create`: a new issue in the project's source.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct IssueCreatePayload {
-    pub(super) workspace_id: String,
-    pub(super) title: String,
-    #[serde(default)]
-    pub(super) body: String,
-    #[serde(default)]
-    pub(super) missed: Option<crate::links::ledger::MissedSource>,
 }
 
 /// `issue_detail_request`: one issue's body, labels, author, assignees and
@@ -1453,16 +1416,19 @@ pub(super) enum Event {
     PathMove(PathMovePayload),
     PathTrash(PathTrashPayload),
     UiStateUpdate(Box<UiStateUpdatePayload>),
-    SessionsRefresh(SessionsRefreshPayload),
-    SessionSearch(super::session_search::SearchPayload),
+    SessionsRefresh,
     LinksOpen(super::links::LinksOpenPayload),
     LinksClose,
     SessionRecordOpen(super::links::RecordOpenPayload),
     SessionRecordClose,
     SessionWorkSearch(super::links::RecordSearchPayload),
     SessionMissedStatus(super::links::MissedStatusPayload),
-    SessionIssueDraft(crate::links::ledger::MissedSource),
-    SessionIssueDraftCancel,
+    BacklogAdd(super::backlog::BacklogAddPayload),
+    BacklogRetry(super::backlog::BacklogIntentPayload),
+    BacklogDismiss(super::backlog::BacklogIntentPayload),
+    BacklogUndo(super::backlog::BacklogItemPayload),
+    BacklogOrigin(super::backlog::BacklogItemPayload),
+    BacklogOriginClose(super::backlog::BacklogKeyPayload),
     FactoryAction(Box<super::factory::FactoryActionPayload>),
     FactoryTaskOpen(super::factory::FactoryTaskOpenPayload),
     FactoryTaskClose,
@@ -1509,7 +1475,6 @@ pub(super) enum Event {
     IssueSourceSet(IssueSourceSetPayload),
     ProjectSettingsSet(super::project_settings::SetPayload),
     IssueSettingsSet(IssueSettingsSetPayload),
-    IssueCreate(IssueCreatePayload),
     IssueDetailRequest(IssueDetailRequestPayload),
     GithubSearch(GithubSearchPayload),
     WorktreeNameSuggest(WorktreeNameSuggestPayload),
@@ -1542,7 +1507,7 @@ pub(super) enum Event {
     CleanupConfirm(CleanupConfirmPayload),
     CleanupDismiss,
     CardRefresh,
-    CardMeasureDisk(CardMeasureDiskPayload),
+    DiskWatch(super::disk_sweep::DiskWatchPayload),
     ReconnectPane(FocusPanePayload),
     PetSetVisible(PetVisibilityPayload),
     PetToggleVisible,
@@ -1691,19 +1656,21 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "ui_state_update" => serde_json::from_value::<Box<UiStateUpdatePayload>>(payload)
             .map(Event::UiStateUpdate)
             .map_err(|_| invalid_payload(&kind)),
-        // An older client sends `{}`; a payload that is absent reads the same.
-        "sessions_refresh" => serde_json::from_value::<Option<SessionsRefreshPayload>>(payload)
-            .map(|payload| Event::SessionsRefresh(payload.unwrap_or_default()))
-            .map_err(|_| invalid_payload(&kind)),
+        // The focused checkout's sessions for the right panel; whatever the
+        // payload says, nothing else is read.
+        "sessions_refresh" => Ok(Event::SessionsRefresh),
         "sessions_set_filter" => decode!(SessionsFilterPayload, SessionsSetFilter),
-        "session_search" => decode!(super::session_search::SearchPayload, SessionSearch),
         "links_open" => decode!(super::links::LinksOpenPayload, LinksOpen),
         "session_record_open" => decode!(super::links::RecordOpenPayload, SessionRecordOpen),
         "session_record_close" => Ok(Event::SessionRecordClose),
         "session_work_search" => decode!(super::links::RecordSearchPayload, SessionWorkSearch),
         "session_missed_status" => decode!(super::links::MissedStatusPayload, SessionMissedStatus),
-        "session_issue_draft" => decode!(crate::links::ledger::MissedSource, SessionIssueDraft),
-        "session_issue_draft_cancel" => Ok(Event::SessionIssueDraftCancel),
+        "backlog_add" => decode!(super::backlog::BacklogAddPayload, BacklogAdd),
+        "backlog_retry" => decode!(super::backlog::BacklogIntentPayload, BacklogRetry),
+        "backlog_dismiss" => decode!(super::backlog::BacklogIntentPayload, BacklogDismiss),
+        "backlog_undo" => decode!(super::backlog::BacklogItemPayload, BacklogUndo),
+        "backlog_origin" => decode!(super::backlog::BacklogItemPayload, BacklogOrigin),
+        "backlog_origin_close" => decode!(super::backlog::BacklogKeyPayload, BacklogOriginClose),
         "factory_action" => serde_json::from_value::<super::factory::FactoryActionPayload>(payload)
             .map(|payload| Event::FactoryAction(Box::new(payload)))
             .map_err(|_| invalid_payload(&kind)),
@@ -1759,7 +1726,6 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "issue_source_set" => decode!(IssueSourceSetPayload, IssueSourceSet),
         "project_settings_set" => decode!(super::project_settings::SetPayload, ProjectSettingsSet),
         "issue_settings_set" => decode!(IssueSettingsSetPayload, IssueSettingsSet),
-        "issue_create" => decode!(IssueCreatePayload, IssueCreate),
         "issue_detail_request" => decode!(IssueDetailRequestPayload, IssueDetailRequest),
         "github_search" => decode!(GithubSearchPayload, GithubSearch),
         "worktree_name_suggest" => decode!(WorktreeNameSuggestPayload, WorktreeNameSuggest),
@@ -1788,10 +1754,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "overview_open_section" => decode!(OverviewOpenSectionPayload, OverviewOpenSection),
         "agent_start_in_checkout" => decode!(AgentStartInCheckoutPayload, AgentStartInCheckout),
         "card_refresh" => Ok(Event::CardRefresh),
-        // An older client sends `{}`; a payload that is absent reads the same.
-        "card_measure_disk" => serde_json::from_value::<Option<CardMeasureDiskPayload>>(payload)
-            .map(|payload| Event::CardMeasureDisk(payload.unwrap_or_default()))
-            .map_err(|_| invalid_payload(&kind)),
+        "disk_watch" => decode!(super::disk_sweep::DiskWatchPayload, DiskWatch),
         "reconnect_pane" => decode!(FocusPanePayload, ReconnectPane),
         "pet_set_visible" => decode!(PetVisibilityPayload, PetSetVisible),
         "pet_toggle_visible" => Ok(Event::PetToggleVisible),
@@ -1927,20 +1890,18 @@ impl Runtime {
             Event::ViewComment(payload) => self.apply_view_comment(payload),
             Event::ViewFeedbackSend(payload) => self.apply_view_feedback_send(payload),
             Event::BrowserState(payload) => self.record_browser_state(payload),
-            Event::SessionsRefresh(payload) => match payload.workspace_id {
-                Some(workspace_id) => {
-                    self.refresh_project_sessions(payload.device_id.as_deref(), &workspace_id)
-                }
-                None => self.request_sessions_refresh(),
-            },
-            Event::SessionSearch(payload) => self.request_session_search(payload),
+            Event::SessionsRefresh => self.request_sessions_refresh(),
             Event::LinksOpen(payload) => self.open_links(payload),
             Event::SessionRecordOpen(payload) => self.open_session_record(payload),
             Event::SessionRecordClose => self.close_session_record(),
             Event::SessionWorkSearch(payload) => self.search_work_sessions(payload),
             Event::SessionMissedStatus(payload) => self.set_missed_status(payload),
-            Event::SessionIssueDraft(payload) => self.draft_missed_issue(payload),
-            Event::SessionIssueDraftCancel => self.cancel_session_issue_draft(),
+            Event::BacklogAdd(payload) => self.add_backlog(payload),
+            Event::BacklogRetry(payload) => self.retry_backlog(payload),
+            Event::BacklogDismiss(payload) => self.dismiss_backlog(payload),
+            Event::BacklogUndo(payload) => self.undo_backlog(payload),
+            Event::BacklogOrigin(payload) => self.read_backlog_origin(payload),
+            Event::BacklogOriginClose(payload) => self.close_backlog_origin(payload),
             Event::FactoryAction(payload) => self.factory_action(*payload),
             Event::FactoryTaskOpen(payload) => self.factory_task_open(payload),
             Event::FactoryTaskClose => self.factory_task_close(),
@@ -1949,12 +1910,9 @@ impl Runtime {
             Event::SessionsSetFilter(payload) => {
                 self.set_sessions_filter(&payload.provider, payload.query)
             }
-            Event::ArchiveOpen(payload) => match payload.workspace_id {
-                Some(workspace_id) => {
-                    self.open_project_session(&workspace_id, &payload.kind, &payload.id)
-                }
-                None => self.open_archive_detail(&payload.kind, &payload.id, payload.preview),
-            },
+            Event::ArchiveOpen(payload) => {
+                self.open_archive_detail(&payload.kind, &payload.id, payload.preview)
+            }
             Event::MemoryAction(payload) => self.apply_memory_action(payload),
             Event::MemoryOpen(payload) => self.open_project_memory(payload.workspace_id),
             Event::ProjectMemoryNavigate(payload) => self.navigate_project_memory(payload),
@@ -3724,16 +3682,7 @@ impl Runtime {
                 self.reread_focused_project();
                 true
             }
-            Event::CardMeasureDisk(payload) => match payload.workspace_id {
-                Some(workspace_id) => self.measure_project_disk(&workspace_id),
-                None => {
-                    // The delete confirmation states the size it is about to
-                    // delete, so it is measured when the dialog opens rather
-                    // than shown from whenever the card last looked.
-                    self.remeasure_disk();
-                    true
-                }
-            },
+            Event::DiskWatch(payload) => self.watch_disk(payload),
             Event::GitWorktreeOpen(payload) => self.open_git_worktree(payload.checkout_path),
             Event::GitWorktreeSetBase(payload) => {
                 self.set_git_worktree_base(payload.repository_root, payload.branch)
@@ -3743,7 +3692,6 @@ impl Runtime {
             Event::IssueSourceSet(payload) => self.set_issue_source(payload),
             Event::ProjectSettingsSet(payload) => self.set_project_settings(payload),
             Event::IssueSettingsSet(payload) => self.set_issue_settings(payload),
-            Event::IssueCreate(payload) => self.create_issue(payload),
             Event::IssueDetailRequest(payload) => self.request_issue_detail(payload),
             Event::GithubSearch(payload) => self.request_github_search(payload),
             Event::WorktreeNameSuggest(payload) => self.suggest_worktree_name(payload),

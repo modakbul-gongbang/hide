@@ -15,7 +15,8 @@ export type AgentScope = {
   listed: { pane_id: string; device_id: string; device_label: string | null; remote: boolean; index: number }[];
   places: Record<string, { project_id: string; checkout_id: string; kind: "home" | "folder" | "checkout" }>;
   places_live: boolean;
-  graph: AgentGraphScope;
+  /** The project's tasks (`agent_scope.tasks`, PRD overview-device-tasks D-05); absent while it has none. */
+  tasks?: ProjectTasksScope;
   closes: Record<string, CloseScope>;
   raised: { group: "needs_you" | "done"; shown: AgentRef[]; more: AgentRef[] }[];
   owners: Record<string, string>;
@@ -101,24 +102,38 @@ export type CloseSubtree = {
   target_unknown: boolean;
 };
 
-export type AgentGraphCross = {
-  direction: "out" | "in";
-  project_id: string;
-  project_device_id: string;
-  /** Null means the same device; a null label names this machine. */
-  device: { label: string | null } | null;
-  pane_ids: string[];
-  names: string[];
-  box_id: string;
-  count: number;
-};
-export type AgentGraphScope = {
-  cross: Record<string, AgentGraphCross[]>;
-  attention: 0 | 1 | 2 | 3 | 4;
+/** Where a task stands, in the order its project's section draws it (`TaskState`, B7). */
+export type TaskState = "needs_you" | "blocked" | "working" | "waiting" | "done" | "resting" | "cleanup";
+
+/** One task: a lineage root and every descendant on any device (`tasks::Card`, B8-B10). */
+export type TaskCardScope = {
+  root: string;
+  state: TaskState;
+  /** `작업 → PR → 검토 → 머지` filled up to here; absent for a conversation with no worktree and no PR. */
+  stage?: 1 | 2 | 3 | 4;
+  /** Every pane of the task, the root first. */
+  members: string[];
+  /** This project's checkouts the task works in, the root's first. */
+  checkouts: string[];
+  out_devices?: { device_id: string; label: string | null; project_id: string; pane_ids: string[] }[];
+  out_projects?: { project_id: string; label: string }[];
   recency: string;
-  checkouts: Record<string, { primary: boolean; cleanup: "merged" | "missing" | null; fold: "empty" | "cleanup" | "resting" | null; members: string[]; rank: 0 | 1 | 2 | 3 | 4; resting: boolean }>;
-  variants: number[];
-  tucked: Record<string, Partial<Record<"error" | "approval" | "question" | "working" | "stopped" | "done" | "idle", number>>>[];
+};
+
+/** Work a root on another device delegated into this project, drawn dashed and never counted (B14). */
+export type IncomingTaskScope = {
+  root: string;
+  root_device_id: string;
+  root_device_label: string | null;
+  root_project_id: string;
+  pane_ids: string[];
+};
+
+export type ProjectTasksScope = {
+  cards: TaskCardScope[];
+  incoming?: IncomingTaskScope[];
+  needs_you: number;
+  recency: string;
 };
 
 /** Why a pull request stands where it does, as a kind the web words (`Reason`, PRD work-tab-pr-lens D-16). */

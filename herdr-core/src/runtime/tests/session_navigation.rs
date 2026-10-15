@@ -4010,6 +4010,59 @@ fn a_missed_restore_with_herdrs_focus_outside_every_checkout_opens_catalog_first
     );
 }
 
+/// With nothing saved the start is the catalog's first checkout, but never
+/// one whose folder the node found gone: a tab restored onto a folder moved
+/// away while Hide was closed is a project of its own with no activity, so
+/// whether it sorts first is a coin toss its id decides, and the window
+/// opened on that empty project about half the time.
+#[test]
+fn a_start_with_nothing_saved_skips_a_checkout_whose_folder_is_gone() {
+    // One of the two orders puts the gone folder first; both must start on
+    // the folder that is there.
+    for gone_first in [true, false] {
+        let folder = scratch_dir("hide-start-gone-");
+        let root = folder.path().canonicalize().expect("a real fixture path");
+        let (kept, gone) = if gone_first {
+            (root.join("kept"), root.join("gone"))
+        } else {
+            (root.join("gone"), root.join("kept"))
+        };
+        std::fs::create_dir_all(&kept).expect("kept folder");
+        let kept = kept.to_string_lossy().into_owned();
+        let gone = gone.to_string_lossy().into_owned();
+        let mut runtime = runtime();
+        runtime.restore_hint_pending = true;
+        let mut payload = split_workspace_payload(
+            &[("w-order:t1", &kept), ("w-order:t2", &gone)],
+            "w-order:t1",
+        );
+        payload.focused_pane_id = Some("w-order:t1:p".to_owned());
+        runtime.ingest_session(Ok(payload));
+
+        let checkouts = || {
+            runtime
+                .snapshot()
+                .navigator
+                .workspaces
+                .iter()
+                .flat_map(|workspace| &workspace.checkouts)
+        };
+        assert!(
+            checkouts().any(|checkout| checkout.path == gone),
+            "the gone folder is still a row"
+        );
+        let kept_checkout = checkouts()
+            .find(|checkout| checkout.path == kept)
+            .map(|checkout| checkout.id.clone());
+        assert!(kept_checkout.is_some());
+        assert_eq!(
+            runtime.snapshot().navigator.focused_checkout_id,
+            kept_checkout,
+            "{gone} is gone"
+        );
+    }
+}
+
 #[test]
 fn a_restored_pane_the_session_no_longer_has_retargets_without_reporting() {
     let mut runtime = runtime();

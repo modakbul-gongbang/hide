@@ -1,6 +1,3 @@
-import { buildTasks } from "../test/legacyAgentScope";
-import { emptyScope } from "../test/legacyAgentScope";
-import { agentsTile, scopeAgents } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 // The Overview's lenses (PRD overview-lenses-tiles-agents): the tiles'
 // values, the checkout lanes' order, columns and folds, the lineage rows,
@@ -9,76 +6,15 @@ import { legacyAgentRow } from "../test/legacyAgentRow";
 
 import { describe, expect, it } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { ageWords, bucketOf, issuesTile, sessionsTile, startOfDay } from "./overviewLens";
-import { type BoardProject } from "./projectBoard";
-import type { AgentRow, Checkout, ProjectSessions, PullRequest, SessionRow, Task, Workspace } from "./snapshot";
+import { ageWords, bucketOf } from "./overviewLens";
+import type { AgentRow } from "./snapshot";
 
-
-const NOW = new Date(2026, 8, 28, 15, 0, 0).getTime();
 
 const t = initializeInterfaceI18n("ko").getFixedT(null, "translation");
 const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
 
-function checkout(id: string, options: { primary?: boolean; panes?: string[]; merged?: boolean; missing?: boolean; pr?: PullRequest; task?: string; changed?: number; ahead?: number } = {}): Checkout {
-  const primary = options.primary ?? false;
-  return { agent_scope: emptyScope(),
-    id,
-    workspace_id: "project",
-    label: id,
-    path: `/fixture/${id}`,
-    branch: id,
-    purpose: null,
-    is_worktree: true,
-    is_primary: primary,
-    exists: !options.missing,
-    has_panes: (options.panes ?? []).length > 0,
-    worktree: { merged: options.merged ?? null, is_main: primary, missing: options.missing ?? false, changed_file_count: options.changed ?? 0, dirty: (options.changed ?? 0) > 0 } as Checkout["worktree"],
-    pull_request: options.pr ?? null,
-    task_key: options.task ?? null,
-    changed_file_count: options.changed ?? 0,
-    ahead: options.ahead ?? 0,
-    tabs: [{ id: `${id}:tab`, workspace_id: "project", checkout_id: id, label: "Tab 1", empty: false, delegated: false, panes: (options.panes ?? []).map((pane) => ({ id: pane })) as never }],
-    active_tab_id: `${id}:tab`,
-    strip: [],
-    next_tab_label: "Tab 2",
-  };
-}
-
-function workspace(checkouts: Checkout[], options: { id?: string; tasks?: Task[]; reading?: boolean; failure?: string } = {}): Workspace {
-  return { agent_scope: emptyScope(),
-    id: options.id ?? "project",
-    label: options.id ?? "Project",
-    path: "/fixture",
-    device_id: "local",
-    is_git: true,
-    default_branch: "main",
-    registered: true,
-    temporary: false,
-    pinned: false,
-    checkouts,
-    inactive_checkouts: { expanded: false, checkout_ids: [] },
-    tasks: {
-      source: { kind: "github", label: "GitHub", name: "acme/project", reading: options.reading ?? false, failure: options.failure ?? null, last_read_at_unix_ms: NOW - 3 * 60_000 },
-      tasks: options.tasks ?? [],
-      overflow: false,
-    },
-  };
-}
-
 function agent(pane: string, group: string, extra: Partial<AgentRow> = {}): AgentRow {
   return legacyAgentRow({ id: pane, pane_id: pane, identity_label: pane, agent_kind: "claude", symbol: "●", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "working", last_activity: "0000000000001", ...extra });
-}
-
-function one(project: Workspace, agents: AgentRow[]): BoardProject[] {
-  return [{ workspace: project, agents, device: null }];
-}
-
-function task(number: number, open = true): Task {
-  return { key: `github:acme/project#${number}`, source: "github", id: `#${number}`, url: `https://github.com/acme/project/issues/${number}`, title: `Task ${number}`, open, updated_at_unix_ms: NOW - 60_000 };
-}
-
-function pr(badge: PullRequest["badge"]): PullRequest {
-  return { number: 9, title: "PR", url: "https://github.com/acme/project/pull/9", badge, review: null, is_draft: false, checks: "passing", state: "mergeable" };
 }
 
 describe("the buckets", () => {
@@ -91,79 +27,7 @@ describe("the buckets", () => {
   });
 });
 
-describe("the tiles", () => {
-  it("counts the scope's agents, badges the operator's turn with its breakdown, and bars the four buckets (B2, B3)", () => {
-    const project = workspace([checkout("main", { primary: true, panes: ["q", "d", "w", "r", "x"] })]);
-    const agents = [
-      agent("q", "needs_you", { demand: "question" }),
-      agent("d", "done"),
-      agent("w", "working"),
-      agent("r", "seen"),
-      agent("x", "working", { wait: "children" }),
-      agent("elsewhere", "needs_you"),
-    ];
-    const tile = agentsTile(scopeAgents(one(project, agents)), { state: "ready" }, t);
-    expect(tile.value).toBe(5);
-    expect(tile.badge).toEqual({ count: 2, parts: [{ key: "question", label: "질문", count: 1 }, { key: "done", label: "끝남", count: 1 }] });
-    expect(tile.bar?.map((segment) => [segment.key, segment.count])).toEqual([["turn", 2], ["working", 1], ["delegating", 1], ["resting", 1]]);
-  });
-
-  it("keeps the first source occurrence for Overview when duplicate panes disagree", () => {
-    const project = workspace([checkout("main", { panes: ["same"] })]);
-    const first = agent("same", "working", { identity_label: "First" });
-    const last = agent("same", "seen", { identity_label: "Last" });
-    const rows = scopeAgents(one(project, [first, last]));
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.agent.identity_label).toBe("First");
-    expect(rows[0]!.bucket).toBe("working");
-  });
-
-  it("draws zero as zero with no badge, nothing for a device that has not answered, and ⚠ with the reason for one that cannot (B6)", () => {
-    expect(agentsTile([], { state: "ready" }, t)).toMatchObject({ value: 0, badge: null, bar: [{ count: 0 }, { count: 0 }, { count: 0 }, { count: 0 }], failure: null });
-    expect(agentsTile([], { state: "loading", text: "connecting" }, t)).toMatchObject({ value: null, badge: null, bar: null, failure: null });
-    expect(agentsTile([], { state: "unavailable", text: "mini is unreachable", retry: "connect" }, t)).toMatchObject({ value: null, bar: null, failure: "에이전트를 읽지 못함 · mini is unreachable" });
-  });
-
-  it("counts open issues once the source answered, bars backlog, in progress and review, and keeps the last value with its age when a read fails (B3, B6)", () => {
-    const project = workspace([checkout("main", { primary: true }), checkout("wip", { task: task(2).key }), checkout("rev", { task: task(3).key, pr: pr("open") })], { tasks: [task(1), task(2), task(3), task(4, false)] });
-    const tile = issuesTile(buildTasks(one(project, []), "project", NOW), NOW, NOW - 3 * 60_000, "ko", t);
-    expect(tile).toMatchObject({ value: 3, unit: "열림", failure: null });
-    expect(tile.bar?.map((segment) => [segment.key, segment.count])).toEqual([["backlog", 1], ["working", 1], ["review", 1]]);
-    const reading = issuesTile(buildTasks(one(workspace([], { tasks: [task(1)], reading: true }), []), "project", NOW), NOW, null, "ko", t);
-    expect(reading).toMatchObject({ value: null, bar: null });
-    const failed = issuesTile(buildTasks(one(workspace([], { tasks: [task(1)], failure: "gh auth" }), []), "project", NOW), NOW, NOW - 3 * 60_000, "ko", t);
-    expect(failed.value).toBe(1);
-    expect(failed.failure).toContain("3분 전");
-  });
-
-  it("counts today's sessions by this machine's date, split Claude and Codex, and stays empty until this Project's history answered (B5, D-16)", () => {
-    const row = (id: string, provider: string, at: number): SessionRow => ({ id, provider, provider_label: provider, locator: id, checkout_path: "/fixture", first_human_request: null, started_at_unix_ms: at, updated_at_unix_ms: at, title: null, unavailable_reason: null });
-    const history = (rows: SessionRow[], extra: Partial<ProjectSessions> = {}): ProjectSessions => ({ device_id: "local", workspace_id: "project", unavailable_reason: null, loading: false, failure: null, rows, detail: null, ...extra });
-    const today = startOfDay(NOW);
-    const rows = [row("a", "claude", today + 1), row("b", "codex", NOW - 1), row("c", "claude", today - 1)];
-    const tile = sessionsTile(history(rows), "project", NOW, t);
-    expect(tile).toMatchObject({ value: 2, unit: "오늘" });
-    expect(tile.bar).toEqual([{ key: "claude", label: "Claude", count: 1 }, { key: "codex", label: "Codex", count: 1 }]);
-    expect(sessionsTile(history(rows), "another", NOW, t).value).toBeNull();
-    expect(sessionsTile(history([], { loading: true }), "project", NOW, t).value).toBeNull();
-    expect(sessionsTile(null, "project", NOW, t).value).toBeNull();
-    expect(sessionsTile(history(rows, { failure: "unreadable" }), "project", NOW, t)).toMatchObject({ value: 2, failure: expect.stringContaining("마지막으로 읽은 값") });
-  });
-});
-
-describe("the tiles and ages in English", () => {
-  it("names the tiles, their units and the badge parts", () => {
-    const project = workspace([checkout("main", { primary: true, panes: ["q", "d"] })]);
-    const tile = agentsTile(scopeAgents(one(project, [agent("q", "needs_you", { demand: "question" }), agent("d", "done")])), { state: "ready" }, english);
-    expect(tile.label).toBe("Agents");
-    expect(tile.badge?.parts.map((part) => part.label)).toEqual(["Question", "Finished"]);
-    expect(tile.bar?.map((segment) => segment.label)).toEqual(["My turn", "Working", "Waiting", "Resting"]);
-    const issues = issuesTile(buildTasks(one(workspace([], { tasks: [task(1)] }), []), "project", NOW), NOW, null, "en", english);
-    expect(issues).toMatchObject({ label: "Issues", unit: "open" });
-    expect(issues.bar?.map((segment) => segment.label)).toEqual(["Backlog", "In progress", "Review"]);
-    expect(sessionsTile(null, "project", NOW, english)).toMatchObject({ label: "Conversation history", unit: "today" });
-  });
-
+describe("ages", () => {
   it("says how old a value is in the language's own relative form", () => {
     const ages = [0, 30_000, 60_000, 5 * 60_000, 60 * 60_000, 3 * 3_600_000, 86_400_000, 3 * 86_400_000];
     expect(ages.map((ms) => ageWords("en", ms, english))).toEqual(["Just now", "Just now", "1 min. ago", "5 min. ago", "1 hr. ago", "3 hr. ago", "yesterday", "3 days ago"]);

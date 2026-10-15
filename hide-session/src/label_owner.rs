@@ -264,7 +264,7 @@ pub fn read_session_file<T>(
         .map_err(|_| "label_session_outside_roots".to_owned())?;
     let before = confirm_session_file(home, agent, path, Some(&expected.id), Some(&expected.cwd))
         .map_err(|e| e.to_string())?;
-    let stamp = crate::search_read::stamp_at(path);
+    let stamp = crate::stamp::stamp_at(path);
     let result = read()?;
     let after = confirm_session_file(home, agent, path, Some(&expected.id), Some(&expected.cwd))
         .map_err(|e| e.to_string())?;
@@ -284,8 +284,7 @@ pub(crate) fn same_read(
         && after.incarnation == before.incarnation
         && after.bytes >= before.bytes
         && (after.bytes != before.bytes
-            || stamp
-                .is_some_and(|stamp| crate::search_read::stamp_at(path).as_deref() == Some(stamp)))
+            || stamp.is_some_and(|stamp| crate::stamp::stamp_at(path).as_deref() == Some(stamp)))
 }
 
 /// Expected catalog ownership carried across queued file reads. A pathname

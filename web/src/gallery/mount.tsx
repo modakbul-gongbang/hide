@@ -15,6 +15,7 @@ import { CoreMoveScene, coreMoveSceneParams } from "./CoreMoveScene";
 import { NodeProjectScene, nodeProjectSceneParams } from "./NodeProjectScene";
 import { LandingScene, landingSceneParams } from "./LandingScene";
 import { MemoryScene, memorySceneParams } from "./MemoryScene";
+import { OverviewScene, overviewSceneParams } from "./OverviewScene";
 import { UsageScene } from "./UsageScene";
 import { ProjectSettingsScene } from "./ProjectSettingsScene";
 import { SessionWorkScene } from "./SessionWorkScene";
@@ -52,7 +53,7 @@ export function mountGallery(root: Root) {
       return;
     }
     // A scene seeds the app's own stores, so it is one document per scene.
-    if (scene === "workspace-servers" || scene === "session-search") {
+    if (scene === "workspace-servers") {
       root.render(<StrictMode><ServerSessionScene scene={scene} {...sceneParams(params)}/></StrictMode>);
       return;
     }
@@ -84,6 +85,13 @@ export function mountGallery(root: Root) {
     if (scene === "memory") {
       document.title = "hide · Memory scene";
       root.render(<StrictMode><MemoryScene {...memorySceneParams(params)} /></StrictMode>);
+      return;
+    }
+    if (scene === "overview") {
+      document.title = "hide · Device Overview scene";
+      // No StrictMode here: its simulated unmount runs the lane record's
+      // leave, which closes the record a production build keeps open.
+      root.render(<OverviewScene {...overviewSceneParams(params)} />);
       return;
     }
     if (scene === "factory") {

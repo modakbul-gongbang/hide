@@ -1,231 +1,243 @@
 import { UsageOverview } from "./UsageOverview";
-import { deviceScope } from "./agentScope";
 import { useInterfaceTranslation } from "./i18n/client";
-import { CircleDotIcon, FolderIcon, GitMergeIcon, GitPullRequestIcon, PlusIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronDownIcon, SearchIcon } from "lucide-react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
+import { Input } from "./components/ui/input";
 import { Kbd } from "./components/ui/kbd";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
-import { Hint } from "./components/ui/tooltip";
+import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
+import { useEscapeLayer } from "./components/ui/layer";
 import { cn } from "./lib/utils";
-import { AGENT_GROUPS, boardProjects, mainSections, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
-import { useNewIssueShortcut } from "./IssueDialogs";
-import { AgentGraph, GraphFilterControls, type GraphReveal } from "./GraphView";
-import { NO_GRAPH_FILTER, foldId, type GraphFilter } from "./agentGraph";
-import { lensHandlers } from "./OverviewLenses";
-import { scopeAgents } from "./overviewLens";
-import { allProjectsStats, boardLabels, buildTasks, NO_FILTER, type AllProjectsStats, type IssueFilter, type SourceState, type TaskCard } from "./projectBoard";
-import { frontDeviceId, readsHere } from "./devices";
+import { boardProjects, mainSections, type DeviceAvailability } from "./navigation";
+import { readsHere } from "./devices";
 import { machineName } from "./screenMachine";
-import { frontCheckout, type Device } from "./snapshot";
+import type { Device } from "./snapshot";
+import { ageWords } from "./overviewLens";
+import { requireInterfaceLanguage } from "./i18n/locale";
 import { useShellStore } from "./store";
-import { IssueFilterControl, TasksModeToggle } from "./TaskBoards";
-import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
-import { toggledFold, useUiStore, type MainView } from "./ui";
+import { MAIN_VIEWS, useUiStore, type MainView, type TaskFilter } from "./ui";
 import { hostBridge } from "./host";
 import { commandLabel } from "./shortcutLabels";
 import { emptyHome, type EmptyHome } from "./firstRun";
+import { everyAgent, taskTally, type TaskTally } from "./overviewTasks";
+import { backlogTally } from "./overviewBacklog";
+import { OverviewTasks } from "./TasksTab";
+import { TaskRecordPanel } from "./OverviewRecord";
+import { BacklogItemPanel, BacklogLabelFilter, OverviewBacklog } from "./BacklogTab";
+import { OverviewProjects, ProjectPanel } from "./ProjectsTab";
 
-// The Overview of one device's projects (PRD S6 D-02, B1-B4, B21; `screen.kind
-// === "main"`, opened by the sidebar's Home row, PRD home-device-rail D-13): the
-// device in front, or the one the screen names, and its header says which. Its facts line totals what every Project can
-// give; its views are every Project's tasks on one board (every project has
-// an issue source, so every project's issues are there), every agent as one
-// inbox, and the registered Projects by device (PRD task-agents-views D-01,
-// D-10, reworked issue-first on 2026-09-28); a
-// Project opens its Overview (`ProjectOverview.tsx`), which also uses the
-// facts line style and the opening and device notices below.
-// Everything drawn is a value the snapshot carries; a device that cannot
-// answer says why on its own section, with Retry where retrying can help.
+// The Overview of one device (PRD overview-device-tasks D-01..D-03, B1-B5):
+// Tasks, 백로그 and Projects with Usage at the end, each tab's controls at
+// the row's right, and the panel a card, a row or a project opens beside the
+// tab. Everything drawn is a value the snapshot carries; a device that cannot
+// answer shows why in the body and dims the tabs (B4).
 
-const VIEWS: readonly { view: MainView; label: "overview.tasks" | "overview.agents" | "overview.projects" | "usage.title" }[] = [
-  { view: "agents", label: "overview.agents" },
-  { view: "tasks", label: "overview.tasks" },
-  { view: "projects", label: "overview.projects" },
-  { view: "usage", label: "usage.title" },
-];
+const TAB_LABEL: Record<MainView, "overview.tasks" | "overviewTasks.backlogTab" | "overview.projects" | "usage.title"> = {
+  tasks: "overview.tasks",
+  backlog: "overviewTasks.backlogTab",
+  projects: "overview.projects",
+  usage: "usage.title",
+};
 
-export function MainScreen({ actions }: { actions: Actions }) {
+export function MainScreen({ actions, deviceId }: { actions: Actions; deviceId: string }) {
   const { t } = useInterfaceTranslation();
   const rest = useShellStore((s) => s.rest);
   const agents = useShellStore((s) => s.agents);
-  const focusedPaneId = useShellStore((s) => s.focusedPaneId);
-  const savedView = useUiStore((s) => s.mainView);
-  const view = savedView === "requests" ? "agents" : savedView;
+  const view = useUiStore((s) => s.mainView);
   const setView = useUiStore((s) => s.setMainView);
-  const tasksMode = useUiStore((s) => s.tasksMode);
-  const setTasksMode = useUiStore((s) => s.setTasksMode);
-  const [doneOpen, setDoneOpen] = useState(false);
-  // The Agents graph's folds and filter are this screen's own page state, gone with it (agents-graph-view B29).
-  const [folds, setFolds] = useState<readonly string[]>([]);
-  const [graphFilter, setGraphFilter] = useState<GraphFilter>(NO_GRAPH_FILTER);
-  // The box a cross-project chip selected; no box is selected here until one does (issue 718).
-  const [graphBox, setGraphBox] = useState<string | null>(null);
-  const [focusTask, setFocusTask] = useState<string | null>(null);
-  // The Tasks view's issue panel and filter, this screen's own page state (PRD overview-lenses-issues).
-  const [panel, setPanel] = useState<string | null>(null);
-  const [filter, setFilter] = useState<IssueFilter>(NO_FILTER);
-  // The device this Overview is of: the one its screen names, else the one in front.
-  const named = useUiStore((s) => (s.screen?.kind === "main" ? s.screen.deviceId : undefined));
-  // A device removed since the screen named it leaves the one in front.
-  const deviceId = named !== undefined && rest?.navigator?.devices?.some((device) => device.id === named) ? named : frontDeviceId(rest);
-  const deviceName = machineName(rest?.navigator?.devices, deviceId, t);
-  const sections = useMemo(() => mainSections(rest, agents, deviceId), [rest, agents, deviceId]);
-  const stats = useMemo(() => allProjectsStats(sections.flatMap((section) => section.projects.map((project) => project.workspace))), [sections]);
+  const panel = useUiStore((s) => s.overview.panel);
+  const section = useMemo(() => mainSections(rest, agents, deviceId)[0] ?? null, [rest, agents, deviceId]);
+  const availability: DeviceAvailability = section?.availability ?? { state: "ready" };
   const projects = useMemo(() => boardProjects(rest, agents, deviceId), [rest, agents, deviceId]);
-  const tasks = useMemo(() => buildTasks(projects, "all", Date.now()), [projects]);
-  const agentScope = deviceScope(rest, deviceId);
-  const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
-  const everyone = useMemo(() => scopeAgents(boardProjects(rest, agents)), [rest, agents]);
-  // Every Git project whose tasks the core reads (its own, or a node's that dials it) is read once the boards are on screen.
+  const rows = useMemo(() => everyAgent(rest, agents), [rest, agents]);
+  const tally = useMemo(() => taskTally(projects), [projects]);
+  const backlog = useMemo(() => backlogTally(projects), [projects]);
+  // Every Git project whose issues the core reads is read while Tasks or the backlog is on screen.
   const devices = rest?.navigator?.devices;
   const localGit = useMemo(() => projects.filter(({ workspace }) => workspace.is_git && readsHere(workspace, devices)).map(({ workspace }) => workspace.id).join("\n"), [projects, devices]);
-  const boards = view === "tasks" || view === "agents";
+  const reads = view === "tasks" || view === "backlog";
   useEffect(() => {
-    if (!boards || !localGit) return;
+    if (!reads || !localGit) return;
     for (const id of localGit.split("\n")) actions.readProjectTasks(id);
-  }, [actions, boards, localGit]);
-  const total = stats.projects;
-  // A device still answering is not empty yet.
-  const homeEmpty = sections.every((section) => section.availability.state === "ready") ? emptyHome(total, lensAgents.length) : null;
-  const openCheckout = (card: TaskCard) => {
-    const project = projects.find(({ workspace }) => workspace.id === card.place.projectId);
-    if (project && card.checkout) actions.openWorkspace(project.workspace.device_id, card.checkout.workspace_id, card.checkout.id);
+  }, [actions, reads, localGit]);
+  // Esc closes the panel before the Overview (B16).
+  useEscapeLayer(panel !== null, () => useUiStore.getState().setOverview({ panel: null }));
+  const unavailable = availability.state === "unavailable" && section ? section.device : null;
+  const homeEmpty = availability.state === "ready" ? emptyHome(projects.length, tally.total) : null;
+  const counts: Record<MainView, ReactNode> = {
+    tasks: <TasksCount tally={tally} />,
+    backlog: <Count value={backlog.open} />,
+    projects: <Count value={projects.length} />,
+    usage: null,
   };
-  // A new issue goes to the Project in front, else the first one that has a
-  // source; the dialog can move it to another.
-  const issueProject = useMemo(() => {
-    const front = frontCheckout(rest);
-    const sourced = projects.filter(({ workspace }) => workspace.tasks?.source);
-    return (front ? sourced.find(({ workspace }) => workspace.checkouts.some((checkout) => checkout.id === front.id)) : undefined)?.workspace.id ?? sourced[0]?.workspace.id ?? null;
-  }, [rest, projects]);
-  const newIssue = () => {
-    if (issueProject) useUiStore.getState().setWorkspaceDialog({ kind: "new_issue", workspaceId: issueProject });
-  };
-  useNewIssueShortcut(issueProject ? newIssue : null);
-  const page: IssuesPage = {
-    openCheckout,
-    startIssue: (card) => useUiStore.getState().setWorkspaceDialog({ kind: "start_issue", workspaceId: card.place.projectId, taskKey: card.task.key }),
-    newIssue,
-    showCheckouts: () => {
-      setView("agents");
-      setPanel(null);
-      setFolds((open) => [...open, ...projects.map(({ workspace }) => foldId("empty", workspace.id)).filter((id) => !open.includes(id))]);
-    },
-  };
-  // The Agents tab keeps the count of agents whose turn it is, as a project's Agents tab does;
-  // the 요청 tab the rows to answer, as a project's 요청 tab does.
-  const waiting = agentScope?.buckets.turn ?? 0;
-  const lensActions = useMemo(() => lensHandlers(actions, {
-    openIssue: (_owner, task) => {
-      setView("tasks");
-      setFocusTask(task.key);
-      setPanel(task.key);
-    },
-    toggleFold: (fold) => setFolds((open) => toggledFold(open, fold)),
-  }), [actions, setView]);
-  const selectGraphBox = useCallback((box: string, { fold, clearFilter }: GraphReveal) => {
-    if (fold !== null) setFolds((open) => (open.includes(fold) ? open : [...open, fold]));
-    if (clearFilter) setGraphFilter(NO_GRAPH_FILTER);
-    setGraphBox(box);
-  }, []);
-  // With the issue panel open the board and the panel scroll on their own (D-43).
-  const scrolls = view !== "projects" && !(view === "tasks" && panelCard(tasks, panel) !== null);
-  const unavailable = sections.filter((section) => section.availability.state !== "ready");
   return (
-    <section className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-background", scrolls && "overflow-y-auto")} aria-label={t("overview.title")} data-main-screen="true" data-main-view={view}>
-      <header className="flex shrink-0 flex-col gap-xs border-b border-border px-lg py-sm">
-        <div className="flex min-w-0 items-center gap-lg">
-          <h1 className="flex min-w-0 flex-1 items-baseline gap-sm text-headline font-semibold text-foreground">
-            <span className="shrink-0">{t("common.home")}</span>
-            <span className="min-w-0 truncate text-body font-normal text-muted-foreground" data-main-device-name={deviceId}>
-              {deviceName}
-            </span>
-          </h1>
-          {issueProject ? (
-            <Button onClick={newIssue} data-main-new-issue="true">
-              <PlusIcon aria-hidden="true" />
-              {t("issue.newTitle")}
-              <Kbd>C</Kbd>
-            </Button>
-          ) : null}
-        </div>
-        <Facts stats={stats} source={tasks.source} />
-      </header>
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" aria-label={t("overview.title")} data-main-screen="true" data-main-view={view}>
       <OpeningStatus actions={actions} />
-      <div className="flex shrink-0 items-center justify-between gap-md px-lg py-sm">
-        <Tabs
-          value={view}
-          onValueChange={(value) => {
-            setView(value as MainView);
-            setFocusTask(null);
-            setPanel(null);
-            setGraphBox(null);
-          }}
-        >
-          <TabsList aria-label={t("overview.viewLabel")}>
-            {VIEWS.map((choice) => (
-              <TabsTrigger key={choice.view} value={choice.view} data-main-tab={choice.view}>
-                {t(choice.label)}
-                {choice.view === "agents" && waiting > 0 ? (
-                  <span className="text-caption text-warning" data-agents-waiting={waiting} aria-label={t("overview.myTurnCount", { count: waiting })}>
-                    {waiting}
-                  </span>
-                ) : null}
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-md border-b border-border px-lg py-xs">
+        <Tabs value={view} onValueChange={(value) => { setView(value as MainView); useUiStore.getState().setOverview({ panel: null }); }}>
+          <TabsList aria-label={t("overview.viewLabel")} className={cn(unavailable && "opacity-(--opacity-dimmed)")}>
+            {MAIN_VIEWS.map((choice) => (
+              <TabsTrigger key={choice} value={choice} data-main-tab={choice} className={choice === "usage" ? "ml-md" : undefined}>
+                {t(TAB_LABEL[choice])}
+                {counts[choice]}
               </TabsTrigger>
             ))}
           </TabsList>
         </Tabs>
-        {view === "tasks" ? (
-          <span className="flex items-center gap-xs" data-issues-controls="true">
-            <IssueFilterControl filter={filter} labels={boardLabels(tasks, filter.labels)} onChange={setFilter} />
-            <TasksModeToggle mode={tasksMode} onChange={setTasksMode} />
-          </span>
-        ) : view === "agents" ? (
-          <GraphFilterControls agents={lensAgents} filter={graphFilter} onChange={setGraphFilter} />
-        ) : null}
+        {unavailable ? null : view === "tasks" ? <TaskControls projects={projects.map(({ workspace }) => workspace)} needsYou={tally.needsYou} /> : view === "backlog" ? <BacklogControls projects={projects} /> : null}
       </div>
-      {boards ? (
-        // A device that cannot answer keeps its last rows off these boards and says why here.
-        unavailable.map((section) => (
-          <div key={section.device.id} className="shrink-0 px-lg">
-            <UnavailableNotice device={section.device} availability={section.availability} actions={actions} />
-          </div>
-        ))
-      ) : null}
-      {view === "usage" ? <UsageOverview actions={actions} /> : view === "tasks" ? (
-        <IssuesView
-          board={tasks}
-          scope="all"
-          mode={tasksMode}
-          filter={filter}
-          onFilterChange={setFilter}
-          panel={panel}
-          onPanel={setPanel}
-          focusTask={focusTask}
-          focusedPaneId={focusedPaneId}
-          doneOpen={doneOpen}
-          onToggleDone={() => setDoneOpen((open) => !open)}
-          actions={actions}
-          page={page}
-        />
-      ) : view === "agents" && homeEmpty ? (
-        <EmptyHomeView state={homeEmpty} actions={actions} />
-      ) : view === "agents" ? (
-        <AgentGraph projects={projects} agents={lensAgents} scope="all" selectedBox={graphBox} filter={graphFilter} onFilter={setGraphFilter} folds={folds} everyone={everyone} onSelectBox={selectGraphBox} handlers={lensActions} now={Date.now()} />
-      ) : total === 0 && sections.every((section) => section.availability.state === "ready") ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-main-empty="true">
-          <p>{t("overview.empty")}</p>
-        </div>
+      {unavailable ? (
+        <DeviceUnanswered device={unavailable} availability={availability} actions={actions} />
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-lg overflow-auto p-md" data-main-projects="true">
-          {sections.map((section) => (
-            <DeviceProjects key={section.device.id} section={section} actions={actions} />
-          ))}
+        <div className="relative flex min-h-0 flex-1">
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto" data-overview-body={view}>
+            {availability.state === "loading" ? <p role="status" className="px-lg pt-sm text-caption text-muted-foreground" data-device-loading="true">{availability.text}</p> : null}
+            {view === "usage" ? (
+              <UsageOverview actions={actions} />
+            ) : view === "tasks" && homeEmpty ? (
+              <EmptyHomeView state={homeEmpty} actions={actions} />
+            ) : view === "tasks" ? (
+              <OverviewTasks projects={projects} rows={rows} deviceId={deviceId} actions={actions} />
+            ) : view === "backlog" ? (
+              <OverviewBacklog projects={projects} rows={rows} deviceId={deviceId} actions={actions} />
+            ) : (
+              <OverviewProjects projects={projects} deviceId={deviceId} actions={actions} />
+            )}
+          </div>
+          {panel && view !== "usage" ? (
+            <aside
+              className="flex w-(--size-lane-min) shrink-0 flex-col border-l border-border bg-background overview-narrow:absolute overview-narrow:inset-y-0 overview-narrow:right-0 overview-narrow:z-10 overview-narrow:shadow-lg"
+              data-overview-panel={panel.kind}
+            >
+              {panel.kind === "task" || panel.kind === "record" ? (
+                <TaskRecordPanel key={panel.kind === "task" ? `${panel.root}:${panel.focus ?? ""}` : `${panel.session.device_id}:${panel.session.session_id}`} panel={panel} projects={projects} rows={rows} actions={actions} />
+              ) : panel.kind === "item" ? (
+                <BacklogItemPanel key={`${panel.workspaceId}:${panel.taskKey}`} panel={panel} projects={projects} actions={actions} />
+              ) : (
+                <ProjectPanel key={panel.workspaceId} panel={panel} projects={projects} deviceId={deviceId} actions={actions} />
+              )}
+            </aside>
+          ) : null}
         </div>
       )}
     </section>
+  );
+}
+
+function Count({ value }: { value: number }) {
+  return <span className="font-mono text-caption tabular-nums text-muted-foreground" data-tab-count={value}>{value}</span>;
+}
+
+/** Tasks' count, its Needs You in the warning colour and the thin bar of where the tasks stand (B3). */
+function TasksCount({ tally }: { tally: TaskTally }) {
+  const { t } = useInterfaceTranslation();
+  const parts = [
+    { key: "needs_you", value: tally.needsYou, tone: "bg-warning" },
+    { key: "working", value: tally.working, tone: "bg-agent-working" },
+    { key: "waiting", value: tally.waiting, tone: "bg-success" },
+    { key: "resting", value: tally.resting, tone: "bg-muted-foreground" },
+  ].filter((part) => part.value > 0);
+  const sum = parts.reduce((total, part) => total + part.value, 0);
+  return (
+    <span className="relative flex items-baseline gap-xs" data-tasks-tally={`${tally.total}:${tally.needsYou}`}>
+      <Count value={tally.total} />
+      {tally.needsYou > 0 ? <span className="font-mono text-caption tabular-nums text-warning" aria-label={t("overviewTasks.needsYouCount", { count: tally.needsYou })}>{tally.needsYou}</span> : null}
+      {sum > 0 ? (
+        <span aria-hidden="true" className="absolute inset-x-0 -bottom-xxs flex h-(--size-hairline) gap-px overflow-hidden rounded-full" data-tasks-bar="true">
+          {parts.map((part) => <span key={part.key} className={part.tone} style={{ flexGrow: part.value }} />)}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** The project chip of Tasks and the backlog (B5): All projects, or one project of the device. */
+function ProjectChip({ projects }: { projects: readonly { id: string; label: string }[] }) {
+  const { t } = useInterfaceTranslation();
+  const projectId = useUiStore((s) => s.overview.projectId);
+  const chosen = projects.find((project) => project.id === projectId) ?? null;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant={chosen ? "secondary" : "outline"} size="sm" className="max-w-(--size-panel-min)" aria-label={t("overviewTasks.projectFilter")} data-overview-project-chip={chosen?.id ?? "all"}>
+          <span className="min-w-0 truncate">{chosen?.label ?? t("overviewTasks.allProjects")}</span>
+          <ChevronDownIcon aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="max-h-(--radix-dropdown-menu-content-available-height) overflow-y-auto">
+        <DropdownMenuRadioGroup value={chosen?.id ?? ""} onValueChange={(value) => useUiStore.getState().setOverview({ projectId: value || null })}>
+          <DropdownMenuRadioItem value="">{t("overviewTasks.allProjects")}</DropdownMenuRadioItem>
+          <DropdownMenuSeparator />
+          {projects.map((project) => <DropdownMenuRadioItem key={project.id} value={project.id} data-overview-project-choice={project.id}>{project.label}</DropdownMenuRadioItem>)}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function SearchBox({ value, placeholder, onChange, name }: { value: string; placeholder: string; onChange: (value: string) => void; name: string }) {
+  return (
+    <span className="relative flex w-(--size-panel-min) items-center">
+      <SearchIcon aria-hidden="true" className="pointer-events-none absolute left-sm size-(--size-icon) text-muted-foreground" />
+      <Input type="search" value={value} placeholder={placeholder} aria-label={placeholder} className="pl-xl" onChange={(event) => onChange(event.target.value)} data-overview-search={name} />
+    </span>
+  );
+}
+
+/** Tasks' chips and search (B11), and the project chip (B5). */
+function TaskControls({ projects, needsYou }: { projects: readonly { id: string; label: string }[]; needsYou: number }) {
+  const { t } = useInterfaceTranslation();
+  const filter = useUiStore((s) => s.overview.taskFilter);
+  const query = useUiStore((s) => s.overview.taskQuery);
+  const set = useUiStore((s) => s.setOverview);
+  return (
+    <span className="flex flex-wrap items-center gap-sm" data-task-controls="true">
+      <ToggleGroup type="single" value={filter} onValueChange={(value) => { if (value) set({ taskFilter: value as TaskFilter }); }} aria-label={t("overview.tasks")}>
+        <ToggleGroupItem value="all" size="sm" data-task-chip="all">{t("overviewTasks.chipAll")}</ToggleGroupItem>
+        <ToggleGroupItem value="needs_you" size="sm" data-task-chip="needs_you">{t("overviewTasks.chipNeedsYou", { count: needsYou })}</ToggleGroupItem>
+        <ToggleGroupItem value="working" size="sm" data-task-chip="working">{t("overviewTasks.chipWorking")}</ToggleGroupItem>
+      </ToggleGroup>
+      <ProjectChip projects={projects} />
+      <SearchBox value={query} placeholder={t("overviewTasks.search")} onChange={(taskQuery) => set({ taskQuery })} name="tasks" />
+    </span>
+  );
+}
+
+/** The backlog's label chips and search (B27), and the project chip (B5). */
+function BacklogControls({ projects }: { projects: readonly import("./projectBoard").BoardProject[] }) {
+  const { t } = useInterfaceTranslation();
+  const query = useUiStore((s) => s.overview.backlogQuery);
+  const set = useUiStore((s) => s.setOverview);
+  return (
+    <span className="flex flex-wrap items-center gap-sm" data-backlog-controls="true">
+      <BacklogLabelFilter projects={projects} />
+      <ProjectChip projects={projects.map(({ workspace }) => workspace)} />
+      <SearchBox value={query} placeholder={t("backlog.search")} onChange={(backlogQuery) => set({ backlogQuery })} name="backlog" />
+    </span>
+  );
+}
+
+/** A device that does not answer (B4): why, and Reconnect, in place of the tabs' content. */
+function DeviceUnanswered({ device, availability, actions }: { device: Device; availability: DeviceAvailability; actions: Actions }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const name = useShellStore((s) => machineName(s.rest?.navigator?.devices, device.id, t));
+  // B4: since when the device stopped answering, as the core recorded it on that transition; its reason is the tooltip.
+  const since = useShellStore((s) => s.rest?.status?.remote?.find((row) => row.target_id === device.id)?.unreachable_since_unix_ms ?? null);
+  if (availability.state !== "unavailable") return null;
+  const retry = availability.retry;
+  const words = since === null ? t("overviewTasks.unanswered", { device: name }) : t("overviewTasks.unansweredSince", { device: name, since: ageWords(requireInterfaceLanguage(i18n.language), Date.now() - since, t) });
+  return (
+    <div role="status" className="flex flex-1 flex-col items-center justify-center gap-md p-xl text-center" data-device-unavailable={device.id}>
+      <p className="text-body text-subtle-foreground" title={availability.text}>{words}</p>
+      {retry ? (
+        <Button variant="secondary" onClick={() => (retry === "helper" ? actions.retryDeviceHost(device.id) : actions.retryDevice(device.id))} data-device-retry={device.id}>
+          {t("overviewTasks.reconnect")}
+        </Button>
+      ) : null}
+    </div>
   );
 }
 
@@ -255,77 +267,6 @@ function EmptyHomeView({ state, actions }: { state: Exclude<EmptyHome, null>; ac
   );
 }
 
-/** One fact of a scope's facts line, a glyph and its number. */
-export const FACT = "inline-flex items-center gap-xxs";
-export const FACTS_LINE = "flex flex-wrap items-center gap-md font-mono text-caption text-subtle-foreground";
-
-/** `20 open issues · GitHub`, once the source has answered. */
-function IssuesFact({ source }: { source: SourceState }) {
-  const { t } = useInterfaceTranslation();
-  if (source.openIssues === null) return null;
-  return (
-    <span className={FACT} data-stat="open-issues">
-      <CircleDotIcon aria-hidden="true" className="size-(--size-icon)" />
-      {t("overview.openIssues", { count: source.openIssues })}
-      {source.label ? <span className="text-muted-foreground">· {source.label}</span> : null}
-    </span>
-  );
-}
-
-/** The Project count, and each total only once every Project gave its part (design #10). */
-function Facts({ stats, source }: { stats: AllProjectsStats; source: SourceState }) {
-  const { t } = useInterfaceTranslation();
-  return (
-    <div className={FACTS_LINE} data-main-stats="true">
-      <span className={FACT} data-stat="projects">
-        <FolderIcon aria-hidden="true" className="size-(--size-icon)" />
-        {t("overview.projects", { count: stats.projects })}
-      </span>
-      <IssuesFact source={source} />
-      {stats.openPullRequests === null ? null : (
-        <span className={FACT} data-stat="open-prs">
-          <GitPullRequestIcon aria-hidden="true" className="size-(--size-icon)" />
-          {t("overview.openPrs", { count: stats.openPullRequests })}
-        </span>
-      )}
-      {stats.merged ? (
-        <span className={cn(FACT, "text-pr-merged")} data-stat="merged">
-          <GitMergeIcon aria-hidden="true" className="size-(--size-icon)" />
-          {t("overview.merged", { count: stats.merged })}
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
-function DeviceProjects({ section, actions }: { section: DeviceSection; actions: Actions }) {
-  const { t } = useInterfaceTranslation();
-  const { device, availability } = section;
-  const name = useShellStore((s) => machineName(s.rest?.navigator?.devices, device.id, t));
-  return (
-    <section aria-label={t("overview.projectsOnDevice", { device: name })} data-main-device={device.id} data-device-availability={availability.state}>
-      <h2 className="flex items-center gap-sm pb-xs text-micro uppercase text-muted-foreground">
-        <span>{name}</span>
-        {availability.state === "loading" ? (
-          <span role="status" className="normal-case" data-device-loading="true">
-            {availability.text}
-          </span>
-        ) : null}
-      </h2>
-      <UnavailableNotice device={device} availability={availability} actions={actions} />
-      {section.projects.length === 0 ? (
-        <p className="px-sm py-xs text-caption text-muted-foreground">{availability.state === "ready" ? t("overview.noProjectsOnDevice") : t("overview.projectsWhenAnswers")}</p>
-      ) : (
-        <ul className="flex flex-col" role="list">
-          {section.projects.map((project) => (
-            <ProjectRow key={project.id} project={project} actions={actions} />
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
 /**
  * A Workspace or agent asked for from here that is not in front yet: a quiet
  * line while it is on its way, and the refusal with Dismiss when it was not
@@ -349,71 +290,5 @@ export function OpeningStatus({ actions }: { actions: Actions }) {
         {t("workspace.dismiss")}
       </Button>
     </div>
-  );
-}
-
-/** Why a device cannot answer, with Retry where retrying can help (B3). */
-export function UnavailableNotice({ device, availability, actions }: { device: Device; availability: DeviceAvailability; actions: Actions }) {
-  const { t } = useInterfaceTranslation();
-  if (availability.state !== "unavailable") return null;
-  const retry = availability.retry;
-  return (
-    <div role="status" className="mb-xs flex items-center gap-sm rounded-sm bg-card px-sm py-xs text-caption text-warning" data-device-unavailable={device.id}>
-      <span className="min-w-0 flex-1 break-words">{availability.text}</span>
-      {retry ? (
-        <Button variant="secondary" onClick={() => (retry === "helper" ? actions.retryDeviceHost(device.id) : actions.retryDevice(device.id))} data-device-retry={device.id}>
-          {t("common.retry")}
-        </Button>
-      ) : null}
-    </div>
-  );
-}
-
-function ProjectRow({ project, actions }: { project: ProjectEntry; actions: Actions }) {
-  const { t } = useInterfaceTranslation();
-  const reachable = project.workspace !== null;
-  return (
-    <li>
-      <Hint label={reachable ? `${project.label} · ${project.path}` : t("overview.projectDeviceUnanswered", { project: project.label, path: project.path })}>
-      <button
-        type="button"
-        disabled={!reachable}
-        data-main-project={project.id}
-        className="flex w-full items-center gap-md rounded-sm px-sm py-xs text-left outline-none hover:bg-accent focus-visible:bg-accent disabled:cursor-default disabled:hover:bg-transparent"
-        onClick={() => actions.openProjectById(project.deviceId, project.id)}
-      >
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="flex items-baseline gap-xs text-body text-foreground">
-            <span className="min-w-0 truncate">{project.label}</span>
-            {project.pinned ? <span className="text-micro uppercase text-muted-foreground">{t("overview.pinned")}</span> : null}
-          </span>
-          <span className="truncate text-caption text-muted-foreground">{project.path}</span>
-        </span>
-        <span className="shrink-0 text-caption text-subtle-foreground" data-workspace-count={project.workspaceCount ?? "unknown"}>
-          {project.workspaceCount === null ? "…" : t("overview.workspaces", { count: project.workspaceCount })}
-        </span>
-        <Counts counts={project.counts} />
-      </button>
-      </Hint>
-    </li>
-  );
-}
-
-/** One small cell per non-empty group, in the canonical order; unknown counts read `…`, never zero. */
-function Counts({ counts }: { counts: GroupCounts | null }) {
-  const { t } = useInterfaceTranslation();
-  if (!counts) return <span className="w-[var(--size-recent-location-max)] shrink-0 text-right text-caption text-muted-foreground" data-agent-counts="unknown">…</span>;
-  const shown = AGENT_GROUPS.filter(({ group }) => counts[group] > 0);
-  return (
-    <span className="flex w-[var(--size-recent-location-max)] shrink-0 justify-end gap-sm text-caption" data-agent-counts={shown.map(({ group }) => `${group}:${counts[group]}`).join(" ")}>
-      {shown.length === 0 ? <span className="text-muted-foreground">{t("overview.noAgents")}</span> : null}
-      {shown.map(({ group, label }) => (
-        <Hint key={group} label={`${counts[group]} ${t(label)}`} reveals>
-        <span className={group === "needs_you" ? "text-warning" : group === "done" ? "text-success" : group === "working" ? "text-agent-working" : "text-muted-foreground"}>
-          {counts[group]} {t(label)}
-        </span>
-        </Hint>
-      ))}
-    </span>
   );
 }

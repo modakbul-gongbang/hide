@@ -1609,8 +1609,11 @@ fn a_link_to_a_folder_is_measured_as_itself_and_is_not_a_folder() {
 #[test]
 fn the_volume_a_folder_is_on_has_room_and_a_missing_one_has_no_answer() {
     let outer = folder();
-    assert!(space::free_bytes(outer.path()).unwrap() > 0);
+    let free = space::free_bytes(outer.path()).unwrap();
+    assert!(free > 0);
+    assert!(space::total_bytes(outer.path()).unwrap() >= free);
     assert!(space::free_bytes(&outer.path().join("missing")).is_err());
+    assert!(space::total_bytes(&outer.path().join("missing")).is_err());
 }
 
 #[test]

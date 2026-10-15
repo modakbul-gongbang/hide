@@ -20,7 +20,7 @@ import { startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixt
 import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
 import { countSent, screenshot } from "./wire";
-import { openProjectOverview } from "./overview-entry";
+import { projectRow } from "./overview-entry";
 import { initGithubRepository } from "./github-remote";
 
 test.describe.configure({ timeout: 240_000 });
@@ -155,19 +155,12 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
     const sent = countSent(page);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
-    await openProjectOverview(page, "repo");
-    await expect(page.locator("[data-overview-screen]")).toBeVisible();
-
-    // B1: the disk number lists the layers on hover and opens the sheet.
-    const entrance = page.locator('[data-disk-entrance="true"]');
-    await expect(entrance).toBeVisible({ timeout: 30_000 });
+    // B1 (PRD overview-device-tasks B51): the Projects tab's size lists the layers on hover and opens the sheet.
+    const entrance = (await projectRow(page, "repo")).locator("[data-projects-disk-open]");
+    await expect(entrance).toBeEnabled({ timeout: 30_000 });
     await entrance.hover();
-    const tooltip = page.locator('[data-disk-tooltip="true"]');
-    await expect(tooltip).toContainText("Build cache");
-    await expect(tooltip).toContainText("Dependencies");
-    await expect(tooltip.locator('[data-disk-tooltip-line="source"]')).toContainText("Worktree source");
-    await expect(tooltip.locator('[data-disk-tooltip-line="other"]')).toContainText("Other");
-    await expect(tooltip.locator('[data-disk-tooltip-line="shared_git"]')).toContainText("Shared Git");
+    const tooltip = page.getByRole("tooltip");
+    for (const layer of ["Build cache", "Dependencies", "Worktree source", "Other", "Shared Git"]) await expect(tooltip).toContainText(layer);
     await page.mouse.move(2, 998);
     const reviewsBefore = sent.get("cleanup_review") ?? 0;
     await entrance.click();
@@ -314,8 +307,7 @@ test("a checkout with a working agent cannot be ticked, and an open pane alone d
     daemon = await startHided(herdr, "disk-cleanup-busy");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
-    await openProjectOverview(page, "repo");
-    await page.locator('[data-disk-entrance="true"]').click({ timeout: 30_000 });
+    await (await projectRow(page, "repo")).locator("[data-projects-disk-open]").click({ timeout: 30_000 });
     const sheet = page.locator("[data-disk-sheet]");
     await expect(sheet).toHaveAttribute("data-disk-state", "ready", { timeout: 60_000 });
     await sheet.locator("[data-disk-fold-toggle]").click();
@@ -379,10 +371,10 @@ test("a worktree left with only a finished agent's pane is chosen and its pane c
     daemon = await startHided(herdr, "disk-cleanup-panes");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
-    await openProjectOverview(page, "repo");
+    const entrance = (await projectRow(page, "repo")).locator("[data-projects-disk-open]");
     const sheet = page.locator("[data-disk-sheet]");
     const open = async () => {
-      await page.locator('[data-disk-entrance="true"]').click({ timeout: 30_000 });
+      await entrance.click({ timeout: 30_000 });
       await expect(sheet).toHaveAttribute("data-disk-state", "ready", { timeout: 60_000 });
       await sheet.locator("[data-disk-fold-toggle]").click();
     };

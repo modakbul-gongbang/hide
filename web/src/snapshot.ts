@@ -26,8 +26,7 @@ export type AgentState = {
   line: { text: string; mode: "request" | "news" | "waiting" | "quiet" | "vanished"; tone: StatusTone } | null;
   branch_badge: string | null;
   bucket: "turn" | "working" | "delegating" | "resting";
-  attention_rank: number; graph_rank: 0 | 1 | 2 | 3; graph_chip: "turn" | "working" | "resting"; graph_resting: boolean;
-  edge: "ask" | "flow" | "wait" | "rest";
+  attention_rank: number;
   search_tone: "attention" | "working" | "done" | "muted";
   subtree: "working" | "waiting" | "unread" | "unknown" | "quiet";
   link: "working" | "question" | "idle"; link_rank: 0 | 1 | 2;
@@ -448,6 +447,8 @@ export type TaskSource = {
   last_read_at_unix_ms: number | null;
   /** The operator chose this source from the project's Issue source menu rather than the default. */
   chosen?: boolean;
+  /** A GitHub source's repository is public; absent when GitHub has not said (`공개일 수 있음`) and for Local. */
+  public?: boolean;
 };
 
 /** A project's tasks (`ProjectTasksSnapshot`); `source` is null only for a device's project. */
@@ -499,8 +500,16 @@ export type IssueDetail = {
 
 /** The Overview's issue work in flight (`IssueWorkSnapshot`), one slot each. */
 export type IssueWork = {
-  draft?: SessionIssueDraft | null;
-  create: { id: number; workspace_id: string; phase: "working" | "ready" | "failed"; task_key: string | null; message: string | null } | null;
+  /** Items the backlog added this run, by the web's intent key (PRD overview-device-tasks D-10, D-34). */
+  backlog?: BacklogItem[];
+  /** The last `되돌리기`. */
+  undo?: BacklogUndo | null;
+  /** Where each item a window shows came from, one per item key (`backlog_origin`); kept while any window shows it. */
+  origins?: BacklogOrigin[];
+  /** Every item key a missed line made, for the backlog row's flag (B27). */
+  missed_keys?: string[];
+  /** Every GitHub issue key Hide made for the backlog: only these and memos show `되돌리기` (D-21, B31). */
+  made_keys?: string[];
   detail: IssueDetail | null;
   name: { request_id: string; phase: "working" | "ready" | "failed"; name: string | null; message: string | null } | null;
   /** The answer to a Local issue's edit, by the web's request id. */
@@ -509,7 +518,37 @@ export type IssueWork = {
   search?: GithubSearch | null;
 };
 
-export type SessionIssueDraft = { source: { session: WorkSession; id: string }; phase: "working" | "ready" | "failed"; workspace_id: string | null; repository: string | null; title: string; body: string; message: string | null };
+/** Why a backlog item was not made or not undone (`BacklogFailure`). */
+export type BacklogFailure = "not_installed" | "not_logged_in" | "no_github_remote" | "network_or_rate_limit" | "queue_full" | "unconfirmed" | "repository_changed" | "unavailable" | "refused";
+
+/** One item the backlog add made or is making (`BacklogItemSnapshot`). */
+export type BacklogItem = {
+  intent: string;
+  workspace_id: string;
+  title: string;
+  phase: "waiting" | "creating" | "created" | "failed";
+  /** The item's task key once it exists. */
+  task_key: string | null;
+  failure: BacklogFailure | null;
+  /** Whether `backlog_retry` can act on this failed row; a refusal, or a repository that changed, cannot. */
+  retry: boolean;
+  /** The missed line it came from. */
+  missed: { session: WorkSession; id: string } | null;
+  at_unix_ms: number;
+};
+
+export type BacklogUndo = { task_key: string; phase: "working" | "done" | "failed"; failure: BacklogFailure | null };
+
+export type BacklogOrigin = {
+  task_key: string;
+  phase: "reading" | "ready" | "failed";
+  session: WorkSession | null;
+  session_title: string | null;
+  missed_text: string | null;
+  task_name: string | null;
+  request: string | null;
+  answer: string | null;
+};
 
 /** One pull request or issue the core found on GitHub for ⌘K's search (`GithubSearchResultSnapshot`). */
 export type GithubSearchResult = {
@@ -744,7 +783,7 @@ export type Workspace = {
   agent_presence?: ProjectAgentPresence;
   /** The repository's open issues, in the shape older readers read. */
   home_issues?: ProjectIssues;
-  /** The project's tasks, the Overview's Tasks and Agents views read these. */
+  /** The project's tasks, which the device Overview's Tasks and backlog read. */
   tasks?: ProjectTasks;
   /**
    * The project's pull requests for the Work tool's PRs lens, one per branch:
@@ -754,9 +793,9 @@ export type Workspace = {
    */
   pull_requests?: PullRequest[];
   /**
-   * A local Git project's allocated disk, every worktree and the shared Git
-   * directory counted once. Present once an Overview named the project for
-   * measuring (`card_measure_disk` with its `workspace_id`).
+   * The project's allocated disk: a Git project's every worktree and shared
+   * Git directory counted once, a folder project's folder. Filled by the
+   * Projects tab's sweep (`disk_watch`); absent on a dialed device.
    */
   disk?: ProjectDisk;
   /** The project's disk cleanup: its review, its progress and its result, present on the project the last `cleanup_review` named. */
@@ -842,10 +881,14 @@ export type ProjectDisk = {
   /** Known only once every part is measured. */
   total_bytes: number | null;
   unavailable_reason: string | null;
-  /** The named measurement has not come back yet. */
+  /** The Projects tab's sweep is measuring it now. */
   measuring: boolean;
+  /** The sweep will measure it: what is shown is old or missing. */
+  queued?: boolean;
   /** Free space on the volume the project sits on, as of the last measurement. */
   free_bytes?: number | null;
+  /** The size of that volume. */
+  volume_total_bytes?: number | null;
   /** What the checkouts that could be measured add up to; the entrance shows it as a subtotal while `total_bytes` is null. */
   confirmed_bytes?: number | null;
   /** The layers of the checkouts that could be measured, summed; absent only while none was. */
@@ -1427,6 +1470,8 @@ export type RemoteStatus = {
   session?: RemoteSession | null;
   /** How far the device's helper has confirmed its projects (`device_catalog`). */
   catalog?: DeviceCatalog;
+  /** Since when the device has not answered; absent while it is connected (Overview B4). */
+  unreachable_since_unix_ms?: number;
 };
 
 /**
@@ -1608,46 +1653,6 @@ export type WorktreeRemoval = {
   message: string | null;
 };
 
-/** One session of a Project's history (`project_sessions.rows`), newest first. */
-export type SessionRow = {
-  id: string;
-  /** `claude` or `codex`. */
-  provider: string;
-  provider_label: string;
-  /** The provider file the session was read from; Copy source location copies it. */
-  locator: string;
-  checkout_path: string;
-  first_human_request: string | null;
-  started_at_unix_ms: number | null;
-  /** 0 when neither the session nor its file carries a time. */
-  updated_at_unix_ms: number;
-  title: string | null;
-  /** Why the session's file cannot be read, in the core's words; null when it can. */
-  unavailable_reason: string | null;
-};
-
-/** One recorded turn of a session: `role` is `user` or `assistant`, `kind` `human`, `assistant`, `interrupted` or `injected`. */
-export type ArchiveEvent = {
-  source_offset?: number | null;
-  role: string;
-  kind: string;
-  at_unix_ms: number;
-  text: string;
-  /** The Memory cards a prompt hook gave the agent in full at this prompt, by number (PRD project-memory-v2 B33). */
-  memory_received?: number[];
-  /** The cards Memory learned from this turn and still keeps, by number. */
-  memory_learned?: number[];
-};
-
-export type ArchiveDetail = {
-  id: string;
-  kind: string;
-  title: string;
-  provider: string | null;
-  unavailable_reason: string | null;
-  events: ArchiveEvent[];
-};
-
 /** A card's kind (`contracts/snapshot-wire-enums.json`: `memory_card_kind`). */
 export type MemoryCardKind = "rule" | "decision" | "lesson" | "fact" | "preference";
 
@@ -1749,34 +1754,6 @@ export type ProjectMemory = {
 /** The `memory` section: absent until a shell opens a Project's Memory. */
 export type MemorySection = { project: ProjectMemory | null };
 
-/** The session opened beside a Project's Sessions (`archive_open` with a `workspace_id`). */
-export type ProjectSessionDetail = {
-  session_id: string;
-  /** Empty when the history no longer lists the session. */
-  locator: string;
-  loading: boolean;
-  failure: string | null;
-  archive: ArchiveDetail | null;
-};
-
-/**
- * The Sessions of the Project a screen named with `sessions_refresh` (PRD S8
- * D-03): its whole history, the one session open beside it, and why either
- * cannot be read. It rides its own section of the wire and is absent until a
- * Project is named; the core holds one named Project at a time.
- */
-export type ProjectSessions = {
-  device_id: string;
-  workspace_id: string;
-  /** Why this Project's sessions are not read here at all (another device, gone from the catalog); no Retry. */
-  unavailable_reason: string | null;
-  loading: boolean;
-  /** Why reading the history failed; Retry reads it again. */
-  failure: string | null;
-  rows: SessionRow[];
-  detail: ProjectSessionDetail | null;
-};
-
 /** Where a pull request's issue link comes from: GitHub's closing reference or Hide's branch link. */
 export type LinkIssueSource = "closes" | "hide";
 /** `created`: the session printed the pull request's address when GitHub made it. */
@@ -1852,7 +1829,7 @@ export type WorkSession = { device_id: string; agent: string; session_id: string
 export type WorkRequest = { offset: number; at_unix_ms: number; text: string; author: "operator" | "parent"; task_ids: string[]; chapter_id: string | null; judged: boolean };
 export type WorkEnd = "working" | "question" | "blocked" | "done" | "waiting" | "unfinished";
 export type WorkTask = { id: string; chapter_id: string; name: string; at_unix_ms: number; last_at_unix_ms: number; end: WorkEnd; done: boolean };
-export type MissedWork = { id: string; kind: "leftover" | "problem" | "follow_up"; text: string; status: "open" | "resolved" | "issue" | "dismissed"; at_unix_ms: number; turn_offset: number; issue_repository: string | null; issue_number: number | null; creating: boolean };
+export type MissedWork = { id: string; kind: "leftover" | "problem" | "follow_up"; text: string; status: "open" | "resolved" | "issue" | "dismissed" | "backlog"; at_unix_ms: number; turn_offset: number; issue_repository: string | null; issue_number: number | null; backlog_key: string | null; creating: boolean };
 export type WorkOutput = { kind: "pr" | "issue"; repository: string; number: number; title: string; url: string; state: string; stale: boolean; last_read_at_unix_ms: number | null; created_at_unix_ms: number; task_id: string | null; source: WorkSession; source_name: string };
 export type SessionRecord = {
   session: WorkSession; title: string; fallback_title: string; native_title: string | null; manual_title: string | null; state: string | null; last_end: WorkEnd | null;
@@ -2138,5 +2115,3 @@ export function dividerPaneId(first: LayoutNode): string {
   return ids[ids.length - 1] ?? "";
 }
 
-export type SessionSearchHit = { session_id: string; source_offset: number; role: string; at_unix_ms: number; snippet: string };
-export type SessionSearch = { workspace_id: string; device_id: string; provider: string; query: string; loading: boolean; indexing: boolean; indexed: number; total: number; days: number; policy_loaded: boolean; control_failure: string | null; failure: string | null; page: { hits: SessionSearchHit[]; limited: boolean; stale: boolean } };

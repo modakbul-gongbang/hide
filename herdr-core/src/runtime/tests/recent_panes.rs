@@ -177,6 +177,7 @@ fn only_a_listed_pane_is_recorded_on_this_machine_or_a_device() {
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
 
     assert!(visit(&mut runtime, remote_pane));

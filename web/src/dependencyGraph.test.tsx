@@ -14,7 +14,7 @@ vi.mock("./dependencyLayout", async (original) => ({
   ...(await original<typeof import("./dependencyLayout")>()),
   workerElk: () => Promise.resolve({ layout, terminateWorker: () => {} }),
 }));
-const { DependencyGraphView } = await import("./TaskBoards");
+const { DependencyGraphView } = await import("./DependencyGraph");
 
 type Node = { id: string };
 const graphOf = (): LayeredGraph<Node> => ({ layers: [[{ id: "A" }], [{ id: "B" }]], edges: [{ from: "A", to: "B" }], unrelated: [] });

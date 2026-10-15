@@ -14,7 +14,6 @@ import {
   type EditorDocumentSnapshot,
   type EditorSnapshot,
   type PaneFind,
-  type ProjectSessions,
   type SnapshotRest,
 } from "./snapshot";
 
@@ -91,9 +90,7 @@ export type Frame = {
     editor?: EditorSnapshot | null;
     changes?: ChangesSnapshot | null;
     documents?: DocumentsSection | null;
-    project_sessions?: ProjectSessions;
     memory?: import("./snapshot").MemorySection;
-    session_search?: import("./snapshot").SessionSearch;
     link_panel?: import("./snapshot").LinkPanel;
     link_summaries?: import("./snapshot").LinkSummaries;
     session_record?: import("./snapshot").SessionRecordSection | null;
@@ -165,17 +162,10 @@ type Store = {
    */
   documents: Documents;
   /**
-   * The named Project's Sessions, the fourth section the core revisions on
-   * its own. The core leaves it out until a Project is named, so a snapshot
-   * without it has none; a delta without it keeps what the store holds.
-   */
-  projectSessions: ProjectSessions | null;
-  /**
    * The opened Project's Memory (`memory`), its own section: absent until a
    * shell opens one; a delta without it keeps what the store holds.
    */
   memory: import("./snapshot").MemorySection | null;
-  sessionSearch: import("./snapshot").SessionSearch | null;
   /** The link record of the open PR or issue panel (`link_panel`); null until one opens. */
   linkPanel: import("./snapshot").LinkPanel | null;
   /** Each Project's link counts and chips (`link_summaries`). */
@@ -324,9 +314,7 @@ export const useShellStore = create<Store>((set, get) => ({
   editor: null,
   changes: null,
   documents: NO_DOCUMENTS,
-  projectSessions: null,
   memory: null,
-  sessionSearch: null,
   linkPanel: null,
   linkSummaries: null,
   sessionRecord: null,
@@ -411,7 +399,7 @@ export const useShellStore = create<Store>((set, get) => ({
   applyFrame: (frame) => {
     const payload = frame.payload ?? {};
     // The core revisions `editor`, `changes`, `documents` and the named
-    // Project's `project_sessions` on their own, beside `rest`: a snapshot
+    // the link and record sections on their own, beside `rest`: a snapshot
     // carries every section it has, a delta only the ones that changed since
     // the client's revision. They land before the routing below, which
     // answers a listing or a refusal with an early return.
@@ -422,9 +410,7 @@ export const useShellStore = create<Store>((set, get) => ({
         editor: payload.editor ?? null,
         changes: payload.changes ?? null,
         documents: payload.documents ? mergeDocuments(NO_DOCUMENTS, payload.documents) : NO_DOCUMENTS,
-        projectSessions: payload.project_sessions ?? null,
         memory: payload.memory ?? null,
-        sessionSearch: payload.session_search ?? null,
         linkPanel: payload.link_panel ?? null,
         linkSummaries: payload.link_summaries ?? null,
         sessionRecord: payload.session_record ?? null,
@@ -436,7 +422,7 @@ export const useShellStore = create<Store>((set, get) => ({
       payload.editor !== undefined ||
       payload.changes !== undefined ||
       payload.documents !== undefined ||
-      payload.project_sessions !== undefined || payload.session_search !== undefined || payload.memory !== undefined ||
+      payload.memory !== undefined ||
       payload.link_panel !== undefined || payload.link_summaries !== undefined ||
       payload.session_record !== undefined || payload.session_work_search !== undefined ||
       payload.factory !== undefined || payload.factory_task !== undefined
@@ -445,9 +431,7 @@ export const useShellStore = create<Store>((set, get) => ({
         editor: payload.editor ?? get().editor,
         changes: payload.changes ?? get().changes,
         documents: payload.documents ? mergeDocuments(get().documents, payload.documents) : get().documents,
-        projectSessions: payload.project_sessions ?? get().projectSessions,
         memory: payload.memory ? share(get().memory, payload.memory) : get().memory,
-        sessionSearch: payload.session_search && (payload.revision ?? get().revision) >= get().revision ? share(get().sessionSearch, payload.session_search) : get().sessionSearch,
         linkPanel: payload.link_panel ? share(get().linkPanel, payload.link_panel) : get().linkPanel,
         linkSummaries: payload.link_summaries ? share(get().linkSummaries, payload.link_summaries) : get().linkSummaries,
         sessionRecord: payload.session_record !== undefined ? payload.session_record && share(get().sessionRecord, payload.session_record) : get().sessionRecord,

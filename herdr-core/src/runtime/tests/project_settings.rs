@@ -732,6 +732,7 @@ fn a_later_local_memory_or_device_visit_supersedes_delayed_remote_memory() {
                 state: "connected".into(),
                 message: None,
                 herdr_version: None,
+                unreachable_since_unix_ms: None,
                 session: Some(RemoteSessionSnapshot {
                     workspaces: vec![project],
                     agents: vec![],

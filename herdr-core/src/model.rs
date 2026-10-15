@@ -127,13 +127,6 @@ pub struct Snapshot {
     pub browser_scopes: Vec<BrowserAreaScopeRow>,
     #[serde(skip)]
     pub browser_views_revision: Option<u64>,
-    /// The Sessions of the Project a shell screen named, absent until one
-    /// does; a client that names none keeps exactly its snapshot keys.
-    /// It rides its own revisioned section of the delta wire.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub project_sessions: Option<ProjectSessionsSnapshot>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_search: Option<SessionSearchSnapshot>,
     /// Project Memory (PRD project-memory-v2): the Project a shell opened
     /// Memory for, and the cards each live agent session on this Mac was
     /// given. Its own revisioned section, absent until there is either.
@@ -1537,17 +1530,22 @@ pub struct ProjectAsleepSnapshot {
 /// A Git project's allocated disk: every worktree and the shared Git
 /// directory, counted once, as the catalog sums them (`disk_total_bytes`).
 /// `total_bytes` is known only once every part is measured; `measuring`
-/// says the project is the one named for measuring (`card_measure_disk`
-/// with its `workspace_id`) and its size has not come back yet.
+/// says the Projects tab's sweep is measuring it now and `queued` that it
+/// will (PRD overview-device-tasks B53), both drawn over the last size.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ProjectDiskSnapshot {
     pub total_bytes: Option<u64>,
     pub unavailable_reason: Option<String>,
     pub measuring: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub queued: bool,
     /// Free space of the project's volume when it was measured; known
     /// whether or not every checkout could be measured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub free_bytes: Option<u64>,
+    /// The size of that volume.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume_total_bytes: Option<u64>,
     /// What the checkouts that could be measured add up to. `total_bytes`
     /// stays absent while any checkout is unavailable; this is the subtotal
     /// the entrance may show beside it.
@@ -2810,32 +2808,6 @@ pub struct SessionRowSnapshot {
     pub unavailable_reason: Option<String>,
 }
 
-/// The Sessions of the Project a shell screen named with `sessions_refresh`
-/// and a `workspace_id` (the web shell's Project Sessions, PRD S8): the
-/// Project's session history and the one session read beside it.
-///
-/// It is kept apart from [`SessionsSnapshot`], which follows the focused
-/// checkout for the right panel, so the operator's focus never moves it. A
-/// Project stays named until a shell names another.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct ProjectSessionsSnapshot {
-    pub device_id: String,
-    /// The catalog Project the screen named.
-    pub workspace_id: String,
-    /// Why this Project's sessions are not read here at all: it is on another
-    /// device, or it left the catalog. Nothing is read and retrying cannot
-    /// help, so no local session ever stands in for it.
-    pub unavailable_reason: Option<String>,
-    pub loading: bool,
-    /// Why reading the history failed; `sessions_refresh` reads it again.
-    pub failure: Option<String>,
-    /// Every session of every worktree of the Project, newest first, with
-    /// an unavailable row's reason in words. A shell narrows them itself.
-    #[serde(serialize_with = "serialize_session_rows")]
-    pub rows: Arc<Vec<SessionRowSnapshot>>,
-    pub detail: Option<ProjectSessionDetailSnapshot>,
-}
-
 /// Project Memory on the wire: the Project a shell opened Memory for in its
 /// lane's Memory tool.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -3181,56 +3153,6 @@ fn serialize_memory_rows<S: serde::Serializer>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     rows.as_ref().serialize(serializer)
-}
-
-fn serialize_session_rows<S: serde::Serializer>(
-    rows: &Arc<Vec<SessionRowSnapshot>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    rows.as_ref().serialize(serializer)
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
-pub struct SessionSearchSnapshot {
-    pub workspace_id: String,
-    pub device_id: String,
-    pub provider: String,
-    pub query: String,
-    pub loading: bool,
-    pub indexing: bool,
-    pub indexed: usize,
-    pub total: usize,
-    pub days: u16,
-    pub policy_loaded: bool,
-    pub control_failure: Option<String>,
-    pub failure: Option<String>,
-    pub page: hide_session::search::SearchPage,
-}
-/// One session opened beside a Project's Sessions with `archive_open` and a
-/// `workspace_id`: read-only, and never an editor tab or a Workspace's.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct ProjectSessionDetailSnapshot {
-    pub session_id: String,
-    /// The provider file the session was listed from, empty when the history
-    /// no longer lists it.
-    pub locator: String,
-    pub loading: bool,
-    /// Why the session cannot be opened; `sessions_refresh` reads the history
-    /// and then this session again.
-    pub failure: Option<String>,
-    /// The conversation once read. It is shared rather than copied: a
-    /// transcript can run to megabytes and the delta compares this section
-    /// under the runtime lock on every read, which an unchanged `Arc` of an
-    /// `Eq` value answers by identity (`Arc`'s documented `PartialEq`).
-    #[serde(serialize_with = "serialize_shared_archive")]
-    pub archive: Option<Arc<ArchiveDetailSnapshot>>,
-}
-
-fn serialize_shared_archive<S: serde::Serializer>(
-    archive: &Option<Arc<ArchiveDetailSnapshot>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    archive.as_deref().serialize(serializer)
 }
 
 /// What kind of document an open file is, decided once by the host that
@@ -3772,27 +3694,121 @@ impl AgentStartChoice {
 /// by id and ignores one it did not ask for.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct IssueWorkSnapshot {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub draft: Option<SessionIssueDraftSnapshot>,
-    pub create: Option<IssueCreateSnapshot>,
     pub detail: Option<IssueDetailSnapshot>,
     pub name: Option<WorktreeNameSnapshot>,
     pub update: Option<IssueUpdateSnapshot>,
     /// The latest `github_search`; absent from the wire until the first one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search: Option<GithubSearchSnapshot>,
+    /// Backlog items on their way, the ones that failed, and the newest made
+    /// (PRD overview-device-tasks B29, B30, B40, B41, B44, B45).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub backlog: Vec<BacklogItemSnapshot>,
+    /// The latest `되돌리기` (B32).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub undo: Option<BacklogUndoSnapshot>,
+    /// Where each item a backlog panel or a Start dialog shows came from, one
+    /// per item key, kept while any window shows it (B31, B33).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub origins: Vec<BacklogOriginSnapshot>,
+    /// Every backlog item key a missed line made, newest first, for the
+    /// backlog row's flag (B27).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub missed_keys: Vec<String>,
+    /// Every GitHub issue key Hide made for the backlog (the quick add, the
+    /// backlog's input or `백로그로`), newest first: only these and memos
+    /// show `되돌리기` (D-21, B31).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub made_keys: Vec<String>,
 }
 
-/// The editable preview of one missed item. No external write precedes Create.
+/// One backlog item made from the backlog's input, the quick add or a
+/// missed line, named by the shell's intent key.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct SessionIssueDraftSnapshot {
-    pub source: crate::links::ledger::MissedSource,
-    pub phase: String,
-    pub workspace_id: Option<String>,
-    pub repository: Option<String>,
+pub struct BacklogItemSnapshot {
+    pub intent: String,
+    pub workspace_id: String,
     pub title: String,
-    pub body: String,
-    pub message: Option<String>,
+    pub phase: BacklogPhase,
+    /// The item's task key once it exists.
+    pub task_key: Option<String>,
+    /// Why it was not made, on `failed`.
+    pub failure: Option<BacklogFailure>,
+    /// Whether `backlog_retry` can make it again: a failed item whose job
+    /// is kept and whose failure a retry does not repeat.
+    pub retry: bool,
+    /// The missed line it is made from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub missed: Option<crate::links::ledger::MissedSource>,
+    pub at_unix_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BacklogPhase {
+    Waiting,
+    Creating,
+    Created,
+    Failed,
+}
+
+/// The reason line a failed item shows: the four GitHub categories, a queue
+/// past its bound, an answer Hide could not confirm, a repository the item
+/// may no longer go to, Hide's own record that could not be read just now
+/// (worth trying again), and a refusal (final).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BacklogFailure {
+    NotInstalled,
+    NotLoggedIn,
+    NoGithubRemote,
+    NetworkOrRateLimit,
+    QueueFull,
+    Unconfirmed,
+    /// The project's repository connection changed while the item was being
+    /// made, or a missed line's session did not work in this repository.
+    RepositoryChanged,
+    /// Hide could not read or reach its own record of the item just now: an
+    /// undo of it can be tried again.
+    Unavailable,
+    Refused,
+}
+
+impl From<hide_node_link::gh::GithubFailureCategory> for BacklogFailure {
+    fn from(category: hide_node_link::gh::GithubFailureCategory) -> Self {
+        use hide_node_link::gh::GithubFailureCategory as Category;
+        match category {
+            Category::NotInstalled => Self::NotInstalled,
+            Category::NotLoggedIn => Self::NotLoggedIn,
+            Category::NoGithubRemote => Self::NoGithubRemote,
+            Category::NetworkOrRateLimit => Self::NetworkOrRateLimit,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct BacklogUndoSnapshot {
+    pub task_key: String,
+    /// `working`, `done` or `failed`.
+    pub phase: String,
+    pub failure: Option<BacklogFailure>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct BacklogOriginSnapshot {
+    pub task_key: String,
+    /// `reading`, `ready` or `failed`.
+    pub phase: String,
+    /// Absent once read when no missed line made the item.
+    pub session: Option<crate::links::ledger::SessionIdentity>,
+    pub session_title: Option<String>,
+    /// The missed line's own words and the assigned task its turn belonged to.
+    pub missed_text: Option<String>,
+    pub task_name: Option<String>,
+    /// The turn's request and answer, for the Start prompt only; read on
+    /// this device and never sent to GitHub (D-21).
+    pub request: Option<String>,
+    pub answer: Option<String>,
 }
 
 /// The latest GitHub search (`github_search`), matched by the web's own
@@ -3845,18 +3861,6 @@ impl GithubSearchSnapshot {
             ..Self::working(request_id, query)
         }
     }
-}
-
-/// A new issue on its way to the project's source.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct IssueCreateSnapshot {
-    pub id: u64,
-    pub workspace_id: String,
-    /// `working`, `ready` or `failed`.
-    pub phase: String,
-    /// The created task's key, once it exists.
-    pub task_key: Option<String>,
-    pub message: Option<String>,
 }
 
 /// One issue as its panel and the Start dialog read it (PRD
@@ -5111,6 +5115,9 @@ pub struct DiskUsageSnapshot {
     /// Free space of the volume the measured path sits on, in bytes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub volume_free_bytes: Option<u64>,
+    /// The size of that volume.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume_total_bytes: Option<u64>,
     /// The folders behind the layer cells. The core keeps them so a cleanup
     /// can move them; the wire never carries a path.
     #[serde(skip)]
@@ -5481,6 +5488,12 @@ pub struct RemoteStatusSnapshot {
     /// Whether the session's projects are grouped from the device's own
     /// facts (`device_catalog`).
     pub catalog: DeviceCatalogSnapshot,
+    /// Since when the device has not answered (PRD overview-device-tasks
+    /// B4): set when its row stops being `connected`, or when it first
+    /// waits for its connection, and cleared when it answers; absent from
+    /// the wire while it is connected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unreachable_since_unix_ms: Option<u64>,
 }
 
 /// How far a device's projects are confirmed by its helper (PRD S5.5 B3,
@@ -5740,8 +5753,6 @@ impl Snapshot {
             browser_views: Vec::new(),
             browser_scopes: Vec::new(),
             browser_views_revision: None,
-            project_sessions: None,
-            session_search: None,
             memory: None,
             link_summaries: None,
             link_panel: None,
@@ -5801,8 +5812,6 @@ pub struct SnapshotDeltaPayload {
     /// The visible View documents (PRD S7 contract 3.1); always `None` in a
     /// shell without View areas.
     pub documents: Option<DocumentsDelta>,
-    pub project_sessions: Option<Arc<ProjectSessionsSnapshot>>,
-    pub session_search: Option<Arc<SessionSearchSnapshot>>,
     pub memory: Option<Arc<MemorySnapshot>>,
     pub link_summaries: Option<Arc<crate::links::LinkSummariesSnapshot>>,
     pub link_panel: Option<Arc<crate::links::LinkPanelSnapshot>>,
@@ -5848,14 +5857,6 @@ pub struct SnapshotDeltaWire<'a> {
     /// exactly its keys.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub documents: Option<DocumentsWire<'a>>,
-    /// A named Project's session history and the transcript open beside it:
-    /// hundreds of rows and megabytes of conversation, so off `rest` like the
-    /// changes view. Omitted while no shell has named a Project, which keeps
-    /// such a snapshot exactly its keys.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub project_sessions: Option<&'a ProjectSessionsSnapshot>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_search: Option<&'a SessionSearchSnapshot>,
     /// Omitted until Memory has a Project open or a live session given a
     /// card.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -5915,8 +5916,6 @@ impl<'a> SnapshotDeltaWire<'a> {
                     .map(|(tab_id, document)| ChangedDocumentWire { tab_id, document })
                     .collect(),
             }),
-            project_sessions: payload.project_sessions.as_deref(),
-            session_search: payload.session_search.as_deref(),
             memory: payload.memory.as_deref(),
             link_summaries: payload.link_summaries.as_deref(),
             link_panel: payload.link_panel.as_deref(),
@@ -6998,6 +6997,74 @@ mod wire_enum_tests {
             &WorkerTextSource::ALL,
         );
         checked.insert("factory_diagnosis_source");
+
+        use crate::agent_state::tally::tasks::TaskState as OverviewTaskState;
+        let task_states = [
+            OverviewTaskState::NeedsYou,
+            OverviewTaskState::Blocked,
+            OverviewTaskState::Working,
+            OverviewTaskState::Waiting,
+            OverviewTaskState::Done,
+            OverviewTaskState::Resting,
+            OverviewTaskState::Cleanup,
+        ];
+        for variant in task_states {
+            match variant {
+                OverviewTaskState::NeedsYou
+                | OverviewTaskState::Blocked
+                | OverviewTaskState::Working
+                | OverviewTaskState::Waiting
+                | OverviewTaskState::Done
+                | OverviewTaskState::Resting
+                | OverviewTaskState::Cleanup => {}
+            }
+        }
+        assert_wire(&contract, "task_state", &task_states);
+        checked.insert("task_state");
+
+        use crate::model::{BacklogFailure, BacklogPhase};
+        let backlog_phases = [
+            BacklogPhase::Waiting,
+            BacklogPhase::Creating,
+            BacklogPhase::Created,
+            BacklogPhase::Failed,
+        ];
+        for variant in backlog_phases {
+            match variant {
+                BacklogPhase::Waiting
+                | BacklogPhase::Creating
+                | BacklogPhase::Created
+                | BacklogPhase::Failed => {}
+            }
+        }
+        assert_wire(&contract, "backlog_phase", &backlog_phases);
+        checked.insert("backlog_phase");
+        let backlog_failures = [
+            BacklogFailure::NotInstalled,
+            BacklogFailure::NotLoggedIn,
+            BacklogFailure::NoGithubRemote,
+            BacklogFailure::NetworkOrRateLimit,
+            BacklogFailure::QueueFull,
+            BacklogFailure::Unconfirmed,
+            BacklogFailure::RepositoryChanged,
+            BacklogFailure::Unavailable,
+            BacklogFailure::Refused,
+        ];
+        for variant in backlog_failures {
+            match variant {
+                BacklogFailure::NotInstalled
+                | BacklogFailure::NotLoggedIn
+                | BacklogFailure::NoGithubRemote
+                | BacklogFailure::NetworkOrRateLimit
+                | BacklogFailure::QueueFull
+                | BacklogFailure::Unconfirmed
+                | BacklogFailure::RepositoryChanged
+                | BacklogFailure::Unavailable
+                | BacklogFailure::Refused => {}
+            }
+        }
+        assert_wire(&contract, "backlog_failure", &backlog_failures);
+        checked.insert("backlog_failure");
 
         let color_themes = [ColorTheme::Hide, ColorTheme::Neutral];
         for variant in color_themes {

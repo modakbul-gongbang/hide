@@ -1218,16 +1218,12 @@ pub fn handle_with_progress(
             let home = env.home("label_session_home_unavailable")?;
             label_transcript(Path::new(&home), &request)
         }
-        Call::SessionWorkContext {
-            request,
-            checkout_path,
-        } => {
+        Call::SessionWorkTurn { request } => {
             let home = env.home("session_work_home_unavailable")?;
-            to_value(crate::session_work::read(
-                Path::new(&home),
-                &request,
-                &checkout_path,
-            )?)
+            to_value(
+                hide_session::label_transcript::read_work_turn(Path::new(&home), &request)
+                    .map_err(|reason| HostError::new(ErrorCode::Io, reason))?,
+            )
         }
         Call::SessionActivity { request } => {
             let home = env.home("session_activity_home_unavailable")?;
@@ -1263,105 +1259,6 @@ pub fn handle_with_progress(
             let step = hide_session::usage::read(Path::new(&home), agent, &path, checkpoint)
                 .map_err(|reason| HostError::new(ErrorCode::Io, reason.to_string()))?;
             to_value(step)
-        }
-        Call::SessionIndexRead {
-            agent: hide_session::Agent::OpenCode,
-            path,
-            saved,
-            scope,
-        } => {
-            // OpenCode's sessions live in its database, named `opencode/<id>`.
-            let home = env.home("sessions_home_unavailable")?;
-            let step = hide_session::search_read::opencode_session(&path, scope.as_ref())
-                .and_then(|scope| {
-                    hide_session::search_read::read_opencode_step(
-                        Path::new(&home),
-                        saved.as_ref(),
-                        scope,
-                    )
-                })
-                .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
-            to_value(step)
-        }
-        Call::SessionIndexRead {
-            agent,
-            path,
-            saved,
-            scope,
-        } => {
-            let path = session_file(env, &[agent], &path)?;
-            let home = env.home("sessions_home_unavailable")?;
-            let (step, _) = hide_session::read_session_file(
-                Path::new(&home),
-                agent,
-                &path,
-                scope.as_ref(),
-                || {
-                    hide_session::search_read::read_step_confirmed(
-                        Path::new(&home),
-                        saved.as_ref(),
-                        agent,
-                        &path,
-                        scope.as_ref(),
-                    )
-                },
-            )
-            .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
-            to_value(step)
-        }
-        Call::SessionStamps { paths, scopes } => {
-            if paths.len() > hide_session::search::STAMP_LIMIT {
-                return Err(HostError::new(
-                    ErrorCode::InvalidRequest,
-                    format!(
-                        "At most {} session stamps are read at once",
-                        hide_session::search::STAMP_LIMIT
-                    ),
-                ));
-            }
-            let home = env.home("sessions_home_unavailable")?;
-            to_value(
-                paths
-                    .iter()
-                    .enumerate()
-                    .map(|(index, path)| {
-                        let scope = scopes
-                            .as_ref()
-                            .and_then(|scopes| scopes.get(index))
-                            .and_then(Option::as_ref);
-                        if path.starts_with(hide_session::links::OPENCODE_PREFIX) {
-                            return hide_session::search_read::opencode_session(path, scope)
-                                .and_then(|scope| {
-                                    hide_session::search_read::opencode_stamp(
-                                        Path::new(&home),
-                                        scope,
-                                    )
-                                })
-                                .ok();
-                        }
-                        let path = Path::new(path);
-                        if !path.is_absolute() {
-                            return None;
-                        }
-                        let path = hide_session::inside_session_root(
-                            Path::new(&home),
-                            &SESSION_FILE_AGENTS,
-                            path,
-                        )
-                        .ok()?;
-                        let agent = session_file_agent(Path::new(&home), &path).ok()?;
-                        hide_session::read_session_file(
-                            Path::new(&home),
-                            agent,
-                            &path,
-                            scope,
-                            || Ok(hide_session::search_read::stamp_at(&path)),
-                        )
-                        .ok()
-                        .flatten()
-                    })
-                    .collect::<Vec<_>>(),
-            )
         }
         Call::ProjectSessions { project } => {
             let home = env.home("sessions_home_unavailable")?;
@@ -1630,12 +1527,6 @@ mod tests {
                     },
                     checkpoint: None,
                 },
-                Call::SessionIndexRead {
-                    agent: hide_session::Agent::Claude,
-                    path,
-                    scope: None,
-                    saved: None,
-                },
             ]
         };
 
@@ -1652,18 +1543,6 @@ mod tests {
                 assert_eq!(refused.code, code, "{path}");
             }
         }
-        let stamps = handle_in(
-            Call::SessionStamps {
-                scopes: None,
-                paths: vec![named(&session), named(&secret), named(&planted)],
-            },
-            &env,
-        )
-        .unwrap();
-        let stamps = stamps.as_array().unwrap();
-        assert!(stamps[0].is_string());
-        assert!(stamps[1].is_null() && stamps[2].is_null());
-
         let pipe = folder.join("pipe.jsonl");
         let made = std::process::Command::new("mkfifo")
             .arg(&pipe)
@@ -1679,7 +1558,7 @@ mod tests {
                 sender.send(handle_in(call, &env).map(|_| ())).unwrap();
             }
         });
-        for _ in 0..3 {
+        for _ in 0..2 {
             let refused = answers
                 .recv_timeout(Duration::from_secs(5))
                 .expect("a pipe read answers at once");
@@ -1688,7 +1567,7 @@ mod tests {
     }
 
     #[test]
-    fn queued_native_archive_search_memory_and_stamps_refuse_a_replaced_catalog_owner() {
+    fn queued_native_archive_and_memory_reads_refuse_a_replaced_catalog_owner() {
         for agent in [hide_session::Agent::Pi, hide_session::Agent::Omp] {
             queued_native_catalog_owner(agent);
         }
@@ -1744,17 +1623,7 @@ mod tests {
                     scope: scope.clone(),
                     checkpoint: None,
                 },
-                Call::SessionIndexRead {
-                    agent,
-                    path: path.display().to_string(),
-                    scope: Some(scope.clone()),
-                    saved: None,
-                },
             ]
-        };
-        let stamps = || Call::SessionStamps {
-            paths: vec![path.display().to_string()],
-            scopes: Some(vec![Some(scope.clone())]),
         };
         let write = |id| {
             std::fs::write(&path, format!("{}\n{}\n",
@@ -1765,14 +1634,12 @@ mod tests {
         for call in reads() {
             handle_in(call, &env).unwrap();
         }
-        assert!(handle_in(stamps(), &env).unwrap()[0].is_string());
         write("owner-b");
         for call in reads() {
             let error = handle_in(call, &env).unwrap_err();
             assert_eq!(error.code, ErrorCode::Io);
             assert_eq!(error.message, "label_session_id_mismatch");
         }
-        assert!(handle_in(stamps(), &env).unwrap()[0].is_null());
     }
 
     /// The SSH channel is gone: nothing written reaches anyone.

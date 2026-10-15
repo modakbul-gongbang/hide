@@ -45,6 +45,17 @@ impl Runtime {
             let measured = self.device_disk.get(target);
             for project in &mut session.workspaces {
                 let Some(listed) = worktrees.projects.get(&project.path) else {
+                    // A folder project is measured as one folder (D-27).
+                    if !project.is_git && reports_own_facts {
+                        let (measuring, queued) =
+                            self.disk_sweep_marks(Some(target), &project.path);
+                        project.disk = super::disk_sweep::folder_disk(
+                            measured.map_or(&[][..], Vec::as_slice),
+                            &project.path,
+                            measuring,
+                            queued,
+                        );
+                    }
                     continue;
                 };
                 match measured {
@@ -52,8 +63,8 @@ impl Runtime {
                         let mut listed = listed.clone();
                         super::projects::measure_worktrees(&mut listed, disk);
                         device_catalog::apply_worktrees(project, &listed, own_rows);
-                        let named = self.device_disk_project.get(target) == Some(&project.path);
-                        project.disk = super::projects::project_disk(Some(&listed), named);
+                        let marks = self.disk_sweep_marks(Some(target), &project.path);
+                        project.disk = super::projects::project_disk(Some(&listed), marks);
                     }
                     None => device_catalog::apply_worktrees(project, listed, own_rows),
                 }
@@ -683,6 +694,7 @@ impl Runtime {
         }
         entry.unavailable = failure;
         let again = std::mem::take(&mut entry.again);
+        self.advance_disk_sweep(Some(target));
         let mut changed = self.refresh_device_catalog(target);
         if again {
             changed |= self.request_device_worktrees(target, true);

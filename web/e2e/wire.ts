@@ -55,21 +55,19 @@ export function countSent(page: Page, last: Map<string, Record<string, unknown>>
 
 /**
  * A first run opens on Main (S6 D-11); a spec about the Workspace goes in
- * through its Project's Overview (the one named `project`, else the first)
- * to that Project's first Workspace: the Overview opens on the request view,
- * whose Agents tile is the graph, whose first box head is a checkout's
- * Workspace (overview-request-view D-05, agents-graph-view B15);
- * a project that draws no box goes
- * through the sidebar's project list, put back on the list it showed. A page
- * that already shows a Workspace is left where it is.
+ * through the sidebar's row of its Project (the one named `project`, else
+ * the first), which opens that Project's Workspace. A page that already
+ * shows a Workspace is left where it is.
  */
 export async function enterWorkspace(page: Page, project?: string): Promise<void> {
   const main = page.locator("[data-main-screen]");
   const workspace = page.locator("[data-workspace-screen]");
   await expect(main.or(workspace)).toBeVisible({ timeout: 20_000 });
   if ((await workspace.count()) > 0) return;
-  await main.locator('[data-main-tab="projects"]').click();
-  await main.locator("[data-main-project]:not([disabled])", project ? { hasText: project } : {}).first().click();
+  // A repository's row is `data-project-row`; a plain folder's is its one checkout's open button.
+  const named = project ? { has: page.locator("[data-row-name]", { hasText: new RegExp(`^${project}$`) }) } : {};
+  const row = page.locator("nav[data-sidebar] [data-project]", named).first().locator("[data-project-row], button[data-checkout]").first();
+  await (await showProjectRow(page, row)).click();
   await expect(workspace).toBeVisible();
 }
 

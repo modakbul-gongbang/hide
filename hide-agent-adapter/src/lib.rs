@@ -189,11 +189,6 @@ impl SessionFormat {
     pub const fn reports_activity(self) -> bool {
         self.has_session_file() || matches!(self, Self::OpenCode)
     }
-
-    /// The native reader feeds the project session catalog and body search.
-    pub const fn searchable(self) -> bool {
-        self.has_session_file() || matches!(self, Self::OpenCode)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -297,6 +297,7 @@ fn a_device_checkout_recorded_before_grouping_is_the_same_record_after_it() {
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     let device = FakeDevice::new();
     runtime.device_hosts.insert(
@@ -365,6 +366,7 @@ fn a_device_session_is_grouped_when_its_helper_answers() {
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     let device = FakeDevice::new();
     runtime.device_hosts.insert(
@@ -855,6 +857,7 @@ fn a_device_whose_helper_is_not_allowed_shows_its_workspaces_unconfirmed() {
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     runtime.ingest_remote_session(
         TARGET,
@@ -934,6 +937,7 @@ fn a_device_registration_is_listed_without_panes_pinned_and_removed_on_that_devi
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     runtime.device_hosts.insert(
         TARGET.to_owned(),
@@ -1097,6 +1101,7 @@ fn a_tab_in_a_device_registration_without_a_workspace_creates_one_there() {
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     runtime.ingest_remote_session(TARGET, Ok(session(Vec::new())));
     let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
@@ -1238,6 +1243,7 @@ fn a_device_tab_moves_on_its_own_herdr_and_a_file_tab_keeps_the_slot_it_was_drop
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     let raw = |order: &[&str]| {
         let tabs = order
@@ -1515,6 +1521,7 @@ fn a_device_agent_chosen_brings_the_device_forward_and_moves_no_column() {
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     let mut raw = session(vec![
         herdr_workspace(TARGET, "w1", &t.main, &[("t1", &t.main)]),
@@ -1690,6 +1697,7 @@ fn a_refused_device_request_does_not_bring_the_device_forward() {
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
         hide_herdr_client::LocalSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
@@ -1729,6 +1737,7 @@ fn a_device_pane_carries_its_children_and_its_path_to_the_parent() {
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     let mut raw = session(vec![herdr_workspace(
         TARGET,
@@ -1802,6 +1811,7 @@ fn regrouping_a_device_session_keeps_its_agents_lineage() {
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     let mut raw = session(vec![herdr_workspace(
         TARGET,
@@ -1875,6 +1885,7 @@ fn a_device_agent_pane_is_judged_against_its_own_kit() {
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     let mut raw = session(vec![herdr_workspace(
         TARGET,
@@ -2085,6 +2096,7 @@ fn one_device_folder_held_by_two_workspaces_is_one_row_whose_new_tabs_go_to_its_
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     runtime.ingest_remote_session(TARGET, Ok(raw()));
     let requests = recording_device(&mut runtime);
@@ -2227,6 +2239,7 @@ fn folds_saved_under_old_device_checkout_ids_carry_over() {
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     let registered = device_catalog::project_id(TARGET, Path::new(&t.other));
     runtime
@@ -2288,6 +2301,7 @@ fn a_device_tab_hide_created_stays_in_its_folder_while_its_pane_reports_the_birt
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     runtime
         .device_facts
@@ -2356,6 +2370,7 @@ pub(super) fn connected_status(target: &str) -> RemoteStatusSnapshot {
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     }
 }
 
@@ -2681,6 +2696,7 @@ fn device_runtime(t: &Tree) -> Runtime {
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     runtime
         .device_facts

@@ -117,7 +117,6 @@ export function FactoryScene({ theme, tab, task, content, state, language, obser
 
   useLayoutEffect(() => {
     useUiStore.setState({
-      sidebarMode: "projects",
       screen: { kind: "factory", place: { ...FACTORY_ENTRY, tab, factory: factory ?? (state === "board" || state === "graph" ? "f-hide" : null), task: task === null || openFactory === null ? null : { factory: openFactory.id, task } } },
       overviewOpen: false,
     });

@@ -647,6 +647,7 @@ fn a_device_checkout_start_opens_its_tab_on_that_device() {
             }),
             files: RemoteFileListSnapshot::idle(),
             catalog: Default::default(),
+            unreachable_since_unix_ms: None,
         });
     }
 

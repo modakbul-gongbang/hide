@@ -502,12 +502,6 @@ impl Checkpoint {
         self.offset
     }
 
-    pub(crate) fn matches_owner(&self, native_id: &str, incarnation: &str) -> Result<bool> {
-        self.validate()?;
-        Ok(self.owner == hex(&Sha256::digest(native_id.as_bytes()))
-            && self.incarnation.as_deref() == Some(incarnation))
-    }
-
     fn validate(&self) -> Result<()> {
         let hash = |value: &str| {
             value.len() == 64

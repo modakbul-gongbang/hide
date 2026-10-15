@@ -209,6 +209,7 @@ fn node_runtime_with(
         session: None,
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     runtime.device_hosts.insert(
         NODE.to_owned(),
@@ -345,12 +346,16 @@ fn a_node_s_local_project_reads_and_writes_the_issues_a_move_kept_under_its_id()
 
     dispatch(
         &shared,
-        "issue_create",
-        serde_json::json!({"workspace_id": workspace_id, "title": "made on the new core"}),
+        "backlog_add",
+        serde_json::json!({"intent": "m-1", "workspace_id": workspace_id, "title": "made on the new core"}),
     );
     let runtime = shared.lock().unwrap();
-    let created = runtime.snapshot.issue_work.create.clone().unwrap();
-    assert_eq!(created.phase, "ready", "{:?}", created.message);
+    let created = runtime.snapshot.issue_work.backlog[0].clone();
+    assert_eq!(
+        created.phase,
+        crate::model::BacklogPhase::Created,
+        "{created:?}"
+    );
     assert_eq!(created.task_key, Some(crate::tasks::local_key(&root, 8)));
     assert_eq!(task_ids(node_project(&runtime).unwrap())[0].0, "L-8");
     drop(runtime);
@@ -780,8 +785,14 @@ fn a_node_project_is_named_and_searched_by_the_repository_the_node_read() {
 fn a_new_github_issue_for_a_node_project_is_made_by_repository_name_here() {
     let repo = repo(Some("https://github.com/acme/app.git"), "feature");
     let own = Recording::of(None);
+    *own.gh_answers.lock().unwrap() = vec![(
+        "repo view",
+        serde_json::json!({"nameWithOwner": "acme/app"}).to_string(),
+    )];
     *own.gh_stdout.lock().unwrap() = Some("https://github.com/acme/app/issues/31\n".to_owned());
     let shared = node_runtime(&repo, FakeDevice::new(), own.clone(), Default::default());
+    let _links = super::super::links::spawn_worker(&shared, ChangeNotifier::noop())
+        .expect("the link worker starts");
     let workspace_id = {
         let mut runtime = shared.lock().unwrap();
         runtime.device_github_request(NODE, std::time::Instant::now());
@@ -810,26 +821,33 @@ fn a_new_github_issue_for_a_node_project_is_made_by_repository_name_here() {
     };
     dispatch(
         &shared,
-        "issue_create",
-        serde_json::json!({"workspace_id": workspace_id, "title": "From the MacBook", "body": "b"}),
+        "backlog_add",
+        serde_json::json!({"intent": "i-1", "workspace_id": workspace_id, "title": "From the MacBook"}),
     );
     wait(&shared, "the new issue", |runtime| {
         runtime
             .snapshot
             .issue_work
-            .create
-            .as_ref()
-            .is_some_and(|create| create.phase != "working")
+            .backlog
+            .first()
+            .is_some_and(|row| {
+                row.task_key.is_some() || row.phase == crate::model::BacklogPhase::Failed
+            })
     });
     let runtime = shared.lock().unwrap();
-    let create = runtime.snapshot.issue_work.create.clone().unwrap();
+    let create = runtime.snapshot.issue_work.backlog[0].clone();
     assert_eq!(
         create.task_key.as_deref(),
         Some("github:acme/app#31"),
         "{create:?}"
     );
+    let creates: Vec<_> = own
+        .gh_calls()
+        .into_iter()
+        .filter(|(_, _, args)| args.starts_with(&["issue".to_owned(), "create".to_owned()]))
+        .collect();
     assert_eq!(
-        own.gh_calls(),
+        creates,
         [(
             None,
             Some("acme/app".to_owned()),
@@ -839,7 +857,7 @@ fn a_new_github_issue_for_a_node_project_is_made_by_repository_name_here() {
                 "--title",
                 "From the MacBook",
                 "--body",
-                "b"
+                ""
             ]
             .map(str::to_owned)
             .to_vec(),
@@ -1115,13 +1133,18 @@ fn a_device_this_core_dials_keeps_no_issues_here() {
     drop(runtime);
     dispatch(
         &shared,
-        "issue_create",
-        serde_json::json!({"workspace_id": workspace_id, "title": "nowhere"}),
+        "backlog_add",
+        serde_json::json!({"intent": "m-1", "workspace_id": workspace_id, "title": "nowhere"}),
     );
     let runtime = shared.lock().unwrap();
+    let refused = &runtime.snapshot.issue_work.backlog[0];
     assert_eq!(
-        runtime.snapshot.status.last_error.as_ref().unwrap().kind,
-        "issue_create.unknown_project"
+        (refused.phase, refused.failure, refused.retry),
+        (
+            crate::model::BacklogPhase::Failed,
+            Some(crate::model::BacklogFailure::Refused),
+            false
+        )
     );
     let store = runtime.local_issues.as_ref().unwrap();
     assert_eq!(

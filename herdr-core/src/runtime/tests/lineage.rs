@@ -117,6 +117,7 @@ fn cross_machine_runtime() -> Runtime {
         session: Some(remote_lineage_session(vec![remote_parent, remote_child])),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     runtime
 }
@@ -2357,6 +2358,7 @@ fn a_descendant_on_a_disconnected_device_is_never_listed_for_a_close() {
         session: Some(remote_lineage_session(vec![remote_child])),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     runtime.refresh_agent_lineage();
     let mut listed = local_lineage_agent(&runtime, "local-parent")

@@ -115,6 +115,7 @@ fn device_runtime_with_host(
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     runtime.device_hosts.insert(
         DEVICE.to_owned(),

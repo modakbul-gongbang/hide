@@ -79,7 +79,6 @@ pub struct Core {
     _changes: Option<crate::changes::ChangesPump>,
     _kit: Option<crate::kit::KitPump>,
     _session_sync: Option<crate::session_sync::SessionSyncHandle>,
-    _session_search: Option<crate::runtime::session_search::SearchWorker>,
     _links: Option<crate::links::worker::LinkWorker>,
     _usage_ledger: Option<crate::usage_ledger::worker::Worker>,
     labels: Option<Arc<crate::labels::LabelServices>>,
@@ -92,7 +91,6 @@ pub struct Core {
 
 impl Drop for Core {
     fn drop(&mut self) {
-        lock_recover(&self.runtime).cancel_session_issue_draft();
         // First: the Factory engine sends through delivery and ends the
         // verify runs and judgments it started (rule 14).
         if let Some(mut factory) = self.factory.take() {
@@ -117,7 +115,6 @@ impl Drop for Core {
         self.own_node.close("core stopping");
         self._kit.take();
         self._usage_ledger.take();
-        self._session_search.take();
         self._links.take();
         self._terminal_reports.take();
         self._changes.take();
@@ -196,7 +193,6 @@ impl Core {
             _changes: None,
             _kit: None,
             _session_sync: None,
-            _session_search: None,
             _links: None,
             _usage_ledger: None,
             _delivery: None,
@@ -351,24 +347,8 @@ impl Core {
                 None
             }
         };
-        let session_search = match crate::runtime::session_search::SearchWorker::spawn(
-            Arc::downgrade(&runtime),
-            notifier.clone(),
-        ) {
-            Ok(worker) => {
-                worker.install(&mut lock_recover(&runtime));
-                Some(worker)
-            }
-            Err(message) => {
-                crate::diagnostic!(
-                    serde_json::json!({"component":"session_search","kind":"worker.start_failed","message":message})
-                );
-                None
-            }
-        };
-        // After the search worker, whose index holds each project's Copied
-        // history, and before any coordinator, so the first catalog and
-        // GitHub answers reach it.
+        // Before any coordinator, so the first catalog and GitHub answers
+        // reach it.
         let links = match crate::runtime::links::spawn_worker(&runtime, notifier.clone()) {
             Ok(worker) => {
                 if let Some(labels) = labels.as_ref()
@@ -487,7 +467,6 @@ impl Core {
             _kit: kit,
             own_node,
             _session_sync: session_sync,
-            _session_search: session_search,
             _links: links,
             _usage_ledger: usage_ledger,
             labels,

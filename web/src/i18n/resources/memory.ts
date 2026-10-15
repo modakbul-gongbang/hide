@@ -13,7 +13,6 @@ export const memoryEnglish = {
   "memory.batch.clear": "Clear",
   "memory.batch.open": "Open one PR",
   "memory.batch.select": "Select {{card}}",
-  "memory.batch.inPr": "In PR {{number}}",
   "memory.docs.newer": "Docs disagree · you are newer",
   "memory.docs.ask": "Docs disagree · which is right?",
   "memory.docs.compare": "Compare",
@@ -25,7 +24,6 @@ export const memoryEnglish = {
   "memory.docs.unknownDate": "Date unknown",
   "memory.docs.sourceUnavailable": "Original words unavailable",
   "memory.startFailure.cardNotProcessed": "Card was not processed",
-  "memory.title": "Memory",
   "memory.questionsWaiting": "Memory has questions",
   "memory.switch": "Use Auto memory",
   "memory.hideAi": "Hide AI · {{agent}}",
@@ -102,9 +100,6 @@ export const memoryEnglish = {
   "memory.delete.keep": "Keep",
   "memory.delete.confirm_one": "Delete {{count}} card",
   "memory.delete.confirm_other": "Delete {{count}} cards",
-  "memory.received": "Memory",
-  "memory.learned": "Learned",
-  "memory.openCard": "Open {{card}} in Memory",
 } as const;
 
 type Messages = Catalog<typeof memoryEnglish>;
@@ -120,7 +115,6 @@ const ko: Messages = {
   "memory.batch.clear": "해제",
   "memory.batch.open": "PR 하나로 열기",
   "memory.batch.select": "{{card}} 선택",
-  "memory.batch.inPr": "PR {{number}}에 포함",
   "memory.docs.newer": "문서와 다름 · 내 결정이 더 최근",
   "memory.docs.ask": "문서와 다름 · 어느 쪽이 맞나요?",
   "memory.docs.compare": "비교",
@@ -132,7 +126,6 @@ const ko: Messages = {
   "memory.docs.unknownDate": "날짜 모름",
   "memory.docs.sourceUnavailable": "원문을 읽을 수 없음",
   "memory.startFailure.cardNotProcessed": "카드를 처리하지 못함",
-  "memory.title": "Memory",
   "memory.questionsWaiting": "Memory에 물어볼 것이 있음",
   "memory.switch": "Auto memory 사용",
   "memory.hideAi": "Hide AI · {{agent}}",
@@ -209,9 +202,6 @@ const ko: Messages = {
   "memory.delete.keep": "그대로 두기",
   "memory.delete.confirm_one": "카드 {{count}}개 삭제",
   "memory.delete.confirm_other": "카드 {{count}}개 삭제",
-  "memory.received": "Memory",
-  "memory.learned": "배움",
-  "memory.openCard": "Memory에서 {{card}} 열기",
 };
 
 const zhCN: Messages = {
@@ -225,7 +215,6 @@ const zhCN: Messages = {
   "memory.batch.clear": "清除",
   "memory.batch.open": "打开一个 PR",
   "memory.batch.select": "选择 {{card}}",
-  "memory.batch.inPr": "在 PR {{number}} 中",
   "memory.docs.newer": "与文档不同 · 您的决定较新",
   "memory.docs.ask": "与文档不同 · 哪个正确？",
   "memory.docs.compare": "对比",
@@ -237,7 +226,6 @@ const zhCN: Messages = {
   "memory.docs.unknownDate": "日期未知",
   "memory.docs.sourceUnavailable": "无法读取原话",
   "memory.startFailure.cardNotProcessed": "未处理此卡片",
-  "memory.title": "Memory",
   "memory.questionsWaiting": "Memory 有待确认的事项",
   "memory.switch": "使用 Auto memory",
   "memory.hideAi": "Hide AI · {{agent}}",
@@ -314,9 +302,6 @@ const zhCN: Messages = {
   "memory.delete.keep": "保留",
   "memory.delete.confirm_one": "删除 {{count}} 张卡片",
   "memory.delete.confirm_other": "删除 {{count}} 张卡片",
-  "memory.received": "Memory",
-  "memory.learned": "学到",
-  "memory.openCard": "在 Memory 中打开 {{card}}",
 };
 
 const ja: Messages = {
@@ -330,7 +315,6 @@ const ja: Messages = {
   "memory.batch.clear": "解除",
   "memory.batch.open": "1つのPRを開く",
   "memory.batch.select": "{{card}}を選択",
-  "memory.batch.inPr": "PR {{number}} に含む",
   "memory.docs.newer": "文書と不一致 · 決定が新しい",
   "memory.docs.ask": "文書と不一致 · どちらが正しい？",
   "memory.docs.compare": "比較",
@@ -342,7 +326,6 @@ const ja: Messages = {
   "memory.docs.unknownDate": "日付不明",
   "memory.docs.sourceUnavailable": "元の発言を読めません",
   "memory.startFailure.cardNotProcessed": "カードを処理できませんでした",
-  "memory.title": "Memory",
   "memory.questionsWaiting": "Memory に確認事項があります",
   "memory.switch": "Auto memory を使う",
   "memory.hideAi": "Hide AI · {{agent}}",
@@ -419,9 +402,6 @@ const ja: Messages = {
   "memory.delete.keep": "そのままにする",
   "memory.delete.confirm_one": "カード {{count}} 枚を削除",
   "memory.delete.confirm_other": "カード {{count}} 枚を削除",
-  "memory.received": "Memory",
-  "memory.learned": "学習",
-  "memory.openCard": "Memory で {{card}} を開く",
 };
 
 export const memoryCatalogs = { en: memoryEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof memoryEnglish>;

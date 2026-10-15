@@ -1,14 +1,7 @@
 //! The shapes of a node's agent sessions, which Project Memory and the
-//! Sessions screen read through the core (PRD core-host-node D-03).
+//! right panel read through the core (PRD core-host-node D-03).
 
 use serde::{Deserialize, Serialize};
-
-/// Bounded material returned by `Call::SessionWorkContext`, read on its node.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct WorkContext {
-    pub turn: hide_session::label_transcript::WorkTurn,
-    pub templates: String,
-}
 
 /// Independently implemented reader operations, not provider installation
 /// or permission to start an agent.
@@ -19,7 +12,6 @@ pub enum ReaderFeature {
     Labels,
     Titles,
     Conversation,
-    Search,
     Memory,
     Links,
     Activity,
@@ -70,9 +62,6 @@ impl ReaderFeatures {
             if agent.reports_activity() {
                 features.insert(Activity);
             }
-            if agent.searchable() {
-                features.insert(Search);
-            }
             if row.titles.is_some() {
                 features.insert(Titles);
             }
@@ -99,15 +88,7 @@ impl ReaderFeatures {
             providers: [
                 (
                     "claude",
-                    vec![
-                        Identity,
-                        Labels,
-                        Titles,
-                        Conversation,
-                        Search,
-                        Links,
-                        Activity,
-                    ],
+                    vec![Identity, Labels, Titles, Conversation, Links, Activity],
                 ),
                 (
                     "codex",
@@ -116,7 +97,6 @@ impl ReaderFeatures {
                         Labels,
                         Titles,
                         Conversation,
-                        Search,
                         Links,
                         Activity,
                         Turns,
@@ -346,7 +326,6 @@ mod reader_tests {
             ReaderFeature::Labels,
             ReaderFeature::Titles,
             ReaderFeature::Conversation,
-            ReaderFeature::Search,
             ReaderFeature::Memory,
             ReaderFeature::Links,
             ReaderFeature::Activity,
@@ -366,7 +345,6 @@ mod reader_tests {
             ReaderFeature::Identity,
             ReaderFeature::Labels,
             ReaderFeature::Conversation,
-            ReaderFeature::Search,
             ReaderFeature::Activity,
         ] {
             assert!(ReaderFeatures::implemented().supports("cursor", feature));
@@ -395,7 +373,6 @@ mod reader_tests {
             ReaderFeature::Labels,
             ReaderFeature::Titles,
             ReaderFeature::Conversation,
-            ReaderFeature::Search,
             ReaderFeature::Memory,
             ReaderFeature::Links,
             ReaderFeature::Activity,
@@ -422,7 +399,6 @@ mod reader_tests {
             ReaderFeature::Labels,
             ReaderFeature::Titles,
             ReaderFeature::Conversation,
-            ReaderFeature::Search,
             ReaderFeature::Memory,
             ReaderFeature::Links,
             ReaderFeature::Activity,
@@ -449,7 +425,6 @@ mod reader_tests {
             ReaderFeature::Labels,
             ReaderFeature::Titles,
             ReaderFeature::Conversation,
-            ReaderFeature::Search,
             ReaderFeature::Links,
             ReaderFeature::Activity,
             ReaderFeature::Turns,
@@ -462,7 +437,6 @@ mod reader_tests {
         let retained = ReaderFeatures::protocol24();
         for feature in [
             ReaderFeature::Conversation,
-            ReaderFeature::Search,
             ReaderFeature::Activity,
             ReaderFeature::Turns,
             ReaderFeature::UserTurnContent,

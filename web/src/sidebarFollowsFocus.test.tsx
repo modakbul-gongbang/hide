@@ -89,7 +89,7 @@ it("selects and brings into view the row that stands for the focused pane, openi
   document.body.append(container);
   const root = createRoot(container);
   try {
-    useUiStore.setState({ sidebarMode: "projects", screen: { kind: "workspace" }, overviewOpen: false });
+    useUiStore.setState({ screen: { kind: "workspace" }, overviewOpen: false });
     const first = catalog("checkout:alpha-main");
     useShellStore.setState({ rest: first.rest, agents: first.agents, connection: "live", focusedPaneId: "pane:child" });
     await act(async () => root.render(<TooltipProvider><Sidebar actions={actions} /></TooltipProvider>));
