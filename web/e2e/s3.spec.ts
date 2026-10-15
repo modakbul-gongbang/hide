@@ -1576,7 +1576,7 @@ test("a save refused at the daemon's boundary keeps the draft unsaved, across a 
 
     await page.reload();
     await expect(content).toContainText("answer = 55", { timeout: 20_000 });
-    await showTool(page, "files"); // an unpinned lane comes back put away (PRD right-lane B22)
+    await showTool(page, "files");
     await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
     expect(fs.readFileSync(file, "utf8")).toBe(original);
 
