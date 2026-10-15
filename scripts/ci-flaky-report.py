@@ -16,10 +16,10 @@ step reads its tool's own report (Playwright's JSON, nextest's JUnit):
     ci-flaky-report.py --suite web --playwright web/e2e-report.json
     ci-flaky-report.py --suite rust --junit target/nextest/ci/junit.xml
 
-The nightly performance lane has no tests and no retry: its judge
-(`scripts/web-shell-measure/nightly.py`) writes a record whose `failures` are
-the checks the run failed, and `--measurement` writes each as an error
-annotation titled `Failed measurement`, with the check on the first line:
+The nightly performance lane has no tests and no retry: its judge, in
+`scripts/web-shell-measure/`, writes a record whose `failures` are the checks
+the run failed, and `--measurement` writes each as an error annotation titled
+`Failed measurement`, with the check on the first line:
 
     ci-flaky-report.py --measurement nightly-summary.json
 
@@ -704,7 +704,7 @@ def main(argv=None):
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--playwright", type=Path, help="a Playwright JSON report")
     source.add_argument("--junit", type=Path, nargs="+", help="cargo-nextest JUnit reports (a lane writes one per nextest run)")
-    source.add_argument("--measurement", type=Path, help="a performance lane's record (scripts/web-shell-measure/nightly.py)")
+    source.add_argument("--measurement", type=Path, help="a performance lane's record, whose failures are annotated")
     parser.add_argument("--system", default=os.environ.get("RUNNER_OS", "unknown"))
     parser.add_argument("--nightly", action="store_true", help="the nightly report job: file, comment on and close nightly-failure issues")
     parser.add_argument("--repo", help="OWNER/REPO (default: GITHUB_REPOSITORY)")
