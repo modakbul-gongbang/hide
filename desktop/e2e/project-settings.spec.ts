@@ -16,10 +16,7 @@ import { fitWindow, isolate, launch, screenshot, test } from "./fixture";
 test("Project settings keep confirmed values through a failed save and restart", async () => {
   const herdr = await startHerdr({ agents: false });
   const run = isolate(herdr, "project-settings");
-  // The account's own state folder under the private HOME, as the installed app keeps it: only a core there writes
-  // this machine's guardrails policy (a relocated one writes nothing under ~/.hide). The fixture's cleanup also
-  // stops a daemon of this folder.
-  run.env.HIDE_STATE_DIR = path.join(run.env.HOME!, ".hide", "state");
+  run.env.HIDE_STATE_DIR = path.join(run.env.HOME!, ".hide", "state"); // The installed app's folder: only a core there writes the guardrails policy.
   let app: ElectronApplication | null = null;
   try {
     const repo = path.join(run.env.HOME!, "projects", "sample");
@@ -75,8 +72,7 @@ process.exit(4);
     await expect(connection).toContainText("Detect automatically");
     await sheet.getByRole("tab", { name: "Working style" }).click();
     // A protection is Saved once this machine's hooks can read it (PRD agent-guardrails B3, B31).
-    const guardrails = path.join(run.env.HOME!, ".hide", "agent-hooks", "guardrails.json");
-    const guarded = () => (JSON.parse(fs.readFileSync(guardrails, "utf8")) as { projects: { root: string; rules: { files: boolean; paths: string[] } }[] }).projects;
+    const guarded = () => (JSON.parse(fs.readFileSync(path.join(run.env.HOME!, ".hide", "agent-hooks", "guardrails.json"), "utf8")) as { projects: { root: string; rules: { files: boolean; paths: string[] } }[] }).projects;
     await expect.poll(() => guarded()).toEqual([]);
     await sheet.getByRole("switch", { name: "Guard files", exact: true }).click();
     await expect(sheet.locator('[data-project-guard="files"]')).toContainText("Saved");

@@ -109,7 +109,7 @@ const ko = {
   "projectSettings.guard": "보호",
   "projectSettings.guardCaption": "에이전트가 하려는 일을 막고 이유를 알려줘요",
   "projectSettings.guardWorktree": "작업 폴더 지키기",
-  "projectSettings.guardWorktreeNote": "원본 폴더의 브랜치를 바꾸거나 다른 worktree를 고치지 못해요.",
+  "projectSettings.guardWorktreeNote": "원본 폴더의 브랜치를 바꾸거나 다른 워크트리를 고치지 못해요.",
   "projectSettings.guardBase": "기준 브랜치 지키기",
   "projectSettings.guardBaseNote": "{{branch}}에서 직접 고치거나 push하지 못해요.",
   "projectSettings.guardBaseNoteAny": "기준 브랜치에서 직접 고치거나 push하지 못해요.",
