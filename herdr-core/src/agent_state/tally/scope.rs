@@ -329,7 +329,7 @@ pub(super) fn scope(
     let mut value = Scope {
         marks,
         sections: sections(physical),
-        sidebar_tree: super::lineage::sidebar_tree(physical, all),
+        sidebar_tree: super::lineage::sidebar_tree(&tree_rows(physical), all),
         ..Scope::default()
     };
     let references = row_references(physical);
@@ -566,6 +566,22 @@ struct DeviceRows<'a> {
     listed: Vec<&'a SidebarAgentSnapshot>,
 }
 
+/// The rows a checkout's tree draws: `listed` without the rows a home owns,
+/// which the raised Needs You and Sessions lists draw and no checkout's tree
+/// does (PRD hide-ai-work-home D-17).
+fn tree_rows<'a>(listed: &[&'a SidebarAgentSnapshot]) -> Vec<&'a SidebarAgentSnapshot> {
+    listed
+        .iter()
+        .copied()
+        .filter(|row| {
+            !matches!(
+                crate::agent_state::ownership_of(row),
+                crate::agent_state::Ownership::HideAi { .. }
+            )
+        })
+        .collect()
+}
+
 fn operator_listed<'a>(agents: &[&'a SidebarAgentSnapshot]) -> Vec<&'a SidebarAgentSnapshot> {
     agents
         .iter()
@@ -763,10 +779,12 @@ impl Cache {
         let mut overall_listed = Vec::new();
         let mut overall_members = Vec::new();
         let mut overall_projects = Vec::new();
+        let live_tree = tree_rows(&live_listed);
         for (device_index, device) in devices.iter().enumerate() {
+            let device_tree = tree_rows(&device.listed);
             for project in &device.projects {
-                let mut trees = super::lineage::checkout_trees(project, &device.listed);
-                let mut global_trees = super::lineage::checkout_trees(project, &live_listed);
+                let mut trees = super::lineage::checkout_trees(project, &device_tree);
+                let mut global_trees = super::lineage::checkout_trees(project, &live_tree);
                 let pane_ids: HashSet<_> = project
                     .checkouts
                     .iter()

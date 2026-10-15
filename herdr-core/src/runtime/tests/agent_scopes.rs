@@ -953,7 +953,7 @@ fn a_home_owned_row_is_listed_only_while_the_operator_has_something_to_do() {
         agents[1].hide_ai = Some(HideAiSnapshot {
             task: None,
             home: Some(TaskHome::Memory),
-            project_id: Some("p".into()),
+            workspace_id: Some("p".into()),
             turn,
         });
         act(&mut agents[1]);
@@ -1002,6 +1002,14 @@ fn a_home_owned_row_is_listed_only_while_the_operator_has_something_to_do() {
                 .sum::<usize>(),
             1 + usize::from(group == "needs_you"),
             "{case}: Sessions lists the operator's own row, and this one only when called out"
+        );
+        assert!(
+            runtime.snapshot.navigator.workspaces[0].checkouts[1]
+                .agent_scope
+                .sidebar_tree
+                .rows
+                .is_empty(),
+            "{case}: no checkout's tree draws it, the raised Needs You and Sessions do"
         );
         assert!(
             runtime.snapshot.navigator.agents[1].hide_ai.is_some(),

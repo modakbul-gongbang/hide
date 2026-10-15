@@ -2962,7 +2962,14 @@ impl Runtime {
                     crate::model::HideAiSnapshot {
                         task: started.task.clone(),
                         home,
-                        project_id: attempt.map(|attempt| attempt.project_id.clone()),
+                        workspace_id: attempt.and_then(|attempt| {
+                            self.catalog_workspaces()
+                                .find(|workspace| {
+                                    workspace.device_id == attempt.node.as_str()
+                                        && workspace.path == attempt.root
+                                })
+                                .map(|workspace| workspace.id.clone())
+                        }),
                         turn: attempt.and_then(|attempt| {
                             super::memory_promotion::home_turn(
                                 attempt.pull,

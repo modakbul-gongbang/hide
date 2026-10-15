@@ -155,7 +155,9 @@ const RETIRE_PER_CHECK: usize = 16;
 /// One followed attempt, as its agent's row needs it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct HomeAttempt {
-    pub(super) project_id: String,
+    /// The machine and folder of the Project, which name its catalog entry.
+    pub(super) node: NodeId,
+    pub(super) root: String,
     pub(super) pull: Option<HomePull>,
 }
 
@@ -774,7 +776,7 @@ fn track_promotions(
             followed
                 .iter()
                 .zip(&moves)
-                .filter_map(|((project_id, root, _, promotion, node), next)| {
+                .filter_map(|((_, root, _, promotion, node), next)| {
                     let state = next.map_or(promotion.state, |(state, _)| state);
                     let agent_id = promotion.agent_id.clone()?;
                     matches!(state, PromotionState::Running | PromotionState::PrOpen).then(|| {
@@ -785,7 +787,8 @@ fn track_promotions(
                         (
                             agent_id,
                             HomeAttempt {
-                                project_id: project_id.clone(),
+                                node: (*node).clone(),
+                                root: root.clone(),
                                 pull,
                             },
                         )

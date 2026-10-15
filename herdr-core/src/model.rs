@@ -575,9 +575,10 @@ pub struct HideAiSnapshot {
     /// has no home for.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub home: Option<crate::coordination::TaskHome>,
-    /// The Project whose home shows the work, once the home has recorded it.
+    /// The catalog Project whose home shows the work, once the home has
+    /// recorded the attempt.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub project_id: Option<String>,
+    pub workspace_id: Option<String>,
     /// What the home waits for the operator to do, beyond what the agent
     /// itself asks.
     #[serde(skip_serializing_if = "Option::is_none")]
