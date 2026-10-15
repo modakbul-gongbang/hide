@@ -71,9 +71,11 @@ The first time the pane settles on the connection, a read record moves to the ne
 A completion the restored server reports again is the one the record held, so a restored agent that reports `done` again stays read.
 An unread record stays unread through the restore and is decided again only when the operator reads the pane.
 Running the same pass twice changes nothing, and a second restart starts from the records the first one left.
-Records written before this rule name no server, so the first restore after the upgrade treats them as read on another server: a turn that finished during the upgrade itself can be absorbed into a read record.
+A record saved while its pane was still being restored (the operator looked during those steps) is carried the same way once the pane settles.
+Records written before this rule name no server, so Hide cannot tell which server they were read on; each is judged by sequence as before the first time its pane settles and then names that server.
+Reading such a record as read on a guess would lose news, so an upgrade whose first connection reaches a restored server (an app update hands Herdr's server over before the new daemon starts) can show a read row unread once.
 
-Regression owners: `a_read_pane_stays_read_through_a_restored_servers_steps`, `a_restored_pane_reporting_done_again_stays_read`, `a_pane_unread_before_a_restart_stays_unread`, `a_restored_pane_showing_something_new_is_unread`, `a_hide_restart_on_the_same_server_shows_work_done_while_away` and `a_childs_signal_through_a_restore_lights_its_parent_only_when_new` in `sidebar.rs`, `a_device_pane_read_before_its_server_restarts_stays_read` for a device, `a_server_mark_is_written_once_and_rides_with_lineage_keys` for the writer, and `web/e2e/read-across-restart.spec.ts` against a real cold restart and live handoff.
+Regression owners: `a_read_pane_stays_read_through_a_restored_servers_steps`, `a_restored_pane_reporting_done_again_stays_read`, `a_pane_unread_before_a_restart_stays_unread`, `a_restored_pane_showing_something_new_is_unread`, `a_hide_restart_on_the_same_server_shows_work_done_while_away`, `a_childs_signal_through_a_restore_lights_its_parent_only_when_new` and `a_record_saved_before_servers_were_named_is_judged_by_sequence_once` in `sidebar.rs`, `a_device_pane_read_before_its_server_restarts_stays_read` for a device, `a_server_mark_is_written_once_and_rides_with_lineage_keys` for the writer, and `web/e2e/read-across-restart.spec.ts` against a real cold restart and live handoff.
 
 ## Completion is separate from stopped
 

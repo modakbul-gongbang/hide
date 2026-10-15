@@ -2434,6 +2434,45 @@ mod tests {
         }
     }
 
+    /// A record saved before servers were named is judged by sequence as it
+    /// always was, once, and then names this connection's server: one that
+    /// still matches is read, one that does not is unread rather than read on
+    /// a guess, and one the old reconciliation left at sequence 0 is carried.
+    #[test]
+    fn a_record_saved_before_servers_were_named_is_judged_by_sequence_once() {
+        let legacy = |seq: u64| PaneReadRecord {
+            state_change_seq: Some(seq),
+            session_id: Some("s1".to_owned()),
+            demand: "none".to_owned(),
+            activity: "stopped".to_owned(),
+            completed: true,
+            descendant_signals: BTreeSet::new(),
+            server: None,
+            unread: false,
+        };
+        for (saved, unread, what) in [
+            (40, false, "the same sequence is still read"),
+            (38, true, "a sequence that moved is unread"),
+            (0, false, "a placeholder sequence is carried"),
+        ] {
+            let mut saved_state = Saved::default();
+            saved_state.records.insert("a".to_owned(), legacy(saved));
+            let mut connection = connection();
+            for _ in 0..2 {
+                let rows = pass(
+                    json!([pane("a", "done", 40, Some(40), "s1")]),
+                    &mut connection,
+                    &mut saved_state,
+                    None,
+                );
+                assert_eq!(rows[0].unread, unread, "{what}");
+            }
+            let record = &saved_state.records["a"];
+            assert_eq!(record.server.as_deref(), Some(SERVER), "{what}: named");
+            assert_eq!(record.unread, unread, "{what}: the verdict is saved");
+        }
+    }
+
     /// Hide restarting while its Herdr server keeps running finds its own
     /// mark on the pane, so the server's sequence still compares: a turn
     /// that ran while Hide was away is news. Without the mark the record

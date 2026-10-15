@@ -603,9 +603,19 @@ impl ReadConnection {
     }
 
     /// Whether a state saved on `server` was read on the server `agent` is
-    /// on now, so its sequence compares with the pane's.
+    /// on now, so its sequence compares with the pane's. A state saved
+    /// before servers were named is compared as it always was: Hide cannot
+    /// tell which server it came from, and calling it read on a guess would
+    /// lose news, so a sequence that no longer matches reads as unread.
     fn compares(&self, server: Option<&str>, agent: &SidebarAgentSnapshot) -> bool {
-        server.is_some_and(|server| server == self.server_of(agent))
+        server.is_none_or(|server| server == self.server_of(agent))
+    }
+
+    /// Whether `record` is judged by sequence against `agent`: saved on its
+    /// server, and saved from a settled pane. A record saved while the pane
+    /// was still being restored names no sequence worth comparing.
+    fn judges_by_sequence(&self, record: &PaneReadRecord, agent: &SidebarAgentSnapshot) -> bool {
+        self.compares(record.server.as_deref(), agent) && record_settled(record)
     }
 }
 
@@ -614,6 +624,11 @@ impl ReadConnection {
 /// at sequence 0 and then `unknown` before it does.
 fn settled(agent: &SidebarAgentSnapshot) -> bool {
     agent.state_change_seq != Some(0) && axes_of(agent).1 != AgentActivity::Unknown
+}
+
+/// Whether a record was saved from a settled pane (`settled`).
+fn record_settled(record: &PaneReadRecord) -> bool {
+    record.state_change_seq != Some(0) && record.activity != AgentActivity::Unknown.name()
 }
 
 /// What the operator is looking at on this pane right now, including what
@@ -784,10 +799,11 @@ pub fn prune_completions(
 /// decide it. Running it twice over the same agents and the same pane changes
 /// nothing the second time (engineering rule 11).
 ///
-/// A record saved on another Herdr server is carried over rather than
-/// compared: until the pane settles on this server it keeps the verdict it
-/// was saved with, and when it first settles a read record is moved onto
-/// this server unless the pane shows something new (`restored_is_news`).
+/// A record saved on another Herdr server, or while its pane was still being
+/// restored, is carried over rather than compared: until the pane settles on
+/// this server it keeps the verdict it was saved with, and when it settles a
+/// read record is moved onto this server unless the pane shows something new
+/// (`restored_is_news`).
 /// The verdict a record holds is saved whenever it changes, so a restart
 /// that loses Herdr's numbers cannot turn an unread pane read or the reverse.
 pub fn apply_read_state(
@@ -810,7 +826,7 @@ pub fn apply_read_state(
         let first_settled = settled_here && connection.settled.insert(agent.pane_id.clone());
         if operator_pane_id == Some(agent.pane_id.as_str()) {
             let mut current = read_fingerprint(agent);
-            current.server = settled_here.then(|| connection.server_of(agent).to_owned());
+            current.server = Some(connection.server_of(agent).to_owned());
             if records.get(&agent.pane_id) != Some(&current) {
                 records.insert(agent.pane_id.clone(), current.clone());
                 changes.push(ReadRecordChange {
@@ -825,8 +841,9 @@ pub fn apply_read_state(
             continue;
         };
         let mut moved = false;
-        if first_settled && !record.unread && !connection.compares(record.server.as_deref(), agent)
-        {
+        let carried = (first_settled && !connection.compares(record.server.as_deref(), agent))
+            || !record_settled(record);
+        if settled_here && carried && !record.unread {
             if restored_is_news(record, agent) {
                 record.unread = true;
             } else {
@@ -837,6 +854,10 @@ pub fn apply_read_state(
                 record.activity = agent.activity.clone();
                 record.completed = agent.completed;
             }
+            moved = true;
+        } else if settled_here && record.server.is_none() {
+            // Judged by sequence as before, once, then named for this server.
+            record.server = Some(connection.server_of(agent).to_owned());
             moved = true;
         }
         // A descendant signal that has gone away is dropped from the record
@@ -864,7 +885,7 @@ pub fn apply_read_state(
         let Some(record) = records.get_mut(&agent.pane_id) else {
             continue;
         };
-        if record.unread != agent.unread && connection.compares(record.server.as_deref(), agent) {
+        if record.unread != agent.unread && connection.judges_by_sequence(record, agent) {
             record.unread = agent.unread;
             changes.push(ReadRecordChange {
                 pane_id: agent.pane_id.clone(),
@@ -895,7 +916,7 @@ pub(crate) fn derive_read_state(
         // saved on another server keeps the verdict it was saved with.
         let read = operator_pane_id == Some(agent.pane_id.as_str())
             || records.get(&agent.pane_id).is_some_and(|record| {
-                if connection.compares(record.server.as_deref(), agent) {
+                if connection.judges_by_sequence(record, agent) {
                     record_covers(record, &read_fingerprint(agent))
                 } else {
                     !record.unread
