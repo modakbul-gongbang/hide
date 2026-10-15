@@ -234,7 +234,7 @@ fn run_for_projects(
             if let (Some(pinned), Some(update)) = (pinned.as_deref(), HERDR_UPDATER.get()) {
                 let record =
                     device_herdr::herdr_dir(&placement.root).join(device_herdr::HANDOFF_RECORD);
-                report.herdr = Some(update(pinned, &herdr_socket, &record));
+                report.herdr = Some(Box::new(update(pinned, &herdr_socket, &record)));
             }
             remove_unused_herdr(&placement.root, pinned.as_deref());
             to_value(report)

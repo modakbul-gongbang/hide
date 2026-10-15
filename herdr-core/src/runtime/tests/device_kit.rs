@@ -2183,7 +2183,7 @@ fn herdr_behind(shared: &Mutex<Runtime>) -> Option<crate::model::HerdrBehindSnap
 
 fn with_herdr(update: Option<hide_kit::device_herdr::HerdrUpdate>) -> KitReport {
     let mut report = report(&[(ComponentId::Cli, ComponentState::Installed)]);
-    report.herdr = update;
+    report.herdr = update.map(Box::new);
     report
 }
 

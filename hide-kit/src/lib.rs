@@ -205,7 +205,7 @@ pub struct KitReport {
     /// socket after this pass (PRD device-herdr-update); only a device's
     /// apply carries it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub herdr: Option<device_herdr::HerdrUpdate>,
+    pub herdr: Option<Box<device_herdr::HerdrUpdate>>,
 }
 
 impl KitReport {
