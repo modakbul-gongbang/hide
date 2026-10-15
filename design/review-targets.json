@@ -1656,7 +1656,7 @@
     ]
   },
   "right-lane": {
-    "description": "The right lane (PRD right-lane): Agent Views fill the body and one lane of four tools (Work, Files, Changes, Memory) opens from the rail, over the agents or pinned beside them, with the file tree as its own column.",
+    "description": "The right lane (PRD right-lane): Agent Views fill the body and one lane of four tools (Work, Memory, Files, Changes) opens from the rail, over the agents or pinned beside them, with the file tree as its own column.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-workspace",
     "scene": "right-lane",

@@ -8,7 +8,7 @@
 import type { Checkout, SnapshotRest, StripTab, ViewLayoutSnapshot } from "./snapshot";
 
 /** The lane's tools, in the rail's order (D-01). */
-export const TOOLS = ["work", "files", "changes", "memory"] as const;
+export const TOOLS = ["work", "memory", "files", "changes"] as const;
 export type Tool = (typeof TOOLS)[number];
 
 /** Which basis the Work tool draws (PRD work-tab-pr-lens D-01). */
