@@ -260,3 +260,118 @@ fn the_default_socket_is_the_one_the_pinned_herdr_uses() {
         hide_platform::host::herdr_socket_default().unwrap()
     );
 }
+
+/// The session the pinned Herdr names for a pane's agent. Hide's subagent
+/// counts take an event of any other session for a nested one and ignore it
+/// (`docs/agent-hooks.md`, Which session is the pane's), and what decides
+/// which session the pane has is Herdr's, in `src/terminal/state.rs` of the
+/// pinned tag (`session_report_allows_session_replacement` and
+/// `conflicting_same_owner_session_ref`): for `herdr:claude`, a report of
+/// another session replaces the pane's only when its `session_start_source` is
+/// `clear`, `resume` or `compact`, and a `startup` of another session, which
+/// is all a nested `claude -p` reports, is dropped. Herdr does not document
+/// this, so a bump that changes it has to fail here and not in the counts.
+#[cfg(unix)]
+#[test]
+#[ignore = "needs the pinned Herdr: set HIDE_E2E_HERDR_BIN and run with --ignored"]
+fn the_pinned_herdr_keeps_a_panes_session_against_a_nested_startup_and_follows_clear_resume_and_compact()
+ {
+    let bin = PathBuf::from(
+        std::env::var_os("HIDE_E2E_HERDR_BIN").expect("HIDE_E2E_HERDR_BIN names the pinned herdr"),
+    );
+    let herdr = PrivateHerdr::start(bin);
+
+    // Herdr takes a session report only for an agent it detects in the pane,
+    // by the process it started: a program named `claude`.
+    let agent_dir = herdr.home.join("agent");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    let source = agent_dir.join("claude.c");
+    std::fs::write(
+        &source,
+        "#include <unistd.h>\nint main(void) { sleep(600); return 0; }\n",
+    )
+    .unwrap();
+    let agent = agent_dir.join("claude");
+    let built = Command::new("cc")
+        .arg(&source)
+        .arg("-o")
+        .arg(&agent)
+        .status()
+        .expect("cc builds the stand-in agent");
+    assert!(built.success());
+
+    let created = herdr.cli(&[
+        "workspace",
+        "create",
+        "--cwd",
+        herdr.home.to_str().unwrap(),
+        "--label",
+        "session",
+    ]);
+    assert!(created.status.success());
+    let created: Value = serde_json::from_slice(&created.stdout).unwrap();
+    let pane = created["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .expect("the workspace's pane")
+        .to_owned();
+    let ran = herdr.cli(&["pane", "run", &pane, agent.to_str().unwrap()]);
+    assert!(ran.status.success());
+
+    let ask = |method: &str, params: Value| {
+        request_with_timeout(&herdr.socket, method, params, Duration::from_secs(5)).unwrap()
+    };
+    let session = || {
+        ask("pane.get", json!({"pane_id": pane}))["pane"]["agent_session"]["value"]
+            .as_str()
+            .map(str::to_owned)
+    };
+    let mut seq = 0_u64;
+    let mut report = |session: &str, start: &str| {
+        seq += 1;
+        ask(
+            "pane.report_agent_session",
+            json!({"pane_id": pane, "source": "herdr:claude", "agent": "claude",
+                   "seq": seq, "agent_session_id": session, "session_start_source": start}),
+        );
+    };
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        report("pane-session", "startup");
+        if session().as_deref() == Some("pane-session") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Herdr never took the pane's session"
+        );
+        wait_a_moment();
+    }
+
+    // A nested `claude -p` reports a startup of its own session: dropped.
+    report("nested-session", "startup");
+    assert_eq!(session().as_deref(), Some("pane-session"));
+
+    // A real session change replaces it, and a nested startup after that is
+    // dropped again.
+    for (start, next) in [
+        ("clear", "after-clear"),
+        ("resume", "after-resume"),
+        ("compact", "after-compact"),
+    ] {
+        report(next, start);
+        assert_eq!(session().as_deref(), Some(next), "{start}");
+        report("nested-session", "startup");
+        assert_eq!(
+            session().as_deref(),
+            Some(next),
+            "{start}, then a nested startup"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state
+fn wait_a_moment() {
+    thread::sleep(Duration::from_millis(250));
+}

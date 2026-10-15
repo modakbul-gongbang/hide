@@ -322,18 +322,23 @@ pub fn change(
     change: Change<'_>,
     who: Reporter<'_>,
 ) -> io::Result<PaneCounters> {
-    change_for_pane(home, pane_id, change, who, None).map(|applied| applied.counters)
+    change_for_pane(home, pane_id, change, who, || None).map(|applied| applied.counters)
 }
 
 /// Applies one [`Change`] to the pane's record, unless the event is another
 /// session's.
 ///
-/// `pane_session` is the session Herdr reports for the pane's agent. A session
-/// that is not that one is a foreign one (a nested `claude -p` that a user's
-/// own Stop hook starts runs the same hooks with the pane's environment), and
-/// its events change nothing: Herdr, not the hook's environment, says which
-/// session the pane's agent is. Without it every event is the pane's, as the
-/// events of a runtime that names no session always were.
+/// `pane_session` asks for the session Herdr reports for the pane's agent. A
+/// session that is not that one is a foreign one (a nested `claude -p` that a
+/// user's own Stop hook starts runs the same hooks with the pane's
+/// environment), and its events change nothing: Herdr, not the hook's
+/// environment, says which session the pane's agent is. Without a session
+/// every event is the pane's, as the events of a runtime that names no session
+/// always were.
+///
+/// It is asked at most once, before the lock is taken (a socket round trip
+/// never waits inside it), and not at all for an event that changes no count
+/// and finds the record already naming its reporter.
 ///
 /// The record is read, changed and written while the lock is held, so two
 /// events of one pane never both start from the same count. The write is not
@@ -345,22 +350,11 @@ pub fn change_for_pane(
     pane_id: &str,
     change: Change<'_>,
     who: Reporter<'_>,
-    pane_session: Option<&str>,
+    pane_session: impl FnOnce() -> Option<String>,
 ) -> io::Result<Applied> {
     let path = record_path(home, pane_id);
     if let Some(parent) = path.parent() {
         hide_platform::fs::private::create_dir_all(parent)?;
-    }
-    if pane_session.is_some_and(|session| who.session != Some(session)) {
-        let counters = match read_record(home, pane_id) {
-            Ok(record) => record.counters(),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => PaneCounters::default(),
-            Err(error) => return Err(error),
-        };
-        return Ok(Applied {
-            counters,
-            foreign: true,
-        });
     }
     if change == Change::None {
         // An event that changes nothing leaves a file that already names this
@@ -379,6 +373,17 @@ pub fn change_for_pane(
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
+    }
+    if pane_session().is_some_and(|session| who.session != Some(session.as_str())) {
+        let counters = match read_record(home, pane_id) {
+            Ok(record) => record.counters(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => PaneCounters::default(),
+            Err(error) => return Err(error),
+        };
+        return Ok(Applied {
+            counters,
+            foreign: true,
+        });
     }
     let held = hold(home, hide_platform::fs::lock::Mode::Exclusive)?;
     let mut record = read_lenient(&path);
@@ -1024,7 +1029,10 @@ mod tests {
             Change::Listed { running: &[] },
             Change::Settled { running: 0 },
         ] {
-            let applied = change_for_pane(&root, pane, event, nested, pane_session).unwrap();
+            let applied = change_for_pane(&root, pane, event, nested, || {
+                pane_session.map(str::to_owned)
+            })
+            .unwrap();
             assert!(applied.foreign, "{event:?}");
             assert_eq!(
                 applied.counters,
@@ -1040,19 +1048,54 @@ mod tests {
             "the file is byte for byte what the pane's own events left"
         );
         // The pane's own session goes on, and a session that names none is not it.
-        let own =
-            change_for_pane(&root, pane, Change::Stopped(Some("b")), WHO, pane_session).unwrap();
+        let own = change_for_pane(&root, pane, Change::Stopped(Some("b")), WHO, || {
+            pane_session.map(str::to_owned)
+        })
+        .unwrap();
         assert!(!own.foreign);
         assert_eq!((own.counters.working, own.counters.done), (0, 2));
+        // A session that names none is not the pane's when it would change
+        // something.
         let blind = Reporter {
             session: None,
             ..WHO
         };
         assert!(
-            change_for_pane(&root, pane, Change::None, blind, pane_session)
-                .unwrap()
-                .foreign
+            change_for_pane(&root, pane, Change::Started(Some("y")), blind, || {
+                pane_session.map(str::to_owned)
+            })
+            .unwrap()
+            .foreign
         );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_event_that_changes_no_count_asks_herdr_only_when_it_would_write() {
+        let root = home("lazy-session");
+        let pane = "w7B:pM";
+        let asked = std::cell::Cell::new(0);
+        let ask = || {
+            asked.set(asked.get() + 1);
+            Some("session-a".to_owned())
+        };
+        // No file yet: the event writes one, so Herdr is asked.
+        change_for_pane(&root, pane, Change::None, WHO, ask).unwrap();
+        assert_eq!(asked.get(), 1);
+        // The file names this reporter: a shared read, no question.
+        change_for_pane(&root, pane, Change::None, WHO, ask).unwrap();
+        assert_eq!(asked.get(), 1);
+        // Another session's event that changes nothing is asked about and
+        // leaves the file as it was.
+        let nested = Reporter {
+            session: Some("nested"),
+            ..WHO
+        };
+        let before = fs::read(record_path(&root, pane)).unwrap();
+        let applied = change_for_pane(&root, pane, Change::None, nested, ask).unwrap();
+        assert!(applied.foreign);
+        assert_eq!(asked.get(), 2);
+        assert_eq!(fs::read(record_path(&root, pane)).unwrap(), before);
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1060,7 +1103,8 @@ mod tests {
     fn a_pane_herdr_names_no_session_for_takes_every_event_as_its_own() {
         let root = home("no-pane-session");
         let pane = "w7B:pM";
-        let applied = change_for_pane(&root, pane, Change::Started(Some("a")), WHO, None).unwrap();
+        let applied =
+            change_for_pane(&root, pane, Change::Started(Some("a")), WHO, || None).unwrap();
         assert!(!applied.foreign);
         assert_eq!(applied.counters.working, 1);
         fs::remove_dir_all(&root).unwrap();

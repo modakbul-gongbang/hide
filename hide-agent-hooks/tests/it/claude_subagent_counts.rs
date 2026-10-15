@@ -31,11 +31,16 @@ const NESTED_SESSION: &str = "f3a9b324-0000-4000-8000-000000000002";
 struct Herdr {
     socket: PathBuf,
     reports: Arc<Mutex<Vec<Value>>>,
+    /// The session `pane.get` names, which a test moves on as Herdr's own
+    /// hook reports a new one.
+    session: Arc<Mutex<Option<String>>>,
+    /// Whether `pane.get` is refused, as a Herdr that cannot be asked.
+    refuse_pane_get: Arc<Mutex<bool>>,
     _folder: tempfile::TempDir,
 }
 
 impl Herdr {
-    fn start(session: Option<&'static str>) -> Self {
+    fn start(session: Option<&str>) -> Self {
         // A Unix socket path is capped at SUN_LEN, so it binds under /tmp.
         let folder = tempfile::Builder::new()
             .prefix("hah-cc-")
@@ -45,6 +50,10 @@ impl Herdr {
         let listener = UnixListener::bind(&socket).unwrap();
         let reports = Arc::new(Mutex::new(Vec::new()));
         let kept = reports.clone();
+        let current = Arc::new(Mutex::new(session.map(str::to_owned)));
+        let named = current.clone();
+        let refuse_pane_get = Arc::new(Mutex::new(false));
+        let refusing = refuse_pane_get.clone();
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { return };
@@ -56,9 +65,15 @@ impl Herdr {
                     continue;
                 };
                 let result = match request["method"].as_str() {
+                    Some("pane.get") if *refusing.lock().unwrap() => {
+                        let error = json!({"code": "pane_not_found", "message": "refused"});
+                        let _ =
+                            writeln!(stream, "{}", json!({"id": request["id"], "error": error}));
+                        continue;
+                    }
                     Some("pane.get") => {
                         let mut pane = json!({"pane_id": PANE, "agent": "claude"});
-                        if let Some(session) = session {
+                        if let Some(session) = named.lock().unwrap().as_deref() {
                             pane["agent_session"] = json!({
                                 "source": "herdr:claude", "agent": "claude",
                                 "kind": "id", "value": session,
@@ -80,8 +95,15 @@ impl Herdr {
         Self {
             socket,
             reports,
+            session: current,
+            refuse_pane_get,
             _folder: folder,
         }
+    }
+
+    /// Herdr's own hook has reported `session` for the pane.
+    fn report_session(&self, session: &str) {
+        *self.session.lock().unwrap() = Some(session.to_owned());
     }
 
     /// `(working, done)` of every count reported so far.
@@ -255,4 +277,69 @@ fn a_pane_herdr_names_no_session_for_counts_every_session_as_before() {
     };
     pane.subagent("SubagentStart", PANE_SESSION, "a");
     assert_eq!(herdr.counts(), [(1, 0)]);
+}
+
+// Claude Code runs a session start's hooks in parallel, so Hide's can reach
+// Herdr before Herdr's own hook has reported the new session. The event is
+// then read against the old session and ignored; the new session's next event
+// starts its record, and the old session's numbers are never added to.
+#[test]
+fn a_new_session_whose_start_beats_herdrs_own_report_starts_a_fresh_record_at_its_next_event() {
+    let machine = Machine::new("registered");
+    let herdr = Herdr::start(Some(PANE_SESSION));
+    let pane = Pane {
+        machine: &machine,
+        herdr: &herdr,
+    };
+    pane.session_start(PANE_SESSION, "startup");
+    pane.subagent("SubagentStart", PANE_SESSION, "old-a");
+    pane.subagent("SubagentStart", PANE_SESSION, "old-b");
+    pane.subagent("SubagentStop", PANE_SESSION, "old-a");
+    assert_eq!(herdr.counts().last(), Some(&(1, 1)));
+
+    // `/clear`: Hide's SessionStart for the new session arrives first.
+    let before = herdr.counts();
+    pane.session_start(NESTED_SESSION, "clear");
+    assert_eq!(
+        herdr.counts(),
+        before,
+        "read against the old session, ignored"
+    );
+    herdr.report_session(NESTED_SESSION);
+
+    // The new session's next counted event: its own numbers, from zero.
+    pane.subagent("SubagentStart", NESTED_SESSION, "new-a");
+    assert_eq!(herdr.counts().last(), Some(&(1, 0)));
+    // The old session's late events are the old session's no more.
+    pane.subagent("SubagentStop", PANE_SESSION, "old-b");
+    pane.stop(PANE_SESSION, &[]);
+    assert_eq!(herdr.counts().last(), Some(&(1, 0)));
+    pane.subagent("SubagentStop", NESTED_SESSION, "new-a");
+    assert_eq!(herdr.counts().last(), Some(&(0, 1)));
+}
+
+#[test]
+fn a_herdr_that_cannot_be_asked_leaves_every_session_counted_and_says_so_in_the_last_report() {
+    let machine = Machine::new("registered");
+    let herdr = Herdr::start(Some(PANE_SESSION));
+    *herdr.refuse_pane_get.lock().unwrap() = true;
+    let pane = Pane {
+        machine: &machine,
+        herdr: &herdr,
+    };
+    pane.subagent("SubagentStart", NESTED_SESSION, "a");
+    assert_eq!(herdr.counts(), [(1, 0)], "counted as the pane's");
+    let failure = hide_agent_hooks::report::last_failure(&machine.home)
+        .expect("the fallback is the pane's last report failure")
+        .message();
+    assert!(
+        failure.contains("did not say which session is the pane's agent"),
+        "{failure}"
+    );
+    assert!(failure.contains("pane_not_found"), "{failure}");
+
+    // Herdr answers again: the next report succeeds and clears the failure.
+    *herdr.refuse_pane_get.lock().unwrap() = false;
+    pane.subagent("SubagentStart", PANE_SESSION, "b");
+    assert_eq!(hide_agent_hooks::report::last_failure(&machine.home), None);
 }

@@ -163,10 +163,24 @@ A pane Herdr has stopped listing has its record swept on the next session bootst
 A session that is not the pane's agent runs the same hooks in the pane's environment: the operator's own Stop hook that starts `claude -p` is one, and it reset the pane's count to zero after every turn of a session that ran subagents (twenty-one of the forty panes on the operator's machine on 2026-10-15 held such a session's record).
 The hook therefore asks Herdr, before it changes anything, which session it reports for the pane's agent (`pane.get`, `agent_session`).
 An event of any other session changes nothing and reports nothing, and an event that names no session counts as another one.
-A pane for which Herdr reports no session, or does not answer, takes every event as its own, as before.
+A pane for which Herdr reports no session, or does not answer, takes every event as its own, as before; an answer that cannot be had is written down as the pane's last report failure (`doctor` and Settings show it), so a pane that fell back to counting every session says so.
 Herdr is the authority and the hook's environment is not: `CLAUDE_CODE_ENTRYPOINT` says `sdk-cli` inside the nested session, but a user's own program can start a session that says `cli`.
-Measured on the pinned Herdr 0.9.3 with Claude Code 2.1.300: Herdr's Claude integration reports every session's start, `/clear` replaced the pane's session with the new one, and a nested `claude -p` session's `startup` did not.
-Herdr does not document the rule it applies; what this relies on is that observation, and it is why a pane's own `SessionStart` that beats Herdr's own hook to the socket is read as the earlier session's and ignored (the next event of the new session starts its record).
+
+The rule that makes Herdr's answer the right one is Herdr's, in `src/terminal/state.rs` of the pinned tag (`session_report_allows_session_replacement` and `conflicting_same_owner_session_ref`, called from `set_agent_session_ref_for_session_start`).
+For `herdr:claude`, a `pane.report_agent_session` of another session replaces the pane's only when its `session_start_source` is `clear`, `resume` or `compact`; a `startup` of another session is dropped.
+Every `claude -p` session reports `startup`, and so does the pane's own first session, which has no earlier one to conflict with.
+The Socket API reference does not document this, so `real_herdr::the_pinned_herdr_keeps_a_panes_session_against_a_nested_startup_and_follows_clear_resume_and_compact` pins it against the pinned binary in the `os contract` lane, and a Herdr bump that changes the rule fails there.
+Two limits follow from the rule:
+
+- A nested session that reports `resume` (a `claude -p --resume`) replaces the pane's session in Herdr itself, and Hide follows Herdr.
+- For `herdr:codex` the rule lets a `startup` replace the session; Herdr's own Codex hook script ignores a session whose id differs from `CODEX_THREAD_ID`, which is how a nested Codex session stays out, and Hide relies on that script for Codex.
+
+A pane's own `SessionStart` can reach the socket before Herdr's own hook has reported the new session (Claude Code runs a start's hooks in parallel).
+Hide then reads it against the old session and ignores it, and the new session's next counted event starts its record from zero, so the old session's numbers are never added to (`claude_subagent_counts::a_new_session_whose_start_beats_herdrs_own_report_starts_a_fresh_record_at_its_next_event`).
+Until that event the pane's tokens still show the old session's counts.
+
+What an event costs beyond the count it always made: one `pane.get` over the local socket, before the lock is taken, for `SessionStart`, `SubagentStart`, `SubagentStop` and a `Stop`, and none for an event that changes no count and finds the record already naming its session.
+`UserPromptSubmit` and `PreToolUse` never reach the count (the prompt hook and the spawn guard take them), and `PostToolUse` is not registered, so a tool call adds nothing.
 
 #### Which subagents run
 

@@ -559,8 +559,8 @@ fn run_hook(arguments: &[String], started: Instant) {
 /// With `compare_session`, the event's session is compared with the one Herdr
 /// reports for the pane's agent, and an event of another session (a nested
 /// `claude -p` that a user's own hook starts runs these hooks with the pane's
-/// environment) changes and reports nothing. A Herdr that cannot say, or names
-/// no session, leaves every event the pane's.
+/// environment) changes and reports nothing. A Herdr that names no session,
+/// or cannot say, leaves every event the pane's.
 fn report_count(
     home: &std::path::Path,
     event: HookEvent,
@@ -578,21 +578,36 @@ fn report_count(
     // reads out of the hook file; the report's own source is fixed in
     // `report::metadata_source`, because Herdr refuses the marker's `@`.
     let socket_path = report::socket_path(home);
-    let pane_session = match &socket_path {
-        Ok(path) if compare_session => report::pane_session(path, &pane_id).ok().flatten(),
-        _ => None,
-    };
-    let applied = counters::change_for_pane(home, &pane_id, change, who, pane_session.as_deref());
+    // Herdr is asked only when the change needs the answer, and a Herdr that
+    // cannot say leaves every event the pane's: that fallback is written down
+    // below, where `doctor` and Settings read the last report's outcome, so a
+    // pane that counts every session is not silent about it.
+    let mut session_failure = None;
+    let applied = counters::change_for_pane(home, &pane_id, change, who, || {
+        let path = socket_path.as_ref().ok().filter(|_| compare_session)?;
+        match report::pane_session(path, &pane_id) {
+            Ok(session) => session,
+            Err(error) => {
+                session_failure = Some(error);
+                None
+            }
+        }
+    });
     if applied.as_ref().is_ok_and(|applied| applied.foreign) {
         return;
     }
-    let outcome = match (applied.map(|applied| applied.counters), &socket_path) {
+    let mut outcome = match (applied.map(|applied| applied.counters), &socket_path) {
         (Ok(counters), Ok(path)) => report_latest(home, path, &pane_id, counters),
         (Err(error), _) => Err(hide_herdr_client::ApiError::Transport(format!(
             "the pane's count could not be changed: {error}"
         ))),
         (_, Err(error)) => Err(error.clone()),
     };
+    if let (Ok(()), Some(error)) = (&outcome, session_failure) {
+        outcome = Err(hide_herdr_client::ApiError::Transport(format!(
+            "Herdr did not say which session is the pane's agent, so every session was counted as the pane's: {error}"
+        )));
+    }
     // The outcome is written down rather than surfaced here: a hook's
     // stderr reaches nobody, and the record is what `doctor` and Settings
     // show (engineering rule 10).
