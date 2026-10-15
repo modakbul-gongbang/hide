@@ -6,7 +6,7 @@ import { useAgentLogosShown } from "./agentLogoMode";
 import { agentProductName } from "./agentAdapters";
 import { forkLabel, markTone } from "./agentRow";
 import { AgentForkMark } from "./components/fork-mark";
-import { hideAiWords } from "./hideAiOrigin";
+import { hideAiWords, homeTurnLine } from "./hideAiOrigin";
 import { sessionsModel, type SessionsModel } from "./sessionPanel";
 import { AskLine, DescendantMark, TreeChevron, TreeRails, type TreePlace } from "./components/agent-tree";
 import { AgentPrMark, useAgentStaleness } from "./components/pr-mark";
@@ -168,7 +168,7 @@ const SessionRow = memo(function SessionRow({ row, family, model, actions, open,
   const staleness = useAgentStaleness(agent, family);
   const session = agent.state.session;
   const needsYou = session.group === "needs_you";
-  const open_ = () => { if (model.available) actions.openAgent(agent.pane_id); };
+  const open_ = () => { if (model.available) actions.openListedAgent(agent.pane_id); };
   // The chevron lane spans the row so an opened row's rail runs on to its children.
   return <li className={cn("group/session relative flex min-w-0 items-stretch rounded-xs pr-xs", selected ? "bg-selected" : "hover:bg-accent focus-within:bg-accent")}
     data-session-row={agent.pane_id} data-selected={selected ? "true" : undefined} onClick={open_}>
@@ -271,10 +271,14 @@ function TreeMoreRow({ line, onShowAll }: { line: Extract<SidebarTreeLine, { kin
  * B31: the ask for Needs You, else the core's line; a block's line is its cause.
  */
 function SecondLine({ agent, owl }: { agent: AgentRow; owl: boolean }) {
+  const { t } = useInterfaceTranslation();
   const indent = detailIndent(useAgentLogosShown() || owl);
   const session = agent.state.session;
   const ask = session.group === "needs_you" ? agent.state.ask : null;
   if (ask) return <div className={cn(indent, "flex min-w-0 text-micro")} data-session-line="ask"><AskLine ask={ask} className="flex-1" /></div>;
+  // What its home waits for, after the agent's own ask or block cause (PRD hide-ai-work-home D-14, D-16).
+  const turn = session.group === "needs_you" && !(session.line && agent.status_code === "error") ? agent.hide_ai?.turn : undefined;
+  if (turn) return <div className={cn(indent, "flex min-w-0 text-micro text-warning")} data-session-line="home-turn"><span className="min-w-0 truncate">{homeTurnLine(t, turn)}</span></div>;
   if (!session.line) return null;
   const blocked = agent.status_code === "error";
   return <div className={cn(indent, "flex min-w-0 text-micro", blocked ? "text-warning" : "text-subtle-foreground")} data-session-line={blocked ? "blocked" : session.unfinished ? "unfinished" : "label"}>

@@ -6,8 +6,7 @@ import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, EllipsisIcon, Fold
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { StatusMark } from "./components/status-mark";
 import { markTone } from "./agentRow";
-import { HideMark } from "./AgentMark";
-import { hideAiCheckoutOf, originLine, splitByOrigin } from "./hideAiOrigin";
+import { drawnInTree, hideAiCheckoutOf, originLine } from "./hideAiOrigin";
 import { useFactoryTurnCount } from "./factory/hooks";
 import { FACTORY_OPEN } from "./factory/launch";
 import { REQUEST_ANSWER_TIMEOUT_MS } from "./factory/request";
@@ -818,7 +817,7 @@ function RaisedAgentRow({ listed: { agent, device }, context }: { listed: Listed
       depth={0}
       ask={agent.state.needs_you}
       selected={agent.pane_id === context.focusRowPane}
-      onOpen={context.actions.openAgent}
+      onOpen={(id) => context.actions.openListedAgent(id)}
       onOpenPullRequest={(url, external) => context.actions.openLink(url, external)}
       inset={PROJECT_COLUMN}
       number={context.numberOf?.(agent.pane_id, null) ?? null}
@@ -1055,8 +1054,10 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
   const target = projectCheckout(workspace, useShellStore.getState().rest?.ui_state?.recent_checkouts);
   const marks = projectMarks(workspace);
   const hiding = focusFold(workspace, context.workspaceScreen ? context.focusedCheckoutId : null, expanded);
-  // The operator's checkouts keep their place; the ones Hide AI made gather behind them under one head (D-03, D-06).
-  const { operator, hideAi: madeByHideAi } = splitByOrigin(hideAiListed, workspace, active);
+  // A checkout Hide AI made is drawn only while it is in front or an operator's agent works in it (PRD hide-ai-work-home D-17, B3).
+  const drawn = (checkout: Checkout) => drawnInTree(hideAiListed, workspace, checkout, checkout.id === context.focusedCheckoutId, (rowsByCheckout.get(checkout.id) ?? NO_BOARD_ROWS).length > 0);
+  const emptyFold = workspace.session_folds ? workspace.checkouts.filter((checkout) => workspace.session_folds!.empty.includes(checkout.id) && drawn(checkout)) : [];
+  const inactiveDrawn = inactive.filter(drawn);
   const checkoutRow = (checkout: Checkout) => (
     <CheckoutRowView
       key={checkout.id}
@@ -1113,19 +1114,18 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
       </EntryContextMenu>
       {expanded ? (
         <ul>
-          {operator.map(checkoutRow)}
-          {madeByHideAi.length > 0 ? <HideAiGroup count={madeByHideAi.length}>{madeByHideAi.map(checkoutRow)}</HideAiGroup> : null}
-          {(workspace.session_folds?.empty.length ?? 0) > 0 ? <li>
+          {active.filter(drawn).map(checkoutRow)}
+          {emptyFold.length > 0 ? <li>
             <FoldRow label={[t("agentSessions.emptyWorktrees"), workspace.session_folds!.open_prs > 0 ? t("agentSessions.openPrs", { count: workspace.session_folds!.open_prs }) : null].filter(Boolean).join(" · ")}
-              count={workspace.session_folds!.empty.length} expanded={workspace.session_folds!.empty_open} level="checkout" current={hiding === "empty"}
+              count={emptyFold.length} expanded={workspace.session_folds!.empty_open} level="checkout" current={hiding === "empty"}
               onToggle={() => actions.toggleSessionFold(workspace.id)} data-empty-worktrees={workspace.id} />
-            {workspace.session_folds!.empty_open ? <ul>{workspace.checkouts.filter((checkout) => workspace.session_folds!.empty.includes(checkout.id)).map(checkoutRow)}</ul> : null}
+            {workspace.session_folds!.empty_open ? <ul>{emptyFold.map(checkoutRow)}</ul> : null}
           </li> : null}
-          {inactive.length > 0 ? (
+          {inactiveDrawn.length > 0 ? (
             <li>
               <FoldRow
                 label={t("sidebar.inactive")}
-                count={inactive.length}
+                count={inactiveDrawn.length}
                 expanded={workspace.inactive_checkouts.expanded}
                 level="checkout"
                 current={hiding === "inactive"}
@@ -1134,7 +1134,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
               />
             </li>
           ) : null}
-          {workspace.inactive_checkouts.expanded ? inactive.map(checkoutRow) : null}
+          {workspace.inactive_checkouts.expanded ? inactiveDrawn.map(checkoutRow) : null}
         </ul>
       ) : null}
     </li>
@@ -1142,26 +1142,6 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
 }
 
 const NO_BOARD_ROWS: BoardRow[] = [];
-
-/**
- * The checkouts Hide AI made for a project, behind the operator's own under
- * one head: its mark, its name and how many (PRD hide-ai-origin-mark D-03).
- * The rows inside carry no badge, since the head says who made them; the
- * caller draws the group only while it has a checkout (D-08).
- */
-function HideAiGroup({ count, children }: { count: number; children: ReactNode }) {
-  const { t } = useInterfaceTranslation();
-  return (
-    <li data-hide-ai-group="true">
-      <div className="flex min-h-(--size-sidebar-line) items-center gap-xs pt-xs pr-xs text-micro font-medium text-muted-foreground" style={{ paddingLeft: CHECKOUT_COLUMN }} data-hide-ai-head="true" aria-hidden="true">
-        <HideMark className="size-(--size-icon-sm)" />
-        <span>{t("hideAi.name")}</span>
-        <span data-hide-ai-count={count}>{count}</span>
-      </div>
-      <ul aria-label={t("hideAi.group", { count })}>{children}</ul>
-    </li>
-  );
-}
 
 /**
  * The row of this project that carries the focused checkout's selection while
@@ -1183,7 +1163,12 @@ function focusFold(workspace: Workspace, checkoutId: string | null, expanded: bo
 function CleanupRows({ workspaces, context, deviceId }: { workspaces: Workspace[]; context: ListContext; deviceId: string }) {
   const { t } = useInterfaceTranslation();
   const hideAiListed = useShellStore((s) => s.rest?.navigator?.hide_ai_checkouts);
-  const rows = workspaces.flatMap((workspace) => workspace.checkouts.filter((checkout) => workspace.session_folds?.cleanup.includes(checkout.id)).map((checkout) => ({ workspace, checkout })));
+  // A cleanup candidate is what the operator reviews, so a checkout Hide AI made and kept after its pull request settled is listed here too (PRD hide-ai-work-home B18).
+  const rows = workspaces.flatMap((workspace) =>
+    workspace.checkouts
+      .filter((checkout) => workspace.session_folds?.cleanup.includes(checkout.id))
+      .map((checkout) => ({ workspace, checkout })),
+  );
   if (rows.length === 0) return null;
   const expanded = rows[0]!.workspace.session_folds!.cleanup_open;
   const current = !expanded && context.workspaceScreen && rows.some(({ checkout }) => checkout.id === context.focusedCheckoutId);
@@ -1690,7 +1675,7 @@ function AgentTreeRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
             tree={tree}
             remote={remote}
             selected={agent.pane_id === context.focusRowPane}
-            onOpen={depth === 0 || !parent ? context.actions.openAgent : (id) => context.actions.followRelation(parent.pane_id, id, agent.identity_label)}
+            onOpen={depth === 0 || !parent ? (id) => context.actions.openListedAgent(id) : (id) => context.actions.followRelation(parent.pane_id, id, agent.identity_label)}
             onOpenPullRequest={(url, external) => context.actions.openLink(url, external)}
             inset={inset}
             // A tree row is one line with no branch (B14); the popover names a differing branch.

@@ -1943,6 +1943,48 @@ impl MemoryStore {
         Ok(open)
     }
 
+    /// The branches whose pull request ended, merged or closed, in every
+    /// Project on `device`, once each with the Project, its root and the
+    /// coordination ids of the agents that attempted it. A batch's cards
+    /// share one branch, and a card's row keeps its last attempt, so this is
+    /// what an upgrade or a restart finds to retire.
+    #[allow(clippy::type_complexity)]
+    pub fn settled_branches(
+        &self,
+        device: &str,
+    ) -> Result<Vec<(String, String, String, Vec<String>)>, MemoryError> {
+        let mut statement = self.connection.prepare(
+            "SELECT pr.id,pr.root,p.branch,p.agent_id FROM card_promotions p \
+             JOIN memory_items i ON i.id=p.item_id JOIN projects pr ON pr.id=i.project_id \
+             WHERE pr.device_id=?1 AND p.state IN ('merged','closed_unmerged') \
+             AND p.branch IS NOT NULL ORDER BY pr.id,p.branch,p.agent_id",
+        )?;
+        let rows = statement
+            .query_map([device], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut branches: Vec<(String, String, String, Vec<String>)> = Vec::new();
+        for (project, root, branch, agent) in rows {
+            match branches.last_mut() {
+                Some(last) if last.0 == project && last.2 == branch => {
+                    if let Some(agent) = agent
+                        && !last.3.contains(&agent)
+                    {
+                        last.3.push(agent);
+                    }
+                }
+                _ => branches.push((project, root, branch, agent.into_iter().collect())),
+            }
+        }
+        Ok(branches)
+    }
+
     /// Moves card `number`'s promotion from the attempt and state `from` to
     /// `state` with `pr_number`, leaving everything else as it stands now (a
     /// file `placed` named meanwhile is kept); answers false when the row
@@ -6369,6 +6411,77 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                 .unwrap()
         );
         assert_eq!(given(&store, "p", "linter first"), ["Run the linter first"]);
+    }
+
+    /// B19: every branch whose pull request ended is found once, whatever
+    /// the card's current revision, and an attempt still open or failed is not.
+    #[test]
+    fn settled_branches_lists_each_ended_branch_once() {
+        let (temp, mut store, project) = store();
+        for (index, text) in ["Run the linter first", "Name the tests by result"]
+            .into_iter()
+            .enumerate()
+        {
+            store
+                .apply_candidates(
+                    &batch(&project, &format!("b{index}"), &format!("h{index}")),
+                    &[Candidate {
+                        title: text.to_owned(),
+                        ..candidate(text, CandidateRelation::New)
+                    }],
+                )
+                .unwrap();
+        }
+        let row = |state, branch: Option<&str>| Promotion {
+            state,
+            revision: 1,
+            attempt: 1,
+            agent_id: Some("agent-7".to_owned()),
+            branch: branch.map(str::to_owned),
+            pr_number: Some(924),
+            target_path: None,
+            started_at_unix_ms: 1,
+            updated_at_unix_ms: 1,
+            failure: None,
+            repository: None,
+        };
+        store
+            .set_promotion(&project, 1, &row(PromotionState::Merged, Some("b-1")))
+            .unwrap();
+        assert_eq!(
+            store.settled_branches("local").unwrap(),
+            [(
+                project.clone(),
+                temp.path().to_string_lossy().into_owned(),
+                "b-1".to_owned(),
+                vec!["agent-7".to_owned()]
+            )]
+        );
+        // A batch's cards share one branch; an open or failed attempt, or one
+        // with no branch, has nothing to retire.
+        store
+            .set_promotion(
+                &project,
+                2,
+                &row(PromotionState::ClosedUnmerged, Some("b-1")),
+            )
+            .unwrap();
+        assert_eq!(store.settled_branches("local").unwrap().len(), 1);
+        for state in [PromotionState::PrOpen, PromotionState::Failed] {
+            store
+                .set_promotion(&project, 2, &row(state, Some("b-2")))
+                .unwrap();
+            assert_eq!(
+                store.settled_branches("local").unwrap().len(),
+                1,
+                "{state:?}"
+            );
+        }
+        store
+            .set_promotion(&project, 2, &row(PromotionState::Merged, None))
+            .unwrap();
+        assert_eq!(store.settled_branches("local").unwrap().len(), 1);
+        assert_eq!(store.settled_branches("elsewhere").unwrap(), []);
     }
 
     #[test]

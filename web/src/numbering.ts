@@ -9,7 +9,6 @@ import { areasOf } from "./areaLayout";
 import type { AgentLayout } from "./agentLayout";
 import type { TreeRow } from "./agentRow";
 import { frontDeviceId } from "./devices";
-import { splitByOrigin } from "./hideAiOrigin";
 import { deviceListedAgents } from "./navigation";
 import { projectRows, activeCheckouts, inactiveCheckouts, folderCheckout, projectExpanded } from "./projects";
 import { checkoutAgentRows } from "./projectBoard";
@@ -74,9 +73,8 @@ function sidebarAgentOrder(state: { rest: SnapshotRest | null; agents: AgentRow[
       continue;
     }
     if (!projectExpanded(workspace)) continue;
-    // The sidebar draws what Hide AI made after the operator's checkouts, and the numbers follow the drawing.
-    const { operator, hideAi } = splitByOrigin(rest?.navigator?.hide_ai_checkouts, workspace, activeCheckouts(workspace));
-    for (const value of [...operator, ...hideAi]) checkout(workspace, value);
+    // A checkout Hide AI made with no operator agent in it has no row, so the numbers follow the drawing without a rule of their own.
+    for (const value of activeCheckouts(workspace)) checkout(workspace, value);
     if (workspace.session_folds?.empty_open) for (const value of workspace.checkouts.filter((value) => workspace.session_folds!.empty.includes(value.id))) checkout(workspace, value);
     if (workspace.inactive_checkouts.expanded) for (const value of inactiveCheckouts(workspace)) checkout(workspace, value);
   }

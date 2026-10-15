@@ -2782,3 +2782,123 @@ fn publishing_the_ledger_moves_the_snapshot_only_when_what_hide_started_moves() 
         "its checkout stays listed after the agent ends"
     );
 }
+
+/// PRD hide-ai-work-home D-14, B8, B9, B10 through the core: the tracker's
+/// facts about an attempt's pull request, the agent's activity and the
+/// ledger's record of who started it make the row's group and turn, and a
+/// change of the pull request moves the published row without a new session
+/// read.
+#[test]
+fn a_hide_started_row_follows_its_attempts_pull_request_into_and_out_of_needs_you() {
+    use crate::coordination::started::tests::{Child, hide_started_ledger, memory_task};
+    use crate::model::{HomeTurn, PullRequestChecks};
+    use crate::runtime::memory_promotion::{HomeAttempt, HomePull};
+    let mut runtime = cross_machine_runtime();
+    attest_cross_machine_sessions(&mut runtime);
+    let node = runtime.node.to_string();
+    // Hide's agent has no pane parent: the operator would have it as a root.
+    for agent in &mut runtime.snapshot.navigator.agents {
+        if agent.pane_id == "local-child" {
+            agent.declared_parent_pane_id = None;
+            agent.spawned_from_machine_id = None;
+        }
+    }
+    let mut project = workspace("project", "Project", "/repo", Vec::new());
+    project.device_id.clone_from(&node);
+    runtime.snapshot.navigator.workspaces = vec![project];
+    let ledger = hide_started_ledger(
+        &node,
+        "hide-memory-m72",
+        memory_task("m72"),
+        Child {
+            machine: &node,
+            pane: "local-child",
+            session: "s-local-child",
+        },
+    );
+    let agent_id = ledger.spawns[0].child.clone().unwrap();
+    runtime.publish_delivery(Arc::new(ledger), false);
+
+    let state = |runtime: &Runtime| {
+        let row = local_lineage_agent(runtime, "local-child");
+        (
+            row.group.clone(),
+            row.hide_ai.as_ref().and_then(|mark| mark.turn),
+            row.hide_ai
+                .as_ref()
+                .and_then(|mark| mark.workspace_id.clone()),
+        )
+    };
+    let machine = runtime.node.clone();
+    let attempt = |pull: Option<HomePull>| {
+        HashMap::from([(
+            agent_id.clone(),
+            HomeAttempt {
+                node: machine.clone(),
+                root: "/repo".into(),
+                pull,
+            },
+        )])
+    };
+    let pull = |checks, draft, changes_requested| {
+        Some(HomePull {
+            number: 924,
+            draft,
+            checks,
+            changes_requested,
+        })
+    };
+    // Followed, but with no pull request yet: progress only, nothing calls the operator.
+    runtime.apply_homes(attempt(None));
+    assert_eq!(
+        state(&runtime),
+        ("seen".into(), None, Some("project".into()))
+    );
+    // Ready and passing: the pull request waits for the operator, and stays.
+    runtime.apply_homes(attempt(pull(PullRequestChecks::Passing, false, false)));
+    assert_eq!(
+        state(&runtime),
+        (
+            "needs_you".into(),
+            Some(HomeTurn::PrReview { pr_number: 924 }),
+            Some("project".into())
+        )
+    );
+    // Reading it changes nothing: the turn is the home's, not an unread flag.
+    for agent in &mut runtime.snapshot.navigator.agents {
+        agent.unread = false;
+    }
+    runtime.refresh_agent_lineage();
+    assert_eq!(state(&runtime).0, "needs_you");
+    // A requested change, a draft or checks still running hand the turn back.
+    for (checks, draft, changes) in [
+        (PullRequestChecks::Passing, false, true),
+        (PullRequestChecks::Passing, true, false),
+        (PullRequestChecks::Pending, false, false),
+    ] {
+        runtime.apply_homes(attempt(pull(checks, draft, changes)));
+        assert_eq!(state(&runtime).0, "seen", "{checks:?} {draft} {changes}");
+    }
+    // Failed checks are the operator's once the agent has stopped working on
+    // them, and the row follows the agent's own activity without a new fact.
+    let activity = |runtime: &mut Runtime, value: &str| {
+        for agent in &mut runtime.snapshot.navigator.agents {
+            if agent.pane_id == "local-child" {
+                agent.activity = value.into();
+            }
+        }
+        runtime.refresh_agent_lineage();
+    };
+    activity(&mut runtime, "working");
+    runtime.apply_homes(attempt(pull(PullRequestChecks::Failed, false, false)));
+    assert_eq!(state(&runtime).1, None, "the agent is fixing them");
+    activity(&mut runtime, "stopped");
+    assert_eq!(
+        state(&runtime).1,
+        Some(HomeTurn::CiFailed { pr_number: 924 })
+    );
+    assert_eq!(state(&runtime).0, "needs_you");
+    // The attempt leaving the table (merged, closed or failed) leaves Needs You.
+    runtime.apply_homes(HashMap::new());
+    assert_eq!(state(&runtime), ("seen".into(), None, None));
+}

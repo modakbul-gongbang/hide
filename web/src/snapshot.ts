@@ -65,8 +65,18 @@ export type RaisedAsk = {
 /** What Hide AI started an agent for, as codes the screen words (`memory_promote`, the card `m72`). */
 export type HideAiTask = { kind: string; target?: string };
 
-/** Hide AI started this agent (PRD hide-ai-origin-mark D-01); `task` is absent for a start that named none. */
-export type HideAi = { task?: HideAiTask };
+/** The screen that owns what a Hide AI task does (PRD hide-ai-work-home D-10); a kind the core has no home for carries none. */
+export type HideAiHome = "memory";
+
+/** What the home waits for the operator to do, beyond what the agent itself asks (D-14); the core decides it. */
+export type HomeTurn = { kind: "pr_review" | "ci_failed"; pr_number: number };
+
+/**
+ * Hide AI started this agent (PRD hide-ai-origin-mark D-01); `task` is absent for a start that named none.
+ * With a `home` the row belongs to that screen: it is listed only while the operator has something to do,
+ * `workspace_id` names the catalog Project whose home shows it and `turn` what that home waits for.
+ */
+export type HideAi = { task?: HideAiTask; home?: HideAiHome; workspace_id?: string; turn?: HomeTurn };
 
 /** A checkout Hide AI made for an agent it started, joined to a checkout by device and path. */
 export type HideAiCheckout = { device_id: string; path: string; task?: HideAiTask };
