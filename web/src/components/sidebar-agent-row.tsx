@@ -1,6 +1,6 @@
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { memo, useRef, type KeyboardEvent, type ReactNode } from "react";
-import { HideMark } from "../AgentMark";
+import { AgentRowMark } from "../AgentRowMark";
 import { agentProductName } from "../agentAdapters";
 import { agentClosing } from "../close";
 import { useInterfaceTranslation } from "../i18n/client";
@@ -192,8 +192,8 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       <span className={cn("flex min-w-0 flex-1 items-start gap-xs", tree && "py-xs")}>
         <span className="pointer-events-none flex min-h-(--size-sidebar-line) shrink-0 items-center gap-xs">
           <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.wait ? "waiting" : agent.status_code} />
-          {/* A Hide AI row is never in a tree; the Hide owl stands beside the status mark (PRD agent-mark-quiet D-04). The provider's logo is only on the pane's own header. */}
-          {agent.hide_ai && !tree ? <HideMark className="size-(--size-agent-badge-compact)" /> : null}
+          {/* A Hide AI row is never in a tree; the Hide owl stands beside the status mark (PRD agent-mark-quiet D-04). The provider's logo follows the view mode or an ⌥ hold, with the owl as its badge (PRD agent-logo-view-mode D-04, D-09). */}
+          <AgentRowMark kind={agent.agent_kind} hideAi={agent.hide_ai && !tree ? "sidebar" : null} />
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-h-(--size-sidebar-line) min-w-0 items-center gap-xs">

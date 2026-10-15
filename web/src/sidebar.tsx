@@ -66,6 +66,7 @@ import { machineName, screenDeviceId, windowDeviceId, windowFirst } from "./scre
 import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type HideAiCheckout, type SleepingSession, type SnapshotRest, type Workspace } from "./snapshot";
 import { useStartPanel } from "./startDraft";
 import { HelpMenu } from "./components/help-menu";
+import { ViewMenu } from "./components/view-menu";
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
 import { useUiStore } from "./ui";
@@ -166,6 +167,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
             {list}
             <div data-sidebar-footer="true" className="flex shrink-0 flex-wrap items-center justify-end gap-xs border-t border-border px-sm py-xs">
               <Usage actions={actions} />
+              <ViewMenu actions={actions} />
               <HelpMenu actions={actions} />
               <Hint label={`${t("common.settings")} (${commandLabel("settings")})`}>
                 <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>
@@ -1596,11 +1598,11 @@ function OpenAgentRows({ checkout, groupTabs, deviceId, agentRows, sleeping, ins
 const TAB_LINE = "calc(var(--size-sidebar-line) + var(--spacing-xxs))";
 
 /**
- * A tab is a segment of its checkout's agent list, not a level (docs/UI_BEHAVIOR.md, Sidebar hierarchy): a tab holding two or more agents
- * draws a hairline guide centered under the checkout's kind glyph spanning the segment's rows, and opens with one quiet line inside the
+ * A tab is a segment of its checkout's agent list, not a level (docs/UI_BEHAVIOR.md, Sidebar hierarchy): a tab holding two or more agents,
+ * or one the operator named, draws a hairline guide centered under the checkout's kind glyph spanning the segment's rows, and opens with one quiet line inside the
  * guide, the tab glyph on the status-mark column and its name (the manual one, else `Tab N`) on the title column, so it reads as part of
- * the checkout rather than beside it. The line opens the real tab, and the hint says its name and agent count. A single-agent tab draws
- * nothing: its row alone is the segment, and the gap between segments is the tab boundary.
+ * the checkout rather than beside it. The line opens the real tab, and the hint says its name and agent count. An unnamed single-agent
+ * tab draws nothing: its row alone is the segment, and the gap between segments is the tab boundary.
  */
 function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context }: { group: SidebarTabGroup; checkout: Checkout; deviceId: string; inset: string; glyphColumn: string; context: TreeContext }) {
   const { t } = useInterfaceTranslation();
