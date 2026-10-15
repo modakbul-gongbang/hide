@@ -2,7 +2,9 @@
 //! each project (PRD agent-guardrails D-11, D-20, D-28, B3, B4, B21, B31).
 //!
 //! Every machine holds one policy file its agents' hooks read: the projects
-//! registered on that machine with a protection on. The core derives what
+//! of that machine with a protection on. Removing a project from Hide takes
+//! its protections with it ([`Runtime::forget_project_guardrails`]), so the
+//! hooks never guard a folder Hide no longer lists (B22). The core derives what
 //! the file must say from its settings and registrations
 //! ([`Runtime::guardrail_policy`]) and has the machine's node write it
 //! (`Call::GuardrailPolicy`): at start for its own machine, at each device
@@ -82,7 +84,6 @@ impl Runtime {
         }
         let projects = records
             .into_values()
-            .filter(|record| self.guarded_registration(device, &record.root))
             .filter_map(|record| {
                 let rules = record.rules()?;
                 Some(ProjectPolicy {
@@ -104,14 +105,17 @@ impl Runtime {
         (Policy::new(projects), saves)
     }
 
-    fn guarded_registration(&self, device: &str, root: &str) -> bool {
-        self.snapshot
+    /// A project removed from Hide stops being guarded; added again, it
+    /// starts with every protection off, as a new one does (B2).
+    pub(super) fn forget_project_guardrails(&mut self, device: &str, root: &str) {
+        if let Some(record) = self
+            .snapshot
             .ui_state
-            .workspace_registrations
-            .iter()
-            .any(|registration| {
-                registration.device_id == device && registration.path == root && !registration.home
-            })
+            .project_settings
+            .get_mut(&settings::key(device, root))
+        {
+            record.guardrails = None;
+        }
     }
 
     /// Whether `record`, saved for its machine, would change what that
@@ -122,13 +126,11 @@ impl Runtime {
         record: &settings::ProjectSettings,
     ) -> bool {
         let rules = |record: Option<&settings::ProjectSettings>| {
-            record
-                .filter(|record| self.guarded_registration(&record.device_id, &record.root))
-                .and_then(|record| {
-                    record
-                        .rules()
-                        .map(|rules| (rules.clone(), record.base_branch.clone()))
-                })
+            record.and_then(|record| {
+                record
+                    .rules()
+                    .map(|rules| (rules.clone(), record.base_branch.clone()))
+            })
         };
         let before = self
             .project_settings_pending

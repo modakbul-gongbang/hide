@@ -335,6 +335,23 @@ fn a_removed_registration_takes_its_project_out_of_the_policy() {
         .take_guardrail_publication(crate::node::TEST_NODE)
         .expect("the hooks stop guarding a project Hide no longer has");
     assert_eq!(job_policy(&job), Policy::new(Vec::new()));
+    assert_eq!(
+        runtime.snapshot.ui_state.project_settings[&id()].guardrails,
+        None,
+        "added again, the project starts with every protection off"
+    );
+}
+
+#[test]
+fn a_project_shown_from_a_herdr_workspace_is_guarded_without_a_registration() {
+    let mut runtime = held(fixture());
+    runtime.snapshot.ui_state.workspace_registrations.clear();
+    runtime.snapshot.navigator.workspaces[0].registered = false;
+    change(&mut runtime, "files-on", files_on());
+    let job = runtime
+        .take_guardrail_publication(crate::node::TEST_NODE)
+        .expect("the protection is delivered");
+    assert_eq!(job_policy(&job).projects[0].root, ROOT);
 }
 
 #[test]
