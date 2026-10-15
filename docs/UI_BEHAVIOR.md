@@ -69,13 +69,13 @@ Pinned (a filled pin; an empty one says `Pin · keep it beside the agents`), the
 The pin is the lane's, whatever tool it shows, and a pinned lane closed and opened again comes back docked.
 A window that would leave Agent Views less than 480px beside a pinned lane opens the lane over them as if unpinned, though it stays through a terminal click; the pin stays filled and its tooltip says `Pin · too narrow, drawn over`, and widening the window docks the lane again.
 Expand gives the lane the whole body between the sidebar and the rail, with the file tree as a column beside the documents; Expand again or Escape returns to the pin, widths and terminal layout as they were, no terminal resizes meanwhile, and Agent Views under an expanded lane take no pointer or keyboard.
-Close (the header's ×, the pressed rail icon, or the tool's chord) closes the lane and turns the file tree off; it closes no view, and the Files badge counts what stays open.
+Close (the header's ×, the pressed rail icon, or the tool's chord) closes the lane and leaves the file tree as it was; it closes no view, and the Files badge counts what stays open.
 
 The files tool shows the View areas below, with their tabs, splits, previews and browser displays, each page inside its area's bounds.
 The active document's header starts with the tree button, the checkout's name, then the path in ` › ` steps, cutting a long path at its start so the file name stays; a browser display's toolbar carries the same tree button.
 The tree button or ⌘⇧E (`Toggle File Tree`) turns the file tree, the Explorer, on and off, the button pressed while it is on; ⌘⇧E while the lane does not show Files opens it on Files with the tree.
 On, the tree is a column left of the documents and the lane widens by its width, so the documents keep theirs: over Agent Views it covers more of them, and docked, Agent Views give up the tree's width as well.
-The tree stays on when a file is picked, when the lane is put away and comes back, and when another tool shows and Files comes back; only the tree button, ⌘⇧E and closing the lane turn it off.
+The tree stays on when a file is picked, when the lane is put away or closed and comes back, and when another tool shows and Files comes back; only the tree button and ⌘⇧E turn it off.
 With no document open, the files tool shows the tree across the lane, its head saying `No open document · tree only`; a file picked there, or anything opened meanwhile (⌘P, a terminal link, a page, `hide` from the front tab), opens beside the tree, which goes back to its own width and stays on, and ⌘⇧E there changes nothing.
 Closing the last view leaves the lane on Files in that state, and ⌘⇧B on a Workspace with no view opens to it; nothing opens a blank page in its place and the lane is never empty, while a View area's New tab still opens a browser display (see Browser displays).
 
