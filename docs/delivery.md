@@ -319,7 +319,7 @@ Delegation derives origin from parent; handoff stores origin separately, and it 
 A handed-off agent's identical self-registration or `--check` preserves its id and stored origin, without taking an origin input or changing responsibility.
 A handed-off agent can end its own registration; its spawner cannot end it and receives `parent_authority_required`.
 Ordinary letters and explicit watches remain available between independent agents.
-The sidebar, graph, ancestor unread state, descendant marks and waiting-on-descendants rule read only responsibility through parent.
+The sidebar, the Overview's tasks, ancestor unread state, descendant marks and waiting-on-descendants rule read only responsibility through parent.
 PR and issue panels retain the handed-off session through its own branch facts and show no delegation line from origin.
 
 A completed spawn stores a durable receipt for its caller and intent, so retries return the same agent and preserve ended registrations and closed watches.
@@ -342,7 +342,7 @@ Completed intent replay returns the durable receipt without contacting Herdr, in
 The id is the `device_id` that `hide workspace info` shows and the `machine` that `hide agent list` shows for agents there; a device label is not accepted, and the caller's own id is the same as leaving the flag out, so a spawn without `--machine` is exactly the spawn above.
 `--repo` and `--path` are then paths on that device.
 The caller keeps the parent registration, the authority and the watch; the child's checkout (a worktree when the branch has none), tab, agent start, identity wait and lineage tokens are the device's, made through its Herdr API channel, and the tokens name this machine as `parent_machine`.
-The agent is registered under the device, so the graph shows it under its parent with the device's mark, its reports and inactivity warnings reach the parent as letters over the existing device paths, and a handed-off agent records the caller as `origin`.
+The agent is registered under the device, so the sidebar and the Overview's tasks show it under its parent with the device's mark, its reports and inactivity warnings reach the parent as letters over the existing device paths, and a handed-off agent records the caller as `origin`.
 Before the intent is reserved or anything is made, the spawn is refused with a stable code and a next action when the id is not a device (`machine_unknown`, naming the connected device ids the caller could have used), the device is not connected or its helper cannot answer (`machine_unavailable`), `--repo` holds no repository there (`repository_unavailable`) or the agent CLI is not on the device's `PATH` (`agent_not_installed`); the checks are the node link's `repository` and `agent_installed` calls, taken off the runtime lock.
 The device is part of the intent: the same intent on another device, or on none, returns `intent_conflict`, and a spawn that already completed answers from its receipt even while the device is away.
 A spawn on a device makes several calls over SSH, so the CLI waits up to 60 seconds for it; one that times out still finishes, and running the same command again returns the same agent (`spawn_busy`, whose next action is to wait and run the same command again, while the first still runs).

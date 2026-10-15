@@ -18,11 +18,6 @@ The session label requests use `context_label.v10`, retaining nullable goals at 
 There is no additional call per turn, and requests from periods with summaries Off or failed judgments are never backfilled by the provider.
 END waits for a known ledger context instead of treating missing parent authority or open work as empty.
 
-An explicit `이슈로` press submits the separate `session_issue_draft` feature, whose schema requires an editable title and body.
-The caller redacts the missed text, original witnessed request and assistant answer, and repository templates before submission; it caps the input and answer and owns cancellation and generation fencing.
-Its provider runs in the same read-only boundary as other features, cannot create an issue or wake an agent, and only the operator's later Create invokes GitHub.
-An unavailable provider, authentication or usage allowance keeps an editable title-only preview with an empty body and a reason.
-
 The Start dialog of the Overview uses feature id `worktree_name` (`herdr-core/src/ai.rs::suggest_worktree_name`): it sends the issue's title and at most 2,000 characters of its body, asks for `{slug}` against a schema, and the core keeps only lowercase ASCII words joined by hyphens, at most 48 characters, behind the issue-number prefix the dialog passed; the deadline is 30 seconds, a failure leaves the dialog's own name in place, and Settings › Issues turns the feature off.
 
 A pull request's card uses feature id `pr_summary` (`herdr-core/src/ai.rs::summarize_pull_request`, PRD work-tab-pr-lens D-04, D-29): it sends the title, at most 4,000 characters of the body, at most 100 changed files with their added and removed counts, and the names of the failed checks and the number of running ones, every text redacted again at the provider boundary, and asks for one `{summary}` of at most 600 characters in two or three plain sentences in the title's language.
@@ -395,7 +390,7 @@ The price worker is joined on shutdown, and diagnostics contain fixed codes and 
 
 ## Counting Hide AI's own usage
 
-Hide AI's background calls (agent summaries, Memory, Factory judgments, issue drafts and worktree names) run through the provider CLIs without leaving a session file, so the historical readers above never see them.
+Hide AI's background calls (agent summaries, Memory, Factory judgments, pull request summaries and worktree names) run through the provider CLIs without leaving a session file, so the historical readers above never see them.
 Each router built for one of those features carries an `AiUsageSink`, and the router tells it once per attempt that reached a provider.
 The Settings probe has no sink: it asks a CLI whether it is ready and is not a feature call.
 An agent pane that Hide starts (a Factory worker, a Memory promotion) is a native session, so its own transcript already counts it and the sink never hears of it.

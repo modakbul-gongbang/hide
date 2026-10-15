@@ -302,7 +302,7 @@ Its compact ask-band form keeps only the raised count, or a tree icon when none 
 Its head names the parent with its direct child count, and its body draws the same rows two levels deep with five siblings each, the children that finished and were read, with nothing below them raised or working, folded below them behind `끝난 자식 N`; choosing a grandchild that has children re-roots the popover on it.
 Arrows move, Right and Left open and fold a branch, Enter opens the agent's pane, and Escape closes it and returns focus to what opened it.
 Opened from a pane button with a raised mark, or the fallback ask-band button, it starts with the raised branches open and draws each ask on the row it raised (`raised_pane_id`) with its verb, what to do and Open, which for a draft goes to the parent holding it.
-A pending or failed move shows at its footer with the retry rules of the relation, and the last line opens the Overview Agents graph.
+A pending or failed move shows at its footer with the retry rules of the relation, and the last line, `Overview에서 일감 보기`, opens the Overview on the agent's device with its task's card selected and the agent's own record beside it.
 Disappearing children leave immediately and an empty popover closes.
 
 The one sidebar raises Needs You and Done above its project tree, at most five and three most recent roots respectively, with older rows behind More.
@@ -312,7 +312,7 @@ A collapsed checkout still shows its Needs You rows.
 Core `session_folds` puts agentless worktrees behind No agents, excluding the primary, front, dirty, unpushed and already inactive checkouts, lists in `child_only` the worktrees (same exclusions) whose unresolved agents are all delegated children, which the sidebar draws nowhere because the parent root's tree reaches them, and collects agent worktrees and missing folders behind Cleanup at the bottom.
 `session_open_folds` remembers explicit openings across startup and device reconnects, including an intermediate empty catalog.
 A confirmed project unregistration removes its project key; removing a device removes its project keys and Cleanup key.
-Resolving a session removes it from sidebar membership without changing its pane, tab or graph membership.
+Resolving a session removes it from sidebar membership without changing its pane, tab or task membership.
 
 Regression owners: `web/e2e/sidebar-status.spec.ts`, `web/e2e/projects-sidebar.spec.ts`, `web/e2e/session-panel.spec.ts`, and `runtime::tests::agent_scopes`.
 
@@ -421,7 +421,7 @@ The glyph's count describes physical agents in that tab, independently of root o
 Tab names use the core's explicit manual-name and stable-number metadata rather than an automatic task label, and no tab fold is saved.
 Raised Needs You and Done rows remain available, while number shortcuts skip hidden tree rows.
 In the web shell the fold controls of a project, a checkout and a parent agent all sit on the right of their row in slots kept at rest; a folded control is always shown and an unfolded one appears under the pointer, with focus inside the row, while the row's menu is open, or on an input with no hover.
-The body of each row navigates (a project to its Overview, a checkout to its Workspace, an agent to its pane); a project or checkout row also unfolds its children, or folds them when its scope is already in front and unfolded, and a fold control never navigates: folding from a chevron changes no screen, pane, tab, read state, group or process.
+The body of each row navigates (a project to its most recent usable checkout, or to the Overview's Tasks filtered to it when it has none, a checkout to its Workspace, an agent to its pane); a project or checkout row also unfolds its children, or folds them when its scope is already in front and unfolded, and a fold control never navigates: folding from a chevron changes no screen, pane, tab, read state, group or process.
 
 ### Verification ownership
 
@@ -646,12 +646,10 @@ Times in a reason are the instants they began, never durations, so time passing 
 `<checkout> only` keeps a row whose `checkout_ids` hold the checkout: the one on the pull request's branch, the ones its recorded sessions ran in and the ones its live agents sit in.
 A project with no GitHub remote has no board, and `gh` missing or signed out is a state of the project's GitHub status, not an empty board.
 
-### Project Overview summary
+### The Overview's task stage
 
-Overview reuses this cached PR answer, including failure and stale status.
-Its active-branch and draft counts describe the selected results, not every PR in the repository's history.
-The details state the reader's lookup window and offer the existing PR URL and scoped refresh actions.
-A failed or unrequested lookup never becomes a zero count.
+A task's four-step stage (`작업 → PR → 검토 → 머지`) reuses this cached PR answer through the agents' PR summaries (`agent_state/tally/tasks.rs::stage`): with any pull request the bar stands at the least advanced one that is not merged, a draft, pending, failing or closed one at two steps and a mergeable one at three, and at four once every one merged; with none it is one step while a member works in a linked worktree, and a task that is only a conversation has no bar.
+A failed or unrequested lookup never becomes a merged or empty stage: a member whose PR state is unread adds nothing.
 The workspace inspector uses the canonical representative agent and disconnected override; inspection itself never acknowledges an agent.
 
 ## Task identity
@@ -776,7 +774,7 @@ Resolve records `resolved_sessions` in core UI state and publishes the hidden ro
 Failure keeps it visible with the existing actionable save error; input, activity, session replacement or pane closure invalidates a pending acknowledgement.
 New operator input, a received letter or renewed working activity restores the session.
 Automatic resolution requires a stopped agent, no demand and every assigned PR merged or closed; settlements before restored input cannot resolve it again.
-Only resolutions from the last 24 hours (`RESOLVED_WINDOW_MS`) enter Resolved, folded by default; older resolutions stay in tabs and the graph but leave both lists.
+Only resolutions from the last 24 hours (`RESOLVED_WINDOW_MS`) enter Resolved, folded by default; older resolutions stay in tabs and in the Overview's Tasks but leave both lists.
 The existing runtime tick advances that window without adding a timer or per-snapshot clock read.
 Closing a pane prunes its resolution and input record.
 Regression owners: `runtime::tests::session_state`, `request_view::tests`, and `web/e2e/session-panel.spec.ts`.
@@ -872,7 +870,7 @@ A delegated row follows the same table for its own group, which for an ordinary 
 Regression owners: `second_line_is_chosen_by_group_and_a_request_outlives_reading` in `herdr-core/src/sidebar.rs`, and `a_native_question_is_the_second_line_until_the_label_says_what_to_reply` and `native_question_snapshot_is_current_without_ai_and_clears_after_answer` in `herdr-core/src/labels/tests.rs`; each source's question text is its reader's, owned by `hide-session/tests/it` (`user_turns` and `adapters`).
 
 Beside `detail` the row carries `message`: the sentence whole up to the 80-character label cap (`MAX_LABEL_TEXT_CHARS`), absent when the label has none.
-It is what the agent last said, and the Overview's node shows it only when the operator rests on the node's line (PRD overview-lenses-tiles-agents D-50, B22); the second line stays the one sentence the table above chooses.
+It is what the agent last said, and the last-words popover shows it only when the operator asks for it; the second line stays the one sentence the table above chooses.
 
 The core publishes the sentence; when a view shows it is that view's presentation.
 The web sidebar row keeps a request line in the warning color until the request resolves, at the mark's reduced emphasis once read, shows the sentence of an unread row as a bright line that goes once the row is read, reveals the full sentence up to two lines on the selected or hovered row with the rest in a tooltip, and otherwise draws one line (`web/src/agentRow.ts`, owned by `agentRow.test.ts`; docs/UI_BEHAVIOR.md).
@@ -887,17 +885,13 @@ The pane id is not printed on the row; only a query holding `:` matches it, by t
 A tab holding exactly one agent pane carries that agent's identity and mark into its Recent Panels row (`StripTabSnapshot.agent_identity`), derived in the core on every status, lineage, or strip rebuild pass; a tab with none or several keeps its Herdr label.
 The core never renames the Herdr tab for this; the Recent Panels label is projection only.
 
-### Project Home
+### The Overview's tasks
 
-Project Home is the empty local checkout surface and the Shift-Command-H overlay.
-Every entry opens the Agents graph with the checkout in front selected (PRD agents-graph-view D-22), except Recent Panels, which restores the lens and expanded rows as they were left; the request view is the tab beside it.
-The Agents view reads the core's four buckets: the operator's turn (Needs You, or Done unread), waiting (`wait`), working, and resting.
-The core also supplies graph priorities, fold badges and tile counts; `web/src/agentGraph.ts` places rows and lines, and `web/src/overviewLens.ts` translates the bar and chip labels.
-The Issues view is the Tasks board below.
-Tasks derives delivery in priority order: merged worktree or merged PR, open PR, then in progress; an open issue no checkout works on is the backlog.
-Needs You changes the halo and stable sort priority, never this delivery stage.
-Main and non-Git checkouts appear on Tasks only while an agent there works on a linked issue; otherwise their agents are on the Agents view only.
-Completed columns start collapsed and disappear only with their underlying pane or worktree.
+The Overview's Tasks (PRD overview-device-tasks D-05) groups a root and every descendant on any device into one task, derived by `agent_state/tally/tasks.rs` from the same agent rows and lineage the sidebar draws; the shell draws the cards and adds no state of its own.
+A task's state is its root's, in the order a section draws its cards: blocked when the root's demand is an error, Needs You and Done from the root's group, working from its activity, waiting while it waits on its descendants, and otherwise resting, or cleanup when every pull request merged and a linked worktree is still on disk.
+A resolved root rests whatever its group was, and a descendant's state moves only its own row, as everywhere else: a child's ask reaches the card through the root's escalation ([Delegated escalation](#delegated-escalation)), never as a second state.
+A section's Needs You counts the cards whose root asks for the operator, blocked ones included, and a dashed card another device's root delegated here is counted on the root's device alone.
+A checkout names its issue or memo by the resolution below, and a started item rides its task's card as a chip instead of standing in the backlog.
 
 `runtime/issues.rs` resolves workspace manual overrides, pane-family issue tokens, branch configuration, PR closing references, then the two supported branch prefixes.
 `wire.rs` extracts metadata, and the core's own node reads the branch setting with the catalog's other path facts (`Call::PathFacts`) off the runtime lock.
@@ -908,7 +902,7 @@ The issue addresses a session's tools printed join this query only when the issu
 An enriched issue lookup may retry once without optional Project fields; basic issue facts remain usable and the Project failure stays in the diagnostic and GitHub availability path.
 Linked issues take priority within the combined 200-identity project limit.
 A failed generation preserves its last successful payload, including a successful empty payload.
-The board keeps stale facts and puts their age in the shared issue tooltip; Overview owns the actionable GitHub availability explanation.
+The backlog keeps stale facts, and its section head says the read failed, why and where to fix it.
 
 Manual issue writes reuse the purpose operation slot and token-first, Git-second writer.
 Validation resolves an issue before writing, a failed Git mirror attempts to restore the previous token, and the runtime suppresses only an uncertain mutation until fresh metadata confirms replacement.
@@ -920,10 +914,10 @@ A rejected cleanup enqueue is retained for the next catalog synchronization.
 
 ## Row presentation and phone notifications
 
-`agent_state/turn.rs::row_state` supplies each row’s attention, title emphasis, line mode, semantic tones, graph bucket and priority, search tone, close state and request timing.
+`agent_state/turn.rs::row_state` supplies each row’s attention, title emphasis, line mode, semantic tones, priority, search tone, close state and request timing.
 The shell maps semantic tones to its existing tokens and translates status words; a tab carries only the mark tone it needs.
 A waiting root intentionally keeps its hollow row glyph with a working tone, and a subdued chip and search result.
-`row_tests::read_question_keeps_its_request_line_and_hue_without_operator_attention` and `row_tests::waiting_root_keeps_distinct_row_chip_and_graph_decisions` pin these surface differences.
+`row_tests::read_question_keeps_its_request_line_and_hue_without_operator_attention` and `row_tests::waiting_root_keeps_distinct_row_and_chip_decisions` pin these surface differences.
 
 `agent_state/tally.rs::phone` projects the phone’s groups, roots, places and safe row values from the published snapshot.
 `agent_state/turn.rs::push` owns the effective notification state and transition ledger; hided keeps pairing, push encryption, transport and delivery policy.
@@ -975,7 +969,7 @@ Regression owners: `hided/src/desktop_notices.rs`, `hided/src/mobile/push.rs`, `
 
 `agent_state/tally/scope.rs` publishes `agent_scope` on the navigator, each device, each project and each checkout.
 Physical group totals preserve every reported row; Overview members use the first checkout owner and deduplicate a pane within each project, while checkout marks retain the existing last-owner rule.
-Physical row references include an occurrence index so duplicate pane IDs keep their distinct labels and states; Overview and graph membership retain the first source occurrence.
+Physical row references include an occurrence index so duplicate pane IDs keep their distinct labels and states; Overview and task membership retain the first source occurrence.
 The scope projection reads Factory worker panes from the current summary’s column cards, excludes them from Sessions and the Overview attention count, and keeps them in physical agent lists.
 A changed Factory summary refreshes the scope in the same publication; unchanged worker membership reuses the cache.
 The retained request projection keeps its previous internal scope semantics.
@@ -1005,15 +999,9 @@ The shell chooses the current target and translates the published states; runtim
 A removal dialog whose target has left the catalog keeps its existing result without requesting live close consequences.
 `runtime::tests::agent_scopes::close_consequences_keep_unknown_priority_and_outside_descendant_counts` pins these rules and pane-only invalidation.
 
-`agent_state/tally/graph.rs` publishes graph membership, row priority, project attention, cleanup/resting folds and the marks tucked under visible ancestors.
-The three fold toggles and project/all selection have sixteen combinations, with identical badge maps shared in the snapshot.
-The renderer selects a combination, filters text and draws geometry; a filtered box reads the first remaining row in core priority order.
-`runtime::tests::agent_scopes::graph_folds_count_hidden_marks_on_the_nearest_visible_ancestor` pins nested hidden marks and Git-only fold invalidation.
-`graph/cross.rs` projects one outgoing chip per other project, ordered by its most urgent child and then latest activity, followed by the incoming parent chip.
-The first global pane occurrence wins, same-project delegation stays an indent or line, and distinct device IDs retain context even when their labels match.
-Disconnected catalogs retain their chips, matching the graph’s existing last-known membership.
-The chip’s count, names and first checkout are projected together; the web resolves navigation and translates the local device label.
-`runtime::tests::agent_scopes::graph_cross_project_chips_preserve_order_counts_and_stable_device_context` pins the incoming graph screen values and cache invalidation.
+`agent_state/tally/tasks.rs` publishes each project's tasks with the scope: cards in state order, their members on every device root first, the devices and projects they delegated into, the incoming entries of another device's roots, and the Needs You count.
+A pane is placed once, at its first occurrence across the local and last-known remote catalogs, so the same task is never counted on two devices, and a child whose parent's machine cannot be resolved is a root of its own.
+`runtime::tests::agent_scopes::a_task_is_its_root_and_every_descendant_with_their_projects_and_devices` and `runtime::tests::agent_scopes::tasks_stand_by_state_and_fold_a_merged_worktree_as_cleanup` pin these rules.
 
 `tally.rs` also owns local and remote device counts and project-removal running-agent totals.
 Device scopes publish the current listed rows by source index, preserving duplicate physical rows and local-first order, and the first checkout place for each pane.

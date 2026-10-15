@@ -35,7 +35,7 @@ Missing keys and missing interpolation values fail explicitly; English is a loca
 ## Current integration coverage
 
 The web shell renders every product-owned sentence of its main screens from the catalogs.
-That covers Settings (every tab), the sidebar rows, menus and close sheets, the shared Overview and its request view, Agents graph, Issues board, the Work tool's PRs lens and PR card, the window's top row, tab bars and pane chrome, the editor and file views, the Explorer and History, browser displays, the palettes, the start panel, the add-project and workspace dialogs, Project Sessions, disk cleanup and the device rail.
+That covers Settings (every tab), the sidebar rows, menus and close sheets, the shared Overview with its Tasks, 백로그 and Projects tabs and the ⇧⌘M quick add, the Work tool's Sessions lens, session record, PRs lens and PR card, the window's top row, tab bars and pane chrome, the editor and file views, the Explorer and History, browser displays, the palettes, the start panel, the add-project and workspace dialogs, disk cleanup and the device rail.
 Shortcut keycaps retain their host-specific chord glyphs in every language.
 Text that a helper composes outside a render uses the `translate` function of `client.tsx`, which reads the confirmed language at call time; a helper that renders inside React takes the component's `t`.
 A module the desktop host imports (`host.ts` and everything it reaches) stays free of the translator and names a label by key, as `revealExternal.ts` does.
