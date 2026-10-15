@@ -5,7 +5,7 @@
 hide is a multi-agent IDE that helps one person keep several coding efforts in view without watching every terminal.
 It preserves the context of each task and brings forward the questions, approvals, and results that need a person's attention.
 
-**Brand line:** Many agents. One clear view.
+**Brand line:** Run more agents. Hold less.
 **Korean line:** 여러 에이전트의 흐름은 한눈에, 집중은 필요한 곳에만.
 
 The product should make three things easy:
