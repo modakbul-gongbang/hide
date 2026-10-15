@@ -256,13 +256,16 @@ code, .mono { font-family: var(--font-mono); }
   filter: blur(40px);
 }
 .stage .peek {
-  /* The owl peeks over the window's top edge, wing tips on the frame. */
+  /* The owl peeks out from behind the window's edges: its 1200x942 field spans the window's width
+     with the window's top edge at y = 200 and the screenshot below it, so each edge the owl hides
+     behind lands on the same edge of the screenshot at every width. */
   position: absolute;
   z-index: 2;
-  right: 7%;
-  bottom: calc(100% - 22px);
-  width: clamp(116px, 15vw, 196px);
+  left: 0;
+  top: 0;
+  width: 100%;
   height: auto;
+  transform: translateY(-21.231%);
   pointer-events: none;
 }
 .window {

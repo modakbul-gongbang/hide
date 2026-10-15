@@ -59,9 +59,9 @@ The Factory is marked Coming soon until a public release carries it.
 The first three pillars' panels are small HTML drawings of the app's own surfaces (the sidebar's four groups, Settings › Devices, an agent title) with invented example tasks; they are illustrations, not captures, and use the app's status marks and colors.
 The Factory pillar has an animated Line drawing above the Factory render described below.
 Supported agents are named in text; third-party agent marks stay inside the app, where `web/src/assets/agents/manifest.json` records their terms.
-`site.js` runs the one-time scroll reveals and the sidebar panel's group changes.
+`site.js` runs the one-time scroll reveals, the hero owl's peeking and the sidebar panel's group changes.
 `factory.js` plays a scripted Factory line: Tasks move from Intake to Merged, and each question goes where the mode table in [factory.md](../docs/factory.md#factory-ai-the-observer) sends it (Direct, Together, Delegate), so a permission always reaches the desk and a risky-path merge goes to Factory AI only in Delegate.
-The two repeating animations sit in different sections, each runs only while it is on screen and the tab is visible, and under `prefers-reduced-motion` both show one still frame.
+The three repeating animations sit in different sections, each runs only while it is on screen and the tab is visible, and under `prefers-reduced-motion` each shows one still frame.
 The header icon's blink is SMIL inside an `<img>`, which a hidden tab does not paint; under `prefers-reduced-motion` a `<picture>` source shows `hide-icon.svg` instead.
 The workflow and feature descriptions follow [UI_BEHAVIOR.md](../docs/UI_BEHAVIOR.md), with current main's agent launcher, project overview and Workspace components as implementation references.
 Supported platforms, signing limitations, prerequisites and installation links follow [INSTALL.md](../docs/INSTALL.md).
@@ -73,6 +73,10 @@ The site has its own small CSS scale and brand palette; it does not consume or r
 The workspace render is assembled from `design/hide-screens.pen` parts (the Projects sidebar, the Workspace toolbar and Agent column, the Sessions panel) with two terminal panes and example session titles written for the page; the Factory render is the Line sheet of that file with its text switched to the app's English catalog (`web/src/i18n/resources/`) and the example Tasks translated.
 Both were built in a scratch copy through the Pen CLI and exported at 2x; the committed `.pen` files are unchanged.
 `assets/owls/` holds the owl character's poses, generated with the approved mark as the style reference and keyed to transparency; [BRAND.md](../docs/BRAND.md#the-owl-character) owns what the character may and may not do, the header shows the blinking app icon and the favicon stays the unchanged `hide-mark.png`.
+`owl-peek.svg` is the `owl-agents` owl traced into vector parts (ears, body, wings, face) and animated by CSS keyframes inside the file, so it plays as a plain `<img>` with no player script.
+Its field spans the window's width with the screenshot's top edge 200 units down, and the owl hides behind straight edges measured on `hide-workspace.webp`: it pops up over the window's top edge, leans out from behind the Sessions panel and rises from behind the sidebar's project box, looks at one place each time, and ducks back.
+A new screenshot moves those edges, so the edge positions in the file are measured again with it.
+`owl-peek-still.svg` is its first stop held still, which the page shows while the hero is off screen, in a hidden tab and under `prefers-reduced-motion`, because an SVG inside `<img>` does not see the page's media queries in every browser.
 The page is dark by default, on the Owl Field palette: the mark's blue-gray field taken down to night, lime as the one primary accent and the field color as the secondary on kickers, numbers and markers.
 It follows `prefers-color-scheme` for a light variant that keeps the same primary and secondary.
 
