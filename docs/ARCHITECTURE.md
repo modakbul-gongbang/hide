@@ -265,7 +265,7 @@ The history read is the Sessions list's own `load_sessions` (`herdr-core/src/run
 A session's conversation names, on each event, the cards a prompt hook gave it there (`memory_received`, from the event's verified receipt) and the cards Memory learned from it and still keeps (`memory_learned`), by number.
 
 Project Memory is its own snapshot section, `memory`, on its own delta revision (`herdr-core/src/runtime/project_memory.rs`), keyed by the Project a shell opens rather than by the Overview's Sessions or the focused checkout, and absent until a Project is opened.
-It is drawn by the lane's Memory tool (`Tool::Memory`, D-17), the rail's fourth tool after Files, Changes and Work.
+It is drawn by the lane's Memory tool (`Tool::Memory`, D-17), the rail's fourth tool after Work, Files and Changes.
 `memory_open` with a catalog `workspace_id` opens that Project's Memory for every window of the daemon (none closes it), and a read on a worker lays its switch, its cards with their usage counts and the analysis state on `memory.project`; it waits for no Sessions history read.
 A Project on any registered linked device reads the core's Memory store through the device's node; an unavailable link or Memory reader answers `unreadable` and records its reason in the diagnostic log.
 Project identity remains the node id plus that node's main worktree root, so equal paths on different devices never share cards.
