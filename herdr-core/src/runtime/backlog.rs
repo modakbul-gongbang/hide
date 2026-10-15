@@ -262,15 +262,33 @@ impl Runtime {
             // A repeated send of the same item: the row already answered it.
             return false;
         }
-        if let Some(missed) = &payload.missed
-            && rows.iter().any(|row| {
+        if let Some(missed) = &payload.missed {
+            let line = |row: &BacklogItemSnapshot| {
                 row.missed
                     .as_ref()
                     .is_some_and(|known| same_missed(known, missed))
-            })
-        {
-            // One missed line is one item, however often it is pressed.
-            return false;
+            };
+            // One missed line is one item, however often it is pressed; a
+            // failure no retry can change (a refusal, a moved repository)
+            // gives way to the new add, which reads the repository again.
+            if rows
+                .iter()
+                .any(|row| line(row) && !(row.phase == BacklogPhase::Failed && !row.retry))
+            {
+                return false;
+            }
+            let replaced: Vec<String> = rows
+                .iter()
+                .filter(|row| line(row))
+                .map(|row| row.intent.clone())
+                .collect();
+            for intent in replaced {
+                self.snapshot
+                    .issue_work
+                    .backlog
+                    .retain(|row| row.intent != intent);
+                self.backlog_work.jobs.remove(&intent);
+            }
         }
         let title = match crate::local_issues::validated_title(&payload.title) {
             Ok(title) => title,

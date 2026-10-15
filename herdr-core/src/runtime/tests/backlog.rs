@@ -961,3 +961,22 @@ fn a_memo_whose_missed_line_is_no_longer_open_is_taken_back() {
             .is_none()
     );
 }
+
+#[test]
+fn a_missed_line_whose_failure_no_retry_can_change_is_added_again_under_a_new_intent() {
+    let gh = FakeGh::new();
+    let (shared, _worker) = backlog_runtime_with(gh, summaries_on);
+    add_missed(&shared, "m-1", "n", "missed-1-0");
+    wait(&shared, "the first add to fail for good", |runtime| {
+        failure(runtime, "m-1").is_some_and(|row| row.0 == BacklogPhase::Failed)
+    });
+    assert!(!retry(&shared.lock().unwrap(), "m-1"));
+    // 백로그로 again: the failed row gives way to the new add.
+    add_missed(&shared, "m-2", "n", "missed-1-0");
+    wait(&shared, "the new add to answer", |runtime| {
+        failure(runtime, "m-2").is_some_and(|row| row.0 == BacklogPhase::Failed)
+    });
+    let runtime = shared.lock().unwrap();
+    let intents: Vec<_> = phases(&runtime).into_iter().map(|row| row.0).collect();
+    assert_eq!(intents, ["m-2"]);
+}

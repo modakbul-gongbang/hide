@@ -238,7 +238,7 @@ test("@platform 백로그로 keeps a session's original repository after a conne
   } finally { daemon?.stop(); herdr.stop(); }
 });
 
-test("@platform a 백로그로 create in flight across an A-to-B-to-A connection edit makes nothing, and its retry makes one", async ({ page }) => {
+test("@platform a 백로그로 create in flight across an A-to-B-to-A connection edit makes nothing, and pressing it again makes one", async ({ page }) => {
   const herdr = await startHerdr();
   let daemon: Daemon | undefined;
   try {
@@ -264,7 +264,9 @@ test("@platform a 백로그로 create in flight across an A-to-B-to-A connection
     const failed = missed.locator('[data-missed-failed="repository_changed"]');
     await expect(failed).toBeVisible({ timeout: 30_000 });
     expect(createdIn(github.contexts)).toEqual([]);
-    await failed.getByRole("button", { name: "Retry", exact: true }).click();
+    // A moved repository is no failure a retry can change: 백로그로 again reads the repository anew.
+    await expect(failed.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
+    await failed.locator("[data-missed-backlog-add]").click();
     await expect(missed.locator('[data-missed-backlog="#77"]')).toBeVisible({ timeout: 30_000 });
     expect(createdIn(github.contexts)).toEqual(["acme/repo"]);
   } finally { daemon?.stop(); herdr.stop(); }
@@ -298,7 +300,7 @@ test("@platform a migrated session's unknown original repository refuses 백로�
     // Emulate the version 2 store while this owned daemon is stopped.
     daemon = await daemon.restart((stateDir) => {
       const db = new DatabaseSync(path.join(stateDir, "links.sqlite3"));
-      try { db.exec("DROP TABLE ledger_session_origins; DROP TABLE ledger_project_connections; DROP TABLE ledger_backlog; ALTER TABLE ledger_missed DROP COLUMN backlog_key; PRAGMA user_version=2;"); }
+      try { db.exec("DROP TABLE ledger_session_origins; DROP TABLE ledger_project_connections; DROP TABLE ledger_backlog; DROP TABLE retention_aliases; ALTER TABLE ledger_missed DROP COLUMN backlog_key; PRAGMA user_version=2;"); }
       finally { db.close(); }
     });
     await page.goto("about:blank");

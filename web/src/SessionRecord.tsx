@@ -377,7 +377,8 @@ function MissedLine({ missed, session, cwd, owner, actions }: { missed: MissedWo
     </p>
     {failed ? <p role="status" className={cn("mt-xxs flex items-center gap-xs text-micro text-destructive", LANE)} data-missed-failed={failed.failure ?? "refused"}>
       <span className="min-w-0 flex-1">{t(`backlog.failure.${failed.failure ?? "refused"}`)}</span>
-      {failed.retry ? <Button size="sm" variant="ghost" className="h-auto px-xs py-0 text-micro" disabled={!connected} onClick={() => actions.retryBacklog(failed.intent)}>{t("common.retry")}</Button> : null}
+      {failed.retry ? <Button size="sm" variant="ghost" className="h-auto px-xs py-0 text-micro" disabled={!connected} onClick={() => actions.retryBacklog(failed.intent)}>{t("common.retry")}</Button>
+        : project ? <Button size="sm" variant="ghost" className="h-auto px-xs py-0 text-micro" disabled={!connected} onClick={toBacklog} data-missed-backlog-add={missed.id}>{t("missed.toBacklog")}</Button> : null}
       <Button size="sm" variant="ghost" className="h-auto px-xs py-0 text-micro" onClick={() => { actions.dismissBacklog(failed.intent); actions.setMissedStatus(session, missed.id, "dismissed"); }} data-missed-failed-dismiss={missed.id}>{t("sessionWork.dismiss")}</Button>
     </p> : null}
     {open && !making && !failed ? <div className={cn("mt-xs flex items-center gap-xs", LANE)}>
