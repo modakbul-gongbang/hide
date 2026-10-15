@@ -1589,46 +1589,36 @@ function OpenAgentRows({ checkout, groupTabs, deviceId, agentRows, sleeping, ins
   </ul>;
 }
 
-/** The named tab's quiet line: a sidebar line and a hairline of air. */
+/** A tab's quiet line: a sidebar line and a hairline of air. */
 const TAB_LINE = "calc(var(--size-sidebar-line) + var(--spacing-xxs))";
 
 /**
  * A tab is a segment of its checkout's agent list, not a level (docs/UI_BEHAVIOR.md, Sidebar hierarchy): a hairline guide centered under the
- * checkout's kind glyph spans the segment's rows, and the gap between two guides is the tab boundary. A tab holding two or more agents wears
- * the tab glyph at the head of its guide, on the first row's line; a manual name adds one quiet line inside the guide instead, the glyph on
- * the status-mark column and the name on the title column, so it reads as part of the checkout rather than beside it. Both open the real
- * tab, and the hint says its name and agent count.
+ * checkout's kind glyph spans the segment's rows, and the gap between two guides is the tab boundary. A tab holding two or more agents opens
+ * with one quiet line inside the guide, the tab glyph on the status-mark column and its name (the manual one, else `Tab N`) on the title
+ * column, so it reads as part of the checkout rather than beside it. The line opens the real tab, and the hint says its name and agent count.
  */
 function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context }: { group: SidebarTabGroup; checkout: Checkout; deviceId: string; inset: string; glyphColumn: string; context: TreeContext }) {
   const { t } = useInterfaceTranslation();
   const removing = useShellStore((s) => checkoutRemoving(s.rest?.worktree_removal, deviceId, checkout.path, localDeviceId(s.rest)));
   const tab = group.tab;
   const naming = tab?.sidebar;
-  const manual = naming?.manual_name ?? null;
-  const named = group.glyph && manual !== null;
-  const label = naming ? t("sidebar.tabAgents", { name: manual ?? t("sidebar.tabNumber", { number: naming.number }), count: group.count }) : "";
+  const name = naming ? naming.manual_name ?? t("sidebar.tabNumber", { number: naming.number }) : "";
+  const label = t("sidebar.tabAgents", { name, count: group.count });
   const center = `calc(${glyphColumn} + var(--size-checkout-icon) / 2)`;
-  const glyph = <PanelsTopLeftIcon aria-hidden="true" className="size-(--size-icon-sm)" />;
   const open = () => context.actions.openSurface(tabSurface(checkout, tab!.id!, deviceId));
-  // The guide starts under the glyph a head carries, and a row's own padding from the segment's edge without one.
-  // It stands above a selected or hovered row's fill, so only a tab boundary breaks it; the list isolates its stacking so neither it nor the glyph rises over the sticky section header.
-  const guideTop = !group.glyph || named ? "var(--spacing-xs)"
-    : `calc(var(--spacing-xs) + var(--size-sidebar-line) / 2 + var(--size-icon-sm) / 2 + var(--spacing-xxs))`;
   return (
     <>
-      <span aria-hidden="true" data-sidebar-tab-guide={tab?.id ?? ""} className="pointer-events-none absolute z-10 w-(--size-hairline) bg-lineage-rail" style={{ left: `calc(${center} - var(--size-hairline) / 2)`, top: guideTop, bottom: "var(--spacing-xs)" }} />
-      {named ? (
+      {/* It stands above a selected or hovered row's fill, so only a tab boundary breaks it; the list isolates its stacking so it never rises over the sticky section header. */}
+      <span aria-hidden="true" data-sidebar-tab-guide={tab?.id ?? ""} className="pointer-events-none absolute top-xs bottom-xs z-10 w-(--size-hairline) bg-lineage-rail" style={{ left: `calc(${center} - var(--size-hairline) / 2)` }} />
+      {group.glyph ? (
         <div data-sidebar-tab-line={tab!.id!} className="group/row relative rounded-sm hover:bg-accent" style={{ height: TAB_LINE }}>
           <Hint label={label} reveals>
             <button type="button" data-sidebar-tab={tab!.id!} disabled={removing} aria-label={label} className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring" onClick={open} />
           </Hint>
-          <span aria-hidden="true" className="pointer-events-none absolute top-1/2 -translate-x-1/2 -translate-y-1/2 text-subtle-foreground" style={{ left: `calc(${inset} + var(--size-agent-mark) / 2)` }}>{glyph}</span>
-          <span aria-hidden="true" data-sidebar-tab-name="true" className="pointer-events-none absolute inset-y-0 right-xs flex min-w-0 items-center text-caption text-subtle-foreground" style={{ left: `calc(${inset} + var(--size-agent-mark) + var(--spacing-xs))` }}><span className="truncate">{manual}</span></span>
+          <span aria-hidden="true" className="pointer-events-none absolute top-1/2 -translate-x-1/2 -translate-y-1/2 text-subtle-foreground" style={{ left: `calc(${inset} + var(--size-agent-mark) / 2)` }}><PanelsTopLeftIcon aria-hidden="true" className="size-(--size-icon-sm)" /></span>
+          <span aria-hidden="true" data-sidebar-tab-name="true" className="pointer-events-none absolute inset-y-0 right-xs flex min-w-0 items-center text-caption text-subtle-foreground" style={{ left: `calc(${inset} + var(--size-agent-mark) + var(--spacing-xs))` }}><span className="truncate">{name}</span></span>
         </div>
-      ) : group.glyph ? (
-        <Hint label={label} reveals>
-          <button type="button" data-sidebar-tab={tab!.id!} disabled={removing} aria-label={label} className="absolute z-10 flex size-(--size-sidebar-line) -translate-x-1/2 items-center justify-center rounded-xs text-subtle-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" style={{ left: center, top: "var(--spacing-xs)" }} onClick={open}>{glyph}</button>
-        </Hint>
       ) : null}
     </>
   );

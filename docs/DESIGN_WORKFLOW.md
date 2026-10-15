@@ -160,7 +160,7 @@ node scripts/pen-transplant.mjs --from <branch-file> --into <main-file> --sheet 
 
 ## Web screen list
 
-The Projects Sidebar screen and production gallery draw tabs as segments, not depth: one root status axis on the checkout name's column, a 1px guide per tab centered under the checkout's kind glyph, the tab glyph at the head of an unnamed tab of two or more agents, and for a named tab one quiet line inside the guide, its glyph on the status-mark column and its name on the title column.
+The Projects Sidebar screen and production gallery draw tabs as segments, not depth: one root status axis on the checkout name's column, a 1px guide per tab centered under the checkout's kind glyph, and for a tab of two or more agents one quiet line inside the guide, its glyph on the status-mark column and its manual name or `Tab N` on the title column.
 The segments separate with `--spacing-sm` rather than another card, hang `--spacing-xxs` under the checkout row and end with `--spacing-sm` before the next row, keep the existing 18px lineage step, and use neutral `--secondary` selection; a plain folder's glyph and name stand on the project row's columns.
 `sidebar-status-axis` is a production Sidebar gallery scene with invented 2-1-2 tab facts (a named tab, a one-agent tab, an unnamed tab), paired with the `psb-axis-l` and `psb-axis-d` Pen cutouts by `design/review-targets.json`.
 The `sidebar-status-axis` target captures the real checkout row with 8px of surrounding sidebar padding to match the 240px cutout.
