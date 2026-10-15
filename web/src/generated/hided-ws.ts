@@ -124,6 +124,8 @@ export type SnapshotSections =
   | UiStateUsageHints
   | FocusCheckoutPayload
   | InterfaceLanguageSetPayload
+  | AgentLogoMode
+  | AgentLogoModeSetPayload
   | ColorThemeSetPayload
   | TerminalFrame
   | AgentNotice
@@ -132,6 +134,10 @@ export type SnapshotSections =
  * The core's shared explicit interface language. Null follows each client's primary system language, with English for unsupported languages. Invalid stored values publish en with a diagnostic and remain stored until an explicit edit.
  */
 export type InterfaceLanguage = null | "en" | "ko" | "zh-CN" | "ja";
+/**
+ * Whether the sidebar, the Sessions list and the tab bar draw an agent's provider logo before its title. Hidden is the default and what a store without the field, or with a value this build does not know, publishes.
+ */
+export type AgentLogoMode = "shown" | "hidden";
 /**
  * The palette every window draws in, `ui_state.color_theme`: hide is the landing page's Owl Field colors and the default (a store without the field opens hide), neutral the grey chrome. Independent of `ui_state.theme`, which picks light, dark or system. A stored value the core does not know opens hide with the diagnostic ui_state.color_theme_unknown.
  */
@@ -525,6 +531,12 @@ export interface FocusCheckoutPayload {
  */
 export interface InterfaceLanguageSetPayload {
   language: InterfaceLanguage;
+}
+/**
+ * Payload of agent_logo_mode_set. This event alone edits the core preference; ui_state_update never changes it, and a mode the event does not name is refused and changes nothing.
+ */
+export interface AgentLogoModeSetPayload {
+  mode: AgentLogoMode;
 }
 /**
  * Payload of color_theme_set. This event alone edits the color theme; ui_state_update never changes it, a value outside colorTheme is refused, and the current value again saves nothing.

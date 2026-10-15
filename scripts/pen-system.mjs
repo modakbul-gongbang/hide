@@ -787,7 +787,7 @@ function buildAgentGraphBox(tokens) {
     ]),
   ]);
 
-  // A row: the status mark, title and age on one line, and no provider logo (PRD agent-mark-quiet D-01); a step in with a
+  // A row: the status mark, title and age on one line, and no provider logo, the default hidden agent logo view mode (PRD agent-mark-quiet D-01; PRD agent-logo-view-mode draws the shown mode in code only); a step in with a
   // corner arrow for a delegation inside the checkout; the chip of a
   // delegation into or from another project and the tucked badge before the
   // age; and the question as a second line, only while the agent asks.

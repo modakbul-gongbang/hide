@@ -407,7 +407,7 @@ Connection recovery resumes the current canonical projection; it does not mark a
 The disclosure chevron sits at the right edge of a Workspace row.
 The left edge holds the checkout-kind icon, title, and checkout badges.
 The representative status moves into the trailing agent summary chip immediately before the chevron.
-A root agent status mark aligns with the Workspace branch icon; compact agent rows use a 4pt gap between status and title and draw no provider logo (the pane header alone does; PRD agent-mark-quiet).
+A root agent status mark aligns with the Workspace branch icon; compact agent rows use a 4pt gap between status and title and draw no provider logo unless the operator's agent logo view mode shows it or an ⌥ hold peeks at it (the pane header always does; PRD agent-mark-quiet, PRD agent-logo-view-mode).
 A Workspace with nested agent rows uses the entire row, including its name and empty space, as the disclosure hit area.
 Its right-edge chevron is a non-interactive indicator within that same button, not a second small control.
 A Workspace without nested agent rows shows no chevron and clicking its row opens the Workspace.
