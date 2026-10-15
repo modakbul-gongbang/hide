@@ -532,11 +532,13 @@ impl Runtime {
     }
 
     /// The tab whose parked presentation a caller's open goes to, or `None`
-    /// when it goes to the projected one.
+    /// when it goes to the projected one. A Workspace no tab owns yet
+    /// projects its active tab (`projected_view_owner`), the same answer
+    /// `parked_tab` parks against, so a caller reads the tab it wrote.
     pub(super) fn caller_parked_tab(&self, key: &WorkspaceKey, caller: &str) -> Option<String> {
-        let entry = self.workspace_views.as_ref()?.views.get(&key.0, &key.1)?;
+        let owner = self.projected_view_owner(key)?;
         self.control_caller_tab(key, caller)
-            .filter(|tab| entry.view_owner.as_ref().is_some_and(|owner| owner != tab))
+            .filter(|tab| *tab != owner)
     }
 
     /// Whether the Workspace of a checkout holds `display_id`, before a
@@ -791,7 +793,7 @@ impl Runtime {
     fn tab_view_layout(&self, key: &WorkspaceKey, tab: Option<&str>) -> Option<&Layout> {
         let entry = self.workspace_views.as_ref()?.views.get(&key.0, &key.1)?;
         match tab {
-            Some(tab) if entry.view_owner.as_deref() != Some(tab) => {
+            Some(tab) if self.projected_view_owner(key).as_deref() != Some(tab) => {
                 entry.view_presentations.get(tab).map(|view| &view.layout)
             }
             _ => Some(&entry.layout),
@@ -2404,7 +2406,7 @@ impl Runtime {
         for display in self
             .all_view_layouts(key)
             .flat_map(|layout| layout.displays())
-            .filter(|display| display.kind != DisplayKind::Browser)
+            .filter(|display| display.kind.is_document())
         {
             let target = (display.path.clone(), display.kind, display.committed);
             if display.tab_id.is_none() && !targets.contains(&target) {
@@ -2417,7 +2419,7 @@ impl Runtime {
             // read from that checkout; a diff is always this one's.
             let (workspace_id, checkout_id) = match kind {
                 DisplayKind::File => self.display_source(key, path),
-                DisplayKind::Diff | DisplayKind::Browser => None,
+                DisplayKind::Diff | DisplayKind::Browser | DisplayKind::PullRequest => None,
             }
             .unwrap_or_else(|| front.clone());
             let open = self.snapshot.editor.tabs.iter().any(|tab| {
@@ -2431,7 +2433,7 @@ impl Runtime {
                 continue;
             }
             match kind {
-                DisplayKind::Browser => {}
+                DisplayKind::Browser | DisplayKind::PullRequest => {}
                 DisplayKind::Diff => {
                     self.insert_diff_tab(
                         &workspace_id,
@@ -2866,7 +2868,10 @@ impl Runtime {
     ) -> (ViewDisplayState, Option<String>) {
         // The host loads a page wherever it is; whether it loaded is the
         // page's own state, which the host draws.
-        if display.kind == DisplayKind::Browser {
+        if matches!(
+            display.kind,
+            DisplayKind::Browser | DisplayKind::PullRequest
+        ) {
             return (ViewDisplayState::Open, None);
         }
         if let Some(tab) = display.tab_id.as_deref().and_then(|id| facts.tabs.get(id)) {
@@ -2900,7 +2905,7 @@ impl Runtime {
             return (ViewDisplayState::Opening, None);
         }
         let reason = match display.kind {
-            DisplayKind::File | DisplayKind::Browser => {
+            DisplayKind::File | DisplayKind::Browser | DisplayKind::PullRequest => {
                 "This view's file is not open; Retry reads it again"
             }
             DisplayKind::Diff => "This view's diff is not open; Retry opens it again",
@@ -2950,6 +2955,9 @@ impl Runtime {
                             path: display.path.clone(),
                             label: match (tab, display.kind) {
                                 (_, DisplayKind::Browser) => browser_label(display),
+                                (_, DisplayKind::PullRequest) => {
+                                    format!("PR #{}", display.pr.unwrap_or_default())
+                                }
                                 (Some(tab), _) => tab.label.clone(),
                                 (None, DisplayKind::File) => file_label(&display.path),
                                 (None, DisplayKind::Diff) => super::editor::diff_label(
@@ -2964,6 +2972,7 @@ impl Runtime {
                             reason,
                             url: display.url.clone(),
                             title: display.title.clone(),
+                            pr: display.pr,
                             load: display.load,
                         }
                     })

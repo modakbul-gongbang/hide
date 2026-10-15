@@ -8,8 +8,18 @@
 import type { Checkout, SnapshotRest, StripTab, ViewLayoutSnapshot } from "./snapshot";
 
 /** The lane's tools, in the rail's order (D-01). */
-export const TOOLS = ["files", "changes", "agent_sessions", "memory"] as const;
+export const TOOLS = ["work", "memory", "files", "changes"] as const;
 export type Tool = (typeof TOOLS)[number];
+
+/** What a tool is about: the Project (Work, Memory) or the front checkout (Files, Changes). The rail and the lane header draw it (PRD work-tab-pr-lens D-37). */
+export type ToolScope = "project" | "checkout";
+export const TOOL_SCOPES: Record<Tool, ToolScope> = { work: "project", memory: "project", files: "checkout", changes: "checkout" };
+
+/** Which basis the Work tool draws (PRD work-tab-pr-lens D-01). */
+export type WorkLens = "sessions" | "prs";
+
+/** The Work tool's basis and scope chip, kept per Workspace (B2). `only_checkout` is the front checkout only. */
+export type WorkView = { lens: WorkLens; only_checkout: boolean };
 
 /** The front Workspace's presentation as the core published it. */
 export type WorkspaceView = {
@@ -17,6 +27,8 @@ export type WorkspaceView = {
   path: string;
   /** The tool the lane shows, or null while the lane is closed. */
   tool: Tool | null;
+  /** The Work tool's basis and scope. */
+  work: WorkView;
   /** Whether the lane is pinned beside Agent Views rather than drawn over it (D-03). */
   pinned: boolean;
   /** Whether the files tool shows its tree column (D-05); with no view open the tree shows anyway. */

@@ -883,7 +883,7 @@ mod tests {
     fn agent(id: &str, pane: &str, parent: Option<&str>) -> AgentRecord {
         AgentRecord {
             id: id.into(),
-            name: id.into(),
+            name: Some(id.into()),
             machine: crate::node::TEST_NODE.into(),
             host_scope: "fixture".into(),
             native_machine: "fixture-machine".into(),

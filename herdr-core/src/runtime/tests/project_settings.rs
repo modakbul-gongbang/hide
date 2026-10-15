@@ -386,6 +386,7 @@ fn old_pr_body_answer_cannot_link_same_number_in_new_repository() {
                 closed_at_unix_ms: None,
                 head_oid: None,
                 cross_repository: false,
+                work: Default::default(),
             }],
             ..Default::default()
         });

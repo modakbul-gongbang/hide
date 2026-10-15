@@ -1,7 +1,6 @@
-import { BrainIcon, EllipsisIcon, FileDiffIcon, FilesIcon, Maximize2Icon, MessagesSquareIcon, Minimize2Icon, PinIcon, XIcon, type LucideIcon } from "lucide-react";
-import { useState } from "react";
+import { BrainIcon, EllipsisIcon, FileDiffIcon, FilesIcon, FolderIcon, GitBranchIcon, Maximize2Icon, Minimize2Icon, PinIcon, SquareKanbanIcon, XIcon, type LucideIcon } from "lucide-react";
+import { Fragment, useState } from "react";
 import type { Actions } from "./actions";
-import { AgentSessions } from "./AgentSessions";
 import { Button } from "./components/ui/button";
 import { cn } from "./lib/utils";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuShortcut, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
@@ -9,6 +8,8 @@ import { Hint } from "./components/ui/tooltip";
 import { ExplorerTree } from "./ExplorerTree";
 import { HistoryList } from "./HistoryList";
 import { MemoryTab, useMemoryProject } from "./MemoryTab";
+import { useWorkCounts } from "./workCount";
+import { WorkPanel } from "./WorkPanel";
 import { DividerGuide, LaneDivider } from "./LaneDivider";
 import { commandLabel } from "./shortcutLabels";
 import { catalogWorkspaces, frontCheckout, type Checkout } from "./snapshot";
@@ -16,21 +17,20 @@ import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { ViewAreas } from "./ViewAreas";
 import { workspaceKey } from "./viewLayout";
-import { TOOLS, type LaneFrame, type LaneSizes, type Tool, type WorkspaceView } from "./workspace";
+import { TOOLS, TOOL_SCOPES, type LaneFrame, type LaneSizes, type Tool, type WorkspaceView } from "./workspace";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
 
 // The right lane and its tool rail (PRD right-lane D-01, D-05, D-08, D-09):
 // one lane shows one tool at a time, Files (the View areas, with the file
-// tree as a column of its own), Changes (History), Sessions and Memory, and
+// tree as a column of its own), Changes (History), Work and Memory, and
 // the rail at the body's right edge opens, switches and closes it. The tool,
 // the pin, the tree and the widths are the front Workspace's, kept by the
 // core; whether an unpinned lane is up and whether it is expanded are this
 // page's (`ui.ts`).
 
-const TOOL_NAMES = { files: "panes.lane.files", changes: "panes.lane.changes", agent_sessions: "panes.lane.sessions", memory: "panes.lane.memory" } as const satisfies Record<Tool, MessageKey>;
-const TOOL_ICONS: Record<Tool, LucideIcon> = { files: FilesIcon, changes: FileDiffIcon, agent_sessions: MessagesSquareIcon, memory: BrainIcon };
-/** The chord that opens and closes the lane on a tool, where one does (D-12). */
+const TOOL_NAMES = { files: "panes.lane.files", changes: "panes.lane.changes", work: "work.title", memory: "panes.lane.memory" } as const satisfies Record<Tool, MessageKey>;
+const TOOL_ICONS: Record<Tool, LucideIcon> = { files: FilesIcon, changes: FileDiffIcon, work: SquareKanbanIcon, memory: BrainIcon };
 
 /** Whether a lane drawn this way is on screen. */
 export function laneUp(mode: LaneFrame["mode"]): boolean {
@@ -38,19 +38,23 @@ export function laneUp(mode: LaneFrame["mode"]): boolean {
 }
 
 /**
- * What a tool's scope reads as (D-08, B14): the front checkout for Files and
- * Changes, the Project for Sessions and Memory.
+ * What a tool's scope reads as (D-08, B14, D-37): the front checkout for the
+ * checkout's tools (Files, Changes), the Project for the Project's (Work,
+ * Memory), with Work naming all of it.
  */
 function useScope(checkout: Checkout | null): (tool: Tool) => string {
   const { t } = useInterfaceTranslation();
   const project = useShellStore((s) => (checkout ? catalogWorkspaces(s.rest).find((row) => row.checkouts.some((candidate) => candidate.id === checkout.id)) ?? null : null));
   const name = checkout ? (checkout.branch ?? checkout.label) : "";
   const projectName = project?.label ?? name;
-  return (tool) => (tool === "agent_sessions" ? t("panes.lane.scopeProject", { project: projectName }) : tool === "memory" ? projectName : name);
+  return (tool) => {
+    const base = TOOL_SCOPES[tool] === "project" ? projectName : name;
+    return tool === "work" ? t("panes.lane.scopeProject", { project: base }) : base;
+  };
 }
 
 /**
- * The tool rail (B1, B2, B23): one icon per tool, its name under it, pressed
+ * The tool rail (B1, B2, B23): one icon per tool, its name in its hint, pressed
  * while the lane shows that tool; pressing it opens the lane on that tool,
  * or closes the lane when it already shows it. The Files icon counts the
  * views open while the lane does not show them (B17), and Memory's dot says
@@ -66,23 +70,31 @@ export function ToolRail({ actions }: { actions: Actions }) {
     return Boolean(project?.enabled && project.questions.length > 0 && project.workspace_id === frontCheckout(state.rest)?.workspace_id);
   });
   const scope = useScope(checkout);
+  // The Work icon's number: the Needs You of Sessions and PRs added, once each (PRD work-tab-pr-lens B4).
+  const work = useWorkCounts(null).total;
   const up = laneUp(drawn.mode);
   // The rail is always drawn, so Memory's dot reads its Project whichever tool shows.
   useMemoryProject(actions);
   return (
     <nav className="flex w-(--size-tool-rail) shrink-0 flex-col items-center gap-xxs border-l border-border bg-sidebar py-xs" aria-label={t("panes.lane.rail")} data-tool-rail="true">
-      {TOOLS.map((tool) => {
+      {TOOLS.map((tool, index) => {
         const Icon = TOOL_ICONS[tool];
         const pressed = up && drawn.tool === tool;
         const name = t(TOOL_NAMES[tool]);
         const count = tool === "files" && !pressed ? views : 0;
+        const needs = tool === "work" ? work : 0;
+        // One short rule where the Project's tools end and the checkout's begin (D-37).
+        const before = TOOLS[index - 1];
+        const boundary = before !== undefined && TOOL_SCOPES[before] !== TOOL_SCOPES[tool];
         return (
-          <Hint key={tool} label={`${name} · ${scope(tool)}`} side="left">
+          <Fragment key={tool}>
+          {boundary ? <span aria-hidden="true" className="my-xs h-(--size-hairline) w-(--size-icon-lg) shrink-0 bg-border" data-tool-rail-divider="true" /> : null}
+          <Hint label={`${name} · ${scope(tool)}`} side="left">
             <button
               type="button"
               aria-pressed={pressed}
               aria-label={name}
-              aria-description={count > 0 ? t("panes.workspace.viewsOpen", { count }) : undefined}
+              aria-description={count > 0 ? t("panes.workspace.viewsOpen", { count }) : needs > 0 ? t("work.count", { count: needs }) : undefined}
               className={`relative flex size-(--size-tool-rail-button) items-center justify-center rounded-md outline-none hover:bg-secondary hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${pressed ? "bg-secondary font-medium text-foreground" : "text-muted-foreground"}`}
               data-lane-tool={tool}
               onClick={() => actions.toggleTool(tool)}
@@ -94,9 +106,15 @@ export function ToolRail({ actions }: { actions: Actions }) {
                   {count}
                 </span>
               ) : null}
+              {needs > 0 ? (
+                <span aria-hidden="true" className="absolute right-0 top-0 flex h-(--size-icon) min-w-(--size-icon) items-center justify-center rounded-full bg-warning px-xxs text-micro tabular-nums text-background" data-lane-work-count={needs}>
+                  {needs}
+                </span>
+              ) : null}
               {tool === "memory" && asking ? <span role="img" aria-label={t("memory.questionsWaiting")} className="absolute right-xs top-xs size-(--size-status-mark) rounded-full bg-warning" data-lane-tool-dot="memory" /> : null}
             </button>
           </Hint>
+          </Fragment>
         );
       })}
       <LaneMenu actions={actions} />
@@ -163,9 +181,14 @@ export function Lane({ view, tool, frame, sizes, checkout, actions }: { view: Wo
   return (
     <aside className="flex h-full min-h-0 min-w-0 flex-1 flex-col text-foreground" aria-label={t("panes.lane.aria")} data-lane={tool}>
       <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-xxs border-b border-border pl-md pr-xs text-caption" data-lane-header="true">
-        <span className="min-w-0 flex-1 truncate" data-lane-scope={scope(tool)}>
+        <span className="min-w-0 flex-1 truncate" data-lane-scope={scope(tool)} data-lane-scope-kind={TOOL_SCOPES[tool]}>
           <span className="font-semibold text-foreground">{t(TOOL_NAMES[tool])}</span>
-          <span className="text-subtle-foreground"> · {scope(tool)}</span>
+          {/* The icon replaces the dot to the eye; the dot stays for a reader, so the text still says `name · scope` (B54). */}
+          <span className="sr-only"> · </span>
+          <span className="ml-xs text-subtle-foreground">
+            {TOOL_SCOPES[tool] === "project" ? <FolderIcon aria-hidden="true" className="mr-xs inline size-(--size-icon-sm) align-middle" /> : <GitBranchIcon aria-hidden="true" className="mr-xs inline size-(--size-icon-sm) align-middle" />}
+            {scope(tool)}
+          </span>
         </span>
         <Hint label={pinHint}>
           <Button variant={view.pinned ? "secondary" : "ghost"} size="icon-sm" className={view.pinned ? "text-primary" : "text-muted-foreground"} aria-pressed={view.pinned} aria-label={t("panes.lane.pin")} data-lane-pin={view.pinned ? (frame.narrowPin ? "narrow" : "on") : "off"} onClick={() => actions.setLanePinned(!view.pinned)}>
@@ -190,7 +213,7 @@ export function Lane({ view, tool, frame, sizes, checkout, actions }: { view: Wo
         {filesShown ? null : (
           <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={t(TOOL_NAMES[tool])} data-tool={tool}>
             {/* History reads the front checkout's Git through its own host. */}
-            {tool === "agent_sessions" ? <AgentSessions actions={actions} /> : tool === "memory" ? <MemoryTab actions={actions} /> : <HistoryList actions={actions} />}
+            {tool === "work" ? <WorkPanel actions={actions} /> : tool === "memory" ? <MemoryTab actions={actions} /> : <HistoryList actions={actions} />}
           </section>
         )}
       </div>

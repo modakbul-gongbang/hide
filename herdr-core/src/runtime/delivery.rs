@@ -2038,7 +2038,7 @@ pub(crate) mod tests {
             let mut ledger = (*guard.delivery_state().unwrap()).clone();
             ledger.agents.push(crate::coordination::AgentRecord {
                 id: "agent-7".into(),
-                name: "recipient".into(),
+                name: Some("recipient".into()),
                 machine: crate::node::TEST_NODE.into(),
                 host_scope: "fixture-scope".into(),
                 native_machine: "fixture-machine".into(),
@@ -2527,7 +2527,8 @@ pub(crate) mod tests {
         for (id, pane) in [("agent-1", "lead"), ("agent-2", "child")] {
             ledger.agents.push(crate::coordination::AgentRecord {
                 id: id.into(),
-                name: pane.into(),
+                // A name that is not the pane id: a pane id is no name.
+                name: Some(format!("{pane}-agent")),
                 machine: crate::node::TEST_NODE.into(),
                 host_scope: "scope".into(),
                 native_machine: "fixture-machine".into(),
@@ -2689,7 +2690,7 @@ pub(crate) mod tests {
         let variant = |id: u64, pane: &str| {
             let mut record = child.clone();
             record.id = format!("agent-{id}");
-            record.name = pane.into();
+            record.name = Some(format!("{pane}-agent"));
             record.pane = pane.into();
             record.actor.pane_id = pane.into();
             record.parent = None;

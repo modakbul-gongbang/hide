@@ -167,6 +167,8 @@ PACKAGE_PATHS = (
 POLICY_ONLY = (
     "agents/*", "site/*", "plugins/*", "tools/*", "spikes/*",
     ".gitignore", "web/.gitignore", "desktop/.gitignore",
+    # hide's own license and copyright notice; no build or package reads them.
+    "LICENSE", "NOTICE",
     ".github/pull_request_template.md", ".github/dependabot.yml",
     # The contribution intake: forms, the approved list and the gate that reads it.
     ".github/ISSUE_TEMPLATE/*", ".github/DISCUSSION_TEMPLATE/*", ".github/APPROVED_CONTRIBUTORS",
