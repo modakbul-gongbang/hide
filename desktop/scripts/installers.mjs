@@ -133,6 +133,8 @@ async function buildWindows(app, version, work) {
         installerIcon: path.join(resources, "hide.ico"),
         uninstallerIcon: path.join(resources, "hide.ico"),
         shortcutName: "hide",
+        // Settings > Apps lists hide by name, with the version in its own column (B2).
+        uninstallDisplayName: "${productName}",
         deleteAppDataOnUninstall: false,
         differentialPackage: true,
         include: path.join(resources, "windows", "installer.nsh"),
