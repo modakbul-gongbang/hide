@@ -23,7 +23,7 @@ export function memoryCards(project: ProjectMemory): MemoryRow[] {
     const byNumber = new Map(project.rows.map((row) => [row.number, row]));
     return project.search.numbers.flatMap((number) => byNumber.get(number) ?? []);
   }
-  return project.rows.filter((row) => !asked.has(row.number) && !["running", "unconfirmed", "pr_open"].includes(row.promotion?.state ?? ""));
+  return project.rows.filter((row) => !asked.has(row.number) && !PROGRESS_STATES.includes(row.promotion?.state ?? ""));
 }
 
 /**
@@ -74,13 +74,16 @@ function pad(value: number): string {
 
 export type MemoryProgress = { key: string; pr: number | null; url: string | null; cards: [MemoryRow, ...MemoryRow[]] };
 
+/** A card on its way into the repository: drawn as a progress row, never as an ordinary card. */
+const PROGRESS_STATES: readonly string[] = ["running", "unconfirmed", "pr_open", "building"];
+
 /** A confirmed PR or a single ledger-bound agent attempt, never a guessed branch/name. */
 export function memoryProgress(project: ProjectMemory): MemoryProgress[] {
   const groups = new Map<string, MemoryProgress>();
   for (const row of project.rows) {
     const promotion = row.promotion;
-    if (!promotion || !["running", "unconfirmed", "pr_open"].includes(promotion.state)) continue;
-    const pr = promotion.state === "pr_open" ? promotion.pr_number : null;
+    if (!promotion || !PROGRESS_STATES.includes(promotion.state)) continue;
+    const pr = promotion.state === "pr_open" || promotion.state === "building" ? promotion.pr_number : null;
     const identity = pr !== null ? githubPullRequestIdentity(promotion.pr_url) : null;
     const url = identity !== null ? promotion.pr_url! : null;
     const key = identity !== null ? `pr:${identity}` : promotion.state === "running" && promotion.agent?.pane_id ? `agent:${promotion.agent.pane_id}:${promotion.started_at_unix_ms ?? row.number}` : `card:${row.number}`;
@@ -93,7 +96,7 @@ export function memoryProgress(project: ProjectMemory): MemoryProgress[] {
 
 /** After PR creation only a Hide AI promotion origin and its live, repository-qualified PR prove the agent. */
 export function memoryProgressAgent(group: MemoryProgress, pull: PullRequest | undefined, agents: AgentRow[]): AgentRow | undefined {
-  if (group.pr === null) {
+  if (group.pr === null || group.cards[0].promotion?.state === "building") {
     const pane = group.cards[0].promotion?.agent?.pane_id;
     return pane ? agents.find((agent) => agent.pane_id === pane) : undefined;
   }
@@ -111,6 +114,7 @@ export function memoryProgressStatus(group: MemoryProgress, pull: PullRequest | 
   if (pull?.state === "merged" || pull?.state === "closed") return { key: pull.state === "merged" ? "agentSessions.pr.merged" : "agentSessions.pr.closed", tone: "text-muted-foreground", agentLink: false };
   if (pull?.checks === "failed") return { key: "agentSessions.pr.failed", tone: "text-destructive", agentLink: true };
   if (pull?.review === "changes_requested") return { key: "board.review.changes", tone: "text-warning", agentLink: true };
+  if (group.cards[0].promotion?.state === "building") return { key: "memory.progress.building", tone: "text-muted-foreground", agentLink: true };
   if (agent?.state.asking) return { key: "memory.progress.asking", tone: "text-warning", agentLink: true };
   if (group.cards[0].promotion?.state === "unconfirmed") return { key: "memory.unconfirmed", tone: "text-muted-foreground", agentLink: false };
   if (group.cards[0].promotion?.state === "running") return { key: "memory.progress.writing", tone: "text-muted-foreground", agentLink: true };
@@ -120,6 +124,7 @@ export function memoryProgressStatus(group: MemoryProgress, pull: PullRequest | 
   return { key: pull ? "memory.prOpen" : "memory.progress.inPr", tone: "text-muted-foreground", agentLink: false };
 }
 
+/** The questions a batch promotion takes: an unbuilt card has nothing to promote, and an `ask` comparison is answered first. */
 export function selectableMemoryQuestions(project: ProjectMemory): Set<number> {
-  return new Set(project.questions.filter((question) => question.kind !== "docs_disagree" || question.document.authority === "card_newer").map((question) => question.number));
+  return new Set(project.questions.filter((question) => question.kind === "docs_disagree" ? question.document.authority === "card_newer" : question.kind !== "unbuilt").map((question) => question.number));
 }
