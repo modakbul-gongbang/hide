@@ -117,9 +117,9 @@ test("Command T and Command W from a native page act on its View area, and after
     await expect(viewTabs.filter({ hasText: TITLE })).toHaveCount(0);
     await expect(panes).toHaveCount(2);
 
-    // Command E from the page shows Sessions in the files tool's place and
-    // hands the keyboard to the terminal. A second Command E closes the
-    // lane; Command W must still close the pane, not the page (B20, B23).
+    // Command E from the page closes the pinned lane and leaves the keyboard
+    // with the terminal; the next Command E brings it back on Files, and one
+    // more closes it. Command W must still close the pane, not the page (B20, B23).
     await showExplorer(page);
     await page.locator('[data-explorer-row$="/page.html"]').click({ button: "right" });
     await page.locator('[data-explorer-menu] [data-menu-item="open-browser"]').click();
@@ -128,8 +128,10 @@ test("Command T and Command W from a native page act on its View area, and after
     await enterPage(app, page);
     await handBack(page);
     await menuClick(app, "toggle_lane");
-    await expect(page.locator('[data-lane="files"]')).toBeVisible();
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
     await expect(page.locator(`[data-terminal-host="${herdr.panes[0]}"] textarea`)).toBeFocused();
+    await menuClick(app, "toggle_lane");
+    await expect(page.locator('[data-lane="files"]')).toBeVisible();
     await menuClick(app, "toggle_lane");
     await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
     await menuClick(app, "close_tab");
