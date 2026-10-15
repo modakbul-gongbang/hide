@@ -277,8 +277,8 @@ An exclusively owned clean document closes with its tab; unsaved content remains
 An unanswered connected-device session or unresolved catalog preserves saved state; a fully answered catalog with no tabs closes its final presentation.
 Local and connected-device callers follow the same rules; the phone keeps its existing flow.
 No additional badge, notice or setting is introduced.
-The checkout shares the existing cap of 64 Views; each tab has its own six View areas and depth three, so a tab can always open a View while other tabs hold theirs.
-An open that would add a 65th View first closes the View looked at longest ago in any of the checkout's tabs, the way closing its last View closes a file (Reopen Closed brings it back); a View on screen, which is its area's front in the tab shown, and a document with unsaved work never close.
+Each tab keeps at most 16 Views in its own six View areas and depth three, so a tab can always open a View while other tabs hold theirs; the checkout holds at most 256 Views across its tabs.
+An open that would add a tab's 17th View first closes that tab's View looked at longest ago, and one that would add the checkout's 257th closes the View looked at longest ago in any of the checkout's tabs, the way closing its last View closes a file (Reopen Closed brings it back); a View on screen, which is its area's front in the tab shown, and a document with unsaved work never close.
 Only when nothing can close is the open refused, with the View notice, and existing content stays as it was.
 Web owner: none, the shell draws the existing snapshot projection.
 Core owner: `herdr-core/src/runtime/{view_bookmarks,view_areas,workspace_control,workspace_view}.rs` and `herdr-core/src/workspace_views.rs`.

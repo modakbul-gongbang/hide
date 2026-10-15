@@ -6,9 +6,11 @@
 import { createHash } from "node:crypto";
 import type { BrowserCommand, BrowserPlacement, BrowserRect, BrowserSync } from "../../../web/src/host";
 
-/** A Workspace holds at most this many displays (`MAX_VIEW_DISPLAYS`). */
-export const MAX_SYNCED_DISPLAYS = 64;
-export const MAX_RETAINED_DISPLAYS = 16_384;
+/** A Workspace holds at most this many displays across its tabs, and so does
+ * the tab shown (`MAX_VIEW_DISPLAYS`). */
+export const MAX_SYNCED_DISPLAYS = 256;
+/** Displays across at most 256 Workspaces. */
+export const MAX_RETAINED_DISPLAYS = 256 * MAX_SYNCED_DISPLAYS;
 /** Positive areas across at most 256 Workspaces: each Agent tab has its own
  * View areas and every area but an empty front one holds a display, so a
  * Workspace has at most one per display plus that empty one. */
