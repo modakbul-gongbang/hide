@@ -2285,7 +2285,7 @@ The app follows the phone's light or dark setting, draws text a quarter larger t
 
 ## Keyboard shortcuts per system
 
-Web owner: `web/src/shortcuts.ts` (the registry, the rule and its exceptions), `web/src/keys.ts` (terminal keys), `web/src/shortcutLabels.ts` (every chord a screen prints), `web/src/keyboard.ts` (the window listener); desktop owner: `desktop/src/main/menu.ts` (the menu's accelerators); test owners: `web/src/shortcuts.test.ts`, `web/src/shortcutsDoc.test.ts` (fails when the Every command table below and the registry disagree), `web/src/keys.test.ts`, `desktop/src/main/menu.test.ts`, and `web/e2e/chords.ts`, through which every web e2e presses its chords as the runner's system does.
+Web owner: `web/src/shortcuts.ts` (the registry, the rule and its exceptions), `web/src/keys.ts` (terminal keys), `web/src/shortcutLabels.ts` (every chord a screen prints), `web/src/keyboard.ts` (the window listener); desktop owner: `desktop/src/main/menu.ts` (the menu's accelerators); test owners: `web/src/shortcuts.test.ts`, `web/src/shortcutsDoc.test.ts` (fails when the Every command table below and the registry disagree), `web/src/keys.test.ts`, `desktop/src/main/menu.test.ts`, `web/e2e/korean-input.spec.ts` (Hangul composed through the browser's input-method path: the ⇧↩ order and a composing Escape), and `web/e2e/chords.ts`, through which every web e2e presses its chords as the runner's system does.
 
 The rest of this document writes chords as macOS has them; this section is how Windows and Linux press each one.
 Which system applies is the one the operator types on: the desktop app's, or the browser's for a browser tab, whatever system the daemon runs on.

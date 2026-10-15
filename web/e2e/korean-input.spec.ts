@@ -3,24 +3,20 @@
 // right after them, and an Escape the input method answers while a dialog's
 // field is composing leaves that dialog open.
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import fs from "node:fs";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { composeKorean } from "./ime";
 import { enterWorkspace } from "./wire";
 import { chord } from "./chords";
+import { animationsFinished } from "./wait";
 
 test.describe.configure({ timeout: 120_000 });
 
 /** What the pane's program has read since the log held `from` bytes, as text. */
 function heard(log: string, from: number): string {
   return fs.readFileSync(log).subarray(from).toString("utf8");
-}
-
-/** Two animation frames, so an effect of the last event has run before the test asserts it did not happen. */
-async function twoFrames(page: Page): Promise<void> {
-  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 }
 
 // @platform: Hangul bytes reach the agent's PTY through the platform's Herdr.
@@ -41,9 +37,23 @@ test("⇧↩ right after a Hangul syllable reaches the program after that syllab
     await textarea.focus();
     const before = fs.readFileSync(herdr.inputLogs[0]).length;
 
-    await composeKorean(page, [["ㅇ", "아", "안"]]);
-    // JSON keeps a control byte readable in a failure.
-    await expect.poll(() => JSON.stringify(heard(herdr.inputLogs[0], before)), { timeout: 10_000 }).toBe(JSON.stringify("안"));
+    // While a syllable is marked, the terminal draws it in its own colours,
+    // not xterm's white on black.
+    const cdp = await page.context().newCDPSession(page);
+    try {
+      await cdp.send("Input.imeSetComposition", { text: "ㅎ", selectionStart: 1, selectionEnd: 1 });
+      const colours = (selector: string) => view.locator(selector).evaluate((node) => [getComputedStyle(node).backgroundColor, getComputedStyle(node).color]);
+      const [background] = await colours(".xterm-viewport");
+      const [, foreground] = await colours(".xterm-rows");
+      await expect.poll(() => colours(".composition-view.active")).toEqual([background, foreground]);
+    } finally {
+      await cdp.detach();
+    }
+
+    // Two syllables, so the second's start reads where the first ended. Exactly
+    // ed959c eab880 reaches the program; JSON keeps a control byte readable in a failure.
+    await composeKorean(page, [["하", "한"], ["ㄱ", "그", "글"]]);
+    await expect.poll(() => JSON.stringify(heard(herdr.inputLogs[0], before)), { timeout: 10_000 }).toBe(JSON.stringify("한글"));
 
     // macOS Chromium ends the last syllable with `compositionend` and then
     // delivers the ⇧↩ that ended it as a second keydown, before xterm sends
@@ -51,14 +61,14 @@ test("⇧↩ right after a Hangul syllable reaches the program after that syllab
     // one task, so the test decides it rather than the scheduler.
     await textarea.evaluate((node: HTMLTextAreaElement) => {
       node.dispatchEvent(new CompositionEvent("compositionstart", { data: "" }));
-      node.value += "녕";
-      node.dispatchEvent(new CompositionEvent("compositionupdate", { data: "녕" }));
-      node.dispatchEvent(new CompositionEvent("compositionend", { data: "녕" }));
+      node.value += "로";
+      node.dispatchEvent(new CompositionEvent("compositionupdate", { data: "로" }));
+      node.dispatchEvent(new CompositionEvent("compositionend", { data: "로" }));
       node.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
     });
     // ⇧↩ is ESC CR, the newline Claude Code and Codex read without sending;
     // a Unix tty hands the program the CR as LF, the Windows console as CR.
-    await expect.poll(() => JSON.stringify(heard(herdr.inputLogs[0], before)), { timeout: 10_000 }).toMatch(/^"안녕\\u001b\\[rn]"$/);
+    await expect.poll(() => JSON.stringify(heard(herdr.inputLogs[0], before)), { timeout: 10_000 }).toMatch(/^"한글로\\u001b\\[rn]"$/);
   } finally {
     daemon?.stop();
     herdr.stop();
@@ -85,7 +95,9 @@ test("Escape while Hangul is composing in the search field keeps ⌘K open, and 
       await cdp.send("Input.imeSetComposition", { text: "하", selectionStart: 1, selectionEnd: 1 });
       await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
       await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
-      await twoFrames(page);
+      // A close would have started its exit animation by now; once the
+      // animations and two frames have run, the palette is still there.
+      await animationsFinished(page);
       await expect(palette).toHaveCount(1);
       await cdp.send("Input.insertText", { text: "하" });
     } finally {

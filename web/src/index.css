@@ -99,7 +99,9 @@
 }
 
 /* xterm's own sheet draws the syllable an input method is composing white on
-   black; it takes the terminal's colours, underlined as the system draws it. */
+   black; it takes the terminal's colours, underlined as the system draws it.
+   Like the viewport rule above, it wins by coming after xterm's sheet, which
+   `main.tsx` imports (through `App`) before this file. */
 .xterm .composition-view {
   background-color: var(--background);
   color: var(--foreground);

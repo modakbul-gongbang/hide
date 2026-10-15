@@ -388,8 +388,10 @@ export function installKeyboard(actions: Actions): () => void {
     if (event.isComposing || event.keyCode === 229) {
       // An Escape while an input method composes belongs to the input method,
       // which has already answered it; Radix's own Escape listener does not
-      // ask, and would close the dialog the operator is typing Hangul in.
-      if (event.key === "Escape") event.stopPropagation();
+      // ask, and would close the dialog the operator is typing Hangul in. A
+      // terminal's textarea keeps it: xterm decides what a composing key does.
+      const terminal = event.target instanceof Element && event.target.closest(".xterm");
+      if (event.key === "Escape" && !terminal) event.stopPropagation();
       return;
     }
     // AltGr types a character on Windows and Linux layouts, and Windows

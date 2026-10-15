@@ -81,7 +81,7 @@ Read [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#2-identify-the-build-and-pr
 
 | Tool | Addresses | Use it for | Not for |
 | --- | --- | --- | --- |
-| Playwright `_electron` through `desktop/e2e/fixture.ts` | The app it launched | Typing, chords and clicks through the renderer, without OS focus | Native input: a pinch, a native drag, IME composition (tag those `@needs-focus`) |
+| Playwright `_electron` through `desktop/e2e/fixture.ts` | The app it launched | Typing, chords and clicks through the renderer, without OS focus | Native input: a pinch, a native drag, a physical input method and its candidate window (tag those `@needs-focus`); the composition events a page receives are driven through CDP `Input.imeSetComposition` in a web e2e (`web/e2e/ime.ts`), tagged `@platform` |
 | `screencapture -x -o -l <window-id>` | One window | A current frame of the candidate without activating it | Minimized, hidden, or off-Space windows |
 | `desktop/e2e/electron-window.ts` | The Electron process and sole BrowserWindow Playwright launched | The running candidate's renderer, without Screen Recording permission or OS focus; retains its PID, window id, bounds, build and capture method | OS window chrome, compositor presentation and native input; renderer captures do not prove those surfaces |
 | The window list below | PID to window id | Resolving the candidate's window id before each capture | |
@@ -107,7 +107,7 @@ osascript -l JavaScript -e 'ObjC.import("CoreGraphics"); ObjC.deepUnwrap(ObjC.ca
 3. Resolve the candidate's PID from the process your launch started, never by name, then its window id from the window list.
    Re-resolve both after any restart.
 4. Before each action, confirm the target again; after each action, observe again with a fresh capture, accessibility read, or pane read, rather than trusting the tool's success reply.
-5. Drive a scenario that needs real key semantics (an Enter or Tab override, IME composition, a chord through the menu, a pinch, a native drag) with a `@needs-focus` spec, or in a foreground window agreed with the operator.
+5. Drive a scenario that needs real key semantics (an Enter or Tab override, a physical input method's key order, a chord through the menu, a pinch, a native drag) with a `@needs-focus` spec, or in a foreground window agreed with the operator.
    A scenario that cannot be driven either way is covered by tests and reported as not observed natively.
 6. Quit only what you launched, by exact PID, stop the private server with `herdr server stop` under the same environment, and check that no process of your run remains.
 

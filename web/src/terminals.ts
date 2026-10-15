@@ -68,6 +68,8 @@ type Instance = {
    * textarea holds the final syllable (its `CompositionHelper`).
    */
   commitPending: boolean;
+  /** Keys the custom handler took that wait behind such a send, in order. */
+  keysWaiting: number;
   disposeHandlers: () => void;
 };
 
@@ -542,6 +544,7 @@ function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLin
     wheel: { rows: 0, remainder: 0, column: 0, row: 0, modifiers: 0, frame: null },
     press: null,
     commitPending: false,
+    keysWaiting: 0,
     disposeHandlers: () => {},
   };
   // Right after a new tab or split was asked for, keys go to that request's
@@ -572,9 +575,15 @@ function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLin
     // Return that ends a Hangul syllable as a second keydown after
     // `compositionend`, so ⇧↩ right after "안녕" would reach the program as
     // "안", the newline, then "녕". The key waits one task instead, queued
-    // behind xterm's send, so the syllable goes first.
-    if (instance.commitPending) setTimeout(() => instances.get(paneId) === instance && run(), 0);
-    else run();
+    // behind xterm's send, so the syllable goes first; a key pressed while
+    // one waits queues behind it rather than overtaking it.
+    if (instance.commitPending || instance.keysWaiting > 0) {
+      instance.keysWaiting += 1;
+      setTimeout(() => {
+        instance.keysWaiting -= 1;
+        if (instances.get(paneId) === instance) run();
+      }, 0);
+    } else run();
     return false;
   });
   term.onData((data) => send(new TextEncoder().encode(data)));
