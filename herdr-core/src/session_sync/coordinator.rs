@@ -1509,22 +1509,12 @@ fn spawn_focus_readback(
             let mut slot = Slot(runtime.clone(), true);
             let mut next = Some(first);
             while let Some(identity) = next.take() {
-                let result = live::confirm_pane_focus(connector.as_ref(), &identity.target_id);
-                if let Err(error) = &result {
-                    crate::diagnostic!(json!({
-                        "component": "pane_focus",
-                        "kind": "pane.focus.stream_readback_failed",
-                        "pane_id": identity.target_id,
-                        "serial": identity.serial,
-                        "connection_generation": identity.live_generation,
-                        "message": error.message(),
-                    }));
-                }
+                let answer = live::confirm_pane_focus(connector.as_ref(), &identity.target_id);
                 let Some(runtime) = runtime.upgrade() else {
                     return;
                 };
                 let (changed, following) = match runtime.lock() {
-                    Ok(mut guard) => guard.finish_pane_focus_readback(identity, result.is_ok()),
+                    Ok(mut guard) => guard.finish_pane_focus_readback(identity, answer),
                     Err(_) => return,
                 };
                 drop(runtime);

@@ -95,6 +95,97 @@ fn a_v1_store_keeps_its_sessions_and_links_through_migration() {
     assert_eq!(LinkStore::open(&path).err().unwrap(), "links_store_newer");
 }
 
+/// The shape a build before session naming left (a read-only copy of an
+/// installed `links.sqlite3`, 2026-10-14): Pi children recorded under their
+/// files, one of them under a Pi parent's file, while the reader recorded
+/// both sessions and their requests under the ids in their headers.
+#[test]
+fn edges_left_under_read_files_move_to_the_readers_names_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("links.sqlite3");
+    let device = "8f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5";
+    let lead = "/Users/example/.pi/agent/sessions/--work-app--/2026-10-10T04-36-40-242Z_01a1.jsonl";
+    let fork = "/Users/example/.pi/agent/sessions/--work-app--/2026-10-10T05-23-34-783Z_01a2.jsonl";
+    let unread =
+        "/Users/example/.pi/agent/sessions/--work-app--/2026-10-10T06-00-00-000Z_01a3.jsonl";
+    let (store, _) = LinkStore::open(&path).unwrap();
+    store
+        .connection
+        .execute_batch(&format!(
+            "DELETE FROM meta WHERE key='session_names';
+             INSERT INTO sessions(device,agent,id,path,cwd,started_at) VALUES
+              ('{device}','claude','claude-lead',NULL,'/work/app',1),
+              ('{device}','pi','01a1','{lead}','/work/app',2),
+              ('{device}','pi','01a2','{fork}','/work/app',3);
+             INSERT INTO cursors(device,path,agent,stamp,session) VALUES
+              ('{device}','{lead}','pi','s','01a1'),('{device}','{fork}','pi','s','01a2');
+             INSERT INTO session_parents VALUES
+              ('{device}','pi','{lead}','claude','claude-lead','bell-guard-lead','{device}'),
+              ('{device}','pi','{fork}','pi','{lead}','re-pi','{device}'),
+              ('{device}','pi','{unread}','claude','claude-lead','bell-guard-lead','{device}');
+             INSERT INTO ledger_requests(device,agent,id,offset,at,text,author) VALUES
+              ('{device}','pi','01a1',0,2,'brief from the lead','\"operator\"'),
+              ('{device}','pi','01a2',0,3,'brief from re-pi','\"operator\"');"
+        ))
+        .unwrap();
+    drop(store);
+
+    let ((store, _), records) = crate::diagnostics::capture(|| LinkStore::open(&path).unwrap());
+    let pi = |id: &str| SessionIdentity {
+        device_id: device.into(),
+        agent: "pi".into(),
+        session_id: id.into(),
+    };
+    let lead_record = store
+        .ledger_record(&SessionIdentity {
+            device_id: device.into(),
+            agent: "claude".into(),
+            session_id: "claude-lead".into(),
+        })
+        .unwrap();
+    assert_eq!(lead_record.children.len(), 1);
+    assert_eq!(lead_record.children[0].session, pi("01a1"));
+    assert_eq!(lead_record.children[0].children[0].session, pi("01a2"));
+    for (id, parent) in [("01a1", "bell-guard-lead"), ("01a2", "re-pi")] {
+        assert_eq!(
+            store.ledger_record(&pi(id)).unwrap().requests[0].author,
+            WorkAuthor::Parent
+        );
+        assert_eq!(
+            store
+                .ledger_context(&pi(id))
+                .unwrap()
+                .parent_name
+                .as_deref(),
+            Some(parent)
+        );
+    }
+    // A file the reader never read keeps its edge for the read to name.
+    assert_eq!(
+        store
+            .connection
+            .query_row(
+                "SELECT count(*) FROM session_parents WHERE id=?1",
+                [unread],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        1
+    );
+    assert!(
+        records.iter().any(|record| {
+            record["kind"] == "store.session_names_moved" && record["files"] == 2
+        })
+    );
+    drop(store);
+    let (_, again) = crate::diagnostics::capture(|| LinkStore::open(&path).unwrap());
+    assert!(
+        !again
+            .iter()
+            .any(|record| record["kind"] == "store.session_names_moved")
+    );
+}
+
 #[test]
 fn questions_stay_requests_and_summary_off_search_excludes_judgments() {
     let directory = tempfile::tempdir().unwrap();
