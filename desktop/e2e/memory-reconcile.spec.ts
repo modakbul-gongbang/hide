@@ -70,12 +70,12 @@ test("Memory compares sources, limits a batch and groups a confirmed PR", async 
     await tab.locator('[data-memory-pr-group="72"] [data-memory-row-toggle="9"]').click();
     await expect(tab.locator('[data-memory-progress-detail="9"] [data-memory-preview]')).toHaveCount(2);
     await tab.locator('[data-memory-progress-detail="9"] [data-memory-open-pr="72"]').click();
-    // The PR button asks the core for the PR's card (PRD work-tab-pr-lens B20); this
-    // fixture's PR 72 is no pull request of any repository, so the core refuses it and
-    // the lane stays on Memory.
+    // The PR button asks the core for the PR's card (PRD work-tab-pr-lens B20): this
+    // fixture lists PR 72, so its `PR #72` tab opens in the lane's files tool, and
+    // no Overview opens.
     await expect.poll(() => sent.get("pr_open")).toMatchObject({ pr_number: 72 });
+    await expect(page.locator('[data-lane="files"] [data-pr-card="72"]')).toBeVisible();
     await expect(page.locator("[data-overview-screen]")).toHaveCount(0);
-    await expect(tab.locator('[data-memory="on"]')).toBeVisible();
     // Return to this Memory, then the light/narrow state.
     await (await showProjectRow(page, page.locator("[data-project]", { hasText: "sample" }).locator("[data-checkout]").first())).click();
     await showTool(page, "memory");
