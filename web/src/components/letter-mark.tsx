@@ -23,7 +23,7 @@ export function PaneLetterButton({ paneId, letters, onDeliver }: { paneId: strin
       >
         <MailIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-subtle-foreground" />
         {letters > 1 ? <span aria-hidden="true" className="font-mono text-subtle-foreground">{letters}</span> : null}
-        <span aria-hidden="true" className="hidden whitespace-nowrap text-foreground @min-[var(--size-pane-parent-breakpoint)]/pane:inline">
+        <span aria-hidden="true" className="hidden whitespace-nowrap text-foreground pane-wide:inline">
           {t("panes.letters.deliver")}
         </span>
       </button>
