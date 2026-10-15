@@ -6,16 +6,23 @@ name: hide release
 #     lane: the workspace, the desktop and web end-to-end suites, Windows and
 #     the packages;
 #   - the workspace tests and the web and desktop checks pass again here;
-#   - `package.yml` builds the three packages and starts each one: the macOS
-#     app signed with the Developer ID certificate and notarized, then opened
-#     by its packaged-app specs; the Windows app opened with its window; the
-#     Windows and Linux packages installed and their daemons started.
-# One job then drafts the release with exactly those six files, verifies it,
-# and publishes it. The tag names the release's kind (`releaseKind` in
-# scripts/check-release-assets.mjs, the one place it is read): `vX.Y.Z` is
-# published as the latest, which withhide.dev's download links follow;
+#   - `package.yml` builds each system's installers and update files and
+#     installs and starts each one: the macOS dmg and zip signed with the
+#     Developer ID certificate and notarized, the app the zip holds opened by
+#     its packaged-app specs; the Windows installer installed, installed again
+#     while Herdr runs and uninstalled, and the installed app opened with its
+#     window; the Linux deb installed on Ubuntu and the rpm in Fedora, and
+#     every installed daemon started (PRD auto-update D-32).
+# One job then drafts the release with exactly the files
+# `expectedAssetNames` lists (the installers, their checksums, the three
+# update files the app reads and the blockmaps; D-35), verifies each checksum
+# and each update file's sha512 and size, and publishes it. The tag names the
+# release's kind (`releaseKind` in scripts/check-release-assets.mjs, the one
+# place it is read): `vX.Y.Z` is published as the latest, which
+# withhide.dev's download links and the apps on the stable channel follow;
 # `vX.Y.Z-rc.N` runs the same gates and is published as a pre-release that is
-# never the latest, which those links ignore.
+# never the latest, which those links ignore and only an app with preview
+# releases turned on installs.
 # Each upload is a workflow artifact first, so a failed gate drafts nothing and
 # no two jobs race to create the same draft. Immutable releases make a
 # published release final: a bad one is followed by a new version, not edited.
@@ -129,8 +136,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # The three packages by name: package.yml uploads screenshots and logs
-      # beside them, and the asset gate refuses any file it does not expect.
+      # The three systems' release files by name: package.yml uploads
+      # screenshots and logs beside them, and the asset gate refuses any file
+      # it does not expect.
       - uses: actions/download-artifact@v8
         with:
           name: hide-package-macos

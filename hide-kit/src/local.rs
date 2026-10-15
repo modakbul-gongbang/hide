@@ -21,10 +21,15 @@ pub const STANDALONE_REASON: &str = if cfg!(target_os = "macos") {
     "This Hide daemon is not running from an unpacked desktop package, so it installs nothing on this machine; open the packaged Hide app to install"
 };
 
-/// The resources folder of the desktop package `executable` runs from.
+/// The resources folder of the desktop package `executable` runs from: a
+/// macOS bundle's, an unpacked or installed package's, or a Windows build's
+/// runtime copy under `~/.hide/runtime` (`crate::runtime`).
 /// A plain Cargo binary, or a folder merely named `resources`, has no kit.
 pub fn bundled_kit_dir(executable: &Path) -> Option<PathBuf> {
     let resources = executable.parent()?;
+    if crate::runtime::is_runtime_copy(resources) {
+        return Some(resources.to_path_buf());
+    }
     if resources.file_name() == Some(OsStr::new("resources")) {
         let app = resources.parent()?;
         return (resources.join("app.asar").is_file()
@@ -127,6 +132,18 @@ mod tests {
         )
         .unwrap();
         assert!(!holds_package_runtime(&own));
+    }
+
+    #[test]
+    fn a_finished_runtime_copy_is_a_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let copy = crate::layout::runtime_dir(dir.path(), "0.4.0-aaaaaaaaaaaa");
+        std::fs::create_dir_all(&copy).unwrap();
+        let daemon = copy.join(format!("hided{}", std::env::consts::EXE_SUFFIX));
+        std::fs::write(copy.join("app.asar"), "").unwrap();
+        assert_eq!(bundled_kit_dir(&daemon), None, "unfinished: no marker");
+        std::fs::write(copy.join(crate::runtime::MARKER), "0.4.0-aaaaaaaaaaaa").unwrap();
+        assert_eq!(bundled_kit_dir(&daemon), Some(copy));
     }
 
     #[test]

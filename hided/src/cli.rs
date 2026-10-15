@@ -33,6 +33,10 @@ pub enum CommandKind {
         json: bool,
     },
     Stop,
+    /// `hide runtime prepare`: the folder this package's runtime runs from,
+    /// made first on Windows (`hide_kit::runtime`), as one JSON line for the
+    /// desktop host.
+    RuntimePrepare,
     Serve {
         keep_alive: bool,
     },
@@ -87,7 +91,7 @@ const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [
 
 /// The version this build reports: `HIDE_VERSION` when it was built (a
 /// package passes the version it ships), else the crate's own.
-pub const VERSION: &str = env!("HIDE_BUILD_VERSION");
+pub const VERSION: &str = crate::VERSION;
 
 /// This build's place in main's history (`HIDE_BUILD_ORDER`, its
 /// first-parent commit count), which orders two builds of one release
@@ -132,6 +136,10 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
             Ok(CommandKind::Status { json })
         }
         Some("stop") => Ok(CommandKind::Stop),
+        Some("runtime") => match (iter.next().map(String::as_str), iter.next()) {
+            (Some("prepare"), None) => Ok(CommandKind::RuntimePrepare),
+            _ => Err("usage: hide runtime prepare".to_owned()),
+        },
         Some("serve") => {
             let keep_alive = iter.any(|arg| arg == "--keep-alive");
             Ok(CommandKind::Serve { keep_alive })
@@ -553,6 +561,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         CommandKind::Status { json: true } => status_json(&env.state_dir),
         CommandKind::Status { json: false } => status(&env.state_dir, env.idle_secs),
         CommandKind::Stop => stop(&env.state_dir),
+        CommandKind::RuntimePrepare => runtime_prepare(&env.home),
         CommandKind::Serve { keep_alive } => serve(env, keep_alive),
         CommandKind::Dev => dev(env),
         CommandKind::BrowserOpen {
@@ -1796,6 +1805,7 @@ fn connect_json(env: &Env) -> Result<(), String> {
 fn needed_keys(kind: &CommandKind) -> Option<&'static [&'static str]> {
     match kind {
         CommandKind::Stop | CommandKind::Status { json: true } => Some(env::STATE_FOLDER_KEYS),
+        CommandKind::RuntimePrepare => Some(&[env::HOME]),
         CommandKind::Status { json: false } => Some(env::STATUS_KEYS),
         _ => None,
     }
@@ -1881,6 +1891,64 @@ fn status(state_dir: &Path, idle_secs: u64) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// Answers the folder the desktop host runs this package's daemon, CLI and
+/// Herdr from, as one JSON line. A Windows package's is a copy outside its
+/// install folder (PRD auto-update D-10), made here once per build, and the
+/// copies of other builds nothing runs from are removed; what could not be
+/// removed is reported to stderr as records the host logs (D-11). Elsewhere
+/// it is the package's own resources folder. A `hide` outside a package has
+/// no runtime to prepare.
+fn runtime_prepare(home: &Path) -> Result<(), String> {
+    let package = std::env::current_exe()
+        .and_then(|path| path.canonicalize())
+        .ok()
+        .as_deref()
+        .and_then(hide_kit::bundled_kit_dir);
+    let Some(package) = package else {
+        println!(
+            "{}",
+            serde_json::json!({ "ok": false, "reason": "not_packaged" })
+        );
+        return Err(
+            "this hide is not from a desktop package, so it has no runtime to prepare".to_owned(),
+        );
+    };
+    if !cfg!(windows) || hide_kit::runtime::is_runtime_copy(&package) {
+        println!(
+            "{}",
+            serde_json::json!({ "ok": true, "dir": package, "copied": false })
+        );
+        return Ok(());
+    }
+    let daemon = package.join(format!("hided{}", std::env::consts::EXE_SUFFIX));
+    let build = hide_kit::runtime::build_name(VERSION, &crate::build_id::of_file(&daemon)?)?;
+    let prepared = hide_kit::runtime::prepare(&package, home, &build)?;
+    let pruned = &prepared.pruned;
+    for name in &pruned.in_use {
+        eprintln!(
+            "{}",
+            serde_json::json!({ "component": "hide", "kind": "runtime.copy_in_use", "copy": name })
+        );
+    }
+    for (name, detail) in &pruned.failed {
+        eprintln!(
+            "{}",
+            serde_json::json!({ "component": "hide", "kind": "runtime.copy_remove_failed", "copy": name, "detail": detail })
+        );
+    }
+    if let Some(count) = pruned.over_cap {
+        eprintln!(
+            "{}",
+            serde_json::json!({ "component": "hide", "kind": "runtime.copies_over_cap", "count": count, "cap": hide_kit::runtime::COPIES_CAP })
+        );
+    }
+    println!(
+        "{}",
+        serde_json::json!({ "ok": true, "dir": prepared.dir, "copied": prepared.copied, "removed": pruned.removed })
+    );
+    Ok(())
 }
 
 fn stop(state_dir: &Path) -> Result<(), String> {

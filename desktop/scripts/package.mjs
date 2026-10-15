@@ -1,14 +1,17 @@
 // Packages the release app for the system this runs on: the Electron host
 // with the release daemon, the hide CLI, the hook helper, the
-// pinned Herdr in its resources folder, archived beside a SHA-256
-// checksum (the Electron release app PRD, D-03 and D-08).
+// pinned Herdr in its resources folder (the Electron release app PRD, D-03),
+// wrapped in that system's installers and the files its updater reads
+// (installers.mjs; PRD auto-update D-08, D-35), each installer beside a
+// SHA-256 checksum, all in desktop/out/release.
 //
 // macOS builds hide.app, with the notification permission helper compiled
-// into Contents/MacOS, as a zip that is either ad-hoc signed or signed with
-// the Developer ID certificate and notarized when HIDE_MACOS_SIGNING asks for
-// it (macos-signing.mjs). Windows x64 builds an unsigned folder as a zip and
-// Linux x64 an unsigned folder as a tar.gz (operator decision 2026-10-03: no
-// signing outside macOS for now). Each is built on its own system, because the release binaries come from that
+// into Contents/MacOS, either ad-hoc signed or signed with the Developer ID
+// certificate and notarized when HIDE_MACOS_SIGNING asks for it
+// (macos-signing.mjs), as a dmg and the zip the updater installs. Windows x64
+// builds an unsigned per-user installer and Linux x64 an unsigned deb and rpm
+// (operator decision 2026-10-03, PRD auto-update D-07: no paid signing outside
+// macOS). Each is built on its own system, because the release binaries come from that
 // system's cargo build; nothing is cross-built.
 //
 // The CLI finds `hided` beside its own file and the daemon offers its own
@@ -18,11 +21,11 @@
 // name, before any app exists (B12); nothing is substituted.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { packager } from "@electron/packager";
+import { APP_ID, buildInstallers } from "./installers.mjs";
 import { assertNotarized, developerIdOptions, macosSigning } from "./macos-signing.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -107,14 +110,12 @@ const version = resolveVersion();
 // seconds rather than after it.
 const signing = platform === "darwin" ? macosSigning(process.env) : null;
 
-// A failed run leaves no app or archive behind, stale or otherwise (B12).
+// A failed run leaves no app or installer behind, stale or otherwise (B12).
 const packaged = path.join(out, `hide-${platform}-${arch}`);
+const release = path.join(out, "release");
 fs.rmSync(packaged, { recursive: true, force: true });
+fs.rmSync(release, { recursive: true, force: true });
 fs.mkdirSync(out, { recursive: true });
-const archivePattern = new RegExp(`^hide-v.*-${system.label}-.*\\.(zip|tar\\.gz)(\\.sha256)?$`);
-for (const entry of fs.readdirSync(out)) {
-  if (archivePattern.test(entry)) fs.rmSync(path.join(out, entry));
-}
 
 // Release hided embeds web/dist, so the web shell is built first; the cargo
 // wrapper reuses the machine's toolchain and keeps output in this worktree.
@@ -133,11 +134,11 @@ if (!/^[0-9]+$/.test(order)) throw new Error(`the package's build order could no
 run("bash", ["scripts/verify-cargo.sh", "release"], { stdio: "inherit", env: { ...process.env, HIDE_VERSION: version, HIDE_COMMIT: commit, HIDE_BUILD_ORDER: order } });
 const herdr = system.herdr();
 
-const release = path.join(repo, "target", "release");
+const cargoRelease = path.join(repo, "target", "release");
 const shipped = [
-  [`hided${exe}`, path.join(release, `hided${exe}`)],
-  [`hide${exe}`, path.join(release, `hide${exe}`)],
-  [`hide-agent-hooks${exe}`, path.join(release, `hide-agent-hooks${exe}`)],
+  [`hided${exe}`, path.join(cargoRelease, `hided${exe}`)],
+  [`hide${exe}`, path.join(cargoRelease, `hide${exe}`)],
+  [`hide-agent-hooks${exe}`, path.join(cargoRelease, `hide-agent-hooks${exe}`)],
   [`herdr${exe}`, herdr.executable],
 ];
 const missing = shipped.filter(([, source]) => {
@@ -171,7 +172,7 @@ const notices = path.join(resources, "THIRD_PARTY_NOTICES");
 if (!fs.existsSync(notices)) throw new Error(`third-party notices are missing: ${notices}`);
 extraResource.push(notices);
 
-const APP_BUNDLE_ID = "me.grab.hide.desktop";
+const APP_BUNDLE_ID = APP_ID;
 
 /**
  * macOS's notification permission helper (PRD first-run-onboarding D-12):
@@ -226,6 +227,16 @@ const [outputDir] = await packager({
   extraResource,
   // Only the bundles and the status page ship; sources, tests and tooling do not.
   ignore: (file) => file !== "" && file !== "/package.json" && !file.startsWith("/dist"),
+  // The app reads its version from its own package.json (Electron's
+  // `app.getVersion()`), and the updater compares releases with it, so the
+  // copy that ships names the release rather than the workspace's 0.1.0.
+  afterCopy: [
+    async ({ buildPath }) => {
+      const manifest = path.join(buildPath, "package.json");
+      const metadata = JSON.parse(fs.readFileSync(manifest, "utf8"));
+      fs.writeFileSync(manifest, `${JSON.stringify({ ...metadata, version }, null, 2)}\n`);
+    },
+  ],
   // The helper goes beside the app's executable, where the host looks for it
   // and where macOS resolves its bundle, before the packager signs anything.
   // It is signed under the app's identifier here, since macOS keys
@@ -272,34 +283,21 @@ if (platform === "darwin") {
   if (signing.mode === "developer-id" && !/flags=0x[0-9a-f]+\([^)]*runtime/.test(signed)) throw new Error(`the notification permission helper is not signed under the hardened runtime: ${signed.trim()}`);
 }
 
-// Each archive holds one folder: hide.app, or the packaged directory.
-const archiveName = `hide-v${version}-${system.label}-${arch}.${platform === "linux" ? "tar.gz" : "zip"}`;
-const archive = path.join(out, archiveName);
-fs.rmSync(archive, { force: true });
-if (platform === "darwin") {
-  run("/usr/bin/ditto", ["-c", "-k", "--keepParent", bundle, archive]);
-} else if (platform === "win32") {
-  // The system's own tar (bsdtar, in every Windows since 10 1803) writes a
-  // zip when the name ends in .zip; Git's GNU tar earlier on PATH cannot.
-  if (!process.env.SystemRoot) throw new Error("SystemRoot is unset, so the system's tar.exe cannot be found");
-  run(path.join(process.env.SystemRoot, "System32", "tar.exe"), ["-a", "-c", "-f", archive, "-C", out, path.basename(bundle)]);
-} else {
-  // A tar keeps the executable bits a zip extracted by most tools would drop.
-  run("tar", ["-czf", archive, "-C", out, path.basename(bundle)]);
-}
-// What a downloader gets is the archive, so Gatekeeper judges the app expanded from it.
+// The installers wrap the app as it stands; a Developer ID build's dmg is
+// signed and notarized there too.
+const installers = await buildInstallers({ app: bundle, version, out: release, signing });
+// What a downloader of the update gets is the zip, so Gatekeeper judges the app expanded from it.
 if (signing?.mode === "developer-id") {
+  const zip = Object.values(installers).find((file) => file.endsWith(".zip"));
   try {
-    assertNotarized(archive, out);
+    assertNotarized(zip, out);
   } catch (error) {
-    fs.rmSync(archive, { force: true });
+    fs.rmSync(release, { recursive: true, force: true });
     throw error;
   }
 }
-const digest = createHash("sha256").update(fs.readFileSync(archive)).digest("hex");
-fs.writeFileSync(`${archive}.sha256`, `${digest}  ${archiveName}\n`);
 
 console.log(`bundle=${bundle}`);
 console.log(`hide_version=${version}`);
-console.log(`archive=${archive}`);
-console.log(`archive_sha256=${digest}`);
+console.log(`release=${release}`);
+for (const file of Object.values(installers)) console.log(`installer=${file}`);

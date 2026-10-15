@@ -26,6 +26,7 @@ import {
   parseConnect,
   parseLoginPath,
   parseRememberedCli,
+  parseRuntimePrepare,
   parseStatus,
   REMEMBERED_SOURCES,
   rememberedCliPath,
@@ -43,7 +44,7 @@ import { readJsonFile, writeJsonFile } from "./jsonFile";
 import type { HostLanguage } from "./language";
 import { chooseHerdr, ensureServer, parseServerStatus, serverEnvironment, type HerdrChoice } from "./herdr";
 import { loadFailureFields, type HostLog } from "./log";
-import { ChildRunner, startDetached, type ChildResult } from "./spawn";
+import { ChildRunner, executableFile, startDetached, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
 import { openRoute, probe, probeRequest } from "./localPath";
 import { revealTarget } from "./reveal";
@@ -57,6 +58,8 @@ declare const __HIDE_BACKGROUND__: string;
 declare const __HIDE_WARNING__: string;
 
 const CONNECT_TIMEOUT_MS = 25_000;
+/** The first launch of a Windows build copies its runtime (about 150 MB); later ones find the copy. */
+const RUNTIME_PREPARE_TIMEOUT_MS = 120_000;
 const STATUS_TIMEOUT_MS = 5_000;
 /** VS Code's default for the same question (`application.shellEnvironmentResolutionTimeout`); a warm rc takes seconds. */
 const LOGIN_PATH_TIMEOUT_MS = 10_000;
@@ -115,6 +118,13 @@ export class DesktopHost {
   private discovering: Promise<void> | null = null;
   private attempts = 0;
   private cli: { path: string; source: CliSource } | null = null;
+  /**
+   * Where a packaged Windows app runs its daemon, CLI and Herdr from: this
+   * build's copy outside the install folder (`hide runtime prepare`; PRD
+   * auto-update D-10), learned once per launch. Null until then, and always
+   * null elsewhere, where the package's own resources folder is used.
+   */
+  private runtimeDir: string | null = null;
   /** The login shell's PATH once it answered; a shell that failed or timed out is asked again on the next search. */
   private loginPath: string | null = null;
   private watch: NodeJS.Timeout | null = null;
@@ -619,6 +629,9 @@ export class DesktopHost {
     const attempt = ++this.attempts;
     this.stopWatch();
     this.setState({ kind: "connecting" });
+    const runtime = await this.prepareRuntime(attempt);
+    if (runtime !== null) return this.fail(attempt, "start_failed", `runtime: ${runtime}`);
+    if (this.quitting) return;
     const herdr = this.herdr();
     this.log.event("discovery.start", { attempt, trigger, herdr: herdr.source, replaced_pane_herdr: herdr.replacedPaneValue ?? undefined });
     const cli = await this.findCli(attempt);
@@ -692,9 +705,36 @@ export class DesktopHost {
     }
   }
 
-  /** The packaged app's `Contents/Resources`, where `hide`, `hided` and `herdr` ship side by side. */
+  /**
+   * The folder `hide`, `hided` and `herdr` run from in a packaged app: its
+   * `Contents/Resources` or `resources`, or on Windows the build's runtime
+   * copy once `prepareRuntime` found it.
+   */
   private bundledDir(): string | null {
-    return app.isPackaged ? process.resourcesPath : null;
+    return app.isPackaged ? (this.runtimeDir ?? process.resourcesPath) : null;
+  }
+
+  /**
+   * A packaged Windows app's runtime copy (PRD auto-update D-10): the
+   * installer stops every program under the install folder and Windows cannot
+   * replace a running file, so the daemon and the Herdr server must not run
+   * from there. Asked of the install folder's own `hide` once per launch;
+   * what it could not remove of older copies goes to the log (D-11). Null
+   * when the copy is ready or none is needed, else why it failed.
+   */
+  private async prepareRuntime(attempt: number): Promise<string | null> {
+    if (!app.isPackaged || process.platform !== "win32" || this.runtimeDir !== null) return null;
+    const started = Date.now();
+    const result = await this.runChild(path.join(process.resourcesPath, executableFile("hide")), ["runtime", "prepare"], RUNTIME_PREPARE_TIMEOUT_MS, this.childEnvironment());
+    for (const record of cliRecords(result.stderr)) this.log.event(record.event, { attempt, ...record.fields });
+    const prepared = parseRuntimePrepare(result);
+    if ("failed" in prepared) {
+      this.log.event("runtime.prepare_failed", { attempt, detail: prepared.failed, elapsed_ms: Date.now() - started });
+      return prepared.failed;
+    }
+    this.runtimeDir = prepared.dir;
+    this.log.event("runtime.prepared", { attempt, dir: prepared.dir, elapsed_ms: Date.now() - started });
+    return null;
   }
 
   /** The Herdr a daemon started from here attaches pane terminals with; `herdr.ts` owns the rule. */

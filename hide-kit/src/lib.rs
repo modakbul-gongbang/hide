@@ -34,6 +34,7 @@ pub mod process;
 mod record;
 mod retired_agents;
 pub mod retirement_inspection;
+pub mod runtime;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
