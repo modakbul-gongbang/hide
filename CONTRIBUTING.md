@@ -58,6 +58,7 @@ The check takes about two minutes, most of it the typecheck and Clippy on a cold
    On 2026-10-05 one pull request removed an export another one imported, both had passed, and main's typecheck failed until a third pull request fixed it.
 
 A refusal says what to do instead, which is to merge main into the branch, fix it there, and let `verify` run again on the push.
+When that push changes nothing a lane reads beyond what the last green run checked, and main changed none of the pull request's files a lane reads since, `verify` reuses that run and runs `policy` alone ([docs/TESTING.md](docs/TESTING.md#which-lanes-a-pull-request-runs)).
 A pass prints the merge command, `gh pr merge <number> --merge --match-head-commit <head>`, which GitHub refuses if the branch moved after the check.
 Above it, a pull request that closes no issue gets a reminder, not a refusal: Hide and GitHub relate a pull request to an issue only through the `Closes #N` line, so one that finishes an issue gets that line before it merges, and one that finishes none merges as it is.
 
