@@ -1513,7 +1513,7 @@
     ]
   },
   "sidebar-status-axis": {
-    "description": "Approved sidebar tab segments: one root status axis right of the checkout glyph, a guide under the glyph per tab, the tab glyph and named line, and neutral selection.",
+    "description": "Approved sidebar tab segments: one root status axis right of the checkout glyph, a guide under the glyph per tab, a tab line inside the guide for each tab of two or more agents, and neutral selection.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-projects-sidebar",
     "scene": "sidebar-status-axis",
@@ -1563,8 +1563,8 @@
       "noSidewaysOverflow": true
     },
     "judgment": [
-      "Do all root status marks share one axis right of the checkout glyph, with each tab's guide centered under that glyph and its tab glyph on the guide's column at the head of its first row?",
-      "Does the named tab line read as a quiet head, and do neutral selection, Korean titles and trailing metadata match the approved Pen in both themes?"
+      "Do all root status marks share one axis right of the checkout glyph, with each tab's guide centered under that glyph?",
+      "Do the tab lines (the manual name, and Tab 3 for the unnamed tab) read as quiet heads inside the guide, their glyph on the status-mark column and their name on the title column, and do neutral selection, Korean titles and trailing metadata match the approved Pen in both themes?"
     ]
   },
   "right-lane": {

@@ -67,9 +67,10 @@ impl From<Value> for LinkAnswer {
 
 /// One node's answerer, addressed by the core through that node's id.
 pub trait NodeLink: Send + Sync {
-    /// Sends one request and waits at most `timeout` for its answer. Blocks,
-    /// on this machine's disk as on another; never call it under the
-    /// runtime lock.
+    /// Sends one request and waits at most `timeout` for its answer, its
+    /// wait to be sent included, so the call's work ends when its caller
+    /// stops waiting. Blocks, on this machine's disk as on another; never
+    /// call it under the runtime lock.
     fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError>;
 
     /// Immutable reader facts belonging to this live connection only, never

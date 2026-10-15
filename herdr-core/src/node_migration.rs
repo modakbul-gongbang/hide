@@ -242,6 +242,12 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
     ),
     (
         CORE_STATE,
+        "/pane_completions/{key}",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        CORE_STATE,
         "/request_verbs/{key}",
         Mechanism::Owned,
         Moves::Pane,
@@ -1278,6 +1284,7 @@ mod tests {
                 "recent_pane_ids": ["w1:p1", "remote:mini:pane:w2:p1"],
                 "pane_text_scales": {"w1:p1": 1.2},
                 "pane_read_records": {"w1:p1": {"seen_at_unix_ms": 1, "descendant_signals": [{"pane_id": "w1:p4"}]}},
+                "pane_completions": {"w1:p1": {"session": "s", "server": "m", "state_change_seq": 4}},
                 "request_verbs": {"w1:p1": "review"},
                 "pane_terminal_sizes": {"w1:p1": {"cols": 80, "rows": 24}},
                 "agent_sleep": {

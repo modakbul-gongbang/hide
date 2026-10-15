@@ -156,14 +156,26 @@ test("the window's top row names the device over the rail and the sidebar, and c
     await page.keyboard.press("Escape");
     await expect(modal).toHaveCount(0);
 
-    // B21: with the sidebar hidden the path starts the row, where the device name was.
+    // B21: the sidebar's switch opens the row and stays where it was when the sidebar hides; the path follows it,
+    // and a press on it brings the sidebar back without the chord, leaving the keyboard in the terminal as the chord does.
+    const sidebarSwitch = row.locator("[data-sidebar-switch]");
+    const switchX = Math.round((await sidebarSwitch.boundingBox())!.x);
+    const terminal = page.locator("[data-pane-view] .xterm-helper-textarea").first();
+    await terminal.focus();
     await page.keyboard.press(chord("toggle_left_sidebar"));
     await expect(sidebar).toHaveCount(0);
     await expect(title).toHaveCount(0);
-    expect(Math.round((await center.boundingBox())!.x)).toBe(0);
+    await expect(sidebarSwitch).toHaveAttribute("aria-expanded", "false");
+    const switchBox = (await sidebarSwitch.boundingBox())!;
+    expect(Math.round(switchBox.x)).toBe(switchX);
+    expect((await center.boundingBox())!.x).toBeGreaterThanOrEqual(switchBox.x + switchBox.width - 0.5);
     await expect(project).toBeVisible();
-    await page.keyboard.press(chord("toggle_left_sidebar"));
+    await sidebarSwitch.click();
     await expect(title).toBeVisible();
+    await expect(sidebar).toBeVisible();
+    await expect(sidebarSwitch).toHaveAttribute("aria-expanded", "true");
+    await expect(terminal).toBeFocused();
+    await expect(page.locator('[data-agent-area-id][data-keyboard-area="true"]')).toHaveCount(1);
   });
 });
 

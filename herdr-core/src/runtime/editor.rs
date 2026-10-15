@@ -1148,6 +1148,25 @@ impl Runtime {
         if self.close_selection_state(restore.checkout_id.as_deref()) != restore.after {
             return;
         }
+        // The close took the operator to the checkout they were in before
+        // (`leave_emptied_checkout`); its tab is back, so they go back too.
+        if restore.before.focused_checkout_id != restore.after.focused_checkout_id
+            && let Some(checkout_id) = restore.before.focused_checkout_id.as_deref()
+            && let Some(workspace_id) = self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .find(|workspace| {
+                    workspace
+                        .checkouts
+                        .iter()
+                        .any(|checkout| checkout.id == checkout_id)
+                })
+                .map(|workspace| workspace.id.clone())
+        {
+            self.bring_checkout_forward_for_close(&workspace_id, checkout_id);
+        }
         if let Some(checkout_id) = restore.checkout_id.as_deref() {
             match restore.before.visible_tab_id.clone() {
                 // The close moved the operator, and Herdr with them, to
@@ -1413,7 +1432,11 @@ impl Runtime {
         // The node refuses keys for a closing pane from now on.
         self.sync_terminal_intents();
         if request.failed_terminals.is_empty() {
-            self.move_from_closing_target(&request.target, &tab);
+            // A sleep's own close (not kept for reopen) is Hide's, not the
+            // operator's, so it never takes the screen elsewhere. One that
+            // opens a replacement shell keeps its tab (`leaving_tab`), so its
+            // checkout is never empty.
+            self.move_from_closing_target(&request.target, &tab, request.retain_for_reopen);
         }
         let selection_after = self.close_selection_state(restore_checkout_id.as_deref());
         if selection_before != selection_after
@@ -1438,11 +1461,15 @@ impl Runtime {
     /// Keeps the operator on a confirmed alternative as soon as a close is
     /// approved, and only when the closing item is the one in use. The
     /// alternative is chosen from the existing projection, so this never
-    /// invents geometry or follows a global Herdr focus change.
+    /// invents geometry or follows a global Herdr focus change. When the
+    /// close leaves the checkout with no tab at all and `may_leave_checkout`
+    /// says it is the operator's own, the alternative is the checkout they
+    /// were in before (`leave_emptied_checkout`).
     pub(super) fn move_from_closing_target(
         &mut self,
         target: &live::CloseCaptureTarget,
         tab: &TabSnapshot,
+        may_leave_checkout: bool,
     ) {
         let Some(checkout_id) = tab.checkout_id.as_deref() else {
             return;
@@ -1484,7 +1511,101 @@ impl Runtime {
         }
         if let Some(replacement) = self.closing_tab_replacement(checkout_id, tab_id) {
             self.focus_close_alternative(checkout_id, replacement);
+        } else if may_leave_checkout && self.checkout_emptied_by_closes(checkout_id) {
+            self.leave_emptied_checkout(checkout_id);
         }
+    }
+
+    /// Whether every tab of the checkout is one a running close is taking
+    /// away, so nothing of it is left to show. A tab off the strip (a
+    /// delegated child's) is still a tab the sidebar reaches, so a checkout
+    /// holding one is not empty.
+    fn checkout_emptied_by_closes(&self, checkout_id: &str) -> bool {
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .find(|checkout| checkout.id == checkout_id)
+            .is_some_and(|checkout| !self.has_tab_left(checkout))
+    }
+
+    /// Whether the checkout holds a tab no running close is taking away.
+    fn has_tab_left(&self, checkout: &CheckoutSnapshot) -> bool {
+        checkout.tabs.iter().any(|tab| {
+            !tab.id.as_deref().is_some_and(|id| {
+                self.close_operations
+                    .values()
+                    .any(|operation| operation.leaving_tab() == Some(id))
+            })
+        })
+    }
+
+    /// Brings back the checkout of this machine the operator was in before
+    /// the one their close just emptied, the way choosing it from the
+    /// sidebar does, so the screen never stands on a checkout with nothing
+    /// left in it (docs/UI_BEHAVIOR.md, Agent areas). A checkout with no tab
+    /// left, or one whose worktree or project is being removed, is no place
+    /// to go. With no such checkout, or with another device in front, the
+    /// screen stays and the Agent area's empty state shows.
+    fn leave_emptied_checkout(&mut self, checkout_id: &str) {
+        if !self.device_in_front(self.node.as_str()) {
+            return;
+        }
+        let node = self.node.as_str();
+        let previous = self
+            .snapshot
+            .ui_state
+            .recent_checkouts
+            .iter()
+            .filter(|record| record.device_id == node && record.checkout_id != checkout_id)
+            .find_map(|record| {
+                self.snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .filter(|workspace| workspace.device_id == node)
+                    .find_map(|workspace| {
+                        workspace
+                            .checkouts
+                            .iter()
+                            .find(|checkout| checkout.id == record.checkout_id)
+                            .filter(|checkout| {
+                                self.has_tab_left(checkout)
+                                    && !self.removal_in_flight(&workspace.id, &checkout.path)
+                            })
+                            .map(|checkout| (workspace.id.clone(), checkout.id.clone()))
+                    })
+            });
+        let Some((workspace_id, previous)) = previous else {
+            return;
+        };
+        self.bring_checkout_forward_for_close(&workspace_id, &previous);
+    }
+
+    /// Whether this machine's project `workspace_id`, or its worktree at
+    /// `checkout_path`, is being removed.
+    fn removal_in_flight(&self, workspace_id: &str, checkout_path: &str) -> bool {
+        self.workspace_removals_in_flight.contains(workspace_id)
+            || self
+                .snapshot
+                .worktree_removal
+                .as_ref()
+                .is_some_and(|removal| {
+                    removal.device_id.is_none()
+                        && removal.checkout_path == checkout_path
+                        && matches!(removal.phase.as_str(), "checking" | "closing" | "removing")
+                })
+    }
+
+    /// A checkout a close moves the operator to, or back from, comes forward
+    /// as a sidebar choice does: on its own tab, as the Workspace a reload
+    /// opens on, waking what sleeps there.
+    fn bring_checkout_forward_for_close(&mut self, workspace_id: &str, checkout_id: &str) {
+        let prior = self.focused_visible_tab_id();
+        self.focus_checkout(workspace_id, checkout_id);
+        self.mark_front_chosen();
+        self.agent_sleep_visit(prior.as_deref());
     }
 
     /// Puts the operator on a tab the way a click on its chip does, so Herdr
@@ -2988,7 +3109,13 @@ impl Runtime {
                     )
             });
             if queued && self.failed_terminal_id(&pane_id).is_none() {
-                self.move_from_closing_target(&live::CloseCaptureTarget::Pane { pane_id }, &tab);
+                // One pane among several: its tab stays, so it empties no
+                // checkout until its turn starts the close.
+                self.move_from_closing_target(
+                    &live::CloseCaptureTarget::Pane { pane_id },
+                    &tab,
+                    false,
+                );
             }
             return true;
         }

@@ -1193,6 +1193,245 @@ fn a_close_that_needs_a_replacement_shell_keeps_its_tab_in_place() {
     assert_eq!(drawn(&mut runtime), [area("w-order:t1", &["w-order:t1"])]);
 }
 
+/// Another registered folder of this machine; returns its checkout id.
+pub(super) fn register_folder(runtime: &mut Runtime, name: &str) -> String {
+    let id = format!("workspace:{name}");
+    let path = format!("/{name}");
+    runtime
+        .snapshot
+        .ui_state
+        .workspace_registrations
+        .push(WorkspaceRegistration {
+            primary_checkout_id: None,
+            id: id.clone(),
+            label: name.to_owned(),
+            path: path.clone(),
+            device_id: crate::node::TEST_NODE.to_owned(),
+            pinned: false,
+            home: false,
+        });
+    runtime.rebuild_catalog();
+    workspace::checkout_id_for_path(&id, Path::new(&path))
+}
+
+/// Adds Herdr workspace `w-else`, holding the one tab `w-else:t1` in
+/// /elsewhere, to a session.
+pub(super) fn add_elsewhere_tab(payload: &mut SessionSnapshotPayload) {
+    let elsewhere: SessionSnapshotPayload =
+        crate::sidebar::owned_label_fixture(serde_json::json!({
+            "agents": [],
+            "workspaces": [{"workspace_id": "w-else", "label": "else", "active_tab_id": "w-else:t1"}],
+            "tabs": [{"workspace_id": "w-else", "tab_id": "w-else:t1", "label": "", "number": 1}],
+            "panes": [{"pane_id": "w-else:t1:p", "cwd": "/elsewhere"}],
+            "layouts": [{
+                "workspace_id": "w-else",
+                "tab_id": "w-else:t1",
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": "w-else:t1:p",
+                "panes": [{"pane_id": "w-else:t1:p", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                "splits": []
+            }]
+        }))
+        .expect("elsewhere session payload");
+    payload.workspaces.extend(elsewhere.workspaces);
+    payload.tabs.extend(elsewhere.tabs);
+    payload.panes.extend(elsewhere.panes);
+    payload.layouts.extend(elsewhere.layouts);
+}
+
+pub(super) fn choose_checkout(runtime: &mut Runtime, workspace_id: &str, checkout_id: &str) {
+    runtime.dispatch_json(&explorer_event(
+        "focus_checkout",
+        serde_json::json!({"workspace_id": workspace_id, "checkout_id": checkout_id}),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+}
+
+fn front(runtime: &Runtime) -> Option<String> {
+    runtime.snapshot().navigator.focused_checkout_id.clone()
+}
+
+/// The Workspace in front and whether a reload opens on it (D-11).
+fn resumed(runtime: &mut Runtime) -> (String, bool) {
+    runtime.sync_workspace_view();
+    let view = runtime.snapshot.workspace_view.clone().expect("front");
+    (view.path, view.resumed)
+}
+
+/// /agent-groups holding `tabs` in Herdr workspace w-order, beside
+/// /elsewhere's one tab.
+fn session_with_elsewhere(tabs: &[&str]) -> SessionSnapshotPayload {
+    let mut payload = tab_order_payload("/agent-groups", tabs, tabs, "w-order:t1");
+    add_elsewhere_tab(&mut payload);
+    payload
+}
+
+/// The operator was in /elsewhere, which holds a tab, and came to
+/// /agent-groups, holding `tabs`, where they are on t1. /empty, a registered
+/// folder with no tab, is there to visit too.
+fn entered_from_elsewhere(tabs: &[&str]) -> (Runtime, String, String) {
+    let (mut runtime, checkout) = live_tab_order_runtime("/agent-groups");
+    let elsewhere = register_folder(&mut runtime, "elsewhere");
+    register_folder(&mut runtime, "empty");
+    let mut runtime = with_new_views(runtime, "agent-groups-leave");
+    runtime.ingest_session(Ok(session_with_elsewhere(tabs)));
+    choose_checkout(&mut runtime, "workspace:elsewhere", &elsewhere);
+    choose_checkout(&mut runtime, "workspace:order", &checkout);
+    assert_eq!(front(&runtime).as_deref(), Some(checkout.as_str()));
+    (runtime, checkout, elsewhere)
+}
+
+fn refuse_close(runtime: &mut Runtime) {
+    answer_close(
+        runtime,
+        Err(hide_herdr_client::ApiError::Remote {
+            code: "tab_not_closable".into(),
+            message: "refused".into(),
+        }),
+    );
+    assert!(runtime.close_operations.is_empty(), "the refusal ended it");
+}
+
+/// Closing the last tab of the checkout in front is leaving it: the screen
+/// goes back to the checkout the operator was in before, in the frame the
+/// close is approved, and a reload opens there. A refusal, even after Herdr
+/// has reported its session again meanwhile, brings the tab back, and the
+/// operator back to it.
+#[test]
+fn closing_the_last_tab_goes_back_to_the_checkout_before_and_a_refusal_comes_back() {
+    let (mut runtime, checkout, elsewhere) = entered_from_elsewhere(&["w-order:t1"]);
+
+    close_tab(&mut runtime, "w-order:t1");
+    assert_eq!(front(&runtime).as_deref(), Some(elsewhere.as_str()));
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w-else:t1:p")
+    );
+    assert_eq!(
+        resumed(&mut runtime),
+        ("/elsewhere".to_owned(), true),
+        "a reload opens where the close went"
+    );
+
+    runtime.ingest_session(Ok(session_with_elsewhere(&["w-order:t1"])));
+    assert_eq!(front(&runtime).as_deref(), Some(elsewhere.as_str()));
+    refuse_close(&mut runtime);
+    assert_eq!(front(&runtime).as_deref(), Some(checkout.as_str()));
+    assert_eq!(drawn(&mut runtime), [area("w-order:t1", &["w-order:t1"])]);
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w-order:t1:p")
+    );
+    assert_eq!(resumed(&mut runtime), ("/agent-groups".to_owned(), true));
+}
+
+/// Closing the only pane of the last tab is closing that tab, and goes back
+/// the same way; a refusal that arrives after the operator chose somewhere
+/// else leaves them there.
+#[test]
+fn closing_the_last_pane_goes_back_too_and_a_late_refusal_leaves_a_later_choice_alone() {
+    let (mut runtime, _, elsewhere) = entered_from_elsewhere(&["w-order:t1"]);
+    runtime.dispatch_json(&explorer_event(
+        "close_pane",
+        serde_json::json!({"pane_id": "w-order:t1:p", "confirmed": false}),
+    ));
+    assert_eq!(front(&runtime).as_deref(), Some(elsewhere.as_str()));
+
+    let empty = workspace::checkout_id_for_path("workspace:empty", Path::new("/empty"));
+    choose_checkout(&mut runtime, "workspace:empty", &empty);
+    let request = runtime
+        .close_operations
+        .values()
+        .next()
+        .expect("the close")
+        .request
+        .clone();
+    let _ = runtime
+        .ingest_close_capture_result(&request, Err("the capture could not be read".to_owned()));
+    assert!(
+        runtime
+            .close_operations
+            .values()
+            .all(|operation| operation.phase == "failed")
+    );
+    assert_eq!(front(&runtime).as_deref(), Some(empty.as_str()));
+}
+
+/// The checkout to go back to is the most recent one with a tab left: a
+/// folder with no tab is passed over, and with no such checkout the screen
+/// stays on the Agent area's empty state. A close that leaves another tab
+/// moves only to that tab.
+#[test]
+fn closing_the_last_tab_passes_over_a_checkout_with_no_tab_and_stays_with_none() {
+    let (mut runtime, checkout, elsewhere) = entered_from_elsewhere(&["w-order:t1"]);
+    let empty = workspace::checkout_id_for_path("workspace:empty", Path::new("/empty"));
+    choose_checkout(&mut runtime, "workspace:empty", &empty);
+    choose_checkout(&mut runtime, "workspace:order", &checkout);
+    close_tab(&mut runtime, "w-order:t1");
+    assert_eq!(front(&runtime).as_deref(), Some(elsewhere.as_str()));
+
+    let (runtime, checkout) = live_tab_order_runtime("/agent-groups");
+    let mut runtime = with_new_views(runtime, "agent-groups-stay");
+    let empty = register_folder(&mut runtime, "empty");
+    ingest(&mut runtime, &["w-order:t1"]);
+    choose_checkout(&mut runtime, "workspace:empty", &empty);
+    choose_checkout(&mut runtime, "workspace:order", &checkout);
+    close_tab(&mut runtime, "w-order:t1");
+    assert_eq!(runtime.close_operations.len(), 1);
+    assert_eq!(front(&runtime).as_deref(), Some(checkout.as_str()));
+
+    let (mut runtime, checkout, _) =
+        entered_from_elsewhere(&["w-order:t1", "w-order:t2", "w-order:t3"]);
+    close_tab(&mut runtime, "w-order:t1");
+    assert_eq!(front(&runtime).as_deref(), Some(checkout.as_str()));
+    let pane = runtime.snapshot().terminal.pane_id.clone();
+    assert!(
+        matches!(pane.as_deref(), Some("w-order:t2:p" | "w-order:t3:p")),
+        "the keyboard went to a tab left, got {pane:?}"
+    );
+}
+
+/// A checkout whose project is being removed is no place to go back to,
+/// even while its tabs are still open.
+#[test]
+fn closing_the_last_tab_passes_over_a_checkout_being_removed() {
+    let (mut runtime, checkout, _) = entered_from_elsewhere(&["w-order:t1"]);
+    runtime
+        .workspace_removals_in_flight
+        .insert("workspace:elsewhere".to_owned());
+    close_tab(&mut runtime, "w-order:t1");
+    assert_eq!(front(&runtime).as_deref(), Some(checkout.as_str()));
+}
+
+/// A close that first opens a replacement shell keeps its checkout busy, so
+/// it leaves the screen where it is.
+#[test]
+fn a_close_that_opens_a_replacement_shell_stays_on_its_checkout() {
+    let (mut runtime, checkout, _) = entered_from_elsewhere(&["w-order:t1"]);
+    let primary = crate::domain::WorktreeProjection {
+        repo_key: "repo".into(),
+        repo_name: "repo".into(),
+        repo_root: "/repo".into(),
+        checkout_path: "/repo".into(),
+        is_linked_worktree: false,
+    };
+    runtime
+        .herdr_worktrees
+        .insert("w-order".into(), primary.clone());
+    runtime.herdr_worktrees.insert(
+        "linked".into(),
+        crate::domain::WorktreeProjection {
+            is_linked_worktree: true,
+            ..primary
+        },
+    );
+    close_tab(&mut runtime, "w-order:t1");
+    let operation = runtime.close_operations.values().next().expect("a close");
+    assert!(operation.request.context.replacement_shell);
+    assert_eq!(front(&runtime).as_deref(), Some(checkout.as_str()));
+}
+
 fn reopen(runtime: &mut Runtime) {
     runtime.dispatch_json(&explorer_event("reopen_closed", serde_json::json!({})));
 }

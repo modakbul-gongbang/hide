@@ -11,10 +11,13 @@
 //!
 //! The terminals relay is fed by [`ScreenOutputs`], which hands every
 //! pane's output to the hub and to each relay's [`RelayTap`]. A tap holds at
-//! most [`TAP_CAP_BYTES`] for its node; past it the backlog is dropped, each
-//! pane it held is drawn again from a full frame, and nothing of that pane
-//! goes out before the full frame does, so the node's hub never holds a
-//! broken stream (B17).
+//! most [`TAP_CAP_BYTES`] of output for its node, full frames included:
+//! output that would pass it drops the backlog, and a full frame that would
+//! pass it drops the waiting output of the panes that waited longest, until
+//! it fits. Each pane that lost output is drawn again from a full frame,
+//! asked for when the relay next sends, and nothing of that pane goes out
+//! before the full frame does, so the node's hub never holds a broken stream
+//! (B17).
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -36,7 +39,10 @@ use crate::terminal_hub::TerminalHub;
 /// How long a relay that ended waits for its writer to hand back the
 /// socket for the close frame.
 const WRITER_HANDBACK: std::time::Duration = std::time::Duration::from_millis(100);
-/// The most output one node's terminals relay holds unsent.
+/// The most output one node's terminals relay holds unsent, full frames
+/// included: a few screens' full frames and their output after them, while
+/// a node that reads nothing for longer than that is drawn again rather
+/// than queued for.
 pub const TAP_CAP_BYTES: usize = 4 * 1024 * 1024;
 /// Output items one relay message carries at most.
 const MESSAGE_ITEMS: usize = 256;
@@ -227,6 +233,20 @@ impl RelayTap {
         if state.closed {
             return;
         }
+        if full && data.len() > TAP_CAP_BYTES {
+            // No backlog makes room for it. The pane waits for a full frame
+            // that fits and asks none, since its next is likely as long.
+            state.awaiting_full.insert(pane.to_owned());
+            drop(state);
+            herdr_core::diagnostic!(json!({
+                "component": "node_relay",
+                "kind": "relay.terminals_frame_too_long",
+                "node": self.node,
+                "bytes": data.len(),
+                "cap_bytes": TAP_CAP_BYTES,
+            }));
+            return;
+        }
         if !state.started_whole.contains(pane) {
             if !full {
                 // The node holds nothing of the pane: ask a full frame once.
@@ -260,7 +280,9 @@ impl RelayTap {
             full,
         };
         let size = output.data.len();
-        if state.bytes + size > TAP_CAP_BYTES && !full {
+        if state.bytes + size > TAP_CAP_BYTES && full {
+            self.make_room(&mut state, size);
+        } else if state.bytes + size > TAP_CAP_BYTES {
             self.overflow(&mut state);
             state.awaiting_full.insert(pane.to_owned());
             if !state.redraws.iter().any(|asked| asked == pane) {
@@ -274,6 +296,45 @@ impl RelayTap {
         state.items.push_back(TapItem::Output(output));
         drop(state);
         self.wake.notify_one();
+    }
+
+    /// Room for a full frame of `size` bytes, made by the panes whose output
+    /// waited longest: each loses what of it waits and is drawn again from a
+    /// full frame, asked for when the relay next sends, so a node that reads
+    /// nothing is asked no redraw meanwhile. A pane's end is never dropped.
+    fn make_room(&self, state: &mut TapState, size: usize) {
+        let mut panes = 0;
+        while state.bytes + size > TAP_CAP_BYTES {
+            let Some(oldest) = state.items.iter().find_map(|item| match item {
+                TapItem::Output(output) => Some(output.pane.clone()),
+                TapItem::Forget(_) => None,
+            }) else {
+                break;
+            };
+            let mut freed = 0;
+            state.items.retain(|item| match item {
+                TapItem::Output(output) if output.pane == oldest => {
+                    freed += output.data.len();
+                    false
+                }
+                _ => true,
+            });
+            state.bytes -= freed;
+            if state.awaiting_full.insert(oldest.clone()) {
+                state.redraws.push(oldest);
+            }
+            panes += 1;
+        }
+        state.dropped += 1;
+        herdr_core::diagnostic!(json!({
+            "component": "node_relay",
+            "kind": "relay.terminals_overflow",
+            "node": self.node,
+            "dropped": "oldest_panes",
+            "panes": panes,
+            "cap_bytes": TAP_CAP_BYTES,
+            "overflows": state.dropped,
+        }));
     }
 
     /// The node fell behind: its backlog goes, and each pane in it is drawn
@@ -297,6 +358,7 @@ impl RelayTap {
             "component": "node_relay",
             "kind": "relay.terminals_overflow",
             "node": self.node,
+            "dropped": "backlog",
             "panes": panes.len(),
             "cap_bytes": TAP_CAP_BYTES,
             "overflows": state.dropped,
@@ -936,6 +998,76 @@ mod tests {
         tap.output("w1:p1", b"partial", false);
         assert!(outputs(&tap).is_empty());
         tap.output("w1:p1", b"whole again", true);
+        assert_eq!(outputs(&tap).len(), 1);
+    }
+
+    /// Remote audit R3: full frames count against the tap's cap. A node that
+    /// reads nothing while eight panes draw whole holds at most the cap, and
+    /// keeps the panes that fit; once it reads, every pane reaches it whole,
+    /// each starting from a full frame.
+    #[test]
+    fn full_frames_of_many_panes_stay_under_the_tap_s_cap_and_every_pane_draws_again() {
+        let tap = RelayTap::new("mac");
+        let held = |tap: &RelayTap| lock(&tap.state).bytes;
+        let panes: Vec<String> = (1..=8).map(|n| format!("w1:p{n}")).collect();
+        // A full frame of 1 MiB once encoded, so the eight pass 4 MiB.
+        let frame = vec![b'x'; 768 * 1024];
+        for pane in &panes {
+            tap.output(pane, &frame, true);
+            tap.output(pane, b"after", false);
+            assert!(held(&tap) <= TAP_CAP_BYTES, "{} held", held(&tap));
+        }
+        assert!(
+            lock(&tap.state).redraws.len() < panes.len(),
+            "some panes were kept"
+        );
+
+        // The node reads again: each message it takes is followed by the
+        // full frames its redraws ask for.
+        let mut drawn = HashSet::new();
+        loop {
+            let (text, redraws) = tap.take();
+            for line in text.as_deref().unwrap_or_default().lines() {
+                let TerminalUp::Output(output) =
+                    serde_json::from_str::<TerminalLine<TerminalUp>>(line)
+                        .unwrap()
+                        .terminal
+                else {
+                    panic!("only output was queued");
+                };
+                if output.full {
+                    drawn.insert(output.pane);
+                } else {
+                    assert!(
+                        drawn.contains(&output.pane),
+                        "{} before its frame",
+                        output.pane
+                    );
+                }
+            }
+            if text.is_none() && redraws.is_empty() {
+                break;
+            }
+            for pane in redraws {
+                tap.output(&pane, &frame, true);
+                assert!(held(&tap) <= TAP_CAP_BYTES, "{} held", held(&tap));
+            }
+        }
+        assert_eq!(drawn, panes.into_iter().collect::<HashSet<_>>());
+        assert_eq!(held(&tap), 0);
+    }
+
+    /// A full frame that alone passes the cap is not relayed and asks no
+    /// redraw, since the next is likely as long; one that fits draws.
+    #[test]
+    fn a_full_frame_past_the_tap_s_cap_waits_for_one_that_fits() {
+        let tap = RelayTap::new("mac");
+        tap.output("w1:p1", &vec![b'x'; TAP_CAP_BYTES], true);
+        tap.output("w1:p1", b"after", false);
+        let (text, redraws) = tap.take();
+        assert!(text.is_none());
+        assert!(redraws.is_empty(), "a long frame is not asked again");
+        tap.output("w1:p1", b"whole", true);
         assert_eq!(outputs(&tap).len(), 1);
     }
 }

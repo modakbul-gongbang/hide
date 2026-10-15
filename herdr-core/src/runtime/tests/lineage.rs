@@ -277,7 +277,12 @@ fn a_cross_checkout_badge_names_the_branch_the_sidebar_shows() {
 fn lineage_cross_checkout_tree_and_orphan_keep_the_canonical_rows_and_axes() {
     let mut rows = lineage_rows();
     let mut records = std::collections::BTreeMap::new();
-    crate::agent_state::apply_read_state(&mut rows, &mut records, Some("child"));
+    crate::agent_state::apply_read_state(
+        &mut rows,
+        &mut records,
+        &mut crate::agent_state::ReadConnection::new("server".to_owned()),
+        Some("child"),
+    );
     let original = rows
         .iter()
         .map(|row| {
@@ -431,6 +436,7 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
     crate::agent_state::apply_read_state(
         &mut attention,
         &mut runtime.snapshot.ui_state.pane_read_records,
+        &mut crate::agent_state::ReadConnection::new("server".to_owned()),
         None,
     );
     assert!(

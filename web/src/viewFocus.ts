@@ -81,6 +81,9 @@ export function installKeyboardOwner(): () => void {
   const record = (event: Event) => {
     const target = event.target instanceof Element ? event.target : null;
     if (event.type === "focusin" && target !== null && target === handedBack) return;
+    // A press on a control that leaves the keyboard where it was (the
+    // sidebar's switch) is not the operator moving the keyboard.
+    if (event.type === "pointerdown" && target?.closest("[data-keyboard-stays]")) return;
     handedBack = null;
     if (!target?.closest("[data-palette]")) commandOwner = ownerOf(target) ?? owner;
     noteKeyboardOwner(ownerOf(target) ?? owner);

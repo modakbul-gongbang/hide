@@ -2899,6 +2899,14 @@ impl Runtime {
                 self.persist_ui_state();
                 changed = true;
             }
+            // Completions are kept first, so the lineage hands up the ones a
+            // restored server no longer reports.
+            self.apply_pane_completions(
+                &mut agents,
+                None,
+                ReadRecordScope::Local,
+                live_pane_ids.as_ref(),
+            );
             crate::agent_state::apply_lineage(
                 &mut agents,
                 &self.snapshot.navigator.workspaces,
