@@ -2262,6 +2262,7 @@ impl Runtime {
                     self.input_requests.open(
                         request_id,
                         super::terminal_input::InputOrigin::TabCreate(admission_id),
+                        std::time::Instant::now(),
                     );
                     self.sync_input_requests();
                 }
@@ -3097,6 +3098,7 @@ impl Runtime {
                     self.input_requests.open(
                         request_id,
                         super::terminal_input::InputOrigin::Fork(pane_id.clone()),
+                        std::time::Instant::now(),
                     );
                     self.sync_input_requests();
                 }
