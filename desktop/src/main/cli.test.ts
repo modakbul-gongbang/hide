@@ -294,7 +294,7 @@ describe("the hide CLI's answers", () => {
 });
 
 describe("parseRuntimePrepare", () => {
-  const dir = process.platform === "win32" ? "C:\\Users\\a\\.hide\\runtime\\0.4.0-aaaaaaaaaaaa" : "/home/a/.hide/runtime/0.4.0-aaaaaaaaaaaa";
+  const dir = process.platform === "win32" ? "C:\\Users\\alice\\.hide\\runtime\\0.4.0-aaaaaaaaaaaa" : "/home/alice/.hide/runtime/0.4.0-aaaaaaaaaaaa";
   it("reads the folder the runtime runs from", () => {
     expect(parseRuntimePrepare(result(`${JSON.stringify({ ok: true, dir, copied: true, removed: [] })}\n`))).toEqual({ dir });
   });

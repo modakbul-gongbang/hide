@@ -14,7 +14,7 @@
     "package": "node scripts/build.mjs && node scripts/package.mjs"
   },
   "devDependencies": {
-    "@electron/asar": "4.0.1",
+    "@electron/asar": "4.3.0",
     "@electron/packager": "^20.3.0",
     "@eslint/js": "^9.24.0",
     "@playwright/test": "^1.51.0",
