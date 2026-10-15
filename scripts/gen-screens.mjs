@@ -4,8 +4,8 @@
 //
 //   node scripts/gen-screens.mjs
 //
-// Regeneration owns every `Screen /` sheet's content and this file's local token
-// variables (kept in sync with design/tokens.json through the same pen-tokens.mjs
+// Regeneration owns every `Screen /` sheet's content, removes the sheets
+// `RETIRED_SHEETS` names, and owns this file's local token variables (kept in sync with design/tokens.json through the same pen-tokens.mjs
 // pipeline gen-pen.mjs uses), never a sheet's placement (x, y) once drawn - the
 // designer's layout on the canvas survives a rerun exactly as pen-bands.mjs
 // preserves it for design/hide-ui.lib.pen.
@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {readTokens} from './gen-tokens.mjs';
-import {screenSheets, readLocalVariables, ALIAS, LIBRARY_PATH} from './pen-screens.mjs';
+import {screenSheets, readLocalVariables, ALIAS, LIBRARY_PATH, RETIRED_SHEETS} from './pen-screens.mjs';
 import {serialize} from './pen-bands.mjs';
 
 export const FILE = 'design/hide-screens.pen';
@@ -33,8 +33,9 @@ export function generate(root) {
   const existing = loadExisting(root);
   const generated = screenSheets(tokens, root);
 
-  let children = existing ? [...existing.children] : [];
-  let placed = existing?.children.length ?? 0;
+  // A retired sheet drew a screen that is gone, so it goes with it; an authored sheet the generator never built stays.
+  let children = existing ? existing.children.filter(node => !RETIRED_SHEETS.includes(node.name)) : [];
+  let placed = children.length;
   for (const {name, build} of generated) {
     const found = children.find(node => node.name === name);
     const sheet = found ? {...build(), x: found.x, y: found.y} : {...build(), x: (placed % GRID_COLUMNS) * GRID_STRIDE_X, y: Math.floor(placed / GRID_COLUMNS) * GRID_STRIDE_Y};
