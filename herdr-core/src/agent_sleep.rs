@@ -638,6 +638,7 @@ mod tests {
             resolved: None,
             resolved_recent: false,
             escalation: None,
+            letters_waiting: None,
             raised: Vec::new(),
             descendant_mark: None,
             descendant_line: None,

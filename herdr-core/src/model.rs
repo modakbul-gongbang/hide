@@ -1137,6 +1137,12 @@ pub struct SidebarAgentSnapshot {
     /// Resolved within the last 24 hours, so Sessions still lists it under Resolved.
     pub resolved_recent: bool,
     pub escalation: Option<crate::agent_state::escalation::Escalation>,
+    /// How many letters wait on this pane because a draft may stand in its
+    /// composer, once it has rested long enough for the operator to be shown
+    /// them (`doorbell::letters_waiting`): the pane header's Deliver now and
+    /// the row's envelope. Absent from the wire while none waits.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub letters_waiting: Option<u32>,
     /// On a lineage root: every raised descendant, lead first (PRD D-10, D-27).
     pub raised: Vec<crate::agent_state::escalation::RaisedAsk>,
     /// The one mark this row wears for its descendants while folded (PRD D-40).

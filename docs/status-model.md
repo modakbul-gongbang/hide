@@ -858,7 +858,7 @@ The first three causes clear on receipt or a successful bell, menu blocking on a
 A letter's cause (the first three and an undelivered letter) also ends for good once the child's session takes up a request written after the letter, from the operator or a letter: the child started a new turn without the answer, so stopping again does not bring the raise back.
 That time is the session's own request record (`RowFacts` `operator_request` and `other_request`), which `labels.json` keeps and a device's helper reads again after a restart, so a restarted daemon gives the same answer; an agent whose session Hide cannot read keeps the cause until receipt, reply, cancellation or expiry.
 Working activity hides a letter or watch cause while it lasts, and a causal reply or child disappearance clears any cause.
-Doorbell hold reasons remain diagnostics and never become UI copy.
+Doorbell hold reasons remain diagnostics and never become UI copy; the letters-waiting mark says only that letters wait on a possible draft, never why in words ([delivery.md](delivery.md#delivering-a-held-letter-now)).
 Phone groups follow these same core values: the first three causes and menu blocking send one Needs You push; undelivered letters and unanswered watches retain their existing human notice without another push.
 An ordinary delegated question produces no root push, and clearing an escalation resets the existing effective push state immediately.
 Regression owners: `agent_state::escalation::tests`, `runtime::tests::lineage`, and `hided/src/mobile/push.rs`.
@@ -876,7 +876,7 @@ PR reason facts carry checks and review separately from label progress.
 The existing input does not supply an approval command or failed check names; the band explicitly says those details are unavailable rather than treating a generated sentence as that evidence.
 A failed exit is red with its real exit code, a normal termination is gray, and connection and sleep actions remain in their existing body surfaces.
 The band overlays the terminal so state changes never resize its PTY grid.
-The identity row reads the ancestor path, the status mark, the agent's logo, title, the pane's own PR mark from `row.state.pr`, the Not connected chip and the existing controls; the ancestors' names drop first when narrow, leaving `›` and the accessible name.
+The identity row reads the ancestor path, the status mark, the agent's logo, title, the letters-waiting pill from `row.letters_waiting`, the pane's own PR mark from `row.state.pr`, the Not connected chip and the existing controls; the ancestors' names drop first when narrow, leaving `›` and the accessible name.
 The tree button with state counts and no separate total or internal divider starts the second-row overlay, sharing that slot with a core band or, without one, the core-ranked child's existing line.
 An unavailable device anywhere in that known subtree overrides the retained state totals and activity line with a dim disconnected mark and the existing connection reason, while preserving topology access.
 Pending or failed relationship navigation stays visible at its popover, ancestor step or band with retry where available, and in the retained Agent-area status when the source pane is no longer on screen.

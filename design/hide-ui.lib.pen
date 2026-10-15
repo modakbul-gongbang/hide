@@ -15972,7 +15972,7 @@
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "v9 C: one quiet 28pt identity. Direct-child badge opens the shared list. One overlaid band: connection/sleep, own demand, raised child, own task. Working is a thin blue line. No child row or relationship sheet; terminal geometry stays fixed.",
+          "content": "v9 C: one quiet 28pt identity. Direct-child badge opens the shared list. One overlaid band: connection/sleep, own demand, raised child, own task. Working is a thin blue line. No child row or relationship sheet; terminal geometry stays fixed. Letters waiting: while letters wait on the pane for a possible draft, one pill after the title is the button, on the popover fill with a hairline edge so it stands out on a focused or unfocused header: the envelope, the count from two letters and 지금 전달; it sits above the composer.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -16056,6 +16056,57 @@
                   "fontWeight": "normal"
                 },
                 {
+                  "type": "frame",
+                  "id": "lwp",
+                  "name": "Letters waiting",
+                  "enabled": false,
+                  "height": 20,
+                  "fill": "$--popover",
+                  "cornerRadius": "$--radius-xs",
+                  "gap": "$--spacing-xs",
+                  "padding": [
+                    0,
+                    "$--spacing-xs"
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "lwp-envelope",
+                      "name": "Envelope",
+                      "width": 12,
+                      "height": 12,
+                      "icon": "mail",
+                      "library": "lucide",
+                      "fill": "$--subtle-foreground"
+                    },
+                    {
+                      "type": "text",
+                      "id": "lwp-count",
+                      "name": "Count",
+                      "fill": "$--subtle-foreground",
+                      "content": "3",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal",
+                      "enabled": false
+                    },
+                    {
+                      "type": "text",
+                      "id": "lwp-action",
+                      "name": "Deliver now",
+                      "fill": "$--foreground",
+                      "content": "지금 전달",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    }
+                  ],
+                  "stroke": "$--border",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inner"
+                },
+                {
                   "id": "c9QF3",
                   "type": "ref",
                   "ref": "ath-pr-icon",
@@ -16068,6 +16119,14 @@
                       "content": "#221"
                     }
                   }
+                },
+                {
+                  "type": "frame",
+                  "id": "lwp-spacer",
+                  "name": "Flexible spacer",
+                  "enabled": false,
+                  "width": "fill_container",
+                  "height": 1
                 },
                 {
                   "type": "frame",
@@ -17266,6 +17325,181 @@
         },
         {
           "type": "frame",
+          "id": "lws-one",
+          "name": "Letters waiting",
+          "clip": true,
+          "width": 560,
+          "stroke": "$--border",
+          "strokeWidth": 1,
+          "strokeAlignment": "inner",
+          "layout": "vertical",
+          "children": [
+            {
+              "id": "lws-one-identity",
+              "type": "ref",
+              "ref": "Z3BnL",
+              "name": "Identity",
+              "width": "fill_container",
+              "descendants": {
+                "XnWql": {
+                  "enabled": false
+                },
+                "F2cOz": {
+                  "content": "○",
+                  "fill": "$--muted-foreground"
+                },
+                "LiVL9": {
+                  "content": "한국어 입력과 세션 복귀 흐름 검토",
+                  "width": "fit_content",
+                  "textGrowth": "auto"
+                },
+                "lwp": {
+                  "enabled": true
+                },
+                "lwp-spacer": {
+                  "enabled": true
+                },
+                "c9QF3": {
+                  "enabled": true
+                },
+                "PaMPI": {
+                  "enabled": false
+                }
+              }
+            },
+            {
+              "type": "text",
+              "id": "lws-one-terminal",
+              "name": "Terminal content",
+              "fill": "$--muted-foreground",
+              "content": "› 변경을 정리했습니다. 다음 지시를 기다립니다.",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "lws-several",
+          "name": "Letters waiting, several",
+          "clip": true,
+          "width": 560,
+          "stroke": "$--border",
+          "strokeWidth": 1,
+          "strokeAlignment": "inner",
+          "layout": "vertical",
+          "children": [
+            {
+              "id": "lws-several-identity",
+              "type": "ref",
+              "ref": "Z3BnL",
+              "name": "Identity",
+              "width": "fill_container",
+              "descendants": {
+                "XnWql": {
+                  "enabled": false
+                },
+                "F2cOz": {
+                  "content": "○",
+                  "fill": "$--muted-foreground"
+                },
+                "LiVL9": {
+                  "content": "한국어 입력과 세션 복귀 흐름 검토",
+                  "width": "fit_content",
+                  "textGrowth": "auto"
+                },
+                "lwp": {
+                  "enabled": true
+                },
+                "lwp-spacer": {
+                  "enabled": true
+                },
+                "c9QF3": {
+                  "enabled": true
+                },
+                "PaMPI": {
+                  "enabled": false
+                },
+                "lwp-count": {
+                  "enabled": true,
+                  "content": "3"
+                }
+              }
+            },
+            {
+              "type": "text",
+              "id": "lws-several-terminal",
+              "name": "Terminal content",
+              "fill": "$--muted-foreground",
+              "content": "› 변경을 정리했습니다. 다음 지시를 기다립니다.",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "lws-english",
+          "name": "Letters waiting, English",
+          "clip": true,
+          "width": 560,
+          "stroke": "$--border",
+          "strokeWidth": 1,
+          "strokeAlignment": "inner",
+          "layout": "vertical",
+          "children": [
+            {
+              "id": "lws-english-identity",
+              "type": "ref",
+              "ref": "Z3BnL",
+              "name": "Identity",
+              "width": "fill_container",
+              "descendants": {
+                "XnWql": {
+                  "enabled": false
+                },
+                "F2cOz": {
+                  "content": "○",
+                  "fill": "$--muted-foreground"
+                },
+                "LiVL9": {
+                  "content": "Review the Korean input and session return flow",
+                  "width": "fit_content",
+                  "textGrowth": "auto"
+                },
+                "lwp": {
+                  "enabled": true
+                },
+                "lwp-spacer": {
+                  "enabled": true
+                },
+                "c9QF3": {
+                  "enabled": true
+                },
+                "PaMPI": {
+                  "enabled": false
+                },
+                "lwp-action": {
+                  "content": "Deliver now"
+                }
+              }
+            },
+            {
+              "type": "text",
+              "id": "lws-english-terminal",
+              "name": "Terminal content",
+              "fill": "$--muted-foreground",
+              "content": "› Cleaned up the change. Waiting for the next instruction.",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
           "id": "PEb0P",
           "name": "Shell",
           "clip": true,
@@ -17385,7 +17619,7 @@
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "v9: one quiet identity, shared direct-child badge and one opaque band over the terminal. At 344 and 400, the parent is an icon and title/reason truncate; time, actions, PR, badge and window controls stay. No extra child row or relationship sheet.",
+          "content": "v9: one quiet identity, shared direct-child badge and one opaque band over the terminal. At 344 and 400, the parent is an icon and title/reason truncate; time, actions, PR, badge and window controls stay. No extra child row or relationship sheet. Letters waiting at 344: the pill keeps the envelope and the count and drops the word; pressing it still delivers.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -17437,6 +17671,53 @@
             },
             "LiVL9": {
               "content": "긴 한국어 제목을 좁은 pane에서 확인하는 상태 검토"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "lwn-label",
+          "name": "344 · letters waiting",
+          "fill": "$--subtle-foreground",
+          "content": "344 · letters waiting: envelope and count, pressing delivers",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "lwn-identity",
+          "type": "ref",
+          "ref": "Z3BnL",
+          "name": "Narrow identity 344, letters waiting",
+          "width": 344,
+          "descendants": {
+            "XnWql": {
+              "enabled": true
+            },
+            "F2cOz": {
+              "content": "○",
+              "fill": "$--muted-foreground"
+            },
+            "LiVL9": {
+              "content": "입력 복귀 흐름 검토",
+              "width": "fit_content",
+              "textGrowth": "auto"
+            },
+            "lwp": {
+              "enabled": true
+            },
+            "lwp-count": {
+              "enabled": true,
+              "content": "3"
+            },
+            "lwp-action": {
+              "enabled": false
+            },
+            "lwp-spacer": {
+              "enabled": true
+            },
+            "PaMPI": {
+              "enabled": false
             }
           }
         },
@@ -20853,7 +21134,7 @@
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "sidebar-agent-row.tsx SidebarAgentRow, in Agents and under a checkout in Projects: the status mark alone (no provider logo; a row Hide AI started that stands alone also draws the Hide owl, see Component / Hide AI origin), the title at 12/400 in every state (attention and selection brighten it, never thicken it), a branch chip only for a child whose checkout differs from its parent, the device chip, the descendant badge while folded, the elapsed time at 11 that is always shown, and the fold slot every row keeps, its chevron drawn only on a parent, so every row's time and chevron share one column each. Line one is 20 high; a request or news has its own 16 line from the start, so a row is 28 or 44; a quiet sentence is only in the tooltip, and Agents adds a fixed context line. Hover, focus and selection change a fill and a ring, never a height.",
+          "content": "sidebar-agent-row.tsx SidebarAgentRow, in Agents and under a checkout in Projects: the status mark alone (no provider logo; a row Hide AI started that stands alone also draws the Hide owl, see Component / Hide AI origin), the title at 12/400 in every state (attention and selection brighten it, never thicken it), a branch chip only for a child whose checkout differs from its parent, the device chip, the descendant badge while folded, the elapsed time at 11 that is always shown, and the fold slot every row keeps, its chevron drawn only on a parent, so every row's time and chevron share one column each. Line one is 20 high; a request or news has its own 16 line from the start, so a row is 28 or 44; a quiet sentence is only in the tooltip, and Agents adds a fixed context line. Hover, focus and selection change a fill and a ring, never a height. A row whose pane has letters waiting on a possible draft draws a 12 envelope in the muted colour before the time, with no number; it takes no slot until then.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -21113,6 +21394,17 @@
                       ]
                     },
                     {
+                      "type": "icon",
+                      "id": "sar-letters",
+                      "name": "Letters waiting",
+                      "enabled": false,
+                      "width": 12,
+                      "height": 12,
+                      "icon": "mail",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
                       "type": "text",
                       "id": "sar-elapsed",
                       "name": "Elapsed",
@@ -21206,6 +21498,38 @@
               "ref": "sidebar-agent-row",
               "width": "fill_container",
               "name": "Row / rest"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-letters",
+          "name": "State / Seen at rest, letters waiting: the quietest mark on the row",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-letters-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Seen at rest, letters waiting: the quietest mark on the row",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-state-letters-row",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / sidebar-agent-row-state-letters",
+              "descendants": {
+                "sar-letters": {
+                  "enabled": true
+                }
+              }
             }
           ]
         },
@@ -21393,6 +21717,61 @@
                   "enabled": true,
                   "content": "hide 앱을 다시 열었고 정상 실행 중",
                   "fill": "$--foreground"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-letters-done",
+          "name": "State / Done, unread, letters waiting: a muted envelope before the time, no number",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-letters-done-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Done, unread, letters waiting: a muted envelope before the time, no number",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-state-letters-done-row",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / sidebar-agent-row-state-letters-done",
+              "descendants": {
+                "sar-dot": {
+                  "enabled": false
+                },
+                "sar-ring": {
+                  "enabled": false
+                },
+                "sar-glyph": {
+                  "enabled": true,
+                  "content": "✓",
+                  "fill": "$--success"
+                },
+                "sar-title": {
+                  "content": "Electron포팅지침이행",
+                  "fill": "$--foreground"
+                },
+                "sar-elapsed": {
+                  "content": "42s"
+                },
+                "sar-line": {
+                  "enabled": true,
+                  "content": "hide 앱을 다시 열었고 정상 실행 중",
+                  "fill": "$--foreground"
+                },
+                "sar-letters": {
+                  "enabled": true
                 }
               }
             }

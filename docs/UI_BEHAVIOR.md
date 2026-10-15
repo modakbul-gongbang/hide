@@ -410,7 +410,7 @@ The browser display's toolbar and its loading, load failed, and plain browser ta
 
 ### Agent panes and the Agents explorer
 
-A pane header is a quiet identity row: the ancestor path, the status mark, the agent's logo, title, the fork mark, the PR mark, the Not connected chip, and the retained overflow, zoom and close controls at the right end.
+A pane header is a quiet identity row: the ancestor path, the status mark, the agent's logo, title, the fork mark, the letters-waiting pill, the PR mark, the Not connected chip, and the retained overflow, zoom and close controls at the right end.
 A plain shell keeps its terminal mark.
 The provider logo is drawn on a pane's own header, and in the heads and places that are about the agent or its provider itself: the start picker, Settings, the footer's usage chips and the Usage pages, the session record's head, a Project conversation's detail head, the tree popover's head, the last-words popover's head, the phone's detail head, the Memory tab's Hide AI chip, the Factory card, the first-run tiles, and the corner of an agent-opened View tab's kind mark ([View openers and comments](#view-openers-and-comments)).
 The sidebar and Sessions rows and the Agent tabs draw it only by the operator's choice or while ⌥ is held ([Agent logo view mode](#agent-logo-view-mode)); ⌘K and the recent-pane list, the link sessions, the Agents graph, the Issue card, list and panel rows, a session record's children, a Project's conversation list and the phone's list lead with the status mark alone in both modes (PRD agent-mark-quiet).
@@ -424,6 +424,10 @@ The PR mark is the one the Sessions row of the same agent draws (below): a pane 
 The fork mark, a small fork icon after the title, is drawn only on a pane Fork agent made; its tooltip and accessible name read `Forked from <source name>` while the source still runs the conversation it was forked from, and the mark is then a button, reachable by keyboard, that opens the source; once the source closed or moved on to another conversation it reads `Forked from another pane` and opens nothing (`web/src/PaneHeaderBand.tsx`, `PaneForkMark`; the fact is the core's, `PaneForkSnapshot.forked_from`).
 A delegated child and a handed-off root have none, and neither does a fork made while forks were children (PRD fork-operator-root B20, B21).
 A device's pane header wears the mark too, as its rows do, although a device's pane offers no fork.
+The letters-waiting pill follows the title and the fork mark while letters wait on the pane for a possible draft, as the core decides ([delivery.md](delivery.md#delivering-a-held-letter-now)): the envelope, the count from two letters, and `지금 전달` (`Deliver now`) on the popover fill with a border edge, which stands apart from both a focused and an unfocused header in Light and Dark.
+The whole pill is one button, reachable by keyboard and pressed with Enter, and its hover and accessible name read `대기 중인 편지 N통 지금 전달`; a pane narrower than the pane breakpoint drops the word and keeps the envelope and the count, and pressing it still delivers.
+Pressing sends `deliver_letters_now` and nothing else: the pill goes, and the bell line appears in the terminal as the doorbell types it, with no confirmation and no warning about a draft, because the pill sits right above the composer.
+No other hold of a letter reaches the screen, and nothing changes on the sender's pane (`web/src/components/letter-mark.tsx`).
 The B2 tree button starts the second row over the terminal: positive core state counts and a chevron open the existing tree popover, with no separate total or internal divider ([status-model.md](status-model.md#the-descendant-mark-and-the-tree-popover)).
 The state counts show working as a blue dot, reported results as a green check, child requests as a blue ring, unknown as a dim tilde, and resting as a dim ring; `! N` in warning colour is exclusively the core's operator-raised request count over the subtree.
 An ordinary child's question, approval or error adds to the blue request ring, not the operator's `!` count; a check is a reported completion, not verified delivery of a task.
@@ -501,6 +505,7 @@ A worktree whose unresolved agents are all delegated children has no checkout li
 An agent counts as a root when the core marks it so (`agent.state.root`): an orphan whose parent ended is a root, and a Factory worker is one too, since its spawn parent is the Factory's own identity and no pane in the list, so its worktree keeps its line.
 The primary, the focused checkout, a dirty or unpushed worktree and an Inactive or Cleanup one keep the line or fold they had.
 Each row with its own PRs carries the PR mark (Purpose, pinning, and PR chrome): one PR's state and `#number`, or each state's count for several, dimmed while GitHub cannot be read; its hover shows the PR card for one PR, and for several lists each PR with its state and title, any of which opens, with the last read time while GitHub cannot be read.
+A row whose pane has letters waiting on a possible draft carries a muted envelope just before its time, with no number, the quietest mark on the row; its accessible name says `Letter waiting`, and clicking the row goes to the pane as always, where the pill delivers them.
 A tree row that asks draws its verb and what on a second line until answered, and an AI question leaves that line once read; a blocked tree row draws its cause there instead, read or not.
 A raised row outside the tree keeps its request line until answered, dimmed after reading an AI question; an unread result line stays bright until read.
 Quiet detail lives in the tooltip, and no progress value is invented.
@@ -508,7 +513,7 @@ Hover, focus, selection and the open popover change fill and ring without adding
 A row is at least 28 high, or 44 with its second line, and grows with text scale rather than spilling.
 While a close names a pane, its row retains closing feedback.
 ⌥1 to ⌥9 select the first nine visible root occurrences top to bottom, counting duplicate raised/tree rows only once; tree children carry no number.
-Web owners: `web/src/PaneView.tsx`, `web/src/PaneHeaderBand.tsx`, `web/src/PaneRelations.tsx`, `web/src/components/sidebar-agent-row.tsx`, `web/src/components/agent-tree.tsx` (the verb, ask line, descendant mark, rails and chevron the three surfaces share), `web/src/components/pr-mark.tsx` and `web/src/prMark.ts` (the PR mark every surface draws), `web/src/components/agent-tree-popover.tsx`, and `web/src/sidebarTree.ts`.
+Web owners: `web/src/PaneView.tsx`, `web/src/PaneHeaderBand.tsx`, `web/src/PaneRelations.tsx`, `web/src/components/sidebar-agent-row.tsx`, `web/src/components/agent-tree.tsx` (the verb, ask line, descendant mark, rails and chevron the three surfaces share), `web/src/components/pr-mark.tsx` and `web/src/prMark.ts` (the PR mark every surface draws), `web/src/components/letter-mark.tsx` (the letters-waiting pill and envelope), `web/src/components/agent-tree-popover.tsx`, and `web/src/sidebarTree.ts`.
 
 ### Work Hide AI does for a home
 

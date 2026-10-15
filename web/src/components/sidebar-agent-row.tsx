@@ -8,6 +8,7 @@ import { useShellStore } from "../store";
 import { branchChip, forkLabel, lineText, lineTone, markTone, rowAccessibleName, sidebarLine } from "../agentRow";
 import { homeTurnLine, originLine } from "../hideAiOrigin";
 import { AgentForkMark } from "./fork-mark";
+import { RowLetterMark } from "./letter-mark";
 import { cn } from "../lib/utils";
 import type { AgentRow } from "../snapshot";
 import type { AgentMenuItem } from "../workspaceManage";
@@ -217,6 +218,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
             ) : null}
             {ask ? null : <AgentPrHover agent={agent} staleness={staleness} card={(icon) => <PrHoverCard agent={agent} icon={icon} staleness={staleness} onOpenPullRequest={onOpenPullRequest} />} />}
             {ask || !folded ? null : <span className="pointer-events-none flex shrink-0"><DescendantMark agent={agent} /></span>}
+            {agent.letters_waiting ? <RowLetterMark /> : null}
             {/* A time the core never measured draws nothing, and nothing stands in for it. */}
             <Elapsed since={agent.changed_at_unix_ms} aria-hidden="true" className="pointer-events-none shrink-0 font-mono text-caption text-muted-foreground" data-agent-elapsed="true" />
             {/* Every row ends in the fold slot, so every time ends on one column (sidebar-readability D-3). */}

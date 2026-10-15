@@ -1121,6 +1121,9 @@ pub struct Runtime {
     pending_session_resolutions: BTreeMap<String, crate::agent_state::sessions::Resolution>,
     failed_session_resolutions: BTreeMap<String, crate::agent_state::sessions::Resolution>,
     delivery_holds: BTreeMap<String, crate::delivery::doorbell::Hold>,
+    /// The panes whose letters the operator is shown waiting on a possible
+    /// draft, with how many (`doorbell::letters_waiting`).
+    letters_waiting: BTreeMap<String, u32>,
     /// When the oldest Resolved row leaves the 24-hour window.
     session_window_deadline_unix_ms: u64,
     #[cfg(test)]
@@ -2156,6 +2159,7 @@ impl Runtime {
             pending_session_resolutions: BTreeMap::new(),
             failed_session_resolutions: BTreeMap::new(),
             delivery_holds: BTreeMap::new(),
+            letters_waiting: BTreeMap::new(),
             session_window_deadline_unix_ms: 0,
             #[cfg(test)]
             pane_header_derivations: 0,

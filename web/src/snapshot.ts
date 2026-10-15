@@ -89,6 +89,8 @@ export type AgentRow = {
   /** Resolved within the last 24 hours, so Sessions still lists it. */
   resolved_recent?: boolean;
   escalation?: { cause: "parent_blocked" | "draft" | "bell_exhausted" | "undelivered" | "child_blocked" | "observer_unconfirmed"; letter_id: string | null; since_unix_ms: number | null; human_notice: boolean } | null;
+  /** How many letters wait on this pane for a possible draft, once it has rested; absent while none waits (docs/delivery.md). */
+  letters_waiting?: number;
   /** On a lineage root: every raised descendant, lead first. */
   raised?: RaisedAsk[];
   /** The one mark a folded parent wears for its descendants: raised, else working, else none. */
