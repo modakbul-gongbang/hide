@@ -2950,8 +2950,26 @@ impl Runtime {
                         && started.session.is_some()
                         && started.session == agent.lineage_session
                 })
-                .map(|started| crate::model::HideAiSnapshot {
-                    task: started.task.clone(),
+                .map(|started| {
+                    let home = started.task.as_ref().and_then(|task| task.kind.home());
+                    // Only a kind with a home has an attempt to read; a kind
+                    // this build does not know stays an operator row (D-19).
+                    let attempt = home.and_then(|_| {
+                        self.project_memory
+                            .promotions
+                            .home_attempt(&started.agent_id)
+                    });
+                    crate::model::HideAiSnapshot {
+                        task: started.task.clone(),
+                        home,
+                        project_id: attempt.map(|attempt| attempt.project_id.clone()),
+                        turn: attempt.and_then(|attempt| {
+                            super::memory_promotion::home_turn(
+                                attempt.pull,
+                                agent.activity == "working",
+                            )
+                        }),
+                    }
                 });
         }
     }

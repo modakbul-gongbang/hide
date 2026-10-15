@@ -166,7 +166,9 @@ pub fn sync_checkout_agent_summaries(
         let Some(&index) = owners.get(agent.pane_id.as_str()) else {
             continue;
         };
-        if !counted.insert(agent.pane_id.as_str()) {
+        // A row its home owns is no part of the checkout's count unless it
+        // calls the operator out (PRD hide-ai-work-home B2).
+        if !listed_for_operator(agent) || !counted.insert(agent.pane_id.as_str()) {
             continue;
         }
         let summary = &mut summaries[index];
@@ -231,6 +233,9 @@ pub fn summarize(agents: &[SidebarAgentSnapshot], connected: bool) -> PetSummary
         // The groups are decided once, in the projection. The pet counts them
         // through the projection's own enum rather than reading tokens, axes,
         // or group names a second time.
+        if !listed_for_operator(agent) {
+            continue;
+        }
         match crate::agent_state::group_of(agent) {
             AgentGroup::NeedsYou => {
                 summary.needs_you += 1;
@@ -617,6 +622,20 @@ pub mod phone {
             }
             let pane_id = str_of(agent, "pane_id");
             if pane_id.is_empty() {
+                continue;
+            }
+            // `listed_for_operator` on the wire form: a row its home owns is
+            // on the phone only while it is in Needs You (PRD
+            // hide-ai-work-home B4); its detail stays reachable from there.
+            if agent
+                .pointer("/hide_ai/home")
+                .is_some_and(|home| !home.is_null())
+                && !agent
+                    .get("delegated")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                && str_of(agent, "group") != "needs_you"
+            {
                 continue;
             }
             let title = agent

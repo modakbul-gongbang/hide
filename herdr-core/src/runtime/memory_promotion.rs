@@ -10,8 +10,9 @@
 use super::*;
 use crate::delivery::HIDE_MEMORY_ROLE;
 use crate::model::{
-    GithubFailureCategory, GithubProjectSnapshot, MemoryPromotionAgentSnapshot,
-    MemoryPromotionSnapshot, MemoryPromotionState, PullRequestBadge,
+    GithubFailureCategory, GithubProjectSnapshot, HomeTurn, MemoryPromotionAgentSnapshot,
+    MemoryPromotionSnapshot, MemoryPromotionState, PullRequestBadge, PullRequestChecks,
+    PullRequestSnapshot, ReviewDecision,
 };
 use crate::node::NodeId;
 use hide_memory::{MemoryLifecycle, MemoryStore, Promotion, PromotionState};
@@ -122,6 +123,84 @@ pub(super) struct PromotionTracking {
     /// when its start returned, with what started it: the tracker asks the
     /// same spawn again until the agent shows or the grace ends.
     unseen: HashMap<AttemptKey, PromotionStart>,
+    /// Each followed attempt's agent and what GitHub shows of its pull
+    /// request, by the agent's coordination id: the facts a row's home turn
+    /// is judged from (`home_turn`), so the snapshot never reads the store.
+    /// Replaced whole by each check.
+    homes: HashMap<String, HomeAttempt>,
+    /// Each settled attempt whose agent and worktree are not yet retired,
+    /// with whether the diagnostic for an unreachable machine was written.
+    /// An attempt a retire could not finish for a reason that may pass (the
+    /// machine away, Herdr refusing) stays here and is tried on the next
+    /// check; one kept for what it holds is left until the next start.
+    retiring: HashMap<Retire, bool>,
+    /// Whether a check has looked for attempts settled before this run
+    /// started (B19).
+    converged: bool,
+}
+
+/// A settled attempt's branch, to retire its agent and worktree (D-18).
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(super) struct Retire {
+    node: NodeId,
+    project_id: String,
+    root: String,
+    branch: String,
+}
+
+/// How many settled attempts one check retires; the rest wait for the next,
+/// so an upgrade over a long history never holds the tracker.
+const RETIRE_PER_CHECK: usize = 16;
+
+/// One followed attempt, as its agent's row needs it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct HomeAttempt {
+    pub(super) project_id: String,
+    pub(super) pull: Option<HomePull>,
+}
+
+/// What the PR catalog shows of an open pull request that decides the home's
+/// turn.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct HomePull {
+    number: u64,
+    draft: bool,
+    checks: PullRequestChecks,
+    changes_requested: bool,
+}
+
+impl HomePull {
+    fn of(pull: &PullRequestSnapshot) -> Option<Self> {
+        matches!(
+            pull.badge,
+            PullRequestBadge::Open | PullRequestBadge::Review
+        )
+        .then(|| Self {
+            number: u64::from(pull.number),
+            draft: pull.is_draft,
+            checks: pull.checks,
+            changes_requested: pull.review == Some(ReviewDecision::ChangesRequested),
+        })
+    }
+}
+
+/// Whether the operator is to act on an attempt's open pull request (PRD
+/// hide-ai-work-home D-14). A ready pull request waits for review while its
+/// checks pass or none exist, and stays there after it is read; failed
+/// checks are the operator's only once the agent has stopped working on
+/// them. A draft, pending or unknown checks, and a requested change are the
+/// author's turn, and unknown checks are never a pass.
+pub(super) fn home_turn(pull: Option<HomePull>, agent_working: bool) -> Option<HomeTurn> {
+    let pull = pull.filter(|pull| !pull.draft && !pull.changes_requested)?;
+    match pull.checks {
+        PullRequestChecks::Passing | PullRequestChecks::None => Some(HomeTurn::PrReview {
+            pr_number: pull.number,
+        }),
+        PullRequestChecks::Failed if !agent_working => Some(HomeTurn::CiFailed {
+            pr_number: pull.number,
+        }),
+        PullRequestChecks::Failed | PullRequestChecks::Pending | PullRequestChecks::Unknown => None,
+    }
 }
 
 struct GoneAttempt {
@@ -137,6 +216,11 @@ struct GoneAttempt {
 pub(super) type AttemptKey = (String, u64, u32);
 
 impl PromotionTracking {
+    /// The followed attempt whose agent has coordination id `agent_id`.
+    pub(super) fn home_attempt(&self, agent_id: &str) -> Option<&HomeAttempt> {
+        self.homes.get(agent_id)
+    }
+
     /// A promotion started or a read found one followed: check it.
     pub(super) fn mark_open(&mut self) {
         self.followed = Some(true);
@@ -283,13 +367,14 @@ impl Runtime {
         };
         tracking.in_flight = true;
         tracking.next_unix_ms = super::memory::now_ms().saturating_add(TRACK_INTERVAL_MS);
+        let converged = tracking.converged;
         let database = self.memory_database_path();
         let spawn = thread::Builder::new()
             .name("hide-memory-promotions".to_owned())
             .spawn(move || {
                 // A panic in the check must not leave the single flight held.
                 let moved = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    track_promotions(&context, &nodes, &database)
+                    track_promotions(&context, &nodes, &database, converged)
                 }))
                 .unwrap_or_else(|_| Err("tracker_panicked".to_owned()));
                 let Some(runtime) = context.runtime.upgrade() else {
@@ -322,15 +407,21 @@ impl Runtime {
         {
             tracking.unseen.extend(outcome.unseen.drain(..));
         }
+        let mut homes = None;
+        let mut retiring = None;
         let moved_projects = match moved {
             // A check asked for during this one may see rows this one did not.
             Ok(outcome) if again => {
                 tracking.mark_open();
+                homes = outcome.homes;
+                retiring = outcome.retiring;
                 outcome.moved_projects
             }
             Ok(outcome) => {
                 tracking.followed = Some(outcome.followed);
                 tracking.running = outcome.running;
+                homes = outcome.homes;
+                retiring = outcome.retiring;
                 outcome.moved_projects
             }
             Err(message) => {
@@ -344,6 +435,22 @@ impl Runtime {
         };
         for project_id in moved_projects {
             self.note_memory_change(&project_id, super::memory_analysis::MemoryChange::Other);
+        }
+        if let Some((retiring, converged)) = retiring {
+            let tracking = &mut self.project_memory.promotions;
+            tracking.retiring = retiring;
+            tracking.converged |= converged;
+        }
+        // A row's home turn moves only with these facts or the agent's own
+        // activity, so the lineage is rebuilt here only when they changed.
+        if let Some(homes) = homes
+            && self.project_memory.promotions.homes != homes
+        {
+            self.project_memory.promotions.homes = homes;
+            if !self.hide_started.agents.is_empty() {
+                self.refresh_agent_lineage();
+                self.refresh_agent_scopes();
+            }
         }
         if again {
             self.track_memory_promotions();
@@ -463,6 +570,16 @@ fn attempt_pull_request(
     project: &GithubProjectSnapshot,
     promotion: &Promotion,
 ) -> Option<PullRequestFact> {
+    attempt_pull_request_snapshot(project, promotion).map(|pull| PullRequestFact {
+        number: u64::from(pull.number),
+        badge: pull.badge,
+    })
+}
+
+fn attempt_pull_request_snapshot<'a>(
+    project: &'a GithubProjectSnapshot,
+    promotion: &Promotion,
+) -> Option<&'a PullRequestSnapshot> {
     let branch = promotion.branch.as_deref()?;
     let started = promotion.started_at_unix_ms.saturating_sub(START_SLACK_MS);
     let mut on_branch = project
@@ -483,10 +600,7 @@ fn attempt_pull_request(
             pull.number,
         )
     });
-    on_branch.last().map(|pull| PullRequestFact {
-        number: u64::from(pull.number),
-        badge: pull.badge,
-    })
+    on_branch.last().copied()
 }
 
 /// What the PR catalog's answer for a repository says of a missing pull
@@ -526,6 +640,12 @@ struct TrackOutcome {
     followed: bool,
     running: bool,
     moved_projects: BTreeSet<String>,
+    /// The followed attempts' home facts after this check's moves; `None`
+    /// when the check did not read them, which leaves the last ones.
+    homes: Option<HashMap<String, HomeAttempt>>,
+    /// The settled attempts still to retire after this check, and whether it
+    /// looked for those settled before the run.
+    retiring: Option<(HashMap<Retire, bool>, bool)>,
     /// Starts the check took to ask again and hands back, the agent still
     /// unseen.
     unseen: Vec<(AttemptKey, PromotionStart)>,
@@ -536,11 +656,14 @@ fn track_promotions(
     context: &RuntimeWorkerContext,
     nodes: &[NodeId],
     database: &Path,
+    converged: bool,
 ) -> Result<TrackOutcome, String> {
     let mut outcome = TrackOutcome {
         followed: false,
         running: false,
         moved_projects: BTreeSet::new(),
+        homes: None,
+        retiring: None,
         unseen: Vec::new(),
     };
     if !MemoryStore::exists(database) {
@@ -560,6 +683,28 @@ fn track_promotions(
                 }),
         );
     }
+    // Attempts that settled before this run: found once per run, and
+    // retired like one that settles now (B19).
+    let converging = if converged {
+        Vec::new()
+    } else {
+        let mut settled = Vec::new();
+        for node in nodes {
+            settled.extend(
+                store
+                    .settled_branches(node.as_str())
+                    .map_err(|error| error.to_string())?
+                    .into_iter()
+                    .map(|(project_id, root, branch)| Retire {
+                        node: node.clone(),
+                        project_id,
+                        root,
+                        branch,
+                    }),
+            );
+        }
+        settled
+    };
     let mut batches = HashSet::new();
     for (project_id, _, _, promotion, _) in &followed {
         if let Some(branch) = &promotion.branch
@@ -572,7 +717,7 @@ fn track_promotions(
         }
     }
     drop(store);
-    let (moves, mut asks, releasers) = {
+    let (moves, mut asks, reach, held, carried) = {
         let runtime = context.runtime.upgrade().ok_or("runtime_gone")?;
         let mut guard = runtime.lock().map_err(|_| "runtime_poisoned")?;
         let mut gone_now = HashSet::new();
@@ -623,21 +768,58 @@ fn track_promotions(
                 }
             })
             .collect::<Vec<_>>();
-        // What closes a failed attempt's panes and removes its worktree, on
-        // the machine of each attempt this check fails, used off the lock.
-        let mut releasers = HashMap::new();
-        for ((.., node), _) in followed
-            .iter()
-            .zip(&moves)
-            .filter(|(_, next)| matches!(next, Some((PromotionState::Failed, _))))
-        {
+        // The attempts that stay followed, by agent, with what GitHub shows
+        // of each pull request: a row's home turn is judged from these.
+        outcome.homes = Some(
+            followed
+                .iter()
+                .zip(&moves)
+                .filter_map(|((project_id, root, _, promotion, node), next)| {
+                    let state = next.map_or(promotion.state, |(state, _)| state);
+                    let agent_id = promotion.agent_id.clone()?;
+                    matches!(state, PromotionState::Running | PromotionState::PrOpen).then(|| {
+                        let pull = guard
+                            .promotion_catalog(node, root)
+                            .and_then(|catalog| attempt_pull_request_snapshot(catalog, promotion))
+                            .and_then(HomePull::of);
+                        (
+                            agent_id,
+                            HomeAttempt {
+                                project_id: project_id.clone(),
+                                pull,
+                            },
+                        )
+                    })
+                })
+                .collect(),
+        );
+        // The Herdr and node of each machine, to close a failed attempt's
+        // panes and retire a settled one's, used off the lock.
+        let mut reach = HashMap::new();
+        for node in nodes {
             if let (Some(connector), Ok(link)) = (
                 guard.delivery_connector(node.as_str()),
                 guard.node_link(node.as_str()),
             ) {
-                releasers.insert((*node).clone(), (connector, link));
+                reach.insert(node.clone(), (connector, link));
             }
         }
+        // The branches an attempt still followed holds: nothing is retired
+        // under a pull request that may yet take new work.
+        let held = followed
+            .iter()
+            .zip(&moves)
+            .filter(|((.., promotion, _), next)| {
+                matches!(
+                    next.map_or(promotion.state, |(state, _)| state),
+                    PromotionState::Running | PromotionState::PrOpen
+                )
+            })
+            .filter_map(|((project_id, _, _, promotion, _), _)| {
+                Some((project_id.clone(), promotion.branch.clone()?))
+            })
+            .collect::<HashSet<_>>();
+        let carried = guard.project_memory.promotions.retiring.clone();
         let tracking = &mut guard.project_memory.promotions;
         let dropped = tracking
             .gone
@@ -655,7 +837,7 @@ fn track_promotions(
                     (project_id, *number, promotion.attempt) == (&key.0, key.1, key.2)
                 })
         });
-        (moves, asks, releasers)
+        (moves, asks, reach, held, carried)
     };
     let mut store = match (moves.iter().any(Option::is_some) || !asks.is_empty())
         .then(|| super::memory::open_memory_store(database))
@@ -680,6 +862,7 @@ fn track_promotions(
         }
     };
     let mut released = HashSet::new();
+    let mut settled = Vec::new();
     for ((project_id, root, number, promotion, node), next) in followed.iter().zip(moves) {
         let state = match (next, store.as_mut()) {
             // Only the state and the pull request move: a file `placed`
@@ -711,10 +894,22 @@ fn track_promotions(
                             "pr_number": pr_number,
                         }));
                         outcome.moved_projects.insert(project_id.clone());
+                        if matches!(
+                            state,
+                            PromotionState::Merged | PromotionState::ClosedUnmerged
+                        ) && let Some(branch) = &promotion.branch
+                        {
+                            settled.push(Retire {
+                                node: (*node).clone(),
+                                project_id: project_id.clone(),
+                                root: root.clone(),
+                                branch: branch.clone(),
+                            });
+                        }
                         if state == PromotionState::Failed
                             && pr_number.is_none()
                             && let (Some((connector, link)), Some(branch)) =
-                                (releasers.get(*node), &promotion.branch)
+                                (reach.get(*node), &promotion.branch)
                             && released.insert((project_id.clone(), branch.clone()))
                         {
                             release_attempt(
@@ -747,6 +942,30 @@ fn track_promotions(
         outcome.followed |= matches!(state, PromotionState::Running | PromotionState::PrOpen);
         outcome.running |= state == PromotionState::Running;
     }
+    let mut retiring = retire_plan(carried, settled.into_iter().chain(converging), &held);
+    let mut due = retiring.keys().cloned().collect::<Vec<_>>();
+    due.sort_by(|a, b| (&a.project_id, &a.branch).cmp(&(&b.project_id, &b.branch)));
+    for retire in due.into_iter().take(RETIRE_PER_CHECK) {
+        let Some((connector, link)) = reach.get(&retire.node) else {
+            // Written once while the machine is away, not on every check.
+            if retiring.insert(retire.clone(), true) == Some(false) {
+                crate::diagnostic!(json!({
+                    "component": "memory",
+                    "kind": "promotion.worktree_retired",
+                    "project_id": retire.project_id,
+                    "branch": retire.branch,
+                    "outcome": "kept",
+                    "reason": "the machine that holds the Project cannot be reached",
+                }));
+            }
+            continue;
+        };
+        if retire_attempt(connector.as_ref(), link.as_ref(), &retire) != Retired::Failed {
+            retiring.remove(&retire);
+        }
+    }
+    outcome.followed |= !retiring.is_empty();
+    outcome.retiring = Some((retiring, true));
     if let Some(store) = store.as_mut() {
         for (key, promotion, start) in asks.drain(..) {
             let spawn = |start: &PromotionStart| spawn_agent(&key.0, key.1, &promotion, start);
@@ -1018,6 +1237,171 @@ fn release_attempt(
         "outcome": released.as_ref().ok(),
         "reason": released.err(),
     }));
+}
+
+/// The settled attempts to retire: those carried from earlier checks, those
+/// this check settled and those found settled at the start, minus any whose
+/// branch an attempt still followed holds (a retry reuses a failed
+/// attempt's branch, and a batch shares one).
+fn retire_plan(
+    carried: HashMap<Retire, bool>,
+    found: impl IntoIterator<Item = Retire>,
+    held: &HashSet<(String, String)>,
+) -> HashMap<Retire, bool> {
+    let mut plan = carried;
+    for retire in found {
+        plan.entry(retire).or_insert(false);
+    }
+    plan.retain(|retire, _| !held.contains(&(retire.project_id.clone(), retire.branch.clone())));
+    plan
+}
+
+/// What retiring a settled attempt came to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Retired {
+    /// The agent's panes are closed and the worktree is gone or never was;
+    /// the branch stays.
+    Done,
+    /// The agent is ended, and the worktree stays for what it holds. Nothing
+    /// is retried until the next start: what holds it is the operator's.
+    Kept,
+    /// Herdr or the node refused, which may pass: tried again on the next
+    /// check.
+    Failed,
+}
+
+/// The names the attempts' agents are listed under start with this.
+const AGENT_NAME_PREFIX: &str = "memory-promote-m";
+
+/// Retires a settled attempt (PRD hide-ai-work-home D-18, D-24, engineering
+/// principle 14): its agent's panes close, then its worktree is removed when
+/// the tree is clean and no other agent or running program is in it. The
+/// branch always stays, for the merge or the operator to reuse. What
+/// happened is logged; a worktree that stays says why.
+fn retire_attempt(
+    connector: &dyn hide_herdr_client::ApiConnector,
+    node: &dyn crate::node_access::NodeLink,
+    retire: &Retire,
+) -> Retired {
+    use hide_node_link::git::GitCommand;
+    use hide_node_link::protocol::Call;
+    const NODE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+    let repo = retire.root.as_str();
+    let result = (|| -> Result<(Retired, &'static str), String> {
+        let Some(path) = worktree_path(connector, repo, &retire.branch)? else {
+            return Ok((Retired::Done, "gone"));
+        };
+        // The branch checked out in the Project's own folder is the
+        // operator's, never an attempt's worktree.
+        if path.trim_end_matches('/') == repo.trim_end_matches('/') {
+            return Ok((Retired::Kept, "the Project's own folder"));
+        }
+        let agents = hide_herdr_client::request_with_connector(
+            connector,
+            "agent.list",
+            crate::wire::empty_params(),
+            std::time::Duration::from_secs(5),
+        )
+        .map_err(|error| error.to_string())
+        .and_then(|listed| {
+            crate::wire::agents_response(listed).map_err(|_| "agent.list is malformed".to_owned())
+        })?;
+        let panes = panes_in(connector, &path)?;
+        let (attempt, others): (Vec<_>, Vec<_>) = agents
+            .iter()
+            .filter(|agent| panes.contains(&agent.pane_id))
+            .partition(|agent| {
+                agent
+                    .name
+                    .as_deref()
+                    .is_some_and(|name| name.starts_with(AGENT_NAME_PREFIX))
+            });
+        // The attempt's agent ends first, whatever else keeps the worktree.
+        let attempt = attempt
+            .into_iter()
+            .map(|agent| agent.pane_id.clone())
+            .collect::<Vec<_>>();
+        crate::live::close_checkout_panes(
+            connector,
+            node,
+            &[],
+            &attempt,
+            crate::live::ProcessWait::for_folder_removal(true),
+            crate::live::CONFIRM_TIMEOUT,
+        )?;
+        if !others.is_empty() {
+            return Ok((Retired::Kept, "another agent works in it"));
+        }
+        // Idle shells close with the worktree; a program running in one
+        // keeps it.
+        let remaining = panes
+            .into_iter()
+            .filter(|pane| !attempt.contains(pane))
+            .collect::<Vec<_>>();
+        for pane in &remaining {
+            let held = hide_herdr_client::request_with_connector(
+                connector,
+                "pane.process_info",
+                crate::wire::pane_process_info_params(pane)?,
+                std::time::Duration::from_secs(5),
+            )
+            .map_err(|error| error.to_string())
+            .and_then(crate::wire::pane_process_group)?;
+            if !held.foreground_pids.is_empty() && !held.shell_holds_terminal() {
+                return Ok((Retired::Kept, "a program is running in it"));
+            }
+        }
+        let status = crate::node_access::call_as::<String>(
+            node,
+            Call::Git {
+                root: path.clone(),
+                command: GitCommand::Status,
+            },
+            NODE_TIMEOUT,
+        )
+        .map_err(|error| error.to_string())?;
+        if !status.trim().is_empty() {
+            return Ok((Retired::Kept, "it holds uncommitted changes"));
+        }
+        crate::live::close_checkout_panes(
+            connector,
+            node,
+            std::slice::from_ref(&path),
+            &remaining,
+            crate::live::ProcessWait::for_folder_removal(true),
+            crate::live::CONFIRM_TIMEOUT,
+        )?;
+        crate::node_access::call_as::<()>(
+            node,
+            Call::Factory {
+                call: hide_node_link::factory::FactoryCall::RemoveWorktree {
+                    root: repo.to_owned(),
+                    checkout: path,
+                    branch: retire.branch.clone(),
+                    discard: false,
+                },
+            },
+            NODE_TIMEOUT,
+        )
+        .map_err(|error| error.to_string())?;
+        Ok((Retired::Done, "removed"))
+    })();
+    let (retired, outcome, reason) = match &result {
+        Ok((retired, reason)) if *reason == "removed" || *reason == "gone" => {
+            (*retired, *reason, None)
+        }
+        Ok((retired, reason)) => (*retired, "kept", Some((*reason).to_owned())),
+        Err(reason) => (Retired::Failed, "failed", Some(reason.clone())),
+    };
+    crate::diagnostic!(json!({
+        "component": "memory",
+        "kind": "promotion.worktree_retired",
+        "project_id": retire.project_id,
+        "branch": retire.branch,
+        "outcome": outcome,
+        "reason": reason,
+    }));
+    retired
 }
 
 /// The panes Herdr runs in the folder `path` or below it.
@@ -1395,7 +1779,7 @@ fn spawn_agent(
             path: None,
             args,
             task: Some(crate::coordination::SpawnTask {
-                kind: crate::coordination::MEMORY_PROMOTE_TASK.into(),
+                kind: crate::coordination::TaskKind::MemoryPromote,
                 target: Some(format!("m{number}")),
             }),
         },
@@ -1670,11 +2054,11 @@ mod tests {
         let state =
             |store: &MemoryStore, project: &str| store.promotions(project).unwrap()[0].1.state;
 
-        track_promotions(&context, std::slice::from_ref(&node), &database).unwrap();
+        track_promotions(&context, std::slice::from_ref(&node), &database, true).unwrap();
         assert_eq!(state(&store, "p"), PromotionState::Running);
         let asked = runtime.lock().unwrap().github_generations[repo];
         assert!(asked > 0, "the tracker asked the catalog for a new read");
-        track_promotions(&context, std::slice::from_ref(&node), &database).unwrap();
+        track_promotions(&context, std::slice::from_ref(&node), &database, true).unwrap();
         assert_eq!(
             state(&store, "p"),
             PromotionState::Running,
@@ -1690,7 +2074,8 @@ mod tests {
             project.pull_requests_read = false;
             project.status.failure_category = Some(GithubFailureCategory::NotLoggedIn);
         }
-        let outcome = track_promotions(&context, std::slice::from_ref(&node), &database).unwrap();
+        let outcome =
+            track_promotions(&context, std::slice::from_ref(&node), &database, true).unwrap();
         assert_eq!(state(&store, "p"), PromotionState::Running);
         assert!(outcome.followed && outcome.running);
         assert!(outcome.moved_projects.contains("p"), "the tab redraws it");
@@ -1716,7 +2101,8 @@ mod tests {
             project.status.failure_category = None;
             project.pull_requests = vec![pull_request(924, &branch(1, started), started + 1)];
         }
-        let outcome = track_promotions(&context, std::slice::from_ref(&node), &database).unwrap();
+        let outcome =
+            track_promotions(&context, std::slice::from_ref(&node), &database, true).unwrap();
         let (_, open) = store.promotions("p").unwrap().remove(0);
         assert_eq!(
             (open.state, open.pr_number),
@@ -1750,14 +2136,14 @@ mod tests {
             ..retry
         };
         store.set_promotion("p", 1, &retry).unwrap();
-        track_promotions(&context, std::slice::from_ref(&node), &database).unwrap();
+        track_promotions(&context, std::slice::from_ref(&node), &database, true).unwrap();
         let asked = runtime.lock().unwrap().github_generations[repo];
         runtime
             .lock()
             .unwrap()
             .github_read_generation
             .insert(repo.into(), asked);
-        track_promotions(&context, std::slice::from_ref(&node), &database).unwrap();
+        track_promotions(&context, std::slice::from_ref(&node), &database, true).unwrap();
         assert_eq!(state(&store, "p"), PromotionState::Failed);
     }
 
@@ -1960,7 +2346,7 @@ mod tests {
         assert_eq!(
             spawn.task,
             Some(crate::coordination::SpawnTask {
-                kind: "memory_promote".into(),
+                kind: crate::coordination::TaskKind::MemoryPromote,
                 target: Some("m1".into()),
             }),
             "the spawn names its task, so the screen can say what Hide AI does"
@@ -2022,6 +2408,12 @@ mod tests {
         panes: Vec<(String, String)>,
         /// The panes Herdr shows an agent, or a held start's name, in.
         agents: Vec<String>,
+        /// The panes of the attempt's own agent, named as Hide names it.
+        attempt_agents: Vec<String>,
+        /// The panes with a program running that is not their shell.
+        busy: Vec<String>,
+        /// The worktree removals asked for, with whether each was forced.
+        removals: Vec<(String, bool)>,
         commits: u32,
         changed: bool,
         /// The commits the branch holds once its panes closed: what ran
@@ -2051,14 +2443,35 @@ mod tests {
                         "terminal_id": "t", "focused": false, "agent_status": "idle",
                         "revision": 1, "cwd": cwd})).collect::<Vec<_>>()}}),
                 "agent.list" => json!({"type": "agent_list", "agents":
-                    repository.agents.iter().map(|pane| json!({"pane_id": pane,
+                    repository.agents.iter().map(|pane| (pane, "m7"))
+                        .chain(repository.attempt_agents.iter().map(|pane| (pane, "memory-promote-m7-1")))
+                        .map(|(pane, name)| json!({"pane_id": pane,
                         "workspace_id": "w2", "tab_id": "w2:t1", "terminal_id": "t",
                         "revision": 1, "focused": false, "agent_status": "idle",
-                        "name": "m7"})).collect::<Vec<_>>()}),
+                        "name": name})).collect::<Vec<_>>()}),
+                "pane.process_info" => {
+                    let busy = repository
+                        .busy
+                        .iter()
+                        .any(|pane| *pane == params["pane_id"]);
+                    let (foreground, processes) = if busy {
+                        (200, json!([{"pid": 200, "name": "vite"}]))
+                    } else {
+                        (100, json!([{"pid": 100, "name": "zsh"}]))
+                    };
+                    json!({"type": "pane_process_info", "process_info": {
+                        "pane_id": params["pane_id"], "shell_pid": 100,
+                        "foreground_process_group_id": foreground,
+                        "foreground_processes": processes}})
+                }
                 "pane.close" => {
                     repository
                         .panes
                         .retain(|(pane, _)| *pane != params["pane_id"]);
+                    repository.agents.retain(|pane| *pane != params["pane_id"]);
+                    repository
+                        .attempt_agents
+                        .retain(|pane| *pane != params["pane_id"]);
                     if let Some(commits) = repository.committed_on_close {
                         repository.commits = commits;
                     }
@@ -2101,10 +2514,7 @@ mod tests {
                             branch, discard, ..
                         },
                 } => {
-                    assert!(
-                        discard,
-                        "a branch with nothing of its own is deleted with it"
-                    );
+                    repository.removals.push((branch.clone(), discard));
                     repository.worktrees.remove(&branch);
                     serde_json::Value::Null
                 }
@@ -2143,6 +2553,11 @@ mod tests {
             7,
         );
         assert!(repository.lock().unwrap().worktrees.is_empty());
+        assert_eq!(
+            repository.lock().unwrap().removals,
+            [(first.clone(), true)],
+            "a branch with nothing of its own is deleted with it"
+        );
         assert!(
             repository.lock().unwrap().panes.is_empty(),
             "its pane closed first"
@@ -2244,6 +2659,262 @@ mod tests {
                 assert!(!repository.lock().unwrap().panes.is_empty(), "{case}");
             }
         }
+    }
+
+    fn retire_of(branch: &str) -> Retire {
+        Retire {
+            node: NodeId::parse("test-node").unwrap(),
+            project_id: "p".into(),
+            root: "/r".into(),
+            branch: branch.into(),
+        }
+    }
+
+    /// A settled attempt: its worktree, an idle shell beside its agent.
+    fn settled_repository(setup: impl FnOnce(&mut Repository)) -> Shared {
+        let repository: Shared = Arc::default();
+        {
+            let mut repository = repository.lock().unwrap();
+            repository
+                .worktrees
+                .insert(branch(7, 1), "/r.worktrees/first".into());
+            repository.panes = vec![
+                ("w2:p1".into(), "/r.worktrees/first".into()),
+                ("w2:p2".into(), "/r.worktrees/first/docs".into()),
+            ];
+            repository.attempt_agents = vec!["w2:p1".into()];
+            setup(&mut repository);
+        }
+        repository
+    }
+
+    /// B15, B16: a merged or closed pull request ends the agent and removes
+    /// the worktree with its idle shell, and the branch is never deleted.
+    #[test]
+    fn a_settled_attempt_ends_its_agent_and_removes_a_clean_worktree_keeping_the_branch() {
+        let repository = settled_repository(|_| {});
+        let herdr = herdr(&repository);
+        let retire = retire_of(&branch(7, 1));
+        assert_eq!(
+            retire_attempt(
+                &herdr.connector(),
+                &Machine(Arc::clone(&repository)),
+                &retire
+            ),
+            Retired::Done
+        );
+        let held = repository.lock().unwrap();
+        assert!(held.worktrees.is_empty());
+        assert!(held.panes.is_empty(), "the agent's pane and the shell");
+        assert_eq!(
+            held.removals,
+            [(branch(7, 1), false)],
+            "unforced: no branch deleted"
+        );
+    }
+
+    /// B17, B18: what the operator may still use keeps the worktree, but the
+    /// attempt's agent is ended whatever keeps it, and asking again changes
+    /// nothing more.
+    #[test]
+    fn a_settled_attempt_keeps_a_worktree_that_holds_anything_and_still_ends_its_agent() {
+        type Case = (&'static str, fn(&mut Repository));
+        let cases: [Case; 3] = [
+            ("uncommitted changes", |repository| {
+                repository.changed = true
+            }),
+            ("another agent", |repository| {
+                repository
+                    .panes
+                    .push(("w2:p3".into(), "/r.worktrees/first".into()));
+                repository.agents.push("w2:p3".into());
+            }),
+            ("a running program", |repository| {
+                repository.busy.push("w2:p2".into())
+            }),
+        ];
+        for (case, setup) in cases {
+            let repository = settled_repository(setup);
+            let herdr = herdr(&repository);
+            let machine = Machine(Arc::clone(&repository));
+            let retire = retire_of(&branch(7, 1));
+            for _ in 0..2 {
+                assert_eq!(
+                    retire_attempt(&herdr.connector(), &machine, &retire),
+                    Retired::Kept,
+                    "{case}"
+                );
+            }
+            let held = repository.lock().unwrap();
+            assert_eq!(held.worktrees.len(), 1, "{case}");
+            assert!(held.removals.is_empty(), "{case}");
+            assert!(
+                !held.panes.iter().any(|(pane, _)| pane == "w2:p1"),
+                "{case}: the attempt's agent is closed"
+            );
+            assert!(
+                held.panes.iter().any(|(pane, _)| pane == "w2:p2"),
+                "{case}: the operator's shell is left"
+            );
+        }
+    }
+
+    /// B19: a worktree already gone is a finished retire, so one asked again
+    /// after an upgrade or a restart converges.
+    #[test]
+    fn retiring_an_attempt_whose_worktree_is_gone_is_done() {
+        let repository = settled_repository(|repository| repository.worktrees.clear());
+        let herdr = herdr(&repository);
+        assert_eq!(
+            retire_attempt(
+                &herdr.connector(),
+                &Machine(Arc::clone(&repository)),
+                &retire_of(&branch(7, 1))
+            ),
+            Retired::Done
+        );
+    }
+
+    /// The Project's own folder holding the branch is the operator's.
+    #[test]
+    fn a_settled_attempt_never_retires_the_projects_own_folder() {
+        let repository = settled_repository(|repository| {
+            repository.worktrees.insert(branch(7, 1), "/r".into());
+            repository.panes = vec![("w1:p1".into(), "/r".into())];
+        });
+        let herdr = herdr(&repository);
+        assert_eq!(
+            retire_attempt(
+                &herdr.connector(),
+                &Machine(Arc::clone(&repository)),
+                &retire_of(&branch(7, 1))
+            ),
+            Retired::Kept
+        );
+        assert_eq!(repository.lock().unwrap().panes.len(), 1);
+    }
+
+    /// A Herdr that cannot be reached is a failure to try again, never a
+    /// kept worktree or a finished one.
+    #[test]
+    fn retiring_while_herdr_is_unreachable_fails_to_be_tried_again() {
+        struct Down;
+        impl hide_herdr_client::ApiConnector for Down {
+            fn connect(
+                &self,
+            ) -> Result<Box<dyn hide_herdr_client::ApiStream>, hide_herdr_client::ApiError>
+            {
+                Err(hide_herdr_client::ApiError::NotRunning("fixture".into()))
+            }
+        }
+        let repository = settled_repository(|_| {});
+        assert_eq!(
+            retire_attempt(
+                &Down,
+                &Machine(Arc::clone(&repository)),
+                &retire_of(&branch(7, 1))
+            ),
+            Retired::Failed
+        );
+        assert_eq!(repository.lock().unwrap().worktrees.len(), 1);
+    }
+
+    /// B19 and the shared branch: what was carried stays, what is found is
+    /// added once, and nothing is retired under a branch still followed.
+    #[test]
+    fn the_retire_plan_merges_what_was_carried_and_found_and_spares_a_followed_branch() {
+        let (a, b, c) = (retire_of("a"), retire_of("b"), retire_of("c"));
+        let carried = HashMap::from([(a.clone(), true), (c.clone(), false)]);
+        let held = HashSet::from([("p".to_owned(), "c".to_owned())]);
+        let plan = retire_plan(carried, [a.clone(), b.clone(), b.clone()], &held);
+        assert_eq!(
+            plan,
+            HashMap::from([(a, true), (b, false)]),
+            "a keeps its note, b is added once, c is held by a followed attempt"
+        );
+    }
+
+    /// D-14 and B8-B10: whose turn a followed attempt's pull request is.
+    #[test]
+    fn the_home_turn_follows_the_pull_request_and_the_agent() {
+        use PullRequestChecks::{Failed, None as NoChecks, Passing, Pending, Unknown};
+        let pull = |checks, draft, changes_requested| {
+            Some(HomePull {
+                number: 924,
+                draft,
+                checks,
+                changes_requested,
+            })
+        };
+        let review = Some(HomeTurn::PrReview { pr_number: 924 });
+        let ci = Some(HomeTurn::CiFailed { pr_number: 924 });
+        let cases = [
+            ("no pull request yet", None, false, None),
+            (
+                "ready and passing",
+                pull(Passing, false, false),
+                false,
+                review,
+            ),
+            (
+                "ready with no checks",
+                pull(NoChecks, false, false),
+                false,
+                review,
+            ),
+            (
+                "passing while the agent still works",
+                pull(Passing, false, false),
+                true,
+                review,
+            ),
+            ("pending checks", pull(Pending, false, false), false, None),
+            (
+                "unknown checks are never a pass",
+                pull(Unknown, false, false),
+                false,
+                None,
+            ),
+            ("a draft", pull(Passing, true, false), false, None),
+            ("changes requested", pull(Passing, false, true), false, None),
+            (
+                "failed checks, agent at rest",
+                pull(Failed, false, false),
+                false,
+                ci,
+            ),
+            (
+                "failed checks, agent fixing them",
+                pull(Failed, false, false),
+                true,
+                None,
+            ),
+            (
+                "failed checks on a draft",
+                pull(Failed, true, false),
+                false,
+                None,
+            ),
+        ];
+        for (case, pull, working, expected) in cases {
+            assert_eq!(home_turn(pull, working), expected, "{case}");
+        }
+    }
+
+    /// A settled pull request has no turn: the attempt is retired, not asked
+    /// about; and a fork's or an old attempt's pull request is not its.
+    #[test]
+    fn only_an_open_pull_request_gives_the_home_a_turn() {
+        for badge in [PullRequestBadge::Merged, PullRequestBadge::Closed] {
+            let mut settled = pull_request(924, "b", 1);
+            settled.badge = badge;
+            settled.checks = PullRequestChecks::Passing;
+            assert_eq!(HomePull::of(&settled), None, "{badge:?}");
+        }
+        let mut open = pull_request(924, "b", 1);
+        open.badge = PullRequestBadge::Review;
+        open.review = Some(ReviewDecision::ChangesRequested);
+        assert!(HomePull::of(&open).unwrap().changes_requested);
     }
 
     #[test]

@@ -480,6 +480,16 @@ pub fn agent_group_for(
             AgentGroup::Seen
         };
     }
+    if let Ownership::HideAi { operator_turn } = ownership {
+        // Its home shows the work's progress and result; the operator is
+        // called out only for what the operator has to do: the agent's own
+        // question or block, read like any row's, or the home's turn.
+        return if operator_turn || blocked || (demand != AgentDemand::None && unread) {
+            AgentGroup::NeedsYou
+        } else {
+            AgentGroup::Seen
+        };
+    }
     if blocked || (demand != AgentDemand::None && unread) {
         AgentGroup::NeedsYou
     } else if waiting {

@@ -694,6 +694,55 @@ mod tests {
         assert_eq!(cleared.len(), 1);
     }
 
+    /// PRD hide-ai-work-home B4, B10: a row its home owns is on the phone only
+    /// while the operator is called out, notifies once when it enters Needs
+    /// You, and a change of the home's turn inside Needs You is no new notice.
+    #[test]
+    fn a_home_owned_row_notifies_once_on_entering_needs_you_and_not_on_a_turn_change() {
+        let owned = |group: &str, turn: Value| {
+            let mut row = row("w1:p1", group, "none", None);
+            row["hide_ai"] = json!({"home": "memory", "turn": turn});
+            row
+        };
+        let observe = |transitions: &mut Transitions, row: Value| {
+            transitions
+                .observe(&project(&rest(json!([row])), "local"))
+                .0
+        };
+        let phone = |row: Value| project(&rest(json!([row])), "local").agents().count();
+        assert_eq!(phone(owned("seen", Value::Null)), 0, "not on the phone");
+        assert_eq!(
+            phone(owned(
+                "needs_you",
+                json!({"kind": "pr_review", "pr_number": 924})
+            )),
+            1,
+            "on the phone once called out"
+        );
+        let mut transitions = Transitions::default();
+        let review = json!({"kind": "pr_review", "pr_number": 924});
+        let failed = json!({"kind": "ci_failed", "pr_number": 924});
+        assert!(
+            observe(&mut transitions, owned("seen", Value::Null)).is_empty(),
+            "the first look only seeds"
+        );
+        assert!(
+            observe(&mut transitions, owned("seen", Value::Null)).is_empty(),
+            "progress alone calls no one"
+        );
+        let entered = observe(&mut transitions, owned("needs_you", review.clone()));
+        assert_eq!(entered.len(), 1);
+        assert_eq!(entered[0].state, NoticeState::NeedsYou);
+        assert!(
+            observe(&mut transitions, owned("needs_you", review)).is_empty(),
+            "the same turn again"
+        );
+        assert!(
+            observe(&mut transitions, owned("needs_you", failed)).is_empty(),
+            "the turn word changing inside Needs You"
+        );
+    }
+
     /// B8, B5: an ordinary delegated child's block is the parent's to handle,
     /// so the root is not announced; only a core escalation cause raises it.
     #[test]
