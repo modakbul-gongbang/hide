@@ -2246,9 +2246,15 @@ export function createActions(send: DispatchFn) {
 
     startSecretary,
 
+    /** A record shows on Work's Sessions lens, so a lane left on PRs turns to Sessions in the same event that brings Work up. */
     openSessionRecord(session: import("./snapshot").WorkSession) {
       ui().setSessionWorkTarget(session);
-      showTool("work");
+      const view = workspaceViewOf(rest());
+      if (!view) diagnostic("workspace_view: no Workspace in front");
+      else {
+        ui().showLane();
+        if (view.tool !== "work" || view.work?.lens !== "sessions") setWorkspaceView({ tool: "work", work_lens: "sessions" });
+      }
       dispatch({ schema_version: 2, kind: "session_record_open", payload: { session } });
     },
     /**
@@ -2258,7 +2264,8 @@ export function createActions(send: DispatchFn) {
      */
     togglePaneRecord(session: import("./snapshot").WorkSession) {
       const shown = ui().sessionWorkTarget;
-      if (shown && workKey(shown) === workKey(session) && laneUpWith("work")) return this.closeSessionRecord();
+      const onSessions = workspaceViewOf(rest())?.work?.lens === "sessions";
+      if (shown && workKey(shown) === workKey(session) && laneUpWith("work") && onSessions) return this.closeSessionRecord();
       this.openSessionRecord(session);
     },
     closeSessionRecord() {

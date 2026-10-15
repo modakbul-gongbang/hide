@@ -384,7 +384,7 @@ The browser display's toolbar and its loading, load failed, and plain browser ta
 
 A pane header is a quiet identity row: the ancestor path, the status mark, the agent's logo, title, the fork mark, the PR mark, the Not connected chip, and the retained overflow, zoom and close controls at the right end.
 A plain shell keeps its terminal mark.
-On an agent pane whose session Hide knows, the status mark, the logo and the title are one button: under the pointer they light together with the hint `세션 기록 보기`, and a press shows that session's record in the right lane, opening the lane when it is closed or put away, while the keyboard and the input cursor stay in the pane's terminal (PRD overview-device-tasks B22).
+On an agent pane whose session Hide knows, the status mark, the logo and the title are one button: under the pointer they light together with the hint `세션 기록 보기`, and a press shows that session's record in the right lane, opening the lane when it is closed or put away and turning the Work tool to Sessions when it was left on PRs, since a record is drawn on Sessions, while the keyboard and the input cursor stay in the pane's terminal (PRD overview-device-tasks B22); the Overview's `lane에서 보기` lands the same way.
 A press while the lane already shows that record goes back to the Sessions list, and the fork mark and the PR mark keep their own presses outside the button (B23).
 A plain shell, and an agent pane whose session is not known yet, keeps the plain head with nothing to press; the head becomes the button in place once the session is known, on a device's pane as on this Mac's (B24).
 Over a narrow window the record shows in the lane floating over the panes (`web/src/PaneHeaderBand.tsx`, `PaneRecordButton`).
