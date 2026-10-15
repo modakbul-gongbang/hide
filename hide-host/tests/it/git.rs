@@ -32,6 +32,8 @@ fn repository(path: &Path) {
     git(path, &["init", "-q", "-b", "main"]);
     git(path, &["config", "user.name", "Fixture"]);
     git(path, &["config", "user.email", "fixture@example.invalid"]);
+    // The operator's global signing setting must not reach a fixture commit.
+    git(path, &["config", "commit.gpgsign", "false"]);
 }
 
 #[test]

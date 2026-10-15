@@ -98,7 +98,7 @@ fn delegated_local_caller_can_manage_background_views() {
 }
 
 #[test]
-fn rejected_background_open_preserves_documents_columns_and_save_generation() {
+fn rejected_background_open_preserves_documents_lane_and_save_generation() {
     let (mut runtime, checkout, directory) = setup("background-refusal");
     open(&mut runtime, &checkout, &directory, "a.md");
     // Nothing can close to make room: A's document holds a draft, B's front
@@ -116,7 +116,7 @@ fn rejected_background_open_preserves_documents_columns_and_save_generation() {
     let frame = runtime.snapshot.workspace_view.clone();
     let editor = serde_json::to_value(&runtime.snapshot.editor).unwrap();
     let generation = runtime.workspace_views.as_ref().unwrap().generation;
-    let calls = runtime.workspace_views.as_ref().unwrap().views_calls;
+    let calls = runtime.workspace_views.as_ref().unwrap().lane_calls;
     let caller = "w-order:t1:p";
     let context = runtime
         .workspace_control_query(crate::node::TEST_NODE, caller, Query::Info)
@@ -161,7 +161,7 @@ fn rejected_background_open_preserves_documents_columns_and_save_generation() {
     runtime.sync_workspace_view();
     let store = runtime.workspace_views.as_ref().unwrap();
     assert_eq!(
-        (&store.views, store.generation, store.views_calls),
+        (&store.views, store.generation, store.lane_calls),
         (&before, generation, calls)
     );
     assert_eq!(runtime.snapshot.workspace_view, frame);
@@ -186,7 +186,7 @@ fn empty_agent_presentations_do_not_consume_view_areas() {
         )));
         runtime.sync_workspace_view();
         dispatch_focus_tab(&mut runtime, &checkout_id, tab);
-        assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
+        assert_eq!(runtime.snapshot.workspace_view.as_ref().unwrap().tool, None);
         assert!(strip(&runtime, &directory).is_empty());
         assert!(runtime.snapshot.browser_scopes.len() <= 6);
         assert_eq!(
@@ -241,7 +241,7 @@ fn background_open_preserves_operator_preview_and_layout() {
             "checkout_id": checkout_id, "preview": true,
         }),
     ));
-    let before = columns(&runtime);
+    let before = presentation(&runtime);
     let b = display_id(&runtime, &directory, "b.md");
     assert!(layout(&runtime, &directory).display(&b).unwrap().preview);
     control_file(
@@ -260,7 +260,7 @@ fn background_open_preserves_operator_preview_and_layout() {
         true,
         "beside-a",
     );
-    assert_eq!(columns(&runtime), before);
+    assert_eq!(presentation(&runtime), before);
     assert!(layout(&runtime, &directory).display(&b).unwrap().preview);
     focus_tab(&mut runtime, &checkout_id, &directory, TABS[0]);
     assert_eq!(fronts(&runtime, &directory), ["b.md", "c.md"]);
@@ -272,7 +272,7 @@ fn background_open_preserves_operator_preview_and_layout() {
         serde_json::json!({"action": "move", "display_id": c, "area_id": target, "index": 0}),
     );
     focus_tab(&mut runtime, &checkout_id, &directory, TABS[1]);
-    assert_eq!(columns(&runtime), before);
+    assert_eq!(presentation(&runtime), before);
 }
 
 /// A checkout of a real directory with a live Herdr context, so a tab choice
@@ -589,24 +589,27 @@ fn open_page(url: &str, reveal: bool) -> Action {
     }
 }
 
-fn columns(runtime: &Runtime) -> crate::model::WorkspaceViewSnapshot {
+/// The published Workspace without its Agent areas and its lane call
+/// serial: a later explicit return to a pending result calls the lane, and
+/// the restored presentation is compared independently of that monotonic
+/// number.
+fn presentation(runtime: &Runtime) -> crate::model::WorkspaceViewSnapshot {
     let mut view = runtime
         .snapshot
         .workspace_view
         .clone()
         .expect("a published Workspace");
     view.agent_layout = None;
-    // A later explicit return to a pending result calls File Views. Compare
-    // the restored columns independently of that monotonic call serial.
-    view.views_calls = 0;
-    view.views_called = 0;
+    view.lane_calls = 0;
+    view.lane_called = 0;
     view
 }
 
-// These expectations come from cli-tab-background-views B1-B24. The old
-// shared-strip/front-only tests are superseded by whole presentations.
+// These expectations come from cli-tab-background-views B1-B24 and PRD
+// right-lane D-11, B15: each Agent tab keeps its View list, layout and
+// selection, and the lane (its tool, pin and widths) is the Workspace's.
 #[test]
-fn each_tab_keeps_its_own_list_visibility_and_shared_dirty_buffer() {
+fn each_tab_keeps_its_own_list_and_the_lane_stays_the_workspaces() {
     let (mut runtime, checkout, directory) = setup("tab-private-list");
     open(&mut runtime, &checkout, &directory, "a.md");
     runtime.dispatch_json(&explorer_event(
@@ -619,7 +622,11 @@ fn each_tab_keeps_its_own_list_visibility_and_shared_dirty_buffer() {
         strip(&runtime, &directory).is_empty(),
         "B2 starts with no Views"
     );
-    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        Some(crate::workspace_views::Tool::Files),
+        "the lane stays the Workspace's"
+    );
     open(&mut runtime, &checkout, &directory, "a.md");
     assert_ne!(
         display_id(&runtime, &directory, "a.md"),
@@ -640,9 +647,9 @@ fn each_tab_keeps_its_own_list_visibility_and_shared_dirty_buffer() {
     open(&mut runtime, &checkout, &directory, "b.md");
     view_event(
         &mut runtime,
-        serde_json::json!({"views": false, "tools": true, "views_width": 444}),
+        serde_json::json!({"tool": "agent_sessions", "pinned": true, "lane_width": 444}),
     );
-    let b = columns(&runtime);
+    let b = presentation(&runtime);
     focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
     assert_eq!(
         strip(&runtime, &directory),
@@ -651,8 +658,11 @@ fn each_tab_keeps_its_own_list_visibility_and_shared_dirty_buffer() {
     );
     assert_eq!(published_front_ids(&runtime), [a]);
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert!(view.views && view.tools);
-    assert_eq!(view.views_width, Some(444));
+    assert_eq!(
+        (view.tool, view.pinned, view.lane_width),
+        (Some(crate::workspace_views::Tool::Work), true, Some(444)),
+        "the lane is the Workspace's, so another tab keeps it"
+    );
     assert!(
         runtime
             .snapshot
@@ -662,23 +672,23 @@ fn each_tab_keeps_its_own_list_visibility_and_shared_dirty_buffer() {
             .any(|tab| tab.label == "a.md" && tab.dirty)
     );
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
-    assert_eq!(columns(&runtime), b);
+    assert_eq!(presentation(&runtime), b);
 }
 
 #[test]
-fn background_file_beside_preserves_b_on_and_off_and_returns_only_to_a() {
-    for visible in [true, false] {
-        let (mut runtime, checkout, directory) = setup(if visible {
-            "background-on"
+fn background_file_beside_preserves_b_open_or_closed_and_returns_only_to_a() {
+    for tool in [serde_json::json!("files"), serde_json::Value::Null] {
+        let (mut runtime, checkout, directory) = setup(if tool.is_null() {
+            "background-closed"
         } else {
-            "background-off"
+            "background-open"
         });
         open(&mut runtime, &checkout, &directory, "a.md");
         focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
         open(&mut runtime, &checkout, &directory, "b.md");
         view_event(
             &mut runtime,
-            serde_json::json!({"views": visible, "tools": true, "views_width": 444, "tools_width": 333}),
+            serde_json::json!({"tool": tool, "pinned": true, "lane_width": 444, "tree_width": 333}),
         );
         let before = runtime.snapshot.workspace_view.clone();
         let editor = runtime.snapshot.editor.active_tab_id.clone();
@@ -693,7 +703,7 @@ fn background_file_beside_preserves_b_on_and_off_and_returns_only_to_a() {
         runtime.sync_workspace_view();
         assert_eq!(
             runtime.snapshot.workspace_view, before,
-            "B5 exact operator presentation"
+            "B5 exact operator presentation and lane"
         );
         assert_eq!(runtime.snapshot.editor.active_tab_id, editor);
         assert_eq!(
@@ -702,18 +712,16 @@ fn background_file_beside_preserves_b_on_and_off_and_returns_only_to_a() {
         );
         focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
         assert_eq!(fronts(&runtime, &directory), ["a.md", "c.md"]);
-        assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
+        assert_eq!(
+            runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+            Some(crate::workspace_views::Tool::Files),
+            "choosing A shows its background result in the files lane"
+        );
         focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
         assert_eq!(
-            columns(&runtime),
-            {
-                let mut before = before.unwrap();
-                before.agent_layout = None;
-                before.views_calls = 0;
-                before.views_called = 0;
-                before
-            },
-            "B7 B stays independent"
+            presentation(&runtime).layout,
+            before.unwrap().layout,
+            "B7 B's View list stays independent"
         );
     }
 }
@@ -780,17 +788,21 @@ fn hidden_same_url_has_its_own_identity_load_and_retained_scope() {
     focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
     assert_eq!(published_front_ids(&runtime), [a[0].view_id.clone()]);
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
-    assert_eq!(columns(&runtime), {
+    assert_eq!(presentation(&runtime), {
         let mut before = before.unwrap();
         before.agent_layout = None;
-        before.views_calls = 0;
-        before.views_called = 0;
+        before.lane_calls = 0;
+        before.lane_called = 0;
+        // Choosing A's background result opened the Workspace's one lane.
+        before.tool = Some(crate::workspace_views::Tool::Files);
         before
     });
 }
 
+/// PRD right-lane B17: a first background view leaves the operator's closed
+/// lane closed, and choosing its tab shows it in the files lane.
 #[test]
-fn first_background_view_does_not_open_bs_empty_column() {
+fn first_background_view_leaves_the_closed_lane_closed() {
     let (mut runtime, checkout, directory) = setup("background-first");
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
     let before = runtime.snapshot.workspace_view.clone();
@@ -802,10 +814,61 @@ fn first_background_view_does_not_open_bs_empty_column() {
     );
     runtime.sync_workspace_view();
     assert_eq!(runtime.snapshot.workspace_view, before);
-    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    assert_eq!(runtime.snapshot.workspace_view.as_ref().unwrap().tool, None);
     focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
     assert_eq!(fronts(&runtime, &directory), ["https://example.test/first"]);
-    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        Some(crate::workspace_views::Tool::Files)
+    );
+}
+
+/// PRD right-lane B17: from the front tab, `hide file open` and `hide view
+/// select` call the lane as a click does, and a file opened while the tree
+/// showed alone opens beside it.
+#[test]
+fn a_front_tab_open_calls_the_lane_and_keeps_a_lone_tree() {
+    let (mut runtime, checkout, directory) = setup("front-open");
+    open(&mut runtime, &checkout, &directory, "a.md");
+    let a = display_id(&runtime, &directory, "a.md");
+    view_event(&mut runtime, serde_json::json!({"tool": null}));
+    let calls = runtime.snapshot.workspace_view.as_ref().unwrap().lane_calls;
+    let selected = control(
+        &mut runtime,
+        "w-order:t1:p",
+        Action::Select {
+            view_id: a,
+            reveal: false,
+            expected_browser_area: None,
+        },
+        "front-select",
+    );
+    assert!(
+        selected.changed,
+        "selecting the view already in front still announces the lane call"
+    );
+    runtime.sync_workspace_view();
+    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+    assert_eq!(view.tool, Some(crate::workspace_views::Tool::Files));
+    assert!(view.lane_called > calls, "a put-away lane comes forward");
+
+    // A tab shown for the first time has no view, so the tree fills it.
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().tree);
+    control_file(
+        &mut runtime,
+        "w-order:t2:p",
+        &directory,
+        "b.md",
+        false,
+        "beside-tree",
+    );
+    runtime.sync_workspace_view();
+    assert_eq!(strip(&runtime, &directory), ["b.md"]);
+    assert!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tree,
+        "the tree stays beside the opened file"
+    );
 }
 
 #[test]
@@ -828,7 +891,10 @@ fn reveal_selects_the_actual_caller_and_checkout_calls_use_the_operator() {
         fronts(&runtime, &directory),
         ["https://example.test/reveal"]
     );
-    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        Some(crate::workspace_views::Tool::Files)
+    );
     herdr_focuses(&mut runtime, &directory, TABS[0]);
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
     assert!(
@@ -892,7 +958,11 @@ fn hidden_references_protect_dirty_document_when_bs_copy_closes() {
     );
     runtime.sync_workspace_view();
     assert!(strip(&runtime, &directory).is_empty());
-    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        Some(crate::workspace_views::Tool::Files),
+        "closing B's last view keeps the lane"
+    );
     focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
     assert_eq!(published_front_ids(&runtime), std::slice::from_ref(&a));
     let expected = runtime
@@ -985,13 +1055,15 @@ fn async_completion_is_bound_to_the_original_tab_and_failure_is_atomic() {
     assert_eq!(runtime.snapshot.workspace_view, before);
 }
 
+/// PRD right-lane B15, B22: a restart keeps each tab's background result and
+/// the Workspace's lane; the lane stays as it is whichever tab is chosen.
 #[test]
-fn presentation_restart_keeps_background_results_and_visibility() {
+fn presentation_restart_keeps_background_results_and_the_lane() {
     let (mut runtime, checkout, directory) = setup("presentation-restart");
     open(&mut runtime, &checkout, &directory, "a.md");
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
     open(&mut runtime, &checkout, &directory, "a.md");
-    view_event(&mut runtime, serde_json::json!({"views": false}));
+    view_event(&mut runtime, serde_json::json!({"tool": null}));
     control_file(
         &mut runtime,
         "w-order:t1:p",
@@ -1005,13 +1077,20 @@ fn presentation_restart_keeps_background_results_and_visibility() {
         Some(WorkspaceViewStore::open(path, (false, RightPanelSection::default())).0);
     runtime.sync_workspace_view();
     assert_eq!(fronts(&runtime, &directory), ["a.md"]);
-    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    assert_eq!(runtime.snapshot.workspace_view.as_ref().unwrap().tool, None);
     focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
     assert_eq!(fronts(&runtime, &directory), ["a.md", "c.md"]);
-    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        Some(crate::workspace_views::Tool::Files)
+    );
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
     assert_eq!(strip(&runtime, &directory), ["a.md"]);
-    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        Some(crate::workspace_views::Tool::Files),
+        "the lane is the Workspace's"
+    );
 }
 
 #[test]
@@ -1029,7 +1108,7 @@ fn authoritative_close_prunes_only_the_closed_tabs_resources() {
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
     open(&mut runtime, &checkout, &directory, "a.md");
     open(&mut runtime, &checkout, &directory, "b.md");
-    let b = columns(&runtime);
+    let b = presentation(&runtime);
     runtime.ingest_session(Ok(tab_order_payload(
         &directory.to_string_lossy(),
         &TABS[1..],
@@ -1037,7 +1116,7 @@ fn authoritative_close_prunes_only_the_closed_tabs_resources() {
         TABS[1],
     )));
     runtime.sync_workspace_view();
-    assert_eq!(columns(&runtime), b);
+    assert_eq!(presentation(&runtime), b);
     assert!(
         !runtime
             .snapshot
@@ -1061,7 +1140,6 @@ fn authoritative_close_prunes_only_the_closed_tabs_resources() {
         .get(crate::node::TEST_NODE, &directory.to_string_lossy())
         .unwrap();
     assert!(!stored.view_presentations.contains_key(TABS[0]));
-    assert!(!stored.view_visibility.contains_key(TABS[0]));
 }
 
 #[test]
@@ -1086,7 +1164,7 @@ fn closing_a_hidden_owner_does_not_adopt_its_documents_into_b() {
             ));
             focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
         }
-        let before = columns(&runtime);
+        let before = presentation(&runtime);
         runtime.ingest_session(Ok(tab_order_payload(
             &directory.to_string_lossy(),
             &TABS[1..],
@@ -1095,7 +1173,7 @@ fn closing_a_hidden_owner_does_not_adopt_its_documents_into_b() {
         )));
         runtime.sync_workspace_view();
         assert_eq!(
-            columns(&runtime),
+            presentation(&runtime),
             before,
             "A's closed presentation does not enter B"
         );
@@ -1336,12 +1414,7 @@ fn a_device_workspace_restores_when_its_visible_tab_changes() {
     let ids: Vec<String> = entry.layout.displays().map(|d| d.id.clone()).collect();
     entry.view_bookmarks.record("remote-tab-1", "a1", &ids[0]);
     entry.view_bookmarks.record("remote-tab-2", "a1", &ids[1]);
-    entry
-        .view_visibility
-        .insert("remote-tab-1".to_owned(), true);
-    entry
-        .view_visibility
-        .insert("remote-tab-2".to_owned(), false);
+    entry.tool = Some(crate::workspace_views::Tool::Files);
     let front = |runtime: &Runtime| {
         runtime
             .view_layout_of(&(device.to_owned(), "/srv/remote".to_owned()))
@@ -1351,7 +1424,10 @@ fn a_device_workspace_restores_when_its_visible_tab_changes() {
             .clone()
     };
     runtime.sync_workspace_view();
-    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        Some(crate::workspace_views::Tool::Files)
+    );
     assert_eq!(
         front(&runtime),
         Some(ids[0].clone()),
@@ -1369,10 +1445,17 @@ fn a_device_workspace_restores_when_its_visible_tab_changes() {
         0,
         "another tab starts with no Views"
     );
-    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        Some(crate::workspace_views::Tool::Files),
+        "the device tab's change keeps the lane"
+    );
     let session = runtime.snapshot.status.remote[0].session.as_mut().unwrap();
     session.workspaces[0].checkouts[0].active_tab_id = Some("remote-tab-1".to_owned());
     runtime.sync_workspace_view();
     assert_eq!(front(&runtime), Some(ids[0].clone()));
-    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        Some(crate::workspace_views::Tool::Files)
+    );
 }

@@ -40,9 +40,9 @@
       "lines": 221,
       "expect": 72
     },
-    "s6.spec.ts::Main, Overview and a Workspace with its columns, tools and delegated child": {
-      "lines": 388,
-      "expect": 150
+    "s6.spec.ts::Main, Overview and a Workspace with its lane, tools and delegated child": {
+      "lines": 245,
+      "expect": 87
     },
     "s7.spec.ts::Open to the side shows one document twice: edits and Korean input reach both, each keeps its place, and closing keeps unsaved text": {
       "lines": 143,

@@ -1154,11 +1154,11 @@ fn closing_the_last_display_of_a_dirty_document_saves_it_first() {
     let mut runtime = shared.lock().unwrap();
     let emptied = tree(&mut runtime);
     assert_eq!(emptied.display_count, 0);
-    // B10: the last area stays, empty; File Views turns off with its last
-    // view (PRD three-column-panel D-10).
+    // B10: the last area stays, empty; the lane stays on the files tool,
+    // where the tree shows alone (PRD right-lane B12).
     assert!(matches!(emptied.root, ViewNodeSnapshot::Area(_)));
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert!(!view.views);
+    assert_eq!(view.tool, Some(crate::workspace_views::Tool::Files));
 }
 
 /// B5: a draft in one display keeps every display of that document open.
@@ -1414,7 +1414,7 @@ fn a_restart_restores_the_view_tree_and_marks_a_missing_file_unavailable() {
     );
     layout(
         &mut runtime,
-        serde_json::json!({"views": true, "tool": "changes"}),
+        serde_json::json!({"tool": "changes", "pinned": true, "tree": true}),
     );
     let before = tree(&mut runtime);
     drop(runtime);
@@ -1466,8 +1466,8 @@ fn a_restart_restores_the_view_tree_and_marks_a_missing_file_unavailable() {
     );
     let view = restarted.snapshot.workspace_view.clone().unwrap();
     assert_eq!(
-        (view.views, view.tool, view.tools),
-        (true, crate::workspace_views::Tool::Changes, true)
+        (view.tool, view.pinned, view.tree),
+        (Some(crate::workspace_views::Tool::Changes), true, true)
     );
     assert_eq!(active_label(&restarted).as_deref(), Some("a.md"));
 
@@ -1637,10 +1637,7 @@ fn a_schema_1_views_file_migrates_into_one_area() {
             .iter()
             .map(|(kind, _)| *kind)
             .collect::<Vec<_>>(),
-        vec![
-            "workspace_views.columns_migrated",
-            "workspace_views.migrated"
-        ]
+        vec!["workspace_views.migrated"]
     );
 
     let mut runtime = with_views(runtime, &state);
@@ -1654,7 +1651,7 @@ fn a_schema_1_views_file_migrates_into_one_area() {
     );
     let written: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&state).unwrap()).unwrap();
-    assert_eq!(written["schema_version"], 2);
+    assert_eq!(written["schema_version"], 3);
 }
 
 /// Contract 3.1, B19: the documents on screen ride their own section, each
@@ -1764,7 +1761,7 @@ fn the_changes_read_takes_every_diff_on_screen() {
             .collect::<Vec<_>>()
     );
 
-    layout(&mut runtime, serde_json::json!({"views": false}));
+    layout(&mut runtime, serde_json::json!({"tool": null}));
     assert!(diffs(&mut runtime).is_empty());
 }
 
@@ -1893,8 +1890,8 @@ impl HistoryPump {
 #[test]
 fn a_late_history_answer_does_not_bring_back_the_row_the_operator_left() {
     let (mut runtime, checkout_id, directory) = views_runtime("view-history-late");
-    // History reads while the side panel shows the tool column.
-    layout(&mut runtime, serde_json::json!({"tools": true}));
+    // History reads while the lane shows the Changes tool.
+    layout(&mut runtime, serde_json::json!({"tool": "changes"}));
     files(&directory, &["a.ts", "e.rs", "f.go"]);
     for arguments in [
         &["add", "."][..],
@@ -1938,8 +1935,9 @@ fn a_late_history_answer_does_not_bring_back_the_row_the_operator_left() {
     select(&mut runtime, "f.go");
     pump.wake(&mut runtime);
     select(&mut runtime, "e.rs");
-    // A file takes the area, so no diff is in front: the request names the
-    // row History has selected.
+    // A file takes the area, so no diff is in front, and the operator goes
+    // back to History in the lane: the request names the row it has
+    // selected.
     open(
         &mut runtime,
         &checkout_id,
@@ -1947,6 +1945,7 @@ fn a_late_history_answer_does_not_bring_back_the_row_the_operator_left() {
         false,
         false,
     );
+    layout(&mut runtime, serde_json::json!({"tool": "changes"}));
     pump.started.clear();
     for _ in 0..4 {
         pump.wake(&mut runtime);
@@ -2021,7 +2020,7 @@ fn last_error_kind(runtime: &Runtime) -> Option<&str> {
 #[test]
 fn a_pull_request_card_opens_once_as_a_view_tab() {
     let (mut runtime, _, _directory) = views_runtime("pr-card");
-    layout(&mut runtime, serde_json::json!({"views": false}));
+    layout(&mut runtime, serde_json::json!({"tool": null}));
     let pr: crate::model::PullRequestSnapshot = serde_json::from_value(serde_json::json!({
         "number":42,"title":"Ship","url":"https://github.com/acme/app/pull/42",
         "head_branch":"feature","base_branch":"main","badge":"open","checks":"passing",
@@ -2046,9 +2045,10 @@ fn a_pull_request_card_opens_once_as_a_view_tab() {
     assert!(event(&mut runtime, 42));
     assert_eq!(runtime.snapshot.status.last_error, None);
     assert_eq!(cards(&mut runtime), vec![(Some(42), "PR #42".to_owned())]);
-    assert!(
-        runtime.snapshot.workspace_view.as_ref().unwrap().views,
-        "File Views shows it"
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        Some(crate::workspace_views::Tool::Files),
+        "the lane shows its files tool"
     );
     event(&mut runtime, 42);
     assert_eq!(
@@ -2072,7 +2072,7 @@ fn a_pull_request_card_opens_once_as_a_view_tab() {
 #[test]
 fn a_pages_new_tab_opens_beside_it_and_keeps_it_in_view() {
     let (mut runtime, _, _directory) = views_runtime("browser-beside");
-    layout(&mut runtime, serde_json::json!({"views": false}));
+    layout(&mut runtime, serde_json::json!({"tool": null}));
     assert!(browser_open(
         &mut runtime,
         serde_json::json!({"url": "https://a.test/pr"})
@@ -2156,7 +2156,7 @@ fn a_pages_new_tab_opens_beside_it_and_keeps_it_in_view() {
 #[test]
 fn a_page_opens_in_the_workspace_of_the_pane_that_asked_and_once_per_address() {
     let (mut runtime, _, directory) = views_runtime("browser-open");
-    layout(&mut runtime, serde_json::json!({"views": false}));
+    layout(&mut runtime, serde_json::json!({"tool": null}));
     let pane = with_pane(&mut runtime, &directory);
     assert!(browser_open(
         &mut runtime,
@@ -2198,7 +2198,7 @@ fn a_page_opens_in_the_workspace_of_the_pane_that_asked_and_once_per_address() {
     );
     assert!(page.load > 0);
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert!(view.views);
+    assert_eq!(view.tool, Some(crate::workspace_views::Tool::Files));
 
     // The front Workspace, named by nothing, shows the page again.
     assert!(browser_open(
@@ -2293,7 +2293,10 @@ fn a_browser_open_reveals_its_checkout_only_when_asked() {
         .try_into()
         .expect("the revealed page");
     assert_eq!(page.url.as_deref(), Some(url));
-    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        Some(crate::workspace_views::Tool::Files)
+    );
 
     let before = runtime.snapshot.navigator.focused_checkout_id.clone();
     assert!(browser_open(
@@ -2463,7 +2466,7 @@ fn a_checkout_focus_naming_a_display_brings_it_forward_on_that_display() {
         false,
     );
     let a = display(&mut runtime, 0, "a.md");
-    layout(&mut runtime, serde_json::json!({"views": false}));
+    layout(&mut runtime, serde_json::json!({"tool": null}));
     runtime.dispatch_json(&explorer_event(
         "focus_checkout",
         serde_json::json!({"workspace_id": "workspace:other", "checkout_id": other_checkout}),
@@ -2505,7 +2508,11 @@ fn a_checkout_focus_naming_a_display_brings_it_forward_on_that_display() {
         .clone()
         .expect("a front Workspace");
     assert_eq!(view.path, directory.to_string_lossy());
-    assert!(view.views, "File Views turns on again");
+    assert_eq!(
+        view.tool,
+        Some(crate::workspace_views::Tool::Files),
+        "the files lane opens again"
+    );
     let (_, active, _) = areas(&view.layout).remove(0);
     assert_eq!(active.as_deref(), Some(a.as_str()));
     drop(other);
@@ -2572,11 +2579,11 @@ fn empty_browser_open_targets_the_named_area_and_navigation_keeps_its_id() {
     assert_eq!(navigated.url.as_deref(), Some("https://example.com"));
 }
 
-/// PRD three-column-panel D-07, D-08: a reveal of a file in another checkout
-/// calls that checkout's File Views once it settles there and leaves the
-/// Workspace that was in front alone, so its narrow body never moves.
+/// PRD right-lane D-02, D-13: a reveal of a file in another checkout calls
+/// that checkout's lane once it settles there and leaves the Workspace that
+/// was in front alone, so its lane is never opened by it.
 #[test]
-fn a_reveal_calls_the_file_views_of_its_own_checkout() {
+fn a_reveal_calls_the_lane_of_its_own_checkout() {
     let (mut runtime, checkout_id, directory) = strip_checkout("view-reveal-own");
     let (other, other_checkout) = second_checkout(&mut runtime, &directory);
     let mut runtime = with_new_views(runtime, "view-reveal-own");
@@ -2591,12 +2598,12 @@ fn a_reveal_calls_the_file_views_of_its_own_checkout() {
     let calls = |runtime: &Runtime| {
         let store = runtime.workspace_views.as_ref().unwrap();
         let mut numbered: Vec<_> = store
-            .views_called
+            .lane_called
             .iter()
             .map(|((_, path), number)| (path.clone(), *number))
             .collect();
         numbered.sort();
-        (store.views_calls, numbered)
+        (store.lane_calls, numbered)
     };
     let (count, first_call) = calls(&runtime);
 
@@ -2611,12 +2618,13 @@ fn a_reveal_calls_the_file_views_of_its_own_checkout() {
     runtime.sync_workspace_view();
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
     assert_eq!(view.path, other.to_string_lossy());
-    assert!(
-        view.views && !view.tools,
-        "the reveal turns File Views on there and leaves Tools off (B4)"
+    assert_eq!(
+        (view.tool, view.tree),
+        (Some(crate::workspace_views::Tool::Files), false),
+        "the reveal opens the files lane there and leaves the tree off (B16)"
     );
     assert_eq!(
-        view.views_called,
+        view.lane_called,
         count + 1,
         "the call is the revealed Workspace's"
     );
@@ -2703,7 +2711,10 @@ fn a_file_of_another_checkout_opens_in_the_views_in_front_and_moves_no_checkout(
     assert_eq!(front_view(&mut runtime), front);
     assert_eq!(labels(&mut runtime), vec![vec!["notes.md", "shot.md"]]);
     assert_eq!(active_label(&runtime).as_deref(), Some("shot.md"));
-    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        Some(crate::workspace_views::Tool::Files)
+    );
     assert_eq!(runtime.snapshot.ui_state.selected_path, selected);
     let tab = runtime
         .snapshot

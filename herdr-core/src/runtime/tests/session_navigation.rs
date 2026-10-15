@@ -1,4 +1,5 @@
 use super::*;
+use crate::live::FocusReadback;
 
 #[test]
 fn eligible_agent_panes_open_on_the_terminal_and_keep_the_conversation_they_asked_for() {
@@ -2366,7 +2367,7 @@ fn pane_focus_rejects_a_stale_stream_after_confirmation_and_follows_a_verified_e
     let identity = identity.unwrap();
     // The update is ingested at once and Herdr's differing focus waits.
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
-    let (_, next) = runtime.finish_pane_focus_readback(identity, false);
+    let (_, next) = runtime.finish_pane_focus_readback(identity, FocusReadback::Elsewhere);
     assert!(next.is_none());
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
     assert_eq!(
@@ -2380,13 +2381,77 @@ fn pane_focus_rejects_a_stale_stream_after_confirmation_and_follows_a_verified_e
     // The same proposed move becomes external authority when Herdr's fresh
     // layout and active tab really agree, without any new operator request.
     let (_, identity) = runtime.ingest_session_awaiting_focus_readback(Ok(stale), None);
-    runtime.finish_pane_focus_readback(identity.unwrap(), true);
+    runtime.finish_pane_focus_readback(identity.unwrap(), FocusReadback::Confirmed);
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
     assert_eq!(
         runtime.snapshot().terminal.pane_id.as_deref(),
         Some("w1:p1")
     );
     assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 1);
+}
+
+/// Every `pane.focus.stream_readback_failed` line an installed build wrote
+/// on 2026-10-14 had one shape: Herdr answered a readback of the stream's
+/// older focus with the pane the operator had just focused. That is the
+/// readback refuting a stale layout, not a failure. Only a readback Herdr
+/// could not answer while it was still the latest is one, logged with
+/// Herdr's reason; one a newer focus overtook ends quietly.
+#[test]
+fn only_the_latest_readback_herdr_could_not_answer_is_a_failure_line() {
+    let failures = |records: &[serde_json::Value]| {
+        records
+            .iter()
+            .filter(|record| record["kind"] == "pane.focus.stream_readback_failed")
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let mut runtime = live_runtime();
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+    runtime.dispatch_json(&operator_focus_event("w1:p2"));
+    finish_running_pane_focus(&mut runtime, Ok(()));
+    let stale = finished_tab_payload(&panes, "w1:p1");
+
+    // Herdr already shows the operator's own pane.
+    let (_, identity) = runtime.ingest_session_awaiting_focus_readback(Ok(stale.clone()), None);
+    let ((_, next), records) = crate::diagnostics::capture(|| {
+        runtime.finish_pane_focus_readback(identity.unwrap(), FocusReadback::Elsewhere)
+    });
+    assert!(next.is_none());
+    assert_eq!(failures(&records), Vec::<serde_json::Value>::new());
+
+    // The operator focused another pane before Herdr answered at all.
+    let (_, identity) = runtime.ingest_session_awaiting_focus_readback(Ok(stale.clone()), None);
+    runtime.dispatch_json(&operator_focus_event("w1:p3"));
+    finish_running_pane_focus(&mut runtime, Ok(()));
+    let ((_, next), records) = crate::diagnostics::capture(|| {
+        runtime.finish_pane_focus_readback(
+            identity.unwrap(),
+            FocusReadback::Unread("pane.layout failed: timed out".into()),
+        )
+    });
+    assert_eq!(failures(&records), Vec::<serde_json::Value>::new());
+    if let Some(next) = next {
+        runtime.finish_pane_focus_readback(next, FocusReadback::Elsewhere);
+    }
+
+    // The latest readback, unanswered.
+    let (_, identity) = runtime.ingest_session_awaiting_focus_readback(Ok(stale), None);
+    let (_, records) = crate::diagnostics::capture(|| {
+        runtime.finish_pane_focus_readback(
+            identity.unwrap(),
+            FocusReadback::Unread("pane.layout failed: Herdr is not running".into()),
+        )
+    });
+    let failures = failures(&records);
+    assert_eq!(failures.len(), 1, "{records:?}");
+    assert_eq!(failures[0]["pane_id"], "w1:p1");
+    assert_eq!(
+        failures[0]["message"],
+        "pane.layout failed: Herdr is not running"
+    );
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p3"));
+    assert!(runtime.pane_focus_readback.is_none());
 }
 
 #[test]
@@ -2412,7 +2477,8 @@ fn pane_focus_readback_cannot_outlive_a_new_selection_or_connection() {
         // The old answer moves nothing. A read handed on instead is for the
         // current selection and connection, and Herdr's answer to that one
         // is the one that counts.
-        let (_, next) = runtime.finish_pane_focus_readback(identity.clone(), true);
+        let (_, next) =
+            runtime.finish_pane_focus_readback(identity.clone(), FocusReadback::Confirmed);
         assert_eq!(
             runtime.snapshot().focused.pane_id.as_deref(),
             Some(expected)
@@ -2420,7 +2486,7 @@ fn pane_focus_readback_cannot_outlive_a_new_selection_or_connection() {
         assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
         if let Some(next) = next {
             assert_ne!(next, identity);
-            runtime.finish_pane_focus_readback(next, false);
+            runtime.finish_pane_focus_readback(next, FocusReadback::Elsewhere);
         }
         assert!(runtime.pane_focus_readback.is_none());
     }
@@ -2470,7 +2536,7 @@ fn a_pane_focus_readback_for_another_tab_cannot_pull_focus_back() {
     finish_running_pane_focus(&mut runtime, Ok(()));
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p4"));
 
-    runtime.finish_pane_focus_readback(identity, true);
+    runtime.finish_pane_focus_readback(identity, FocusReadback::Confirmed);
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p4"));
     assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
 }
@@ -2508,11 +2574,11 @@ fn only_one_pane_focus_readback_is_outstanding_and_a_superseded_one_hands_on() {
 
     // The answer is for a focus the layout no longer shows, so it covers
     // nothing and the worker is handed the one the layout does show.
-    let (_, next) = runtime.finish_pane_focus_readback(first, true);
+    let (_, next) = runtime.finish_pane_focus_readback(first, FocusReadback::Confirmed);
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
     let next = next.unwrap();
     assert_eq!(next.target_id, "w1:p3");
-    runtime.finish_pane_focus_readback(next, true);
+    runtime.finish_pane_focus_readback(next, FocusReadback::Confirmed);
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p3"));
     assert!(runtime.pane_focus_readback.is_none());
 }
@@ -2535,11 +2601,11 @@ fn a_move_that_arrives_during_an_unconfirmed_readback_is_read_again() {
 
     // The read was answered before the move, so it does not confirm. The
     // move came after the read began, so it is read again rather than lost.
-    let (_, next) = runtime.finish_pane_focus_readback(stale, false);
+    let (_, next) = runtime.finish_pane_focus_readback(stale, FocusReadback::Elsewhere);
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
     let next = next.expect("the move that arrived during the read is read again");
     assert_eq!(next.target_id, "w1:p2");
-    runtime.finish_pane_focus_readback(next, true);
+    runtime.finish_pane_focus_readback(next, FocusReadback::Confirmed);
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
     assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 1);
     assert!(runtime.pane_focus_readback.is_none());

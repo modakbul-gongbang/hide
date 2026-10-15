@@ -13,7 +13,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
-import { enterWorkspace, showTool } from "../../web/e2e/wire";
+import { enterWorkspace, showExplorer, showTool } from "../../web/e2e/wire";
 import { toPage } from "../src/main/wirePath";
 import { fitWindow, hostLog, isolate, launch, screenshot, shellPage, test, type Isolated } from "./fixture";
 
@@ -101,7 +101,7 @@ test("reveal: Explorer, History, a View tab and a sidebar row hand the item to t
   await recordReveals();
 
   // Explorer: a file row's opens, the reveal, Rename, then Move to Trash.
-  await showTool(page, "explorer");
+  await showExplorer(page);
   const notes = path.join(checkout, "notes.md");
   let menu = await openMenu(page, page.locator(`[data-explorer-row="${toPage(notes)}"]`), "notes.md actions");
   expect(await menuLines(menu)).toEqual(["Open to the side", "─", label, "─", "Rename", "─", "Move to Trash"]);

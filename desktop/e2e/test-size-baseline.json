@@ -44,13 +44,13 @@
       "lines": 124,
       "expect": 14
     },
-    "workspace-columns.spec.ts::Workspace columns preserve geometry, dock once on release and show native idle and driven echo": {
-      "lines": 338,
-      "expect": 100
+    "right-lane.spec.ts::the lane comes and goes over the terminals without a resize, the pin and a docked divider resize once, and input continues through all of it": {
+      "lines": 222,
+      "expect": 49
     },
-    "workspace-columns.spec.ts::SSH Workspace columns keep chords, fallback and saved widths separate from the same local path": {
-      "lines": 140,
-      "expect": 38
+    "right-lane.spec.ts::an SSH Workspace's lane keeps its chords, narrow fallback and saved widths apart from the same local path": {
+      "lines": 123,
+      "expect": 28
     }
   }
 }

@@ -55,7 +55,7 @@ test("Memory progress expands whole rows and follows the live promotion agent th
     seedReconciliation(run);
     await page.reload();
     await showTool(page, "memory");
-    const tab = page.locator('[data-tool="memory"]');
+    const tab = page.locator('[data-lane="memory"]');
     const quiet = tab.locator('[data-memory-pr-group="72"]');
     await expect(quiet).toContainText("Awaiting review");
     await expect(quiet.locator("[data-memory-agent]")).toHaveCount(0);
@@ -99,9 +99,10 @@ test("Memory progress expands whole rows and follows the live promotion agent th
     await progress.locator('[data-memory-row-toggle="1"]').press("Space");
     await expect(progress.locator("[data-memory-progress-detail]")).toHaveCount(0);
     await fitWindow(app, { width: 1440, height: 900 });
-    const divider = page.locator('[data-column-divider="tools"]');
-    for (let step = 0; step < 4; step++) await divider.press("ArrowRight");
-    await expect.poll(() => page.locator('[data-column="tools"]').evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(260);
+    await page.locator('[data-lane-pin="off"]').click();
+    const divider = page.locator('[data-lane-divider="lane"]');
+    for (let step = 0; step < 6; step++) await divider.press("ArrowRight");
+    await expect.poll(() => page.locator("[data-lane-frame]").evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(360);
     for (const language of ["en", "ko", "zh-CN", "ja"]) {
       await page.locator("[data-open-settings]").click();
       await page.locator("[data-interface-language]").click();

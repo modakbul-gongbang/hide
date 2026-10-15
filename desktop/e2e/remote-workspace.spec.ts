@@ -17,7 +17,7 @@ import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
-import { enterWorkspace } from "../../web/e2e/wire";
+import { enterWorkspace, showTool } from "../../web/e2e/wire";
 import { browserPartition } from "../src/main/browserSync";
 import { claudeSettings, deviceBridges, deviceHome, proveDeviceHome, readSettings, resetDeviceHome, writeSshConfig } from "./device-home";
 import { endChild, HIDE_CLI, hostLog, isolate, launch, nodeOf, test, type Isolated } from "./fixture";
@@ -27,11 +27,9 @@ const HOOK_CLI = path.join(path.dirname(HIDE_CLI), "hide-agent-hooks");
 test.describe.configure({ timeout: 300_000 });
 test.skip(!process.env.HIDE_E2E_SSH_PORT, "an isolated SSH server is required");
 
-/** Shows the Workspace in front's View areas, turning File Views on if a background open left it off. */
+/** Shows the Workspace in front's View areas, opening the files tool if a background open left the lane alone. */
 async function showViews(page: Page): Promise<void> {
-  const off = page.locator('[data-column-toggle="views"][aria-pressed="false"]');
-  if (await off.count()) await off.click();
-  await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-file-views", "shown");
+  await showTool(page, "files");
 }
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }

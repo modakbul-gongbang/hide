@@ -1,5 +1,6 @@
-//! Tab-owned File Views, projected through the existing Workspace snapshot.
-//! The shared editor owns documents; each presentation owns its displays.
+//! Each Agent tab's own views in the files tool, projected through the
+//! Workspace snapshot. The shared editor owns documents; each presentation
+//! owns its displays, and the lane stays the Workspace's.
 
 use super::workspace_view::WorkspaceKey;
 use super::*;
@@ -152,18 +153,12 @@ impl Runtime {
         let store = self.workspace_views.as_mut().expect("checked store");
         let mut changed = false;
         let mut refusal = None;
-        if let Some(entry) = store.views.get_mut(&key.0, &key.1) {
-            if let Some(active) = project.as_deref() {
-                match entry.project_tab(active) {
-                    Ok(swapped) => changed |= swapped,
-                    Err(error) => refusal = Some(error),
-                }
-            }
-            if let Some(owner) = &entry.view_owner
-                && entry.view_visibility.get(owner).copied() != Some(entry.views)
-            {
-                entry.view_visibility.insert(owner.clone(), entry.views);
-                changed = true;
+        if let Some(entry) = store.views.get_mut(&key.0, &key.1)
+            && let Some(active) = project.as_deref()
+        {
+            match entry.project_tab(active) {
+                Ok(swapped) => changed |= swapped,
+                Err(error) => refusal = Some(error),
             }
         }
         if explicit {
@@ -175,7 +170,7 @@ impl Runtime {
         if changed {
             store.generation += 1;
             if should_project && pending_result {
-                self.apply_area_intent_to(&key, AreaIntent::Views);
+                self.apply_area_intent_to(&key, AreaIntent::Files);
             }
             self.persist_workspace_views();
         }
@@ -297,8 +292,8 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_mut() else {
             return Ok(None);
         };
-        let called = store.views_called.get(key).copied();
-        let calls = store.views_calls;
+        let called = store.lane_called.get(key).copied();
+        let calls = store.lane_calls;
         let generation = store.generation;
         let entry = store.views.entry(&key.0, &key.1);
         if entry.view_owner.is_none() && active.as_deref().is_none_or(|active| active == tab) {
@@ -320,7 +315,6 @@ impl Runtime {
                 .remove(&tab)
                 .unwrap_or_else(|| entry.owner_copy(&tab));
             entry.layout = next.layout;
-            entry.views = next.views;
             Some(before.layout.clone())
         } else {
             if entry.project_tab(&tab).is_err() {
@@ -368,16 +362,13 @@ impl Runtime {
         };
         let entry = store.views.entry(&key.0, &key.1);
         let opened = opens_or_selects(action);
-        let visibility_changed =
-            opened && !entry.views && (parked.is_some() || store.front.as_ref() != Some(key));
-        if opened && (parked.is_some() || store.front.as_ref() != Some(key)) {
-            entry.views = true;
-        }
+        // An open into a tab or Workspace the operator is not looking at
+        // leaves every lane as it was; the files icon counts the new view
+        // (PRD right-lane B17).
         if let Some(parked) = parked {
             if !parked.reveal {
                 let result = crate::workspace_views::Presentation {
                     layout: entry.layout.clone(),
-                    views: entry.views,
                     pending_result: opened
                         || parked
                             .before
@@ -394,13 +385,13 @@ impl Runtime {
                     self.snapshot.editor.active_tab_id = parked.editor_active;
                     store.view_transaction = None;
                     store.generation = parked.generation;
-                    store.views_calls = parked.calls;
+                    store.lane_calls = parked.calls;
                     match parked.called {
                         Some(called) => {
-                            store.views_called.insert(key.clone(), called);
+                            store.lane_called.insert(key.clone(), called);
                         }
                         None => {
-                            store.views_called.remove(key);
+                            store.lane_called.remove(key);
                         }
                     }
                     self.retire_refused_view_documents(key, &parked.documents);
@@ -410,28 +401,23 @@ impl Runtime {
                     });
                 }
                 self.snapshot.editor.active_tab_id = parked.editor_active;
-                store.views_calls = parked.calls;
+                store.lane_calls = parked.calls;
                 match parked.called {
                     Some(called) => {
-                        store.views_called.insert(key.clone(), called);
+                        store.lane_called.insert(key.clone(), called);
                     }
                     None => {
-                        store.views_called.remove(key);
+                        store.lane_called.remove(key);
                     }
                 }
             }
             let changed = entry != &parked.before;
             store.generation = parked.generation + u64::from(changed);
             store.view_transaction = None;
-            if !changed {
-                return Ok(());
+            if changed {
+                self.persist_workspace_views();
             }
-        } else if !visibility_changed {
-            return Ok(());
-        } else {
-            store.generation += 1;
         }
-        self.persist_workspace_views();
         Ok(())
     }
 
@@ -441,13 +427,13 @@ impl Runtime {
         {
             *store.views.entry(&key.0, &key.1) = parked.before;
             self.snapshot.editor.active_tab_id = parked.editor_active;
-            store.views_calls = parked.calls;
+            store.lane_calls = parked.calls;
             match parked.called {
                 Some(called) => {
-                    store.views_called.insert(key.clone(), called);
+                    store.lane_called.insert(key.clone(), called);
                 }
                 None => {
-                    store.views_called.remove(key);
+                    store.lane_called.remove(key);
                 }
             }
             store.view_transaction = None;
@@ -511,10 +497,7 @@ impl Runtime {
             .filter_map(|display| display.tab_id.clone())
             .collect();
         entry.view_next_id = entry.next_view_identity();
-        let before = entry.view_visibility.len() + entry.view_presentations.len();
-        entry
-            .view_visibility
-            .retain(|tab, _| tabs.contains(&tab.as_str()));
+        let before = entry.view_presentations.len();
         entry
             .view_presentations
             .retain(|tab, _| tabs.contains(&tab.as_str()));
@@ -528,7 +511,6 @@ impl Runtime {
                 && let Some(next) = entry.view_presentations.remove(*tab)
             {
                 entry.layout = next.layout;
-                entry.views = next.views;
                 entry.view_owner = Some((*tab).to_owned());
             } else {
                 entry.layout = crate::view_layout::Layout::default();
@@ -538,11 +520,10 @@ impl Runtime {
                 }
                 entry.view_next_id += 1;
                 entry.layout.next_id = entry.view_next_id;
-                entry.views = false;
             }
         }
         let changed = entry.view_bookmarks.retain_tabs(|tab| tabs.contains(&tab))
-            || before != entry.view_visibility.len() + entry.view_presentations.len()
+            || before != entry.view_presentations.len()
             || owner_gone;
         if changed {
             store.generation += 1;

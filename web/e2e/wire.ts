@@ -85,35 +85,37 @@ export async function screenshot(page: Page, name: string): Promise<unknown> {
   return page.screenshot({ path: path.join(dir, `${name}.png`) });
 }
 
+export type LaneTool = "files" | "changes" | "work" | "memory";
+
 /**
- * Shows one tool in the Tools column: a Workspace starts with Tools off, the
- * toolbar's Tools icon turns it on, and its icon tabs choose the tool (PRD
- * three-column-panel D-04).
+ * Shows one tool in the right lane: its rail icon opens the lane on that
+ * tool, or puts the lane back up when it holds it hidden (PRD right-lane
+ * B1, B2). A press on the tool the lane already shows would close it, so a
+ * pressed icon is left alone.
  */
-export async function showTool(page: Page, tool: "work" | "explorer" | "changes" | "memory"): Promise<void> {
-  const shown = page.locator(`[data-tool="${tool}"]`);
-  if (await shown.isVisible()) return;
-  const column = page.locator('[data-column="tools"]');
-  if ((await column.count()) === 0) await page.locator('[data-column-toggle="tools"]').click();
-  await expect(column).toBeVisible();
-  const tab = page.locator(`[data-tool-tab="${tool}"]`);
-  if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
-  await expect(shown).toBeVisible();
+export async function showTool(page: Page, tool: LaneTool): Promise<void> {
+  const icon = page.locator(`[data-lane-tool="${tool}"]`);
+  if ((await icon.getAttribute("aria-pressed")) !== "true") await icon.click();
+  await expect(icon).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(`aside[data-lane="${tool}"]`)).toBeVisible();
 }
 
-/** Shows or hides a column from the Workspace toolbar's menu (B15). */
-export async function chooseColumn(page: Page, column: "views" | "tools"): Promise<void> {
+/** Shows or hides Files or Sessions from the Workspace path's menu (B20). */
+export async function chooseLane(page: Page, tool: "files" | "sessions"): Promise<void> {
   await page.locator("[data-workspace-location]").click({ button: "right" });
-  await page.locator(`[data-menu-item="${column}"]`).click();
+  await page.locator(`[data-menu-item="${tool}"]`).click();
   await expect(page.locator('[role="menu"]')).toHaveCount(0);
 }
 
 /**
  * Binds a chord to a command that has none by default in Settings, Shortcuts
  * (the area commands and the global Recent Panels pair have no other way to run
- * in a browser tab), then closes Settings.
+ * in a browser tab), then closes Settings and waits for it to hand the
+ * keyboard back where it was: that lands a tick after the close, and a key
+ * pressed before it would start from the page body instead.
  */
 export async function bindChordlessCommand(page: Page, id: string, keys: string): Promise<void> {
+  const before = await page.evaluateHandle(() => document.activeElement);
   await page.keyboard.press(chord("settings"));
   await page.locator('[data-settings-tab="shortcuts"]').click();
   // The area commands sit in a fold that starts closed.
@@ -126,10 +128,18 @@ export async function bindChordlessCommand(page: Page, id: string, keys: string)
   await expect(page.locator(`[data-shortcut-effective="${id}"]`)).not.toHaveText("-");
   await page.locator("[data-settings-close]").click();
   await expect(page.locator("[data-settings]")).toHaveCount(0);
+  await expect.poll(() => before.evaluate((node) => node === document.activeElement)).toBe(true);
 }
 
+/** Shows the files tool with its file tree, beside the documents or filling the lane (B9, B12). */
 export async function showExplorer(page: Page): Promise<void> {
-  await showTool(page, "explorer");
+  await showTool(page, "files");
+  const tree = page.locator("[data-lane-tree]");
+  if ((await tree.count()) === 0) {
+    await page.locator("[data-lane-more]").click();
+    await page.locator('[data-lane-menu-item="tree"]').click();
+  }
+  await expect(tree.locator("[data-explorer]")).toBeVisible();
 }
 
 /**

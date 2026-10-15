@@ -180,7 +180,7 @@ impl Runtime {
             self.set_error(error.kind(), error.message(), false);
             return true;
         }
-        self.apply_area_intent_to(&key, AreaIntent::Views);
+        self.apply_area_intent_to(&key, AreaIntent::Files);
         crate::diagnostic!(serde_json::json!({
             "component": "pull_requests", "kind": "pr_open",
             "project": workspace_id, "pr": number, "checkout": checkout_id,

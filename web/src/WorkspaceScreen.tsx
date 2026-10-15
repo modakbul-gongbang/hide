@@ -1,4 +1,4 @@
-import { ArrowLeftRightIcon, FilesIcon, PanelRightIcon, ServerIcon } from "lucide-react";
+import { ServerIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { EntryContextMenu, type MenuEntry } from "./components/entry-menu";
@@ -6,130 +6,151 @@ import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { RemotePaneCanvas } from "./PaneGrid";
 import { remoteTabView, remoteView } from "./remote";
-import { holdShellDrag } from "./shellDrag";
 import { canRetryDevice, deviceLine } from "./settings";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, localDeviceId, type Checkout } from "./snapshot";
 import { registeredName } from "./screenMachine";
 import { useShellStore } from "./store";
 import { focusTerminal } from "./terminals";
 import { AgentAreas } from "./AgentAreas";
-import { Tools } from "./Tools";
+import { DividerGuide, LaneDivider } from "./LaneDivider";
+import { Lane, laneUp, ToolRail } from "./Tools";
 import { OverviewButton } from "./Overview";
 import { RunningServers } from "./RunningServers";
 import { useUiStore } from "./ui";
-import { ViewAreas } from "./ViewAreas";
+import { noteShellLayer } from "./browserViews";
 import { workspaceKey } from "./viewLayout";
-import { bodyStep, columnFrame, dividerLanding, slotsForStep, workspaceViewOf, type BodyStep, type ColumnFrame, type ColumnSizes, type SideColumn, type WorkspaceView } from "./workspace";
+import { laneFrame, workspaceViewOf, type LaneFrame, type LaneSizes, type WorkspaceView } from "./workspace";
 import { keyboardOwner, noteKeyboardOwner } from "./viewFocus";
-import { commandLabel } from "./shortcutLabels";
 import { cn } from "./lib/utils";
 import { useInterfaceTranslation } from "./i18n/client";
-import "./columnCalls";
+import "./laneCalls";
 
-// A Workspace (PRD S6 D-01..D-05; S7 B12, B13; PRD three-column-panel D-01,
-// D-02, D-04, D-07, D-12): one checkout's path and column icons in the
-// window's top row (PRD sidebar-titlebar-refresh D-15, `WorkspaceTitle`), and
-// in the body three docked columns, left to right Agent Views (its Herdr tabs
-// and their panes), File Views (its files, diffs and pages) and Tools (the
-// Explorer or History). No column is drawn over another. Whether File Views
-// and Tools are on, the tool and the two widths are the core's, per
-// Workspace; this draws them and sends one event per operator choice. A
-// column that is off is unmounted, never closed: its views stay in the core.
+// A Workspace (PRD S6 D-01..D-05; S7 B12, B13; PRD right-lane D-01..D-07):
+// one checkout's path in the window's top row (PRD sidebar-titlebar-refresh
+// D-15, `WorkspaceTitle`), and in the body Agent Views (its Herdr tabs and
+// their panes), the right lane (one tool: Files, Changes, Sessions or
+// Memory) and, at the right edge, the tool rail. The lane's tool, pin, tree
+// and widths are the core's, per Workspace; this draws them and sends one
+// event per operator choice.
 //
-// Agent Views takes what the other columns leave, so turning a column on or
-// off, a divider landing, or the body crossing a step resizes the agents'
-// terminals once (D-02); a drag moves only a guide until it lands. A body
-// too narrow for every column that is on hides columns without storing it
-// (`columnFrame`), so widening brings back what the core stores.
+// An unpinned lane is drawn over Agent Views, which keeps its width, so
+// opening and closing it resizes no terminal (B3, B24); a terminal click,
+// Escape or an agent chosen puts it away, mounted out of sight so its
+// documents, scroll and pages are as they were when it comes back (B4). A
+// pinned lane docks and Agent Views gives up its width, so the pin and a
+// divider landing resize the agents' terminals once (B5, B6); a drag moves
+// only a guide until it lands. The rail is always there, so nothing the lane
+// does changes Agent Views' width but the pin.
 
 /** Where every device keeps its Home (PRD home-device-rail D-03). */
 const HOME_FOLDER = "~/hide";
-/** One arrow key on a focused divider moves it this many pixels. */
-const DIVIDER_STEP = 32;
 
 export function WorkspaceScreen({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const checkout = useShellStore((s) => frontCheckout(s.rest));
   const view = useShellStore((s) => workspaceViewOf(s.rest));
-  const slots = useUiStore((s) => s.columnSlots);
+  const shown = useUiStore((s) => s.laneShown);
+  const expanded = useUiStore((s) => s.laneExpanded);
   const [body, setBody] = useState<HTMLElement | null>(null);
   const width = useWidth(body);
-  const sizes = useMemo<ColumnSizes>(
+  const sizes = useMemo<LaneSizes>(
     () => ({
       agentMin: tokenPx("--size-agent-views-min"),
-      viewsMin: tokenPx("--size-file-views-min"),
-      toolsMin: tokenPx("--size-panel-min"),
-      viewsIdeal: tokenPx("--size-file-views-ideal"),
-      toolsIdeal: tokenPx("--size-panel-ideal"),
+      laneMin: tokenPx("--size-lane-min"),
+      laneIdeal: tokenPx("--size-lane-ideal"),
+      treeMin: tokenPx("--size-tree-min"),
+      treeIdeal: tokenPx("--size-tree-ideal"),
       divider: tokenPx("--spacing-sm"),
     }),
     [],
   );
-  const step = bodyStep(width, sizes);
-  const previousStep = useRef<BodyStep | null>(null);
-  // Draw the new step's default in its first frame, before retiring the old
-  // call. This avoids fitting terminals to an intermediate wrong column.
-  const stepSlots = slotsForStep(slots, previousStep.current, step);
-  useLayoutEffect(() => {
-    if (width <= 0) return;
-    if (previousStep.current !== null && previousStep.current !== step) useUiStore.getState().resetColumnSlots();
-    previousStep.current = step;
-  }, [width, step]);
   const opening = useShellStore((s) => (s.editor?.opening ?? []).some((row) => row.checkout_id === checkout?.id));
   const hasViews = (view?.layout?.display_count ?? 0) > 0 || opening;
-  const frame = columnFrame({
-    views: view?.views === true && hasViews,
-    tools: view?.tools === true,
-    viewsWidth: view?.views_width ?? null,
-    toolsWidth: view?.tools_width ?? null,
+  const tool = view?.tool ?? null;
+  const frame = laneFrame({
+    tool,
+    pinned: view?.pinned === true,
+    tree: view?.tree === true,
+    laneWidth: view?.lane_width ?? null,
+    treeWidth: view?.tree_width ?? null,
+    hasViews,
+    shown,
+    expanded,
     body: width,
     sizes,
-    slots: stepSlots,
   });
+  const up = laneUp(frame.mode);
   const checkoutId = checkout?.id ?? null;
-  const viewsShown = frame.views !== null;
-  const toolsShown = frame.tools !== null;
-  const agentsCovered = frame.agents === null;
-  // The toolbar's icons and the column chords read what is drawn.
+  // The rail, the chords and the close shortcut read what is drawn.
   useLayoutEffect(() => {
-    useUiStore.getState().setShownColumns({ views: viewsShown, tools: toolsShown, step: frame.step });
-  }, [viewsShown, toolsShown, frame.step]);
-  // Agent Views under a narrow body's one column keeps its size and takes
-  // no keyboard, so its keyboard target is retired before a chord can act on
-  // a pane out of sight.
+    useUiStore.getState().setDrawnLane({ mode: frame.mode, tool });
+  }, [frame.mode, tool]);
+  // Off the Workspace screen nothing is drawn, so a chord there opens the lane.
+  useLayoutEffect(() => () => useUiStore.getState().setDrawnLane({ mode: "closed", tool: null }), []);
+  // A closed lane is not expanded when it opens again.
+  useLayoutEffect(() => {
+    if (tool === null) useUiStore.getState().setLaneExpanded(false);
+  }, [tool]);
+  // A lane put away or shown moves no element the page observes, so the
+  // native pages in it are placed again in the same frame (B21).
+  useLayoutEffect(() => noteShellLayer(), [frame.mode, tool]);
+  // Agent Views under an expanded lane keeps its size and takes no keyboard,
+  // so its keyboard target is retired before a chord can act on a pane out
+  // of sight.
+  const agentsCovered = frame.mode === "expanded";
   useLayoutEffect(() => {
     const owner = keyboardOwner();
     if (agentsCovered && (owner.kind === "pane" || owner.kind === "agent") && owner.workspace === checkoutId) noteKeyboardOwner({ kind: "none" });
   }, [agentsCovered, checkoutId]);
-  // A column that leaves with the keyboard inside it hands the keyboard to
-  // File Views' active area while that shows, else to the pane the core has
-  // focused, as after a closing sheet, so no focus is reported for it (B24).
-  const shown = useRef({ views: viewsShown, tools: toolsShown });
-  const activeArea = view?.layout?.active_area ?? null;
-  const key = view ? workspaceKey(view) : null;
+  // A lane that goes out of sight with the keyboard inside it, or a files
+  // tool another tool replaces with the keyboard in its documents, hands the
+  // keyboard to the pane the core has focused, as after a closing sheet, so
+  // no focus is reported for it (B4, B23).
+  const filesUp = up && tool === "files";
+  const shownBefore = useRef({ up, filesUp });
   useEffect(() => {
-    const before = shown.current;
-    shown.current = { views: viewsShown, tools: toolsShown };
+    const before = shownBefore.current;
+    shownBefore.current = { up, filesUp };
     const owner = keyboardOwner();
-    const left = (before.views && !viewsShown && owner.kind === "view") || (before.tools && !toolsShown && owner.kind === "tool");
-    if (!left) return;
-    if (viewsShown && key && activeArea) return useUiStore.getState().setViewFocusRequest({ workspace: key, areaId: activeArea });
+    const lost = (before.up && !up && (owner.kind === "view" || owner.kind === "tool")) || (before.filesUp && !filesUp && owner.kind === "view");
+    if (!lost) return;
     const paneId = useShellStore.getState().focusedPaneId;
     if (paneId) focusTerminal(paneId);
-  }, [viewsShown, toolsShown, key, activeArea]);
+  }, [up, filesUp]);
   if (!checkout || !view) return null;
   return (
     <section
-      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      className="flex min-h-0 min-w-0 flex-1 overflow-hidden"
       aria-label={t("panes.workspace.aria", { name: checkout.branch ?? checkout.label })}
       data-workspace-screen={checkout.id}
-      data-file-views={viewsShown ? "shown" : view.views ? "hidden" : "off"}
-      data-tools={toolsShown ? "shown" : view.tools ? "hidden" : "off"}
-      data-workspace-body={frame.step}
+      data-lane-mode={frame.mode}
+      data-lane-shows={tool ?? "none"}
     >
-      <ColumnRow view={view} frame={frame} body={body} setBody={setBody} sizes={sizes} actions={actions} checkout={checkout} />
+      <LaneRow view={view} frame={frame} width={width} body={body} setBody={setBody} sizes={sizes} actions={actions} checkout={checkout} />
+      <div className="contents" onKeyDown={(event) => laneEscape(event, frame, view.pinned)}>
+        <ToolRail actions={actions} />
+      </div>
     </section>
   );
+}
+
+/**
+ * Escape in the lane or on its rail, once nothing inside answered (a menu, a
+ * filter, a document's find), returns an expanded lane, or puts an unpinned
+ * one away and gives the keyboard to the focused pane; Escape in a terminal
+ * stays the program's (B4, B8).
+ */
+function laneEscape(event: React.KeyboardEvent<HTMLElement>, frame: LaneFrame, pinned: boolean): void {
+  if (event.key !== "Escape" || event.defaultPrevented) return;
+  const ui = useUiStore.getState();
+  if (frame.mode === "expanded") ui.setLaneExpanded(false);
+  else if (frame.mode === "overlay" && !pinned) {
+    ui.putLaneAway();
+    const paneId = useShellStore.getState().focusedPaneId;
+    if (paneId) focusTerminal(paneId);
+  } else return;
+  event.preventDefault();
+  event.stopPropagation();
 }
 
 function tokenPx(name: string): number {
@@ -150,209 +171,68 @@ function useWidth(element: HTMLElement | null): number {
 }
 
 /**
- * The body under the toolbar: Agent Views, then File Views and Tools while
- * they show, each beside a divider on its left. Agent Views is always
- * mounted; under a narrow body's other column it keeps the body's size out
- * of sight, so moving between the one column and Agent Views resizes no
- * terminal.
+ * The body left of the rail: Agent Views, and the lane. The lane is always
+ * placed over the body's right edge, so moving between over, beside,
+ * expanded and put away never mounts it again; a docked lane, and an
+ * expanded one that was docked, keep their width beside Agent Views with a
+ * divider and an empty slot under the lane, so Agent Views keeps the width
+ * it has (B8).
  */
-function ColumnRow({ view, frame, body, setBody, sizes, actions, checkout }: { view: WorkspaceView; frame: ColumnFrame; body: HTMLElement | null; setBody: (element: HTMLElement | null) => void; sizes: ColumnSizes; actions: Actions; checkout: Checkout }) {
+function LaneRow({ view, frame, width, body, setBody, sizes, actions, checkout }: { view: WorkspaceView; frame: LaneFrame; width: number; body: HTMLElement | null; setBody: (element: HTMLElement | null) => void; sizes: LaneSizes; actions: Actions; checkout: Checkout }) {
   const { t } = useInterfaceTranslation();
   const [guide, setGuide] = useState<number | null>(null);
-  const narrow = frame.step === "narrow";
-  const covered = frame.agents === null;
-  const divider = (column: SideColumn) => <ColumnDivider workspace={workspaceKey(view)} acknowledged={view.width_request_id ?? null} column={column} frame={frame} body={body} sizes={sizes} setGuide={setGuide} actions={actions} />;
+  // The width Agent Views gives up: a docked lane's, kept while it is expanded.
+  const slot = frame.agents > 0 && frame.agents < width ? width - frame.agents - sizes.divider : 0;
+  const up = laneUp(frame.mode);
+  const unpinned = !view.pinned;
+  // A terminal click puts an unpinned lane away (B4); a pinned one, docked
+  // or over a body too narrow for it, stays (B5, B19). A press on a tab
+  // strip is not one, so a tab dragged over the lane meets it there.
+  const putAway = (event: React.PointerEvent<HTMLElement>) => {
+    if (!(event.target instanceof Element) || !event.target.closest("[data-pane-view]")) return;
+    if (frame.mode === "overlay" && unpinned) useUiStore.getState().putLaneAway();
+  };
+  const escape = (event: React.KeyboardEvent<HTMLElement>) => laneEscape(event, frame, view.pinned);
+  const placed = frame.mode === "expanded" ? "inset-0 z-20" : "inset-y-0 right-0 z-20";
+  const raised = frame.mode === "overlay" || frame.mode === "expanded" ? "border-l border-border shadow-lg" : "";
   return (
-    <div ref={setBody} className="relative flex min-h-0 min-w-0 flex-1" data-column-row="true">
+    <div ref={setBody} className="relative flex min-h-0 min-w-0 flex-1" data-lane-row="true">
       {/* Its own stacking context, so nothing the agents raise (a pane
-          divider) draws over a column; out of sight and out of reach of the
-          pointer and the keyboard while a narrow body shows another column. */}
-      <div
-        className={`isolate flex min-h-0 min-w-0 flex-1 flex-col ${covered ? "invisible absolute inset-0" : ""}`}
-        inert={covered}
-        data-agent-area="true"
-        data-column="agents"
-      >
+          divider) draws over the lane; out of reach of the pointer and the
+          keyboard while an expanded lane covers it. */}
+      <div className="isolate flex min-h-0 min-w-0 flex-1 flex-col" inert={frame.mode === "expanded"} data-agent-area="true" onPointerDownCapture={putAway}>
         <AgentArea checkout={checkout} actions={actions} />
       </div>
-      {frame.views !== null ? (
+      {slot > 0 ? (
         <>
-          {narrow ? null : divider("views")}
-          <div
-            className={`flex min-h-0 min-w-0 shrink-0 flex-col bg-card ${narrow ? "absolute inset-0" : ""}`}
-            style={narrow ? undefined : { width: frame.views }}
-            aria-label={t("panes.workspace.fileViews")}
-            role="region"
-            data-column="views"
-            data-view-area="true"
-          >
-            <ViewAreas actions={actions} />
-          </div>
+          <LaneDivider kind="lane" label={t("panes.workspace.resize", { name: t("panes.lane.aria") })} workspace={workspaceKey(view)} acknowledged={view.width_request_id ?? null} frame={frame} origin={body} sizes={sizes} setGuide={setGuide} actions={actions} />
+          <div className="shrink-0" style={{ width: slot }} aria-hidden="true" data-lane-slot="true" />
         </>
       ) : null}
-      {frame.tools !== null ? (
-        <>
-          {narrow ? null : divider("tools")}
-          <div
-            className={`flex min-h-0 min-w-0 shrink-0 flex-col bg-card ${narrow ? "absolute inset-0" : ""}`}
-            style={narrow ? undefined : { width: frame.tools }}
-            data-column="tools"
-          >
-            <Tools tool={view.tool} actions={actions} />
-          </div>
-        </>
-      ) : null}
-      {guide !== null ? (
-        <div className="pointer-events-none absolute inset-y-0 z-30 flex w-sm justify-center" style={{ left: guide }} data-column-guide="true">
-          <DividerGrip />
+      {view.tool !== null ? (
+        <div
+          className={cn("absolute flex min-h-0 min-w-0 flex-col bg-card", placed, raised, !up && "invisible")}
+          style={frame.mode === "expanded" ? undefined : { width: frame.width }}
+          inert={!up}
+          onKeyDown={escape}
+          data-lane-frame={frame.mode}
+          data-lane-hidden={up ? undefined : "true"}
+        >
+          <Lane view={view} tool={view.tool} frame={frame} sizes={sizes} checkout={checkout} actions={actions} />
         </div>
       ) : null}
+      {guide !== null ? <DividerGuide left={guide} /> : null}
     </div>
-  );
-}
-
-/**
- * The divider on a column's left (D-12; `Component / Side panel grip`):
- * nothing at rest, and on hover, keyboard focus and while dragging a hairline
- * with a ⇆ pill at its middle. A drag moves a guide and lands once on
- * release, so no terminal or page resizes during it and every page shows its
- * still; a focused divider moves one step per arrow key, one event per press.
- */
-function ColumnDivider({ workspace, acknowledged, column, frame, body, sizes, setGuide, actions }: { workspace: string; acknowledged: string | null; column: SideColumn; frame: ColumnFrame; body: HTMLElement | null; sizes: ColumnSizes; setGuide: (x: number | null) => void; actions: Actions }) {
-  const cancelDrag = useRef<(() => void) | null>(null);
-  const [keySession] = useState(() => crypto.randomUUID());
-  const keyIntent = useRef<{ frame: ColumnFrame; published: ColumnFrame; body: number; request: string; observed: string | null } | null>(null);
-  // Keep one absolute target until its own acknowledgement, not an older
-  // echo from this key session. Other callers and changed geometry rebase it.
-  useLayoutEffect(() => {
-    const pending = keyIntent.current;
-    if (pending && (acknowledged === pending.request ||
-      ((acknowledged !== pending.observed || frame.views !== pending.published.views || frame.tools !== pending.published.tools) && !acknowledged?.startsWith(`${keySession}:`)) ||
-      pending.body !== body?.clientWidth || pending.frame.step !== frame.step ||
-      (pending.frame.views === null) !== (frame.views === null) || (pending.frame.tools === null) !== (frame.tools === null))) {
-      keyIntent.current = null;
-    }
-  }, [acknowledged, keySession, body, frame]);
-  useLayoutEffect(() => () => { keyIntent.current = null; }, [workspace, body]);
-  // A captured pointer belongs to the Workspace and geometry it started on.
-  // Switching either, or unmounting, retires the guide and its page still.
-  useLayoutEffect(() => () => cancelDrag.current?.(), [workspace, body, frame.agents, frame.views, frame.tools]);
-  const { t } = useInterfaceTranslation();
-  const width = (column === "views" ? frame.views : frame.tools) ?? 0;
-  const name = column === "views" ? t("panes.workspace.fileViews") : t("panes.workspace.tools");
-  const land = (x: number, basis = frame, request?: string) => {
-    const total = body?.clientWidth ?? 0;
-    if (total <= 0) return;
-    const patch = dividerLanding({ divider: column, x, body: total, frame: basis, sizes });
-    const changed = (patch.views_width !== undefined && patch.views_width !== basis.views) || (patch.tools_width !== undefined && patch.tools_width !== basis.tools);
-    if (!changed) return;
-    if (request) {
-      const views = patch.views_width ?? basis.views;
-      const tools = patch.tools_width ?? basis.tools;
-      const dividers = (views !== null ? sizes.divider : 0) + (tools !== null ? sizes.divider : 0);
-      keyIntent.current = { frame: { ...basis, views, tools, agents: total - dividers - (views ?? 0) - (tools ?? 0) }, published: frame, body: total, request, observed: acknowledged };
-    }
-    if (actions.setWorkspaceView({ ...patch, ...(request ? { width_request_id: request } : {}) }) === false) keyIntent.current = null;
-  };
-  // Where the divider's left edge stands now, from the body's left edge.
-  const position = (basis = frame) => {
-    const total = body?.clientWidth ?? 0;
-    const right = column === "views" ? total - (basis.tools !== null ? basis.tools + sizes.divider : 0) : total;
-    const currentWidth = (column === "views" ? basis.views : basis.tools) ?? 0;
-    return right - currentWidth - sizes.divider;
-  };
-  const drag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || !body) return;
-    event.preventDefault();
-    cancelDrag.current?.();
-    keyIntent.current = null;
-    const left = body.getBoundingClientRect().left;
-    const target = event.currentTarget;
-    target.setPointerCapture(event.pointerId);
-    const at = (next: PointerEvent) => next.clientX - left - sizes.divider / 2;
-    // The guide shows where the divider would land, clamped like the landing.
-    const guideAt = (x: number) => {
-      const patch = dividerLanding({ divider: column, x, body: body.clientWidth, frame, sizes });
-      const landed = column === "views" ? patch.views_width ?? width : patch.tools_width ?? width;
-      return position() + width - landed;
-    };
-    const move = (next: PointerEvent) => setGuide(guideAt(at(next)));
-    // The drag marks the root, so a page the guide crosses gives way to its still.
-    const release = holdShellDrag("col-resize");
-    const end = () => {
-      if (cancelDrag.current !== end) return;
-      cancelDrag.current = null;
-      release();
-      target.removeEventListener("pointermove", move);
-      target.removeEventListener("pointerup", up);
-      target.removeEventListener("pointercancel", end);
-      target.removeEventListener("lostpointercapture", end);
-      if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
-      setGuide(null);
-    };
-    const up = (next: PointerEvent) => {
-      if (cancelDrag.current !== end) return;
-      end();
-      land(at(next));
-    };
-    cancelDrag.current = end;
-    // A drag the system cancels lands nothing and leaves no guide behind.
-    target.addEventListener("pointermove", move);
-    target.addEventListener("pointerup", up);
-    target.addEventListener("pointercancel", end);
-    target.addEventListener("lostpointercapture", end);
-  };
-  // Tools trades with File Views while both show; its accessible range
-  // must use that neighbour's spare width, like dividerLanding does.
-  const spare = column === "tools" && frame.views !== null ? frame.views - sizes.viewsMin : (frame.agents ?? 0) - sizes.agentMin;
-  const min = column === "views" ? sizes.viewsMin : sizes.toolsMin;
-  return (
-    <div
-      role="separator"
-      aria-orientation="vertical"
-      aria-label={t("panes.workspace.resize", { name })}
-      aria-valuenow={width}
-      aria-valuemin={min}
-      aria-valuemax={width + Math.max(0, spare)}
-      tabIndex={0}
-      data-column-divider={column}
-      className="group relative z-10 flex w-sm shrink-0 cursor-col-resize justify-center bg-background outline-none"
-      onPointerDown={drag}
-      onBlur={() => { keyIntent.current = null; }}
-      onKeyDown={(event) => {
-        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-        event.preventDefault();
-        // Left widens the column, as its divider moves left. Calculate from
-        // the last requested target while the core is still confirming it.
-        const pending = keyIntent.current;
-        const basis = pending && pending.body === body?.clientWidth ? pending.frame : frame;
-        const request = `${keySession}:${crypto.randomUUID()}`;
-        land(position(basis) + (event.key === "ArrowLeft" ? -DIVIDER_STEP : DIVIDER_STEP), basis, request);
-      }}
-    >
-      <DividerGrip className="opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" />
-    </div>
-  );
-}
-
-/** The divider's grip: a hairline with a ⇆ pill at its middle, drawn on hover, keyboard focus and while dragging. */
-function DividerGrip({ className = "" }: { className?: string }) {
-  return (
-    <span aria-hidden="true" className={`relative h-full w-(--size-hairline) ${className}`} data-column-grip="true">
-      <span className="absolute inset-0 bg-muted-foreground opacity-[var(--opacity-secondary)]" />
-      <span className="absolute left-1/2 top-1/2 flex size-(--size-icon-button-toolbar) -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-md border border-border bg-card text-muted-foreground">
-        <ArrowLeftRightIcon className="size-(--size-icon-sm)" />
-      </span>
-    </span>
   );
 }
 
 /**
  * The Workspace's part of the window's top row (PRD sidebar-titlebar-refresh
- * D-15, D-16, B17, B18): a remote device's band, the `project / checkout`
- * path, and at the right end, icons only, Overview, Open server, File Views
- * and Tools. The project opens its Overview; a right-click on the path opens
- * the Workspace's menu. Nothing while a Workspace is not the screen in front.
+ * D-15, D-16, B17, B18; PRD right-lane B1): a remote device's band, the
+ * `project / checkout` path, and at the right end, icons only, Overview and
+ * Open server; the lane's tools are on the rail. The project opens its
+ * Overview; a right-click on the path opens the Workspace's menu. Nothing
+ * while a Workspace is not the screen in front.
  */
 export function WorkspaceTitle({ actions }: { actions: Actions }) {
   const workspaceScreen = useUiStore((s) => s.screen?.kind === "workspace");
@@ -366,27 +246,22 @@ function WorkspaceTitleBar({ checkout, view, actions }: { checkout: Checkout; vi
   const { t } = useInterfaceTranslation();
   const project = useShellStore((s) => catalogWorkspaces(s.rest).find((row) => row.checkouts.some((candidate) => candidate.id === checkout.id)) ?? null);
   const device = useShellStore((s) => focusedRemoteDevice(s.rest));
-  // The icons say what the body draws now, which a narrow body decides (`columnFrame`).
-  const viewsShown = useUiStore((s) => s.shownColumns.views);
-  const toolsShown = useUiStore((s) => s.shownColumns.tools);
-  // The chords as bound, so a rebound one shows as bound (B7).
-  const viewsChord = useShellStore((s) => commandLabel("toggle_right_panel", s.rest?.ui_state));
-  const toolsChord = useShellStore((s) => commandLabel("toggle_explorer", s.rest?.ui_state));
+  // The menu says what the body draws now (PRD right-lane B20).
+  const drawn = useUiStore((s) => s.drawnLane);
+  const up = laneUp(drawn.mode);
   const name = checkout.branch ?? checkout.label;
-  // What the menu acts on is this Workspace: its columns, its path and
-  // its Project (B15). Opening the menu changes none of them.
+  // What the menu acts on is this Workspace: its lane, its path and its
+  // Project (B15). Opening the menu changes none of them.
   const menuItems = (): MenuEntry<ToolbarMenuId>[] => [
-    { id: "views", label: viewsShown ? t("panes.workspace.hideFileViews") : t("panes.workspace.showFileViews"), unavailable: null },
-    { id: "tools", label: toolsShown ? t("panes.workspace.hideTools") : t("panes.workspace.showTools"), unavailable: null },
+    { id: "files", label: up && drawn.tool === "files" ? t("panes.lane.hideFiles") : t("panes.lane.showFiles"), unavailable: null },
+    { id: "sessions", label: up && drawn.tool === "work" ? t("panes.lane.hideWork") : t("panes.lane.showWork"), unavailable: null },
     { id: "copy_path", label: t("panes.workspace.copyPath"), unavailable: null, separated: true },
   ];
   const select = (id: ToolbarMenuId) => {
-    if (id === "views") return actions.toggleFileViews();
-    if (id === "tools") return actions.toggleTools();
+    if (id === "files") return actions.toggleFileViews();
+    if (id === "sessions") return actions.toggleTools();
     if (id === "copy_path") return void navigator.clipboard?.writeText(checkout.path).catch(() => undefined);
   };
-  const count = viewsShown ? 0 : (view.layout?.display_count ?? 0);
-  const viewsOpen = count > 0 ? t("panes.workspace.viewsOpen", { count }) : undefined;
   const home = project?.is_home === true;
   return (
     <div className="flex h-full min-w-0 flex-1 items-center gap-sm pr-sm text-caption" data-workspace-toolbar="true">
@@ -423,40 +298,15 @@ function WorkspaceTitleBar({ checkout, view, actions }: { checkout: Checkout; vi
           </Hint>
         </nav>
       </EntryContextMenu>
-      <div className="flex shrink-0 items-center gap-xxs" role="group" aria-label={t("panes.workspace.columns")} data-column-toggles="true">
+      <div className="flex shrink-0 items-center gap-xxs" data-workspace-actions="true">
         <OverviewButton actions={actions} />
         <RunningServers key={checkout.id} checkout={checkout} view={view} actions={actions} />
-        {/* One name per icon, its state in aria-pressed; the tooltip carries the name and the chord (B7, B8). */}
-        <Hint label={t("panes.workspace.fileViews")} shortcut={viewsChord}>
-          <Button
-            variant={viewsShown ? "secondary" : "ghost"}
-            size="icon-sm"
-            className="relative"
-            aria-pressed={viewsShown}
-            aria-label={t("panes.workspace.fileViews")}
-            aria-description={viewsOpen}
-            data-column-toggle="views"
-            onClick={() => actions.toggleFileViews()}
-          >
-            <FilesIcon />
-            {count > 0 ? (
-              <span aria-hidden="true" className="absolute -right-xxs -top-xxs flex h-(--size-icon) min-w-(--size-icon) items-center justify-center rounded-full bg-primary px-xxs text-micro text-primary-foreground" data-column-badge={count}>
-                {count}
-              </span>
-            ) : null}
-          </Button>
-        </Hint>
-        <Hint label={t("panes.workspace.tools")} shortcut={toolsChord}>
-          <Button variant={toolsShown ? "secondary" : "ghost"} size="icon-sm" aria-pressed={toolsShown} aria-label={t("panes.workspace.tools")} data-column-toggle="tools" onClick={() => actions.toggleTools()}>
-            <PanelRightIcon />
-          </Button>
-        </Hint>
       </div>
     </div>
   );
 }
 
-type ToolbarMenuId = "views" | "tools" | "copy_path";
+type ToolbarMenuId = "files" | "sessions" | "copy_path";
 
 /** This machine's tabs, or the selected SSH device's own tabs and panes in their place (S5 B19). */
 function AgentArea({ checkout, actions }: { checkout: Checkout; actions: Actions }) {

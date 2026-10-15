@@ -1,13 +1,14 @@
-// The production Tools column on its Memory tab over invented wire values,
+// The production lane on its Memory tool over invented wire values,
 // one state per document, for comparison with the v7 design exports (PRD
 // project-memory-v2 D-17, B19-B32). Runtime policy is tested in herdr-core.
 import { useLayoutEffect, useMemo } from "react";
 import { createActions } from "../actions";
 import { InterfaceLanguageBoundary } from "../i18n/client";
 import { TooltipProvider } from "../components/ui/tooltip";
-import type { MemoryRow, ProjectMemory, SnapshotRest } from "../snapshot";
+import type { Checkout, MemoryRow, ProjectMemory, SnapshotRest } from "../snapshot";
 import { useShellStore } from "../store";
-import { Tools } from "../Tools";
+import { Lane } from "../Tools";
+import type { LaneFrame, LaneSizes, WorkspaceView } from "../workspace";
 
 export const MEMORY_SCENE_STATES = ["workspace", "off", "ai_not_ready", "analyzing", "empty", "unreadable", "promote", "failed", "start_failed", "forgotten", "verifying", "reconsent", "checking", "check_budget_exhausted"] as const;
 export type MemorySceneState = (typeof MEMORY_SCENE_STATES)[number];
@@ -77,6 +78,11 @@ function project(state: MemorySceneState): ProjectMemory {
   }
 }
 
+/** The lane pinned on its Memory tool, the scene's width wide. */
+const VIEW: WorkspaceView = { device_id: "local", path: "/projects/herdr-ide", tool: "memory", work: { lens: "sessions", only_checkout: false }, pinned: true, tree: false, lane_width: null, tree_width: null, lane_called: 0, lane_calls: 0 };
+const FRAME: LaneFrame = { mode: "docked", agents: 0, width: 0, document: 0, tree: null, treeOnly: false, narrowPin: false };
+const SIZES: LaneSizes = { agentMin: 480, laneMin: 360, laneIdeal: 520, treeMin: 180, treeIdeal: 240, divider: 8 };
+
 export function MemoryScene({ theme, state, width, language }: MemorySceneParams) {
   const actions = useMemo(() => createActions(() => true), []);
   const rest = useMemo(() => ({
@@ -97,7 +103,7 @@ export function MemoryScene({ theme, state, width, language }: MemorySceneParams
     <TooltipProvider>
       <InterfaceLanguageBoundary />
       <div className="flex h-screen bg-background text-foreground" style={{ width }} data-gallery-scene="memory" data-memory-scene={state}>
-        <Tools tool="memory" actions={actions} />
+        <Lane view={{ ...VIEW, lane_width: width }} tool="memory" frame={{ ...FRAME, width, document: width }} sizes={SIZES} checkout={rest.navigator!.workspaces![0]!.checkouts[0] as Checkout} actions={actions} />
       </div>
     </TooltipProvider>
   );

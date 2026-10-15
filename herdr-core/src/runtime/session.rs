@@ -2268,13 +2268,34 @@ impl Runtime {
     /// leaves the answer without authority. An unconfirmed answer changes
     /// nothing and is not asked again until the next session update; an
     /// update that arrived while the read was out is that next update.
+    ///
+    /// Herdr's focus on another pane is the readback doing its work: the
+    /// stream showed a move older than Herdr's focus, most often older than
+    /// Hide's own last focus. Only a readback Herdr could not answer while
+    /// it was still the latest is a failure, logged with Herdr's reason; one
+    /// a newer focus, selection or connection overtook ends quietly.
     pub(crate) fn finish_pane_focus_readback(
         &mut self,
         identity: PendingPaneFocusControl,
-        confirmed: bool,
+        answer: crate::live::FocusReadback,
     ) -> (bool, Option<PendingPaneFocusControl>) {
         self.pane_focus_readback = None;
         let again = std::mem::take(&mut self.pane_focus_readback_again);
+        // The move must still be the one the selected pane's layout shows:
+        // the apply below rechecks the identity only inside that layout, so
+        // an answer for another tab than the selected one has no authority.
+        let latest = self.pane_focus_readback_target().as_ref() == Some(&identity);
+        if latest && let crate::live::FocusReadback::Unread(message) = &answer {
+            crate::diagnostic!(serde_json::json!({
+                "component": "pane_focus",
+                "kind": "pane.focus.stream_readback_failed",
+                "pane_id": identity.target_id,
+                "serial": identity.serial,
+                "connection_generation": identity.live_generation,
+                "message": message,
+            }));
+        }
+        let confirmed = answer == crate::live::FocusReadback::Confirmed;
         let stored = self
             .snapshot
             .pane_layouts
@@ -2282,11 +2303,8 @@ impl Runtime {
             .find(|layout| layout.focused_pane_id == identity.target_id)
             .cloned();
         let mut changed = false;
-        // The move must still be the one the selected pane's layout shows:
-        // the apply below rechecks the identity only inside that layout, so
-        // an answer for another tab than the selected one has no authority.
         if confirmed
-            && self.pane_focus_readback_target().as_ref() == Some(&identity)
+            && latest
             && let Some(layout) = stored.clone()
         {
             changed |= self.apply_pane_layout_with_focus_check(
@@ -5407,6 +5425,13 @@ impl Runtime {
             );
             return;
         };
+        // A link the operator clicked while this Workspace's files tool
+        // showed the tree alone keeps the tree beside the file (B11, B12).
+        let lone_tree = self.front_lone_tree().filter(|key| {
+            self.workspace_key(&payload.workspace_id, &payload.checkout_id)
+                .as_ref()
+                == Some(key)
+        });
         if self.snapshot.navigator.focused_checkout_id.as_deref()
             != Some(payload.checkout_id.as_str())
         {
@@ -5433,12 +5458,11 @@ impl Runtime {
                 false,
             );
         }
-        // The reveal calls the columns of its own checkout's Workspace, once
-        // it has settled there, not of whichever was in front when it was
-        // asked, and not when its file was refused as it landed (D-08). A
-        // file opens in File Views and leaves Tools as it was (B4); a folder
-        // shows only in the Explorer, so it turns Tools on and leaves File
-        // Views as it was.
+        // The reveal calls the lane of its own checkout's Workspace, once it
+        // has settled there, not of whichever was in front when it was asked,
+        // and not when its file was refused as it landed (PRD right-lane
+        // D-13). A file opens in the files tool; a folder shows only in the
+        // tree, so it opens the files tool with the tree on (B16).
         if self.separate_view_areas()
             && self.snapshot.status.last_error == error_before
             && let Some(key) = self.workspace_key(&payload.workspace_id, &payload.checkout_id)
@@ -5446,9 +5470,12 @@ impl Runtime {
             let intent = if payload.is_directory {
                 super::workspace_view::AreaIntent::RevealFolder
             } else {
-                super::workspace_view::AreaIntent::Views
+                super::workspace_view::AreaIntent::Files
             };
             self.apply_area_intent_to(&key, intent);
+            if lone_tree.as_ref() == Some(&key) {
+                self.keep_lone_tree(&key);
+            }
         }
         self.push_diagnostic(
             "path.revealed",

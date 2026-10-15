@@ -224,6 +224,147 @@ fn native_lineage_reaches_the_ledger_on_remote_and_cross_device_sessions() {
     assert!(store.ledger_summaries(local_key).unwrap().is_empty());
 }
 
+/// A registration as `hide agent spawn` records it: the session is the
+/// value Herdr reported for the pane, which for Pi and omp is the session's
+/// file.
+fn spawned_record(
+    id: &str,
+    kind: &str,
+    session: &str,
+    parent: Option<&str>,
+) -> crate::coordination::AgentRecord {
+    crate::coordination::AgentRecord {
+        id: id.into(),
+        name: format!("name-{id}"),
+        machine: crate::node::TEST_NODE.into(),
+        host_scope: "scope".into(),
+        native_machine: crate::node::TEST_NODE.into(),
+        session: session.into(),
+        instance: format!("pane-{id}"),
+        pane: format!("pane-{id}"),
+        parent: parent.map(str::to_owned),
+        origin: None,
+        project: None,
+        actor: crate::delivery::Actor {
+            pane_id: format!("pane-{id}"),
+            name: format!("name-{id}"),
+            kind: kind.into(),
+            device_id: crate::node::TEST_NODE.into(),
+            session: crate::wire::session_digest(session),
+        },
+        ended: false,
+        forked: false,
+    }
+}
+
+/// Pi and omp report their session to Herdr as its file, while the link
+/// reader names it by the id in the file's header. A child spawned that way
+/// is in its parent's record once its file is read, whichever of the spawn
+/// and the read reaches the record first.
+#[test]
+fn a_pi_or_omp_child_spawned_by_its_file_is_in_its_parents_record() {
+    use crate::links::ledger::{LedgerUpdate, RecordedRequest, SessionIdentity, WorkAuthor};
+    for kind in ["pi", "omp"] {
+        for spawn_first in [true, false] {
+            let home = tempfile::tempdir().unwrap();
+            let cwd = hide_platform::fs::identity::canonical(home.path()).unwrap();
+            let folder = crate::fixture::native_session_folder(home.path(), kind, &cwd);
+            std::fs::create_dir_all(&folder).unwrap();
+            // Neither runtime puts the header id in a name the reader trusts.
+            let file = folder.join("2026-10-14T00-00-00-000Z_file-name.jsonl");
+            std::fs::write(
+                &file,
+                format!(
+                    "{}\n{}\n",
+                    serde_json::json!({"type":"session", "version":3, "id":"native-child",
+                        "timestamp":"2026-10-14T00:00:00.000Z", "cwd":cwd}),
+                    serde_json::json!({"type":"message", "id":"m1", "parentId":null,
+                        "timestamp":"2026-10-14T00:00:01.000Z", "message":{"role":"user",
+                        "content":[{"type":"text","text":"Do the delegated part"}]}}),
+                ),
+            )
+            .unwrap();
+            let path = file.display().to_string();
+
+            let mut runtime = runtime();
+            let ledger = crate::delivery::ledger::Ledger {
+                agents: vec![
+                    spawned_record("agent-1", "claude", "parent-session", None),
+                    spawned_record("agent-2", kind, &path, Some("agent-1")),
+                ],
+                ..Default::default()
+            };
+            runtime.delivery_ledger = Ok(Arc::new(ledger));
+            let client = crate::links::worker::LinkClient::full_mailbox_for_test();
+            runtime.links_work.client = Some(client.clone());
+            runtime.feed_links();
+            let facts = client.parent_facts_for_test().unwrap();
+
+            let directory = tempfile::tempdir().unwrap();
+            let (mut store, _) =
+                crate::links::store::LinkStore::open(&directory.path().join("links.sqlite3"))
+                    .unwrap();
+            let parent = SessionIdentity {
+                device_id: crate::node::TEST_NODE.into(),
+                agent: "claude".into(),
+                session_id: "parent-session".into(),
+            };
+            store
+                .apply_ledger_update(&LedgerUpdate::Requests {
+                    session: parent.clone(),
+                    cwd: cwd.display().to_string(),
+                    path: None,
+                    requests: vec![RecordedRequest {
+                        offset: 1,
+                        at_unix_ms: CREATED,
+                        text: "Split the work".into(),
+                        author: WorkAuthor::Operator,
+                        task_ids: vec![],
+                        chapter_id: None,
+                        judged: false,
+                    }],
+                })
+                .unwrap();
+            let read = |store: &mut crate::links::store::LinkStore| {
+                let answer = hide_session::links::read(
+                    home.path(),
+                    &[hide_session::links::ReadRequest {
+                        agent: hide_session::Agent::from_kind(kind).unwrap(),
+                        path: path.clone(),
+                        checkpoint: None,
+                    }],
+                )
+                .remove(0);
+                assert_eq!(answer.error, None, "{kind}");
+                store
+                    .apply_answer(crate::node::TEST_NODE, &answer, "stamp")
+                    .unwrap();
+            };
+            if spawn_first {
+                store.apply_parents(&facts).unwrap();
+                read(&mut store);
+            } else {
+                read(&mut store);
+                store.apply_parents(&facts).unwrap();
+            }
+
+            let children = store.ledger_record(&parent).unwrap().children;
+            assert_eq!(
+                children
+                    .iter()
+                    .map(|child| child.session.clone())
+                    .collect::<Vec<_>>(),
+                [SessionIdentity {
+                    device_id: crate::node::TEST_NODE.into(),
+                    agent: kind.into(),
+                    session_id: "native-child".into(),
+                }],
+                "{kind}, spawn first: {spawn_first}"
+            );
+        }
+    }
+}
+
 #[test]
 fn rejecting_a_child_missed_action_keeps_the_displayed_parent_record_and_retry_target() {
     use crate::links::ledger::{MissedStatus, SessionIdentity, SessionRecordSnapshot};

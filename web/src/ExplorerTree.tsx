@@ -87,7 +87,11 @@ function baseName(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
-export function ExplorerTree({ actions }: { actions: Actions }) {
+/**
+ * `hint` is the line under the filter and `footer` the line at the bottom,
+ * which the lane's tree column fills (PRD right-lane B9, B12).
+ */
+export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint?: string; footer?: string }) {
   const { t } = useInterfaceTranslation();
   const checkout = useShellStore((s) => explorerContext(s.rest).checkout);
   const device = useShellStore((s) => explorerContext(s.rest).device);
@@ -409,6 +413,11 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           />
         </span>
       </div>
+      {hint ? (
+        <p className="shrink-0 truncate px-md pt-xs text-micro text-muted-foreground" data-lane-tree-hint="true">
+          {hint}
+        </p>
+      ) : null}
       <div className="flex shrink-0 items-center gap-xs border-b border-border px-md py-xs text-caption text-subtle-foreground">
         <Hint label={rootPath} reveals>
         <span className="min-w-0 flex-1 truncate" data-explorer-root="true">
@@ -584,6 +593,11 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           onRename={beginRename}
           onTrash={requestTrash}
         />
+      ) : null}
+      {footer ? (
+        <p className="shrink-0 truncate border-t border-border px-md py-xs text-micro text-muted-foreground" data-lane-tree-footer="true">
+          {footer}
+        </p>
       ) : null}
     </div>
   );

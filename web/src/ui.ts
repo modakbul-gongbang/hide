@@ -13,12 +13,12 @@ import type { CycleItem } from "./recent";
 import type { NumberedFamily } from "./shortcuts";
 import type { ViewFocusRequest, ViewWorkspace } from "./viewLayout";
 import type { KeyboardOwner } from "./viewFocus";
-import { DEFAULT_SLOTS, NO_CALLS_SEEN, type BodyStep, type CallsSeen, type Column, type ColumnSlots } from "./workspace";
+import { NO_CALLS_SEEN, type CallsSeen, type LaneMode, type Tool } from "./workspace";
 
 export type { ViewFocusRequest } from "./viewLayout";
 
-/** The columns the Workspace screen draws now beside Agent Views, and how many the body holds. */
-export type ShownColumns = { views: boolean; tools: boolean; step: BodyStep };
+/** What the Workspace screen draws of the lane now, which the rail, the chords and the close shortcut read. */
+export type DrawnLane = { mode: LaneMode; tool: Tool | null };
 
 export type SidebarMode = "agents" | "projects";
 
@@ -264,15 +264,18 @@ type UiStore = {
   agentFindRequest: { id: string; owner: KeyboardOwner } | null;
   viewFocusRequest: ViewFocusRequest | null;
   /**
-   * Which column a narrow Workspace body shows (PRD three-column-panel D-07):
-   * the one called last. Display only, never sent, so widening brings back
-   * what the core stores.
+   * Whether the front Workspace's unpinned lane is up over Agent Views (PRD
+   * right-lane D-02, D-11): a call or the rail puts it up, a terminal click,
+   * Escape or an agent chosen puts it away. Never sent, so a restart starts
+   * an unpinned lane put away.
    */
-  columnSlots: ColumnSlots;
-  /** What the page has read of the core's File Views calls (`columnCalls.ts`). */
-  viewsCallsSeen: CallsSeen;
-  /** The columns the Workspace screen draws now, which the toolbar and the column chords read. */
-  shownColumns: ShownColumns;
+  laneShown: boolean;
+  /** Whether the lane takes the whole body (D-04); never sent. */
+  laneExpanded: boolean;
+  /** What the page has read of the core's lane calls (`laneCalls.ts`). */
+  laneCallsSeen: CallsSeen;
+  /** What the Workspace screen draws of the lane now. */
+  drawnLane: DrawnLane;
   /** The Explorer's inline name field, or null. */
   explorerDraft: ExplorerDraft | null;
   /** The trash confirmation the Explorer is showing, or null. */
@@ -346,11 +349,12 @@ type UiStore = {
   requestEditorFind: (displayId: string | null) => void;
   setAgentFindRequest: (request: { id: string; owner: KeyboardOwner } | null) => void;
   setViewFocusRequest: (request: ViewFocusRequest | null) => void;
-  /** A column was called (an open, a tool, an agent chosen): a narrow body shows it. */
-  callColumn: (column: Column) => void;
-  /** Another Workspace is drawn: a narrow body starts on Agent Views again. */
-  resetColumnSlots: () => void;
-  setShownColumns: (shown: ShownColumns) => void;
+  /** The lane was called (an open, a tool, a reveal): an unpinned lane comes up. */
+  showLane: () => void;
+  /** A terminal click, Escape or an agent chosen: an unpinned lane is put away and an expanded one returns. */
+  putLaneAway: () => void;
+  setLaneExpanded: (expanded: boolean) => void;
+  setDrawnLane: (drawn: DrawnLane) => void;
   setExplorerDraft: (draft: ExplorerDraft | null) => void;
   setPendingTrash: (trash: PendingTrash | null) => void;
   openOverlay: (overlay: Overlay) => void;
@@ -403,9 +407,10 @@ export const useUiStore = create<UiStore>((set, get) => ({
   editorFindDisplay: null,
   agentFindRequest: null,
   viewFocusRequest: null,
-  columnSlots: DEFAULT_SLOTS,
-  viewsCallsSeen: NO_CALLS_SEEN,
-  shownColumns: { views: false, tools: false, step: "wide" },
+  laneShown: false,
+  laneExpanded: false,
+  laneCallsSeen: NO_CALLS_SEEN,
+  drawnLane: { mode: "closed", tool: null },
   explorerDraft: null,
   pendingTrash: null,
   overlay: "none",
@@ -469,17 +474,18 @@ export const useUiStore = create<UiStore>((set, get) => ({
   requestEditorFind: (displayId) => set({ editorFindRequest: get().editorFindRequest + 1, editorFindDisplay: displayId }),
   setAgentFindRequest: (agentFindRequest) => set({ agentFindRequest }),
   setViewFocusRequest: (viewFocusRequest) => set({ viewFocusRequest }),
-  callColumn: (column) => {
-    const { columnSlots } = get();
-    const side = column === "agents" ? columnSlots.side : column;
-    if (columnSlots.single !== column || columnSlots.side !== side) set({ columnSlots: { side, single: column } });
+  showLane: () => {
+    if (!get().laneShown) set({ laneShown: true });
   },
-  resetColumnSlots: () => {
-    if (get().columnSlots !== DEFAULT_SLOTS) set({ columnSlots: DEFAULT_SLOTS });
+  putLaneAway: () => {
+    if (get().laneShown || get().laneExpanded) set({ laneShown: false, laneExpanded: false });
   },
-  setShownColumns: (shown) => {
-    const current = get().shownColumns;
-    if (current.views !== shown.views || current.tools !== shown.tools || current.step !== shown.step) set({ shownColumns: shown });
+  setLaneExpanded: (laneExpanded) => {
+    if (get().laneExpanded !== laneExpanded) set({ laneExpanded });
+  },
+  setDrawnLane: (drawn) => {
+    const current = get().drawnLane;
+    if (current.mode !== drawn.mode || current.tool !== drawn.tool) set({ drawnLane: drawn });
   },
   setExplorerDraft: (explorerDraft) => set({ explorerDraft }),
   setPendingTrash: (pendingTrash) => set({ pendingTrash }),

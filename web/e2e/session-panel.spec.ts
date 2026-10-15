@@ -6,7 +6,7 @@ import path from "node:path";
 import { declareParent, labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { chord } from "./chords";
-import { chooseTheme, countSent, screenshot } from "./wire";
+import { chooseTheme, countSent, screenshot, showTool } from "./wire";
 import { quietFor, unchangedForFrames } from "./wait";
 
 test.describe.configure({ timeout: 240_000 });
@@ -43,10 +43,7 @@ const QUESTION = "긴 한국어 요청을 읽은 뒤 질문 표시가 흐려지�
 const sentTotal = (sent: Map<string, number>) => [...sent.values()].reduce((sum, count) => sum + count, 0);
 
 async function ensureSessions(page: Page) {
-  if (!await page.locator("[data-session-panel]").isVisible()) {
-    if (!await page.locator("[data-tool-tabs]").isVisible()) await page.getByRole("button", { name: "Tools", exact: true }).click();
-    await page.locator('[data-tool-tab="work"]').click();
-  }
+  await showTool(page, "work");
   await expect(page.locator("[data-session-panel]")).toBeVisible();
 }
 
@@ -88,9 +85,8 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator(`nav[data-sidebar] [data-agent-open="${parent}"]`).first().click();
-    await page.getByRole("button", { name: "Tools", exact: true }).click();
-    await expect(page.locator('[data-tool-tabs] [data-tool-tab]')).toHaveText([/^Work/, "Explorer", "History", "Memory"]);
-    await page.locator('[data-tool-tab="work"]').click();
+    await expect(page.locator("[data-lane-tool]")).toHaveText(["Files", "Changes", /^Work/, "Memory"]);
+    await showTool(page, "work");
     const panel = page.locator("[data-session-panel]");
     const showSessions = () => ensureSessions(page);
     const row = (pane: string) => panel.locator(`[data-session-row="${pane}"]`);
@@ -137,11 +133,12 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await head("resolved").click();
     await expect(row(stopped)).toBeVisible();
     expect(JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "core-state.json"), "utf8")).resolved_sessions[stopped]).toBeTruthy();
-    // Closing/reopening the document retains both the chosen tool and resolution.
+    // A restart keeps the chosen tool, hidden until asked (PRD right-lane B22), and the resolution.
     daemon = await daemon.restart();
     await page.goto("about:blank");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await expect(page.locator('[data-tool-tab="work"]')).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator('[data-workspace-screen][data-lane-mode="hidden"]')).toHaveAttribute("data-lane-shows", "work");
+    await showSessions();
     await expect(head("resolved")).toContainText("1");
     await expect(page.locator(`nav[data-sidebar] [data-pane="${stopped}"]`)).toHaveCount(0);
     await head("resolved").click();
