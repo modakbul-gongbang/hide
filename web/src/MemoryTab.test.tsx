@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { ToolRail } from "./Tools";
-import { MemoryTab } from "./MemoryTab";
+import { MemorySettings, MemoryTab, useMemoryProject } from "./MemoryTab";
 import { clientI18n } from "./i18n/translator";
 import type { MemoryRow, ProjectMemory, SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
@@ -54,6 +54,7 @@ describe("the Memory tab", () => {
     savedUi = useUiStore.getState();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     events = [];
+    vi.spyOn(window, "open").mockReturnValue(null);
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -65,6 +66,7 @@ describe("the Memory tab", () => {
     await clientI18n.changeLanguage(savedLanguage);
     useUiStore.setState(savedUi, true);
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   /** The rail, which opens the front checkout's Project and wears Memory's dot, and the Memory tool, or the rail alone. */
@@ -101,6 +103,26 @@ describe("the Memory tab", () => {
     expect(container.querySelector('[data-lane-tool-dot="memory"]')).not.toBeNull();
   });
 
+  it("gives Settings the only Memory read slot and restores Tools on close", async () => {
+    const actions = createActions((event) => { events.push(event); return true; });
+    function SettingsReader() { useMemoryProject(actions, "other-project"); return null; }
+    await render(memory());
+    events.length = 0;
+    await act(async () => {
+      useUiStore.setState({ overlay: "project_settings" });
+      root.render(<TooltipProvider><ToolRail actions={actions} /><MemoryTab actions={actions} /><SettingsReader /></TooltipProvider>);
+    });
+    expect(sent("memory_open")).toEqual([{ workspace_id: "other-project" }]);
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(sent("memory_open")).toEqual([{ workspace_id: "other-project" }, { workspace_id: "other-project" }]);
+    events.length = 0;
+    await act(async () => {
+      useUiStore.getState().closeOverlay("project_settings");
+      root.render(<TooltipProvider><ToolRail actions={actions} /><MemoryTab actions={actions} /></TooltipProvider>);
+    });
+    expect(sent("memory_open")).toEqual([{ workspace_id: "p" }]);
+  });
+
   it("asks about a suggested card and a failed promotion, and sends the card's number", async () => {
     await render(memory({
       questions: [
@@ -121,13 +143,13 @@ describe("the Memory tab", () => {
     ]);
   });
 
-  it("keeps running and legacy open promotions in To ask until merged or closed", async () => {
-    const promotion = { state: "pr_open" as const, agent: null, pr_number: 72, target_path: "AGENTS.md", github_failure: null };
+  it("keeps running and bound open promotions in To ask until merged or closed", async () => {
+    const promotion = { state: "pr_open" as const, agent: null, pr_number: 72, pr_url: "https://github.com/acme/one/pull/72", target_path: "AGENTS.md", github_failure: null };
     await render(memory({ rows: [row(3, { promotion: { ...promotion, state: "running", pr_number: null } }), row(7, { promotion })] }));
     expect(container.querySelector("[data-memory-questions] [data-memory-running='3']")).not.toBeNull();
     expect(container.querySelector("[data-memory-questions] [data-memory-pr-group='72']")?.textContent).toContain("m7");
     expect(container.querySelector("[data-memory-cards]")).toBeNull();
-    await act(async () => useShellStore.setState({ rest: { ...rest, navigator: { ...rest.navigator, workspaces: [{ ...rest.navigator!.workspaces![0], pull_requests: [{ number: 72, review: "changes_requested" }] }] } } as unknown as SnapshotRest }));
+    await act(async () => useShellStore.setState({ rest: { ...rest, navigator: { ...rest.navigator, workspaces: [{ ...rest.navigator!.workspaces![0], pull_requests: [{ number: 72, url: "https://github.com/acme/one/pull/72", review: "changes_requested" }] }] } } as unknown as SnapshotRest }));
     expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).toContain("Changes requested");
     await render(memory({ rows: [row(3), row(7, { promotion: { ...promotion, state: "merged" } })] }));
     expect(container.querySelector("[data-memory-questions]")).toBeNull();
@@ -142,12 +164,31 @@ describe("the Memory tab", () => {
     ["zh-CN", "PR 1050"],
   ])("renders PR identifiers as plain digits in %s", async (language, expected) => {
     await act(async () => { await clientI18n.changeLanguage(language); });
-    await render(memory({ rows: [row(7, { promotion: { state: "pr_open", agent: null, pr_number: 1050, target_path: null, github_failure: null } })] }));
+    await render(memory({ rows: [row(7, { promotion: { state: "pr_open", agent: null, pr_number: 1050, pr_url: "https://github.com/acme/one/pull/1050", target_path: null, github_failure: null } })] }));
     const group = container.querySelector("[data-memory-pr-group='1050']");
     expect(group?.textContent).toContain(expected);
     expect(group?.textContent).not.toContain("1,050");
     await click("[data-memory-open-pr='1050']");
-    expect(useUiStore.getState().overviewLens).toMatchObject({ tab: "prs", prs: { panel: 1050, focus: 1050 } });
+    expect(window.open).toHaveBeenCalledWith("https://github.com/acme/one/pull/1050", "_blank", "noopener,noreferrer");
+  });
+
+  it("retains the original promotion URL after Connections changes to a same-number PR", async () => {
+    const original = "https://github.com/Acme/One/pull/72";
+    await render(memory({ rows: [row(7, { promotion: { state: "pr_open", agent: null, pr_number: 72, pr_url: original, target_path: null, github_failure: null } })] }));
+    await act(async () => useShellStore.setState({ rest: { ...rest, navigator: { ...rest.navigator, workspaces: [{ ...rest.navigator!.workspaces![0], pull_requests: [{ number: 72, url: "https://github.com/acme/two/pull/72", state: "merged", checks: "failed" }] }] } } as unknown as SnapshotRest }));
+    expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).not.toContain("Merged");
+    expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).not.toContain("Checks failed");
+    await click("[data-memory-open-pr='72']");
+    expect(window.open).toHaveBeenCalledWith(original, "_blank", "noopener,noreferrer");
+    await act(async () => useShellStore.setState({ rest: { ...rest, navigator: { ...rest.navigator, workspaces: [{ ...rest.navigator!.workspaces![0], pull_requests: [{ number: 72, url: "https://github.com/acme/one/pull/72", state: "merged" }] }] } } as unknown as SnapshotRest }));
+    expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).toContain("Merged");
+    await click("[data-memory-open-pr='72']");
+    expect(useUiStore.getState().overviewLens).toMatchObject({ tab: "prs", prs: { panel: 72, focus: 72 } });
+    await render(memory({ rows: [row(7, { promotion: { state: "pr_open", agent: null, pr_number: 72, target_path: null, github_failure: null } })] }));
+    expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).toContain("Couldn't check for a PR");
+    expect(container.querySelector<HTMLButtonElement>("[data-memory-open-pr='72']")?.disabled).toBe(true);
+    await click("[data-memory-open-pr='72']");
+    expect(window.open).toHaveBeenCalledTimes(1);
   });
 
   it("selection hides row promotion actions while unknown authority still needs an answer", async () => {
@@ -166,7 +207,7 @@ describe("the Memory tab", () => {
   });
 
   it("discloses a whole question or PR row while its checkbox, promotion and PR buttons act independently", async () => {
-    const promotion = { state: "pr_open" as const, agent: null, pr_number: 72, target_path: null, github_failure: null };
+    const promotion = { state: "pr_open" as const, agent: null, pr_number: 72, pr_url: "https://github.com/acme/one/pull/72", target_path: null, github_failure: null };
     const data = memory({ rows: [row(3), row(7, { promotion, body_preview: "A rule's body" }), row(9, { promotion, body_preview: "Another rule's body" })], questions: [{ kind: "promote", number: 3, title: "card 3", human_session_count: 2, pulled_session_count: 0 }] });
     await render(data);
     await click("[data-memory-promote='3']");
@@ -205,9 +246,9 @@ describe("the Memory tab", () => {
     await render(memory({
       rows: [
         row(7, { promotion: { state: "running", agent: { name: "memory-promote-m7", pane_id: "w1:p2" }, pr_number: null, target_path: null, github_failure: null } }),
-        row(9, { promotion: { state: "pr_open", agent: null, pr_number: 924, target_path: null, github_failure: null } }),
-        row(8, { promotion: { state: "merged", agent: null, pr_number: 924, target_path: "AGENTS.md", github_failure: null } }),
-        row(4, { promotion: { state: "merged", agent: null, pr_number: 931, target_path: null, github_failure: null } }),
+        row(9, { promotion: { state: "pr_open", agent: null, pr_number: 924, pr_url: "https://github.com/acme/one/pull/924", target_path: null, github_failure: null } }),
+        row(8, { promotion: { state: "merged", agent: null, pr_number: 924, pr_url: "https://github.com/acme/one/pull/924", target_path: "AGENTS.md", github_failure: null } }),
+        row(4, { promotion: { state: "merged", agent: null, pr_number: 931, pr_url: "https://github.com/acme/one/pull/931", target_path: null, github_failure: null } }),
         row(6, { promotion: { state: "running", agent: null, pr_number: null, target_path: null, github_failure: null } }),
         row(5, { promotion: { state: "unconfirmed", agent: null, pr_number: null, target_path: null, github_failure: "not_logged_in" } }),
       ],
@@ -250,7 +291,7 @@ describe("the Memory tab", () => {
   });
 
   it("does not call cards already in repository documents a pending check", async () => {
-    await render(memory({ usable_cards: 0, rows: [row(3, { promotion: { state: "merged", agent: null, pr_number: 44, target_path: "AGENTS.md", github_failure: null } })] }));
+    await render(memory({ usable_cards: 0, rows: [row(3, { promotion: { state: "merged", agent: null, pr_number: 44, pr_url: "https://github.com/acme/one/pull/44", target_path: "AGENTS.md", github_failure: null } })] }));
     expect(container.querySelector("[data-memory-empty]")).toBeNull();
     expect(container.textContent).toContain("In the file · not injected");
   });
@@ -402,4 +443,23 @@ describe("the Memory tab", () => {
     expect(container.querySelector('[data-memory="unreadable"]')).not.toBeNull();
     expect(container.querySelector("[data-memory-cards]")).toBeNull();
   });
+  it("shows the requested Memory failure with scoped Retry and keeps the confirmed switch", async () => {
+    const actions = createActions((event) => { events.push(event); return true; });
+    await act(async () => {
+      await clientI18n.changeLanguage("en");
+      root.render(<TooltipProvider><MemorySettings project={memory({ action_failure: "disable" })} actions={actions} disabled={false} /></TooltipProvider>);
+    });
+    expect(container.querySelector("[data-memory-switch='on']")).not.toBeNull();
+    expect(container.querySelector("[role=alert]")?.textContent).toContain("Could not change Memory");
+    await click("[role=alert] button");
+    expect(sent("memory_action")).toEqual([{ workspace_id: "p", action: "disable", number: null }]);
+    for (const action of ["delete", "forget", "promote"] as const) {
+      await act(async () => root.render(<TooltipProvider><MemorySettings project={memory({ action_failure: action })} actions={actions} disabled={false} /></TooltipProvider>));
+      expect(container.querySelector("[role=alert]")).toBeNull();
+    }
+    await act(async () => root.render(<TooltipProvider><MemorySettings project={memory({ pending_action: "enable", preparing_hooks: true })} actions={actions} disabled={false} /></TooltipProvider>));
+    expect(container.textContent).toContain("Preparing agent hooks");
+    expect(container.querySelector("[data-memory-switch]")?.hasAttribute("disabled")).toBe(true);
+  });
+
 });

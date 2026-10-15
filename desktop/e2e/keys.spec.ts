@@ -66,7 +66,7 @@ test("pane chords: the macOS app's set comes across, runs once, and Settings edi
         close_pane: "command+shift+w",
         split_down: "command+shift+d",
         split_right: "command+d",
-        toggle_zoom: "command+shift+return",
+        toggle_zoom: "command+option+return",
         increase_text_size: "command+=",
         decrease_text_size: "command+-",
         reset_text_size: "command+0",
@@ -81,27 +81,27 @@ test("pane chords: the macOS app's set comes across, runs once, and Settings edi
   await expect(page.locator("[data-pane-view]")).toHaveCount(2);
 
   // The menu shows the imported chord once the shell reports the set.
-  await expect.poll(() => accelerator("toggle_zoom")).toBe("Shift+Command+Return");
+  await expect.poll(() => accelerator("toggle_zoom")).toBe("Alt+Command+Return");
   expect(await accelerator("split_right")).toBe("Command+D");
 
-  // ⇧⌘↩ zooms exactly once; the default ⌥⌘↩ is no longer a chord here.
+  // ⌥⌘↩ zooms exactly once; the default ⇧⌘↩ is no longer a chord here.
   await page.locator("[data-pane-view] .xterm-helper-textarea").first().focus();
-  await page.keyboard.press("Meta+Alt+Enter");
   await page.keyboard.press("Meta+Shift+Enter");
+  await page.keyboard.press("Meta+Alt+Enter");
   await expect(page.locator("[data-canvas]").first()).toHaveAttribute("data-zoomed", "true");
   await exactlyOnce(sent, "toggle_zoom", 1, page);
 
   // The ⌘/ sheet lists it.
   await page.keyboard.press("Meta+Slash");
   const sheet = page.locator("[data-shortcut-sheet]");
-  await expect(sheet.locator('[data-shortcut="toggle_zoom"] kbd')).toHaveText("⇧⌘↩");
+  await expect(sheet.locator('[data-shortcut="toggle_zoom"] kbd')).toHaveText("⌥⌘↩");
   await page.keyboard.press("Escape");
   await expect(sheet).toHaveCount(0);
 
   // Settings > Shortcuts edits the same set, in the macOS set's text form.
   await page.locator("[data-open-settings]").click();
   await page.locator('[data-settings-tab="shortcuts"]').click();
-  await expect(page.locator('[data-shortcut-effective="toggle_zoom"]')).toHaveText("⇧⌘↩");
+  await expect(page.locator('[data-shortcut-effective="toggle_zoom"]')).toHaveText("⌥⌘↩");
   // The numbered chords are fixed, and each row says which key to hold to see its numbers.
   const fixed = page.locator('[data-settings-group="numbered-chords"]');
   await expect(fixed).toContainText("Hold ⌘ to see the numbers");
@@ -110,7 +110,7 @@ test("pane chords: the macOS app's set comes across, runs once, and Settings edi
   await page.keyboard.press("Meta+Alt+KeyR");
   await expect(page.locator('[data-shortcut-effective="split_right"]')).toHaveText("⌥⌘R");
   const saved = lastSent.get("ui_state_update")?.shortcut_bindings as Record<string, string> | undefined;
-  expect(saved).toMatchObject({ split_right: "command+option+r", toggle_zoom: "command+shift+return" });
+  expect(saved).toMatchObject({ split_right: "command+option+r", toggle_zoom: "command+option+return" });
   expect(lastSent.get("ui_state_update")?.browser_shortcut_bindings ?? {}).toEqual({});
   await expect.poll(() => accelerator("split_right")).toBe("Alt+Command+R");
   await screenshot(page, "desktop-shortcut-settings");

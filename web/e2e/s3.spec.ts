@@ -1042,7 +1042,7 @@ test("⌘P opens a file by name and ⌘K switches checkout", { tag: "@platform" 
     // row again through the core's expanded set (B3).
     await page.locator(`[data-explorer-row="${repo}/src"]`).click();
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(0);
-    await page.keyboard.press(chord("toggle_right_panel"));
+    await page.keyboard.press(chord("toggle_lane"));
     await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
 
     // ⌘P: hided indexes the checkout, ranks the typed name and opens it in the

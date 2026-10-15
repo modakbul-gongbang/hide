@@ -26,6 +26,8 @@ struct PendingChoice {
     device_id: String,
     request_id: String,
     key: WorkspaceKey,
+    memory_project: Option<String>,
+    memory_acknowledged: bool,
 }
 
 pub(super) struct WorkspaceViewStore {
@@ -381,8 +383,67 @@ impl Runtime {
                 device_id: device_id.to_owned(),
                 request_id: request_id.to_owned(),
                 key,
+                memory_project: None,
+                memory_acknowledged: false,
             });
         }
+    }
+
+    /// A newer explicit visit supersedes the outstanding Memory visit;
+    /// its late ACK or target arrival must no longer change the screen.
+    pub(super) fn supersede_memory_navigation(&mut self) {
+        if let Some(store) = self.workspace_views.as_mut()
+            && store
+                .pending_choice
+                .as_ref()
+                .is_some_and(|pending| pending.memory_project.is_some())
+        {
+            store.pending_choice = None;
+        }
+    }
+
+    pub(super) fn attach_memory_navigation(
+        &mut self,
+        device: &str,
+        request: &str,
+        workspace: String,
+    ) {
+        if let Some(pending) = self
+            .workspace_views
+            .as_mut()
+            .and_then(|store| store.pending_choice.as_mut())
+            && pending.device_id == device
+            && pending.request_id == request
+        {
+            pending.memory_project = Some(workspace);
+        }
+    }
+
+    pub(super) fn acknowledge_memory_navigation(&mut self, device: &str, request: &str) {
+        if let Some(pending) = self
+            .workspace_views
+            .as_mut()
+            .and_then(|store| store.pending_choice.as_mut())
+            && pending.device_id == device
+            && pending.request_id == request
+            && pending.memory_project.is_some()
+        {
+            pending.memory_acknowledged = true;
+            self.sync_workspace_view();
+        }
+    }
+
+    pub(super) fn show_project_memory_at(&mut self, key: &WorkspaceKey, workspace: String) {
+        if let Some(store) = self.workspace_views.as_mut() {
+            let entry = store.views.entry(&key.0, &key.1);
+            let changed = entry.tool != Some(Tool::Memory);
+            entry.tool = Some(Tool::Memory);
+            store.call_lane(key);
+            if changed {
+                self.persist_workspace_views();
+            }
+        }
+        self.open_project_memory(Some(workspace));
     }
 
     /// The device refused the request, or its answer was lost: a later move
@@ -569,7 +630,38 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_ref() else {
             return;
         };
+        let memory_device = store
+            .pending_choice
+            .as_ref()
+            .filter(|pending| pending.memory_project.is_some() && pending.memory_acknowledged)
+            .and_then(|pending| {
+                self.snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .find(|status| {
+                        status.target_id == pending.device_id && status.state == "connected"
+                    })
+                    .and_then(|status| status.session.as_ref())
+                    .and_then(|session| {
+                        let focused = session.focused_checkout_id.as_deref()?;
+                        session
+                            .workspaces
+                            .iter()
+                            .flat_map(|workspace| &workspace.checkouts)
+                            .any(|checkout| {
+                                checkout.id == focused && checkout.path == pending.key.1
+                            })
+                            .then(|| pending.device_id.clone())
+                    })
+            });
+        if let Some(device) = memory_device
+            && !self.device_in_front(&device)
+        {
+            self.bring_device_forward(device);
+        }
         let front = self.front_workspace_key();
+        let store = self.workspace_views.as_ref().expect("checked above");
         if front != store.front {
             let store = self.workspace_views.as_mut().expect("checked above");
             store.front = front.clone();
@@ -579,9 +671,20 @@ impl Runtime {
                 .workspace_views
                 .as_ref()
                 .and_then(|store| store.pending_choice.as_ref())
-                .is_some_and(|pending| &pending.key == key)
+                .is_some_and(|pending| {
+                    &pending.key == key
+                        && (pending.memory_project.is_none() || pending.memory_acknowledged)
+                })
         {
+            let memory_project = self
+                .workspace_views
+                .as_mut()
+                .and_then(|store| store.pending_choice.as_mut())
+                .and_then(|pending| pending.memory_project.take());
             self.mark_workspace_chosen(key);
+            if let Some(project) = memory_project {
+                self.show_project_memory_at(key, project);
+            }
         }
         self.restore_front_when_ready();
         self.reconcile_view_displays();
@@ -954,6 +1057,11 @@ impl Runtime {
     /// panel the file already held while the panel is a projection.
     pub(super) fn ui_state_to_save(&self) -> UiStateSnapshot {
         let mut state = self.snapshot.ui_state.clone();
+        for (id, pending) in &self.project_settings_pending {
+            state
+                .project_settings
+                .insert(id.clone(), pending.record.clone());
+        }
         state
             .resolved_sessions
             .extend(self.pending_session_resolutions.clone());

@@ -158,6 +158,9 @@ node scripts/pen-transplant.mjs --from <branch-file> --into <main-file> --sheet 
 - Run `node scripts/gen-pen.mjs` and `node scripts/check-design-contract.mjs` against the result before committing; a transplant that leaves stale Foundations or an unrecognized sheet name fails the same checks a normal edit would.
 - Never resolve a `hide-screens.pen` conflict by hand-merging JSON; re-run the transplant with the correct `--sheet` list instead.
 
+For an owned screen regeneration, `node scripts/gen-screens.mjs --sheet <sheet-id>` generates the candidate and uses the same node-identity transplant internally, keeping every other sheet byte-for-byte and refreshing the shared local token variables.
+Omitting `--sheet` still regenerates all screens.
+
 ## Web screen list
 
 The Projects Sidebar screen and production gallery draw tabs as segments, not depth: one root status axis on the checkout name's column, a 1px guide per tab centered under the checkout's kind glyph, and for a tab of two or more agents one quiet line inside the guide, its glyph on the status-mark column and its manual name or `Tab N` on the title column.
@@ -185,6 +188,9 @@ The sidebar there is the one-device window's: the device rail with This Mac alon
 Its web files are `web/src/App.tsx`, `web/src/sidebar.tsx`, `web/src/MainScreen.tsx`, `web/src/AgentSessions.tsx`, `web/src/TaskBoards.tsx`, and `web/src/projectBoard.ts`.
 
 Project Overview is `Screen / Project Overview`.
+Its existing short-name header frames retain the labelled actions.
+The production header's narrow and long-name states reuse those controls as named icons, including the All projects return arrow, while retaining the Project settings menu.
+`web/e2e/overview-header.spec.ts` captures these additional Light/Dark states at 720, 900 and 1600 pixels; the labelled return and primary-action measurement copies keep resize transitions independent of the currently drawn form.
 Each frame carries its header: the title row with the path back, New agent as the quiet action and `새 이슈` as the primary one, the facts line of worktrees, disk, behind and merged, and under the rule the lens tabs `Agents · Issues · PRs · 대화 기록`, each with its number and yellow count and the chosen one with its bar along its foot, with the view's control at the row's right end (the filter on Agents: the status chips `내 차례 · 일하는 중 · 쉬는 중` and a search field, no device control while one device is in view).
 Its Agents frame is the graph: a box per checkout with its head (glyph and branch, purpose, the issue chip and PR mark, `↑N ↓N`, files), main's box first with a box selected, delegation lines between boxes coloured by the child's state, the operator's turn as a row with its question in warning, a merged box dimmed with `정리`, a row with a tucked badge, and the fold lines.
 The graph's sizes are the `--graph-*` tokens in `design/tokens.json`, and the layout reads them at run time, so a frame draws a box from the tokens and not from numbers of its own.

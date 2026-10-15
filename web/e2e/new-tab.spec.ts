@@ -106,7 +106,7 @@ test("New tab chord opens where the keyboard is: its View area, its pane's Agent
     await expect(page.getByRole("textbox", { name: "Page address" })).toHaveValue("");
     await expect(agentTabs).toHaveCount(2);
     await screenshot(page, "new-tab-chord-view");
-    await page.keyboard.press(chord("toggle_right_panel"));
+    await page.keyboard.press(chord("toggle_lane"));
     await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
 
     // The keyboard in an Agent pane: a tab at the end of the area showing that
