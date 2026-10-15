@@ -157,9 +157,11 @@ test("the window's top row names the device over the rail and the sidebar, and c
     await expect(modal).toHaveCount(0);
 
     // B21: the sidebar's switch opens the row and stays where it was when the sidebar hides; the path follows it,
-    // and a press on it brings the sidebar back without the chord.
+    // and a press on it brings the sidebar back without the chord, leaving the keyboard in the terminal as the chord does.
     const sidebarSwitch = row.locator("[data-sidebar-switch]");
     const switchX = Math.round((await sidebarSwitch.boundingBox())!.x);
+    const terminal = page.locator("[data-pane-view] .xterm-helper-textarea").first();
+    await terminal.focus();
     await page.keyboard.press(chord("toggle_left_sidebar"));
     await expect(sidebar).toHaveCount(0);
     await expect(title).toHaveCount(0);
@@ -172,7 +174,7 @@ test("the window's top row names the device over the rail and the sidebar, and c
     await expect(title).toBeVisible();
     await expect(sidebar).toBeVisible();
     await expect(sidebarSwitch).toHaveAttribute("aria-expanded", "true");
-    await expect(sidebarSwitch).toBeFocused();
+    await expect(terminal).toBeFocused();
   });
 });
 

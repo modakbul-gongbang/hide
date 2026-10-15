@@ -50,14 +50,18 @@ export function TitleRow({ actions }: { actions: Actions }) {
   );
 }
 
-/** Shows or hides the left sidebar, the same command as its chord (⌘B by default). */
+/**
+ * Shows or hides the left sidebar, the same command as its chord (⌘B by
+ * default). Like the chord, a click leaves the keyboard where it was, in a
+ * terminal above all, as a macOS toolbar button does; Tab still reaches it.
+ */
 function SidebarSwitch({ visible, actions }: { visible: boolean; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const chord = useShellStore((s) => commandLabel("toggle_left_sidebar", s.rest?.ui_state));
   const label = visible ? t("sidebar.hide") : t("sidebar.show");
   return (
     <Hint label={label} shortcut={chord}>
-      <Button variant="ghost" size="icon-sm" className="shrink-0 text-subtle-foreground" aria-label={label} aria-expanded={visible} data-sidebar-switch="true" onClick={actions.toggleLeftSidebar}>
+      <Button variant="ghost" size="icon-sm" className="shrink-0 text-subtle-foreground" aria-label={label} aria-expanded={visible} data-sidebar-switch="true" onMouseDown={(event) => event.preventDefault()} onClick={actions.toggleLeftSidebar}>
         <PanelLeftIcon />
       </Button>
     </Hint>
