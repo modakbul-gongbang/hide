@@ -484,6 +484,7 @@ The `keys`, `device`, `remote-core` and `topology` branches exit before that sam
 A first run opens on Main (PRD S6), so the harness uses the Projects sidebar to open its linked fixture checkout before measuring.
 The fixture workspace reports the checkout's `hide_owner` token before startup so the core reuses the prepared pane rather than creating a different workspace.
 The Projects control is a tab, so readiness reads `aria-selected`; opening the fixture is one click after its checkout row appears.
+At a scale the fixture's project is the one without agents, so its row waits behind the No agents fold, its project's own fold and its empty or inactive worktrees; the harness opens those folds on the fixture's project alone, each once, because a fold is the core's state and a second click closes it.
 Cleanup removes the private socket's label-generator lock as well as its socket before removing the owned socket directory.
 The run directory keeps `identity.txt` (head, dirty count, binary hash, Herdr and Chrome versions, load), `echo-*.json`, `frames.json`, both summaries and the owned PID status at cleanup.
 The harness resolves that directory to an absolute path before starting child panes, so their private HOME, state, and checkout paths remain valid after the pane changes directory.
