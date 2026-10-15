@@ -81,7 +81,7 @@ Read [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#2-identify-the-build-and-pr
 
 | Tool | Addresses | Use it for | Not for |
 | --- | --- | --- | --- |
-| Playwright `_electron` through `desktop/e2e/fixture.ts` | The app it launched | Typing, chords and clicks through the renderer, without OS focus | Native input: a pinch, a native drag, a physical input method and its candidate window (tag those `@needs-focus`); the composition events a page receives are driven through CDP `Input.imeSetComposition` in a web e2e (`web/e2e/ime.ts`), tagged `@platform` |
+| Playwright `_electron` through `desktop/e2e/fixture.ts` | The app it launched | Typing, chords and clicks through the renderer, without OS focus | Native input: a pinch, a native drag, a physical input method and its candidate window (tag those `@needs-focus`); the composition events a page receives are driven through CDP `Input.imeSetComposition` in a web e2e (`web/e2e/ime.ts`), and one that checks the bytes a pane's program reads is tagged `@platform` |
 | `screencapture -x -o -l <window-id>` | One window | A current frame of the candidate without activating it | Minimized, hidden, or off-Space windows |
 | `desktop/e2e/electron-window.ts` | The Electron process and sole BrowserWindow Playwright launched | The running candidate's renderer, without Screen Recording permission or OS focus; retains its PID, window id, bounds, build and capture method | OS window chrome, compositor presentation and native input; renderer captures do not prove those surfaces |
 | The window list below | PID to window id | Resolving the candidate's window id before each capture | |
