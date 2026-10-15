@@ -2947,6 +2947,8 @@ mod tests {
         );
         assert_eq!(helper_protocol_refusal(&hello(PROTOCOL_VERSION)), None);
         assert_eq!(helper_protocol_refusal(&hello(24)), None);
+        // The helper of the build before session_work_turn.
+        assert!(helper_protocol_refusal(&hello(32)).is_some());
         assert!(helper_protocol_refusal(&hello(PROTOCOL_VERSION - 1)).is_some());
         assert!(helper_protocol_refusal(&hello(PROTOCOL_VERSION + 1)).is_some());
     }
