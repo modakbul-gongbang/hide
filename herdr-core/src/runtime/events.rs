@@ -1240,6 +1240,11 @@ pub(super) struct ThemeSetPayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct ColorThemeSetPayload {
+    pub(super) color_theme: crate::model::ColorTheme,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct PetVisibilityPayload {
     pub(super) visible: bool,
 }
@@ -1408,6 +1413,7 @@ pub(super) enum Event {
     PaneTextScale(PaneTextScalePayload),
     EditorTextScale(EditorTextScalePayload),
     ThemeSet(ThemeSetPayload),
+    ColorThemeSet(ColorThemeSetPayload),
     InterfaceLanguageSet(InterfaceLanguageSetPayload),
     UsagePinSet(UsagePinSetPayload),
     UsageHiddenSet(UsageHiddenSetPayload),
@@ -1642,6 +1648,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pane_text_scale" => decode!(PaneTextScalePayload, PaneTextScale),
         "editor_text_scale" => decode!(EditorTextScalePayload, EditorTextScale),
         "theme_set" => decode!(ThemeSetPayload, ThemeSet),
+        "color_theme_set" => decode!(ColorThemeSetPayload, ColorThemeSet),
         "usage_pin_set" => decode!(UsagePinSetPayload, UsagePinSet),
         "usage_hidden_set" => decode!(UsageHiddenSetPayload, UsageHiddenSet),
         "interface_language_set" => decode!(InterfaceLanguageSetPayload, InterfaceLanguageSet),
@@ -3722,6 +3729,14 @@ impl Runtime {
                 self.persist_ui_state();
                 true
             }
+            Event::ColorThemeSet(payload) => {
+                if self.snapshot.ui_state.color_theme == payload.color_theme {
+                    return false;
+                }
+                self.snapshot.ui_state.color_theme = payload.color_theme;
+                self.persist_ui_state();
+                true
+            }
             Event::ChangesSelect(payload) => {
                 let Some(path) = payload.path else {
                     if self.snapshot.changes.selected_path.is_none() {
@@ -3908,6 +3923,8 @@ impl Runtime {
                     accent_hex: payload.accent_hex.unwrap_or(current.accent_hex),
                     // `theme_set` owns the theme; a shared UI-state save carries it through.
                     theme: current.theme,
+                    // `color_theme_set` owns the color theme the same way.
+                    color_theme: current.color_theme,
                     interface_language: current.interface_language,
                     usage: current.usage,
                     // `agent_onboarding_*` events own the first-run choice.

@@ -5,8 +5,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    DeviceRegistration, PaneReadRecord, PetOriginSnapshot, RightPanelSection, ThemePreference,
-    UiStateSnapshot, WorkspaceRegistration, default_accent_hex, default_font_size,
+    ColorTheme, DeviceRegistration, PaneReadRecord, PetOriginSnapshot, RightPanelSection,
+    ThemePreference, UiStateSnapshot, WorkspaceRegistration, default_accent_hex, default_font_size,
     default_pane_text_scale, default_panel_visible, default_sidebar_width,
 };
 
@@ -100,6 +100,10 @@ struct StoredUiState {
     /// store written before the web theme existed, which loads as Dark.
     #[serde(default)]
     theme: Option<String>,
+    /// Kept as text for the same reason as `theme`; absent in a store written
+    /// before the color theme existed, which loads as Hide (D-04).
+    #[serde(default)]
+    color_theme: Option<String>,
     #[serde(default)]
     interface_language: Option<serde_json::Value>,
     #[serde(default)]
@@ -196,10 +200,20 @@ fn default_pet_visible() -> bool {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LoadDisposition {
     Loaded,
-    /// Loaded, but the stored theme was not one this build knows; Dark was used.
-    UnknownTheme,
+    /// Loaded, but a stored appearance value was not one this build knows;
+    /// each named field took its default.
+    Unrecognized(Vec<UnrecognizedField>),
     Missing,
     Corrupt,
+}
+
+/// A stored appearance field whose value this build does not know.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UnrecognizedField {
+    /// The mode; Dark was used.
+    Theme,
+    /// The color theme; Hide was used.
+    ColorTheme,
 }
 
 /// What the removed native app's state file holds for `shortcut_bindings`.
@@ -323,12 +337,25 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             LoadDisposition::Corrupt,
         );
     }
-    let (theme, disposition) = match stored.theme.as_deref() {
-        None => (ThemePreference::Dark, LoadDisposition::Loaded),
-        Some(value) => match ThemePreference::parse(value) {
-            Some(theme) => (theme, LoadDisposition::Loaded),
-            None => (ThemePreference::Dark, LoadDisposition::UnknownTheme),
-        },
+    let mut unrecognized = Vec::new();
+    let theme = match stored.theme.as_deref() {
+        None => ThemePreference::Dark,
+        Some(value) => ThemePreference::parse(value).unwrap_or_else(|| {
+            unrecognized.push(UnrecognizedField::Theme);
+            ThemePreference::Dark
+        }),
+    };
+    let color_theme = match stored.color_theme.as_deref() {
+        None => ColorTheme::Hide,
+        Some(value) => ColorTheme::parse(value).unwrap_or_else(|| {
+            unrecognized.push(UnrecognizedField::ColorTheme);
+            ColorTheme::Hide
+        }),
+    };
+    let disposition = if unrecognized.is_empty() {
+        LoadDisposition::Loaded
+    } else {
+        LoadDisposition::Unrecognized(unrecognized)
     };
     (
         UiStateSnapshot {
@@ -366,6 +393,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             device_registrations: stored.device_registrations,
             accent_hex: stored.accent_hex,
             theme,
+            color_theme,
             interface_language: stored.interface_language,
             usage: stored.usage.restored(),
             agent_onboarding: stored.agent_onboarding,
@@ -478,6 +506,7 @@ pub fn save(
         device_registrations: state.device_registrations.clone(),
         accent_hex: state.accent_hex.clone(),
         theme: Some(state.theme.as_str().to_owned()),
+        color_theme: Some(state.color_theme.as_str().to_owned()),
         interface_language: state.interface_language.clone(),
         usage: state.usage.clone(),
         agent_onboarding: state.agent_onboarding,
