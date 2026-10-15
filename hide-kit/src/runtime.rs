@@ -12,9 +12,11 @@
 //! replacement all name it.
 //!
 //! Each prepare also removes the copies of other builds that nothing runs
-//! from. Windows refuses to rename a folder while a program in it runs or a
-//! file in it is open, so a copy that renames is unused and is removed; one
-//! that does not is kept for a later start. At most [`COPIES_CAP`] copies are
+//! from. Windows lets a folder be renamed while a program in it runs, and
+//! refuses only to delete the program, so a copy is first asked whether a
+//! process holds any of its files ([`hide_platform::fs::in_use`]); one that is
+//! held is kept for a later start, and only a free one is claimed by a rename
+//! and removed. At most [`COPIES_CAP`] copies are
 //! expected to remain; more is reported, not hidden. macOS and Linux run the
 //! package where it is installed and make no copy.
 
@@ -230,9 +232,9 @@ fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Removes every folder under `root` but `keep` that nothing runs from:
-/// claiming one by renaming it fails while a program in it runs or a file in
-/// it is open (Windows), and a claimed folder is removed.
+/// Removes every folder under `root` but `keep` that nothing runs from: a
+/// folder a process holds a file of is kept, and a free one is claimed by
+/// renaming it, which fails if a program started from it since, and removed.
 fn prune(root: &Path, keep: &str) -> Pruned {
     let mut pruned = Pruned::default();
     let Ok(entries) = fs::read_dir(root) else {
@@ -247,6 +249,21 @@ fn prune(root: &Path, keep: &str) -> Pruned {
         let name = entry.file_name().to_string_lossy().into_owned();
         if name == keep || name == ".lock" || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
             continue;
+        }
+        // A rename does not see a running program, and removing its folder
+        // would delete every file of it but the program itself.
+        match hide_platform::fs::in_use::first_in_use(&entry.path()) {
+            Ok(None) => {}
+            Ok(Some(_)) => {
+                pruned.in_use.push(name);
+                remaining += 1;
+                continue;
+            }
+            Err(error) => {
+                pruned.failed.push((name, error.to_string()));
+                remaining += 1;
+                continue;
+            }
         }
         // A folder an earlier prune claimed but could not finish is already ours.
         let claimed = if name.starts_with(".removing-") {
