@@ -31,7 +31,8 @@ export async function agentPane(herdr: HerdrFixture, stateDir: string, pane: str
   const output = path.join(root, "agent-pane-output.json");
   const completed = path.join(root, "agent-pane-command.status");
   const driver = path.join(root, "agent-pane-driver.cjs");
-  const hide = path.resolve(__dirname, "..", "..", "target", "debug", fixtureExecutable("hide"));
+  // Both suites run from their package folder (`web`, `desktop`), one below the repository.
+  const hide = path.resolve("..", "target", "debug", fixtureExecutable("hide"));
   fs.writeFileSync(driver, `
 const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
