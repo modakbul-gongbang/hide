@@ -1,5 +1,5 @@
 import { TriangleAlertIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { Actions } from "./actions";
 import { AgentSessions } from "./AgentSessions";
 import { Hint } from "./components/ui/tooltip";
@@ -36,8 +36,7 @@ export function WorkPanel({ actions }: { actions: Actions }) {
     () => boardProjects(rest, agents, frontDeviceId(rest)).filter((item) => !project || item.workspace.id === project.id),
     [rest, agents, project],
   );
-  const [now] = useState(() => Date.now());
-  const prs = useMemo(() => prListModel(projects, only, Date.now()), [projects, only, now]);
+  const prs = useMemo(() => prListModel(projects, only, Date.now()), [projects, only]);
   const sessions = useMemo(() => sessionsModel(rest, agents, only), [rest, agents, only]);
   const sessionsNeed = sessions.scope?.sessions.groups.find((group) => group.group === "needs_you")?.members.length ?? 0;
   // A project with no GitHub remote has only Sessions, whatever it was left on (B41).

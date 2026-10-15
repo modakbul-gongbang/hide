@@ -254,12 +254,12 @@ function WorkspaceTitleBar({ checkout, view, actions }: { checkout: Checkout; vi
   // Project (B15). Opening the menu changes none of them.
   const menuItems = (): MenuEntry<ToolbarMenuId>[] => [
     { id: "files", label: up && drawn.tool === "files" ? t("panes.lane.hideFiles") : t("panes.lane.showFiles"), unavailable: null },
-    { id: "sessions", label: up && drawn.tool === "work" ? t("panes.lane.hideWork") : t("panes.lane.showWork"), unavailable: null },
+    { id: "work", label: up && drawn.tool === "work" ? t("panes.lane.hideWork") : t("panes.lane.showWork"), unavailable: null },
     { id: "copy_path", label: t("panes.workspace.copyPath"), unavailable: null, separated: true },
   ];
   const select = (id: ToolbarMenuId) => {
     if (id === "files") return actions.toggleFileViews();
-    if (id === "sessions") return actions.toggleTools();
+    if (id === "work") return actions.toggleTools();
     if (id === "copy_path") return void navigator.clipboard?.writeText(checkout.path).catch(() => undefined);
   };
   const home = project?.is_home === true;
@@ -306,7 +306,7 @@ function WorkspaceTitleBar({ checkout, view, actions }: { checkout: Checkout; vi
   );
 }
 
-type ToolbarMenuId = "files" | "sessions" | "copy_path";
+type ToolbarMenuId = "files" | "work" | "copy_path";
 
 /** This machine's tabs, or the selected SSH device's own tabs and panes in their place (S5 B19). */
 function AgentArea({ checkout, actions }: { checkout: Checkout; actions: Actions }) {

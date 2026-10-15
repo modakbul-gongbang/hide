@@ -60,11 +60,12 @@ async function openWork(page: Page, fn: (stack: { gh: { bin: string; state: stri
 }
 
 test("the Work tool's PRs lens groups by whose move it is and says why on each row", async ({ page }) => {
-  await openWork(page, async ({ work, sent }) => {
+  await openWork(page, async ({ work }) => {
     // The rail's third tool is Work; its lens switch holds Sessions and PRs (B1, B2).
     await expect(page.locator("[data-lane-tool]")).toHaveCount(4);
     await expect(page.locator('[data-lane-tool="work"]')).toHaveAttribute("aria-pressed", "true");
-    expect(sent.get("workspace_view")).toBeGreaterThan(0);
+    // The rail's Work icon carries the number that needs the operator: the three Needs You PRs (B4).
+    await expect(page.locator('[data-lane-tool="work"] [data-lane-work-count]')).toHaveText("3");
 
     // The groups by whose move it is; each row says why in its second line (B6, B8, B24).
     const groups = work.locator("[data-pr-group]");

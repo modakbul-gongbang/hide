@@ -31,9 +31,17 @@ export function workCounts(rest: SnapshotRest | null, agents: AgentRow[], only: 
   const projects: PrScopeProject[] = boardProjects(rest, agents, frontDeviceId(rest))
     .filter((item) => !sessions.project || item.workspace.id === sessions.project.id);
   const prs = prListModel(projects, only, now);
-  // A PR that stands in Needs You because its agent asks is the same ask Sessions already counted.
-  const extra = prs.needsYou.filter((entry) => entry.row.agent_pane === null || !askingPanes.has(entry.row.agent_pane));
-  return { sessions: asking.length, prs: prs.needsYou.length, total: asking.length + extra.length };
+  return countAsks(asking.length, askingPanes, prs.needsYou.map((entry) => entry.row.agent_pane));
+}
+
+/**
+ * The counts of Needs You rows. A PR that stands in Needs You because its
+ * agent asks is the same ask Sessions already counted, so its pane (`null`
+ * for a PR with no agent) is added to the total only when Sessions lacks it.
+ */
+export function countAsks(sessions: number, askingPanes: ReadonlySet<string>, prPanes: readonly (string | null)[]): WorkCounts {
+  const extra = prPanes.filter((pane) => pane === null || !askingPanes.has(pane));
+  return { sessions, prs: prPanes.length, total: sessions + extra.length };
 }
 
 /** The tab's counts, recomputed when the snapshot or the agents move. */

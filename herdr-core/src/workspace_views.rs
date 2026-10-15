@@ -66,7 +66,7 @@ impl Tool {
         match value {
             "files" => Some(Self::Files),
             "changes" => Some(Self::Changes),
-            "work" | "agent_sessions" => Some(Self::Work),
+            "work" => Some(Self::Work),
             "memory" => Some(Self::Memory),
             _ => None,
         }
@@ -267,8 +267,6 @@ struct StoredColumns {
     tool: Option<LegacyTool>,
     #[serde(default)]
     tools: Option<bool>,
-    #[serde(default)]
-    work: WorkView,
     #[serde(default = "default_explorer")]
     explorer: bool,
     #[serde(default)]
@@ -315,7 +313,7 @@ impl StoredColumns {
             device_id: self.device_id,
             path: self.path,
             tool,
-            work: self.work,
+            work: WorkView::default(),
             pinned: false,
             tree,
             // Widths stored before the columns were shares of a panel that
@@ -1260,12 +1258,6 @@ mod tests {
         entry
     }
 
-    /// PRD right-lane D-11, B22: every shape schema 2 stored becomes the
-    /// lane once. File Views on gives the files tool, else Tools on gives
-    /// its tool, the Explorer as the files tool with its tree on; neither
-    /// gives a closed lane. The pin starts off, File Views' width is the
-    /// lane's, a tab's File Views visibility is dropped while its View list
-    /// stays, and the next save writes none of the columns' keys.
     /// PRD work-tab-pr-lens B1, B2, D-34: a lane stored on the sessions tool
     /// (`agent_sessions`, in schema 2 or 3) restarts on Work with its other
     /// choices unchanged, the next save writes `work`, and the basis and scope
@@ -1316,6 +1308,12 @@ mod tests {
         );
     }
 
+    /// PRD right-lane D-11, B22: every shape schema 2 stored becomes the
+    /// lane once. File Views on gives the files tool, else Tools on gives
+    /// its tool, the Explorer as the files tool with its tree on; neither
+    /// gives a closed lane. The pin starts off, File Views' width is the
+    /// lane's, a tab's File Views visibility is dropped while its View list
+    /// stays, and the next save writes none of the columns' keys.
     #[test]
     fn a_schema_2_workspace_becomes_its_lane_once() {
         let folder = scratch("columns");

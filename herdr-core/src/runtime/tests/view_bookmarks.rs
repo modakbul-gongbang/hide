@@ -647,7 +647,7 @@ fn each_tab_keeps_its_own_list_and_the_lane_stays_the_workspaces() {
     open(&mut runtime, &checkout, &directory, "b.md");
     view_event(
         &mut runtime,
-        serde_json::json!({"tool": "agent_sessions", "pinned": true, "lane_width": 444}),
+        serde_json::json!({"tool": "work", "pinned": true, "lane_width": 444}),
     );
     let b = presentation(&runtime);
     focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
