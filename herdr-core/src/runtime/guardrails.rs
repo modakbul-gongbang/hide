@@ -29,6 +29,9 @@ use hide_agent_hooks::guardrails::{Policy, ProjectPolicy};
 
 /// A policy write is one small file replaced in place.
 const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
+/// Writes again past a node's newer sequence before the saves fail, so a
+/// node that always answers one cannot keep the worker writing.
+const SUPERSEDED_RETRIES: u8 = 3;
 
 #[derive(Default)]
 pub(super) struct GuardrailsWork {
@@ -46,6 +49,9 @@ pub(super) struct GuardrailsWork {
     running: BTreeSet<String>,
     /// The last write's [`Publication::sequence`].
     sequence: u64,
+    /// Writes in a row a machine's node answered with a newer sequence, by
+    /// machine; past [`SUPERSEDED_RETRIES`] the saves fail.
+    superseded: BTreeMap<String, u8>,
     /// Saves waiting for their machine to take the policy they move, by
     /// settings id. Bounded with the pending saves by `settings::LIMIT`.
     pub(super) awaiting: BTreeMap<String, super::project_settings::Pending>,
@@ -362,7 +368,7 @@ impl Runtime {
         };
         // Wall-clock milliseconds, kept rising, so a later core's writes
         // also order after an earlier one's on a node that outlived it.
-        let sequence = unix_milliseconds().max(self.guardrails.sequence + 1);
+        let sequence = unix_milliseconds().max(self.guardrails.sequence.saturating_add(1));
         self.guardrails.sequence = sequence;
         Some(Publication {
             link,
@@ -380,11 +386,12 @@ impl Runtime {
         answer: Result<Option<u64>, String>,
     ) -> bool {
         match answer {
-            // The node holds a write with a higher sequence than any this
-            // core made: another core's, or this one's from before a clock
-            // set back. The sequence moves past it and the policy is written
-            // again, its saves still waiting.
-            Ok(Some(newer)) if newer >= self.guardrails.sequence => {
+            // The node holds a write with a higher sequence: a machine's
+            // writes are one at a time, so it is another core's, or this
+            // one's from before a clock set back. The sequence moves past it
+            // and the policy is written again, its saves still waiting, a
+            // few times before they fail.
+            Ok(Some(newer)) => {
                 crate::diagnostic!(serde_json::json!({
                     "component": "guardrails",
                     "kind": "policy.superseded",
@@ -392,14 +399,28 @@ impl Runtime {
                     "sequence": job.sequence,
                     "superseded_by": newer,
                 }));
-                self.guardrails.sequence = newer;
+                self.guardrails.sequence = self.guardrails.sequence.max(newer);
                 self.guardrails.published.remove(device);
-                self.guardrails.queued.insert(device.to_owned());
-                self.start_guardrails_worker(device);
-                false
+                let tries = self
+                    .guardrails
+                    .superseded
+                    .entry(device.to_owned())
+                    .or_default();
+                *tries += 1;
+                if *tries <= SUPERSEDED_RETRIES {
+                    self.guardrails.queued.insert(device.to_owned());
+                    self.start_guardrails_worker(device);
+                    return false;
+                }
+                self.guardrails.superseded.remove(device);
+                let mut failed = false;
+                for id in job.saves {
+                    failed |= self.fail_guardrail_save(&id);
+                }
+                failed
             }
-            // Applied, or overtaken by this core's own newer write.
-            Ok(_) => {
+            Ok(None) => {
+                self.guardrails.superseded.remove(device);
                 crate::diagnostic!(serde_json::json!({
                     "component": "guardrails",
                     "kind": "policy.published",
@@ -419,6 +440,7 @@ impl Runtime {
                 saved
             }
             Err(reason) => {
+                self.guardrails.superseded.remove(device);
                 crate::diagnostic!(serde_json::json!({
                     "component": "guardrails",
                     "kind": "policy.publish_failed",
@@ -458,6 +480,7 @@ impl Runtime {
     /// A removed device's machine is no longer written.
     pub(super) fn forget_guardrails_device(&mut self, device: &str) {
         self.guardrails.published.remove(device);
+        self.guardrails.superseded.remove(device);
         self.guardrails.queued.remove(device);
         let saves: Vec<String> = self
             .guardrails

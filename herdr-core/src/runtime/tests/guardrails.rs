@@ -140,6 +140,29 @@ fn a_node_holding_a_newer_write_is_written_again_above_it_and_the_save_waits() {
 }
 
 #[test]
+fn a_node_that_always_holds_a_newer_write_fails_the_save_after_a_few_tries() {
+    let mut runtime = held(fixture());
+    change(&mut runtime, "files-on", files_on());
+    let mut tries = 0;
+    while let Some(job) = runtime.take_guardrail_publication(crate::node::TEST_NODE) {
+        tries += 1;
+        assert!(tries <= 4, "the worker keeps writing");
+        runtime.guardrail_policy_answered(crate::node::TEST_NODE, job, Ok(Some(u64::MAX)));
+        if receipt(&runtime).0 == WriteState::Failed {
+            break;
+        }
+    }
+    assert_eq!(tries, 4);
+    assert_eq!(
+        receipt(&runtime),
+        (
+            WriteState::Failed,
+            Some("project_settings_policy_failed".into())
+        )
+    );
+}
+
+#[test]
 fn a_failed_delivery_fails_the_save_keeps_the_confirmed_value_and_writes_it_once_more() {
     let mut runtime = held(fixture());
     change(&mut runtime, "files-on", files_on());
@@ -301,20 +324,18 @@ fn a_path_list_past_its_limits_is_refused_with_its_reason() {
         );
         assert_eq!(receipt(&runtime), (WriteState::Failed, Some(code.into())));
     }
-    // A protection this build does not know is no change the shell makes.
+    // A field the change names beyond this build's protections is not kept;
+    // the record's own are.
     let mut runtime = held(fixture());
     change(
         &mut runtime,
         "unknown",
         serde_json::json!({"guardrails": {"files": true, "later": "x".repeat(1024)}}),
     );
-    assert_eq!(
-        receipt(&runtime),
-        (
-            WriteState::Failed,
-            Some("project_settings_invalid_guardrails".into())
-        )
-    );
+    let job = runtime
+        .take_guardrail_publication(crate::node::TEST_NODE)
+        .unwrap();
+    assert!(job_policy(&job).projects[0].rules.unknown.is_empty());
 }
 
 #[test]

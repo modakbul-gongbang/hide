@@ -159,13 +159,16 @@ impl ProjectSettings {
         if let Some(base) = patch.base_branch {
             next.base_branch = Some(base);
         }
-        if let Some(rules) = patch.guardrails {
-            // The shell this daemon serves names only the protections it
-            // knows; a field kept for a newer build comes from a record, never
-            // from a change, and would grow the policy every hook reads.
-            if !rules.unknown.is_empty() {
-                return Err("project_settings_invalid_guardrails");
-            }
+        if let Some(mut rules) = patch.guardrails {
+            // A field kept for a newer build is the record's: the shell sends
+            // back what it was shown, so the record's own copy is kept, and
+            // nothing a change names beyond this build's protections reaches
+            // the policy every hook reads.
+            rules.unknown = next
+                .guardrails
+                .as_ref()
+                .map(|kept| kept.unknown.clone())
+                .unwrap_or_default();
             rules.validate().map_err(PathRefusal::code)?;
             next.guardrails = Some(rules);
             next.version = VERSION;
