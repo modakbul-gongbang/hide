@@ -7,7 +7,8 @@
 // Electron helpers, the notification permission helper, the bundled CLIs and
 // Herdr) is signed with the Developer ID certificate under the hardened
 // runtime, Apple notarizes the app and its ticket is stapled, so a downloaded
-// copy opens like any other app. Herdr ships with only the linker's ad-hoc
+// copy opens like any other app; the dmg around it is signed, notarized and
+// stapled the same way (`notarizeDiskImage`). Herdr ships with only the linker's ad-hoc
 // signature and notarization refuses an executable without a Developer ID one,
 // so hide's signature replaces it; Herdr's code is not changed.
 //
@@ -84,6 +85,26 @@ export function developerIdOptions(signing, executables, entitlements, helpers =
     // staples the ticket; a rejection throws with Apple's log.
     osxNotarize: signing.notary,
   };
+}
+
+/**
+ * Signs the disk image a person downloads with the Developer ID identity,
+ * notarizes it, staples its ticket and throws unless Gatekeeper accepts it as
+ * notarized, so a downloaded dmg opens without a warning (PRD auto-update
+ * B1). The app inside was notarized before the image was made.
+ */
+export function notarizeDiskImage(dmg, signing, scratch) {
+  execFileSync("/usr/bin/codesign", ["--force", "--sign", signing.identity, "--timestamp", dmg], { stdio: "inherit" });
+  const { appleApiKey, appleApiKeyId, appleApiIssuer } = signing.notary;
+  // notarytool exits 0 for a rejected submission too; its status says which.
+  const submitted = JSON.parse(execFileSync("/usr/bin/xcrun", ["notarytool", "submit", dmg, "--key", appleApiKey, "--key-id", appleApiKeyId, "--issuer", appleApiIssuer, "--wait", "--timeout", "60m", "--output-format", "json"], { encoding: "utf8", cwd: scratch }));
+  if (submitted.status !== "Accepted") throw new Error(`Apple did not accept ${dmg} for notarization: ${submitted.status} (submission ${submitted.id}; read its log with notarytool log)`);
+  execFileSync("/usr/bin/xcrun", ["stapler", "staple", dmg], { stdio: "inherit" });
+  const assessment = spawnSync("/usr/sbin/spctl", ["--assess", "--type", "open", "--context", "context:primary-signature", "--verbose=4", dmg], { encoding: "utf8" });
+  const answer = `${assessment.stdout}${assessment.stderr}`.trim();
+  if (assessment.status !== 0 || !answer.includes("source=Notarized Developer ID")) {
+    throw new Error(`Gatekeeper does not accept ${dmg} as notarized: ${answer || `spctl exited ${assessment.status}`}`);
+  }
 }
 
 /**

@@ -25,26 +25,31 @@ pnpm --version
 
 ## Install a release
 
-Open the [hide Releases page](https://github.com/with-hide/hide/releases).
-If it says there are no releases, continue with [Build and install from source](#build-and-install-from-source).
+Open the [hide Releases page](https://github.com/with-hide/hide/releases) or [withhide.dev](https://withhide.dev), which links the latest stable release's files for your system.
+If there are no releases yet, continue with [Build and install from source](#build-and-install-from-source).
+Every installer has a `.sha256` file beside it naming only that file; check it before installing.
+After this one install, hide updates itself ([Update](#update)).
 
-Download both files for the same version:
+| System | Download | Installs to |
+| --- | --- | --- |
+| macOS, Apple Silicon | `hide-v<version>-macos-arm64.dmg` | `/Applications/hide.app` |
+| Windows x64 | `hide-v<version>-windows-x64-setup.exe` | `%LOCALAPPDATA%\Programs\hide`, for this user only |
+| Debian, Ubuntu (x64) | `hide-v<version>-linux-x64.deb` | `/opt/hide` |
+| Fedora and other rpm systems (x64) | `hide-v<version>-linux-x64.rpm` | `/opt/hide` |
 
-- `hide-v<version>-macos-arm64.zip`
-- `hide-v<version>-macos-arm64.zip.sha256`
+The release also carries `hide-v<version>-macos-arm64.zip`, the update files `latest-mac.yml`, `latest.yml` and `latest-linux.yml`, and `.blockmap` files; those are what the app's updater reads, and you do not need them to install.
 
-Verify the archive from the directory that contains both downloads:
+### Install on macOS
+
+Check the disk image from the folder that holds both downloads:
 
 ```sh
-shasum -a 256 -c hide-v<version>-macos-arm64.zip.sha256
+shasum -a 256 -c hide-v<version>-macos-arm64.dmg.sha256
 ```
 
 Continue only when the command prints `OK`.
-Expand the archive, move `hide.app` to `/Applications`, then launch it:
-
-```sh
-open /Applications/hide.app
-```
+Open the disk image and drag `hide` onto the Applications folder beside it, then open hide from Applications.
+Run it from Applications, not from the disk image: an app on the disk image or in a folder you cannot write cannot update itself, and Settings > About says to move it.
 
 Releases after v0.3.0 are signed with hide's Developer ID and notarized by Apple, so macOS opens them like any other downloaded app.
 v0.3.0 and earlier are ad-hoc signed and not notarized: on the first launch, Control-click `hide.app`, choose **Open**, and confirm the Gatekeeper dialog.
@@ -56,47 +61,53 @@ xattr -dr com.apple.quarantine /Applications/hide.app
 open /Applications/hide.app
 ```
 
-## Windows and Linux
-
-The Windows and Linux packages are not signed.
-Each is a folder in an archive: `hide-win32-x64` in `hide-v<version>-windows-x64.zip`, and `hide-linux-x64` in `hide-v<version>-linux-x64.tar.gz`, each with a `.sha256` file beside it on the Releases page.
-The folder holds the Electron app at its top and, in its `resources` folder, the same `hided`, `hide`, `hide-agent-hooks` and pinned Herdr the macOS app carries; on Windows those are `.exe` files, and Herdr's ConPTY runtime is the `conpty` folder beside `herdr.exe`.
-
 ### Install on Windows
 
-Download both files for the same version, then check the archive in PowerShell from the folder that holds them:
+Check the installer in PowerShell from the folder that holds both downloads:
 
 ```powershell
-(Get-FileHash -Algorithm SHA256 .\hide-v<version>-windows-x64.zip).Hash.ToLower()
-Get-Content .\hide-v<version>-windows-x64.zip.sha256
+(Get-FileHash -Algorithm SHA256 .\hide-v<version>-windows-x64-setup.exe).Hash.ToLower()
+Get-Content .\hide-v<version>-windows-x64-setup.exe.sha256
 ```
 
 Continue only when the first line printed is the hash at the start of the second.
-Extract the zip (Extract All in File Explorer), move the `hide-win32-x64` folder where you keep programs, and open `hide.exe` inside it.
+Open the installer.
+It installs hide for your account without asking for administrator access, adds hide to the Start menu and to Settings > Apps, and opens it.
 
-Windows SmartScreen warns about an unsigned app it has not seen before, and the first launch stops at "Windows protected your PC".
-Choose **More info**, check that the dialog names the app `hide.exe` with an unknown publisher, then choose **Run anyway**.
+The installer is not signed, so Windows SmartScreen warns about it the first time, and the launch stops at "Windows protected your PC".
+Choose **More info**, check that the dialog names `hide-v<version>-windows-x64-setup.exe` with an unknown publisher, then choose **Run anyway**.
+Windows 11 with Smart App Control turned on blocks unsigned programs wherever they are, and hide and its Herdr are unsigned, so hide does not run there ([What each system supports](#what-each-system-supports)).
+
+The install folder holds the Electron app at its top and, in its `resources` folder, the same `hided`, `hide`, `hide-agent-hooks` and pinned Herdr the macOS app carries, as `.exe` files, with Herdr's ConPTY runtime in the `conpty` folder beside `herdr.exe`.
+The app does not run the daemon or the Herdr server from there: at each launch it copies those programs into `%USERPROFILE%\.hide\runtime\<build>` and starts them from the copy, so installing a new version, by hand or by an update, never stops the Herdr server or the agents in it.
+A copy no program runs from any more is removed at a later launch, and at most four are kept; one that cannot be removed is recorded in the app's log (`runtime.copy_remove_failed`, `runtime.copies_over_cap`).
 
 ### Install on Linux
 
-Download both files for the same version, then check and unpack the archive from the folder that holds them:
+Check the package from the folder that holds both downloads, then install it with the system's package manager:
 
 ```sh
-sha256sum -c hide-v<version>-linux-x64.tar.gz.sha256
-tar -xzf hide-v<version>-linux-x64.tar.gz
-./hide-linux-x64/hide
+sha256sum -c hide-v<version>-linux-x64.deb.sha256
+sudo apt install ./hide-v<version>-linux-x64.deb
+```
+
+```sh
+sha256sum -c hide-v<version>-linux-x64.rpm.sha256
+sudo dnf install ./hide-v<version>-linux-x64.rpm
 ```
 
 Continue only when `sha256sum` prints `OK`.
-The tar keeps the files executable, so there is nothing to `chmod`; nothing is installed system-wide, and no menu entry is created.
-The app needs the libraries every Electron app does (GTK 3, NSS, ALSA), which a desktop distribution already has.
-Electron needs a sandbox on Linux: where the system lets an unprivileged process make user namespaces it needs nothing more, and where it does not (Ubuntu 24.04 and later restrict them through AppArmor), the app stops with a message about `chrome-sandbox`.
-Then make the bundled sandbox helper setuid root once, from the folder you unpacked:
+The package installs hide into `/opt/hide`, adds hide to the applications menu, and makes `/usr/bin/hide` the `hide` command, so a new terminal's `hide` is the CLI.
+It also sets up Electron's sandbox helper (`/opt/hide/chrome-sandbox`) and, where AppArmor restricts user namespaces (Ubuntu 24.04 and later), the profile the app needs, so there is no manual sandbox step.
+The packages are not signed: apt and dnf install a local file you checked yourself.
+The app needs the libraries every Electron app does (GTK 3, NSS, ALSA), which the package declares and a desktop distribution already has.
 
-```sh
-sudo chown root:root hide-linux-x64/chrome-sandbox
-sudo chmod 4755 hide-linux-x64/chrome-sandbox
-```
+### Moving from a zip or tar.gz build
+
+A Windows zip folder or a Linux tar.gz folder from before this change cannot update itself.
+Install the new package once as above; its first launch moves the `hide` command and every agent hook to the installed app, as an update does.
+Then remove the old folder: run its `hide stop` (`resources\hide.exe stop` on Windows, `resources/hide stop` on Linux), stop its Herdr server with `herdr server stop` from the same folder's `resources` when no agent you need is running in it, and delete the folder.
+The new app starts its own daemon and Herdr server at its next launch, and `~/.hide` with all of hide's state stays where it is.
 
 ### What differs from the macOS app
 
@@ -105,15 +116,13 @@ sudo chmod 4755 hide-linux-x64/chrome-sandbox
 - The app's profile is `%APPDATA%\hide-desktop` on Windows and `~/.config/hide-desktop` on Linux, instead of `~/Library/Application Support/hide-desktop`.
 - First launch installs the `hide` command and, once the first-run wizard's agent choice is answered, each chosen agent's hook, plugin or extension and skill, as on macOS ([What the first launch installs](#what-the-first-launch-installs)).
   Settings > Devices shows their installation results on this computer's row.
-- Linux installs `~/.local/bin/hide` as a link to the package's `resources/hide`.
-  Windows installs `%USERPROFILE%\.local\bin\hide.cmd`, which runs `resources\hide.exe` through a `.hide-kit` directory junction beside the command; neither Administrator access nor Developer Mode is needed.
-  Keep the unpacked package folder in place while using it.
+- Linux also installs `~/.local/bin/hide` as a link to the package's `resources/hide`, beside the package's own `/usr/bin/hide`.
+  Windows installs `%USERPROFILE%\.local\bin\hide.cmd`, which runs the runtime copy's `hide.exe` through a `.hide-kit` directory junction beside the command; neither Administrator access nor Developer Mode is needed.
 - Opening a newer package replaces a running daemon of another build and refreshes the command and hook paths, as on macOS.
   A development or standalone `hide` still refuses to replace a packaged daemon.
 - A package's `hided` is also the node it installs on a device, for its own system only, as the macOS app does: a Linux package installs it on a Linux x64 device, while no device runs the Windows one yet (Windows devices are not supported), so from Windows a device's files and Git stay unavailable.
-- On Windows the first launch registers the app for notifications: Electron adds a `hide` entry to the Start menu (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\hide.lnk`, pointing at this folder's `hide.exe`) and a per-user COM class key under `HKCU\Software\Classes\CLSID`, so a notification clicked after Hide quit can start it; Electron rewrites the entry when the folder moves, and it stays behind when the folder is deleted.
-  Linux registers nothing outside `~/.local/bin/hide` and the profile, and creates no menu entry.
-- Nothing updates itself, and uninstalling is deleting the folder and the pieces [Uninstall](#uninstall) lists; `~/.hide` (`%USERPROFILE%\.hide` on Windows) and the profile stay until you delete them.
+- On Windows the installer adds the Start menu entry (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\hide.lnk`) that notifications are attributed through, and the first launch adds a per-user COM class key under `HKCU\Software\Classes\CLSID`, so a notification clicked after Hide quit can start it.
+- An update installs when you quit the app on Windows, as on macOS; on Linux it installs only when you choose Restart, because the package manager asks for your password ([Update](#update)).
 
 ### What each system supports
 
@@ -128,7 +137,9 @@ Not supported is a gap, never a design choice.
 
 | | macOS (Apple Silicon, 14 or later) | Windows x64 | Linux x64 |
 | --- | --- | --- | --- |
-| Package | supported: app bundle signed with hide's Developer ID and notarized ([BUILD.md](BUILD.md#developer-id-signing)) | unsigned folder, so SmartScreen warns on the first launch; signing is issue #193 | unsigned folder |
+| Package | supported: a dmg holding the app bundle, both signed with hide's Developer ID and notarized ([BUILD.md](BUILD.md#developer-id-signing)); the package checks open the dmg and start the app the update zip holds | supported: a per-user installer, which the package checks install, install again while a Herdr server runs from the runtime copy, and uninstall | supported: a deb and an rpm into `/opt/hide`, which the package checks install on Ubuntu and in a Fedora container and start |
+| Signing | supported (Developer ID) | not supported: the installer and the programs are unsigned because signing has to stay free for now; SmartScreen warns on the first install, an update's publisher is not checked (only the release's SHA-512 digest is), and Windows 11 with Smart App Control on blocks hide and its Herdr outright (the upstream `herdr.exe` is unsigned too, herdrdev/herdr#4380); changes with Azure Artifact Signing or SignPath (issue #193) | not supported: the packages are unsigned for the same reason, and an update's publisher is not checked (only the release's SHA-512 digest is); changes with a signed package repository |
+| The app updates itself ([Update](#update)) | supported: the choice of release, the states and the download are unit tested; a real update from one release to the next is unverified until two Developer ID builds exist, the first two release candidates | supported: CI installs a release-numbered build and updates it to the next one from a local feed through Help's Restart, keeping the Herdr server and the daemon | supported for the deb: the same CI update runs on Ubuntu; an rpm update is unverified (the rpm is installed and started in Fedora, not updated) |
 | Daemon, Herdr, install kit | supported | supported (CI runs them against the pinned Herdr) | supported (the web shell's whole e2e suite runs against the pinned Herdr) |
 | The seven agents: Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, each with its hook, plugin or extension and skill ([agent-hooks.md](agent-hooks.md#support-table)) | supported | supported: each agent's Windows form is read from its own source or package and run on the Windows runner (`hide-agent-hooks/tests/it/windows_hook_command.rs`, `windows_scripts.rs`); a real Grok or Cursor session is unverified | supported: the same entries as macOS, checked by the workspace tests on Linux; a real Grok or Cursor session is unverified |
 | Project guardrails ([agent-hooks.md](agent-hooks.md#project-guardrails)) | supported: shell rules in all seven agents, file writes in all seven, file reads in all but Codex, which has no read tool, so a protected path is caught only in its shell words; a real refusal was seen in Claude Code, Codex, Cursor, OpenCode, Pi and omp, and Grok's rests on its payload tests | supported, with one gap: the same rules for the same agents, from the same code, and the decision's tests run on the Windows runner (`hide-agent-hooks` library tests); a shell call's words are read as a POSIX shell reads them, so in a PowerShell command a backslash path (`.\.env`, `C:\repo`) is not resolved and the files protection and a `git -C`/`cd` aimed by one miss it, while file tools and forward-slash paths are guarded; this closes when a payload names the shell it runs in and the guardrails read PowerShell's words for it; a real agent's refusal is unverified | supported: the same rules for the same agents, checked by the workspace tests on Linux; a real agent's refusal is unverified |
@@ -136,9 +147,9 @@ Not supported is a gap, never a design choice.
 | Desktop app window and menu | supported (desktop e2e) | supported (the desktop `@platform` tests in every pull request that can change them, and the packaged `hide.exe`'s window in the package checks) | supported (the desktop `@platform` tests in the nightly, under a virtual display) |
 | Keyboard shortcuts | supported | supported by registry tests; the table is in [UI_BEHAVIOR.md](UI_BEHAVIOR.md#keyboard-shortcuts-per-system) | same as Windows |
 | Agent notifications ([UI_BEHAVIOR.md](UI_BEHAVIOR.md#first-run)) | supported: the wizard's notifications step asks macOS and reads its answer back; delivery on a signed build is unverified | supported: the app registers itself for toasts at launch, and the package checks require its Start menu entry; delivery and a click from the Action Center after Hide quit are unverified | supported where a notification service runs; without one the wizard and Settings say so and keep the switch off; delivery is unverified |
-| Needs You count on the app icon | supported: a count on the Dock once macOS lets Hide notify | supported: a dot on the taskbar button, with the count in its description | unverified: drawn only by a desktop that shows launcher counts for the app's `.desktop` entry, which the folder package does not install |
+| Needs You count on the app icon | supported: a count on the Dock once macOS lets Hide notify | supported: a dot on the taskbar button, with the count in its description | unverified: drawn only by a desktop that shows launcher counts for the app's `.desktop` entry, which the packages install; no desktop has been tried |
 | Device node (a remote machine's files and Git) | supported | not supported: no device runs the Windows `hided` yet, so from Windows a device's files and Git stay unavailable | supported |
-| The Herdr server follows an app update ([Update](#update)) | supported | not supported: Herdr hands a running server to another Herdr on Unix only, so the server keeps the previous package's Herdr until it is stopped; changes when Herdr supports live handoff on Windows | supported (the remote mailbox lane hands a pinned server over) |
+| The Herdr server follows an app update ([Update](#update)) | supported | not supported: Herdr hands a running server to another Herdr on Unix only, so the server keeps running from the previous build's runtime copy until it is stopped, which an update never does; changes when Herdr supports live handoff on Windows | supported (the remote mailbox lane hands a pinned server over) |
 | A connected device's Herdr follows an app update ([Connect another Mac](#connect-another-mac-over-ssh)) | supported for an Apple Silicon Mac device, whose system the Mac app carries (the device-kit e2e on an isolated SSH device; the remote mailbox lane's macOS nightly hands a Herdr 0.9.1 server to the pinned one) | not supported: no device runs the Windows `hided`, and Herdr hands a server over on Unix only; changes with a Windows device node and Windows live handoff | supported for a Linux x64 device, whose system the Linux package carries (the remote mailbox lane hands a Herdr 0.9.1 server to the pinned one); a Mac app's Linux device keeps its own Herdr until a package carries the Linux helper |
 | Move the core to another machine ([Move the core](#move-the-core-to-another-mac)) | supported | not supported: the core's login item is written for launchd only (`hide_platform::user_agents`), with no Windows or systemd form yet | not supported: same as Windows |
 | Comments on a page in Comment mode ([BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md#comment-mode)) | supported, from the window on the machine whose daemon holds the page; a screen of a linked node answers `comment_unavailable_here` because its daemon relays the core and cannot reach the page's gateway; changes when the node relays the gateway too | same as macOS (unverified: the overlay is the same Chromium code, not yet run on a Windows CI lane) | same as macOS (unverified on Linux the same way) |
@@ -176,9 +187,9 @@ HIDE_VERSION=<version> pnpm --dir desktop package
 Omit it to build from a checkout that a Git tag matching `v[0-9]*` already describes; the packaging script fails rather than ship a version nothing was released under.
 
 Packaging builds the web shell, builds the release `hided`, `hide` and `hide-agent-hooks` binaries, fetches and digest-verifies the pinned Herdr binary, and stops with a named error and no app if any of those is missing or not executable.
-It then packages everything into `desktop/out/hide-darwin-arm64/hide.app`, ad-hoc signs it, verifies the signature, and writes `desktop/out/hide-v<version>-macos-arm64.zip` with a `.sha256` sidecar.
+It then packages everything into `desktop/out/hide-darwin-arm64/hide.app`, ad-hoc signs it, verifies the signature, and writes the release files into `desktop/out/release`: `hide-v<version>-macos-arm64.dmg` and the `.zip` the updater installs, each with its `.sha256`, `latest-mac.yml` and the zip's `.blockmap`.
 A release signs with the Developer ID certificate and notarizes instead; [BUILD.md](BUILD.md) gives the switch and what it needs.
-The same command on Windows x64 writes `desktop/out/hide-win32-x64/` and `hide-v<version>-windows-x64.zip`, and on Linux x64 `desktop/out/hide-linux-x64/` and `hide-v<version>-linux-x64.tar.gz`, each with its `.sha256` and unsigned; each system builds only its own package.
+The same command on Windows x64 writes the app folder `desktop/out/hide-win32-x64/` and, in `desktop/out/release`, `hide-v<version>-windows-x64-setup.exe` with `latest.yml` and its `.blockmap`; on Linux x64 it writes `desktop/out/hide-linux-x64/` and `hide-v<version>-linux-x64.deb` and `.rpm` with one `latest-linux.yml`; each installer has its `.sha256`, the Windows and Linux ones are unsigned, and each system builds only its own package ([BUILD.md](BUILD.md)).
 
 Install the app into the system Applications directory and launch the installed bundle:
 
@@ -385,16 +396,45 @@ Hide AI's settings move with the core and come back with it.
 
 ## Update
 
-Quit hide, replace `/Applications/hide.app` on macOS or unpack the new Windows/Linux package into its permanent folder, and reopen it.
-Opening the updated app replaces a `hided` still running from the previous build with one of its own build; a `hided` that will not stop makes the app show its start failure instead of attaching to the old one.
+A packaged release of hide updates itself from [with-hide/hide's releases](https://github.com/with-hide/hide/releases).
+It looks shortly after it opens and every six hours after, takes the highest release whose files for this system are all uploaded, and downloads it in the background.
+Nothing shows while it looks or downloads.
+When the update is ready, a dot appears on the `?` button at the bottom of the sidebar, and the last line of the Help menu reads `hide <version> ready · Restart`.
+
+- **Restart** in the Help menu, or **Restart now** in Settings > About, closes the window, installs the update and opens the new version.
+- Without that, macOS and Windows install it the next time you quit hide, and the next launch is the new version.
+- Linux installs it only when you choose Restart, after the system asks for your password; cancel the prompt and the update stays ready.
+
+Settings > About shows the update row under the hide version: up to date with when it last looked and **Check now**, looking, downloading with its progress, ready with **Restart now**, or that it could not look or download with **Check again**; the reason is in the app's log.
+**Check for updates…** in the app menu on macOS, or the Help menu on Windows and Linux, opens that row and looks at once.
+A download whose SHA-512 digest does not match the release's update file is discarded and nothing is installed; on macOS the update must also carry the same Developer ID signature as the app.
+Windows and Linux releases are unsigned, so there the digest in the release's update file is the only check of where an update came from.
+
+The **Get preview versions (rc)** switch in About, off at first, also takes release candidates (`v<version>-rc.<n>`) from the next check on.
+Turning it off never installs a lower version: an app on a release candidate waits for the next stable release above it.
+A development build (a version that is not a release number, such as `0.1.0-main.<commit>`), an app run from a source checkout, and a Linux app not installed from the deb or rpm never look for updates, and About says updates are off.
+
+The window is the only thing an update closes.
+The core and the agents keep running; the new app replaces a `hided` still running from the previous build with one of its own build, and a `hided` that will not stop makes the app show its start failure instead of attaching to the old one.
 On macOS and Linux it also moves the Herdr server the previous app started onto its own Herdr, with the panes and the agents in them still running, so nothing keeps running from the previous app's folder; a Herdr terminal you attached yourself is asked to reconnect, and a Herdr server you started from your own Herdr install is left as it is.
-On Windows the server keeps the previous package's Herdr until you stop it ([What each system supports](#what-each-system-supports)).
+On Windows the server keeps running from its runtime copy, which the installer never touches, until you stop it ([What each system supports](#what-each-system-supports)).
 State under `~/.hide/state` and the desktop profile (`~/Library/Application Support/hide-desktop` on macOS, `%APPDATA%\hide-desktop` on Windows, `~/.config/hide-desktop` on Linux) both persist across an update.
 Files the previous Swift app left under `~/Library/Application Support/hide/` are not read by the current app, apart from `state.json`'s shortcut bindings, which are imported once, and can be deleted by hand.
 Each packaged launch replaces an outdated part of the kit on this machine, and each device connection does the same there, hook entries included; a part you removed stays removed.
 A connected device whose system the package carries also gets the app's pinned Herdr, and its Herdr server moves onto it when it runs an older release ([Connect another Mac](#connect-another-mac-over-ssh)); you do nothing on the device.
 When the core runs on another machine, a newer app updates it to its own build before it connects, once per connection, while agents keep running; if that fails, the window shows both builds with Retry, and the core goes on with its previous build.
 An updated app on the core's own machine updates the core the login item runs in the same way, and an older app there is told to update.
+
+### When an update goes wrong
+
+A published release is never changed; a bad one is replaced by a higher version, which the app takes at its next check or at **Check now**.
+If the app does not open after an update, install the previous release from the Releases page by hand, as in [Install a release](#install-a-release); `~/.hide` and the desktop profile stay as they are.
+The app never installs a lower version by itself.
+An install cut off partway is finished by installing again:
+
+- macOS: drag `hide` from the disk image to Applications again.
+- Windows: run the release's `setup.exe` again; it replaces what is there and keeps your state.
+- Linux: run `sudo dpkg --configure -a`, then `sudo apt install ./hide-v<version>-linux-x64.deb` again; on an rpm system, `sudo dnf reinstall ./hide-v<version>-linux-x64.rpm`.
 
 ## Uninstall
 
@@ -404,10 +444,12 @@ If the core runs on another machine, move it back first; its login item otherwis
 Delete both directories only when you deliberately want to reset hide's saved state.
 Each agent's piece stays and does nothing once the app is gone ([agent-hooks.md](agent-hooks.md#what-is-written-and-where) lists them): delete the Claude Code, Codex and Cursor entries whose command carries `hide-subagents@`, Grok's `~/.grok/hooks/hide.json`, the OpenCode plugin and the Pi and omp extensions named `hide`, and the `hide-browser` skill stubs; Codex's trust records stay in `~/.codex/config.toml` and match only Hide's own command, and a Herdr integration Hide installed stays until `herdr integration uninstall <agent>`.
 `~/.local/bin/hide` stays as well until you remove it.
-On Windows or Linux, delete the unpacked package folder after quitting and running its `resources/hide[.exe] stop`.
-The agents' pieces and home state likewise remain; remove `~/.local/bin/hide` on Linux, or `%USERPROFILE%\.local\bin\hide.cmd` and the `.hide-kit` junction beside it on Windows.
-On Windows also delete the `hide` entry from the Start menu folder (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\hide.lnk`) and the `HKCU\Software\Classes\CLSID` key whose default value is `Electron Notification Activator` and whose `LocalServer32` names this folder's `hide.exe`.
-Remove the junction itself, not the directory it leads to.
+On Windows, remove hide from Settings > Apps.
+That removes the app, its Start menu entry and its Apps entry, and stops `hided`; the Herdr server and the agents in its panes keep running, so no work is ended without you.
+Stop them yourself when you are done with them: `herdr server stop`, run from the newest folder under `%USERPROFILE%\.hide\runtime`, ends the server and every pane in it.
+Then delete `%USERPROFILE%\.hide\runtime`, `%USERPROFILE%\.local\bin\hide.cmd` and the `.hide-kit` junction beside it (the junction itself, not the directory it leads to), and the `HKCU\Software\Classes\CLSID` key whose default value is `Electron Notification Activator` and whose `LocalServer32` names hide's `hide.exe`.
+On Linux, run `hide stop`, then `sudo apt remove hide` or `sudo dnf remove hide`, and remove `~/.local/bin/hide`.
+On every system the agents' pieces and `~/.hide` remain until you delete them.
 
 ### Earlier builds and the transition
 

@@ -137,6 +137,20 @@ describe("the app menu (B9)", () => {
     }
   });
 
+  it("puts Check for updates… in the app menu on macOS and in Help elsewhere, sending the host's own command (D-25)", () => {
+    const find = (menu: MenuItemConstructorOptions | undefined) => (Array.isArray(menu?.submenu) ? menu.submenu.find((item) => item.id === "check_updates") : undefined);
+    for (const [system, home] of [["mac", 0], ["pc", -1]] as const) {
+      const sent: string[] = [];
+      const template = menuTemplate({ appName: "hide", send: (id) => sent.push(id), developer: false, system, t: english });
+      const holders = template.filter((menu) => find(menu));
+      expect(holders).toEqual([home === 0 ? template[0] : template.at(-1)]);
+      const item = find(holders[0]);
+      expect(item?.label).toBe("Check for updates…");
+      (item?.click as () => void)();
+      expect(sent).toEqual(["check_updates"]);
+    }
+  });
+
   it("draws every label, the system's role items included, in the language it is given", () => {
     const labels = (menu: MenuItemConstructorOptions[]): string[] =>
       menu.flatMap((item) => [...(item.label ? [item.label] : []), ...(Array.isArray(item.submenu) ? labels(item.submenu) : [])]);

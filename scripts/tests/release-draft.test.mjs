@@ -11,8 +11,18 @@ const tag = "v1.2.3";
 const rc = "v0.4.0-rc.1";
 const sha = "1".repeat(40);
 const marker = `<!-- hide-release-source:${sha} -->`;
-const namesOf = (tag) => ["macos-arm64.zip", "windows-x64.zip", "linux-x64.tar.gz"].map((s) => `hide-${tag}-${s}`);
+/** The installers each tag ships (PRD auto-update D-35), each with a checksum. */
+const namesOf = (tag) => ["macos-arm64.dmg", "macos-arm64.zip", "windows-x64-setup.exe", "linux-x64.deb", "linux-x64.rpm"].map((s) => `hide-${tag}-${s}`);
+/** Which installers each update file names. */
+const updatesOf = (tag) => ({
+  "latest-mac.yml": [`hide-${tag}-macos-arm64.zip`],
+  "latest.yml": [`hide-${tag}-windows-x64-setup.exe`],
+  "latest-linux.yml": [`hide-${tag}-linux-x64.deb`, `hide-${tag}-linux-x64.rpm`],
+});
+const blockmapsOf = (tag) => [`hide-${tag}-macos-arm64.zip.blockmap`, `hide-${tag}-windows-x64-setup.exe.blockmap`];
 const names = namesOf(tag);
+/** Five installers, their five checksums, three update files and two blockmaps. */
+const ASSET_COUNT = 15;
 const digest = (data) => `sha256:${createHash("sha256").update(data).digest("hex")}`;
 
 async function fixture(t, options = {}) {
@@ -23,10 +33,16 @@ async function fixture(t, options = {}) {
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const files = new Map();
   for (const name of namesOf(tag)) {
-    // Valid empty ZIP and TAR.GZ archives; no bundled program is executed.
-    const data = name.endsWith(".zip") ? Buffer.from("504b0506000000000000000000000000000000000000", "hex") : gzipSync(Buffer.alloc(1024));
+    // Fixture bytes; no installer is run.
+    const data = gzipSync(Buffer.from(name));
     files.set(name, data);
     files.set(`${name}.sha256`, Buffer.from(`${digest(data).slice(7)}  ${name}\n`));
+  }
+  for (const name of blockmapsOf(tag)) files.set(name, gzipSync(Buffer.from(name)));
+  for (const [info, updates] of Object.entries(updatesOf(tag))) {
+    const entries = updates.map((name) => ({ name, sha512: createHash("sha512").update(files.get(name)).digest("base64"), size: files.get(name).length }));
+    const lines = [`version: ${tag.slice(1)}`, "files:", ...entries.flatMap((e) => [`  - url: ${e.name}`, `    sha512: ${e.sha512}`, `    size: ${e.size}`]), `path: ${entries[0].name}`, `sha512: ${entries[0].sha512}`, "releaseDate: '2026-10-16T00:00:00.000Z'"];
+    files.set(info, Buffer.from(`${lines.join("\n")}\n`));
   }
   for (const [name, data] of files) await fs.writeFile(path.join(directory, name), data);
   const state = {
@@ -96,12 +112,13 @@ async function fixture(t, options = {}) {
 const draft = () => ({ id: 7, tag_name: tag, body: marker, draft: true, prerelease: false });
 const rcDraft = () => ({ ...draft(), tag_name: rc, prerelease: true });
 
-test("complete fresh draft posts six matching assets without PATCH or DELETE; retry writes nothing", async (t) => {
+test("complete fresh draft posts every matching asset without PATCH or DELETE; retry writes nothing", async (t) => {
   const f = await fixture(t);
-  assert.deepEqual(await f.run(), { id: 7, tag, assets: 6 });
-  assert.equal(f.state.writes.length, 7);
+  assert.deepEqual(await f.run(), { id: 7, tag, assets: ASSET_COUNT });
+  // The draft, then one upload per asset.
+  assert.equal(f.state.writes.length, ASSET_COUNT + 1);
   assert.ok(f.state.writes.every((r) => r.method === "POST"));
-  assert.equal(f.state.assets.length, 6);
+  assert.equal(f.state.assets.length, ASSET_COUNT);
   for (const a of f.state.assets) assert.equal(a.digest, digest(f.files.get(a.name)));
   f.state.writes.length = 0;
   await f.run();
@@ -132,7 +149,7 @@ test("matching partial uploaded draft resumes; mismatched, starter or duplicate 
   const name = names[0], data = f.files.get(name);
   f.state.assets.push({ name, size: data.length, state: "uploaded", digest: digest(data) });
   await f.run();
-  assert.equal(f.state.writes.length, 5);
+  assert.equal(f.state.writes.length, ASSET_COUNT - 1);
   assert.ok(f.state.writes.every((r) => r.route === "/releases/7/assets"));
   for (const change of [{ digest: "sha256:" + "0".repeat(64) }, { size: 1 }, { state: "starter" }]) {
     const bad = await fixture(t, { release: draft(), assets: [{ name, size: data.length, state: "uploaded", digest: digest(data), ...change }] });
@@ -164,12 +181,12 @@ test("moved tag, wrong release ID and incomplete local package fail; annotated t
   await assert.rejects(local.run());
   assert.deepEqual(local.state.requests, []);
   const annotated = await fixture(t, { annotated: true });
-  assert.equal((await annotated.run()).assets, 6);
+  assert.equal((await annotated.run()).assets, ASSET_COUNT);
 });
 
 test("a complete verified draft is published once, as the latest, after its last read", async (t) => {
   const f = await fixture(t);
-  assert.deepEqual(await f.publish(), { id: 7, tag, assets: 6 });
+  assert.deepEqual(await f.publish(), { id: 7, tag, assets: ASSET_COUNT });
   assert.deepEqual(f.state.created, [{ tag_name: tag, name: tag, body: marker, draft: true, prerelease: false }]);
   assert.deepEqual(f.state.publications, [{ draft: false, make_latest: "true" }]);
   assert.deepEqual(f.state.writes.at(-1), { method: "PATCH", route: "/releases/7" });
@@ -196,14 +213,17 @@ test("an answer that is not the verified release, published, fails the run", asy
   assert.equal(f.state.publications.length, 1);
 });
 
-test("an -rc tag drafts a pre-release with its own six assets and publishes it, never as the latest", async (t) => {
+test("an -rc tag drafts a pre-release with its own assets and publishes it, never as the latest", async (t) => {
   const f = await fixture(t, { tag: rc });
-  assert.deepEqual(await f.publish(), { id: 7, tag: rc, assets: 6 });
+  assert.deepEqual(await f.publish(), { id: 7, tag: rc, assets: ASSET_COUNT });
   assert.deepEqual(f.state.created, [{ tag_name: rc, name: rc, body: marker, draft: true, prerelease: true }]);
   assert.deepEqual(f.state.assets.map((a) => a.name).sort(), [
-    "hide-v0.4.0-rc.1-linux-x64.tar.gz", "hide-v0.4.0-rc.1-linux-x64.tar.gz.sha256",
-    "hide-v0.4.0-rc.1-macos-arm64.zip", "hide-v0.4.0-rc.1-macos-arm64.zip.sha256",
-    "hide-v0.4.0-rc.1-windows-x64.zip", "hide-v0.4.0-rc.1-windows-x64.zip.sha256",
+    "hide-v0.4.0-rc.1-linux-x64.deb", "hide-v0.4.0-rc.1-linux-x64.deb.sha256",
+    "hide-v0.4.0-rc.1-linux-x64.rpm", "hide-v0.4.0-rc.1-linux-x64.rpm.sha256",
+    "hide-v0.4.0-rc.1-macos-arm64.dmg", "hide-v0.4.0-rc.1-macos-arm64.dmg.sha256",
+    "hide-v0.4.0-rc.1-macos-arm64.zip", "hide-v0.4.0-rc.1-macos-arm64.zip.blockmap", "hide-v0.4.0-rc.1-macos-arm64.zip.sha256",
+    "hide-v0.4.0-rc.1-windows-x64-setup.exe", "hide-v0.4.0-rc.1-windows-x64-setup.exe.blockmap", "hide-v0.4.0-rc.1-windows-x64-setup.exe.sha256",
+    "latest-linux.yml", "latest-mac.yml", "latest.yml",
   ]);
   assert.deepEqual(f.state.publications, [{ draft: false, make_latest: "false" }]);
   assert.equal(f.state.writes.filter((r) => r.method === "PATCH").length, 1);
@@ -216,7 +236,7 @@ test("a draft or a published answer of the other release kind stops the run", as
     assert.deepEqual(f.state.writes, []);
   }
   const resumed = await fixture(t, { tag: rc, release: rcDraft() });
-  assert.equal((await resumed.run()).assets, 6);
+  assert.equal((await resumed.run()).assets, ASSET_COUNT);
   const answered = await fixture(t, { tag: rc, publishAnswer: { prerelease: false } });
   await assert.rejects(answered.publish(), /not the verified release, published/);
 });

@@ -1,11 +1,14 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "../components/ui/button";
-import { Disclosure, Group, Note, Row, Status, Value } from "../components/settings-rows";
+import { Switch } from "../components/ui/switch";
+import { Disclosure, Group, Note, Row, Status, Value, type Tone } from "../components/settings-rows";
 import { useInterfaceTranslation } from "../i18n/client";
-import { formatDateTime } from "../i18n/format";
+import { formatDateTime, formatPercent } from "../i18n/format";
 import { requireInterfaceLanguage } from "../i18n/locale";
 import { diagnosticsInputOf, diagnosticsText, environmentTone, herdrLine, herdrProtocolText, shownIn } from "../settings";
 import { useShellStore } from "../store";
+import type { UpdateStatus } from "../host";
+import { checkedAgo, checkForUpdates, restartIntoUpdate, setPreviewUpdates, useUpdateStatus } from "../updates";
 
 /** What this hide is: its version, the Herdr behind it, and the details folded away unless something is wrong. */
 export function AboutTab() {
@@ -29,6 +32,7 @@ export function AboutTab() {
       <Row label={t("settings.hideName")}>
         <Value>{daemon ? daemon.version : t("settings.unavailable")}</Value>
       </Row>
+      <UpdateRows />
       <Row label="Herdr">
         <Status tone={line.tone} data-herdr-state={herdr?.state ?? "unavailable"}>
           {herdr?.state === "connected" && herdr.received_version ? `${line.text} · ${herdr.received_version}` : line.text}
@@ -86,6 +90,81 @@ export function AboutTab() {
       </Disclosure>
     </Group>
   );
+}
+
+/**
+ * This app's update and its preview switch (PRD auto-update D-20, B25-B28):
+ * the one place a check, a download or a failure shows. Only the desktop app
+ * has them; a browser tab and the phone draw neither row (B24).
+ */
+function UpdateRows() {
+  const { t, i18n } = useInterfaceTranslation();
+  const language = requireInterfaceLanguage(i18n.language);
+  const status = useUpdateStatus();
+  const idle = status?.phase.kind === "idle";
+  const [now, setNow] = useState(() => Date.now());
+  // "checked 10 min. ago" stays true while the sheet is open.
+  useEffect(() => {
+    if (!idle) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [idle]);
+  if (!status) return null;
+  const line = updateLine(status, t, (checkedAt) => checkedAgo(language, checkedAt, now), (percent) => formatPercent(language, percent));
+  return (
+    <>
+      <Row label={t("settings.update.label")} data-settings-update={status.phase.kind}>
+        <Status tone={line.tone}>{line.text}</Status>
+        {line.action ? (
+          <Button variant="secondary" size="sm" onClick={line.action === "restart" ? restartIntoUpdate : checkForUpdates} data-update-action={line.action}>
+            {t(line.action === "restart" ? "settings.update.restartNow" : line.action === "retry" ? "settings.update.checkAgain" : "settings.update.checkNow")}
+          </Button>
+        ) : null}
+      </Row>
+      <Row
+        label={
+          <span className="flex min-w-0 flex-col gap-xxs">
+            <span>{t("settings.update.prerelease")}</span>
+            <span className="text-body text-muted-foreground">{t("settings.update.prereleaseNote")}</span>
+          </span>
+        }
+      >
+        <Switch
+          checked={status.prerelease}
+          disabled={status.phase.kind === "off"}
+          onCheckedChange={setPreviewUpdates}
+          aria-label={t("settings.update.prerelease")}
+          data-update-prerelease={String(status.prerelease)}
+        />
+      </Row>
+    </>
+  );
+}
+
+type UpdateLine = { tone: Tone; text: string; action: "check" | "retry" | "restart" | null };
+
+/** What the update row says and offers in each phase. */
+function updateLine(status: UpdateStatus, t: ReturnType<typeof useInterfaceTranslation>["t"], ago: (checkedAt: number) => string, percent: (value: number) => string): UpdateLine {
+  const { phase } = status;
+  switch (phase.kind) {
+    case "off":
+      return phase.reason === "location"
+        ? { tone: "warn", text: t("settings.update.moveToApplications"), action: null }
+        : { tone: "muted", text: t("settings.update.development"), action: null };
+    case "idle":
+      return phase.checkedAt === null
+        ? { tone: "muted", text: t("settings.update.notChecked"), action: "check" }
+        : { tone: "ok", text: t("settings.update.latest", { when: ago(phase.checkedAt) }), action: "check" };
+    case "checking":
+      return { tone: "pending", text: t("settings.update.checking"), action: null };
+    case "downloading":
+      return { tone: "pending", text: t("settings.update.downloading", { version: phase.version, percent: percent(phase.percent) }), action: null };
+    case "ready":
+      return { tone: "local", text: t(status.installOnQuit ? "settings.update.readyOnQuit" : "settings.update.readyOnRestart", { version: phase.version }), action: "restart" };
+    case "failed":
+      return { tone: "error", text: t(phase.stage === "check" ? "settings.update.checkFailed" : "settings.update.downloadFailed"), action: "retry" };
+  }
 }
 
 function DiagnosticList() {

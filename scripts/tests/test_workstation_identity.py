@@ -85,6 +85,22 @@ class WorkstationIdentityTests(unittest.TestCase):
             self.tracked("contact.txt", value)
             self.assertEqual(self.classes(self.check()), ["contact_email"])
 
+    def test_only_a_registry_deprecation_notice_in_the_lockfile_may_name_its_author(self):
+        author = "package-author" + "@" + "mail.vendor.com"
+        notice = "  glob@7.2.3:\n    deprecated: Old versions are unsupported, contact " + author + "\n"
+        self.tracked("pnpm-lock.yaml", notice)
+        for scope in ("checkout", "index"):
+            self.assertEqual(self.check(scope).returncode, 0)
+        # Anywhere else in the lockfile, or the same line in another file, is still private.
+        for path, contents in (("pnpm-lock.yaml", notice + "  author: " + author + "\n"),
+                               ("web/pnpm-lock.yaml", notice), ("notes.yaml", notice)):
+            self.git("rm", "-q", "--cached", "-r", "--ignore-unmatch", ".")
+            self.tracked(path, contents)
+            result = self.check()
+            self.assertEqual(self.classes(result), ["contact_email"], path)
+            self.assertNotIn(author, result.stdout + result.stderr)
+            (self.root / path).unlink()
+
     def test_contact_address_in_a_filename_is_redacted(self):
         address = "private-fixture-person" + "@" + "mail.vendor.com"
         self.tracked(address + ".txt", address)

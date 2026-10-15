@@ -1689,3 +1689,99 @@ fn the_process_holding_a_folder_or_a_file_in_it_is_listed_with_its_id() {
     drop(handle);
     assert!(!listed(&folder));
 }
+
+#[test]
+#[allow(clippy::disallowed_methods)] // a child process the test kills later: it sleeps to stay alive
+fn idle_role() {
+    if std::env::var(ROLE).as_deref() != Ok("idle") {
+        return;
+    }
+    println!("READY");
+    thread::sleep(Duration::from_secs(60));
+}
+
+/// Waits until nothing holds a file under `folder`: Windows unmaps a program
+/// and a scanner lets a new file go a moment later, with no event to wait on.
+#[cfg(windows)]
+#[allow(clippy::disallowed_methods)] // the kernel's release has no event; this polls it, bounded
+fn until_free(folder: &Path) {
+    use hide_platform::fs::in_use::first_in_use;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while let Some(held) = first_in_use(folder).unwrap() {
+        assert!(
+            Instant::now() < deadline,
+            "{} is still held",
+            held.display()
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// A folder whose files nothing holds is free to remove, on every system.
+#[test]
+fn a_folder_nothing_holds_is_not_in_use() {
+    use hide_platform::fs::in_use::first_in_use;
+    let sandbox = folder();
+    fs::create_dir(sandbox.path().join("inner")).unwrap();
+    fs::write(sandbox.path().join("inner").join("file.txt"), "file").unwrap();
+    assert_eq!(first_in_use(sandbox.path()).unwrap(), None);
+    assert!(first_in_use(&sandbox.path().join("missing")).is_err());
+}
+
+/// A program running from a folder holds it in use until it ends, though
+/// Windows maps the image without an open handle; a file opened without
+/// write sharing holds it too. The runtime copy's prune decides on this,
+/// since a rename of the folder does not see the program.
+#[cfg(windows)]
+#[test]
+fn a_program_running_from_a_folder_or_a_file_open_in_it_holds_it_in_use() {
+    use hide_platform::fs::in_use::first_in_use;
+    use std::os::windows::fs::OpenOptionsExt;
+    let sandbox = folder();
+    let program = sandbox.path().join("nested").join("program.exe");
+    fs::create_dir(program.parent().unwrap()).unwrap();
+    fs::copy(std::env::current_exe().unwrap(), &program).unwrap();
+    // A scanner may hold a new program for a moment after it is written.
+    until_free(sandbox.path());
+
+    let mut running = Killed(
+        Command::new(&program)
+            .args([
+                "--exact",
+                "fs::idle_role",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(ROLE, "idle")
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let stdout = running.0.stdout.take().unwrap();
+    let ready = BufReader::new(stdout)
+        .lines()
+        .map_while(Result::ok)
+        .any(|line| line.contains("READY"));
+    assert!(ready, "the program never started");
+    assert_eq!(first_in_use(sandbox.path()).unwrap(), Some(program.clone()));
+    // Why a rename is no test of use: the running program's folder moves.
+    let moved = sandbox.path().join("moved");
+    fs::rename(program.parent().unwrap(), &moved)
+        .expect("Windows renames a running program's folder");
+    fs::rename(&moved, program.parent().unwrap()).unwrap();
+    drop(running);
+    // The image is unmapped a moment after the process has ended.
+    until_free(sandbox.path());
+
+    let file = sandbox.path().join("open.txt");
+    fs::write(&file, "open").unwrap();
+    // FILE_SHARE_READ only.
+    let open = File::options()
+        .read(true)
+        .share_mode(1)
+        .open(&file)
+        .unwrap();
+    assert_eq!(first_in_use(sandbox.path()).unwrap(), Some(file));
+    drop(open);
+    assert_eq!(first_in_use(sandbox.path()).unwrap(), None);
+}

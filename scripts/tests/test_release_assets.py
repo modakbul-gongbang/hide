@@ -1,13 +1,11 @@
 """The #343 release contract rejects incomplete, mixed or published packages."""
+import base64
 import hashlib
-import io
 import json
 from pathlib import Path
 import subprocess
 import tempfile
-import tarfile
 import unittest
-import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -23,27 +21,44 @@ class ReleaseAssetsTest(unittest.TestCase):
         self.write_packages("v1.2.3")
 
     def write_packages(self, tag):
+        """D-35's set for one tag: each installer with its checksum, the three
+        update files naming each system's update files by sha512 and size, and
+        the two blockmaps. The bytes are fixtures; nothing is installed."""
         self.directory = Path(self.scratch.name) / f"packages-{tag}"
         self.directory.mkdir()
+        base = f"hide-{tag}"
         self.names = [
-            f"hide-{tag}-macos-arm64.zip",
-            f"hide-{tag}-windows-x64.zip",
-            f"hide-{tag}-linux-x64.tar.gz",
+            f"{base}-macos-arm64.dmg",
+            f"{base}-macos-arm64.zip",
+            f"{base}-windows-x64-setup.exe",
+            f"{base}-linux-x64.deb",
+            f"{base}-linux-x64.rpm",
         ]
         for name in self.names:
-            stream = io.BytesIO()
-            payload = f"fixture for {name}".encode()
-            if name.endswith(".zip"):
-                with zipfile.ZipFile(stream, "w") as archive:
-                    archive.writestr("fixture.txt", payload)
-            else:
-                with tarfile.open(fileobj=stream, mode="w:gz") as archive:
-                    entry = tarfile.TarInfo("fixture.txt")
-                    entry.size = len(payload)
-                    archive.addfile(entry, io.BytesIO(payload))
-            data = stream.getvalue()
+            data = f"fixture for {name}".encode()
             (self.directory / name).write_bytes(data)
             (self.directory / f"{name}.sha256").write_text(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
+        for name in [f"{base}-macos-arm64.zip.blockmap", f"{base}-windows-x64-setup.exe.blockmap"]:
+            (self.directory / name).write_bytes(b"blockmap fixture")
+        updates = {
+            "latest-mac.yml": [f"{base}-macos-arm64.zip", f"{base}-macos-arm64.dmg"],
+            "latest.yml": [f"{base}-windows-x64-setup.exe"],
+            "latest-linux.yml": [f"{base}-linux-x64.deb", f"{base}-linux-x64.rpm"],
+        }
+        for info, files in updates.items():
+            self.write_update_info(info, tag[1:], files)
+
+    def write_update_info(self, info, version, files):
+        """An update file in the shape electron-builder writes."""
+        lines = [f"version: {version}", "files:"]
+        digests = []
+        for name in files:
+            data = (self.directory / name).read_bytes()
+            digest = base64.b64encode(hashlib.sha512(data).digest()).decode()
+            digests.append(digest)
+            lines += [f"  - url: {name}", f"    sha512: {digest}", f"    size: {len(data)}"]
+        lines += [f"path: {files[0]}", f"sha512: {digests[0]}", "releaseDate: '2026-10-16T00:00:00.000Z'"]
+        (self.directory / info).write_text("\n".join(lines) + "\n")
 
     def check(self, tag="v1.2.3", release=None, pages=None):
         args = ["node", str(CHECK), tag, str(self.directory)]
@@ -56,8 +71,8 @@ class ReleaseAssetsTest(unittest.TestCase):
     def test_complete_same_version_packages_pass(self):
         self.assertEqual(self.check().returncode, 0)
 
-    def test_three_checksums_cannot_hide_a_missing_target(self):
-        name = self.names[1]
+    def test_checksums_cannot_hide_a_missing_target(self):
+        name = self.names[2]
         other = name.replace("windows", "other")
         (self.directory / name).rename(self.directory / other)
         checksum = self.directory / f"{name}.sha256"
@@ -68,6 +83,34 @@ class ReleaseAssetsTest(unittest.TestCase):
 
     def test_mixed_version_and_extra_assets_fail(self):
         (self.directory / "hide-v1.2.2-macos-arm64.zip").write_bytes(b"old")
+        self.assertNotEqual(self.check().returncode, 0)
+
+    def test_retired_archives_are_not_released(self):
+        for name in ["hide-v1.2.3-windows-x64.zip", "hide-v1.2.3-linux-x64.tar.gz"]:
+            with self.subTest(name=name):
+                (self.directory / name).write_bytes(b"old archive")
+                self.assertNotEqual(self.check().returncode, 0)
+                (self.directory / name).unlink()
+
+    def test_update_file_must_match_the_files_beside_it(self):
+        self.assertEqual(self.check().returncode, 0)
+        setup = self.directory / self.names[2]
+        setup.write_bytes(b"another installer")
+        (self.directory / f"{self.names[2]}.sha256").write_text(f"{hashlib.sha256(b'another installer').hexdigest()}  {self.names[2]}\n")
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("latest.yml", result.stderr)
+
+    def test_update_file_must_list_every_update_and_its_version(self):
+        self.write_update_info("latest-linux.yml", "1.2.3", [self.names[3]])
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not list", result.stderr)
+        self.write_update_info("latest-linux.yml", "1.2.2", [self.names[3], self.names[4]])
+        self.assertNotEqual(self.check().returncode, 0)
+        self.write_update_info("latest-linux.yml", "1.2.3", [self.names[3], self.names[4]])
+        self.assertEqual(self.check().returncode, 0)
+        self.write_update_info("latest-mac.yml", "1.2.3", [self.names[1], self.names[2]])
         self.assertNotEqual(self.check().returncode, 0)
 
     def test_corruption_and_wrong_checksum_filename_fail(self):
@@ -101,7 +144,7 @@ class ReleaseAssetsTest(unittest.TestCase):
         self.assertEqual(self.check("v0.4.0-rc.1").returncode, 0)
         self.assertNotEqual(self.check("v0.4.0").returncode, 0)
         draft = {"tag_name": "v0.4.0-rc.1", "draft": True, "prerelease": True,
-                 "assets": [{"name": "hide-v0.4.0-rc.1-macos-arm64.zip"}]}
+                 "assets": [{"name": "hide-v0.4.0-rc.1-macos-arm64.dmg"}]}
         self.assertEqual(self.check("v0.4.0-rc.1", release=draft).returncode, 0)
         draft["prerelease"] = False
         self.assertNotEqual(self.check("v0.4.0-rc.1", release=draft).returncode, 0)
@@ -119,7 +162,7 @@ class ReleaseAssetsTest(unittest.TestCase):
 
     def test_mixed_or_duplicate_existing_draft_assets_fail(self):
         draft = {"tag_name": "v1.2.3", "draft": True, "prerelease": False,
-                 "assets": [{"name": "hide-v1.2.2-windows-x64.zip"}]}
+                 "assets": [{"name": "hide-v1.2.2-windows-x64-setup.exe"}]}
         self.assertNotEqual(self.check(release=draft).returncode, 0)
         draft["assets"] = [{"name": self.names[0]}, {"name": self.names[0]}]
         self.assertNotEqual(self.check(release=draft).returncode, 0)
@@ -127,7 +170,7 @@ class ReleaseAssetsTest(unittest.TestCase):
     def test_late_page_draft_and_ambiguous_tags_cannot_bypass_inventory(self):
         old = {"tag_name": "v0.0.1", "draft": False, "prerelease": False, "assets": []}
         stale = {"tag_name": "v1.2.3", "draft": True, "prerelease": False,
-                 "assets": [{"name": "hide-v1.2.2-windows-x64.zip"}]}
+                 "assets": [{"name": "hide-v1.2.2-windows-x64-setup.exe"}]}
         self.assertNotEqual(self.check(pages=[[old], [old], [stale]]).returncode, 0)
         good = {**stale, "assets": []}
         self.assertNotEqual(self.check(pages=[[good], [good]]).returncode, 0)

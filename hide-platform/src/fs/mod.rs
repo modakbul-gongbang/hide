@@ -11,6 +11,7 @@
 pub mod atomic;
 pub mod holders;
 pub mod identity;
+pub mod in_use;
 pub mod link;
 pub mod lock;
 pub mod permissions;

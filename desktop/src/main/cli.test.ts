@@ -10,6 +10,7 @@ import {
   parseConnect,
   parseLoginPath,
   parseRememberedCli,
+  parseRuntimePrepare,
   parseStatus,
   rememberedCliPath,
   rememberedCliValue,
@@ -289,5 +290,20 @@ describe("the hide CLI's answers", () => {
     const command = loginPathCommand("/bin/sh");
     const answer = await new ChildRunner().run(command.file, command.args, 10_000);
     expect(parseLoginPath(answer.stdout)).toBeTruthy();
+  });
+});
+
+describe("parseRuntimePrepare", () => {
+  const dir = process.platform === "win32" ? "C:\\Users\\alice\\.hide\\runtime\\0.4.0-aaaaaaaaaaaa" : "/home/alice/.hide/runtime/0.4.0-aaaaaaaaaaaa";
+  it("reads the folder the runtime runs from", () => {
+    expect(parseRuntimePrepare(result(`${JSON.stringify({ ok: true, dir, copied: true, removed: [] })}\n`))).toEqual({ dir });
+  });
+  it("names why there is none, never falling back to a folder", () => {
+    expect(parseRuntimePrepare(result('{"ok":false,"reason":"not_packaged"}\n', { code: 1, stderr: "not from a desktop package" }))).toEqual({
+      failed: "unreadable answer (exit 1): not from a desktop package",
+    });
+    expect(parseRuntimePrepare(result('{"ok":true,"dir":"relative"}\n'))).toHaveProperty("failed");
+    expect(parseRuntimePrepare(result("", { timedOut: true }))).toEqual({ failed: "hide runtime prepare timed out" });
+    expect(parseRuntimePrepare(result("", { spawnError: "ENOENT" }))).toEqual({ failed: "ENOENT" });
   });
 });

@@ -246,7 +246,7 @@
               <p class="label">Get hide</p>
               <h3 class="download-title">Choose your setup.</h3>
               <p>Apple Silicon on macOS 14 or later, Windows x64, or Linux x64. Install your agent CLI and sign in before starting it from hide.</p>
-              <p class="quiet">macOS builds are ad-hoc signed and not notarized. Windows and Linux packages are unsigned. Check the SHA-256 file before installing, then follow the platform's first-launch steps.</p>
+              <p class="quiet">The macOS app is signed and notarized. The Windows installer and the Linux packages are unsigned: check the SHA-256 file before installing, then follow the platform's first-launch steps. hide updates itself after that.</p>
               <a class="text-link" href="https://github.com/with-hide/hide/blob/main/docs/INSTALL.md">Installation &amp; platform notes <span aria-hidden="true">↗</span></a>
             </div>
 
@@ -278,8 +278,10 @@
             <div id="validated-download" hidden>
               <p class="release-version" id="release-version"></p>
               <div class="actions download-actions">
-                <a class="button primary" id="archive-link">Download archive <span aria-hidden="true">↗</span></a>
+                <a class="button primary" id="archive-link">Download installer <span aria-hidden="true">↗</span></a>
                 <a class="text-link" id="checksum-link">SHA-256 checksum</a>
+                <a class="button secondary" id="second-link" hidden>Download <span aria-hidden="true">↗</span></a>
+                <a class="text-link" id="second-checksum-link" hidden>SHA-256 checksum</a>
               </div>
               <a class="text-link version-link" id="version-link">Notes for this version <span aria-hidden="true">↗</span></a>
             </div>

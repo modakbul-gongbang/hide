@@ -21,7 +21,7 @@ import { agentCycle, agentOrigin, areaCycle, focusedCycleScope, focusedSurface, 
 import type { Actions } from "./actions";
 import { focusBrowserDisplay } from "./browserViews";
 import { advanceHint, clearHint, holdModifiers, idleHint, modifiersOf, NO_MODIFIERS, revealedFamily, type HintState } from "./hints";
-import { browserBridge, hostBridge, hostKind, keySystem, SETUP_COMMAND } from "./host";
+import { browserBridge, CHECK_UPDATES_COMMAND, hostBridge, hostKind, keySystem, SETUP_COMMAND } from "./host";
 import { useSetupWalk } from "./FirstRunWizard";
 import { agentListOrder, numberedAgents, numberedTabs } from "./numbering";
 import { availableEntries, currentEntry, expectPane, expectSurface, observeEntries, observePane, observeProject, paneItem, panelItem, projectItem, reconcileCycle, recentEntries, recentProjectOrder, type CycleItem } from "./recent";
@@ -520,6 +520,11 @@ export function installKeyboard(actions: Actions): () => void {
     // Help > Set up Hide, the host's own item outside the registry (PRD first-run-onboarding B45).
     if (id === SETUP_COMMAND) {
       useSetupWalk.getState().open();
+      return;
+    }
+    // Check for Updates…: the host has started the check; its outcome shows in About (PRD auto-update D-20).
+    if (id === CHECK_UPDATES_COMMAND) {
+      ui().openSettings("about");
       return;
     }
     const command = REGISTRY.find((row) => row.id === id);

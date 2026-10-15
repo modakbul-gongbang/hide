@@ -2,23 +2,26 @@
 // of that system: no machine of either system is at hand to try a package on
 // (operator decision 2026-10-03).
 //
-// Usage: node desktop/scripts/smoke-package.mjs <archive>
+// Usage: node desktop/scripts/smoke-package.mjs <installed app folder>
 //
-// It checks the archive against its `.sha256`, unpacks it into a new
-// temporary folder (Windows with Expand-Archive, as a user's Extract All
-// reads a zip, rather than the tar that wrote it), and from the unpacked
-// folder: Herdr reports the pinned version, the daemon answers in its device
-// node role (`hided node --version`), the hook helper starts, and the bundled
-// `hide connect` starts the bundled daemon, which serves the web shell it
-// embeds, installs the CLI and holds both installed agents for the first-run choice
-// (their files untouched), installs both hooks once that choice is answered
-// over the daemon's socket, and is replaced by a second
-// package fixture with a changed daemon hash, before `hide stop` ends it. Every process runs with a private home
-// and state folder, so none reaches a daemon or Herdr of the runner's account.
+// The folder is where the system's installer put the app (PRD auto-update
+// D-32): %LOCALAPPDATA%\Programs\hide after the Windows installer, /opt/hide
+// after the deb or the rpm. From it: Herdr reports the pinned version, the
+// daemon answers in its device node role (`hided node --version`), the hook
+// helper starts, `hide runtime prepare` names where the runtime runs (on
+// Windows a copy under the private home, outside the install folder; D-10),
+// and that runtime's `hide connect` starts its daemon, which serves the web
+// shell it embeds, installs the CLI and holds both installed agents for the
+// first-run choice (their files untouched), installs both hooks once that
+// choice is answered over the daemon's socket, and is replaced by a second
+// package fixture with a changed daemon hash, before `hide stop` ends it; on
+// Windows the next prepare then removes the first build's copy (D-11). Every
+// process runs with a private home and state folder, so none reaches a daemon
+// or Herdr of the runner's account.
 //
 // macOS uses the isolated packaged-app e2e lane instead.
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -32,8 +35,8 @@ const label = LABELS[process.platform];
 if (!label) throw new Error(`smoke-package checks Windows and Linux packages only, not ${process.platform}`);
 const exe = process.platform === "win32" ? ".exe" : "";
 
-const archive = process.argv[2];
-if (!archive || process.argv.length !== 3) throw new Error("usage: node desktop/scripts/smoke-package.mjs <archive>");
+const installed = process.argv[2] ? path.resolve(process.argv[2]) : null;
+if (!installed || process.argv.length !== 3) throw new Error("usage: node desktop/scripts/smoke-package.mjs <installed app folder>");
 
 /** One named check: it passes, or the run stops with its name. */
 function check(name, body) {
@@ -58,51 +61,44 @@ async function daemonsEnded(pids) {
   if (running.length > 0) throw new Error(`hided still running 10 seconds after hide stop (its files are in the scratch folder): pid ${running.join(", ")}`);
 }
 
+/**
+ * Copies a package folder file by file, links as links. fs.cpSync left the
+ * installed Windows package's resources/app.asar behind on the package lane,
+ * so the copy is spelled out and every step that fails throws.
+ */
+function copyTree(source, target) {
+  fs.mkdirSync(target, { recursive: true });
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    const from = path.join(source, entry.name);
+    const to = path.join(target, entry.name);
+    if (entry.isSymbolicLink()) fs.symlinkSync(fs.readlinkSync(from), to);
+    else if (entry.isDirectory()) copyTree(from, to);
+    else if (entry.isFile()) {
+      fs.copyFileSync(from, to);
+      fs.chmodSync(to, fs.statSync(from).mode & 0o7777);
+    } else throw new Error(`${from} is neither a file, a folder nor a link`);
+  }
+}
+
 /** A program's stdout; a non-zero exit, a timeout or a spawn failure throws with its stderr. */
 const output = (file, args, env) => execFileSync(file, args, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 }).trim();
-
-check("checksum", () => {
-  const [digest, name] = fs.readFileSync(`${archive}.sha256`, "utf8").trim().split(/\s+/);
-  const actual = createHash("sha256").update(fs.readFileSync(archive)).digest("hex");
-  if (name !== path.basename(archive)) throw new Error(`the checksum names ${name}, not ${path.basename(archive)}`);
-  if (actual !== digest) throw new Error(`the archive's SHA-256 is ${actual}, the checksum says ${digest}`);
-});
 
 // Windows TEMP may use an 8.3 alias. Every fixture path, including the
 // expected hook command, starts from the native canonical spelling.
 const scratch = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "hide-smoke-")));
-const unpacked = path.join(scratch, "unpacked");
 const home = path.join(scratch, "home");
 // Keep the state under its selected HOME authority, as the shipped default
 // does. An unrelated external override would require authenticating the
 // system drive namespace before the kit may treat a missing ledger as empty.
 const state = path.join(home, ".hide", "state");
 
-/** Each fixture starts from the actual archive, as an operator's extraction does. */
-function unpackInto(destination) {
-  fs.mkdirSync(destination);
-  if (process.platform === "win32") {
-    execFileSync("pwsh", ["-NoProfile", "-Command", "Expand-Archive -LiteralPath $env:SMOKE_ARCHIVE -DestinationPath $env:SMOKE_DESTINATION"], {
-      env: { ...process.env, SMOKE_ARCHIVE: path.resolve(archive), SMOKE_DESTINATION: destination },
-      stdio: "inherit",
-    });
-  } else {
-    execFileSync("tar", ["-xzf", path.resolve(archive), "-C", destination], { stdio: "inherit" });
-  }
-  const top = fs.readdirSync(destination);
-  if (top.length !== 1) throw new Error(`the archive holds ${top.length} top-level entries, not one folder: ${top.join(", ")}`);
-  return top[0];
-}
-
 try {
   fs.mkdirSync(home);
-  check("unpack", () => unpackInto(unpacked));
-
-  const app = path.join(unpacked, fs.readdirSync(unpacked)[0]);
+  const app = installed;
   let resources = path.join(app, "resources");
   const bundled = (name) => path.join(resources, `${name}${exe}`);
-  // Cleanup always uses the known complete first package, even if preparing
-  // or connecting the upgrade fails before its CLI can run.
+  // Cleanup always uses the installed package's CLI, even if preparing or
+  // connecting the upgrade fails before its CLI can run.
   const controlCli = bundled("hide");
 
   const electron = path.join(app, `hide${exe}`);
@@ -170,16 +166,59 @@ try {
     JSON.parse(output(bundled("hide-agent-hooks"), ["doctor", "--json"], isolated));
   });
 
+  /**
+   * Where the runtime of the package at `cli` runs, as the desktop host asks
+   * before it starts anything: a copy under the private home's
+   * `.hide/runtime` on Windows, the installed resources folder elsewhere.
+   */
+  function prepareRuntime(cli) {
+    const answer = runtimePrepare(cli);
+    if (answer.ok !== true) throw new Error(JSON.stringify(answer));
+    const runtimeRoot = path.join(home, ".hide", "runtime");
+    if (process.platform === "win32" ? path.dirname(answer.dir) !== runtimeRoot : answer.dir !== path.dirname(cli)) {
+      throw new Error(`the runtime runs from ${answer.dir}`);
+    }
+    if (process.platform === "win32" && answer.dir.toLowerCase().startsWith(app.toLowerCase())) throw new Error("the runtime copy is under the install folder");
+    return answer;
+  }
+  /**
+   * `hide runtime prepare`'s answer. What it kept (in use) or could not
+   * remove reaches only its stderr, as records the host logs; they are
+   * printed so a run shows what each prepare did with the other copies.
+   */
+  function runtimePrepare(cli) {
+    const run = spawnSync(cli, ["runtime", "prepare"], { env: isolated, encoding: "utf8", timeout: 30_000 });
+    if (run.error || run.status !== 0) throw new Error(`hide runtime prepare: ${run.error?.message ?? `exit ${run.status}`}: ${run.stderr}`);
+    for (const line of run.stderr.split(/\r?\n/).filter(Boolean)) console.log(`  runtime prepare: ${line}`);
+    return JSON.parse(run.stdout);
+  }
+
+  /** The processes whose program lies under `dir`, as Windows names them. */
+  function runningFrom(dir) {
+    if (process.platform !== "win32") return "";
+    const script = `Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith('${dir.replace(/'/g, "''")}', 'OrdinalIgnoreCase') } | ForEach-Object { "$($_.Id) $($_.Path)" }`;
+    return execFileSync("pwsh", ["-NoProfile", "-Command", script], { encoding: "utf8" }).trim() || "none";
+  }
+
+  let firstCopy = null;
+  check("hide runtime prepare", () => {
+    const answer = prepareRuntime(controlCli);
+    if (process.platform === "win32") firstCopy = answer.dir;
+    resources = answer.dir;
+    return `${answer.dir}${answer.copied ? " (copied)" : ""}`;
+  });
+
   // Prepare the complete second package before either daemon holds an
   // executable open. PE and ELF permit an overlay after the image; this
   // changes the production build hash without a second release build.
   const upgraded = path.join(scratch, "new 한글 package");
   check("prepare a second complete package", () => {
-    const secondUnpacked = path.join(scratch, "upgrade-unpacked");
-    const folder = unpackInto(secondUnpacked);
-    fs.renameSync(path.join(secondUnpacked, folder), upgraded);
+    copyTree(app, upgraded);
     for (const file of ["app.asar", ...["hide", "hided", "hide-agent-hooks", "herdr"].map((name) => `${name}${exe}`)]) {
-      if (!fs.statSync(path.join(upgraded, "resources", file), { throwIfNoEntry: false })?.isFile()) throw new Error(`second package is missing resources/${file}`);
+      if (!fs.statSync(path.join(upgraded, "resources", file), { throwIfNoEntry: false })?.isFile()) {
+        const holds = (dir) => (fs.existsSync(path.join(dir, "resources")) ? fs.readdirSync(path.join(dir, "resources")).join(", ") : "no resources folder");
+        throw new Error(`second package is missing resources/${file}; its resources hold: ${holds(upgraded)}; the installed package's hold: ${holds(app)}`);
+      }
     }
     fs.appendFileSync(path.join(upgraded, "resources", `hided${exe}`), "\nHide package smoke next-build fixture\n");
   });
@@ -197,6 +236,18 @@ try {
       if (exited && typeof error.stdout === "string" && error.stdout.trim().startsWith("{")) return JSON.parse(error.stdout);
       throw new Error(`hide ${args.join(" ")}: ${error?.stderr || error?.message || error}`);
     }
+  }
+
+  /**
+   * Why a daemon `hide connect` started ended before it answered: `hide
+   * connect` sends its stderr nowhere, so the bundled daemon runs once more
+   * on its own, bounded, and its stderr and the newest log lines are named.
+   */
+  function whyDaemonEnded() {
+    const alone = spawnSync(bundled("hided"), [], { env: isolated, encoding: "utf8", timeout: 5_000 });
+    const ended = alone.error ? alone.error.message : alone.signal ? `still running after 5 s (${alone.signal})` : `exit ${alone.status}`;
+    const lines = fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").slice(-5).join("\n") : "(no log)";
+    return `hided alone: ${ended}; stderr: ${alone.stderr?.trim() || "(none)"}\nnewest log lines:\n${lines}`;
   }
 
   /** A GET to the daemon, its failure named by the path asked. */
@@ -318,7 +369,7 @@ try {
     connected = hide(["connect"]);
     if (connected.ok === true) daemonPids.add(connected.pid);
     check("hide connect starts the bundled daemon", () => {
-      if (connected.ok !== true) throw new Error(JSON.stringify(connected));
+      if (connected.ok !== true) throw new Error(`${JSON.stringify(connected)}${connected.reason === "start_failed" ? `\n${whyDaemonEnded()}` : ""}`);
       return `pid ${connected.pid}, port ${connected.port}`;
     });
     await kitInstalled(0, "held");
@@ -343,7 +394,11 @@ try {
       if (asset.status !== 200) throw new Error(`${script} answered ${asset.status}`);
       return script;
     });
-    resources = path.join(upgraded, "resources");
+    check("the second package's runtime", () => {
+      const answer = prepareRuntime(path.join(upgraded, "resources", `hide${exe}`));
+      if (process.platform === "win32" && answer.dir === firstCopy) throw new Error("a changed build reused the first build's copy");
+      resources = answer.dir;
+    });
     const beforeUpgrade = fs.statSync(log).size;
     const previous = connected;
     connected = hide(["connect"]);
@@ -395,6 +450,16 @@ try {
       console.error(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;
     }
+  }
+  // Nothing runs from the first build's copy now, so the next start removes it.
+  if (firstCopy) {
+    check("a later start removes the copy nothing runs from", () => {
+      const answer = runtimePrepare(path.join(upgraded, "resources", `hide${exe}`));
+      if (fs.existsSync(firstCopy) || !answer.removed.includes(path.basename(firstCopy))) {
+        const held = fs.existsSync(firstCopy) ? fs.readdirSync(firstCopy).join(", ") : "gone";
+        throw new Error(`${firstCopy} is still there: ${JSON.stringify(answer)}; it holds: ${held}; running from it: ${runningFrom(firstCopy)}; the runtime folder holds: ${fs.readdirSync(path.dirname(firstCopy)).join(", ")}`);
+      }
+    });
   }
 } catch (error) {
   console.error(error);

@@ -69,7 +69,10 @@ use crate::index::IndexService;
 use crate::server::AppState;
 use crate::state_file::{DaemonState, acquire_lock, forget_daemon, new_token, write_state};
 
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The release this build ships as (`HIDE_VERSION` when a package was
+/// built, else the crate's own), which the shell shows as the app's version
+/// (PRD auto-update D-26) rather than the crate number every build shares.
+pub const VERSION: &str = env!("HIDE_BUILD_VERSION");
 
 /// The name of the machine this daemon runs on, which Settings names as the
 /// owner of every value the daemon stores (PRD S5.5 B35); `None` when the

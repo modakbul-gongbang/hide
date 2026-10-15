@@ -1829,9 +1829,13 @@ The core keeps one value of each hint, so with several pages open the last page 
 
 ## Help menu
 
-Web owner: `web/src/components/help-menu.tsx`, `diagnosticsInputOf` in `web/src/settings.ts` (PRD sidebar-titlebar-refresh D-11, D-12).
+Web owner: `web/src/components/help-menu.tsx`, `diagnosticsInputOf` in `web/src/settings.ts`, `web/src/updates.ts` (PRD sidebar-titlebar-refresh D-11, D-12; PRD auto-update D-03, D-21).
 
 The footer's `?` opens the Help menu above it: `Keyboard shortcuts` with its chord, which opens the shortcut sheet; `Copy diagnostics`, which puts About's diagnostics text on the clipboard and says `Copied` in place, or the failure when the clipboard refuses, keeping the menu open either way; `Report an issue`, which opens the repository's new-issue page in the default browser; then, under a separator, the `hide <version>` line in mono, which takes no press.
+The version is the release the app was built as, such as `0.4.0`, and a development build's own version, such as `0.1.0-main.<commit>`.
+When the desktop app has an update ready ([INSTALL.md](INSTALL.md#update)), a dot in the primary color sits on the `?`, whose name and tooltip become `Help · Update ready`, and the last line becomes a menu item, `hide <new version> ready` with `Restart` at its end, which installs the update and reopens the app.
+Nothing else of an update reaches the footer or this menu: looking, downloading and a failure show only in Settings > About.
+A browser tab and the phone have no dot and no update line.
 
 ## Search keyboard navigation
 
@@ -2058,6 +2062,22 @@ Hide has no GitHub sign-in of its own, so there is no connect or reconnect actio
 About shows the `hide` version and Herdr as `Connected · <version>` or its failure in one line, and a closed Details disclosure holds the rest: the process, lifetime, state file, page connection, Herdr's runtime message, version, protocol, socket and binary paths, the environment rows, the recent diagnostics and Copy diagnostics (PRD settings-left-nav B9).
 The Protocol row shows one number while the protocol Hide expects and the one Herdr answered are the same, and `<received> (expects <expected>)` when they differ.
 Version and Protocol come from the answer to `session.snapshot` the core last accepted, so a Herdr that is connected never shows a missing version or protocol.
+
+In the desktop app, an Updates row and a preview switch sit under the `hide` version (web owner `AboutTab.tsx`, `web/src/updates.ts`; host owner `desktop/src/main/updater.ts`; PRD auto-update D-20 to D-22, B25 to B28):
+
+| State | The row says | Action |
+| --- | --- | --- |
+| Up to date | `Up to date · checked <how long ago>`, which moves with the clock while About is open, or `Not checked yet` | `Check now` |
+| Looking | `Checking…` | none |
+| Downloading | `Downloading <version> · <percent>` | none |
+| Ready | `<version> ready · installs when you quit`, or on Linux `<version> ready · restart to install` | `Restart now` |
+| Failed | `Couldn't check for updates` or `Couldn't update`, with the reason in the app's log | `Check again` |
+| Off | `Updates are off in development builds`, or on macOS `Move hide to Applications to get updates` for an app on the disk image or in a folder it cannot write | none |
+
+A ready update stays ready while a later check looks; a newer release that check finds is downloaded in its place, so the row shows that download and the dot and Help's line return with the newer version once it is ready, since the updater keeps one pending update.
+`Get preview versions (rc)`, with a note that turning it off never goes back to a lower version, is off at first, kept in the desktop profile, and cannot be turned while updates are off.
+`Check for updates…` in the app menu (macOS) or the Help menu (Windows, Linux) opens About and looks at once.
+A browser tab and the phone show neither row.
 
 ### Language
 

@@ -247,6 +247,21 @@ pub fn legacy_helper_root(home: &Path) -> PathBuf {
     expand_home(LEGACY_HELPER_ROOT, home)
 }
 
+/// The folder each Windows package build's runtime copy sits in (PRD
+/// auto-update D-10): outside the install folder, whose processes the
+/// installer stops and whose running files Windows cannot replace.
+pub const RUNTIME_ROOT: &str = "runtime";
+
+pub fn runtime_root(home: &Path) -> PathBuf {
+    hide_home(home).join(RUNTIME_ROOT)
+}
+
+/// One build's runtime copy; `build` is `<version>-<hash prefix>`
+/// (`crate::runtime::build_name`).
+pub fn runtime_dir(home: &Path, build: &str) -> PathBuf {
+    runtime_root(home).join(build)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

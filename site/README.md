@@ -31,19 +31,21 @@ The browser reads the unauthenticated GitHub `releases/latest` API for `with-hid
 It requests no credentials, permits one request at a time, and cancels a request after ten seconds or when leaving the page.
 There is no polling or persistent release cache.
 Only a release with explicit `draft: false`, `prerelease: false`, a stable `v<major>.<minor>.<patch>` tag and that tag's exact repository release URL is eligible.
-All three archives below and their individual `.sha256` sidecars must exist exactly once, be uploaded, have a positive integer size, and have exact repository download URLs for the same release tag.
+All four installers below and their individual `.sha256` sidecars must exist exactly once, be uploaded, have a positive integer size, and have exact repository download URLs for the same release tag.
 
-| Setup | Required archive |
+| Setup | Required installers |
 | --- | --- |
-| macOS, Apple Silicon | `hide-v<version>-macos-arm64.zip` |
-| Windows, x64 | `hide-v<version>-windows-x64.zip` |
-| Linux, x64 | `hide-v<version>-linux-x64.tar.gz` |
+| macOS, Apple Silicon | `hide-v<version>-macos-arm64.dmg` |
+| Windows, x64 | `hide-v<version>-windows-x64-setup.exe` |
+| Linux, x64 | `hide-v<version>-linux-x64.deb` and `hide-v<version>-linux-x64.rpm` |
 
 Any incomplete pair withholds downloads for every platform.
+Linux shows both packages, the `.deb` first, each with its own checksum.
+The app updates itself from the release's update files afterwards, so the page offers only the installers ([INSTALL.md](../docs/INSTALL.md)).
 The browser's OS suggestion is only a hint; the visitor can change it and must choose a processor.
-Unsupported combinations offer no archive.
-The archive, checksum and version-specific release links appear together only after validation and a supported selection.
-The site links the published checksum for the visitor to verify; it does not download and cryptographically verify the archive itself.
+Unsupported combinations offer no installer.
+The installer, checksum and version-specific release links appear together only after validation and a supported selection.
+The site links the published checksum for the visitor to verify; it does not download and cryptographically verify the installer itself.
 API errors, timeouts, invalid JSON, no public release and ineligible releases leave useful GitHub Releases and source-install links available.
 The same links remain usable without JavaScript.
 Browser QA should simulate GitHub responses at that external boundary for ready, incomplete, draft, loading, rate-limit and network-error cases, without changing the shipped source or following test download URLs.

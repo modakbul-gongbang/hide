@@ -87,11 +87,13 @@ Download the package for your system from the [latest release](https://github.co
 
 | System | Package | First launch |
 | --- | --- | --- |
-| macOS 14+, Apple Silicon | `hide-v<version>-macos-arm64.zip` | Opens like any app; v0.3.0 and earlier need Control-click, **Open** once |
-| Windows x64 | `hide-v<version>-windows-x64.zip` | Unsigned: SmartScreen asks once, **More info**, **Run anyway** |
-| Linux x64 | `hide-v<version>-linux-x64.tar.gz` | Unpack and run `hide-linux-x64/hide`; nothing installs system-wide |
+| macOS 14+, Apple Silicon | `hide-v<version>-macos-arm64.dmg` | Drag hide to Applications; it opens like any app |
+| Windows x64 | `hide-v<version>-windows-x64-setup.exe` | Installs for you only; unsigned, so SmartScreen asks once: **More info**, **Run anyway** |
+| Debian, Ubuntu (x64) | `hide-v<version>-linux-x64.deb` | `sudo apt install ./hide-v<version>-linux-x64.deb`, then hide is in the app menu |
+| Fedora and other rpm systems (x64) | `hide-v<version>-linux-x64.rpm` | `sudo dnf install ./hide-v<version>-linux-x64.rpm`, then hide is in the app menu |
 
-Check the archive against its `.sha256` file before you open it.
+Check the installer against its `.sha256` file before you open it.
+After that one install, hide updates itself.
 Install and sign in to the agent CLIs you want hide to start; hide never asks for their credentials.
 hide brings its own [Herdr](https://herdr.dev), and when a Herdr server is already running it opens on top of it as it is.
 
@@ -111,7 +113,7 @@ pnpm install --frozen-lockfile
 HIDE_VERSION=0.0.0-local pnpm --dir desktop package
 ```
 
-On macOS this writes an ad-hoc signed `hide.app`, a versioned zip and its SHA-256 file under `desktop/out/`; install it with:
+On macOS this writes an ad-hoc signed `hide.app` under `desktop/out/`, and the dmg, the zip the updater reads, their SHA-256 files and the update file under `desktop/out/release/`; install the app with:
 
 ```sh
 sudo /usr/bin/ditto --rsrc --extattr --qtn desktop/out/hide-darwin-arm64/hide.app /Applications/hide.app

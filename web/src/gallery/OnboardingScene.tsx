@@ -11,7 +11,7 @@ import { useLayoutEffect, useMemo, useState } from "react";
 import { createActions } from "../actions";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { FirstRunWizard, useSetupWalk } from "../FirstRunWizard";
-import type { HostBridge, NotificationPermission } from "../host";
+import type { HostBridge, NotificationPermission, UpdateStatus } from "../host";
 import type { MobileState } from "../mobileSettings";
 import { clientI18n } from "../i18n/translator";
 import { OverviewPage } from "../Overview";
@@ -63,6 +63,18 @@ export type OnboardingSceneParams = {
   scale: number;
   /** The Settings page a `settings-*` state opens (PRD settings-left-nav); Notifications unless the query names another. */
   page?: SettingsTab;
+  /** This app's update as the host reports it (PRD auto-update), for About's row and the Help dot; none when absent. */
+  update?: UpdateStatus;
+};
+
+/** `update=<state>` in the query: the states About's update row draws (PRD auto-update D-20). */
+const SCENE_UPDATES: Record<string, UpdateStatus> = {
+  idle: { phase: { kind: "idle", checkedAt: Date.now() - 12 * 60_000 }, prerelease: false, installOnQuit: true },
+  downloading: { phase: { kind: "downloading", version: "0.5.0", percent: 42 }, prerelease: false, installOnQuit: true },
+  ready: { phase: { kind: "ready", version: "0.5.0" }, prerelease: false, installOnQuit: true },
+  "ready-linux": { phase: { kind: "ready", version: "0.5.0" }, prerelease: true, installOnQuit: false },
+  failed: { phase: { kind: "failed", stage: "download" }, prerelease: false, installOnQuit: true },
+  location: { phase: { kind: "off", reason: "location" }, prerelease: false, installOnQuit: true },
 };
 
 export function onboardingSceneParams(params: URLSearchParams): OnboardingSceneParams {
@@ -77,7 +89,9 @@ export function onboardingSceneParams(params: URLSearchParams): OnboardingSceneP
   if (!(scale > 0)) throw new Error(`Scene scale must be a positive number, got ${params.get("scale")}`);
   const page = params.get("page") ?? "notifications";
   if (!SETTINGS_GROUPS.some((group) => group.tabs.includes(page as SettingsTab)) && page !== "about") throw new Error(`Unknown Settings page ${page}`);
-  return { theme: params.get("theme") === "light" ? "light" : "dark", state: state as OnboardingState, system, language, scale, page: page as SettingsTab };
+  const update = params.get("update");
+  if (update !== null && !(update in SCENE_UPDATES)) throw new Error(`Unknown update state ${update}`);
+  return { theme: params.get("theme") === "light" ? "light" : "dark", state: state as OnboardingState, system, language, scale, page: page as SettingsTab, update: update === null ? undefined : SCENE_UPDATES[update] };
 }
 
 const HOME = "/Users/me";
@@ -147,7 +161,7 @@ function permissionOf(state: OnboardingState, system: OnboardingSystem): Notific
 }
 
 /** The desktop host as far as these screens ask it; nothing is shown or opened. */
-function sceneHost(system: OnboardingSystem, permission: NotificationPermission): HostBridge {
+function sceneHost(system: OnboardingSystem, permission: NotificationPermission, update: UpdateStatus | undefined): HostBridge {
   const none = () => () => undefined;
   return {
     kind: "electron",
@@ -166,6 +180,15 @@ function sceneHost(system: OnboardingSystem, permission: NotificationPermission)
     onWindowChrome: () => () => undefined, editorAvailable: async () => false, openInEditor: () => undefined, openNotificationSettings: () => undefined,
     reportBadge: () => undefined,
     browser: { sync: () => undefined, endCycle: () => undefined, capture: async () => null, command: () => undefined, onEvent: none },
+    updates: {
+      onStatus: (listener) => {
+        if (update) listener(update);
+        return () => undefined;
+      },
+      check: () => undefined,
+      restart: () => undefined,
+      setPrerelease: () => undefined,
+    },
   };
 }
 
@@ -202,14 +225,14 @@ function sceneRest(state: OnboardingState, system: OnboardingSystem): SnapshotRe
   } as unknown as SnapshotRest;
 }
 
-export function OnboardingScene({ theme, state, system, language, scale, page = "notifications" }: OnboardingSceneParams) {
+export function OnboardingScene({ theme, state, system, language, scale, page = "notifications", update }: OnboardingSceneParams) {
   const actions = useMemo(() => createActions(() => true), []);
   // The host and the stores are in place before the first render, since the wizard asks the host which one it is in.
   useMemo(() => {
-    window.hideHost = sceneHost(system, permissionOf(state, system));
+    window.hideHost = sceneHost(system, permissionOf(state, system), update);
     useShellStore.setState({ connection: "live", rest: sceneRest(state, system), agents: [], revision: 1, mobile: SCENE_MOBILE } as never);
     useUiStore.setState({ screen: { kind: "main" }, overviewOpen: false } as never);
-  }, [state, system]);
+  }, [state, system, update]);
 
   // Set once the presses below have landed and a frame has drawn them, so a capture waits for it.
   const [ready, setReady] = useState(false);

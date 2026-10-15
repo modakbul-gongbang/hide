@@ -1,10 +1,11 @@
-// The packaged app as an operator unpacks it, with its window: its own
-// Electron host, the `hide` CLI and daemon in its resources, and the web
-// shell that daemon embeds, against a private HOME, state and Herdr. The
-// package lane runs it on Windows, where `smoke-package.mjs` starts the same
-// package without a window and no other job draws the packaged one.
-// HIDE_E2E_PACKAGED_APP names the packaged executable (`hide.exe` at the top
-// of the unpacked folder on Windows, `hide.app/Contents/MacOS/hide` on macOS),
+// The packaged app as an operator installs it, with its window: its own
+// Electron host, the `hide` CLI and daemon in its resources (on Windows run
+// from the build's runtime copy under the private home; PRD auto-update
+// D-10), and the web shell that daemon embeds, against a private HOME, state
+// and Herdr. The package lane runs it on Windows, where `smoke-package.mjs`
+// starts the same package without a window and no other job draws the
+// packaged one. HIDE_E2E_PACKAGED_APP names the packaged executable (`hide.exe`
+// in the install folder on Windows, `hide.app/Contents/MacOS/hide` on macOS),
 // never the operator's installed copy.
 
 import { expect, type ElectronApplication } from "@playwright/test";
@@ -33,8 +34,11 @@ test("the packaged app opens its window on the shell its own daemon serves", asy
   let app: ElectronApplication | null = null;
   try {
     // The host finds the package's own CLI, whose `hide connect` starts the
-    // hided beside it; with no UI folder named, that daemon serves the shell it embeds.
-    run.env.HIDE_CLI_PATH = path.join(resources, fixtureExecutable("hide"));
+    // hided beside it; with no UI folder named, that daemon serves the shell
+    // it embeds. On Windows that CLI is the runtime copy's, which the host
+    // makes before it starts anything.
+    if (process.platform === "win32") delete run.env.HIDE_CLI_PATH;
+    else run.env.HIDE_CLI_PATH = path.join(resources, fixtureExecutable("hide"));
     delete run.env.HIDED_UI_DIR;
     // Every Windows profile has its Start Menu; Electron finds it with SHGetKnownFolderPath, which
     // fails for a missing folder, so the fixture's private profile needs one as a real profile has.
@@ -44,6 +48,11 @@ test("the packaged app opens its window on the shell its own daemon serves", asy
     const page = await shellPage(app);
     expect(fs.realpathSync.native(await app.evaluate(() => process.resourcesPath))).toBe(fs.realpathSync.native(resources));
     expect(run.daemonPid()).not.toBeNull();
+    if (process.platform === "win32") {
+      const prepared = hostLog(run.env).find((line) => line.event === "runtime.prepared");
+      expect(path.dirname(String(prepared?.dir))).toBe(path.join(run.env.USERPROFILE!, ".hide", "runtime"));
+      expect(hostLog(run.env).find((line) => line.event === "cli.resolved")?.path).toBe(path.join(String(prepared?.dir), "hide.exe"));
+    }
     // Launch builds Electron's notification presenter on Windows, which makes the Start Menu
     // shortcut a toast is attributed through, named from the executable's product name, before
     // any notification shows.

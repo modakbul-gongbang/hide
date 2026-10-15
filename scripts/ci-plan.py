@@ -164,6 +164,8 @@ PACKAGE_PATHS = (
     "scripts/verify-cargo.sh", "scripts/verify-web.sh", "scripts/toolchain-env.sh",
     "hided/build.rs", "hided/src/cli.rs", "hide-kit/*", "hide-agent-hooks/*",
     ".github/workflows/package.yml", ".github/workflows/release.yml",
+    # The updater and the release files it reads, and the specs only this lane runs.
+    "desktop/src/main/updater*", "scripts/check-release-assets.mjs", "desktop/e2e/packaged-*",
 )
 
 

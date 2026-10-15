@@ -316,6 +316,19 @@ export function parseConnect(result: ChildResult): ConnectAnswer {
   return { kind: "failed", reason: "start_failed", detail: unreadable(result) };
 }
 
+/**
+ * Where `hide runtime prepare` says this package's runtime runs from (PRD
+ * auto-update D-10): an absolute folder, or why there is none. A folder that
+ * cannot be read from the answer is a failure, never the install folder.
+ */
+export function parseRuntimePrepare(result: ChildResult): { dir: string } | { failed: string } {
+  if (result.spawnError) return { failed: result.spawnError };
+  if (result.timedOut) return { failed: "hide runtime prepare timed out" };
+  const value = lastJsonLine(result.stdout);
+  if (value?.ok === true && typeof value.dir === "string" && isAbsolute(value.dir)) return { dir: value.dir };
+  return { failed: unreadable(result) };
+}
+
 /** Null when the probe itself did not answer; the caller asks again later. */
 export function parseStatus(result: ChildResult): StatusAnswer | null {
   if (result.spawnError || result.timedOut) return null;

@@ -4,14 +4,14 @@
 // the paths a terminal link names and handing one to macOS, and the pages of
 // browser displays (issue 155), and the Factory's and agents' notifications with their clicks,
 // withdrawals, the system's permission for them and the app icon's count, the window frame the
-// top row is drawn inside, and a folder handed to VS Code.
+// top row is drawn inside, a folder handed to VS Code, and the app's own updates.
 // No Node API, no other channel. Browser pages load in their own session with no preload, so none
 // of this reaches them.
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type { BrowserCommand, BrowserHostEvent, BrowserSync } from "../../../web/src/host";
-import type { NotificationPermission, ProbedPath, WindowChrome } from "../../../web/src/host";
-import { BINDINGS_CHANNEL, BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_CYCLE_END_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL, COMMAND_CHANNEL, EDITOR_AVAILABLE_CHANNEL, EDITOR_OPEN_CHANNEL, LANGUAGE_CHANNEL, NOTIFY_BADGE_CHANNEL, NOTIFY_CHANNEL, NOTIFY_OPEN_CHANNEL, NOTIFY_PERMISSION_CHANNEL, NOTIFY_SETTINGS_CHANNEL, NOTIFY_WITHDRAW_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL, WINDOW_CHROME_CHANNEL, WINDOW_CHROME_GET_CHANNEL } from "../channel";
+import type { NotificationPermission, ProbedPath, UpdateStatus, WindowChrome } from "../../../web/src/host";
+import { BINDINGS_CHANNEL, BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_CYCLE_END_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL, COMMAND_CHANNEL, EDITOR_AVAILABLE_CHANNEL, EDITOR_OPEN_CHANNEL, LANGUAGE_CHANNEL, NOTIFY_BADGE_CHANNEL, NOTIFY_CHANNEL, NOTIFY_OPEN_CHANNEL, NOTIFY_PERMISSION_CHANNEL, NOTIFY_SETTINGS_CHANNEL, NOTIFY_WITHDRAW_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL, UPDATE_CHECK_CHANNEL, UPDATE_PRERELEASE_CHANNEL, UPDATE_RESTART_CHANNEL, UPDATE_STATUS_CHANNEL, UPDATE_STATUS_GET_CHANNEL, WINDOW_CHROME_CHANNEL, WINDOW_CHROME_GET_CHANNEL } from "../channel";
 
 contextBridge.exposeInMainWorld("hideHost", {
   kind: "electron",
@@ -88,6 +88,32 @@ contextBridge.exposeInMainWorld("hideHost", {
   },
   openInEditor(path: string): void {
     ipcRenderer.send(EDITOR_OPEN_CHANNEL, path);
+  },
+  updates: {
+    onStatus(listener: (status: UpdateStatus) => void): () => void {
+      // As onWindowChrome: the asked status is dropped if a change already arrived.
+      let heard = false;
+      const handler = (_event: IpcRendererEvent, status: UpdateStatus) => {
+        heard = true;
+        listener(status);
+      };
+      ipcRenderer.on(UPDATE_STATUS_CHANNEL, handler);
+      void (ipcRenderer.invoke(UPDATE_STATUS_GET_CHANNEL) as Promise<UpdateStatus | null>).then((status) => {
+        if (status !== null && !heard) listener(status);
+      });
+      return () => {
+        ipcRenderer.removeListener(UPDATE_STATUS_CHANNEL, handler);
+      };
+    },
+    check(): void {
+      ipcRenderer.send(UPDATE_CHECK_CHANNEL);
+    },
+    restart(): void {
+      ipcRenderer.send(UPDATE_RESTART_CHANNEL);
+    },
+    setPrerelease(on: boolean): void {
+      ipcRenderer.send(UPDATE_PRERELEASE_CHANNEL, on);
+    },
   },
   browser: {
     endCycle(cycleId: number): void {

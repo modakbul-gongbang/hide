@@ -1,0 +1,6 @@
+# Read by electron-updater from the app's resources folder. The updater sets
+# the release to fetch on every check (desktop/src/main/updater.ts); this file
+# names the folder it downloads into, which a prepackaged build does not write.
+provider: generic
+url: https://github.com/with-hide/hide/releases/latest/download
+updaterCacheDirName: hide-updater

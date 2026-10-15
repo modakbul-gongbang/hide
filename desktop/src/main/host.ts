@@ -12,10 +12,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, Notification, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent, type NativeImage } from "electron";
-import { SETUP_COMMAND } from "../../../web/src/host";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, net, Notification, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent, type NativeImage } from "electron";
+import { DebUpdater, MacUpdater, NsisUpdater, RpmUpdater } from "electron-updater";
+import { CHECK_UPDATES_COMMAND, SETUP_COMMAND } from "../../../web/src/host";
 import type { MenuCommand } from "./menu";
-import { BINDINGS_CHANNEL, COMMAND_CHANNEL, EDITOR_AVAILABLE_CHANNEL, EDITOR_OPEN_CHANNEL, LANGUAGE_CHANNEL, NOTIFY_BADGE_CHANNEL, NOTIFY_CHANNEL, NOTIFY_OPEN_CHANNEL, NOTIFY_PERMISSION_CHANNEL, NOTIFY_SETTINGS_CHANNEL, NOTIFY_WITHDRAW_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL, WINDOW_CHROME_CHANNEL, WINDOW_CHROME_GET_CHANNEL } from "../channel";
+import { BINDINGS_CHANNEL, COMMAND_CHANNEL, EDITOR_AVAILABLE_CHANNEL, EDITOR_OPEN_CHANNEL, LANGUAGE_CHANNEL, NOTIFY_BADGE_CHANNEL, NOTIFY_CHANNEL, NOTIFY_OPEN_CHANNEL, NOTIFY_PERMISSION_CHANNEL, NOTIFY_SETTINGS_CHANNEL, NOTIFY_WITHDRAW_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL, UPDATE_CHECK_CHANNEL, UPDATE_PRERELEASE_CHANNEL, UPDATE_RESTART_CHANNEL, UPDATE_STATUS_CHANNEL, UPDATE_STATUS_GET_CHANNEL, WINDOW_CHROME_CHANNEL, WINDOW_CHROME_GET_CHANNEL } from "../channel";
 import { BrowserViews, type ResolvedPage } from "./browser";
 import { BrowserCdpGateway, CdpActionUncertain, parseBrowserControlResult, type CdpAction, type CdpActionResult, type CdpScope } from "./browserCdp";
 import {
@@ -26,6 +27,7 @@ import {
   parseConnect,
   parseLoginPath,
   parseRememberedCli,
+  parseRuntimePrepare,
   parseStatus,
   REMEMBERED_SOURCES,
   rememberedCliPath,
@@ -43,7 +45,7 @@ import { readJsonFile, writeJsonFile } from "./jsonFile";
 import type { HostLanguage } from "./language";
 import { chooseHerdr, ensureServer, parseServerStatus, serverEnvironment, type HerdrChoice } from "./herdr";
 import { loadFailureFields, type HostLog } from "./log";
-import { ChildRunner, startDetached, type ChildResult } from "./spawn";
+import { ChildRunner, executableFile, startDetached, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
 import { openRoute, probe, probeRequest } from "./localPath";
 import { revealTarget } from "./reveal";
@@ -52,11 +54,14 @@ import { Editor } from "./editor";
 import { frameOptions, hidesTitleBar, windowChrome } from "./windowChrome";
 import { NOTIFICATION_SETTINGS_URL, NotificationPermissionReader } from "./notificationPermission";
 import { fromPage, toPage, WirePathError } from "./wirePath";
+import { AppUpdates, fetchReleases, macosLocation, readPackageType, readPrerelease, savePrerelease, updatesFile, updateSystem, type UpdateSystem, type UpdaterLike } from "./updater";
 
 declare const __HIDE_BACKGROUND__: string;
 declare const __HIDE_WARNING__: string;
 
 const CONNECT_TIMEOUT_MS = 25_000;
+/** The first launch of a Windows build copies its runtime (about 150 MB); later ones find the copy. */
+const RUNTIME_PREPARE_TIMEOUT_MS = 120_000;
 const STATUS_TIMEOUT_MS = 5_000;
 /** VS Code's default for the same question (`application.shellEnvironmentResolutionTimeout`); a warm rc takes seconds. */
 const LOGIN_PATH_TIMEOUT_MS = 10_000;
@@ -82,6 +87,16 @@ function isExecutable(file: string): boolean {
   try {
     fs.accessSync(file, fs.constants.X_OK);
     return fs.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/** Whether this account may create and replace entries in `folder`. */
+function isWritable(folder: string): boolean {
+  try {
+    fs.accessSync(folder, fs.constants.W_OK);
+    return true;
   } catch {
     return false;
   }
@@ -115,6 +130,13 @@ export class DesktopHost {
   private discovering: Promise<void> | null = null;
   private attempts = 0;
   private cli: { path: string; source: CliSource } | null = null;
+  /**
+   * Where a packaged Windows app runs its daemon, CLI and Herdr from: this
+   * build's copy outside the install folder (`hide runtime prepare`; PRD
+   * auto-update D-10), learned once per launch. Null until then, and always
+   * null elsewhere, where the package's own resources folder is used.
+   */
+  private runtimeDir: string | null = null;
   /** The login shell's PATH once it answered; a shell that failed or timed out is asked again on the next search. */
   private loginPath: string | null = null;
   private watch: NodeJS.Timeout | null = null;
@@ -139,6 +161,8 @@ export class DesktopHost {
   private badge = 0;
   private overlay: NativeImage | null = null;
   private readonly editor: Editor;
+  /** This app's own updates; made at start, since electron-updater needs the app ready. */
+  private updates: AppUpdates | null = null;
 
   constructor(
     private readonly env: DesktopEnv,
@@ -188,6 +212,12 @@ export class DesktopHost {
     this.listenNotify();
     this.listenWindowChrome();
     this.listenEditor();
+    // An optional feature: a failure to set it up is the log's, and the window opens regardless.
+    try {
+      this.startUpdates();
+    } catch (error) {
+      this.log.event("update.start_failed", { detail: error instanceof Error ? error.message : String(error) });
+    }
     this.openWindow();
     if (process.platform === "win32") this.listenToastActivation();
     void this.discover("launch");
@@ -211,6 +241,7 @@ export class DesktopHost {
     this.runner.stop();
     this.permission.stop();
     this.editor.stop();
+    this.updates?.stop();
     // Revoke sockets and debugger leases immediately; hold quit only for
     // the bounded authenticated unregister, never for the operator daemon.
     const close = this.browserCdp?.close() ?? Promise.resolve();
@@ -447,6 +478,65 @@ export class DesktopHost {
     });
   }
 
+  /**
+   * This app's own updates (PRD auto-update): the updater, the status the
+   * shell draws, and the shell's check, Restart and preview switch. Only this
+   * window's page on the daemon origin is heard or told; a browser tab or the
+   * phone has no bridge, so it shows none of it (B24).
+   */
+  private startUpdates(): void {
+    const version = app.getVersion();
+    const resources = process.resourcesPath;
+    const system = updateSystem({
+      packaged: app.isPackaged,
+      version,
+      platform: process.platform,
+      packageType: process.platform === "linux" ? readPackageType(resources) : null,
+      macosLocation: process.platform === "darwin" ? macosLocation(path.resolve(process.execPath, "..", "..", ".."), isWritable) : "ok",
+    });
+    const file = updatesFile(app.getPath("userData"));
+    const updates = new AppUpdates(
+      system,
+      version,
+      typeof system === "string" ? this.createUpdater(system) : null,
+      {
+        releases: () => fetchReleases((url, init) => net.fetch(url, init)),
+        now: Date.now,
+        later: (run, ms) => {
+          const timer = setTimeout(run, ms);
+          return () => clearTimeout(timer);
+        },
+        savePrerelease: (on) => savePrerelease(file, on),
+      },
+      this.log,
+      { prerelease: readPrerelease(file), feedOverride: this.env.updateFeedUrl },
+    );
+    this.updates = updates;
+    updates.onChange((status) => {
+      const window = this.window;
+      if (window && !window.isDestroyed() && this.isDaemonUrl(window.webContents.getURL())) window.webContents.send(UPDATE_STATUS_CHANNEL, status);
+    });
+    ipcMain.handle(UPDATE_STATUS_GET_CHANNEL, (event: IpcMainInvokeEvent) => (this.fromShell(event) ? updates.status() : null));
+    ipcMain.on(UPDATE_CHECK_CHANNEL, (event: IpcMainEvent) => {
+      if (this.fromShell(event)) void updates.check("operator");
+    });
+    ipcMain.on(UPDATE_RESTART_CHANNEL, (event: IpcMainEvent) => {
+      if (this.fromShell(event)) updates.restart();
+    });
+    ipcMain.on(UPDATE_PRERELEASE_CHANNEL, (event: IpcMainEvent, reported: unknown) => {
+      if (this.fromShell(event) && typeof reported === "boolean") updates.setPrerelease(reported);
+    });
+    updates.start();
+  }
+
+  /** electron-updater's updater for this system, its own log lines routed to the host log. */
+  private createUpdater(system: UpdateSystem): UpdaterLike {
+    const updater = system === "macos" ? new MacUpdater() : system === "windows" ? new NsisUpdater() : system === "deb" ? new DebUpdater() : new RpmUpdater();
+    const record = (level: string) => (message: unknown) => this.log.event("update.library", { level, detail: String(message).slice(0, 500) });
+    updater.logger = { info: () => undefined, debug: () => undefined, warn: record("warn"), error: record("error") };
+    return updater;
+  }
+
   /** Tells the shell in `window` that the window entered or left fullscreen. */
   private sendWindowChrome(window: BrowserWindow): void {
     if (window.isDestroyed() || !this.isDaemonUrl(window.webContents.getURL())) return;
@@ -593,7 +683,9 @@ export class DesktopHost {
 
   /** An app-menu click, delivered to the shell only while it is loaded. */
   sendCommand(id: MenuCommand): void {
-    const command = id === SETUP_COMMAND ? null : id;
+    // Check for Updates… looks whatever the window shows; the shell opens About for its outcome.
+    if (id === CHECK_UPDATES_COMMAND) void this.updates?.check("operator");
+    const command = id === SETUP_COMMAND || id === CHECK_UPDATES_COMMAND ? null : id;
     // A page's popup window holding the keyboard answers the command itself,
     // whatever the shell's state.
     if (command && this.browsers?.popupCommand(command)) return;
@@ -619,6 +711,9 @@ export class DesktopHost {
     const attempt = ++this.attempts;
     this.stopWatch();
     this.setState({ kind: "connecting" });
+    const runtime = await this.prepareRuntime(attempt);
+    if (runtime !== null) return this.fail(attempt, "start_failed", `runtime: ${runtime}`);
+    if (this.quitting) return;
     const herdr = this.herdr();
     this.log.event("discovery.start", { attempt, trigger, herdr: herdr.source, replaced_pane_herdr: herdr.replacedPaneValue ?? undefined });
     const cli = await this.findCli(attempt);
@@ -692,9 +787,36 @@ export class DesktopHost {
     }
   }
 
-  /** The packaged app's `Contents/Resources`, where `hide`, `hided` and `herdr` ship side by side. */
+  /**
+   * The folder `hide`, `hided` and `herdr` run from in a packaged app: its
+   * `Contents/Resources` or `resources`, or on Windows the build's runtime
+   * copy once `prepareRuntime` found it.
+   */
   private bundledDir(): string | null {
-    return app.isPackaged ? process.resourcesPath : null;
+    return app.isPackaged ? (this.runtimeDir ?? process.resourcesPath) : null;
+  }
+
+  /**
+   * A packaged Windows app's runtime copy (PRD auto-update D-10): the
+   * installer stops every program under the install folder and Windows cannot
+   * replace a running file, so the daemon and the Herdr server must not run
+   * from there. Asked of the install folder's own `hide` once per launch;
+   * what it could not remove of older copies goes to the log (D-11). Null
+   * when the copy is ready or none is needed, else why it failed.
+   */
+  private async prepareRuntime(attempt: number): Promise<string | null> {
+    if (!app.isPackaged || process.platform !== "win32" || this.runtimeDir !== null) return null;
+    const started = Date.now();
+    const result = await this.runChild(path.join(process.resourcesPath, executableFile("hide")), ["runtime", "prepare"], RUNTIME_PREPARE_TIMEOUT_MS, this.childEnvironment());
+    for (const record of cliRecords(result.stderr)) this.log.event(record.event, { attempt, ...record.fields });
+    const prepared = parseRuntimePrepare(result);
+    if ("failed" in prepared) {
+      this.log.event("runtime.prepare_failed", { attempt, detail: prepared.failed, elapsed_ms: Date.now() - started });
+      return prepared.failed;
+    }
+    this.runtimeDir = prepared.dir;
+    this.log.event("runtime.prepared", { attempt, dir: prepared.dir, elapsed_ms: Date.now() - started });
+    return null;
   }
 
   /** The Herdr a daemon started from here attaches pane terminals with; `herdr.ts` owns the rule. */
