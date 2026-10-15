@@ -53,11 +53,15 @@ test("keys typed into a split before its shell reads arrive whole", async ({ pag
     const created = (await paneIds()).filter((id) => !before.includes(id));
     expect(created).toHaveLength(1);
     const split = created[0]!;
-    // Once the pane's session is open, keys written as soon as it could take
-    // them are in its terminal, in the kernel's line mode. The keys wait for
-    // the shell at most two seconds after Herdr names the pane, so the shell
-    // is released as soon as the session is.
-    await expect(page.locator(`[data-pane-view="${split}"]`)).toHaveAttribute("data-transport", "controlling");
+    // The shell is released once the keys' fate is decided while it is still
+    // held: the core lists their request as waiting for the new pane's shell,
+    // or the keys already reached its terminal in the kernel's line mode,
+    // which echoes them. Both are seen soon after Herdr names the pane, well
+    // inside the wait's two seconds, and neither depends on when the pane's
+    // terminal session opens.
+    const waitsForShell = () =>
+      page.evaluate((pane) => window.__hideProbe!.inputRequests().some((request) => request.state === "pending" && request.held_for === pane), split);
+    await expect.poll(async () => (await waitsForShell()) || visible(herdr, split).includes("cla"), { timeout: 20_000 }).toBe(true);
     fs.writeFileSync(release, "");
 
     // The line editor took the keys: the prompt holds the command, with no

@@ -433,8 +433,14 @@ fn shell_reads_keys(
             .saturating_duration_since(Instant::now())
             .min(SHELL_READ_TIMEOUT)
     };
+    // A read given no time fails as a read; past the deadline the wait ends
+    // as a timeout instead.
+    let timeout = left();
+    if timeout.is_zero() {
+        return Ok(false);
+    }
     let params = wire::pane_process_info_params(pane_id)?;
-    let group = request_with_connector(connector, "pane.process_info", params, left())
+    let group = request_with_connector(connector, "pane.process_info", params, timeout)
         .map_err(|error| format!("pane.process_info failed: {error}"))
         .and_then(wire::pane_process_group)?;
     // A pane whose shell Herdr has not named yet is still starting.
