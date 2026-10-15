@@ -29,6 +29,8 @@ import type { ViewWorkspace } from "./viewLayout";
 import {
   closeBrowserNote,
   closeNote,
+  notePlace,
+  pageNotePlace,
   commentsOn,
   COMMENTS_PER_VIEW,
   deletedHere,
@@ -792,15 +794,6 @@ function rectStyle(rect: ViewRect) {
   return { left: rect.x, top: rect.y, width: rect.width, height: rect.height };
 }
 
-/** The note beside its region: on the right while it fits, else on the left, else under it. */
-function notePlace(rect: ViewRect | null, page: { width: number }): { left: number; top: number } {
-  if (!rect) return { left: 0, top: 0 };
-  const width = 320;
-  if (rect.x + rect.width + width + 8 <= page.width) return { left: rect.x + rect.width + 8, top: rect.y };
-  if (rect.x - width - 8 >= 0) return { left: rect.x - width - 8, top: rect.y };
-  return { left: Math.max(0, Math.min(rect.x, page.width - width)), top: rect.y + rect.height + 8 };
-}
-
 /**
  * The note over a page in Comment mode (B10, B12, D-17): the place the
  * operator just picked in the page, or the comment whose pin they pressed,
@@ -816,6 +809,8 @@ export function PageNoteLayer({ commentKey, displayId, workspace, actions, add, 
   const edit = useFeedbackStore((s) => s.forms[displayId] ?? null);
   const feedback = useViewFeedback();
   const layer = useRef<HTMLDivElement>(null);
+  const card = useRef<HTMLDivElement>(null);
+  const [cardHeight, setCardHeight] = useState(0);
   const doneRef = useRef(done);
   doneRef.current = done;
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
@@ -842,9 +837,23 @@ export function PageNoteLayer({ commentKey, displayId, workspace, actions, add, 
     doneRef.current();
   }, [note, comment, commentKey]);
   // A card opened from a pin takes the keyboard, so Esc closes it.
+  const openId = note?.kind === "open" && comment ? comment.id : null;
   useEffect(() => {
-    if (note?.kind === "open" && comment) layer.current?.focus({ preventScroll: true });
-  }, [note, comment]);
+    if (openId) layer.current?.focus({ preventScroll: true });
+  }, [openId]);
+  // An edit begun in a card goes with the note.
+  useEffect(() => {
+    if (!note && useFeedbackStore.getState().forms[displayId]) closeNote(displayId);
+  }, [note, displayId]);
+  useLayoutEffect(() => {
+    const element = card.current;
+    if (!element) return undefined;
+    const measure = () => setCardHeight(element.offsetHeight);
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(element);
+    return () => observer?.disconnect();
+  }, [shown, note]);
   if (!shown || !note) return null;
   const close = () => {
     closeBrowserNote(commentKey);
@@ -852,9 +861,7 @@ export function PageNoteLayer({ commentKey, displayId, workspace, actions, add, 
     done();
   };
   const at = size ? { x: note.at.left * size.width, y: note.at.top * size.height, width: note.at.width * size.width, height: note.at.height * size.height } : null;
-  const place = at && size ? notePlace(at, size) : { left: 0, top: 0 };
-  // Low on the page, the note hangs above its place's bottom edge rather than past the slot.
-  const style = at && size && place.top > size.height / 2 ? { left: place.left, bottom: Math.max(0, size.height - at.y - at.height) } : place;
+  const style = at && size ? pageNotePlace(at, size, cardHeight) : { left: 0, top: 0 };
   const full = commentsOn(feedback, displayId).length >= COMMENTS_PER_VIEW;
   let body: ReactNode = null;
   if (note.kind === "pick") {
@@ -883,7 +890,7 @@ export function PageNoteLayer({ commentKey, displayId, workspace, actions, add, 
       }}
     >
       {at ? (
-        <div className="absolute w-(--size-view-note)" style={style}>
+        <div ref={card} className="absolute w-(--size-view-note)" style={style}>
           {body}
         </div>
       ) : null}

@@ -184,10 +184,18 @@ test("Comment on a page: the operator picks an element in the page and its agent
   await expect(card).toHaveCount(0);
   expect(await inPage<number>(url, "window.keys")).toBe(0);
 
+  // A place picked on a document the page then leaves goes with it, and so does its note.
+  await pressGo(url);
+  await expect(note).toHaveCount(1);
+  const next = `${url}?step=2`;
+  await inPage(url, `location.assign(${JSON.stringify(next)}); true`);
+  await expect(note).toHaveCount(0);
+  await expect.poll(() => inPage<boolean>(next, "document.querySelector('hide-comment-overlay') !== null")).toBe(true);
+
   // Esc ends Comment mode: the overlay goes and the page takes clicks again; the edit left one comment.
-  await input(url, [{ type: "keyDown", keyCode: "Escape" }]);
+  await input(next, [{ type: "keyDown", keyCode: "Escape" }]);
   await expect(comment).toHaveAttribute("data-browser-comment", "off");
-  await expect.poll(() => inPage<boolean>(url, "document.querySelector('hide-comment-overlay') === null")).toBe(true);
+  await expect.poll(() => inPage<boolean>(next, "document.querySelector('hide-comment-overlay') === null")).toBe(true);
   await expect(row.locator("[data-view-feedback-summary]")).toHaveText(/1 comment · 1 view/);
 
   // B16, B21, B23: Send gives the agent the page, the View, the element and a screenshot on its machine.

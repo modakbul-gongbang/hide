@@ -318,12 +318,13 @@ struct Own<'a> {
 }
 
 impl Own<'_> {
-    fn keep(&self, pick: Pick) {
+    /// Holds `pick` for the screen's note, or lets the held one go.
+    fn keep(&self, pick: Option<Pick>) {
         if let Ok(mut sessions) = self.registry.sessions.lock()
             && let Some(session) = sessions.get_mut(self.key)
             && session.generation == self.generation
         {
-            session.pick = Some(pick);
+            session.pick = pick;
         }
     }
 }
@@ -390,8 +391,13 @@ async fn run(
                         if event.session.as_deref() == Some(top.as_str())
                             && event.params["frame"].get("parentId").is_none() =>
                     {
-                        // A new document: the overlay goes in again, with the
-                        // pins of the address it is at now.
+                        // A new document: a place picked on the old one is
+                        // gone with it, and so is its note in the window; the
+                        // overlay goes in again, with the pins of the address
+                        // it is at now.
+                        own.keep(None);
+                        let line = (key.0.as_str(), key.1.as_str(), key.2.as_str());
+                        let _ = frames.send(framed(line, json!({"on": true, "reason": null, "dropped": true}))).await;
                         match inject(&mut page, &shown.1).await {
                             Ok(id) => {
                                 world = id;
@@ -417,7 +423,7 @@ async fn run(
                                 let Some((anchor, at)) = picked(&message) else { continue };
                                 picks += 1;
                                 let png = capture(&mut page, world, &anchor["rect"]).await;
-                                own.keep(Pick { id: picks, anchor: anchor.clone(), png });
+                                own.keep(Some(Pick { id: picks, anchor: anchor.clone(), png }));
                                 let pick = json!({"id": picks, "anchor": anchor, "at": at});
                                 let line = (key.0.as_str(), key.1.as_str(), key.2.as_str());
                                 let _ = frames.send(framed(line, json!({"on": true, "reason": null, "pick": pick}))).await;

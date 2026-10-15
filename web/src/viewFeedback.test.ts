@@ -5,7 +5,7 @@ import { patchLines } from "./editor/patch";
 import { diffModel, fileModel, pickedAnchor } from "./editor/useLineComments";
 import { english } from "./i18n/catalogs";
 import type { ViewComment, ViewFeedback, ViewFeedbackSend } from "./snapshot";
-import { commentsOn, deletedHere, dragRect, fractionRect, groupOn, linesAnchor, QUOTED_LINES, relocation, sendDisplay, SEND_REASON_KEYS, sendShown, SHOWN_MS } from "./viewFeedback";
+import { commentsOn, deletedHere, dragRect, fractionRect, groupOn, linesAnchor, pageNotePlace, QUOTED_LINES, relocation, sendDisplay, SEND_REASON_KEYS, sendShown, SHOWN_MS } from "./viewFeedback";
 
 const lines = (anchor: { start: number; end: number; lines: string[] }) => ({ kind: "lines" as const, ...anchor });
 
@@ -105,6 +105,19 @@ describe("the line under a View", () => {
     expect(sendDisplay(send({}), { r1: "d2" }, ["d1", "d2"], "d1")).toBe("d2");
     expect(sendDisplay(send({}), {}, ["d1", "d2"], "d1")).toBe("d1");
     expect(sendDisplay(send({}), { r1: "gone" }, ["d1"], "d1")).toBeNull();
+  });
+
+  it("keeps a page's note inside its slot: beside its place, else under, else above", () => {
+    const slot = { width: 1000, height: 600 };
+    // Beside a small element, level with it.
+    expect(pageNotePlace({ x: 100, y: 100, width: 200, height: 40 }, slot, 160)).toEqual({ left: 308, top: 100 });
+    // An element scrolled partly out of view above keeps its note at the slot's top.
+    expect(pageNotePlace({ x: 100, y: -300, width: 200, height: 500 }, slot, 160).top).toBe(0);
+    // Beside one low on the page, the note rises to stay inside.
+    expect(pageNotePlace({ x: 100, y: 550, width: 200, height: 40 }, slot, 160).top).toBe(440);
+    // A place as wide as the page: under it while that fits, else above it, never over it.
+    expect(pageNotePlace({ x: 0, y: 100, width: 1000, height: 40 }, slot, 160).top).toBe(148);
+    expect(pageNotePlace({ x: 0, y: 400, width: 1000, height: 150 }, slot, 160).top).toBe(232);
   });
 
   it("offers Undo on the View the delete was made on, for a moment", () => {

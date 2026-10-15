@@ -236,6 +236,11 @@ export function noteBrowserComment(key: string, comment: BrowserComment): void {
   if (!comment.on) closeBrowserNote(key);
 }
 
+/** The socket went: hided ended every page's Comment with it, and their notes go too. */
+export function resetBrowserComments(): void {
+  useFeedbackStore.setState((state) => (Object.keys(state.browser).length === 0 && Object.keys(state.browserNotes).length === 0 ? state : { browser: {}, browserNotes: {} }));
+}
+
 export function openBrowserNote(key: string, note: BrowserNote): void {
   useFeedbackStore.setState((state) => ({ browserNotes: { ...state.browserNotes, [key]: note } }));
 }
@@ -277,4 +282,31 @@ export function deletedHere(feedback: ViewFeedback | undefined, deletedFrom: Fee
   const deleted = feedback?.deleted;
   if (!deleted || deletedFrom?.commentId !== deleted) return false;
   return deletedFrom.displayId === displayId && now - deletedFrom.at < SHOWN_MS;
+}
+
+/** The note beside its region: on the right while it fits, else on the left, else under it. */
+export function notePlace(rect: ViewRect | null, page: { width: number }): { left: number; top: number } {
+  if (!rect) return { left: 0, top: 0 };
+  const width = 320;
+  if (rect.x + rect.width + width + 8 <= page.width) return { left: rect.x + rect.width + 8, top: rect.y };
+  if (rect.x - width - 8 >= 0) return { left: rect.x - width - 8, top: rect.y };
+  return { left: Math.max(0, Math.min(rect.x, page.width - width)), top: rect.y + rect.height + 8 };
+}
+
+/**
+ * Where a page's note sits in its slot: beside its place while it fits,
+ * else under it, else above it, and always inside the slot, so a place
+ * scrolled partly out of view or as wide as the page keeps its note on screen.
+ */
+export function pageNotePlace(rect: ViewRect, slot: { width: number; height: number }, height: number): { left: number; top: number } {
+  const place = notePlace(rect, slot);
+  const lowest = Math.max(0, slot.height - height);
+  const clamp = (top: number) => Math.min(Math.max(0, top), lowest);
+  // Beside its place: level with its top, or as near as the slot allows.
+  if (place.top === rect.y) return { left: place.left, top: clamp(rect.y) };
+  const under = rect.y + rect.height + 8;
+  if (under + height <= slot.height) return { left: place.left, top: under };
+  const above = rect.y - height - 8;
+  if (above >= 0) return { left: place.left, top: above };
+  return { left: place.left, top: clamp(under) };
 }

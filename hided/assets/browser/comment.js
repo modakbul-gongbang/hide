@@ -149,7 +149,11 @@
     return element && element !== document.documentElement ? element : null;
   };
 
-  const pick = (anchor) => send({ type: 'pick', anchor, at: fractionOf(viewRect(anchor.rect)) });
+  const pick = (anchor) => {
+    // While its screenshot is taken the overlay is drawn clear but still
+    // takes every press, so a second click never reaches the page.
+    if (!state.shooting) send({ type: 'pick', anchor, at: fractionOf(viewRect(anchor.rect)) });
+  };
 
   const handlers = {
     mousemove(event) {
@@ -198,6 +202,8 @@
       pick({ kind: 'element', selector, text, rect, ...(source ? { source } : {}) });
     },
     click(event) { if (event.isTrusted) { event.preventDefault(); event.stopPropagation(); } },
+    /* The page never sees the operator's presses on the overlay, as pointer events either. */
+    pointer(event) { if (event.isTrusted) event.stopPropagation(); },
     keydown(event) {
       if (!event.isTrusted || event.key !== 'Escape') return;
       event.preventDefault();
@@ -211,10 +217,11 @@
     start(strings) {
       if (state) { state.strings = strings; return true; }
       const { host, root } = build(strings);
-      state = { host, root, strings, pins: [], drag: null };
+      state = { host, root, strings, pins: [], drag: null, shooting: false };
       // The pointer handlers listen as a press bubbles out of the overlay, so
       // the pins, which stop their own presses, keep them.
       for (const kind of ['mousemove', 'mousedown', 'mouseup', 'click']) host.addEventListener(kind, handlers[kind]);
+      for (const kind of ['pointerdown', 'pointerup', 'pointermove', 'dblclick', 'contextmenu']) host.addEventListener(kind, handlers.pointer);
       window.addEventListener('scroll', handlers.scroll, { passive: true });
       window.addEventListener('keydown', handlers.keydown, true);
       return true;
@@ -230,8 +237,9 @@
     /* Resolves once the page has drawn a frame without (or with) the overlay. */
     shot(on) {
       if (!state) return false;
-      if (on) state.host.style.setProperty('visibility', 'hidden', 'important');
-      else state.host.style.removeProperty('visibility');
+      state.shooting = on;
+      if (on) state.host.style.setProperty('opacity', '0', 'important');
+      else state.host.style.removeProperty('opacity');
       return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))));
     },
     stop() {
