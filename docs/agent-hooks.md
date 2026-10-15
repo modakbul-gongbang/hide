@@ -33,7 +33,7 @@ The file keeps its mode, a new one is created 0600, and a file that is a symlink
 Entries belonging to other tools are counted before and after, and a regression test asserts they survive.
 
 Six events are registered: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `SubagentStart`, `SubagentStop`, and `Stop`.
-`SessionEnd` is not registered by either, so the `Stop` sweep is what closes a turn out.
+`SessionEnd` is not registered by either: a session's record is read only while Herdr reports that session for the pane, so a session that ends needs no event to be forgotten.
 `PreToolUse` selects `Bash|AskUserQuestion|ExitPlanMode` in Claude Code and `Bash|request_user_input` in Codex (`install::hook_matcher`, the one function the writer and Codex's trust check both read), so a file edit or a search never starts the helper.
 The version-seven marker makes earlier entries Outdated until the normal kit pass at launch, connection or Reinstall replaces Hide's entries and records their exact Codex trust.
 Already-running sessions pick up the changed hooks when restarted.
@@ -153,9 +153,35 @@ Two things keep that from recurring: `report::tests` sends one report at a fake 
 `hide_sub_blocked` is defined and never written: neither shipped adapter can observe a blocked subagent from the four available events, so the count stays unknown rather than being drawn as a zero.
 A token that is not a count is dropped rather than coerced.
 
-`SessionStart` resets the pane, so a new session in a reused pane never inherits the last one's numbers.
-`Stop` sweeps `working` to zero, because the turn is over and a `SubagentStop` that never arrived cannot leave a count behind.
+A record belongs to one session.
+The first event of another session that the pane's agent now is starts the record over, so a new session in a reused pane never inherits the last one's numbers.
+A `SessionStart` of the same session (a resume or a compaction) keeps them, since its background subagents still run; a runtime whose input names no session resets at `SessionStart`.
 A pane Herdr has stopped listing has its record swept on the next session bootstrap.
+
+#### Which session is the pane's
+
+A session that is not the pane's agent runs the same hooks in the pane's environment: the operator's own Stop hook that starts `claude -p` is one, and it reset the pane's count to zero after every turn of a session that ran subagents (twenty-one of the forty panes on the operator's machine on 2026-10-15 held such a session's record).
+The hook therefore asks Herdr, before it changes anything, which session it reports for the pane's agent (`pane.get`, `agent_session`).
+An event of any other session changes nothing and reports nothing, and an event that names no session counts as another one.
+A pane for which Herdr reports no session, or does not answer, takes every event as its own, as before.
+Herdr is the authority and the hook's environment is not: `CLAUDE_CODE_ENTRYPOINT` says `sdk-cli` inside the nested session, but a user's own program can start a session that says `cli`.
+Measured on the pinned Herdr 0.9.3 with Claude Code 2.1.300: Herdr's Claude integration reports every session's start, `/clear` replaced the pane's session with the new one, and a nested `claude -p` session's `startup` did not.
+Herdr does not document the rule it applies; what this relies on is that observation, and it is why a pane's own `SessionStart` that beats Herdr's own hook to the socket is read as the earlier session's and ignored (the next event of the new session starts its record).
+
+#### Which subagents run
+
+Claude Code names every subagent (`agent_id`) and sends three facts that the count follows (Claude Code 2.1.300, measured in an interactive session):
+
+- The parent's `Stop` fires while background subagents still run, and both `Stop` and `SubagentStop` list them in `background_tasks` with `type` `subagent` and `status` `running`.
+- A subagent that waits on its own background command ends its turn, which sends a `SubagentStop`; when the command ends it runs again and sends a `SubagentStart` with the same `agent_id`. Every pause is a stop, so counting stops counted one subagent as done at every pause.
+- A subagent stopped with the `TaskStop` tool sends no `SubagentStop` at all; the next `Stop`'s list no longer holds it.
+
+So the record keeps the running ids and the ids that finished, per session.
+A start adds the id (and takes a resumed subagent back out of `done`), a stop of a running id moves it to `done` once, and a repeated stop, or the stop of an id that never started, changes nothing.
+The parent's `Stop` replaces the running ids with the ones it lists: a subagent it no longer lists left without a stop reaching the hook and stops working, without being counted done.
+A `Stop` that lists nothing (an input cut off, or a Claude Code that sends no `background_tasks`) changes nothing; nothing sweeps, since no signal says a running subagent ended.
+The running ids are capped at 256 per session, the remembered finished ids at 256 (the oldest go first, and the done count keeps them); crossing the running cap fails the event and is written down as the pane's last report failure.
+Codex and the runtimes whose input carries no subagent id keep the older rule: a start adds one, a stop moves one to done, and the turn's `Stop` sets `working` to what the runtime lists, none for Codex.
 
 ### After Herdr hands off or restarts
 
@@ -185,7 +211,7 @@ For each listed agent that carries no `hide_hooks` token and that Hide has an ad
 
 The version is put back for the same agent because a hook is installed in a runtime's configuration and not in a session.
 The counts are put back only for the same session, and nothing relies on `SessionStart` having reset the record: a session that started after the record was written and before the connection is the case the session id tells apart.
-What the counts can still be is the record's last word for that session: a subagent that ended with no `SubagentStop` reaching the helper still counts as working until the session's next `Stop`, exactly as it did before the loss.
+What the counts can still be is the record's last word for that session: a subagent that ended with no `SubagentStop` reaching the helper still counts as working until the session's next `Stop` lists the subagents that run (or, for a runtime that lists none, ends the turn), exactly as it did before the loss.
 A record that changed while the report was on its way is sent again, as the helper does, so Herdr ends on the latest count.
 A report merges token by token, so when the second read finds the counts no longer vouched for (the session changed, or another agent's record replaced the file) the restorer clears the two count tokens with `null` instead of leaving the first report's values on the pane.
 
