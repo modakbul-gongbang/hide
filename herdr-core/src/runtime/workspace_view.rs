@@ -1,8 +1,8 @@
 //! The runtime side of per-Workspace presentation (PRD S6 D-04, D-05, D-08,
-//! D-10; S7; PRD three-column-panel D-05, D-08, D-10): whether the front
-//! Workspace's File Views and Tools columns are on, their tool and widths,
-//! its View area tree, when that tree's documents are read back, and the
-//! file that keeps it all. What the areas hold and how an open lands in them is
+//! D-10; S7; PRD right-lane D-01, D-03, D-05, D-11, D-13): the front
+//! Workspace's right lane (its tool, pin, tree and widths), its View area
+//! tree, when that tree's documents are read back, and the file that keeps
+//! it all. What the areas hold and how an open lands in them is
 //! `view_areas.rs`.
 //!
 //! Everything here is inert unless the shell passed
@@ -44,7 +44,8 @@ pub(super) struct WorkspaceViewStore {
     pub(super) agent_placements: BTreeMap<String, (WorkspaceKey, String, Option<usize>)>,
     /// The Workspace the last sync saw in front.
     pub(super) front: Option<WorkspaceKey>,
-    /// One bounded acknowledgement slot for the last column-width intent.
+    /// One bounded acknowledgement slot for the last lane or tree width
+    /// intent.
     /// It is published only for its Workspace and never saved.
     width_request: Option<(WorkspaceKey, String)>,
     /// Counts the layout changes made outside the reconcile, so an unchanged
@@ -67,16 +68,16 @@ pub(super) struct WorkspaceViewStore {
     /// The last load stamp a browser display was given (`next_browser_load`).
     /// Runtime only.
     pub(super) browser_load: u64,
-    /// Numbers the area intents that called File Views, whichever page, CLI
-    /// `--reveal` or event asked, and remembers the number of each
-    /// Workspace's last call. The shell draws a called column in a body too
-    /// narrow for all of them (PRD three-column-panel D-07, B26, B27), and a
-    /// call that did not start in that page reaches it only as the front
-    /// Workspace's number passing the last one it read, so a call into
-    /// another Workspace never moves the front one's columns. Runtime only:
-    /// which column a narrow body shows is never stored (B28).
-    pub(super) views_calls: u64,
-    pub(super) views_called: HashMap<WorkspaceKey, u64>,
+    /// Numbers the intents that opened the lane, whichever page, CLI
+    /// `--reveal`, event or rail press asked, and remembers the number of
+    /// each Workspace's last call. A page shows an unpinned lane over the
+    /// agents when the front Workspace's number passes the last one it read
+    /// (PRD right-lane D-02, B16, B17), so a call into another Workspace
+    /// never opens the front one's lane, and hiding the lane again is the
+    /// page's own moment. Runtime only: whether the lane floats now is never
+    /// stored (D-11).
+    pub(super) lane_calls: u64,
+    pub(super) lane_called: HashMap<WorkspaceKey, u64>,
     pub(super) presentation_choice: Option<(WorkspaceKey, String)>,
     /// An owner-lock transaction suppresses intermediate saves. Its reserved
     /// layout is the unchanged operator frame when a shown tab opens behind it.
@@ -99,68 +100,96 @@ pub(super) struct WorkspaceViewStore {
     save_worker: Option<thread::JoinHandle<()>>,
 }
 
-/// What an event asks of a Workspace's columns once it has moved the screen
-/// (D-03, D-08): a document, diff or page opened or focused turns the front
-/// Workspace's File Views on and numbers that call, and so does a file a
-/// terminal link names, applied to its own checkout's Workspace when it
-/// settles (`settle_reveal_path`), leaving Tools as it was (B4). A folder a
-/// link names opens nothing in File Views, so it turns only Tools on with the
-/// Explorer and is no File Views call. The Explorer's own reveal (B5) is a
-/// `workspace_view` `reveal`, not an intent.
-/// Choosing an agent or a tab changes no column (D-17); nothing else moves
-/// a column on its own.
+/// What an event asks of a Workspace's lane once it has moved the screen
+/// (PRD right-lane D-13, B16): a document, diff or page opened or focused
+/// opens the front Workspace's lane on the files tool and numbers that call,
+/// and so does a file a terminal link names, applied to its own checkout's
+/// Workspace when it settles (`settle_reveal_path`). A folder a link names
+/// opens the files tool with its tree, where the folder is shown. The
+/// Explorer's own reveal is a `workspace_view` `reveal`, not an intent.
+/// Choosing an agent or a tab moves no lane state the core keeps (B15);
+/// nothing else opens the lane on its own.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum AreaIntent {
-    Views,
-    /// A folder a link names: Tools on, on the Explorer, and File Views as it was.
+    Files,
+    /// A folder a link names: the files tool with its tree on.
     RevealFolder,
 }
 
 impl AreaIntent {
     pub(super) fn of(event: &Event) -> Option<Self> {
         match event {
-            Event::FileOpen(_) | Event::FileFocus(_) => Some(Self::Views),
+            Event::FileOpen(_) | Event::FileFocus(_) => Some(Self::Files),
             // A deselect opens nothing.
-            Event::ChangesSelect(payload) if payload.path.is_some() => Some(Self::Views),
+            Event::ChangesSelect(payload) if payload.path.is_some() => Some(Self::Files),
             _ => None,
         }
+    }
+
+    /// Whether the event asks for a view in the files tool: a file, a diff
+    /// or a page. A terminal link's path asks once it settles in its own
+    /// checkout's Workspace (`settle_reveal_path`).
+    pub(super) fn opens_view(event: &Event) -> bool {
+        Self::of(event).is_some() || matches!(event, Event::BrowserOpen(_))
     }
 }
 
 /// The payload of `workspace_view`: any subset of the front Workspace's
-/// presentation, each field the value it should end at, so the same event
-/// sent twice lands where it did once (D-05, B13). Absent fields keep their
-/// value.
+/// lane, each field the value it should end at, so the same event sent
+/// twice lands where it did once (PRD right-lane D-12, B20). Absent fields
+/// keep their value.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct WorkspaceViewPayload {
-    /// Whether the File Views column is on. On with no view open, it opens
-    /// one New tab page in the same event (D-10).
+    /// `files`, `changes`, `agent_sessions` or `memory` opens the lane on
+    /// that tool, a call the page shows even when the tool was already the
+    /// lane's; `null` closes the lane.
+    #[serde(default, deserialize_with = "present")]
+    pub(super) tool: Option<Option<String>>,
+    /// Whether the lane is pinned beside Agent Views (D-03).
     #[serde(default)]
-    pub(super) views: Option<bool>,
-    /// Whether the Tools column is on.
+    pub(super) pinned: Option<bool>,
+    /// Whether the files tool shows the file tree column (D-05).
     #[serde(default)]
-    pub(super) tools: Option<bool>,
-    /// `explorer` or `changes` (History): the Tools column's one tool.
-    /// Choosing one turns the column on unless `tools` says otherwise.
+    pub(super) tree: Option<bool>,
+    /// The lane's width, in CSS pixels.
     #[serde(default)]
-    pub(super) tool: Option<String>,
-    /// The File Views column's width, in CSS pixels.
+    pub(super) lane_width: Option<u32>,
+    /// The tree column's width, in CSS pixels.
     #[serde(default)]
-    pub(super) views_width: Option<u32>,
-    /// The Tools column's width, in CSS pixels.
-    #[serde(default)]
-    pub(super) tools_width: Option<u32>,
+    pub(super) tree_width: Option<u32>,
     /// An optional opaque identity for a width intent, at most 128 bytes.
     #[serde(default)]
     pub(super) width_request_id: Option<String>,
-    /// A file of the front Workspace to reveal: Tools turns on with the
-    /// Explorer and the file's folders unfolded, in the same event, and
-    /// nothing is opened; File Views stays as it is (B5).
+    /// A file of the front Workspace to reveal: the lane opens on the files
+    /// tool with the tree on and the file's folders unfolded, in the same
+    /// event, and nothing is opened (B16).
     #[serde(default)]
     pub(super) reveal: Option<String>,
 }
 
+/// A field that is present, `null` included, as opposed to absent.
+fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
 impl WorkspaceViewStore {
+    /// Numbers a call that opened `key`'s lane. The call history has the
+    /// store's bound; it is pruned only when crossing it, never on a repeat.
+    pub(super) fn call_lane(&mut self, key: &WorkspaceKey) {
+        self.lane_calls += 1;
+        self.lane_called.insert(key.clone(), self.lane_calls);
+        if self.lane_called.len() > workspace_views::MAX_WORKSPACES {
+            let views = &self.views;
+            self.lane_called
+                .retain(|(device, path), _| views.get(device, path).is_some());
+        }
+    }
+
     /// `saved_panel` is the right panel the older settings file holds, which
     /// is written back unchanged (D-10).
     /// The diagnostics say what the load had to do: move an unreadable file
@@ -176,21 +205,12 @@ impl WorkspaceViewStore {
             workspace_views::LoadOutcome::Loaded {
                 migrated_from,
                 repairs,
-                upgraded,
             } => {
-                if upgraded > 0 {
-                    diagnostics.push((
-                        "workspace_views.columns_migrated",
-                        format!(
-                            "{upgraded} Workspaces were stored with the side panel or an older layout; each restarts with File Views on where its views showed, Tools and its tool as they were, and both column widths at their defaults"
-                        ),
-                    ));
-                }
                 if let Some(version) = migrated_from {
                     diagnostics.push((
                         "workspace_views.migrated",
                         format!(
-                            "Workspace view state was migrated from schema {version} to {}; each Workspace's View tabs are one area",
+                            "Workspace view state was migrated from schema {version} to {}; each Workspace's File Views and Tools became its right lane, on the files tool where File Views was on, else on the tool Tools showed, unpinned",
                             workspace_views::SCHEMA_VERSION
                         ),
                     ));
@@ -254,8 +274,8 @@ impl WorkspaceViewStore {
                 derived_active: None,
                 split_requests: HashMap::new(),
                 browser_load: 0,
-                views_calls: 0,
-                views_called: HashMap::new(),
+                lane_calls: 0,
+                lane_called: HashMap::new(),
                 presentation_choice: None,
                 view_transaction: None,
                 unshown: HashSet::new(),
@@ -285,6 +305,30 @@ impl Runtime {
     ) -> Option<WorkspaceKey> {
         self.catalog_checkout(workspace_id, checkout_id)
             .map(|(workspace, checkout)| (workspace.device_id.clone(), checkout.path.clone()))
+    }
+
+    /// The front Workspace, when its files tool shows the tree alone (B12).
+    /// An open asked there keeps the tree beside what it opens (B11), read
+    /// before the open so that a view landing late keeps the same tree.
+    pub(super) fn front_lone_tree(&self) -> Option<WorkspaceKey> {
+        let key = self.front_workspace_key()?;
+        let entry = self.workspace_views.as_ref()?.views.get(&key.0, &key.1)?;
+        (entry.shows_files() && entry.layout.display_count() == 0).then_some(key)
+    }
+
+    /// Turns the tree on for an open asked while it showed alone, whichever
+    /// route the open took; true when the stored tree changed.
+    pub(super) fn keep_lone_tree(&mut self, key: &WorkspaceKey) -> bool {
+        let Some(store) = self.workspace_views.as_mut() else {
+            return false;
+        };
+        let entry = store.views.entry(&key.0, &key.1);
+        if entry.tree {
+            return false;
+        }
+        entry.tree = true;
+        self.persist_workspace_views();
+        true
     }
 
     pub(super) fn front_workspace_key(&self) -> Option<WorkspaceKey> {
@@ -365,29 +409,14 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_mut() else {
             return;
         };
-        if intent == AreaIntent::Views {
-            store.views_calls += 1;
-            store.views_called.insert(key.clone(), store.views_calls);
-        }
         let entry = store.views.entry(&key.0, &key.1);
-        let before = (entry.views, entry.tool, entry.tools);
-        match intent {
-            AreaIntent::Views => entry.views = true,
-            AreaIntent::RevealFolder => {
-                entry.tool = Tool::Explorer;
-                entry.tools = true;
-            }
+        let before = (entry.tool, entry.tree);
+        entry.tool = Some(Tool::Files);
+        if intent == AreaIntent::RevealFolder {
+            entry.tree = true;
         }
-        let changed = before != (entry.views, entry.tool, entry.tools);
-        // A new Workspace can evict the store's least recently used entry.
-        // Call history has the same bound; prune only when crossing it, not
-        // on repeated calls or any terminal input/output path.
-        if store.views_called.len() > workspace_views::MAX_WORKSPACES {
-            let views = &store.views;
-            store
-                .views_called
-                .retain(|(device, path), _| views.get(device, path).is_some());
-        }
+        let changed = before != (entry.tool, entry.tree);
+        store.call_lane(key);
         if changed {
             self.persist_workspace_views();
         }
@@ -409,19 +438,22 @@ impl Runtime {
         {
             self.set_error(
                 "workspace_view.invalid_width_request",
-                "The column width request identity must contain 1 to 128 bytes",
+                "The lane width request identity must contain 1 to 128 bytes",
                 false,
             );
             return true;
         }
-        let tool = match payload.tool.as_deref() {
+        let tool = match payload.tool.as_ref() {
             None => None,
-            Some(value) => match Tool::parse(value) {
-                Some(tool) => Some(tool),
+            Some(None) => Some(None),
+            Some(Some(value)) => match Tool::parse(value) {
+                Some(tool) => Some(Some(tool)),
                 None => {
                     self.set_error(
                         "workspace_view.unknown_tool",
-                        format!("{value} is not a Workspace tool; expected explorer, changes, agent_sessions or memory"),
+                        format!(
+                            "{value} is not a lane tool; expected files, changes, agent_sessions or memory"
+                        ),
                         false,
                     );
                     return true;
@@ -450,64 +482,51 @@ impl Runtime {
         let store = self.workspace_views.as_mut().expect("checked above");
         let entry = store.views.entry(&key.0, &key.1);
         let before = entry.clone();
-        // File Views is never an empty column: turned on with no view, it
-        // opens the New tab page in the same event (D-10, B16). That is the
-        // one step that can fail, so it runs before anything else changes and
-        // a refusal leaves the entry as it was.
-        if payload.views == Some(true) && entry.layout.displays().next().is_none() {
-            let load = self.next_browser_load();
-            if let Err(error) = self.change_view_layout(&key, |layout, stamp| {
-                let display = layout.new_browser_display("", load);
-                let area = layout.active_area().id.clone();
-                layout.insert(&area, display, stamp)?;
-                Ok(((), true))
-            }) {
-                self.set_error(error.kind(), error.message(), false);
-                return true;
-            }
-        }
-        let store = self.workspace_views.as_mut().expect("checked above");
-        let entry = store.views.entry(&key.0, &key.1);
-        // A reveal is the Explorer's; a tool chosen turns its column on.
-        let tool = if payload.reveal.is_some() {
-            Some(Tool::Explorer)
-        } else {
-            tool
-        };
-        let tools = payload.tools.or(tool.is_some().then_some(true));
         if let Some(tool) = tool {
             entry.tool = tool;
         }
-        if let Some(tools) = tools {
-            entry.tools = tools;
+        if let Some(pinned) = payload.pinned {
+            entry.pinned = pinned;
         }
-        if let Some(width) = payload.views_width {
-            entry.views_width = Some(workspace_views::clamp_column_width(width));
+        if let Some(tree) = payload.tree {
+            entry.tree = tree;
         }
-        if let Some(width) = payload.tools_width {
-            entry.tools_width = Some(workspace_views::clamp_column_width(width));
+        // Closing the lane turns the tree off; hiding it or switching tools
+        // does not (PRD right-lane B11).
+        if entry.tool.is_none() {
+            entry.tree = false;
         }
-        if let Some(views) = payload.views {
-            entry.views = views;
+        // A reveal is the tree's: the files tool with the tree on.
+        if payload.reveal.is_some() {
+            entry.tool = Some(Tool::Files);
+            entry.tree = true;
         }
-        let width_request_changed =
-            if payload.views_width.is_some() || payload.tools_width.is_some() {
-                let next = payload.width_request_id.map(|id| (key.clone(), id));
-                let changed = store.width_request != next;
-                store.width_request = next;
-                changed
-            } else {
-                false
-            };
+        if let Some(width) = payload.lane_width {
+            entry.lane_width = Some(workspace_views::clamp_width(width));
+        }
+        if let Some(width) = payload.tree_width {
+            entry.tree_width = Some(workspace_views::clamp_width(width));
+        }
+        let entry_changed = *entry != before;
+        // Every open is a call, so a page shows a lane it had hidden even
+        // when the lane already held that tool.
+        let called = matches!(tool, Some(Some(_))) || payload.reveal.is_some();
+        if called {
+            store.call_lane(&key);
+        }
+        let width_request_changed = if payload.lane_width.is_some() || payload.tree_width.is_some()
+        {
+            let next = payload.width_request_id.map(|id| (key.clone(), id));
+            let changed = store.width_request != next;
+            store.width_request = next;
+            changed
+        } else {
+            false
+        };
         let revealed = payload
             .reveal
             .is_some_and(|path| self.unfold_to(&key, &path));
-        let entry_changed = self
-            .workspace_views
-            .as_ref()
-            .and_then(|store| store.views.get(&key.0, &key.1))
-            != Some(&before);
-        if !entry_changed && !revealed && !width_request_changed {
+        if !entry_changed && !called && !revealed && !width_request_changed {
             return false;
         }
         if entry_changed {
@@ -784,38 +803,40 @@ impl Runtime {
         let published = front.zip(view).map(|(key, view)| WorkspaceViewSnapshot {
             device_id: view.device_id.clone(),
             path: view.path.clone(),
-            views: view.views,
-            tools: view.tools,
             tool: view.tool,
-            views_width: view.views_width,
-            tools_width: view.tools_width,
+            pinned: view.pinned,
+            tree: view.tree,
+            lane_width: view.lane_width,
+            tree_width: view.tree_width,
             width_request_id: store
                 .width_request
                 .as_ref()
                 .filter(|(workspace, _)| workspace == key)
                 .map(|(_, request)| request.clone()),
-            views_called: store.views_called.get(key).copied().unwrap_or(0),
-            views_calls: store.views_calls,
+            lane_called: store.lane_called.get(key).copied().unwrap_or(0),
+            lane_calls: store.lane_calls,
             resumed: Some(key) == store.resumable.as_ref(),
             layout: self.view_layout_snapshot(key, &view.layout),
             agent_layout: self
                 .arranges_agent_areas(&key.0)
                 .then(|| self.agent_layout_snapshot(key, &view.agent_layout)),
         });
-        self.snapshot.workspace_view = published;
         // The one global panel every existing reader gates on (the Changes
-        // reader, the device Explorer watch) follows the front Workspace's
-        // Tools column and its tool, so those readers keep one owner (A5)
-        // and read nothing while Tools is off.
-        if let Some(view) = self.snapshot.workspace_view.as_ref() {
-            self.snapshot.ui_state.right_panel_visible = view.tools;
-            self.snapshot.ui_state.right_panel_section = match view.tool {
-                Tool::Explorer => RightPanelSection::Explorer,
-                Tool::Changes => RightPanelSection::Changes,
-                Tool::AgentSessions => RightPanelSection::AgentSessions,
-                Tool::Memory => RightPanelSection::Memory,
+        // reader, the device Explorer watch, Memory) follows the front
+        // Workspace's lane, so those readers keep one owner (A5) and read
+        // nothing while the lane is closed or the files tool draws no tree.
+        if let Some(view) = view {
+            let (visible, section) = match view.tool {
+                Some(Tool::Files) => (view.shows_tree(), RightPanelSection::Explorer),
+                Some(Tool::Changes) => (true, RightPanelSection::Changes),
+                Some(Tool::AgentSessions) => (true, RightPanelSection::AgentSessions),
+                Some(Tool::Memory) => (true, RightPanelSection::Memory),
+                None => (false, self.snapshot.ui_state.right_panel_section),
             };
+            self.snapshot.ui_state.right_panel_visible = visible;
+            self.snapshot.ui_state.right_panel_section = section;
         }
+        self.snapshot.workspace_view = published;
     }
 
     /// A View display's file that could not be read back after a restart,
@@ -963,7 +984,7 @@ impl Runtime {
             .retain(|view| view.device_id != device_id);
         store.live.retain(|(device, _)| device != device_id);
         store
-            .views_called
+            .lane_called
             .retain(|(device, _), _| device != device_id);
         store
             .bookmark_seen

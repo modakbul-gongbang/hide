@@ -138,7 +138,7 @@ test("the window's top row names the device over the rail and the sidebar, and c
     const project = center.locator("[data-workspace-project]");
     await expect(project).toHaveText("fixture");
     await expect(center.locator("[data-workspace-location]")).toBeVisible();
-    await expect(center.locator("[data-column-toggles] button")).toHaveCount(4);
+    await expect(center.locator("[data-workspace-actions] button")).toHaveCount(2);
     const workspaceBox = (await page.locator("[data-workspace-screen]").boundingBox())!;
     expect(workspaceBox.y).toBeGreaterThanOrEqual(rowBox.y + rowBox.height - 0.5);
     for (const theme of ["dark", "light"] as const) {
@@ -188,12 +188,12 @@ test("at the smallest window and the largest Interface text, long names shorten 
     const center = page.locator("[data-title-center]");
     const project = center.locator("[data-workspace-project]");
     await expect(project).toHaveText(LONG_NAME);
-    // The path shortens with an ellipsis, inside the row; the four icons keep their place.
+    // The path shortens with an ellipsis, inside the row; the icons keep their place.
     const cut = (element: HTMLElement) => element.scrollWidth > element.clientWidth;
     expect(await project.evaluate(cut) || await center.locator("[data-workspace-location]").evaluate(cut)).toBe(true);
     expect(await page.locator("[data-title-row]").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-    const toggles = center.locator("[data-column-toggles] button");
-    await expect(toggles).toHaveCount(4);
+    const toggles = center.locator("[data-workspace-actions] button");
+    await expect(toggles).toHaveCount(2);
     const rowBox = (await page.locator("[data-title-row]").boundingBox())!;
     for (const toggle of await toggles.all()) {
       await expect(toggle).toBeVisible();

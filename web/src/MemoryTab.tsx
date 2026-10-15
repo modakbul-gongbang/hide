@@ -32,9 +32,9 @@ import { useShellStore } from "./store";
 const KIND: Record<MemoryCardKind, MessageKey> = { rule: "memory.kind.rule", decision: "memory.kind.decision", lesson: "memory.kind.lesson", fact: "memory.kind.fact", preference: "memory.kind.preference" };
 
 /**
- * The Tools column's Memory tab (PRD project-memory-v2 D-17, B19-B32): the
- * front checkout's Project, which the Tools column opens (`useMemoryProject`);
- * until the core answers for that Project, the tab reads.
+ * The lane's Memory tool (PRD project-memory-v2 D-17, B19-B32; PRD
+ * right-lane D-01): the front checkout's Project, which the tool rail opens
+ * (`useMemoryProject`); until the core answers for that Project, the tool reads.
  */
 export function MemoryTab({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
@@ -53,10 +53,10 @@ export function MemoryTab({ actions }: { actions: Actions }) {
 }
 
 /**
- * Opens the front checkout's Project's Memory while the Tools column shows,
- * whatever its tool, so the Memory tab's dot says when the Project has
+ * Opens the front checkout's Project's Memory while the tool rail shows,
+ * whatever the lane holds, so the Memory icon's dot says when the Project has
  * something to ask (B28). The core keeps one opened Project per daemon: the
- * column names its Project when it shows, when the front Project changes, and
+ * rail names its Project when it shows, when the front Project changes, and
  * when its window comes forward after another window named another one, so
  * two windows never take it from each other in a loop.
  */

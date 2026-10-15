@@ -1,5 +1,5 @@
 /* global document */
-// Record sections remain inside a narrow Tools column. Dialog/palette
+// Record sections remain inside a narrow lane. Dialog/palette
 // portals are measured independently of the scrollable record beneath them.
 export async function measure(page) {
   return page.evaluate(() => {

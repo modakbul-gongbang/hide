@@ -1,18 +1,17 @@
 // The S6 flow on an isolated pinned Herdr and hided: a first run on Main, a Project's
-// Overview and its Workspace (B1, B2, B4), the Agent Views, File Views and
-// Tools columns from the toolbar, its menu and their chords, with a terminal
-// resized once per column change and never inside File Views (PRD
-// three-column-panel), the Explorer and History as one tool at a time (B10),
-// a delegated child reached from its parent's chip and left by its Return
-// (B14-B16), and a restart that brings the Workspace back with a View tab
-// whose file is gone marked unavailable (B19, B20).
+// Overview and its Workspace (B1, B2, B4), the right lane from its rail, the
+// path's menu and the chords, one tool at a time, pinned beside live agents
+// with a terminal resized once per pin change (PRD right-lane), a delegated
+// child reached from its parent's chip and left by its Return (B14-B16), and
+// a restart that brings the Workspace back with a View tab whose file is gone
+// marked unavailable (B19, B20).
 
 import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { declareParent, herdrHasFocus, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { chooseColumn, countSent, screenshot } from "./wire";
+import { chooseLane, countSent, screenshot, showExplorer } from "./wire";
 import { chord, commandLabel } from "./chords";
 import { openCurrentProjectOverview } from "./overview-entry";
 import { toPage } from "../../desktop/src/main/wirePath";
@@ -54,8 +53,8 @@ async function savedFront(daemon: Daemon, pattern: RegExp): Promise<void> {
   await expect.poll(savedFronts).toEqual([expect.stringMatching(pattern)]);
 }
 
-test("Main, Overview and a Workspace with its columns, tools and delegated child", async ({ page }) => {
-  // Wide enough for all three columns at their default widths.
+test("Main, Overview and a Workspace with its lane, tools and delegated child", async ({ page }) => {
+  // Wide enough to dock the lane beside the agents.
   await page.setViewportSize({ width: 1920, height: 1000 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -92,187 +91,88 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await page.locator(`[data-overview-screen] [data-graph-open="${parent}"]`).click();
     await expect(workspace).toBeVisible();
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true");
-    // A new Workspace shows Agent Views alone: File Views and Tools are off
-    // and Tools holds the Explorer (B2). The toolbar spans the body and ends
-    // with Overview, Open server (its server count, once known), File Views and Tools as icons only (#349 D-07).
-    await expect(workspace).toHaveAttribute("data-file-views", "off");
-    await expect(workspace).toHaveAttribute("data-tools", "off");
-    await expect(page.locator('[data-column="views"], [data-column="tools"]')).toHaveCount(0);
-    const toggles = page.locator("[data-workspace-toolbar] [data-column-toggles] button");
-    await expect(toggles).toHaveCount(4);
-    expect(await toggles.evaluateAll((buttons) => buttons.map((button) => [button.getAttribute("aria-label"), button.textContent?.trim() ?? ""]))).toEqual([
+    // A new Workspace shows Agent Views alone with its lane closed (PRD
+    // right-lane B1). The top row ends with Overview and Open server (its
+    // server count, once known) as icons only; the tools are on the rail.
+    await expect(workspace).toHaveAttribute("data-lane-mode", "closed");
+    await expect(page.locator("[data-lane-frame]")).toHaveCount(0);
+    const actions = page.locator("[data-workspace-toolbar] [data-workspace-actions] button");
+    expect(await actions.evaluateAll((buttons) => buttons.map((button) => [button.getAttribute("aria-label"), button.textContent?.trim() ?? ""]))).toEqual([
       ["Overview", ""],
       [expect.stringMatching(/^Open server(, \d+ running)?$/), ""],
-      ["File Views", ""],
-      ["Tools", ""],
     ]);
-    const body = page.locator('[data-column-row="true"]');
-    const toolbarBox = (await page.locator("[data-workspace-toolbar]").boundingBox())!;
+    const body = page.locator("[data-lane-row]");
     const bodyBox = (await body.boundingBox())!;
-    expect(toolbarBox.width).toBeCloseTo(bodyBox.width, 0);
+    const toolbarBox = (await page.locator("[data-workspace-toolbar]").boundingBox())!;
     expect(toolbarBox.y + toolbarBox.height).toBeLessThanOrEqual(bodyBox.y + 1);
 
-    // B7, B8: each icon names itself with its chord in the tooltip and
-    // reads pressed only while its column shows.
-    const viewsToggle = page.locator('[data-column-toggle="views"]');
-    const toolsToggle = page.locator('[data-column-toggle="tools"]');
-    await expect(viewsToggle).toHaveAttribute("aria-pressed", "false");
-    await toolsToggle.hover();
-    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("Tools");
+    // B1, B20: each rail icon names itself and its scope with its chord in
+    // the tooltip, and reads pressed only while the lane shows its tool.
+    const filesIcon = page.locator('[data-lane-tool="files"]');
+    const sessionsIcon = page.locator('[data-lane-tool="agent_sessions"]');
+    await expect(filesIcon).toHaveAttribute("aria-pressed", "false");
+    await sessionsIcon.hover();
+    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("Sessions");
     await expect(page.locator('[data-slot="tooltip-content"]')).toContainText(commandLabel("toggle_explorer"));
-    await viewsToggle.hover();
-    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("File Views");
+    await filesIcon.hover();
+    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("Files");
     await expect(page.locator('[data-slot="tooltip-content"]')).toContainText(commandLabel("toggle_right_panel"));
     await page.mouse.move(bodyBox.x + 40, bodyBox.y + 40);
 
-    // The Tools icon turns Tools on by result value, alone beside the agents
-    // (B12, Tools only is a state), and the toolbar's menu turns it off.
-    const toolsColumn = page.locator('[data-column="tools"]');
-    const viewsColumn = page.locator('[data-column="views"]');
-    const agentArea = page.locator('[data-column="agents"]');
-    const before = sent.get("workspace_view") ?? 0;
-    await toolsToggle.click();
-    await expect(workspace).toHaveAttribute("data-tools", "shown");
-    await expect(toolsToggle).toHaveAttribute("aria-pressed", "true");
-    await expect.poll(() => last.get("workspace_view")).toEqual({ tools: true });
-    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
-    const toolColumn = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--size-panel-ideal")));
-    expect((await toolsColumn.boundingBox())!.width).toBeCloseTo(toolColumn, 0);
-    await chooseColumn(page, "tools");
-    await expect(workspace).toHaveAttribute("data-tools", "off");
-    expect(sent.get("workspace_view")).toBe(before + 2);
-    await expect.poll(() => last.get("workspace_view")).toEqual({ tools: false });
-
-    // ⌘E turns Tools on; its icon tabs swap the one tool it holds, and a
-    // tool kept while Tools is off comes back with it.
+    // ⌘E opens the lane on Sessions over the agents, the path's menu closes
+    // it, and the rail swaps the one tool it holds (B2, B20, D-01).
+    const lane = page.locator("[data-lane-frame]");
+    const agentArea = page.locator("[data-agent-area]");
     await page.keyboard.press(chord("toggle_explorer"));
-    await expect(workspace).toHaveAttribute("data-tools", "shown");
-    await toolsColumn.locator('[data-tool-tab="changes"]').click();
+    await expect(workspace).toHaveAttribute("data-lane-shows", "agent_sessions");
+    await expect(workspace).toHaveAttribute("data-lane-mode", "overlay");
+    await expect.poll(() => last.get("workspace_view")).toEqual({ tool: "agent_sessions" });
+    await expect(sessionsIcon).toHaveAttribute("aria-pressed", "true");
+    const laneIdeal = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--size-lane-ideal")));
+    expect((await lane.boundingBox())!.width).toBeCloseTo(laneIdeal, 0);
+    await chooseLane(page, "sessions");
+    await expect(workspace).toHaveAttribute("data-lane-mode", "closed");
+    await expect.poll(() => last.get("workspace_view")).toEqual({ tool: null });
+    await page.keyboard.press(chord("toggle_explorer"));
+    await page.locator('[data-lane-tool="changes"]').click();
     await expect.poll(() => last.get("workspace_view")).toEqual({ tool: "changes" });
-    await expect(page.locator('[data-tool="changes"]')).toBeVisible();
-    await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
-    await page.keyboard.press(chord("toggle_explorer"));
-    await expect(toolsColumn).toHaveCount(0);
-    await page.keyboard.press(chord("toggle_explorer"));
-    await expect(page.locator('[data-tool="changes"]')).toBeVisible();
-    await toolsColumn.locator('[data-tool-tab="explorer"]').click();
-    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
+    await expect(page.locator('[data-lane="changes"]')).toBeVisible();
+    await expect(page.locator("[data-explorer]")).toHaveCount(0);
     // The sidebar switch keeps no chord of its own: the chords above left it on Projects.
     await expect(page.locator("[data-sidebar]")).toHaveAttribute("data-sidebar", "projects");
 
-    // Tools' divider shows its grip on hover and while dragging, moves a
-    // guide during the drag, and lands one width on release (B20, B21).
-    const toolsDivider = page.locator('[data-column-divider="tools"]');
-    const grip = toolsDivider.locator("[data-column-grip]");
-    const opacity = () => grip.evaluate((element) => getComputedStyle(element).opacity);
-    expect(await opacity()).toBe("0");
-    const toolsDividerBox = (await toolsDivider.boundingBox())!;
-    await page.mouse.move(toolsDividerBox.x + toolsDividerBox.width / 2, toolsDividerBox.y + 200);
-    await expect.poll(opacity).toBe("1");
-    await page.mouse.down();
-    await page.mouse.move(bodyBox.x + bodyBox.width - 500, toolsDividerBox.y + 200, { steps: 8 });
-    await expect(page.locator("[data-column-guide] [data-column-grip]")).toBeVisible();
-    await page.mouse.up();
-    await expect(page.locator("[data-column-guide]")).toHaveCount(0);
-    await expect.poll(() => last.get("workspace_view")).toEqual({ tools_width: expect.any(Number) });
-    await expect.poll(async () => (await toolsColumn.boundingBox())!.width).toBeCloseTo(496, -1);
-    await page.mouse.move(bodyBox.x + 40, bodyBox.y + 40);
-    await expect(toolsDivider).toHaveAttribute("role", "separator");
-
-    // ⌘⇧B with no view open opens File Views on the New tab page (B16), and
-    // closing that untouched tab turns File Views off again; Tools stays.
-    await page.keyboard.press(chord("toggle_right_panel"));
-    await expect.poll(() => last.get("workspace_view")).toEqual({ views: true });
-    await expect(workspace).toHaveAttribute("data-file-views", "shown");
-    await expect(viewsColumn.locator("[data-new-tab-page]")).toBeVisible();
-    await viewsColumn.locator('button[aria-label^="Close view"]').first().click();
-    await expect(workspace).toHaveAttribute("data-file-views", "off");
-    await expect(workspace).toHaveAttribute("data-tools", "shown");
-
-    // A file opened from the Explorer turns File Views on between the agents
-    // and Tools; the agents resize once to the narrower width (B3, B4, B18).
+    // Files from the tree open in the files tool; pinned, the lane docks
+    // beside the agents, which resize once (B5, B16, B24).
     const resizes = () => sent.get("terminal_resize") ?? 0;
     const settled = () => unchangedForFrames(page, resizes);
-    await settled();
-    const agentsBeforeViews = (await agentArea.boundingBox())!;
-    const resizesBeforeViews = resizes();
+    await showExplorer(page);
     await page.locator(`[data-explorer-row="${toPage(path.join(root, "notes.md"))}"]`).dblclick();
-    await expect(workspace).toHaveAttribute("data-file-views", "shown");
-    await expect(viewsColumn.locator('[data-tab-kind="file"]')).toHaveCount(1);
-    await expect.poll(async () => (await agentArea.boundingBox())!.width).toBeLessThan(agentsBeforeViews.width - 300);
-    await expect.poll(resizes, { timeout: 10_000 }).toBeGreaterThan(resizesBeforeViews);
-    await settled();
-    // Once: one resize for each pane on screen, none for a frame between.
-    const panesShown = await page.locator("[data-pane-view]").count();
-    expect(resizes() - resizesBeforeViews).toBe(panesShown);
-    // Left to right, docked edge to edge: Agent Views, File Views, Tools.
-    const agentsBox = (await agentArea.boundingBox())!;
-    const viewsBox = (await viewsColumn.boundingBox())!;
-    const toolsBox = (await toolsColumn.boundingBox())!;
-    expect(agentsBox.x + agentsBox.width).toBeLessThanOrEqual(viewsBox.x);
-    expect(viewsBox.x + viewsBox.width).toBeLessThanOrEqual(toolsBox.x);
-    expect(toolsBox.x + toolsBox.width).toBeCloseTo(bodyBox.x + bodyBox.width, 0);
-    for (const box of [agentsBox, viewsBox, toolsBox]) expect(box.height).toBeCloseTo(bodyBox.height, 0);
-
-    // Inside File Views nothing resizes a terminal: opening another file,
-    // switching its tabs (B19).
-    const resizesInViews = resizes();
     await page.locator(`[data-explorer-row="${toPage(path.join(root, "gone.txt"))}"]`).dblclick();
-    await expect(viewsColumn.locator('[data-tab-kind="file"]')).toHaveCount(2);
-    await viewsColumn.locator('[data-tab-kind="file"]').first().click();
-    await quietFor(page, 500, "opening a file view sends nothing more");
-    expect(resizes()).toBe(resizesInViews);
-    expect(await agentArea.boundingBox()).toEqual(agentsBox);
-
-    // File Views' divider: one step per arrow key, a guide while dragging
-    // with nothing resized, one change on release (B19, B20).
-    const viewsDivider = page.locator('[data-column-divider="views"]');
-    await viewsDivider.focus();
-    const widthBefore = Number(await viewsDivider.getAttribute("aria-valuenow"));
-    await page.keyboard.press("ArrowRight");
-    await expect(viewsDivider).toHaveAttribute("aria-valuenow", String(widthBefore - 32));
-    await expect.poll(() => last.get("workspace_view")).toEqual({ views_width: widthBefore - 32, width_request_id: expect.any(String) });
+    await expect(lane.locator('[data-tab-kind="file"]')).toHaveCount(2);
     await settled();
-    const widened = (await viewsColumn.boundingBox())!;
-    const resizesBeforeDrag = resizes();
-    const viewsDividerBox = (await viewsDivider.boundingBox())!;
-    await page.mouse.move(viewsDividerBox.x + viewsDividerBox.width / 2, viewsDividerBox.y + 200);
-    await page.mouse.down();
-    await page.mouse.move(viewsDividerBox.x + viewsDividerBox.width / 2 + 150, viewsDividerBox.y + 200, { steps: 8 });
-    await expect(page.locator("[data-column-guide]")).toBeVisible();
-    expect(await viewsColumn.boundingBox()).toEqual(widened);
-    expect(resizes()).toBe(resizesBeforeDrag);
-    await page.mouse.up();
-    await expect(page.locator("[data-column-guide]")).toHaveCount(0);
-    await expect.poll(async () => (await viewsColumn.boundingBox())!.width).toBeCloseTo(widened.width - 150, -1);
-    await expect.poll(() => last.get("workspace_view")).toEqual({ views_width: expect.any(Number) });
-
-    // The divider between File Views and Tools trades their widths, so the
-    // agents keep theirs and no terminal resizes.
+    const resizesBeforePin = resizes();
+    await page.locator("[data-lane-pin]").click();
+    await expect(workspace).toHaveAttribute("data-lane-mode", "docked");
+    await expect.poll(() => last.get("workspace_view")).toEqual({ pinned: true });
+    await expect.poll(resizes, { timeout: 10_000 }).toBeGreaterThan(resizesBeforePin);
     await settled();
-    const agentsBeforeTrade = (await agentArea.boundingBox())!;
-    const resizesBeforeTrade = resizes();
-    const tradeBox = (await toolsDivider.boundingBox())!;
-    await page.mouse.move(tradeBox.x + tradeBox.width / 2, tradeBox.y + 200);
-    await page.mouse.down();
-    await page.mouse.move(tradeBox.x + 60, tradeBox.y + 200, { steps: 6 });
-    await page.mouse.up();
-    await expect.poll(() => last.get("workspace_view")).toEqual({ views_width: expect.any(Number), tools_width: expect.any(Number) });
-    await quietFor(page, 500, "the width commit is the last one");
-    expect(await agentArea.boundingBox()).toEqual(agentsBeforeTrade);
-    expect(resizes()).toBe(resizesBeforeTrade);
-    await page.mouse.move(bodyBox.x + 40, bodyBox.y + 40);
+    const panesShown = await page.locator("[data-pane-view]").count();
+    expect(resizes() - resizesBeforePin).toBe(panesShown);
+    const agentsBox = (await agentArea.boundingBox())!;
+    const laneBox = (await lane.boundingBox())!;
+    expect(agentsBox.x + agentsBox.width).toBeLessThanOrEqual(laneBox.x);
+    expect(laneBox.x + laneBox.width).toBeCloseTo(bodyBox.x + bodyBox.width, 0);
 
-    // The agents beside the columns are live: a click focuses the pane,
-    // typing reaches it, and ⌘F finds in that pane; in a View area ⌘F is the
+    // The agents beside the lane are live: a click focuses the pane, typing
+    // reaches it, and ⌘F finds in that pane; in a View area ⌘F is the
     // document's (B23).
     const childHost = page.locator(`[data-pane-view="${child}"] [data-terminal-host]`);
     await childHost.click({ position: { x: 40, y: 60 } });
     await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await expect.poll(() => last.get("focus_pane")).toMatchObject({ pane_id: child, origin: "operator" });
-    await page.keyboard.type("typed beside the columns");
-    await expect.poll(() => fs.readFileSync(herdr.inputLogs[1], "utf8"), { timeout: 10_000 }).toContain("typed beside the columns");
-    await expect(workspace).toHaveAttribute("data-file-views", "shown");
+    await page.keyboard.type("typed beside the lane");
+    await expect.poll(() => fs.readFileSync(herdr.inputLogs[1], "utf8"), { timeout: 10_000 }).toContain("typed beside the lane");
+    await expect(workspace).toHaveAttribute("data-lane-mode", "docked");
     const mouseReports = () => fs.readFileSync(herdr.inputLogs[1], "latin1").split("\x1b[<0;").length - 1;
     const reportsBefore = mouseReports();
     await childHost.click({ position: { x: 40, y: 60 } });
@@ -283,96 +183,54 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await expect.poll(() => last.get("pane_find_open")).toMatchObject({ pane_id: child });
     await expect(page.locator(".cm-search")).toHaveCount(0);
     await expect(page.locator("[data-find-bar]")).toHaveCount(0);
-    await viewsColumn.locator("[data-editor-body] .cm-content").click();
+    await lane.locator("[data-editor-body] .cm-content").click();
     await page.keyboard.press(chord("find_in_pane"));
     await expect(page.locator(".cm-search")).toBeVisible();
     await page.keyboard.press("Escape");
-    await screenshot(page, "s6-columns-wide");
+    await screenshot(page, "s6-lane-docked");
 
-    // ⌘⇧B turns File Views off without closing a view; the icon counts the
-    // views it keeps, and the keyboard that was in File Views goes back to
-    // the focused pane (B9, B11, B24). Turning it on brings the same tabs.
+    // ⌘⇧B closes the lane without closing a view; the Files icon counts the
+    // views it keeps, and the keyboard that was in the lane goes back to the
+    // focused pane (B2, B7, B17). Opening it brings the same tabs, docked.
     await settled();
-    const resizesBeforeHide = resizes();
-    await viewsColumn.locator("[data-editor-body] .cm-content").click();
+    const resizesBeforeClose = resizes();
+    await lane.locator("[data-editor-body] .cm-content").click();
     await page.keyboard.press(chord("toggle_right_panel"));
-    await expect(workspace).toHaveAttribute("data-file-views", "off");
-    await expect.poll(() => last.get("workspace_view")).toEqual({ views: false });
-    await expect(workspace).toHaveAttribute("data-tools", "shown");
-    await expect(viewsToggle).toHaveAttribute("aria-pressed", "false");
-    await expect(page.locator("[data-column-badge]")).toHaveText("2");
-    await expect(viewsToggle).toHaveAttribute("aria-description", "2 views open");
-    // The badge is drawn whole on the icon's top-right corner, inside the toolbar.
-    const badge = (await page.locator("[data-column-badge]").boundingBox())!;
-    const toggleBox = (await viewsToggle.boundingBox())!;
-    expect(badge.y).toBeGreaterThanOrEqual(toolbarBox.y);
-    expect(badge.x).toBeGreaterThanOrEqual(toggleBox.x + toggleBox.width / 2);
-    expect(badge.y).toBeLessThan(toggleBox.y + toggleBox.height / 2);
+    await expect(workspace).toHaveAttribute("data-lane-mode", "closed");
+    await expect.poll(() => last.get("workspace_view")).toEqual({ tool: null });
+    await expect(filesIcon).toHaveAttribute("aria-pressed", "false");
+    await expect(filesIcon.locator("[data-lane-badge]")).toHaveText("2");
+    await expect(filesIcon).toHaveAttribute("aria-description", "2 views open");
     await expect
       .poll(() => page.evaluate(() => document.activeElement?.closest("[data-pane-view]")?.getAttribute("data-pane-view") ?? null))
       .not.toBeNull();
-    await expect.poll(resizes, { timeout: 10_000 }).toBeGreaterThan(resizesBeforeHide);
+    await expect.poll(resizes, { timeout: 10_000 }).toBeGreaterThan(resizesBeforeClose);
     await settled();
-    expect(resizes() - resizesBeforeHide).toBe(panesShown);
-    await screenshot(page, "s6-columns-views-off");
-    await viewsToggle.click();
-    await expect.poll(() => last.get("workspace_view")).toEqual({ views: true });
-    await expect(viewsColumn.locator('[data-tab-kind="file"]')).toHaveCount(2);
-    await expect(page.locator("[data-column-badge]")).toHaveCount(0);
+    expect(resizes() - resizesBeforeClose).toBe(panesShown);
+    await screenshot(page, "s6-lane-closed");
+    await filesIcon.click();
+    await expect(workspace).toHaveAttribute("data-lane-mode", "docked");
+    await expect(lane.locator('[data-tab-kind="file"]')).toHaveCount(2);
+    await expect(filesIcon.locator("[data-lane-badge]")).toHaveCount(0);
 
-    // An agent chosen from the sidebar changes no column (B22, D-17).
+    // An agent chosen from the sidebar changes no lane (B22, D-17).
     await page.locator(`[data-agent-open="${parent}"]`).first().click();
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
-    await expect(workspace).toHaveAttribute("data-file-views", "shown");
-    await expect(workspace).toHaveAttribute("data-tools", "shown");
+    await expect(workspace).toHaveAttribute("data-lane-mode", "docked");
     await expect.poll(() => herdrHasFocus(herdr, parent), { timeout: 15_000 }).toBe(true);
 
-    // B25-B27: the body decides how many columns show, and a narrow body
-    // stores nothing. Between the steps Tools gives way to File Views and
-    // comes back in its place when called; below them one column shows.
+    // B19: a window too narrow to dock opens the pinned lane over the agents
+    // and stores nothing; widening docks it again.
     const sentBeforeNarrow = sent.get("workspace_view") ?? 0;
-    await page.setViewportSize({ width: 1300, height: 1000 });
-    await expect(workspace).toHaveAttribute("data-workspace-body", "mid");
-    await expect(workspace).toHaveAttribute("data-file-views", "shown");
-    await expect(workspace).toHaveAttribute("data-tools", "hidden");
-    await page.keyboard.press(chord("toggle_explorer"));
-    await expect(workspace).toHaveAttribute("data-tools", "shown");
-    await expect(workspace).toHaveAttribute("data-file-views", "hidden");
-    await expect(toolsToggle).toHaveAttribute("aria-pressed", "true");
-    await expect(viewsToggle).toHaveAttribute("aria-pressed", "false");
-    await page.keyboard.press(chord("toggle_right_panel"));
-    await expect(workspace).toHaveAttribute("data-file-views", "shown");
-    await expect(workspace).toHaveAttribute("data-tools", "hidden");
-    expect(sent.get("workspace_view") ?? 0).toBe(sentBeforeNarrow);
-    await screenshot(page, "s6-columns-mid");
     await page.setViewportSize({ width: 1000, height: 1000 });
-    await expect(workspace).toHaveAttribute("data-workspace-body", "narrow");
-    await expect(workspace).toHaveAttribute("data-file-views", "hidden");
-    await expect(workspace).toHaveAttribute("data-tools", "hidden");
+    await expect(workspace).toHaveAttribute("data-lane-mode", "overlay");
+    await expect(page.locator("[data-lane-pin]")).toHaveAttribute("data-lane-pin", "narrow");
     await expect(agentArea).toBeVisible();
-    await viewsToggle.click();
-    await expect(workspace).toHaveAttribute("data-file-views", "shown");
-    expect((await viewsColumn.boundingBox())!.width).toBeCloseTo((await body.boundingBox())!.width, 0);
-    await screenshot(page, "s6-columns-narrow");
-    // The same icon again gives the body back to Agent Views and stores nothing.
-    await viewsToggle.click();
-    await expect(workspace).toHaveAttribute("data-file-views", "hidden");
-    await expect(agentArea).toBeVisible();
-    await page.keyboard.press(chord("toggle_explorer"));
-    await expect(workspace).toHaveAttribute("data-tools", "shown");
-    // An agent chosen from the sidebar returns the body to Agent Views.
-    await page.locator(`[data-agent-open="${child}"]`).first().click();
-    await expect(workspace).toHaveAttribute("data-tools", "hidden");
-    await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
-    await expect.poll(() => herdrHasFocus(herdr, child), { timeout: 15_000 }).toBe(true);
+    await screenshot(page, "s6-lane-narrow");
     expect(sent.get("workspace_view") ?? 0).toBe(sentBeforeNarrow);
-    // Widening brings back what the Workspace stores.
     await page.setViewportSize({ width: 1920, height: 1000 });
-    await expect(workspace).toHaveAttribute("data-file-views", "shown");
-    await expect(workspace).toHaveAttribute("data-tools", "shown");
-    await page.locator(`[data-agent-open="${parent}"]`).first().click();
+    await expect(workspace).toHaveAttribute("data-lane-mode", "docked");
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
-    await expect.poll(() => herdrHasFocus(herdr, parent), { timeout: 15_000 }).toBe(true);
 
     // A declared child shows in its parent's header tree; the core
     // moves the delegated pane to its own tab, so the chip crosses tabs with
@@ -417,22 +275,20 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await quietFor(page, 800, "the closed menu's button does not bring its hint up");
     await expect(page.locator('[data-slot="tooltip-content"]')).toHaveCount(0);
 
-    // A restart brings the Workspace back with its columns, widths and View
-    // tabs; the file that went away stays as an unavailable tab (S6 B19,
-    // B20; PRD three-column-panel B29).
-    await chooseColumn(page, "tools");
-    await expect(workspace).toHaveAttribute("data-tools", "off");
-    const viewsWidth = (await viewsColumn.boundingBox())!.width;
-    await viewsColumn.locator('[data-tab-kind="file"]', { hasText: "gone.txt" }).click();
+    // A restart brings the Workspace back with its lane docked at its width
+    // and its View tabs; the file that went away stays as an unavailable tab
+    // (S6 B19, B20; PRD right-lane B22).
+    const laneWidth = (await lane.boundingBox())!.width;
+    await lane.locator('[data-tab-kind="file"]', { hasText: "gone.txt" }).click();
     await savedFront(daemon, /\/gone\.txt$/);
     fs.rmSync(path.join(herdr.root, "fixture", "gone.txt"));
     daemon = await daemon.restart();
     // Reopening the app is a fresh page, not a reconnect of this one.
     await page.goto("about:blank");
     await open(page, daemon);
-    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-file-views", "shown", { timeout: 20_000 });
-    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-tools", "off");
-    await expect.poll(async () => (await page.locator('[data-column="views"]').boundingBox())!.width).toBeCloseTo(viewsWidth, 0);
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "docked", { timeout: 20_000 });
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-shows", "files");
+    await expect.poll(async () => (await lane.boundingBox())!.width).toBeCloseTo(laneWidth, 0);
     await expect(page.locator('[data-view-area] [data-tab-kind="file"]')).toHaveCount(2, { timeout: 15_000 });
     await expect(page.locator('[data-view-area] [data-unavailable="true"]')).toHaveCount(1);
     await expect(page.locator("[data-view-area] [data-close-unavailable]")).toBeVisible();

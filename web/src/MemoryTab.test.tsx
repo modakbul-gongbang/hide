@@ -4,7 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
-import { Tools } from "./Tools";
+import { ToolRail } from "./Tools";
+import { MemoryTab } from "./MemoryTab";
 import { clientI18n } from "./i18n/translator";
 import type { MemoryRow, ProjectMemory, SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
@@ -66,11 +67,12 @@ describe("the Memory tab", () => {
     vi.unstubAllGlobals();
   });
 
-  async function render(project: ProjectMemory | null, tool: "memory" | "explorer" = "memory") {
+  /** The rail, which opens the front checkout's Project and wears Memory's dot, and the Memory tool, or the rail alone. */
+  async function render(project: ProjectMemory | null, tool: "memory" | "files" = "memory") {
     const actions = createActions((event) => { events.push(event); return true; });
     await act(async () => {
       useShellStore.setState({ connection: "live", rest, memory: { project } });
-      root.render(<TooltipProvider><Tools tool={tool} actions={actions} /></TooltipProvider>);
+      root.render(<TooltipProvider><ToolRail actions={actions} />{tool === "memory" ? <MemoryTab actions={actions} /> : null}</TooltipProvider>);
     });
   }
   const sent = (kind: string) => events.filter((event) => event.kind === kind).map((event) => event.payload);
@@ -93,10 +95,10 @@ describe("the Memory tab", () => {
     expect(sent("memory_open")).toHaveLength(2);
   });
 
-  it("opens the Project and shows the tab's dot from any tool while its Project has a question", async () => {
-    await render(memory({ questions: [{ kind: "failed", number: 7, title: "card 7", start_failure: null }] }), "explorer");
+  it("opens the Project and shows the rail's dot from any tool while its Project has a question", async () => {
+    await render(memory({ questions: [{ kind: "failed", number: 7, title: "card 7", start_failure: null }] }), "files");
     expect(sent("memory_open")).toEqual([{ workspace_id: "p" }]);
-    expect(container.querySelector('[data-tool-dot="memory"]')).not.toBeNull();
+    expect(container.querySelector('[data-lane-tool-dot="memory"]')).not.toBeNull();
   });
 
   it("asks about a suggested card and a failed promotion, and sends the card's number", async () => {
@@ -332,7 +334,7 @@ describe("the Memory tab", () => {
     vi.useFakeTimers();
     try {
       useShellStore.setState({ connection: "live", rest, memory: { project: memory() } });
-      const tools = <TooltipProvider><Tools tool="memory" actions={createActions(dispatch)} /></TooltipProvider>;
+      const tools = <TooltipProvider><ToolRail actions={createActions(dispatch)} /><MemoryTab actions={createActions(dispatch)} /></TooltipProvider>;
       await act(async () => root.render(tools));
       await act(async () => otherRoot.render(tools));
       const field = container.querySelector<HTMLInputElement>("[data-memory-search]")!;
@@ -368,7 +370,7 @@ describe("the Memory tab", () => {
       memory: { project: memory({ analysis: "ai_not_ready" }) },
     });
     const actions = createActions((event) => { events.push(event); return true; });
-    await act(async () => root.render(<TooltipProvider><Tools tool="memory" actions={actions} /></TooltipProvider>));
+    await act(async () => root.render(<TooltipProvider><ToolRail actions={actions} /><MemoryTab actions={actions} /></TooltipProvider>));
     expect(container.querySelector("[data-memory-ai='not_ready']")?.textContent).toContain("every agent is past your usage limit this week");
     expect(container.querySelector("[data-memory-ai-chip]")?.className).toContain("opacity-(--opacity-dimmed)");
     await click("[data-memory-ai='not_ready'] button");
@@ -391,7 +393,7 @@ describe("the Memory tab", () => {
       memory: { project: memory() },
     });
     const actions = createActions((event) => { events.push(event); return true; });
-    await act(async () => root.render(<TooltipProvider><Tools tool="memory" actions={actions} /></TooltipProvider>));
+    await act(async () => root.render(<TooltipProvider><ToolRail actions={actions} /><MemoryTab actions={actions} /></TooltipProvider>));
     expect(container.querySelector("[data-memory-ai-chip]")?.textContent).toBe("Hide AI · Codex");
   });
 

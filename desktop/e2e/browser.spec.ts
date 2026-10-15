@@ -14,7 +14,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { runInPane, startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { fixtureExecutable } from "../../web/e2e/platform-fixture";
-import { countSent, enterWorkspace } from "../../web/e2e/wire";
+import { countSent, enterWorkspace, showExplorer, showTool } from "../../web/e2e/wire";
 import { fitWindow, focusPage, hostLog, isolate, launch, NEEDS_FOCUS, nodeOf, relaunch, screenshot, shellPage, test, type Isolated } from "./fixture";
 import { compositorPresents, quietFor } from "../../web/e2e/wait";
 
@@ -217,18 +217,15 @@ test(`browser: Agent tabs retain independent same-URL pages through a background
   };
   const other = created.result.tab.tab_id;
   const url = `${origin}/a.html`;
-  const chooseTab = async (id: string, callViews = true) => {
-    // The native screen can leave only one Workspace column visible.
-    // Use its existing toolbar navigation, then call File Views back.
-    if (!(await page.locator('[data-column="agents"]').isVisible())) {
-      await page.locator('[data-column-toggle="views"]').click();
-    }
-    await expect(page.locator('[data-column="agents"]')).toBeVisible();
+  const chooseTab = async (id: string, callFiles = true) => {
+    // The lane over the agents can cover their tab strip: the Files icon
+    // closes it for the choice, and the files tool comes back after unless
+    // the next open calls it (PRD right-lane B2, B16).
+    const files = page.locator('[data-lane-tool="files"]');
+    if ((await files.getAttribute("aria-pressed")) === "true") await files.click();
     await page.locator(`[data-agent-tab-bar] [data-tab="${id}"]`).click();
     await expect(page.locator(`[data-agent-tab-bar] [data-tab="${id}"]`)).toHaveAttribute("aria-selected", "true");
-    if (callViews && !(await page.locator('[data-column="views"]').isVisible())) {
-      await page.locator('[data-column-toggle="views"]').click();
-    }
+    if (callFiles) await showTool(page, "files");
   };
   try {
     const opened = await openFromCli(url, ["--reveal", "--wait"]);
@@ -316,11 +313,11 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   const pageB = await viewOf(`${origin}/b.html`);
   await expect.poll(async () => (await viewOf(`${origin}/a.html`)).visible).toBe(false);
 
-  // Two View areas side by side need File Views' width: Tools is turned off
-  // so File Views and Agent Views share the body (PRD three-column-panel
-  // B4). The menu below reads the geometry drawn when it opens, so it offers
-  // Split right once the column has drawn without Tools.
-  await turnToolsOff(page);
+  // Two View areas side by side need the lane's width: the files tool is
+  // expanded over the body (PRD right-lane B8). The menu below reads the
+  // geometry drawn when it opens, so it offers Split right once the lane
+  // has drawn expanded.
+  await widenFiles(page);
 
   // Split right moves B into a new area: both pages show, neither loaded again.
   await tab(page, "Page B").click({ button: "right" });
@@ -428,9 +425,8 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   await expect(page.locator("[data-browser-retry]")).toBeVisible();
   await windowShot("browser-load-failed");
 
-  // The Explorer opens an HTML file of the checkout as a page.
-  await page.locator('[data-column-toggle="tools"]').click();
-  await page.locator('[data-tool-tab="explorer"]').click();
+  // The file tree opens an HTML file of the checkout as a page.
+  await showExplorer(page);
   await page.locator(`[data-explorer-row="${path.join(checkout, "리포트 1.html")}"]`).click({ button: "right" });
   await page.locator('[data-explorer-menu] [data-menu-item="open-browser"]').click();
   await expect(tab(page, "Local report")).toBeVisible({ timeout: 20_000 });
@@ -440,9 +436,9 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   fs.writeFileSync(outside, "<title>Outside</title>");
   expect(await openFromCli(outside)).toMatchObject({ ok: false, reason: "path_outside_checkout" });
 
-  // Closing B's display ends its renderer process. Without the Explorer both
+  // Closing B's display ends its renderer process. Without the tree both
   // areas show again, B's tab among them (behind Page C, which opened beside A).
-  await turnToolsOff(page);
+  await widenFiles(page);
   await expect(tab(page, "Page B")).toBeVisible();
   await tab(page, "Page B").click({ button: "right" });
   await page.locator('[role="menu"] [data-menu-item="close_view"]').click();
@@ -464,7 +460,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   app = await relaunch(run.env);
   const again = await shellPage(app);
   await enterWorkspace(again, "fixture");
-  await showFileViews(again);
+  await showTool(again, "files");
   await expect(tab(again, "Page A")).toBeVisible({ timeout: 20_000 });
   await tab(again, "Page A").click();
   await expect.poll(async () => (await views()).find((view) => view.url === `${origin}/a.html`)?.visible).toBe(true);
@@ -477,6 +473,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
     const plain = await browser.newPage();
     await plain.goto(status.url);
     await enterWorkspace(plain, "fixture");
+    await showTool(plain, "files"); // another client's lane starts put away (PRD right-lane B22)
     await tab(plain, "Page A").click();
     // Page C, opened beside Page A, shows the same notice in its own area.
     await expect(plain.locator(`[data-browser-display="${a}"] [data-area-empty="browser-host"]`)).toContainText("Pages open in the hide desktop app.");
@@ -564,18 +561,17 @@ test("browser: a shell layer never has a page drawn over it, and a page tab's hi
   await expect(page.locator("[data-browser-still]")).toHaveCount(0);
   await app.evaluate(() => { (globalThis as unknown as { __captureProbe: { delay: number } }).__captureProbe.delay = 0; });
 
-  // A narrow window shows one column: Tools called into it hides the page,
-  // and File Views called back puts the page on its slot again (PRD
-  // three-column-panel B25, B27).
+  // In a narrow window the lane still carries the page: another tool hides
+  // it, and the Files icon puts it back on its slot (PRD right-lane B19,
+  // B21).
   await fitWindow(app, { width: 720, height: WINDOW.height });
-  await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-workspace-body", "narrow");
-  if ((await page.locator("[data-workspace-screen]").getAttribute("data-file-views")) !== "shown") await page.locator('[data-column-toggle="views"]').click();
+  await showTool(page, "files");
   await expectOnSlot(page, url, a);
-  await page.locator('[data-column-toggle="tools"]').click();
-  await expect(page.locator('[data-column="tools"]')).toBeVisible();
-  await expect.poll(shown, { message: "Tools in the one column hides the page" }).toBe(false);
+  await page.locator('[data-lane-tool="agent_sessions"]').click();
+  await expect(page.locator('[data-lane="agent_sessions"]')).toBeVisible();
+  await expect.poll(shown, { message: "another tool in the lane hides the page" }).toBe(false);
   await windowShot("browser-narrow-tools");
-  await page.locator('[data-column-toggle="views"]').click();
+  await page.locator('[data-lane-tool="files"]').click();
   await expect.poll(shown).toBe(true);
   await expectOnSlot(page, url, a);
 });
@@ -587,12 +583,23 @@ test("browser: waiting for a hidden page does not take the operator's keyboard t
   const focusedLocator = page.locator('[data-pane-view][data-focused="true"]');
   await expect(focusedLocator).toHaveAttribute("data-pane-view", /./);
   const focused = await focusedLocator.getAttribute("data-pane-view");
-  const hidden = await openFromCli(`${origin}/b.html`, ["--wait"]);
-  expect(hidden).toMatchObject({ status: 2, ok: false, applied: "applied", reason: "page_wait_timeout", page: { state: "pending" } });
-  expect(await cliFromPane(["view", "status", hidden.view_id as string])).toMatchObject({ status: 0, ok: true, view: { page: { state: "pending" } } });
-  await expect(page.locator('[data-pane-view][data-focused="true"]')).toHaveAttribute("data-pane-view", focused!);
-  const revealed = await openFromCli(`${origin}/b.html`, ["--reveal", "--wait"]);
-  expect(revealed).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
+  // An agent in a tab the operator is not looking at opens the page, so it
+  // stays hidden; from the front tab the open would call the lane (PRD
+  // right-lane B17).
+  const created = herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "Background", "--no-focus"]) as {
+    result: { tab: { tab_id: string }; root_pane: { pane_id: string } };
+  };
+  const agent = created.result.root_pane.pane_id;
+  try {
+    const hidden = await cliFromPane(["browser", "open", `${origin}/b.html`, "--wait"], agent);
+    expect(hidden).toMatchObject({ status: 2, ok: false, applied: "applied", reason: "page_wait_timeout", page: { state: "pending" } });
+    expect(await cliFromPane(["view", "status", hidden.view_id as string], agent)).toMatchObject({ status: 0, ok: true, view: { page: { state: "pending" } } });
+    await expect(page.locator('[data-pane-view][data-focused="true"]')).toHaveAttribute("data-pane-view", focused!);
+    const revealed = await cliFromPane(["browser", "open", `${origin}/b.html`, "--reveal", "--wait"], agent);
+    expect(revealed).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
+  } finally {
+    herdr.run(["tab", "close", created.result.tab.tab_id]);
+  }
 });
 
 test("browser: a login in one Workspace is available in another", async () => {
@@ -710,9 +717,9 @@ test("browser: a sign-in popup keeps its opener, belongs to its page, and a link
     for (const type of ["mouseDown", "mouseUp"] as const) child.webContents.sendInputEvent({ type, x: 20, y: 20, button: "left", clickCount: 1, modifiers: ["shift"] });
   }, signin);
   await expect(tab(page, "Page C")).toBeVisible({ timeout: 20_000 });
-  // Two View areas side by side need File Views' width: Tools is turned
-  // off, as the first test does.
-  await turnToolsOff(page);
+  // Two View areas side by side need the lane's width, as the first test
+  // gives it.
+  await widenFiles(page);
   await expect(page.locator("[data-view-area-id]")).toHaveCount(2);
   await expect.poll(async () => (await views()).filter((view) => view.visible).map((view) => view.url).sort()).toEqual([`${origin}/c.html`, signin].sort());
   expect(await windows()).toBe(1);
@@ -842,8 +849,8 @@ test("area cycle native: page input previews one exact area, releases once and c
   const previous = `${origin}/b.html`;
   const current = `${origin}/korean.html`;
   for (const url of [outside, previous]) expect(await openFromCli(url, ["--reveal", "--wait"])).toMatchObject({ ok: true });
-  // Two View areas side by side need File Views' width: Tools is turned off.
-  await turnToolsOff(page);
+  // Two View areas side by side need the lane's width.
+  await widenFiles(page);
   await tab(page, "Page B").click({ button: "right" });
   await page.locator('[role=menu] [data-menu-item=split_right]').click();
   await expect(page.locator("[data-view-area-id]")).toHaveCount(2);
@@ -1041,17 +1048,15 @@ test("zoom: the text-size commands zoom a focused page in Chrome's steps and a p
   await windowShot("browser-zoom-pinched");
 });
 
-/** Turns the Tools column off when it is on, leaving its width to File Views and Agent Views. */
-async function turnToolsOff(page: Page): Promise<void> {
-  const on = page.locator('[data-column-toggle="tools"][aria-pressed="true"]');
-  if (await on.count()) await on.click();
-  await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
-}
-
-/** Shows File Views, calling it into the one column a narrow window draws. */
-async function showFileViews(page: Page): Promise<void> {
-  const workspace = page.locator("[data-workspace-screen]");
-  await expect(workspace).toHaveAttribute("data-file-views", /shown|hidden/, { timeout: 20_000 });
-  if ((await workspace.getAttribute("data-file-views")) === "hidden") await page.locator('[data-column-toggle="views"]').click();
-  await expect(workspace).toHaveAttribute("data-file-views", "shown");
+/** The files tool expanded over the body with its tree off, so its areas have the width to sit side by side (PRD right-lane B8). */
+async function widenFiles(page: Page): Promise<void> {
+  await showTool(page, "files");
+  if ((await page.locator('[data-lane-tree="beside"]').count()) > 0) {
+    await page.locator("[data-lane-more]").click();
+    await page.locator('[data-lane-menu-item="tree"]').click();
+  }
+  await expect(page.locator('[data-lane-tree="beside"]')).toHaveCount(0);
+  const screen = page.locator("[data-workspace-screen]");
+  if ((await screen.getAttribute("data-lane-mode")) !== "expanded") await page.locator("[data-lane-expand]").click();
+  await expect(screen).toHaveAttribute("data-lane-mode", "expanded");
 }

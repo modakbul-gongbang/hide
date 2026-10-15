@@ -113,8 +113,7 @@ impl KitPump {
                     // again here: Memory's "update hooks" and the agent rows
                     // follow what the kit just wrote.
                     let diagnosis = (diagnosis_due || applied)
-                        .then(|| hook_diagnosis(link.as_ref(), node.as_str()))
-                        .flatten();
+                        .then(|| hook_diagnosis(link.as_ref(), node.as_str()));
                     if diagnosis_due || applied {
                         next_diagnosis = Some(Instant::now() + HOOK_DIAGNOSIS_REFRESH_INTERVAL);
                     }
@@ -137,8 +136,12 @@ impl KitPump {
                             }
                             None => false,
                         };
-                        if let Some(diagnosis) = diagnosis {
-                            changed |= locked.ingest_hook_diagnosis(diagnosis);
+                        match diagnosis {
+                            Some(Some(diagnosis)) => {
+                                changed |= locked.ingest_hook_diagnosis(diagnosis);
+                            }
+                            Some(None) => changed |= locked.hook_diagnosis_failed(),
+                            None => {}
                         }
                         changed
                     }) else {
