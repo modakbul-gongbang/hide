@@ -251,6 +251,8 @@ export function overviewWorld(now: number): OverviewWorld {
       workspace_registrations: workspaces.map((row) => ({ id: row.id, label: row.label, path: row.path, device_id: "local", pinned: row.pinned })),
     },
     issue_work: issueWork,
+    // Summaries on, so a record draws its checklist and missed lines rather than the plain request list.
+    status: { background_ai: { provider: "claude", providers: [], unavailable_reason: null, enabled: true, chosen: true, agent_summary: true } },
   } as SnapshotRest;
 
   const task = (id: string, name: string, end: SessionRecord["tasks"][number]["end"], done: boolean, ago: number) => ({ id, chapter_id: "chapter-1", name, end, done, at_unix_ms: now - ago, last_at_unix_ms: now - ago + 1000 });
