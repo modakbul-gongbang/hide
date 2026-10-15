@@ -19,7 +19,6 @@ import { workspaceKey } from "./viewLayout";
 import { TOOLS, type LaneFrame, type LaneSizes, type Tool, type WorkspaceView } from "./workspace";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
-import type { CommandId } from "./shortcuts";
 
 // The right lane and its tool rail (PRD right-lane D-01, D-05, D-08, D-09):
 // one lane shows one tool at a time, Files (the View areas, with the file
@@ -32,7 +31,6 @@ import type { CommandId } from "./shortcuts";
 const TOOL_NAMES = { files: "panes.lane.files", changes: "panes.lane.changes", agent_sessions: "panes.lane.sessions", memory: "panes.lane.memory" } as const satisfies Record<Tool, MessageKey>;
 const TOOL_ICONS: Record<Tool, LucideIcon> = { files: FilesIcon, changes: FileDiffIcon, agent_sessions: MessagesSquareIcon, memory: BrainIcon };
 /** The chord that opens and closes the lane on a tool, where one does (D-12). */
-const TOOL_CHORDS: Partial<Record<Tool, CommandId>> = { files: "toggle_right_panel", agent_sessions: "toggle_explorer" };
 
 /** Whether a lane drawn this way is on screen. */
 export function laneUp(mode: LaneFrame["mode"]): boolean {
@@ -63,7 +61,6 @@ export function ToolRail({ actions }: { actions: Actions }) {
   const checkout = useShellStore((s) => frontCheckout(s.rest));
   const views = useShellStore((s) => (s.rest?.workspace_view as WorkspaceView | undefined)?.layout?.display_count ?? 0);
   const drawn = useUiStore((s) => s.drawnLane);
-  const bindings = useShellStore((s) => s.rest?.ui_state);
   const asking = useShellStore((state) => {
     const project = state.memory?.project;
     return Boolean(project?.enabled && project.questions.length > 0 && project.workspace_id === frontCheckout(state.rest)?.workspace_id);
@@ -78,10 +75,9 @@ export function ToolRail({ actions }: { actions: Actions }) {
         const Icon = TOOL_ICONS[tool];
         const pressed = up && drawn.tool === tool;
         const name = t(TOOL_NAMES[tool]);
-        const chord = TOOL_CHORDS[tool];
         const count = tool === "files" && !pressed ? views : 0;
         return (
-          <Hint key={tool} label={`${name} · ${scope(tool)}`} shortcut={chord ? commandLabel(chord, bindings) : undefined} side="left">
+          <Hint key={tool} label={`${name} · ${scope(tool)}`} side="left">
             <button
               type="button"
               aria-pressed={pressed}

@@ -445,14 +445,14 @@ test("an SSH Workspace's lane keeps its chords, narrow fallback and saved widths
     const workspace = page.locator("[data-workspace-screen]");
     await bodyWidth(app, page, 1600);
     await expect(workspace).toHaveAttribute("data-lane-mode", "closed");
-    // ⌘⇧E opens the files tool with its tree; ⌘⇧B closes and opens the lane (B9, B20).
+    // ⌘⇧E opens the files tool with its tree; ⌘E closes and opens the lane (B9, B20).
     await page.keyboard.press(chord("toggle_file_tree", "electron"));
     await expect(page.locator('[data-explorer-row$="/한글-notes.md"]')).toBeVisible({ timeout: 60_000 });
     await page.locator('[data-explorer-row$="/한글-notes.md"]').click();
     await expect(page.locator("[data-editor-body] .cm-content")).toContainText("Remote lane notes");
-    await page.keyboard.press(chord("toggle_right_panel", "electron"));
+    await page.keyboard.press(chord("toggle_lane", "electron"));
     await expect(workspace).toHaveAttribute("data-lane-mode", "closed");
-    await page.keyboard.press(chord("toggle_right_panel", "electron"));
+    await page.keyboard.press(chord("toggle_lane", "electron"));
     await expect(workspace).toHaveAttribute("data-lane-mode", "overlay");
     await page.keyboard.press(chord("toggle_file_tree", "electron"));
     await expect(page.locator('[data-lane-tree="beside"]')).toBeVisible();

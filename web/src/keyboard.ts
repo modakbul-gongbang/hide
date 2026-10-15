@@ -243,8 +243,6 @@ export function installKeyboard(actions: Actions): () => void {
         return actions.openSearch();
       case "open_file":
         return actions.openFilePalette();
-      case "toggle_right_panel":
-        return actions.toggleFileViews();
       case "toggle_left_sidebar":
         return actions.toggleLeftSidebar();
       case "overview":
@@ -257,8 +255,8 @@ export function installKeyboard(actions: Actions): () => void {
         return actions.focusSidebarMode("agents");
       case "toggle_device_rail":
         return actions.toggleDeviceRail();
-      case "toggle_explorer":
-        return actions.toggleTools();
+      case "toggle_lane":
+        return actions.toggleLane();
       case "toggle_file_tree":
         return actions.toggleFileTree();
       case "find_in_pane": {

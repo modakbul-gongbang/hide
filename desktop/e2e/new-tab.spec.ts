@@ -127,10 +127,10 @@ test("Command T and Command W from a native page act on its View area, and after
     await terminal(herdr.panes[0]);
     await enterPage(app, page);
     await handBack(page);
-    await menuClick(app, "toggle_explorer");
-    await expect(page.locator('[data-lane="agent_sessions"]')).toBeVisible();
+    await menuClick(app, "toggle_lane");
+    await expect(page.locator('[data-lane="files"]')).toBeVisible();
     await expect(page.locator(`[data-terminal-host="${herdr.panes[0]}"] textarea`)).toBeFocused();
-    await menuClick(app, "toggle_explorer");
+    await menuClick(app, "toggle_lane");
     await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
     await menuClick(app, "close_tab");
     await expect(page.locator(`[data-pane-view="${herdr.panes[0]}"]`)).toHaveCount(0, { timeout: 15_000 });

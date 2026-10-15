@@ -21,7 +21,7 @@ The picker shows each real bind address and port, preserves IPv4/IPv6 scope, and
 An empty, loading, disconnected, failed or stale catalog gives small feedback in the same popover; a remote Workspace explicitly has no local discovery.
 Discovery never starts or stops a server, and an opened page retains the Browser View’s own connection failure and recovery controls.
 Hovering or focusing an icon shows its name in a tooltip; `Open server` has no chord.
-A right-click or the menu key on the path offers Show or Hide Files, Show or Hide Sessions, and Copy Workspace path.
+A right-click or the menu key on the path offers Show or Hide right lane and Copy Workspace path.
 An empty Agent area offers New tab.
 The area is empty only when the checkout has no tab: a checkout whose only tab holds delegated children keeps that tab off the strip and still draws it on the canvas, so the agent chosen from the sidebar there opens on its pane.
 
@@ -53,7 +53,7 @@ Only when the window's frame itself cannot draw does the line take the whole win
 The Workspace body, under the top row, is Agent Views (the Agent area), one right lane, and the tool rail, 48px wide, at the window's right edge.
 The rail lists Files, Changes, Sessions and Memory from the top, each an icon alone (files, a file diff, conversations, a brain) whose name, scope and chord are its hint on hover and its accessible name, and the lane shows one of them at a time: Files (the View areas and the file tree), Changes (History), Sessions, and Memory.
 A rail icon is drawn pressed, with a primary bar at the rail's edge, while the lane shows its tool; pressing it opens the lane on that tool, and pressing the pressed one closes the lane.
-Each icon's tooltip names the tool, its scope and its chord (`Files · settings-ui ⇧⌘B`, `Sessions · all of hide ⌘E`), with a rebound chord shown as bound.
+Each icon's hint names the tool and its scope (`Files · settings-ui`, `Sessions · all of hide`); the tools have no chords of their own.
 While the lane does not show Files, its icon carries a badge counting the views open, also given as its accessible description; Memory's carries a dot while its Project has questions waiting.
 The rail's `…` menu holds Toggle File Tree with its chord, Pin or Unpin, and Expand.
 A Workspace seen for the first time shows Agent Views alone, its lane closed.
@@ -75,13 +75,13 @@ The tree button or ⌘⇧E (`Toggle File Tree`) turns the file tree, the Explore
 On, the tree is a column left of the documents and the lane widens by its width, so the documents keep theirs: over Agent Views it covers more of them, and docked, Agent Views give up the tree's width as well.
 The tree stays on when a file is picked, when the lane is put away and comes back, and when another tool shows and Files comes back; only the tree button, ⌘⇧E and closing the lane turn it off.
 With no document open, the files tool shows the tree across the lane, its head saying `No open document · tree only`; a file picked there, or anything opened meanwhile (⌘P, a terminal link, a page, `hide` from the front tab), opens beside the tree, which goes back to its own width and stays on, and ⌘⇧E there changes nothing.
-Closing the last view leaves the lane on Files in that state, and ⌘⇧B on a Workspace with no view opens to it; nothing opens a blank page in its place and the lane is never empty, while a View area's New tab still opens a browser display (see Browser displays).
+Closing the last view leaves the lane on Files in that state, and ⌘E on a Workspace with no view opens to it; nothing opens a blank page in its place and the lane is never empty, while a View area's New tab still opens a browser display (see Browser displays).
 
 Opening a file, a diff or a page from the tree, Changes, ⌘P, a terminal link, Open in Browser or Open server opens the lane on Files, over the agents or docked as its pin says, with the opened tab in its active View area; another tool showing gives way to Files.
 Select in File Tree, a reveal, or a terminal link that names a folder opens Files with the tree on and the row unfolded and selected.
-⌘⇧B (`Toggle File Views`) opens and closes the lane on Files, and ⌘E (`Toggle Tools`) on Sessions; the desktop app's View menu names those two and `Toggle File Tree`, and a chord bound to any of them in Settings, Shortcuts keeps doing the same.
+⌘E (`Toggle right lane`) closes the lane while it shows and otherwise brings it back on the tool it holds, Files when it holds none; the desktop app's View menu names it and `Toggle File Tree`, and a chord bound to either in Settings, Shortcuts keeps doing the same.
 Each sends the value the lane should end at, so the same command arriving twice lands where it did once.
-A right-click or the menu key on the Workspace's path offers Show or Hide Files and Show or Hide Sessions with the same effect.
+A right-click or the menu key on the Workspace's path offers Show or Hide right lane with the same effect.
 A file read opens the files tool when its document is ready, in the Agent tab that requested it.
 Choosing another Agent tab while it reads keeps that tab's presentation intact, and closing a requesting tab drops only that tab's pending open.
 When several tabs request the same file during its read, they share the read and document buffer while each keeps its own display request.
@@ -2197,9 +2197,8 @@ The sheet carries no row or explanation for a command the removed native app alo
 | Agents overview | `⇧⌘A` | `Alt+Shift+A` | `⇧⌘A` | `Ctrl+Alt+A` |
 | Toggle left sidebar | `⌘B` | `Ctrl+Shift+B` | `⌘B` | `Ctrl+Shift+B` |
 | Toggle device rail | none | none | none | none |
-| Toggle Tools | `⌘E` | `Ctrl+Shift+E` | `⌘E` | `Ctrl+Shift+E` |
+| Toggle right lane | `⌘E` | `Ctrl+Shift+E` | `⌘E` | `Ctrl+Shift+E` |
 | Toggle File Tree | `⇧⌘E` | `Alt+Shift+E` | `⇧⌘E` | `Alt+Shift+E` |
-| Toggle File Views | `⇧⌘B` | `Alt+Shift+B` | `⇧⌘B` | `Alt+Shift+B` |
 | Find in pane | `⌘F` | `Ctrl+Shift+F` | `⌘F` | `Ctrl+Shift+F` |
 | Save file | `⌘S` | `Ctrl+Shift+S` | `⌘S` | `Ctrl+Shift+S` |
 | Keep open | `⇧⌘K` | `Alt+Shift+K` | `⇧⌘K` | `Alt+Shift+K` |

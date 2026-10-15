@@ -2728,12 +2728,12 @@ The table below is written in macOS chords; Windows and Linux press each one thr
 | Next / previous recent tab (the Agent pane or focused View tab) | ⌃Tab / ⌃⇧Tab | ⌥` / ⌥⇧` | ⌃Tab / ⌃⇧Tab, committed on releasing ⌃ |
 | Next / previous panel (all projects) | none by default | none by default; bindable in Settings | none by default; the menu selects immediately |
 | Next / previous recent project (Recent Projects) | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab |
-| Search, Open file, Toggle File Views | ⌘K, ⌘P, ⌘⇧B | same chords; ⌘K and ⌘P answered by the palettes | same chords |
+| Search, Open file | ⌘K, ⌘P | same chords, answered by the palettes | same chords |
 | Overview | ⌘⇧O | shared modal or page | same chord |
 | Sidebar / Overview Agents | ⌘⇧P / ⌘⇧A | show the single sidebar and focus it / open the Agents graph | same chords |
 | Save file | ⌘S | ⌘S | ⌘S |
-| Toggle left sidebar, Toggle File Views, Find in pane, Keep open | ⌘B, ⌘⇧B, ⌘F, ⌘⇧K | same chords | same chords |
-| Toggle Tools | - | ⌘E | ⌘E |
+| Toggle left sidebar, Find in pane, Keep open | ⌘B, ⌘F, ⌘⇧K | same chords | same chords |
+| Toggle right lane | - | ⌘E | ⌘E |
 | Toggle File Tree | - | ⌘⇧E | ⌘⇧E |
 | Split right / down | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D |
 | Zoom pane | ⌘⌥↩ | ⌘⌥↩ | ⌘⌥↩ |
