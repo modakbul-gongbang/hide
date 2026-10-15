@@ -130,7 +130,7 @@ test("Main, Overview and a Workspace with its lane, tools and delegated child", 
     await expect(sessionsIcon).toHaveAttribute("aria-pressed", "true");
     const laneIdeal = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--size-lane-ideal")));
     expect((await lane.boundingBox())!.width).toBeCloseTo(laneIdeal, 0);
-    await chooseLane(page, "sessions");
+    await chooseLane(page, "work");
     await expect(workspace).toHaveAttribute("data-lane-mode", "closed");
     await expect.poll(() => last.get("workspace_view")).toEqual({ tool: null });
     await page.keyboard.press(chord("toggle_explorer"));

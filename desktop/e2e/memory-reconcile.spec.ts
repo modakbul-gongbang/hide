@@ -65,10 +65,13 @@ test("Memory compares sources, limits a batch and groups a confirmed PR", async 
     await tab.locator('[data-memory-pr-group="72"] [data-memory-row-toggle="9"]').click();
     await expect(tab.locator('[data-memory-progress-detail="9"] [data-memory-preview]')).toHaveCount(2);
     await tab.locator('[data-memory-progress-detail="9"] [data-memory-open-pr="72"]').click();
-    await expect(page.locator("[data-overview-screen]")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.locator('[role="dialog"]')).toHaveCount(0);
-    // Return to this Memory after the existing PR navigation, then the light/narrow state.
+    // The PR button asks the core for the PR's card (PRD work-tab-pr-lens B20); this
+    // fixture's PR 72 is no pull request of any repository, so the core refuses it and
+    // the lane stays on Memory.
+    await expect.poll(() => sent.get("pr_open")).toMatchObject({ pr_number: 72 });
+    await expect(page.locator("[data-overview-screen]")).toHaveCount(0);
+    await expect(tab.locator('[data-memory="on"]')).toBeVisible();
+    // Return to this Memory, then the light/narrow state.
     await (await showProjectRow(page, page.locator("[data-project]", { hasText: "sample" }).locator("[data-checkout]").first())).click();
     await showTool(page, "memory");
     await page.evaluate(() => { document.documentElement.classList.remove("dark"); document.documentElement.classList.add("light"); });
