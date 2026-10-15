@@ -2173,6 +2173,13 @@ pub(crate) mod tests {
             &Actor::hide("other", crate::node::TEST_NODE)
         ));
         assert!(crate::delivery::reserved_name("hide:memory"));
+        // The operator's identity answers only as itself, and no pane can
+        // take its name (PRD view-opener-feedback D-17, B35).
+        let operator = Actor::operator(crate::node::TEST_NODE);
+        assert!(guard.code_owned_authority_current(&operator.pane_id, &operator));
+        assert!(!guard.code_owned_authority_current("sender", &operator));
+        assert!(crate::delivery::reserved_name("operator"));
+        assert!(crate::delivery::reserved_name(&operator.pane_id));
         let forged = Actor {
             session: Some("forged".into()),
             ..Actor::factory("f-1", crate::node::TEST_NODE)

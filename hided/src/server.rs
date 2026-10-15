@@ -78,6 +78,9 @@ pub struct AppState {
     pub pane_capabilities: Arc<Registry>,
     pub browser_routes: Arc<crate::browser_routes::BrowserRoutes>,
     pub browser_control: Arc<crate::browser_control::BrowserControl>,
+    /// The operator's Comment mode on browser Views (PRD
+    /// view-opener-feedback B9).
+    pub browser_comments: Arc<crate::browser_page::comment::CommentSessions>,
     pub herdr_socket: Option<PathBuf>,
     pub allowed_origins: Arc<HashSet<String>>,
     pub clients: Arc<AtomicUsize>,
@@ -1093,7 +1096,7 @@ async fn screen_loop(
                             }
                             continue;
                         }
-                        match handle_client_text(&state, &text, connection, desktop) {
+                        match handle_client_text(&state, &text, connection, desktop, renderer) {
                             Ok(ClientAction::FileBytes(event)) => {
                                 if let Some(device) = event_device(&state.boundary, &event) {
                                     let slot = relay.as_ref().map(RelayScreen::slot);
@@ -1129,6 +1132,29 @@ async fn screen_loop(
                                 if let Err(reason) = answer {
                                     let frame = crate::core_move::control::refusal_frame(reason);
                                     if socket.send(Message::Text(frame.into())).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                            Ok(ClientAction::BrowserComment(event)) => {
+                                // A linked node's screen shows pages its own
+                                // machine's window holds, which this daemon's
+                                // gateway does not reach (docs/INSTALL.md).
+                                let refused = if relay.is_some() {
+                                    Some("comment_unavailable_here".to_owned())
+                                } else {
+                                    let context = crate::browser_page::comment::Context {
+                                        core: Arc::clone(&state.core),
+                                        attachments: Arc::clone(&state.attachments),
+                                        control: Arc::clone(&state.browser_control),
+                                    };
+                                    state.browser_comments.handle(context, connection, &event, device_frames_tx.clone()).err()
+                                };
+                                if let Some(reason) = refused {
+                                    let frame = json!({"type": "browser_comment", "payload": {
+                                        "display_id": event.pointer("/payload/display_id"), "on": false, "reason": reason,
+                                    }});
+                                    if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
                                         break;
                                     }
                                 }
@@ -1835,6 +1861,8 @@ enum ClientAction {
     CoreMove(Value),
     /// A `file_list` for a checkout on an SSH device, answered by its helper.
     DeviceListing(Value),
+    /// Comment mode on a browser View, answered when its page is ready.
+    BrowserComment(Value),
     Replies(Vec<Message>),
 }
 
@@ -1870,6 +1898,7 @@ fn handle_client_text(
     text: &str,
     connection: u64,
     desktop: bool,
+    renderer: bool,
 ) -> Result<ClientAction, String> {
     let value: Value =
         serde_json::from_str(text).map_err(|error| format!("client json: {error}"))?;
@@ -1979,6 +2008,24 @@ fn handle_client_text(
                 });
             return Ok(ClientAction::Replies(Vec::new()));
         }
+        // The operator's comments and their Send, which writes a letter in
+        // the operator's name, belong to a window the operator works in
+        // (PRD view-opener-feedback D-17); a pane's scoped connection has no
+        // such event at all.
+        Some("view_comment" | "view_feedback_send") if !renderer => {
+            return Err("View feedback is an operator window's".to_owned());
+        }
+        // An image or PDF comment's crop, which the screen made: staged
+        // here, and only its name goes on to the core (D-23).
+        Some("view_comment") if event.pointer("/payload/shot_png").is_some() => {
+            stage_comment_shot(state, &mut event)?;
+        }
+        Some("browser_comment") => {
+            if !renderer {
+                return Err("View feedback is an operator window's".to_owned());
+            }
+            return Ok(ClientAction::BrowserComment(event));
+        }
         // The daemon owns this flag from its renderer count; a window that
         // sent it would pause the readers every other window draws.
         Some("ui_attached") => return Err("ui_attached is sent by the daemon only".to_owned()),
@@ -2022,6 +2069,32 @@ fn handle_client_text(
         .core
         .dispatch(bytes)
         .map(|()| ClientAction::Replies(Vec::new()))
+}
+
+/// Replaces a `view_comment` add's `shot_png` (base64) with the staged
+/// screenshot's node and name.
+fn stage_comment_shot(state: &AppState, event: &mut Value) -> Result<(), String> {
+    use base64::Engine;
+    let payload = event
+        .get_mut("payload")
+        .and_then(Value::as_object_mut)
+        .ok_or("view_comment has no payload")?;
+    let encoded = payload
+        .remove("shot_png")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .ok_or("view_comment.shot_png must be base64 text")?;
+    if encoded.len() > 22 * 1024 * 1024 {
+        return Err("The screenshot is larger than 16 MiB.".to_owned());
+    }
+    let png = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|_| "view_comment.shot_png is not base64".to_owned())?;
+    let name = state.attachments.stage_view_shot(&png)?;
+    payload.insert(
+        "shot".to_owned(),
+        json!({"node": state.core.node().as_str(), "name": name}),
+    );
+    Ok(())
 }
 
 /// Lists one folder of a device checkout on a blocking task and hands the
@@ -3724,6 +3797,7 @@ fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool)
         state.desktop_renderers.fetch_sub(1, Ordering::SeqCst);
     }
     state.attachments.release(connection);
+    state.browser_comments.release(connection);
     state.mobile.release(connection);
     state.desktop_notices.release(connection);
     for (pane, size) in state.pane_sizes.left(connection) {
