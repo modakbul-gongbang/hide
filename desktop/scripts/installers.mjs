@@ -142,6 +142,25 @@ async function buildWindows(app, version, work) {
 }
 
 /**
+ * Opens the packaged app to every account, as a system package installs it:
+ * folders 0755, files readable and, where the owner may run them, runnable.
+ * @electron/packager builds the app in a private temporary folder (0700) and
+ * renames it into place, so without this `/opt/hide` would be root's alone
+ * and no one else could start the app or reach `/usr/bin/hide`.
+ */
+function openToEveryAccount(dir) {
+  fs.chmodSync(dir, 0o755);
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) openToEveryAccount(file);
+    else if (entry.isFile()) {
+      const mode = fs.statSync(file).mode & 0o7777;
+      fs.chmodSync(file, mode & 0o100 ? mode | 0o555 : mode | 0o444);
+    }
+  }
+}
+
+/**
  * One Linux package type. Each is built on its own: electron-builder writes
  * the type the updater reads (`resources/package-type`) into the app it wraps
  * just before packing, so two types built at once could pack each other's.
@@ -200,7 +219,10 @@ export async function buildInstallers({ app, version, out, signing = null }) {
     const kept = [...files.installers, ...files.blockmaps];
     if (system === "macos") await buildMacos(app, version, work, signing);
     else if (system === "windows") await buildWindows(app, version, work);
-    else for (const type of ["deb", "rpm"]) await buildLinux(app, version, path.join(work, type), type);
+    else {
+      openToEveryAccount(app);
+      for (const type of ["deb", "rpm"]) await buildLinux(app, version, path.join(work, type), type);
+    }
     for (const name of kept) {
       const source = system === "linux" ? path.join(work, name.endsWith(".rpm") ? "rpm" : "deb", name) : path.join(work, name);
       if (!fs.statSync(source, { throwIfNoEntry: false })?.isFile()) throw new Error(`electron-builder did not write ${name}`);
