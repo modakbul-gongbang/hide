@@ -236,7 +236,7 @@ fn spawned_record(
 ) -> crate::coordination::AgentRecord {
     crate::coordination::AgentRecord {
         id: id.into(),
-        name: format!("name-{id}"),
+        name: Some(format!("name-{id}")),
         machine: crate::node::TEST_NODE.into(),
         host_scope: "scope".into(),
         native_machine: crate::node::TEST_NODE.into(),
@@ -1331,4 +1331,100 @@ fn resuming_starts_the_providers_resume_and_refuses_what_cannot_resume() {
         );
         assert!(runtime.snapshot.task_operation.is_none());
     }
+}
+
+/// A parent Herdr never named is called by its registration id in its
+/// letters' envelopes and in the lineage facts that recognise those letters as
+/// work. Its screen title changes with every turn, so neither side may take
+/// its name from it.
+#[test]
+fn a_parents_request_stays_the_childs_work_when_the_parents_screen_title_changes() {
+    use crate::delivery::{Actor, ledger::Ledger, mailbox};
+    use crate::labels::facts::SessionFacts;
+    use hide_session::label_transcript::{LabelEvent, LabelEventKind};
+
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![record_workspace(
+        crate::node::TEST_NODE,
+        "project",
+        &["lead", "worker"],
+    )];
+    let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({"agents":[
+        {"id":"lead","pane_id":"lead","agent":"claude","agent_status":"idle","state_change_seq":1,
+         "lineage_session":crate::wire::session_digest("lead-native")},
+        {"id":"worker","pane_id":"worker","agent":"claude","agent_status":"idle","state_change_seq":1,
+         "lineage_session":crate::wire::session_digest("worker-native")},
+    ]}))
+    .unwrap();
+    runtime.observe_delivery(crate::node::TEST_NODE, &payload, Some("scope"), None);
+    let actor = |pane: &str| -> Actor { runtime.delivery_observations[pane].actor.clone() };
+    let (lead, worker) = (actor("lead"), actor("worker"));
+    let registered = |id: &str, name: Option<&str>, parent: Option<&str>, actor: &Actor| {
+        let mut record = spawned_record(id, "claude", &format!("{}-native", actor.pane_id), parent);
+        record.name = name.map(str::to_owned);
+        record.pane = actor.pane_id.clone();
+        record.actor = actor.clone();
+        record
+    };
+    let mut ledger = Ledger {
+        agents: vec![
+            registered("agent-1", None, None, &lead),
+            registered("agent-2", Some("worker"), Some("agent-1"), &worker),
+        ],
+        next_id: 3,
+        ..Default::default()
+    };
+    mailbox::send(
+        &mut ledger,
+        &lead,
+        &worker,
+        "ask",
+        "Do the part",
+        "request",
+        None,
+        1,
+    )
+    .unwrap();
+    let header = mailbox::pull(&ledger, &worker).unwrap().context;
+    runtime.delivery_ledger = Ok(Arc::new(ledger));
+
+    let show = |runtime: &mut Runtime, title: &str| {
+        let mut agents = vec![
+            record_agent("lead", "lead-native", None),
+            record_agent("worker", "worker-native", Some("lead")),
+        ];
+        agents[0].identity_label = title.to_owned();
+        runtime.snapshot.navigator.agents = agents;
+    };
+    let facts = SessionFacts::default();
+    let event = LabelEvent {
+        kind: LabelEventKind::Human,
+        at_unix_ms: 1,
+        text: header.trim_start().to_owned(),
+        offset: 0,
+        images: 0,
+        sender: None,
+    };
+    for title in [
+        "Fix the parser",
+        "Review the parser fix",
+        "Merge the parser fix",
+    ] {
+        show(&mut runtime, title);
+        let parent_name = runtime
+            .link_parent_facts()
+            .into_iter()
+            .find(|fact| fact.session_id == "worker-native")
+            .expect("the worker's parent is known")
+            .parent_name;
+        assert_eq!(parent_name, "agent-1", "{title}");
+        assert!(
+            facts.feeds_work(&event, Some(&parent_name)),
+            "the parent's request is the child's work under the title {title:?}: {header}"
+        );
+    }
+    assert!(
+        header.contains("from agent-1 (claude) [request]"),
+        "{header}"
+    );
 }

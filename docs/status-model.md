@@ -735,6 +735,9 @@ OpenCode's `question` tool part supplies the question's text and choices while i
 The agent's own title rides the same proof as the label: it is laid on the row only while the pane's reference proves the session it was read from.
 The Herdr workspace label is never a name: it is whatever the workspace was called when it was opened, and one workspace can hold agents for several checkouts.
 The Herdr agent name remains the unique control identifier that Sasu and other orchestrators assign at start, so it never enters the display ladder.
+A registration's name (`AgentRecord::name`) is optional and is never a pane id.
+Where a program compares names, an unnamed registration is called by its registration id (`coordination::wire_name`), never by its title: the label worker accepts a parent's request as its child's work only when the envelope header's sender equals the `parent_name` of the lineage facts, and both come from that one function, so a title that changes every turn cannot separate them ([delivery.md](delivery.md#names-on-the-wire-and-on-screen)).
+Where a person reads a name (the bell line, a row) an unnamed agent is called by its title, and by its runtime's name when it has none.
 Nothing publishes a session `name`, reads Codex's first human turn as a title, or renames an agent or tab.
 
 The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex, Grok, Pi, omp, Cursor or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v10`), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
