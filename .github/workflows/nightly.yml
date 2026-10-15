@@ -1,6 +1,6 @@
 # The `@platform` web tests on macOS and Windows, the desktop suite whole on
-# macOS and its `@platform` tests on Linux and Windows, and package checks nightly,
-# and `verify` (pr.yml) with every lane on main. A push to main runs every lane
+# macOS and its `@platform` tests on Linux and Windows, package checks and the
+# performance lane (perf.yml) nightly, and `verify` (pr.yml) with every lane on main. A push to main runs every lane
 # too, but a lane it fails opens no issue; here it opens a nightly-failure
 # issue, and a lane that breaks with no merge (a runner image, a service a test
 # reaches) is found within a day. The Rust toolchain is not one of those: its version is
@@ -24,8 +24,8 @@
 # and completed jobs must be measured separately from this configured matrix.
 # A hand run picks `lane`: `all`, or one system's web and desktop suites, so
 # checking Windows does not occupy the macOS runners (one full dispatch used 7
-# macOS jobs for 65 minutes). `verify` and `package` run for
-# `all` only.
+# macOS jobs for 65 minutes); `macos` also runs the performance lane. `verify`
+# and `package` run for `all` only.
 # The schedule runs everything. A lane left out is skipped, and the failure
 # report ignores a skipped job.
 #
@@ -131,6 +131,14 @@ jobs:
       grep: ${{ matrix.system != 'macos' && '@platform' || '' }}
       keep-screenshots: ${{ matrix.system != 'macos' }}
 
+  # One fixed fixture measured against the release hided on macOS
+  # (docs/PERFORMANCE_TESTING.md, "The nightly performance lane"). A failed
+  # check is annotated as a failed measurement, which the report files.
+  perf:
+    name: performance (macOS)
+    if: ${{ inputs.lane != 'linux' && inputs.lane != 'windows' }}
+    uses: ./.github/workflows/perf.yml
+
   verify:
     name: verify
     if: ${{ inputs.lane == '' || inputs.lane == 'all' }}
@@ -149,7 +157,7 @@ jobs:
 
   report:
     name: nightly report
-    needs: [web-e2e-macos, web-e2e-windows, remote-mailbox-macos, desktop-e2e, verify, package]
+    needs: [web-e2e-macos, web-e2e-windows, remote-mailbox-macos, desktop-e2e, perf, verify, package]
     if: ${{ always() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10

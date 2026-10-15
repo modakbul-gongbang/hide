@@ -14,10 +14,10 @@ This table describes the checked-in workflows, not a claim that a particular PR'
 | --- | --- | --- |
 | Deterministic regression tests and structural checks | Blank repaint buffers, cache bounds, incorrect state transitions, blocking work in forbidden paths | The repository invariant checks run on every PR and main push in `.github/workflows/pr.yml`, and the Rust suite on every main push and on each PR whose plan includes it (docs/TESTING.md, "Which lanes a pull request runs"); `design-contract.yml` adds static design checks |
 | Automated end-to-end | Real window launch, attach to a private Herdr server, IPC between the desktop host and `hided`, occluded-window rendering, packaging mistakes | Playwright drives the web shell in a browser and the desktop app through `desktop/e2e/fixture.ts`; the web suite runs in the four Linux `web-e2e` shards and, for its `@platform` tests, in one Windows job, the desktop app in the macOS `desktop-e2e` job of `pr.yml`, each when the pull request's plan includes it, and `nightly.yml` calls `verify` with every lane and configures the `@platform` web tests on macOS and Windows, the full desktop suite on macOS and its `@platform` tests on Linux and Windows, with tracked flaky tests blocking nightly; Linux desktop uses Xvfb; `verify` requires the pull request's jobs |
-| Controlled performance comparison | Warm/cold latency distributions, periodic stalls, CPU/lock contention, sustained RSS, and cost that grows with process uptime | Local matched baseline/candidate measurements (`scripts/web-shell-measure/run.sh`); no checked-in scheduled or required performance job |
+| Controlled performance comparison | Warm/cold latency distributions, periodic stalls, CPU/lock contention, sustained RSS, and cost that grows with process uptime | Local matched baseline/candidate measurements (`scripts/web-shell-measure/run.sh`); `nightly.yml` measures one fixed fixture every night through `perf.yml` on macOS ([The nightly performance lane](#the-nightly-performance-lane)), which keeps a dated record and fails only on an invalid measurement; no pull request runs or requires a performance job |
 
 The repository-invariant Python tests run in the `policy` lane of `pr.yml`, which every plan includes.
-Fixture/replay commands under `scripts/web-shell-measure/` do not become CI gates merely because this guide lists them.
+Fixture/replay commands under `scripts/web-shell-measure/` do not become CI gates merely because this guide lists them; the nightly lane runs one of them, on its fixed fixture.
 Check the workflow before claiming any of them runs automatically.
 The per-OS schema/runtime contracts and the package jobs run in a pull request only when its plan names them; actual executed jobs, failures and skips establish a particular head's coverage.
 PR macOS queue comparisons use actual executed jobs (exclude skipped reusable placeholders), recorded SHA/time windows and sample counts, and report run wall time and runner cost separately.
@@ -81,6 +81,7 @@ On revisit, check restored text and new ordered input separately from retained m
 | Owned terminal children end with daemon/link owners | `hided/tests/it/terminal_children.rs` and remote/core-move journeys | A functional teardown assertion does not establish zero survivors for every OS or owner-death mode. |
 | Measurements refuse production device routes before dialing | `scripts/tests/test_measure_device_guard.py`, `device-guard.sh` | Guard fixtures do not establish a real device's speed, login or cleanup. |
 | Echo and frame summaries refuse invalid or incomplete data; echo acceptance requires an explicit threshold | `scripts/tests/test_measure_echo_summary.py` | Synthetic records prove the verdict rules, not a measured latency, physical input or native presentation. |
+| The nightly lane fails only on a fixture other than its own, an invalid or a missing measurement, and files each failed check by name | `scripts/tests/test_measure_nightly.py`, `scripts/tests/test_ci_flaky_report.py` | Synthetic run files and GitHub answers prove the verdict and filing rules, not a hosted runner's timing or a measured figure. |
 
 Rust owners run in the planned Rust lane, app scenarios in their planned web/desktop/remote lanes, and script owners in `policy`.
 Read actual job outcomes and retries; this mapping describes checked-in ownership and does not claim an executed PASS.
@@ -484,6 +485,7 @@ The `keys`, `device`, `remote-core` and `topology` branches exit before that sam
 A first run opens on Main (PRD S6), so the harness uses the Projects sidebar to open its linked fixture checkout before measuring.
 The fixture workspace reports the checkout's `hide_owner` token before startup so the core reuses the prepared pane rather than creating a different workspace.
 The Projects control is a tab, so readiness reads `aria-selected`; opening the fixture is one click after its checkout row appears.
+At a scale the fixture's project is the one without agents, so its row waits behind the No agents fold, its project's own fold and its empty or inactive worktrees; the harness opens those folds on the fixture's project alone, each once, because a fold is the core's state and a second click closes it.
 Cleanup removes the private socket's label-generator lock as well as its socket before removing the owned socket directory.
 The run directory keeps `identity.txt` (head, dirty count, binary hash, Herdr and Chrome versions, load), `echo-*.json`, `frames.json`, both summaries and the owned PID status at cleanup.
 The harness resolves that directory to an absolute path before starting child panes, so their private HOME, state, and checkout paths remain valid after the pane changes directory.
@@ -510,6 +512,66 @@ Every time is on the page's clock from the chord's first keydown (or the click):
 `topology-summary.json` gives each operation's p50, p95 and max to screen and to frame.
 `MEASURE_HIDED_BIN` points the run at another hided, such as a baseline built from the merge base, so baseline and candidate share the fixture; run both headless (`--isolated-headless`) under the same scale and report the load beside each.
 Herdr's share and Hide's are read from the candidate's `pane_op.timing` lines in the run's `hide-state` diagnostic log (Drawn ahead of Herdr in [ARCHITECTURE.md](ARCHITECTURE.md#drawn-ahead-of-herdr)), which the baseline does not write.
+
+### The nightly performance lane
+
+`nightly.yml` calls `perf.yml`, whose one job (`performance (macOS) / topology operator`, on `macos-15`) measures the same fixture every night against the product `hided` built from that night's `main`.
+It builds the web shell and the release `hided` at the fixed `target/release/hided`, fetches the pinned Herdr, and runs `run.sh --isolated-headless` with `MEASURE_SCENARIO=topology`, `MEASURE_SCALE=operator` and `MEASURE_TOPOLOGY_ROUNDS=20`, the run directory under the job's workspace.
+The browser is the hosted image's Google Chrome, headless; `run.sh` starts it with `--remote-debugging-port=0` and reads the port Chrome chose from `DevToolsActivePort` in the run's own profile.
+`perf.yml` also has a `workflow_dispatch`, so a branch can be measured alone without starting every nightly lane.
+Nothing a pull request runs depends on it, and no pull request runs it.
+
+The fixture is the measurement's identity, so it is fixed:
+
+| Part | Contract |
+| --- | --- |
+| Topology | `scale.sh` at `operator`: 43 workspaces and 43 projects (the measured checkout, a linked worktree of the fixture repository, and 42 others that are each their own Git checkout), 62 tabs (the measured tab and the switch target, one root tab in each other workspace, 18 more), 66 panes (one per tab and four splits) |
+| Agents | 30 reported with `herdr pane report-agent`, idle at first; 5 of their panes print a line every 50 ms after the idle sample, and one idle agent changes state every 2 s through the echo and the topology rounds |
+| Idle resources | `resources-idle.json`: 20 one-second samples of the owned `hided`, Herdr and Chrome trees before anything moves |
+| Echo | One trial of 50 screen keys on the measured pane under that churn, renderer keydown to xterm write on the page's clock |
+| Topology | 20 rounds of split, zoom, unzoom, close and new tab by chord, and two tab switches by click, each to screen and to terminal, with Herdr's share and Hide's from `pane_op.timing` |
+| Memory | `memory-settled.json` and `memory-after-topology.json` |
+| Browser and runner | Headless Google Chrome at 1280 × 900 on the `macos-15` hosted image |
+| Driver | `scripts/web-shell-measure/` at the run's commit |
+
+`scale.sh` writes the counts the private server answers beside the ones the scale asks for (`scale.json`), and a run whose counts differ is not this fixture.
+Changing any row of this table, `scale.sh`'s operator numbers or the driver's measurement boundaries starts a new series: do it in its own pull request that says so.
+Each record carries the driver's hash, the runner image, the Chrome, Herdr and `hided` identities and the load, so a reader compares only records of one series.
+
+`scripts/web-shell-measure/nightly.py` judges the run and writes its record, `nightly-summary.json`.
+It derives every figure again from the raw files through `summarize.py`, writes the same table to the job's summary page with the record beneath it, and fails the job in three cases only:
+
+- the fixture is not the lane's: another scenario, scale or browser mode, or a private server whose topology is not the one `scale.sh` asked for;
+- a measurement is invalid by `summarize.py`'s own contract: an echo with missing, incomplete, negative or nonnumeric samples or an unproven clock boundary; or
+- a measurement is missing, because the run stopped before it.
+
+No figure is a limit.
+The guide's echo comparisons are relative to a matched baseline, never absolute, so the echo is reported with `pass: null` and no `--max-p95-ms`.
+`summarize.py topology` has no validity contract, so a topology timeout is counted in the table and the record and is not judged.
+The frame window, whose 16.7 ms budget and one-percent fraction are the one limit this guide states, does not run on the hosted runner: headless Chrome calls animation frames at a nominal 60 Hz whatever the load, so every interval sits on the budget and the strict `dt > 16.7` check counts the browser's scheduler.
+The dated headless runs in [PERFORMANCE_RESULTS.md](PERFORMANCE_RESULTS.md#headless-sustained-output-observation) failed it with 38.8% and 24.9% of intervals over while their p50 and p95 were both about 16.7 ms.
+The frame window therefore stays a local check on a native display, and the lane covers it as follows:
+
+| Measurement | Nightly lane |
+| --- | --- |
+| Idle resources, echo under churn, topology latencies, memory | Covered, recorded without a limit; invalid or missing fails the job |
+| Frame window (16.7 ms budget) | Not covered: headless 60 Hz frame scheduling on the hosted runner |
+| Driven CPU, key count, windowless, device and remote core | Not covered: not part of the `topology` scenario |
+
+A failed check is annotated as `Failed measurement` (`ci-flaky-report.py --measurement`), and the nightly report opens one `nightly-failure` issue per check, comments on it each night it fails again and closes it when a scheduled run passes the lane ([TESTING.md](TESTING.md#nightly-failures)).
+Its candidates are every pull request merged since the lane's last green nightly, because a measurement can move with any change; a run that stopped is filed by its failed step instead, with the lane's workflows and scripts as candidates.
+The authors of the candidates look first.
+A fixture failure means the driver, the pin or the runner no longer builds the fixture; an invalid echo means keys stopped reaching the terminal the way the probe measures, a product defect candidate.
+When no candidate explains it, for instance a new runner image or Chrome that the record's identity shows, the issue goes to the operator, who decides whether the series has to start again.
+A green run proves the measurement was valid, not that performance held; read the trend.
+
+Each run keeps its run directory, without the throwaway Chrome profile, as the artifact `perf-run-<date>-<run id>-<attempt>` for 30 days, and its record alone as `perf-record-<date>` for 90.
+Read a series with `gh run download <run id> -n perf-record-<date>`; nothing about a run is committed.
+
+The job costs about 22 runner minutes a night on `macos-15`, most of it the release build.
+Its first run on a branch, with no Rust cache, took 21.8 minutes: about a minute of setup, a minute for the web shell, 16.4 minutes for the release `hided` (14.4 in another run) and 3.6 for the measurement.
+Main's run saves the release dependencies to the cache, which saves about a minute and a half at most, because `herdr-core` and `hided` themselves are most of the build.
+The job stops at 45 minutes and the build at 30, so a stalled run is cut short rather than holding a runner.
 
 ### Populated local and device catalog comparison
 
