@@ -365,6 +365,7 @@ code, .mono { font-family: var(--font-mono); }
 .factory .lead { max-width: 60ch; margin-top: 20px; font-size: var(--t-lead); line-height: var(--lh-lead); color: var(--muted); }
 .factory .actions { margin-top: 28px; }
 .factory .quiet { margin-top: 12px; }
+.factory .button { padding-block: 12px; white-space: normal; text-align: center; text-wrap: balance; }
 .soon { display: inline-block; margin-right: 10px; padding: 3px 9px; border-radius: var(--radius-pill); background: var(--lime); font-weight: var(--w-semibold); letter-spacing: 0.1em; vertical-align: middle; color: #101112; }
 
 /* Pricing */
@@ -377,6 +378,8 @@ code, .mono { font-family: var(--font-mono); }
 .price { min-height: 51px; font-size: 34px; font-weight: var(--w-semibold); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.5; }
 .price small { font-size: var(--t-small); font-weight: var(--w-regular); letter-spacing: 0; color: var(--muted); }
 .plan > p:not(.price) { font-size: var(--t-small); color: var(--muted); }
+.plan-contact { font-size: var(--t-small); color: var(--muted); }
+.plan-contact a { color: var(--ink); }
 .plan ul { display: grid; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line); font-size: var(--t-small); }
 .plan li { position: relative; padding-left: 20px; }
 .plan li::before { content: "✓"; position: absolute; left: 0; font-size: 13px; color: var(--second); }
@@ -420,6 +423,8 @@ select { width: 100%; min-height: 48px; padding: 0 40px 0 14px; border: 1px soli
 /* Footer */
 .site-footer { border-top: 1px solid var(--line); }
 .site-footer .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-sm) var(--space-lg); padding-block: 28px; font-family: var(--font-mono); font-size: var(--t-label); letter-spacing: 0.06em; color: var(--faint); }
+.footer-contact { color: var(--muted); }
+.footer-contact a { color: var(--ink); }
 .site-footer nav { display: flex; flex-wrap: wrap; gap: 4px 24px; }
 .site-footer nav a { display: inline-flex; align-items: center; min-height: 44px; color: var(--muted); text-decoration: none; }
 .site-footer nav a:hover { color: var(--ink); }
@@ -461,6 +466,7 @@ select { width: 100%; min-height: 48px; padding: 0 40px 0 14px; border: 1px soli
   .band { padding: 24px; }
   .band ol { grid-template-columns: minmax(0, 1fr); }
   .factory .owl { width: 130px; }
+  .factory .button { border-radius: var(--radius-lg); }
   .closing .owl-rest { width: 150px; }
   .owl { width: 108px; }
 }
