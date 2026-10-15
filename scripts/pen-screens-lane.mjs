@@ -91,7 +91,7 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
   }
 
   // -- the rail: icons alone, each tool's name in its hint --
-  const TOOLS = ['files', 'changes', 'work', 'memory'];
+  const TOOLS = ['work', 'files', 'changes', 'memory'];
   // What needs the operator in Work, as the rail's warning badge draws it (PRD work-tab-pr-lens B4).
   const WORK_COUNT = '3';
   function rail(id, active) {

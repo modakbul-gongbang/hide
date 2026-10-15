@@ -1,4 +1,4 @@
-import { BrainIcon, EllipsisIcon, FileDiffIcon, FilesIcon, Maximize2Icon, MessagesSquareIcon, Minimize2Icon, PinIcon, XIcon, type LucideIcon } from "lucide-react";
+import { BrainIcon, EllipsisIcon, FileDiffIcon, FilesIcon, Maximize2Icon, Minimize2Icon, PinIcon, SquareKanbanIcon, XIcon, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
@@ -30,7 +30,7 @@ import type { MessageKey } from "./i18n/catalogs";
 // page's (`ui.ts`).
 
 const TOOL_NAMES = { files: "panes.lane.files", changes: "panes.lane.changes", work: "work.title", memory: "panes.lane.memory" } as const satisfies Record<Tool, MessageKey>;
-const TOOL_ICONS: Record<Tool, LucideIcon> = { files: FilesIcon, changes: FileDiffIcon, work: MessagesSquareIcon, memory: BrainIcon };
+const TOOL_ICONS: Record<Tool, LucideIcon> = { files: FilesIcon, changes: FileDiffIcon, work: SquareKanbanIcon, memory: BrainIcon };
 /** The chord that opens and closes the lane on a tool, where one does (D-12). */
 
 /** Whether a lane drawn this way is on screen. */
