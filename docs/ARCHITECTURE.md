@@ -2058,7 +2058,7 @@ An accepted newer checkout, pane, tab, device, file or local Memory navigation s
 Memory projects expose their own hook-preparation and failed-action state, preserving confirmed values and cards for Retry.
 Settings retries only its enable or disable action; card deletion, forgetting and promotion retain the existing Memory tool's confirmation and card identity.
 Tests in `herdr-core/src/runtime/tests/project_settings.rs` cover the save acknowledgment, failed save, fallback, identity and late-answer boundary.
-The agent logo view mode is owned the same way: `agent_logo_mode_set` alone changes `ui_state.agent_logo_mode`, an unknown stored value reads as `hidden` with a `ui_state.agent_logo_mode_unknown` diagnostic, and unrelated UI saves preserve it.
+The agent logo view mode is a core-owned UI preference like the interface language below: `agent_logo_mode_set` alone changes `ui_state.agent_logo_mode`, an unknown stored value reads as `hidden` with a `ui_state.agent_logo_mode_unknown` diagnostic, and unrelated UI saves preserve it.
 Interface language is a core-owned UI preference: `interface_language_set` alone changes `ui_state.interface_language`, and unrelated UI saves preserve it.
 The existing coalesced persistence queue stores the raw choice; snapshot serialization publishes English for an invalid stored value while keeping that value and logging a diagnostic.
 Clients resolve an unset choice from their own primary system language and apply only confirmed snapshot choices.
