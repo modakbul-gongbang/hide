@@ -8,27 +8,12 @@ import type { LegacyScope } from "./legacyAgentScope";
 import { parser as markdownParser } from "@lezer/markdown";
 import type { TFunction } from "i18next";
 import type { MessageKey } from "../src/i18n/catalogs";
-import type { DeviceAvailability } from "../src/navigation";
-import type { LensAgent, Tile } from "../src/overviewLens";
+import type { LensAgent } from "../src/overviewLens";
 import type { AgentPullRequest, AgentRequest, AgentRow, LabelEnd, RequestSender, RequestVerb, Task, Workspace } from "../src/snapshot";
 import { parseToken, type LinkTarget } from "../src/terminalLinks";
 
 // --- groups ------------------------------------------------------------------
 
-/** The verbs that are the operator's to do, the groups the tile counts (D-06). */
-export const TODO_VERBS: readonly RequestVerb[] = ["answer", "blocked", "fix", "review", "stopped", "result"];
-
-export const VERB_LABEL: Record<RequestVerb, MessageKey> = {
-  answer: "requests.verb.answer",
-  blocked: "requests.verb.blocked",
-  fix: "requests.verb.fix",
-  review: "requests.verb.review",
-  stopped: "requests.verb.stopped",
-  result: "requests.verb.result",
-  working: "requests.verb.working",
-  waiting: "requests.verb.waiting",
-  idle: "requests.verb.idle",
-};
 
 
 /** One row of the view: an agent with its verb, and the live descendants it speaks for (D-30). */
@@ -77,27 +62,6 @@ export function requestGroups(rows: readonly RequestRow[], scope: AgentScope): R
 /** When a row's time counts from: the verb's start in a to-do group, else the last activity (D-40, B50). */
 export function rowSince(row: RequestRow): number | null {
   return row.lens.agent.state.request_since;
-}
-
-/**
- * The Requests tile (B2): how many rows are the operator's to do as the big
- * number, the ones to answer as the yellow badge, and a bar of the to-do
- * verbs. Zero is drawn as zero; a device that has not answered has no count.
- */
-export function requestsTile(scope: AgentScope, availability: DeviceAvailability, t: TFunction<"translation">): Tile {
-  const known = availability.state === "ready";
-  const count = (verb: RequestVerb) => scope.requests.counts[verb];
-  const todo = scope.requests.todo;
-  const answer = scope.requests.answer;
-  return {
-    id: "requests",
-    label: t("requests.title"),
-    value: known ? todo : null,
-    unit: null,
-    badge: known && answer > 0 ? { count: answer, label: t(VERB_LABEL.answer), parts: [] } : null,
-    bar: known ? TODO_VERBS.map((verb) => ({ key: verb, label: t(VERB_LABEL[verb]), count: count(verb) })) : null,
-    failure: availability.state === "unavailable" ? t("requests.unavailable", { reason: availability.text }) : null,
-  };
 }
 
 // --- the request line (D-42) ---------------------------------------------------
@@ -251,10 +215,6 @@ export function verdictLine(block: AgentRequest | undefined, t: TFunction<"trans
   return line ? t("requests.verdictLine", { end, line }) : t("requests.verdict", { end });
 }
 
-/** The row's name for assistive technology (B8): title, agent kind, verb, result line. */
-export function requestAccessibleName(row: RequestRow, result: string, t: TFunction<"translation">): string {
-  return [row.lens.agent.identity_label, row.lens.agent.agent_kind, t(VERB_LABEL[row.verb]), result].filter(Boolean).join(", ");
-}
 
 // --- descendants (D-30, B13) -----------------------------------------------------
 

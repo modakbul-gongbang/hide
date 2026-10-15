@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import type { MissedWork, SessionRecord, SessionWorkSummary, WorkRequest, WorkTask } from "./snapshot";
 import { checklist, openMissedWork, outputPrState, recordTitle } from "./sessionWork";
 
-const missed = (id: string, at: number, status: MissedWork["status"] = "open"): MissedWork => ({ id, kind: "problem", text: id, status, at_unix_ms: at, turn_offset: 1, issue_repository: null, issue_number: null, creating: false });
+const missed = (id: string, at: number, status: MissedWork["status"] = "open"): MissedWork => ({ id, kind: "problem", text: id, status, at_unix_ms: at, turn_offset: 1, issue_repository: null, issue_number: null, creating: false, backlog_key: null });
 const work = (id: string, cwd: string, items: MissedWork[]): SessionWorkSummary => ({
   session: { device_id: "local", agent: "claude", session_id: id }, title: "Current goal", fallback_title: "Claude", native_title: null, manual_title: null,
   cwd, ended_at_unix_ms: null, open_missed: items.filter((item) => item.status === "open").length, subtree_open_missed: 0, missed: items,

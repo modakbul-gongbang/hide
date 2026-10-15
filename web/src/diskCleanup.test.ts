@@ -8,7 +8,6 @@ import { initializeInterfaceI18n } from "./i18n/instance";
 import { projectStats } from "./projectBoard";
 import {
   EMPTY_SELECTION,
-  LOW_FREE_BYTES,
   SMALL_CHECKOUT_BYTES,
   BUSY_KEY,
   bundleRefs,
@@ -20,7 +19,6 @@ import {
   footerOf as footerOfIn,
   layerLines as layerLinesIn,
   layoutRows,
-  lowFree,
   needsConfirm,
   planOf,
   pruneSelection,
@@ -427,13 +425,6 @@ describe("the entrance (B1, B2, B6, D-29)", () => {
   const measured = (free: number | null, checkouts: Checkout[]): Workspace => ({ ...workspace(checkouts, null), disk: { total_bytes: 50 * GB, unavailable_reason: null, measuring: false, free_bytes: free } });
   const layerTotals = { build_cache: 30 * GB, dependencies: 5 * GB, source: 3 * GB, other: 2 * GB, shared_git: 1 * GB };
 
-  it("stands only once the measurement is back and under 10 GB free", () => {
-    expect(lowFree(measured(1.6 * GB, []))).toBe(1.6 * GB);
-    expect(lowFree(measured(LOW_FREE_BYTES, []))).toBeNull();
-    expect(lowFree(measured(null, []))).toBeNull();
-    expect(lowFree({ ...measured(1 * GB, []), disk: { total_bytes: null, unavailable_reason: null, measuring: true, free_bytes: 1 * GB } })).toBeNull();
-  });
-
   it("counts the caches of finished linked checkouts no agent works in", () => {
     const value = measured(1 * GB, [
       checkout("main", { main: true, build: 10 * GB }),
@@ -467,7 +458,6 @@ describe("the entrance (B1, B2, B6, D-29)", () => {
         ["기타 · 지우지 않음", 2 * GB],
         ["공유 Git", 1 * GB],
       ]);
-      expect(lowFree(partial)).toBe(1.6 * GB);
       expect(reclaimable(partial)).toBe(4 * GB);
     });
   });

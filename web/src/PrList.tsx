@@ -3,7 +3,7 @@ import { useState, type KeyboardEvent, type MouseEvent } from "react";
 import type { Actions } from "./actions";
 import type { PrGroupId } from "./agentScope";
 import { markTone, rowLine, lineTone } from "./agentRow";
-import { AgentMessagePopover } from "./OverviewLenses";
+import { AgentMessagePopover } from "./AgentMessagePopover";
 import { PrMark } from "./components/pr-mark";
 import { StatusMark } from "./components/status-mark";
 import { Button } from "./components/ui/button";

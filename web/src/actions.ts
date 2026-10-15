@@ -25,7 +25,6 @@ import {
   type CloseWatch,
   type CloseWatchFrame,
 } from "./buffers";
-import { NO_GRAPH_FILTER } from "./agentGraph";
 import { createCatalogObserver, type AgentKind, type ProviderKind } from "./agentPicker";
 import { closeScope, closeDecision, statusUnknownNotice, subtreeOf } from "./close";
 import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./settings";
@@ -33,7 +32,10 @@ import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import { frontDeviceId, localDeviceId, railShown } from "./devices";
 import { registeredName } from "./screenMachine";
-import { allAgents, projectEntryLens, type OpenTarget } from "./navigation";
+import { allAgents, boardProjects, type OpenTarget } from "./navigation";
+import { cardOfItem, cardOfPane } from "./overviewTasks";
+import { backlogIntent } from "./overviewBacklog";
+import { workKey } from "./sessionWork";
 import { expectSurface, type Surface } from "./recent";
 import { useStartPanel } from "./startDraft";
 import { contextAgents, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
@@ -65,7 +67,7 @@ import { fileUrl, isHtmlFile } from "./browserViews";
 import { requestLine } from "./editor/lineRequest";
 import { terminalPathOwner, type FoundPath } from "./terminalLinkProvider";
 import { useShellStore } from "./store";
-import { FACTORY_ENTRY, useUiStore, type FactoryPlace, type PendingClose, type SessionTarget, type SidebarMode } from "./ui";
+import { FACTORY_ENTRY, useUiStore, type FactoryPlace, type MainView, type OverviewPanel, type OverviewPlace, type PendingClose, type SidebarMode } from "./ui";
 import type { FactoryCommand } from "./factory/commands";
 import { FACTORY_OPEN } from "./factory/launch";
 import { SECRETARY_PROMPT, paneListed } from "./factory/secretary";
@@ -1271,15 +1273,6 @@ export function createActions(send: DispatchFn) {
     },
 
     /**
-     * Names a Project for its Sessions screen and reads its history, or reads
-     * it again, with the open session after it: the screen's every Retry
-     * (PRD S8 D-03, B4, B5). The Project is named whatever is focused.
-     */
-    refreshProjectSessions(workspaceId: string, deviceId: string) {
-      dispatch({ schema_version: 2, kind: "sessions_refresh", payload: { workspace_id: workspaceId, ...deviceField(deviceId, localDeviceId(rest())) } });
-    },
-
-    /**
      * Asks the core to read a local Git project's pull requests and issues,
      * the tasks its Tasks and Agents views draw; the core reads a project
      * once and keeps the answer, so asking again costs nothing (D-14).
@@ -1357,11 +1350,6 @@ export function createActions(send: DispatchFn) {
      */
     observeCatalog(): () => void {
       return catalogObserver.acquire();
-    },
-
-    /** A new issue in the project's source (the project row's Issue source menu); the core answers in `issue_work.create`. */
-    createIssue(workspaceId: string, title: string, body: string, missed?: { session: import("./snapshot").WorkSession; id: string }) {
-      dispatch({ schema_version: 2, kind: "issue_create", payload: { workspace_id: workspaceId, title, body, ...(missed ? { missed } : {}) } });
     },
 
     /** An issue's body, labels, author, assignees and comments for its panel and the Start dialog, answered in `issue_work.detail`. */
@@ -1491,27 +1479,66 @@ export function createActions(send: DispatchFn) {
     },
 
     /**
-     * ⌘K's pick of a project, an issue or a pull request: the device that
-     * holds it comes forward (the rail and sidebar follow) and its Project's
-     * Overview shows, as one action. The screen is this page's own state, so
-     * the only event is the device's (PRD cmdk-navigation B20).
+     * The Overview of one device at a place (PRD overview-device-tasks D-02,
+     * D-30, D-31): as a layer over work, or as the page when no Workspace is
+     * in front. Only the Overview moves to the device; the rail, the sidebar
+     * and the Workspace in front stay (B2).
      */
-    openOverview(deviceId: string, projectId: string, lens?: { issue: string } | { session: SessionTarget } | { box: string; fold: string | null }) {
+    openOverview(deviceId: string, place: Partial<OverviewPlace> & { view?: MainView } = {}) {
       const state = ui();
-      const next = state.overviewProjectId === projectId ? state.overviewLens : projectEntryLens(rest(), projectId);
-      const selected =
-        lens && "session" in lens
-            ? { ...next, tab: "sessions" as const, focusTask: null, panel: null, session: lens.session }
-            : lens && "box" in lens
-              ? // A cross-project chip's other end (issue 718): its box selected and unfolded, with no filter to hide it.
-                { ...next, tab: "agents" as const, box: lens.box, graph: NO_GRAPH_FILTER, folds: lens.fold === null || next.folds.includes(lens.fold) ? next.folds : [...next.folds, lens.fold] }
-              : lens
-                ? { ...next, tab: "issues" as const, focusTask: lens.issue, panel: lens.issue }
-                : next;
+      const { view, ...patch } = place;
       const modal = state.screen?.kind === "workspace" && Boolean(frontCheckout(rest()) && rest()?.workspace_view);
       const target = state.overlay === "search" ? state.searchReturnFocus : document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      useUiStore.setState({ overviewProjectId: projectId, overviewLens: selected, overviewOpen: modal, overviewReturnFocus: target, overlay: "none", ...(!modal ? { screen: { kind: "main" as const, deviceId } } : {}) });
-      if (frontDeviceId(rest()) !== deviceId) dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
+      if (view) state.setMainView(view);
+      state.setOverview({ deviceId, projectId: null, panel: null, ...patch });
+      useUiStore.setState({ overviewOpen: modal || state.overviewOpen, overviewReturnFocus: state.overviewOpen ? state.overviewReturnFocus : target, overlay: "none", ...(!modal && !state.overviewOpen ? { screen: { kind: "main" as const, deviceId } } : {}) });
+    },
+
+    /** Tasks filtered to one project (B60): a breadcrumb's project, a cross-project chip, a Recent Panels project. */
+    openProjectTasks(deviceId: string, projectId: string) {
+      this.openOverview(deviceId, { view: "tasks", projectId });
+    },
+
+    /**
+     * An issue or memo from ⌘K, a Factory card, a recorded issue or a missed
+     * line's `· 백로그 #N` (B44, B60): the task card it is on when it was
+     * started, else the item in the backlog.
+     */
+    openBacklogItem(deviceId: string, projectId: string, taskKey: string) {
+      const found = cardOfItem(boardProjects(rest(), useShellStore.getState().agents, deviceId), taskKey);
+      if (found) return this.openOverview(deviceId, { view: "tasks", panel: { kind: "task", root: found.card.root } });
+      this.openOverview(deviceId, { view: "backlog", projectId, panel: { kind: "item", workspaceId: projectId, taskKey } });
+    },
+
+    /**
+     * A pane's agent-tree button (B59): the Overview of the agent's device on
+     * Tasks, the card it belongs to selected and its own record in the panel.
+     */
+    openPaneTask(paneId: string) {
+      const deviceId = remoteTargetOfPane(rest(), paneId) ?? localDeviceId(rest());
+      const found = cardOfPane(boardProjects(rest(), useShellStore.getState().agents, deviceId), paneId);
+      const panel: OverviewPanel | null = found ? { kind: "task", root: found.card.root, ...(found.card.root !== paneId ? { focus: paneId } : {}) } : null;
+      this.openOverview(deviceId, { view: "tasks", panel });
+    },
+
+    /**
+     * `View conversation` on a linked session (B58): its record in the lane,
+     * or in the Overview's panel when no Workspace is in front.
+     */
+    openSessionConversation(session: import("./snapshot").WorkSession) {
+      if (frontCheckout(rest()) && rest()?.workspace_view) {
+        this.closeOverview();
+        return this.openSessionRecord(session);
+      }
+      this.openOverview(session.device_id, { view: "tasks", panel: { kind: "record", session } });
+    },
+
+    /** A section's `열기 ↗` (B12): the Overview closes, the project's latest checkout opens and the lane shows Sessions. */
+    openProjectSessions(deviceId: string, projectId: string) {
+      this.closeOverview();
+      ui().setSessionWorkTarget(null);
+      this.openProjectById(deviceId, projectId);
+      showTool("work");
     },
 
     /** ⌘K's `GitHub에서 "…" 검색` row: one search of this Mac's GitHub projects, answered in `issue_work.search` by `requestId`. */
@@ -1524,10 +1551,6 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "issue_set_open", payload: { workspace_id: workspaceId, task_key: taskKey, open } });
     },
 
-
-    measureProjectDisk(workspaceId: string) {
-      dispatch({ schema_version: 2, kind: "card_measure_disk", payload: { workspace_id: workspaceId } });
-    },
 
     /** Opening the disk cleanup sheet, or its `다시 검토`: the core reviews the project and measures it again. */
     reviewDiskCleanup(workspaceId: string) {
@@ -1542,11 +1565,6 @@ export function createActions(send: DispatchFn) {
     /** Closing the sheet; the core keeps a cleanup that is still removing. */
     dismissDiskCleanup() {
       dispatch({ schema_version: 2, kind: "cleanup_dismiss", payload: {} });
-    },
-
-    /** Opens one session read-only beside the named Project's history; never in a Workspace (B3). */
-    searchProjectSessions(workspaceId: string, deviceId: string, query: string, control?: { clear?: boolean; days?: number; provider?: string }) {
-      dispatch({ schema_version: 2, kind: "session_search", payload: { workspace_id: workspaceId, device_id: deviceId, query, ...control } });
     },
 
     /**
@@ -1582,10 +1600,6 @@ export function createActions(send: DispatchFn) {
       this.memoryExpand(workspaceId, number);
       this.openProjectById(deviceId, workspaceId);
       showTool("memory");
-    },
-
-    openProjectSession(workspaceId: string, sessionId: string) {
-      dispatch({ schema_version: 2, kind: "archive_open", payload: { kind: "session", id: sessionId, workspace_id: workspaceId } });
     },
 
     /** An agent chosen on an Overview or in the Agents list: its Workspace and pane (B12). */
@@ -2040,14 +2054,14 @@ export function createActions(send: DispatchFn) {
     /** Open the project's usable checkout and admit its disclosure in the same event. */
     openProject(workspace: Workspace, expanded: boolean | undefined) {
       const checkout = deviceConnected(rest(), workspace.device_id) ? projectCheckout(workspace, rest()?.ui_state?.recent_checkouts) : null;
-      if (!checkout) return this.openOverview(workspace.device_id, workspace.id);
+      if (!checkout) return this.openProjectTasks(workspace.device_id, workspace.id);
       this.openWorkspace(workspace.device_id, workspace.id, checkout.id, undefined, expanded);
     },
 
     openProjectById(deviceId: string, projectId: string) {
       const workspace = catalogWorkspaces(rest()).find((row) => row.id === projectId && row.device_id === deviceId);
       if (workspace) return this.openProject(workspace, undefined);
-      this.openOverview(deviceId, projectId);
+      this.openProjectTasks(deviceId, projectId);
     },
 
     /** Opens or closes the agent rows under a checkout in the Projects list; they start closed and the core keeps the choice. */
@@ -2074,7 +2088,6 @@ export function createActions(send: DispatchFn) {
     },
 
     focusSidebarMode(mode: SidebarMode) {
-      if (mode === "agents") return this.openAgentsOverview();
       useUiStore.setState({ overviewOpen: false, overviewReturnFocus: null, sidebarMode: mode, sidebarFocus: ui().sidebarFocus + 1 });
       if (!rest()?.ui_state?.left_sidebar_visible) setLeftSidebarVisible(true);
     },
@@ -2093,12 +2106,28 @@ export function createActions(send: DispatchFn) {
         state.setScreen({ kind: "main" });
         return;
       }
-      const front = frontCheckout(rest());
-      const project = front ? catalogWorkspaces(rest()).find((row) => !row.is_home && row.checkouts.some((checkout) => checkout.id === front.id)) : null;
-      if (!project) state.setOverviewProject(null);
-      else if (state.overviewProjectId !== null && state.overviewProjectId !== project.id) state.setOverviewProject(project.id, projectEntryLens(rest(), project.id));
+      // Every open starts on the rail's front device with no project chosen (B1).
+      state.setOverview({ deviceId: null, projectId: null, panel: null });
       const target = state.overlay === "search" ? state.searchReturnFocus : document.activeElement instanceof HTMLElement ? document.activeElement : null;
       useUiStore.setState({ overviewOpen: true, overviewReturnFocus: target, overlay: "none" });
+    },
+
+    /**
+     * ⌘⇧M (PRD overview-device-tasks B37): the quick add over any screen, a
+     * terminal holding the keyboard included; ⌘K and the find bar close
+     * first, and the keyboard goes back to where it was before them. A second
+     * press closes it.
+     */
+    openQuickAdd() {
+      const state = ui();
+      if (state.quickAdd) return useUiStore.setState({ quickAdd: null });
+      const returnFocus = state.overlay === "search" ? state.searchReturnFocus : document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (state.overlay === "search" || state.overlay === "find") state.closeOverlay();
+      useUiStore.setState({ quickAdd: { returnFocus } });
+    },
+
+    closeQuickAdd() {
+      useUiStore.setState({ quickAdd: null });
     },
 
     openOverviewEntry() {
@@ -2107,14 +2136,7 @@ export function createActions(send: DispatchFn) {
     },
 
     openUsageHistory() {
-      ui().setOverviewProject(null);
       ui().setMainView("usage");
-      if (ui().screen?.kind !== "main" && !ui().overviewOpen) this.toggleOverview();
-    },
-
-    openAgentsOverview() {
-      ui().setLens({ tab: "agents" });
-      ui().setMainView("agents");
       if (ui().screen?.kind !== "main" && !ui().overviewOpen) this.toggleOverview();
     },
 
@@ -2173,18 +2195,20 @@ export function createActions(send: DispatchFn) {
 
     startSecretary,
 
-    /** The Overview of every project on its 요청 tab: the agents' own requests (B13). */
-    openRequests() {
-      ui().setOverviewProject(null);
-      ui().setScreen({ kind: "main" });
-      ui().setMainView("agents");
-      showTool("work");
-    },
-
     openSessionRecord(session: import("./snapshot").WorkSession) {
       ui().setSessionWorkTarget(session);
       showTool("work");
       dispatch({ schema_version: 2, kind: "session_record_open", payload: { session } });
+    },
+    /**
+     * A pane head's record button (PRD overview-device-tasks B22, B23): the
+     * lane shows that session's record, or goes back to the Sessions list
+     * when it already does. The keyboard stays in the pane's terminal.
+     */
+    togglePaneRecord(session: import("./snapshot").WorkSession) {
+      const shown = ui().sessionWorkTarget;
+      if (shown && workKey(shown) === workKey(session) && laneUpWith("work")) return this.closeSessionRecord();
+      this.openSessionRecord(session);
     },
     closeSessionRecord() {
       ui().setSessionWorkTarget(null);
@@ -2196,15 +2220,56 @@ export function createActions(send: DispatchFn) {
     setMissedStatus(session: import("./snapshot").WorkSession, id: string, status: "open" | "dismissed") {
       dispatch({ schema_version: 2, kind: "session_missed_status", payload: { session, id, status } });
     },
-    draftMissedIssue(session: import("./snapshot").WorkSession, id: string) {
-      dispatch({ schema_version: 2, kind: "session_issue_draft", payload: { session, id } });
+    /**
+     * A title for a project's backlog (PRD overview-device-tasks D-10, D-13,
+     * D-34): a memo at once, or one title-only GitHub issue; a missed line's
+     * `백로그로` names the line. The returned intent names the item in
+     * `issue_work.backlog` and is what a retry sends again.
+     */
+    addBacklog(workspaceId: string, title: string, missed?: { session: import("./snapshot").WorkSession; id: string }): string {
+      const intent = backlogIntent();
+      dispatch({ schema_version: 2, kind: "backlog_add", payload: { intent, workspace_id: workspaceId, title, ...(missed ? { missed } : {}) } });
+      return intent;
     },
-    cancelMissedIssueDraft() {
-      dispatch({ schema_version: 2, kind: "session_issue_draft_cancel", payload: {} });
+    /** `다시 시도` on a failed item: the same intent, so a create GitHub already made is joined, not repeated (B30, B45). */
+    retryBacklog(intent: string) {
+      dispatch({ schema_version: 2, kind: "backlog_retry", payload: { intent } });
+    },
+    /** `지우기` on a failed item. */
+    dismissBacklog(intent: string) {
+      dispatch({ schema_version: 2, kind: "backlog_dismiss", payload: { intent } });
+    },
+    /** `되돌리기` (B32): a memo is deleted, an issue closed, and a missed line it came from opens again. */
+    undoBacklog(workspaceId: string, taskKey: string) {
+      dispatch({ schema_version: 2, kind: "backlog_undo", payload: { workspace_id: workspaceId, task_key: taskKey } });
+    },
+    /** Where an item came from, for its panel (B31). */
+    readBacklogOrigin(workspaceId: string, taskKey: string) {
+      dispatch({ schema_version: 2, kind: "backlog_origin", payload: { workspace_id: workspaceId, task_key: taskKey } });
+    },
+    /** The projects the Projects tab shows, in its order, for the disk sweep; none when it is hidden (D-15, B53). */
+    watchDisk(workspaceIds: readonly string[]) {
+      dispatch({ schema_version: 2, kind: "disk_watch", payload: { workspace_ids: [...workspaceIds] } });
+    },
+    /** The Overview panel's record: read, without the lane moving. */
+    readSessionRecord(session: import("./snapshot").WorkSession) {
+      dispatch({ schema_version: 2, kind: "session_record_open", payload: { session } });
+    },
+    /** The Overview panel's record closed: the lane's own record, when it shows one, is read again. */
+    leaveOverviewRecord() {
+      const lane = ui().sessionWorkTarget;
+      if (lane) dispatch({ schema_version: 2, kind: "session_record_open", payload: { session: lane } });
+      else dispatch({ schema_version: 2, kind: "session_record_close", payload: {} });
+    },
+    /** `lane에서 보기` (B18): the Overview closes, the checkout opens and the lane shows the same record. */
+    viewRecordInLane(deviceId: string, workspaceId: string, checkoutId: string, session: import("./snapshot").WorkSession) {
+      this.closeOverview();
+      this.openWorkspace(deviceId, workspaceId, checkoutId);
+      this.openSessionRecord(session);
     },
     openRecordedIssue(session: import("./snapshot").WorkSession, repository: string, number: number) {
       const project = catalogWorkspaces(rest()).find((row) => row.device_id === session.device_id && row.tasks?.source?.name?.toLowerCase() === repository.toLowerCase());
-      if (project) this.openOverview(project.device_id, project.id, { issue: `github:${repository.toLowerCase()}#${number}` });
+      if (project) this.openBacklogItem(project.device_id, project.id, `github:${repository.toLowerCase()}#${number}`);
       else this.openLink(`https://github.com/${repository}/issues/${number}`, true);
     },
     openRecordedOutput(output: import("./snapshot").WorkOutput) {

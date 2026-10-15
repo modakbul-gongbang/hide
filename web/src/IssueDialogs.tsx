@@ -1,17 +1,15 @@
-// Work that starts from an issue (the issue-first Overview, 2026-09-28): a
-// new issue in a project's source and the Start dialog that turns an issue
-// into a worktree with an agent and its first prompt. Each sends the one core event that owns
+// Work that starts from an issue (the issue-first Overview, 2026-09-28): the
+// Start dialog that turns an issue into a worktree with an agent and its
+// first prompt. Each sends the one core event that owns
 // the change and reads the core's own answer for it (`issue_work`,
 // `task_operation`); a dialog never decides that its request succeeded.
 
 import { FileTextIcon, CircleDotIcon, RotateCcwIcon, SparklesIcon } from "lucide-react";
-import type { TFunction } from "i18next";
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { rememberedSelection, modelToSend, type AgentSelection } from "./agentPicker";
 import { AgentPicker } from "./components/agent-picker";
 import { Button } from "./components/ui/button";
-import { Checkbox } from "./components/ui/checkbox";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
 import { Kbd } from "./components/ui/kbd";
@@ -21,8 +19,7 @@ import { useInterfaceTranslation } from "./i18n/client";
 import { Note, Status } from "./components/settings-rows";
 import { defaultWorktreeName, firstPrompt, namePrefix } from "./issueStart";
 import { cn } from "./lib/utils";
-import { catalogOf, localDeviceId, type Device, type IssueSettings, type SessionIssueDraft, type Task, type Workspace } from "./snapshot";
-import { machineName } from "./screenMachine";
+import { localDeviceId, type IssueSettings, type Task, type Workspace } from "./snapshot";
 import { hideAiCanAnswer } from "./hideAi";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -63,136 +60,6 @@ export function submitOnCommandEnter(event: React.KeyboardEvent<HTMLFormElement>
     event.preventDefault();
     event.currentTarget.requestSubmit();
   }
-}
-
-/**
- * The projects an issue can be made in: each one the core publishes a source
- * for (its own, and a node's that dials it), never the Home, which is no
- * project.
- */
-function issueProjects(workspaces: readonly Workspace[]): Workspace[] {
-  return workspaces.filter((workspace) => !workspace.is_home && workspace.tasks?.source);
-}
-
-/** `hide · GitHub owner/repo`, `notes · Local`: where a new issue lands. */
-export function sourcePlace(workspace: Workspace): string {
-  const source = workspace.tasks?.source;
-  if (!source) return workspace.label;
-  return [workspace.label, source.name ? `${source.label} ${source.name}` : source.label].join(" · ");
-}
-
-/**
- * New issue's project list rows by project id: `sourcePlace`, and when the
- * list holds projects of more than one machine, each row's machine, this
- * window's own as This Mac, so the core's project and a node's at the same
- * name read apart from either window (PRD core-host-node-move D-29). A list
- * from one machine names none.
- */
-export function issuePlaces(projects: readonly Workspace[], devices: readonly Device[] | undefined, t: TFunction<"translation">): Map<string, string> {
-  const machines = new Set(projects.map((workspace) => workspace.device_id));
-  return new Map(
-    projects.map((workspace) => {
-      const place = sourcePlace(workspace);
-      return [workspace.id, machines.size > 1 ? `${place} · ${machineName(devices, workspace.device_id, t)}` : place];
-    }),
-  );
-}
-
-/**
- * New issue: in the named project's source, or another project picked from
- * the list; `Create and start immediately` goes on to the Start dialog with the new issue
- * once the source has it.
- */
-export function NewIssueDialog({ actions, workspace, draft, onClose }: { actions: Actions; workspace: Workspace; draft?: SessionIssueDraft; onClose: () => void }) {
-  const { t } = useInterfaceTranslation();
-  const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
-  const remote = useShellStore((s) => s.rest?.status?.remote);
-  const devices = useShellStore((s) => s.rest?.navigator?.devices);
-  const projects = useMemo(() => issueProjects(catalogOf(workspaces, remote)), [workspaces, remote]);
-  const places = useMemo(() => issuePlaces(projects, devices, t), [projects, devices, t]);
-  const [projectId, setProjectId] = useState(workspace.id);
-  const project = draft ? workspace : projects.find((row) => row.id === projectId) ?? null;
-  const [title, setTitle] = useState(draft?.title ?? "");
-  const [body, setBody] = useState(draft?.body ?? "");
-  const [thenStart, setThenStart] = useState(false);
-  const [request, setRequest] = useState<{ after: number; at: number; start: boolean; projectId: string } | null>(null);
-  const create = useShellStore((s) => s.rest?.issue_work?.create ?? null);
-  const answer = request && create && create.id > request.after && create.workspace_id === request.projectId ? create : null;
-  const refused = useErrorSince(request?.at ?? null, ["issue_create."]);
-  const retryPreview = !!draft && (draft.phase === "failed" || !draft.repository || draft.message === "issue_draft_github_unavailable");
-  const working = draft?.phase === "working" || request !== null && refused === null && (answer === null || answer.phase === "working");
-  const failure = answer?.phase === "failed" ? (answer.message ?? t("issue.createFailed")) : refused;
-
-  useEffect(() => {
-    if (answer?.phase !== "ready" || !request) return;
-    if (request.start && answer.task_key) {
-      useUiStore.getState().setWorkspaceDialog({ kind: "start_issue", workspaceId: request.projectId, taskKey: answer.task_key });
-    } else {
-      onClose();
-    }
-  }, [answer, request, onClose]);
-
-  const submit = () => {
-    if (working || !project) return;
-    if (draft && retryPreview) {
-      actions.draftMissedIssue(draft.source.session, draft.source.id);
-      return;
-    }
-    if (!title.trim()) return;
-    setRequest({ after: create?.id ?? 0, at: Date.now(), start: thenStart, projectId: project.id });
-    actions.createIssue(project.id, title.trim(), body, draft?.source);
-  };
-  return (
-    <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DialogContent data-new-issue={projectId}>
-        <form className="flex min-h-0 flex-1 flex-col" onKeyDown={submitOnCommandEnter} onSubmit={(event) => { event.preventDefault(); submit(); }}>
-          <DialogHeader>
-            <DialogTitle>{t("issue.newTitle")}</DialogTitle>
-            <DialogDescription className="sr-only">{t("issue.newDescription")}</DialogDescription>
-          </DialogHeader>
-          <DialogBody className="space-y-sm">
-            <Field label={t("issue.place")}>
-              {draft ? <span className="block truncate text-foreground" title={draft.repository ?? workspace.label}>{draft.repository ?? workspace.label}</span> :
-              <Select value={projectId} disabled={working} onValueChange={setProjectId}>
-                <SelectTrigger className="w-full" aria-label={t("issue.place")} data-new-issue-project="true">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {projects.map((row) => (
-                    <SelectItem key={row.id} value={row.id}>
-                      {places.get(row.id)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>}
-            </Field>
-            {draft ? <Note>{t("sessionWork.draftNote")}</Note> : null}
-            {draft?.message ? <Note tone="warn">{t(draft.phase === "failed" ? "sessionWork.issue_draft_unavailable" : draft.message === "issue_draft_ai_unavailable" ? "sessionWork.issue_draft_ai_unavailable" : draft.message === "issue_draft_github_unavailable" ? "sessionWork.issue_draft_github_unavailable" : "sessionWork.issue_draft_context_unavailable")}</Note> : null}
-            <Field label={t("issue.title")}>
-              <Input value={title} autoFocus disabled={working} maxLength={256} onChange={(event) => setTitle(event.target.value.replace(/[\r\n]+/g, " "))} data-new-issue-title="true" />
-            </Field>
-            <Field label={t("issue.content")}>
-              <TextArea value={body} rows={4} disabled={working} onChange={(event) => setBody(event.target.value)} data-new-issue-body="true" />
-            </Field>
-            {!draft ? <label className="inline-flex items-center gap-xs text-body text-foreground">
-              <Checkbox checked={thenStart} disabled={working} onCheckedChange={(checked) => setThenStart(checked === true)} data-new-issue-start="true" />
-              {t("issue.createAndStart")}
-            </label> : null}
-            {!draft && project?.tasks?.source?.failure ? <Note tone="warn">{`${project.tasks.source.label}: ${project.tasks.source.failure}`}</Note> : null}
-            {failure ? <Note tone="error" data-new-issue-error="true">{failure}</Note> : null}
-            {working ? <Status tone="pending">{t("issue.creating")}</Status> : null}
-          </DialogBody>
-          <DialogFooter>
-            <Button variant="secondary" onClick={onClose}>{t(working ? "issue.hide" : "common.cancel")}</Button>
-            <Button type="submit" disabled={working || !project || !retryPreview && !title.trim()} data-new-issue-create="true">
-              {t(failure || retryPreview ? "common.retry" : draft ? "sessionWork.createIssue" : thenStart ? "issue.createStart" : "issue.create")}
-              <Kbd>{fieldLabel("Enter")}</Kbd>
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
 /** The name field's note: who wrote the name, and the way back to the AI's. */
@@ -265,6 +132,7 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
   const [prompt, setPrompt] = useState(() => firstPrompt(task, null, settings.closes_instruction, t));
   const promptEdited = useRef(false);
   const detail = useShellStore((s) => (s.rest?.issue_work?.detail?.task_key === task.key ? s.rest.issue_work.detail : null));
+  const origin = useShellStore((s) => (s.rest?.issue_work?.origin?.task_key === task.key ? s.rest.issue_work.origin : null));
   const nameAnswer = useShellStore((s) => (s.rest?.issue_work?.name?.request_id === requestId ? s.rest.issue_work.name : null));
   const asked = useRef(false);
   const [request, setRequest] = useState<{ afterId: number; branch: string; at: number } | null>(null);
@@ -274,14 +142,17 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
   const working = request !== null && refused === null && (created === null || created.phase === "working");
 
   // The body is read once per dialog; a GitHub issue's comes from `gh`.
+  // So is where it came from: a missed line's request and answer join the prompt (B33).
   useEffect(() => {
     actions.requestIssueDetail(workspace.id, task.key);
+    actions.readBacklogOrigin(workspace.id, task.key);
   }, [actions, workspace.id, task.key]);
   const bodyKnown = detail !== null && detail.phase !== "reading";
+  const originKnown = origin !== null && origin.phase !== "reading";
   useEffect(() => {
-    if (!bodyKnown || promptEdited.current) return;
-    setPrompt(firstPrompt(task, detail?.body ?? null, settings.closes_instruction, t));
-  }, [bodyKnown, detail?.body, task, settings.closes_instruction, t]);
+    if (!bodyKnown || !originKnown || promptEdited.current) return;
+    setPrompt(firstPrompt(task, detail?.body ?? null, settings.closes_instruction, t, origin ?? undefined));
+  }, [bodyKnown, originKnown, detail?.body, origin, task, settings.closes_instruction, t]);
   // The AI names the worktree once the body is known, so the name can use it.
   useEffect(() => {
     if (!git || !aiNames || !bodyKnown || asked.current) return;
@@ -400,7 +271,7 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
             ) : (
               <AgentField agent={agent} actions={actions} disabled={working} onChange={setAgent} />
             )}
-            <Field label={t("issue.firstPrompt")} aside={<span className="text-muted-foreground">{t(detail?.phase === "reading" ? "issue.bodyReading" : "issue.bodyPrefilled")}</span>}>
+            <Field label={t("issue.firstPrompt")} aside={<span className="text-muted-foreground">{t(!bodyKnown || !originKnown ? "issue.bodyReading" : "issue.bodyPrefilled")}</span>}>
                 <TextArea
                   value={prompt}
                   rows={5}
@@ -438,40 +309,4 @@ export function AgentField({ agent, actions, disabled, onChange }: { agent: Agen
       <AgentPicker actions={actions} value={agent} onChange={onChange} disabled={disabled} className="mt-xxs" />
     </div>
   );
-}
-
-/**
- * Whether a key press belongs to a field, a terminal, a menu or a dialog
- * rather than to the page. The Overview's layer over a Workspace is a dialog
- * too, but what it holds is the Overview page, whose keys are its own.
- */
-export function typing(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  const holder = target.closest("input, textarea, select, [contenteditable='true'], .xterm, [role='dialog'], [role='menu'], [role='listbox']");
-  return holder !== null && !holder.hasAttribute("data-overview-modal");
-}
-
-/**
- * `C` on an Overview opens New issue, as Linear's does: only while the page
- * itself has the keyboard, never from a field, a terminal, a menu or a
- * dialog. `null` while the page has nowhere to put an issue.
- */
-export function useNewIssueShortcut(open: (() => void) | null) {
-  const latest = useRef(open);
-  latest.current = open;
-  const enabled = open !== null;
-  useEffect(() => {
-    if (!enabled) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
-      if (event.key.toLowerCase() !== "c" || event.isComposing || typing(event.target)) return;
-      const ui = useUiStore.getState();
-      if (ui.overlay !== "none" || ui.workspaceDialog !== null) return;
-      event.preventDefault();
-      latest.current?.();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [enabled]);
 }

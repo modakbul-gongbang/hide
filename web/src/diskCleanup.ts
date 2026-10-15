@@ -357,13 +357,6 @@ export function needsConfirm(plan: CleanupPlan): boolean {
 
 // --- the entrance (B1, B2, D-29) ----------------------------------------------------------
 
-/** The warning cell shows once the measurement is back and the volume is under the limit (B2, D-20); one checkout that could not be measured does not hide it. */
-export function lowFree(workspace: Workspace): number | null {
-  const disk = workspace.disk;
-  if (!disk || disk.measuring || disk.free_bytes == null) return null;
-  return disk.free_bytes < LOW_FREE_BYTES ? disk.free_bytes : null;
-}
-
 /** The size the entrance may state: the total when every checkout was measured, else the subtotal of those that were (never a total the system cannot produce). */
 export function entranceBytes(workspace: Workspace): { bytes: number; partial: boolean } | null {
   const disk = workspace.disk;

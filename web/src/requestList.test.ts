@@ -1,6 +1,6 @@
 import { legacyWork } from "../test/legacyRequestWork";
 import { emptyScope } from "../test/legacyAgentScope";
-import { requestRows, requestGroups, requestsTile } from "../test/legacyAgentScope";
+import { requestRows, requestGroups } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 // The request view's rules (PRD overview-request-view): which rows it draws
 // and in what order, the Requests tile, the one-line request (D-42), and the
@@ -160,29 +160,11 @@ describe("the rows and groups (D-06, D-30, D-40)", () => {
   it("leaves out a Factory worker's question, which 내 차례 holds instead (software-factory-ui B13)", () => {
     const rows = requestRows([lens(agent("worker", "answer")), lens(agent("own", "answer"))], [], new Set(["worker"]));
     expect(rows.map((row) => row.lens.agent.pane_id)).toEqual(["own"]);
-    expect(requestsTile(rows, { state: "ready" }, t).value).toBe(1);
   });
 
   it("reads a row the core has not laid a block on by its group", () => {
     const rows = requestRows([lens(agent("w", null, { group: "working" })), lens(agent("r", null))], []);
     expect(rows.map((row) => row.verb)).toEqual(["working", "idle"]);
-  });
-});
-
-describe("the Requests tile (B2)", () => {
-  it("counts the rows to do, badges the ones to answer, and draws zero as zero", () => {
-    const rows = requestRows([lens(agent("a", "answer")), lens(agent("b", "review")), lens(agent("c", "result")), lens(agent("d", "working"))], []);
-    const tile = requestsTile(rows, { state: "ready" }, t);
-    expect(tile.value).toBe(3);
-    expect(tile.badge).toEqual({ count: 1, label: "답할 것", parts: [] });
-    expect(tile.bar?.map((segment) => `${segment.key}:${segment.count}`)).toEqual(["answer:1", "blocked:0", "fix:0", "review:1", "stopped:0", "result:1"]);
-    const quiet = requestsTile(requestRows([lens(agent("d", "idle"))], []), { state: "ready" }, t);
-    expect(quiet.value).toBe(0);
-    expect(quiet.badge).toBeNull();
-  });
-
-  it("has no count while the device has not answered", () => {
-    expect(requestsTile([], { state: "loading", text: "…" }, t).value).toBeNull();
   });
 });
 
@@ -287,14 +269,6 @@ describe("the words of a row follow the interface language", () => {
     expect(childrenSummary(row!, english)).toEqual({ text: "1 descendant · Working 1", asking: 0 });
   });
 
-  it("names the tile and its segments in English and carries the device's reason as data", () => {
-    const rows = requestRows([lens(agent("a", "answer")), lens(agent("b", "fix"))], []);
-    const tile = requestsTile(rows, { state: "ready" }, english);
-    expect(tile.label).toBe("Requests");
-    expect(tile.badge?.label).toBe("To answer");
-    expect(tile.bar?.map((segment) => segment.label)).toEqual(["To answer", "Blocked", "To fix", "Review · Merge", "Stopped", "View results"]);
-    expect(requestsTile([], { state: "unavailable", text: "ssh refused", retry: "connect" }, english).failure).toBe("Couldn't read agents · ssh refused");
-  });
 });
 
 function withWork(row: import("../test/legacyRequestList").RequestRow, project: Workspace) {

@@ -168,7 +168,7 @@ export function SearchPalette({ actions }: { actions: Actions }) {
       case "pr":
         if (entry.external && entry.url) return actions.openLink(entry.url, true);
         if (!entry.deviceId || !entry.workspaceId) return undefined;
-        if (entry.kind === "issue" && entry.taskKey) return actions.openOverview(entry.deviceId, entry.workspaceId, { issue: entry.taskKey });
+        if (entry.kind === "issue" && entry.taskKey) return actions.openBacklogItem(entry.deviceId, entry.workspaceId, entry.taskKey);
         if (entry.kind === "pr" && entry.number !== undefined) return actions.openPrCard(entry.workspaceId, entry.number);
         return undefined;
     }

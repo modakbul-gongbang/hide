@@ -19,7 +19,7 @@ import {
 import { observeRecent } from "./keyboard";
 import type { AgentRow, Checkout, SnapshotRest, ViewDisplaySnapshot, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
-import { useUiStore } from "./ui";
+import { OVERVIEW_ENTRY, useUiStore } from "./ui";
 
 // Two projects: "hide" with checkouts main (tabs t1, t2) and feature (tab t3,
 // labelled like its project so its place collapses), and "notes" (tab t4).
@@ -170,9 +170,9 @@ describe("Recent Panels with the shared Overview", () => {
     useShellStore.setState({ rest });
     useUiStore.setState({ screen: { kind: "workspace" } });
     observeRecent(rest, true);
-    useUiStore.setState({ screen: { kind: "main" }, overviewProjectId: "w-notes" });
+    useUiStore.setState({ screen: { kind: "main" }, overview: { ...OVERVIEW_ENTRY, projectId: "w-notes" } });
     observeRecent(rest, true);
-    useUiStore.setState({ overviewProjectId: "w-hide" });
+    useUiStore.setState({ overview: { ...OVERVIEW_ENTRY, projectId: "w-hide" } });
     observeRecent(rest, true);
     const screens = recentEntries().filter(isScreenVisit);
     expect(screens).toEqual([{ key: "main:local", screen: { kind: "main", deviceId: "local" } }]);

@@ -15,6 +15,7 @@ import { OverviewModal, OverviewPage } from "./Overview";
 import { FactoryScreen } from "./factory/FactoryScreen";
 import { useFactoryNotifications } from "./factory/notify";
 import { AgentCloseNotice, ConfirmClose, ConfirmTrash, CycleOverlay, NoticeBar } from "./Overlays";
+import { QuickAdd } from "./QuickAdd";
 import { Palette } from "./Palette";
 import { installProbe, probeEnabled } from "./probe";
 import { configurePaneVisits, expectPane, expectSurface, focusSignature } from "./recent";
@@ -254,6 +255,7 @@ export function App() {
     ["confirm_close", <ConfirmClose actions={actions} />],
     ["confirm_trash", <ConfirmTrash actions={actions} />],
     ["palette", <Palette actions={actions} />],
+    ["quick_add", <QuickAdd actions={actions} />],
     ["start_panel", <StartPanelHost actions={actions} />],
     ["shortcuts", <ShortcutSheetGate actions={actions} />],
     ["settings", <SettingsGate actions={actions} />],

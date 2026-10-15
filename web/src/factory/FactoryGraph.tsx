@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useInterfaceTranslation } from "../i18n/client";
-import { DependencyGraphView } from "../TaskBoards";
+import { DependencyGraphView } from "../DependencyGraph";
 import { useUiStore } from "../ui";
 import { NoMatch } from "./FactoryBoard";
 import { TaskCardView } from "./FactoryCard";

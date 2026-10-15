@@ -1658,7 +1658,7 @@ function AgentTreeRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
           popover: hasChildren && depth >= 2 ? {
             agents: context.agents,
             onOpenChild: (id, label) => context.actions.followRelation(agent.pane_id, id, label),
-            onGraph: () => context.actions.openAgentsOverview(),
+            onTask: () => context.actions.openPaneTask(agent.pane_id),
           } : null,
         };
         return (

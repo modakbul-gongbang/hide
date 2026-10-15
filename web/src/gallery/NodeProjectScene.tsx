@@ -1,22 +1,22 @@
-// A MacBook project's Overview after the core moved (PRD core-host-node-move
-// D-29) on the gallery's synthetic data: the shipped Overview on its Issues
-// tab with a GitHub or a Local source, the New issue dialog over it, and the
-// disk cleanup sheet the size opens. Each state is set up from the address;
-// one scene fills one document, because the stores it seeds are the app's
-// singletons.
+// A MacBook project in the device Overview after the core moved (PRD
+// core-host-node-move D-29, overview-device-tasks D-02) on the gallery's
+// synthetic data: the shipped Overview on the MacBook with its 백로그 tab over
+// a GitHub or a Local source, and the disk cleanup sheet its Projects tab
+// opens. Each state is set up from the address; one scene fills one document,
+// because the stores it seeds are the app's singletons.
 
 import { useLayoutEffect, useMemo } from "react";
 import { createActions } from "../actions";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { clientI18n } from "../i18n/translator";
-import { ProjectOverview } from "../ProjectOverview";
+import { OverviewPage } from "../Overview";
 import { useShellStore } from "../store";
-import { entryLens, useUiStore, type OverviewLens } from "../ui";
+import { OVERVIEW_ENTRY, useUiStore } from "../ui";
 import { WorkspaceDialogs } from "../WorkspaceDialogs";
 import { NODE_DEVICE } from "./coreMoveSceneData";
 import { NODE_PROJECT, nodeProjectRest } from "./nodeProjectSceneData";
 
-export const NODE_PROJECT_STATES = ["issues-github", "issues-local", "new-issue", "cleanup"] as const;
+export const NODE_PROJECT_STATES = ["backlog-github", "backlog-local", "cleanup"] as const;
 export type NodeProjectState = (typeof NODE_PROJECT_STATES)[number];
 export type NodeProjectSceneParams = { theme: "light" | "dark"; state: NodeProjectState; language: "ko" | "en" };
 
@@ -27,9 +27,8 @@ export function nodeProjectSceneParams(params: URLSearchParams): NodeProjectScen
 }
 
 export function NodeProjectScene({ theme, state, language }: NodeProjectSceneParams) {
-  const fixture = useMemo(() => nodeProjectRest(state === "issues-github" ? "github" : "local", state === "cleanup", "reference", Date.now()), [state]);
+  const fixture = useMemo(() => nodeProjectRest(state === "backlog-github" ? "github" : "local", state === "cleanup", "reference", Date.now()), [state]);
   const actions = useMemo(() => createActions(() => true), []);
-  const lens: OverviewLens = { ...entryLens(null, "board"), tab: "issues" };
 
   useLayoutEffect(() => {
     // The MacBook's window names its machine in the address, as `hide connect` does.
@@ -37,10 +36,10 @@ export function NodeProjectScene({ theme, state, language }: NodeProjectScenePar
     useShellStore.setState({ rest: fixture.rest, agents: fixture.agents, connection: "live" });
     useUiStore.setState({
       sidebarMode: "projects",
-      screen: { kind: "main" },
-      overviewProjectId: NODE_PROJECT,
-      overviewLens: lens,
-      workspaceDialog: state === "new-issue" ? { kind: "new_issue", workspaceId: NODE_PROJECT } : state === "cleanup" ? { kind: "disk_cleanup", workspaceId: NODE_PROJECT, filter: "done" } : null,
+      screen: { kind: "main", deviceId: NODE_DEVICE },
+      mainView: state === "cleanup" ? "projects" : "backlog",
+      overview: { ...OVERVIEW_ENTRY, deviceId: NODE_DEVICE, projectId: state === "cleanup" ? null : NODE_PROJECT },
+      workspaceDialog: state === "cleanup" ? { kind: "disk_cleanup", workspaceId: NODE_PROJECT, filter: "done" } : null,
     });
     document.documentElement.classList.toggle("dark", theme === "dark");
     document.documentElement.classList.toggle("light", theme === "light");
@@ -54,7 +53,7 @@ export function NodeProjectScene({ theme, state, language }: NodeProjectScenePar
   return (
     <TooltipProvider>
       <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground" data-gallery-scene="node-project" data-node-project-scene-ready={state}>
-        <ProjectOverview projectId={NODE_PROJECT} lens={lens} actions={actions} />
+        <OverviewPage actions={actions} />
         <WorkspaceDialogs actions={actions} />
       </div>
     </TooltipProvider>

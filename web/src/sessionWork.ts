@@ -1,4 +1,5 @@
-import { localDeviceId, type AgentRow, type MissedWork, type PrState, type SessionRecord, type SessionWorkSummary, type SnapshotRest, type WorkOutput, type WorkRequest, type WorkSession, type WorkTask } from "./snapshot";
+import type { BoardProject } from "./projectBoard";
+import { localDeviceId, type AgentRow, type Checkout, type Workspace, type MissedWork, type PrState, type SessionRecord, type SessionWorkSummary, type SnapshotRest, type WorkOutput, type WorkRequest, type WorkSession, type WorkTask } from "./snapshot";
 
 export const workKey = (session: WorkSession) => `${session.device_id}\0${session.agent}\0${session.session_id}`;
 export function sessionOfAgent(agent: AgentRow, rest: SnapshotRest | null): WorkSession | null {
@@ -42,7 +43,7 @@ export type TaskState = ReturnType<typeof taskState>;
 export type ChecklistTask = { task: WorkTask; state: TaskState; prs: WorkOutput[]; words: WorkRequest[]; missed: MissedWork[] };
 /** One chapter's tasks; `goal` is null for tasks outside any chapter and wherever the record has a single goal. */
 export type ChecklistGroup = { id: string | null; goal: string | null; at: number; tasks: ChecklistTask[] };
-export type OwnedMissed = { owner: Pick<SessionRecord, "session" | "title">; missed: MissedWork; named: boolean };
+export type OwnedMissed = { owner: Pick<SessionRecord, "session" | "title" | "cwd">; missed: MissedWork; named: boolean };
 export type Checklist = {
   groups: ChecklistGroup[];
   done: number;
@@ -97,4 +98,32 @@ export function checklist(record: SessionRecord, descendants: readonly SessionRe
     otherMissed,
     now,
   };
+}
+
+/** Where a session works: the project and checkout its pane is in, else the registered checkout holding its folder. */
+export type SessionPlace = { project: Workspace; checkout: Checkout | null; agent: AgentRow | null };
+
+/**
+ * The project a session works in on its own device (PRD overview-device-tasks
+ * B17, B44): its live pane's checkout when it has one, else the deepest
+ * checkout or project path that holds its working folder. Null when no
+ * registered project of that device holds it.
+ */
+export function sessionPlace(projects: readonly BoardProject[], session: WorkSession, cwd: string | null, rest: SnapshotRest | null): SessionPlace | null {
+  const own = projects.filter(({ workspace }) => workspace.device_id === session.device_id);
+  for (const { workspace, agents } of own) {
+    const agent = agents.find((row) => row.session_id === session.session_id && (row.device_id ?? localDeviceId(rest)) === session.device_id);
+    const member = agent ? workspace.agent_scope.members.find((row) => row.pane_id === agent.pane_id) : undefined;
+    if (!agent || !member) continue;
+    return { project: workspace, checkout: workspace.checkouts.find((row) => row.id === member.checkout_id) ?? null, agent };
+  }
+  if (!cwd) return null;
+  const holds = (path: string) => cwd === path || cwd.startsWith(path.endsWith("/") ? path : `${path}/`);
+  let best: SessionPlace | null = null;
+  let depth = -1;
+  for (const { workspace } of own) {
+    for (const checkout of workspace.checkouts) if (holds(checkout.path) && checkout.path.length > depth) { best = { project: workspace, checkout, agent: null }; depth = checkout.path.length; }
+    if (holds(workspace.path) && workspace.path.length > depth) { best = { project: workspace, checkout: null, agent: null }; depth = workspace.path.length; }
+  }
+  return best;
 }

@@ -550,16 +550,16 @@ it("opens the corresponding inbox item for another answer and keeps issue/PR con
 
 it("opens a local issue through its catalog identity without opening the Factory task", async () => {
   const rest = { navigator: { focused_device_id: "remote", devices: [{ id: "remote", kind: "remote" }, { id: "local", kind: "local" }], workspaces: [
-    { id: "remote-project", path: "/fixture", device_id: "remote", tasks: { tasks: [{ id: "L-7", key: "remote:/fixture#7", source: "local" }] } },
-    { id: "project", path: "/fixture", device_id: "local", tasks: { tasks: [{ id: "L-7", key: "local:/fixture#7", source: "local" }] } },
+    { id: "remote-project", path: "/fixture", device_id: "remote", checkouts: [], agent_scope: {}, tasks: { tasks: [{ id: "L-7", key: "remote:/fixture#7", source: "local" }] } },
+    { id: "project", path: "/fixture", device_id: "local", checkouts: [], agent_scope: {}, tasks: { tasks: [{ id: "L-7", key: "local:/fixture#7", source: "local" }] } },
   ] } } as unknown as SnapshotRest;
   useShellStore.setState({ rest });
   const task = card("T-1", "running", { issue: "L-7" });
   const { container } = await mount({ my_turn: 0, factories: [factory({ columns: [{ column: "moving", label: "", cards: [task] }] })], inbox: [] }, { tab: "board" });
-  useUiStore.setState({ overviewProjectId: "project" });
   const issue = [...container.querySelectorAll<HTMLButtonElement>("[data-factory-card] button")].find((button) => button.textContent === "L-7")!;
   await act(async () => issue.click());
-  expect(useUiStore.getState().overviewLens.panel).toBe("local:/fixture#7");
+  expect(useUiStore.getState().mainView).toBe("backlog");
+  expect(useUiStore.getState().overview.panel).toEqual({ kind: "item", workspaceId: "project", taskKey: "local:/fixture#7" });
   expect(useUiStore.getState().screen).toMatchObject({ kind: "main", deviceId: "local" });
   useShellStore.setState({ rest: null });
 });

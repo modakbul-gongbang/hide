@@ -61,7 +61,7 @@ export function AgentTreePopover({
   agents,
   raised = false,
   onOpenChild,
-  onGraph,
+  onTask,
   returnFocus,
   trigger,
   triggerLabel,
@@ -71,7 +71,7 @@ export function AgentTreePopover({
   /** Opened for raised descendants: their branches first, with their asks. */
   raised?: boolean;
   onOpenChild: (paneId: string, label: string) => void;
-  onGraph: (() => void) | null;
+  onTask: (() => void) | null;
   returnFocus: () => void;
   trigger: ReactNode;
   triggerLabel: string;
@@ -247,19 +247,19 @@ export function AgentTreePopover({
                 ),
               )}
             </CommandGroup>
-            {onGraph ? (
+            {onTask ? (
               <>
                 <CommandSeparator />
                 <CommandItem
-                  value="__graph"
+                  value="__task"
                   onSelect={() => {
-                    afterClose.current = onGraph;
+                    afterClose.current = onTask;
                     setOpen(false);
                   }}
-                  data-agent-tree-graph="true"
+                  data-agent-tree-task="true"
                   className="text-subtle-foreground"
                 >
-                  <span className="flex-1">{t("agentSessions.tree.graph")}</span>
+                  <span className="flex-1">{t("agentSessions.tree.task")}</span>
                   <ArrowRightIcon />
                 </CommandItem>
               </>

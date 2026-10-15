@@ -55,11 +55,20 @@ export function defaultWorktreeName(task: Task): string {
  * for a GitHub issue when the project row's Issue source menu asks for it, to open a pull
  * request that closes it. The operator edits it before starting.
  */
-export function firstPrompt(task: Task, body: string | null, closes: boolean, t: TFunction<"translation">): string {
+/**
+ * `origin` is the request and the turn's answer a missed line came from
+ * (PRD overview-device-tasks D-21, B33): the agent starts with them, and they
+ * stay on this device, never in the issue.
+ */
+export function firstPrompt(task: Task, body: string | null, closes: boolean, t: TFunction<"translation">, origin?: { request: string | null; answer: string | null }): string {
   const id = task.id ?? task.title;
   const lines: string[] = [t(task.source === "local" ? "issue.prompt.local" : "issue.prompt.github", { id, title: task.title })];
   const text = body?.trim();
   if (text) lines.push("", text);
+  const request = origin?.request?.trim();
+  if (request) lines.push("", t("issue.prompt.request"), request);
+  const answer = origin?.answer?.trim();
+  if (answer) lines.push("", t("issue.prompt.answer"), answer);
   if (closes && task.source === "github" && task.id) lines.push("", t("issue.prompt.closes", { id: task.id }));
   return lines.join("\n");
 }

@@ -38,9 +38,17 @@ describe("shortcut registry", () => {
     }
   });
 
-  it("marks exactly the seven moved chords", () => {
+  it("marks exactly the eight moved chords", () => {
     const moved = REGISTRY.filter((command) => command.moved).map((command) => command.id).sort();
-    expect(moved).toEqual(["close_pane", "close_tab", "new_tab", "previous_recent_area_tab", "recent_area_tab", "reopen_closed_tab", "settings"].sort());
+    expect(moved).toEqual(["add_backlog", "close_pane", "close_tab", "new_tab", "previous_recent_area_tab", "recent_area_tab", "reopen_closed_tab", "settings"].sort());
+  });
+
+  it("adds to the backlog with ⇧⌘M in the desktop app and ⌥⇧M in a browser, where Chrome keeps ⇧⌘M (PRD overview-device-tasks B37)", () => {
+    expect(displayCommand("add_backlog", "electron", REGISTRY, "mac")).toBe("⇧⌘M");
+    expect(displayCommand("add_backlog", "browser", REGISTRY, "mac")).toBe("⌥⇧M");
+    expect(isChromeReserved({ code: "KeyM", meta: true, shift: true }, "mac")).toBe(true);
+    const pc = systemRegistry("pc");
+    for (const host of ["browser", "electron"] as const) expect(displayCommand("add_backlog", host, pc, "pc"), host).toBe("Alt+Shift+M");
   });
 
   it("offers Add project only in the desktop app, which has the folder picker", () => {
@@ -74,9 +82,9 @@ describe("shortcut registry", () => {
       // ⌘E shows the Explorer in both hosts (issue 170); the macOS set keeps
       // it on the sidebar switch, which has no chord here until one is bound.
       overview: "⇧⌘O",
+      add_backlog: "⇧⌘M",
       ...(FACTORY_OPEN ? { factory_open: "⇧⌘F" } : {}),
       sidebar_projects: "⇧⌘P",
-      sidebar_agents: "⇧⌘A",
       toggle_device_rail: "",
       toggle_explorer: "⌘E",
       toggle_file_tree: "⇧⌘E",
@@ -269,7 +277,7 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
     expect([...EDITABLE_PANE_COMMANDS].sort()).toEqual(
       [
         "recent_area_tab", "previous_recent_area_tab", "recent_panel", "previous_recent_panel",
-        "close_pane", "split_down", "split_right", "text_larger", "text_reset", "text_smaller", "toggle_device_rail", "overview", "sidebar_projects", "sidebar_agents", "toggle_zoom",
+        "close_pane", "split_down", "split_right", "text_larger", "text_reset", "text_smaller", "toggle_device_rail", "overview", "sidebar_projects", "toggle_zoom",
         "focus_next_agent_area", "focus_previous_agent_area", "grow_agent_area", "shrink_agent_area",
         "focus_next_view_area", "focus_previous_view_area", "grow_view_area", "shrink_view_area",
       ].sort(),
@@ -295,7 +303,6 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
       expect(resolved.diagnostic).toMatch(/retired/);
       expect(displayCommand("split_right", host, resolved.registry, "mac")).toBe("⌥⌘R");
       expect(displayCommand("sidebar_projects", host, resolved.registry, "mac")).toBe("⇧⌘P");
-      expect(displayCommand("sidebar_agents", host, resolved.registry, "mac")).toBe("⇧⌘A");
       expect(resolved.registry.some((command) => command.id as string === "toggle_sidebar_view")).toBe(false);
     }
   });
@@ -392,9 +399,9 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
       open_file: "Ctrl+Shift+P",
       toggle_left_sidebar: "Ctrl+Shift+B",
       overview: "Alt+Shift+O",
+      add_backlog: "Alt+Shift+M",
       ...(FACTORY_OPEN ? { factory_open: "Alt+Shift+F" } : {}),
       sidebar_projects: "Alt+Shift+P",
-      sidebar_agents: "Alt+Shift+A",
       toggle_device_rail: "",
       toggle_explorer: "Ctrl+Shift+E",
       toggle_file_tree: "Alt+Shift+E",
@@ -451,7 +458,7 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
   });
 
   it("notes a browser chord as moved only where Chrome keeps the desktop chord on this system", () => {
-    expect(pc.filter((command) => command.moved).map((command) => command.id).sort()).toEqual(["close_tab", "new_tab", "previous_recent_area_tab", "recent_area_tab", "reopen_closed_tab", "sidebar_agents"]);
+    expect(pc.filter((command) => command.moved).map((command) => command.id).sort()).toEqual(["close_tab", "new_tab", "previous_recent_area_tab", "recent_area_tab", "reopen_closed_tab"]);
     expect(sheetRows("Tabs", pc, "browser", "pc").find((row) => row.id === "new_tab")).toMatchObject({ chord: "Alt+T", moved: true, movedFrom: "Ctrl+Shift+T" });
     // Chrome keeps Alt+Shift+T for its toolbar, and the macOS ⌥⇧T is those keys.
     expect(sheetRows("Tabs", pc, "browser", "pc").find((row) => row.id === "reopen_closed_tab")).toMatchObject({ chord: "Ctrl+Alt+Shift+T", moved: true, movedFrom: "Alt+Shift+T" });
@@ -529,9 +536,9 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
 describe("cleared navigation keys", () => {
   it("keeps unrelated overrides while removing every new navigation chord", () => {
     for (const host of ["browser", "electron"] as const) {
-      const result = effectiveRegistry({ overview: "none", sidebar_projects: "none", sidebar_agents: "none", split_right: host === "browser" ? "meta+alt+KeyR" : "command+option+r" }, host, "mac");
+      const result = effectiveRegistry({ overview: "none", sidebar_projects: "none", split_right: host === "browser" ? "meta+alt+KeyR" : "command+option+r" }, host, "mac");
       expect(result.diagnostic).toBeNull();
-      for (const id of ["overview", "sidebar_projects", "sidebar_agents"]) expect(result.registry.find(row => row.id === id)?.[host]).toBeNull();
+      for (const id of ["overview", "sidebar_projects"]) expect(result.registry.find(row => row.id === id)?.[host]).toBeNull();
       expect(result.registry.find(row => row.id === "split_right")?.[host]?.code).toBe("KeyR");
     }
   });

@@ -8,7 +8,7 @@ import { agentProductName } from "./agentAdapters";
 import { StatusMark } from "./components/status-mark";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
-import { PaneForkMark, PaneHeaderBand, PanePrChip } from "./PaneHeaderBand";
+import { PaneForkMark, PaneHeaderBand, PanePrChip, PaneRecordButton } from "./PaneHeaderBand";
 import { PaneConnectionChip } from "./PaneConnection";
 import { AncestorPath, usePaneMenu, type TerminalMenuContext } from "./PaneRelations";
 import { chordLabel, commandLabel } from "./shortcutLabels";
@@ -297,14 +297,35 @@ export const PaneView = memo(function PaneView({
         }}
       >
         <AncestorPath pane={pane} actions={actions} />
-        {agentKind && markSymbol ? <StatusMark symbol={markSymbol} className={markTone} data-pane-status-mark={markSymbol} /> : null}
-        {agentKind ? <Hint label={agentProductName(agentKind)}><span className="flex shrink-0"><AgentMark kind={agentKind} /></span></Hint> : <TerminalSquareIcon className="size-(--size-icon-sm) shrink-0" aria-label={t("agentSessions.shell")} />}
-        <Hint label={agentKind ? `${title}\n${agentProductName(agentKind)}` : title} reveals>
-        <span className="min-w-0 truncate">
-          {title}
-          {agentKind ? <span className="sr-only">, {agentProductName(agentKind)}</span> : null}
-        </span>
-        </Hint>
+        {agentKind ? (
+          <PaneRecordButton
+            paneId={paneId}
+            actions={actions}
+            plain={
+              <>
+                {markSymbol ? <StatusMark symbol={markSymbol} className={markTone} data-pane-status-mark={markSymbol} /> : null}
+                <Hint label={agentProductName(agentKind)}><span className="flex shrink-0"><AgentMark kind={agentKind} /></span></Hint>
+                <Hint label={`${title}\n${agentProductName(agentKind)}`} reveals>
+                  <span className="min-w-0 truncate">{title}<span className="sr-only">, {agentProductName(agentKind)}</span></span>
+                </Hint>
+              </>
+            }
+          >
+            {markSymbol ? <StatusMark symbol={markSymbol} className={markTone} data-pane-status-mark={markSymbol} /> : null}
+            <span className="flex shrink-0" aria-hidden="true"><AgentMark kind={agentKind} /></span>
+            <span className="min-w-0 truncate">
+              {title}
+              <span className="sr-only">, {agentProductName(agentKind)}</span>
+            </span>
+          </PaneRecordButton>
+        ) : (
+          <>
+            <TerminalSquareIcon className="size-(--size-icon-sm) shrink-0" aria-label={t("agentSessions.shell")} />
+            <Hint label={title} reveals>
+              <span className="min-w-0 truncate">{title}</span>
+            </Hint>
+          </>
+        )}
         {agentKind ? <PaneForkMark pane={pane} actions={actions} /> : null}
         {agentKind ? <PanePrChip paneId={paneId} actions={actions} /> : null}
         <span className="flex-1" />

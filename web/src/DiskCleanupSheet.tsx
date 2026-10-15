@@ -48,6 +48,7 @@ import { cn } from "./lib/utils";
 import { prChip } from "./projectBoard";
 import { catalogOf, type CacheLayer, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
+import { useUiStore } from "./ui";
 import { PrChipMark } from "./components/pr-mark";
 
 // The disk cleanup sheet of a local Git project (PRD disk-layers): one row per
@@ -74,6 +75,11 @@ type Step = "table" | "confirm";
 
 /** How long a confirm may go unanswered before the sheet takes it as dropped; the core answers in one snapshot. */
 const CONFIRM_ANSWER_MS = 5000;
+
+/** Opens the sheet on one project, on a filter (the Projects tab's size, `N merged → 정리`, the project panel). */
+export function openDiskCleanup(workspaceId: string, filter: Filter) {
+  useUiStore.getState().setWorkspaceDialog({ kind: "disk_cleanup", workspaceId, filter });
+}
 
 export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, onClose }: { actions: Actions; workspace: Workspace; filter: Filter; onClose: () => void }) {
   const { t, i18n } = useInterfaceTranslation();

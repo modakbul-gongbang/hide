@@ -120,7 +120,7 @@ export type CommandId =
   | "overview"
   | "factory_open"
   | "sidebar_projects"
-  | "sidebar_agents"
+  | "add_backlog"
   | "toggle_device_rail"
   | "toggle_explorer"
   | "toggle_right_panel"
@@ -236,10 +236,11 @@ export const REGISTRY: readonly Command[] = [
   { id: "open_file", title: "Open file", group: "Navigate", browser: { code: "KeyP", meta: true }, electron: { code: "KeyP", meta: true }, moved: false },
   { id: "toggle_left_sidebar", title: "Toggle left sidebar", group: "Panels", browser: { code: "KeyB", meta: true }, electron: { code: "KeyB", meta: true }, moved: false },
   { id: "overview", title: "Overview", group: "Navigate", browser: { code: "KeyO", meta: true, shift: true }, electron: { code: "KeyO", meta: true, shift: true }, moved: false },
+  // Chrome keeps ⌘⇧M for the profile menu, so the browser form is ⌥⇧M (PRD overview-device-tasks B37).
+  { id: "add_backlog", title: "Add to backlog", group: "Navigate", browser: { code: "KeyM", alt: true, shift: true }, electron: { code: "KeyM", meta: true, shift: true }, moved: true },
   // Until the Factory opens, nothing claims ⇧⌘F and no sheet or menu lists it (`factory/launch.ts`).
   ...(FACTORY_OPEN ? [{ id: "factory_open", title: "Open Factory", group: "Navigate", browser: { code: "KeyF", meta: true, shift: true }, electron: { code: "KeyF", meta: true, shift: true }, moved: false } satisfies Command] : []),
   { id: "sidebar_projects", title: "Focus sidebar", group: "Panels", browser: { code: "KeyP", meta: true, shift: true }, electron: { code: "KeyP", meta: true, shift: true }, moved: false },
-  { id: "sidebar_agents", title: "Agents overview", group: "Panels", browser: { code: "KeyA", meta: true, shift: true }, electron: { code: "KeyA", meta: true, shift: true }, moved: false },
   { id: "toggle_device_rail", title: "Toggle device rail", group: "Panels", browser: null, electron: null, moved: false },
   { id: "toggle_explorer", title: "Toggle Tools", group: "Panels", browser: { code: "KeyE", meta: true }, electron: { code: "KeyE", meta: true }, moved: false },
   { id: "toggle_right_panel", title: "Toggle File Views", group: "Panels", browser: { code: "KeyB", meta: true, shift: true }, electron: { code: "KeyB", meta: true, shift: true }, moved: false },
@@ -285,7 +286,6 @@ export const PC_KEYS: Readonly<Partial<Record<CommandId, { chord?: Chord; browse
   // Chrome keeps Alt+Shift+T (focus the toolbar) on Windows and Linux, and the
   // macOS browser chord ⌥⇧T is those same keys there, so a browser tab
   // reopens with the one free chord on that key.
-  sidebar_agents: { browser: { code: "KeyA", ctrl: true, alt: true } },
   reopen_closed_tab: { browser: { code: "KeyT", ctrl: true, alt: true, shift: true } },
   // Windows Terminal, GNOME Terminal, WezTerm, VS Code and every browser size
   // text with Ctrl and =, - or 0.
@@ -312,6 +312,8 @@ const CHROME_RESERVED: Readonly<Record<KeySystem, readonly Chord[]>> = {
     { code: "KeyQ", meta: true },
     { code: "KeyH", meta: true },
     { code: "KeyM", meta: true },
+    // Chrome's profile switcher.
+    { code: "KeyM", meta: true, shift: true },
     { code: "Comma", meta: true },
   ],
   // Chrome's reserved commands on Windows and Linux (new and closed tabs and
@@ -359,7 +361,7 @@ function pcCommand(command: Command): Command {
   const deviation = PC_KEYS[command.id];
   const keys = (chord: Chord | null) => chord && (deviation?.chord ?? modChord(chord, "pc"));
   const electron = keys(command.electron);
-  const moved = (command.moved || command.id === "sidebar_agents") && electron !== null && isChromeReserved(electron, "pc");
+  const moved = command.moved && electron !== null && isChromeReserved(electron, "pc");
   return {
     ...command,
     browser: deviation?.browser ?? (command.moved && !moved ? electron : keys(command.browser)),
@@ -409,7 +411,7 @@ export function matchHost(event: KeyEventLike, registry: readonly Command[], hos
 // honours the operator's existing shortcut settings).
 export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
   "recent_area_tab", "previous_recent_area_tab", "recent_panel", "previous_recent_panel",
-  "overview", "sidebar_projects", "sidebar_agents",
+  "overview", "sidebar_projects",
   "toggle_device_rail",
   "split_right",
   "split_down",
@@ -430,7 +432,6 @@ export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
 const MACOS_KEYS: Readonly<Partial<Record<CommandId, string>>> = {
   overview: "overview",
   sidebar_projects: "sidebar_projects",
-  sidebar_agents: "sidebar_agents",
   toggle_device_rail: "toggle_device_rail",
   split_right: "split_right",
   split_down: "split_down",

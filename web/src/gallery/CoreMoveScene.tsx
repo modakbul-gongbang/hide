@@ -16,7 +16,7 @@ import { clientI18n } from "../i18n/translator";
 import { DevicesTab } from "../settings/DevicesTab";
 import { Sidebar } from "../sidebar";
 import { useShellStore } from "../store";
-import { entryLens, useUiStore } from "../ui";
+import { OVERVIEW_ENTRY, useUiStore } from "../ui";
 import { CORE_MOVE_STATES, CORE_WINDOW_STATES, coreMoveRest, DIALOG_VIEWS, GIVE_UP_STATES, MENU_STATES, NODE_DEVICE, sideOf, WINDOW_STATES, type CoreMoveState } from "./coreMoveSceneData";
 import type { SceneContent } from "./sceneData";
 
@@ -45,7 +45,7 @@ export function CoreMoveScene({ scene, theme, state, content, language }: CoreMo
     window.history.replaceState(null, "", side === "node" ? `${window.location.pathname}${window.location.search}#node=${NODE_DEVICE}` : `${window.location.pathname}${window.location.search}`);
     const shown = WINDOW_STATES[state];
     useShellStore.setState({ rest: fixture.rest, agents: fixture.agents, connection: shown?.connection ?? "live", coreMove: shown?.move ?? DIALOG_VIEWS[state] ?? null, coreMoveRefusal: null, coreLink: shown?.link ?? null });
-    useUiStore.setState({ sidebarMode: "projects", screen: { kind: "main" }, overviewProjectId: "herdr-ide", overviewLens: entryLens(null, "board") });
+    useUiStore.setState({ sidebarMode: "projects", screen: { kind: "main" }, overview: { ...OVERVIEW_ENTRY, projectId: "herdr-ide" } });
     document.documentElement.classList.toggle("dark", theme === "dark");
     document.documentElement.classList.toggle("light", theme === "light");
   }, [fixture, side, state, theme]);
