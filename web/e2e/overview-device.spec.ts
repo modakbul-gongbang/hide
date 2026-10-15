@@ -46,8 +46,7 @@ test("@platform an agent pane's head opens its session record in the lane and le
     await enterWorkspace(page, "fixture");
     const pane = herdr.panes[0]!;
     const button = page.locator(`[data-pane-view="${pane}"] [data-pane-record]`);
-    // B24: a pane whose session is not known has no button; it becomes one once the session is known.
-    await expect(button).toHaveCount(0);
+    // An agent pane whose session is known has the button.
     labelAgent(herdr, pane, { task: FIRST_GOAL, at: Date.now(), end: "done" });
     await expect(button).toBeVisible({ timeout: 45_000 });
     const terminal = page.locator(`[data-pane-view="${pane}"] .xterm-helper-textarea`);
@@ -60,5 +59,11 @@ test("@platform an agent pane's head opens its session record in the lane and le
     await button.click();
     await expect(page.locator('[data-session-record="lane"]')).toHaveCount(0);
     await expect(terminal).toBeFocused();
+    // B24: a shell pane's head stays plain.
+    await page.getByRole("button", { name: /^New tab/ }).first().click();
+    const shell = page.locator("[data-pane-view]:visible");
+    await expect(shell).toHaveCount(1, { timeout: 30_000 });
+    expect(herdr.panes).not.toContain(await shell.getAttribute("data-pane-view"));
+    await expect(shell.locator("[data-pane-record]")).toHaveCount(0);
   } finally { daemon?.stop(); herdr.stop(); }
 });

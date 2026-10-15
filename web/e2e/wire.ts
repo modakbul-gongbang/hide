@@ -64,8 +64,10 @@ export async function enterWorkspace(page: Page, project?: string): Promise<void
   const workspace = page.locator("[data-workspace-screen]");
   await expect(main.or(workspace)).toBeVisible({ timeout: 20_000 });
   if ((await workspace.count()) > 0) return;
-  const rows = page.locator("nav[data-sidebar] [data-project-row]", project ? { hasText: new RegExp(`^${project}`) } : {});
-  await (await showProjectRow(page, rows.first())).click();
+  // A repository's row is `data-project-row`; a plain folder's is its one checkout's open button.
+  const named = project ? { has: page.locator("[data-row-name]", { hasText: new RegExp(`^${project}$`) }) } : {};
+  const row = page.locator("nav[data-sidebar] [data-project]", named).first().locator("[data-project-row], button[data-checkout]").first();
+  await (await showProjectRow(page, row)).click();
   await expect(workspace).toBeVisible();
 }
 

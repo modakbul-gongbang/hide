@@ -84,14 +84,13 @@ test("the Search row and the Overview row under the device, with no Home row and
       await screenshot(page, `sidebar-shell-search-${theme}`);
     }
 
-    // D-07: over a Workspace the Overview row opens All projects as a layer, and Escape returns to the Workspace.
+    // Over a Workspace the Overview row opens the device Overview as a layer, and Escape returns to the Workspace.
     await list.locator("[data-checkout]").first().click();
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await expect(overview).not.toHaveAttribute("aria-current", "page");
     await overview.click();
     const modal = page.getByRole("dialog", { name: "Overview", exact: true });
-    await modal.getByRole("tab", { name: "All projects", exact: true }).click();
-    await expect(modal.locator("[data-main-screen]")).toBeVisible();
+    await expect(modal.locator("[data-overview-page]")).toBeVisible();
     await expect(overview).toHaveAttribute("aria-current", "page");
     await page.keyboard.press("Escape");
     await expect(modal).toHaveCount(0);

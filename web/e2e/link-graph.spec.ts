@@ -180,14 +180,15 @@ test("a pull request's panel shows the sessions that made it and worked on it af
     await screenshot(page, "link-graph-panel-light");
 
     // A line's buttons stand under it on the pointer; View conversation opens
-    // that session's record in the lane beside the card (B10, B11; PRD
-    // overview-device-tasks B58).
+    // that session's record in the lane (B10, B11; PRD overview-device-tasks
+    // B58), and the files tool still holds the card.
     await maker.hover();
     await expect(maker.locator('[data-link-button="view"]')).toBeVisible();
     await expect(maker.locator('[data-link-button="resume"]')).toBeVisible();
     await maker.locator('[data-link-button="view"]').click();
     await expect(page.locator('[data-session-record="lane"]')).toBeVisible({ timeout: 30_000 });
     await expect(page.locator("[data-overview-page]")).toHaveCount(0);
+    await showTool(page, "files");
     await expect(panel).toBeVisible();
 
     // A session whose file is gone stays as a dim line, and Resume says why (B15);
@@ -259,6 +260,8 @@ test(`a ${kind} archive resume keeps its selected source and uses the current co
     await archived.locator('[data-link-button="view"]').click();
     await expect(page.locator('[data-session-record="lane"]')).toBeVisible({ timeout: 30_000 });
     await screenshot(page, `${kind}-archive-record`);
+    // The record took the lane; the card waits in the files tool.
+    await showTool(page, "files");
     await expect(panel.locator(`[data-pr-panel-worktree="${tree}"]`)).not.toHaveAttribute("data-removed", "true");
     await expect(panel.locator("[data-link-loading]")).toHaveCount(0, { timeout: 60_000 });
     // The card's own parts settle first: a failed part draws a line that moves the row under the pointer.

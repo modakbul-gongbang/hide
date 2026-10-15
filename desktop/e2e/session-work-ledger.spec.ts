@@ -48,7 +48,8 @@ test("@platform session work records, drafts, ended work and search render in bo
     await setFixtureLifecycle(herdr, herdr.panes[0], "idle");
     await expect(record.locator('[data-record-task]')).toHaveCount(3, { timeout: 45_000 });
     await expect(record.locator('[data-record-output="pr"]')).toHaveCount(3, { timeout: 45_000 });
-    await record.locator(`[data-record-child="${child}"] > summary`).click();
+    // The child is a row of the parent's record (B20); the capture keeps the parent in front.
+    await expect(record.locator(`[data-record-child="${child}"]`)).toBeVisible();
     const fixtureIdentity = { head: execFileSync("git", ["rev-parse", "HEAD"], { cwd: REPO, encoding: "utf8" }).trim(), home: run.env.HOME, state: run.env.HIDE_STATE_DIR, socket: herdr.socket, daemon: run.daemonPid(), parent: herdr.panes[0], child, provider: "scripted", github: "scripted" };
     for (const theme of ["light", "dark"] as const) {
       await page.locator('[data-open-settings]').click();
@@ -84,9 +85,10 @@ test("@platform session work records, drafts, ended work and search render in bo
       await page.locator('[data-ai-agent-summary="true"]').click();
       await page.keyboard.press("Escape");
       await expect(record.locator('[data-record-task]')).toHaveCount(0);
-      await expect(record.locator('[data-record-request]')).toHaveCount(3);
+      // The parent's two requests; the child's is in its own record, behind its row.
+      await expect(record.locator('[data-record-request]')).toHaveCount(2);
       await expect(record.getByRole('heading', { level: 2 })).toHaveText('Claude');
-      await expect(record.locator('[data-record-child] > summary')).toContainText('Claude');
+      await expect(record.locator('[data-record-child]')).toContainText('Claude');
       // Only the child's pull request names its maker; the session's own say nothing.
       await expect(record.locator('[data-output-source]')).toHaveText(['Claude']);
       await captureElectronWindow(app, `record-summaries-off-${theme}`, facts);

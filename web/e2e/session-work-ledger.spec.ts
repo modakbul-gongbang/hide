@@ -70,8 +70,11 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     await expect(record.locator('[data-record-output="pr"]')).toHaveCount(3, { timeout: 45_000 });
     // First asked first: the finished task, then the one whose PR failed CI.
     expect(await tasks.evaluateAll((rows) => rows.map((row) => row.querySelector("[data-task-state]")?.getAttribute("data-task-state")))).toEqual(["done", "ci_failed"]);
-    await record.locator(`[data-record-child="${child}"] > summary`).click();
-    await expect(record.locator(`[data-record-child="${child}"] [data-record-task]`)).toContainText("자식 연결 검증");
+    // A child is a row that opens its own record in place, under `← <parent>` (B20).
+    await record.locator(`[data-record-child="${child}"]`).click();
+    await expect(record.locator("[data-record-task]")).toContainText("자식 연결 검증");
+    await record.locator("[data-record-up]").click();
+    await expect(tasks).toHaveCount(2);
     const missed = record.locator("[data-missed-work]", { hasText: MISSED });
     await missed.getByRole("button", { name: "Dismiss", exact: true }).click();
     // A closed one is a muted line that says how it closed; Undo shows under the pointer.
@@ -92,10 +95,11 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     await expect(record.locator('[data-record-words]')).toHaveCount(0);
     await expect(record.locator('[data-record-task]')).toHaveCount(0);
     await expect(record.locator('[data-missed-work]')).toHaveCount(0);
-    await expect(record.locator('[data-record-request]')).toHaveCount(3);
+    // The parent's two requests; the child's is in its own record, behind its row.
+    await expect(record.locator('[data-record-request]')).toHaveCount(2);
     await expect(record.locator('[data-record-output="pr"]')).toHaveCount(3);
     await expect(record.getByRole('heading', { level: 2 })).toHaveText('Claude');
-    await expect(record.locator('[data-record-child] > summary')).toContainText('Claude');
+    await expect(record.locator('[data-record-child]')).toContainText('Claude');
     // Only the child's pull request names its maker; the session's own say nothing.
     await expect(record.locator('[data-output-source]')).toHaveText(['Claude']);
   } finally { daemon?.stop(); herdr.stop(); }

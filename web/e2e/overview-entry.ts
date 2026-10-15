@@ -19,6 +19,10 @@ export async function openOverview(page: Page, tab: OverviewTab = "tasks") {
 export async function projectRow(page: Page, label: string) {
   await openOverview(page, "projects");
   const row = page.locator("[data-projects-row]", { hasText: new RegExp(`^${label}`) });
+  // A resting project with nothing to clean up is folded under `Quiet projects N` (B50).
+  const quiet = page.locator('[data-projects-quiet][aria-expanded="false"]');
+  await expect(row.or(quiet).first()).toBeVisible({ timeout: 20_000 });
+  if (!(await row.isVisible())) await quiet.click();
   await expect(row).toBeVisible({ timeout: 20_000 });
   return row;
 }

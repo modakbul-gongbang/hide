@@ -77,11 +77,12 @@ test("Main, Overview and a Workspace with its lane, tools and delegated child", 
     await expect(await projectRow(page, "fixture")).toBeVisible();
     await screenshot(page, "s6-main");
 
-    // Tasks draws the parent and its delegated child as one card (B8); the
-    // card opens its record beside the tabs, whose head enters the Workspace
-    // at the root's pane (B16, B17).
+    // Tasks folds the two resting agents under `Resting 2` (B7) until one
+    // is opened; a card opens its record beside the tabs, whose head enters
+    // the Workspace at the root's pane (B16, B17).
     await openOverview(page, "tasks");
-    await expect(page.locator("[data-task-card]")).toHaveCount(1, { timeout: 20_000 });
+    await page.locator('[data-task-fold][aria-expanded="false"]').click({ timeout: 20_000 });
+    await expect(page.locator("[data-task-card]")).toHaveCount(2, { timeout: 20_000 });
     await page.locator(`[data-task-card-open="${parent}"]`).click();
     await expect(page.locator("[data-overview-panel]")).toBeVisible();
     await screenshot(page, "s6-overview");

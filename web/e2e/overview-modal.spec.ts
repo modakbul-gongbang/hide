@@ -100,7 +100,8 @@ test("shared Overview preserves work, returns the keyboard and has direct sideba
     // Focus sidebar closes the Overview and focuses the one sidebar.
     await page.keyboard.press(chord("overview"));
     await expect(modal).toBeVisible();
-    await expect(modal.locator('[data-main-view="tasks"]')).toBeVisible();
+    // The Overview opens again on the tab it was left on.
+    await expect(modal.locator('[data-main-view="projects"]')).toBeVisible();
     await page.keyboard.press(chord("sidebar_projects"));
     await expect(modal).toHaveCount(0);
     await expect.poll(() => page.locator('nav[data-sidebar]').evaluate((node) => node.contains(document.activeElement))).toBe(true);
