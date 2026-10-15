@@ -95,14 +95,14 @@ process.exit(4);
     await page.keyboard.press("Escape");
     await expect(sheet).toHaveCount(0);
     await expect(gear()).toBeFocused();
-    // CI's work area can leave room for only one Workspace column. Opening
-    // Memory must call Tools even when Agents would otherwise take that slot.
+    // CI's work area can be a narrow window. Opening Memory must call the
+    // lane forward on its Memory tool there too.
     await fitWindow(app, { width: 1024, height: 681 });
     await gear().click();
     await sheet.getByRole("tab", { name: "Memory", exact: true }).click();
     await sheet.getByRole("button", { name: "Open project Memory" }).click();
     await expect(sheet).toHaveCount(0);
-    await expect(page.locator("[data-memory]")).toBeVisible();
+    await expect(page.locator('aside[data-lane="memory"] [data-memory]')).toBeVisible();
     await captureNativeWindow(app, "project-settings-memory-open-native", { build: "worktree debug", project: repo, daemonPid: run.daemonPid() });
     await app.close();
     app = null;
