@@ -15,8 +15,11 @@ Three files each own one kind of truth, and none of them restates another's valu
   `Component / Sidebar chrome` is generated the same way by `scripts/pen-sidebar-chrome.mjs`: the Search row and the section header masters, the Help menu, Light and Dark.
   Only `System /` and `Component /` top-level sheets belong in this file; screen proposals, audits, and scratch never do.
 - **Numeric authority** is [design/tokens.json](../design/tokens.json): shadcn-named tokens (`--background`, `--foreground`, `--card`, `--popover`, `--primary`/`--primary-foreground`, `--secondary`, `--muted`/`--muted-foreground`, `--accent`, `--destructive`, `--border`, `--input`, `--ring`, `--sidebar-*`, and the four `--accent-choice-*` picks) each carrying a Dark value and a Light value, plus aliases.
-  `node scripts/gen-tokens.mjs` writes `web/src/tokens.css` (Tailwind v4 `@theme`, `:root`/`.light`, `.dark`) and `web/src/generated/accents.ts`.
-  `node scripts/gen-pen.mjs` writes the same values into `design/hide-ui.lib.pen` as Pen variables on a `Mode` (Light/Dark) theme axis.
+  Those two values are the Neutral color theme's; a color the Hide color theme draws differently also carries `hide` with its own Dark `value` and `light`, and every other color is shared by both.
+  `node scripts/gen-tokens.mjs` writes `web/src/tokens.css` (Tailwind v4 `@theme`, `:root`/`.light`, `.dark`, then the Hide values under `.palette-hide`, the class the shell puts on the document root) and `web/src/generated/accents.ts`.
+  `node scripts/gen-pen.mjs` writes the same values into `design/hide-ui.lib.pen` as Pen variables on two theme axes: `Mode` (Light/Dark) and `Palette` (Neutral, the default, and Hide).
+  Every `System /`, `Component /` and `Screen /` frame carries only a `Mode` tag, so it draws Neutral, as the dev gallery does; Foundations draws the Hide palettes beside the Neutral ones.
+  `node scripts/check-token-contrast.mjs` fails a terminal text color or a secondary grey below 4.5:1 in either palette and mode.
   `tokens.json` is web-only: it generates `web/src/tokens.css` and nothing else.
 - **Code authority** is `web/src/components/ui` for shadcn parts (one file per part, matching the gallery and the Pen `System /` sheets) and `web/src/components` for hide composites such as `entry-menu.tsx` and `settings-rows.tsx`, matching `Component /` sheets.
 
@@ -304,8 +307,9 @@ Its builder is `scripts/pen-screens-core-move.mjs`, the gallery scenes `core-mov
 ## How to add a token
 
 1. Add the entry to `design/tokens.json`, with both a Dark (`value`) and a Light (`light`) value for a color token, or use `type: "alias"` to point at another token.
+   When the Hide color theme draws the color differently, add `hide: {"value": <Dark>, "light": <Light>}` too; an alias takes its target's Hide value and carries none of its own.
 2. Run `node scripts/gen-tokens.mjs` to regenerate `web/src/tokens.css` and `web/src/generated/accents.ts`.
-3. Run `node scripts/gen-pen.mjs` to carry the same value into the Pen library's `Mode` variables and Foundations sheet.
+3. Run `node scripts/gen-pen.mjs` to carry the same value into the Pen library's `Mode` and `Palette` variables and Foundations sheet, and `node scripts/gen-screens.mjs` for `design/hide-screens.pen`'s local copy.
 4. Reference the token from Tailwind classes or CSS custom properties in `web/src` (`check-web-tokens.mjs` refuses a literal hex, `rgb()`/`hsl()` or `px` value anywhere in a source, including a CodeMirror theme object or another stylesheet, and Tailwind's own default spacing/text scales, since those are also unchosen literals).
    The generated `agent-tab-count-room` container variant compiles two `--size-control-sm` lengths into its condition, so Agent tab counts use the same numeric authority without a runtime `var()` in the query.
 5. A visual case the token system does not cover is a proposed addition, reviewed and approved before use, never settled with a one-off value.
@@ -343,10 +347,11 @@ A `Component /` sheet is a hide composite assembled from `System /` masters (nev
   A node written whole inside a ref's `descendants` counts: its key already addresses the node, so an `id` of its own makes Pen's loader report duplicate ids.
 - `check-pen-gallery.mjs` - refuses a `System /` sheet and `web/src/gallery/manifest.ts` that name different parts, or a state drawn on one side and not listed on the other, for either theme frame.
 - `check-web-tokens.mjs` - refuses a web source file that reaches a color, size, or radius through a literal instead of a token: a hex, `rgb()`/`hsl()` or `px` literal anywhere in the file, an inline color style, a Tailwind arbitrary `[...]` value, or one of Tailwind's own default spacing/text scale classes.
+- `check-token-contrast.mjs` - refuses `design/tokens.json` when a terminal color used for text falls below 4.5:1 on the terminal background, or `--muted-foreground` or `--subtle-foreground` below 4.5:1 on the background, the sidebar or a card, in Neutral or Hide, Dark or Light; terminal black in Dark and white and bright white in Light are background colors and are left out.
 - `check-hide-screens.mjs` - refuses a `design/hide-screens.pen` top-level node not named `Screen / `, an id that names more than one node, a `Screen /` sheet missing a `Light` or a `Dark` frame, a local `$--variable` the file does not define, a ref or descendant-override key whose import alias or target id does not resolve against the imported library, a cross-library ref that leaves one of the imported master's own colors un-restated locally, or a local variable block that differs from what `design/tokens.json` generates.
 
 `--staged` reads the exact staged content of the design inputs and checker files into a temporary directory and checks that, without touching the index or working tree; the tracked `.githooks/pre-commit` runs it and is opt-in (`git -c core.hooksPath=.githooks commit`).
-The node test suites `scripts/tests/pen-gallery.test.mjs`, `scripts/tests/pen-transplant.test.mjs`, `scripts/tests/design-scratch.test.mjs`, `scripts/tests/design-review.test.mjs`, and `scripts/tests/hide-screens.test.mjs` exercise the gallery comparison, the transplant script, the scratch creator, the reference bundle and the review rules, and the screen-list checker respectively against fixtures; they do not prove Pen rendering or browser layout, which stay a local `design-review.mjs review` run with the real Pen CLI and Chromium.
+The node test suites `scripts/tests/pen-gallery.test.mjs`, `scripts/tests/pen-transplant.test.mjs`, `scripts/tests/design-scratch.test.mjs`, `scripts/tests/design-review.test.mjs`, `scripts/tests/hide-screens.test.mjs` and `scripts/tests/token-contrast.test.mjs` exercise the gallery comparison, the transplant script, the scratch creator, the reference bundle and the review rules, the screen-list checker and the contrast check respectively against fixtures; they do not prove Pen rendering or browser layout, which stay a local `design-review.mjs review` run with the real Pen CLI and Chromium.
 
 These are static source checks, not a rendering engine or an aesthetic evaluator: they catch drift between the files that are supposed to agree, not whether a composition looks right.
 Visual approval is always a human judgment made from a gallery-or-app capture beside the Pen export, recorded under `agents/runs/<slug>/` and never as a committed image; the review run's rules make layout drift a failure, not an approval.

@@ -1914,7 +1914,14 @@ Settings opens on General unless the way in names a page: Explorer's and a devic
 
 ### General
 
-General is Appearance alone: one group with Language, Theme, Accent and Interface text; Accent shows its swatches and no hex value, and Interface text carries one note that the sidebar keeps its own sizes (PRD settings-left-nav B5).
+General is Appearance alone: one group with Language, Color theme, Mode, Accent and Interface text; Accent shows its swatches and no hex value, and Interface text carries one note that the sidebar keeps its own sizes (PRD settings-left-nav B5; hide-color-theme B1).
+Color theme chooses the palette every window draws in, Hide or Neutral, as a segmented toggle like Mode's, each name led by a small swatch of that theme's background and no color code; it waits for a live connection, as Language does.
+Hide is the landing page's Owl Field palette and the default, including for an install that never chose; Neutral is the grey chrome.
+Both have their own sixteen terminal colors, each readable at 4.5:1 on its background, and the choice changes the sidebar, tabs, pane headers, terminals, editors, sheets and popovers at once, keeping a terminal's content, scroll position, half-typed line and selection.
+Status colors, the accent choices and what uses them, the destructive color, and the diff, PR and file icon colors are the same in both.
+Mode is the former Theme row unchanged: System, Light or Dark, each color theme having both.
+The choice is the core's, one for every window attached to it, and survives a restart of the app or of hided; the first paint, the desktop window before the page draws and the host status page are Hide Dark, and a paired phone draws the operator's color theme in its own light or dark.
+A stored value this build does not know opens Hide with only the `ui_state.color_theme_unknown` diagnostic.
 
 ### Notifications
 
