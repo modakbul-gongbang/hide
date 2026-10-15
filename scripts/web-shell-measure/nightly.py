@@ -56,7 +56,7 @@ def driver_sha256():
     not a new series."""
     digest = hashlib.sha256()
     for path in sorted(HERE.iterdir()):
-        if path.is_file() and path.suffix in (".sh", ".mjs", ".py", ".rs") and path.name != Path(__file__).name:
+        if path.is_file() and path.suffix in (".sh", ".js", ".mjs", ".py", ".rs") and path.name != Path(__file__).name:
             digest.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
     return digest.hexdigest()
 

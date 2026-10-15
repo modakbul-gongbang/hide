@@ -352,29 +352,8 @@ printf '%s' "$page_url" | node "$measure_dir/navigate.mjs" "$MEASURE_CDP_PORT"
 # folds (PRD sidebar-titlebar-refresh B1): No agents, its project's own fold,
 # and its project's empty or inactive worktrees. Only the fixture's project is
 # opened, so the measured sidebar is the operator's shape, and each fold is
-# clicked once: the fold is the core's, and a second click closes it.
-open_fixture_js=$(cat <<'JS'
-(() => {
-  if (document.querySelector('[data-workspace-screen]')) return true;
-  const opened = (window.__measureOpened ??= new Set());
-  const once = (key, element) => { if (!element || opened.has(key)) return false; opened.add(key); element.click(); return true; };
-  const projects = document.querySelector('[data-sidebar-mode="projects"]');
-  if (projects && projects.getAttribute('aria-selected') !== 'true') { projects.click(); return false; }
-  const checkout = document.querySelector('[data-checkout-kind="branch"]:not([disabled])');
-  if (checkout) { once('checkout', checkout); return false; }
-  // The fixture's project is the one a scale did not add: scale.sh labels each of its own project-N.
-  const project = [...document.querySelectorAll('[data-project]')].find((row) => !/^project-\d+$/.test(row.querySelector('[data-row-name]')?.textContent?.trim() ?? ''));
-  if (!project) {
-    once('no-agents', document.querySelector('[data-no-agent-projects][aria-expanded="false"]')) || once('inactive-projects', document.querySelector('[data-inactive-projects][aria-expanded="false"]'));
-    return false;
-  }
-  for (const fold of ['data-project-toggle', 'data-empty-worktrees', 'data-inactive-checkouts']) {
-    if (once(fold, project.querySelector(`[${fold}][aria-expanded="false"]`))) return false;
-  }
-  return false;
-})()
-JS
-)
+# clicked once: the fold is the core's, and a second click closes it
+# (open-fixture.js, one expression the page evaluates each poll).
 if [[ "$scenario" == remote-core ]]; then
   export MEASURE_HIDED_PORT="$hided_port" MEASURE_HIDED_TOKEN="$hided_token" MEASURE_SCREEN_NODE="$screen_node"
   note "remote-core: bringing this machine's checkout to the front on the core"
@@ -382,7 +361,7 @@ if [[ "$scenario" == remote-core ]]; then
   screen_pane="remote:$screen_node:pane:$MEASURE_PANE_ID"
   echo "screen_pane=$screen_pane" >> "$MEASURE_RUN_DIR/identity.txt"
 fi
-wait_js "$open_fixture_js"
+wait_js "$(cat "$measure_dir/open-fixture.js")"
 echo_pane="${screen_pane:-$MEASURE_PANE_ID}"
 wait_js "window.__hideProbe?.paneId() === '$echo_pane'"
 sleep 2
