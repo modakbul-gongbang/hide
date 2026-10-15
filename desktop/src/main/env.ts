@@ -110,7 +110,7 @@ export const ENV_REGISTRY: readonly EnvKey[] = [
     requirement: "optional",
     shape: "an http or https URL of a folder holding an update file (latest-mac.yml, latest.yml or latest-linux.yml) and the files it names",
     fallback: "the release `updater.ts` chooses from with-hide/hide's GitHub releases",
-    note: "Points a packaged release build's updater at another feed, for the CI update test (PRD auto-update D-29); the build must still be one that updates itself",
+    note: "Points a packaged release build's updater at another feed, for the CI update test (PRD auto-update D-29); the build must still be one that updates itself. The update file's sha512 comes from that same feed, so setting it trusts whoever serves the feed with what the app installs; the host logs `update.feed_override` at launch whenever it is set",
   },
   {
     key: "PATH",

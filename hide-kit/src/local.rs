@@ -140,7 +140,7 @@ mod tests {
         let copy = crate::layout::runtime_dir(dir.path(), "0.4.0-aaaaaaaaaaaa");
         std::fs::create_dir_all(&copy).unwrap();
         let daemon = copy.join(format!("hided{}", std::env::consts::EXE_SUFFIX));
-        std::fs::write(copy.join("app.asar"), "").unwrap();
+        std::fs::write(&daemon, "").unwrap();
         assert_eq!(bundled_kit_dir(&daemon), None, "unfinished: no marker");
         std::fs::write(copy.join(crate::runtime::MARKER), "0.4.0-aaaaaaaaaaaa").unwrap();
         assert_eq!(bundled_kit_dir(&daemon), Some(copy));

@@ -222,8 +222,21 @@ describe("the updater's states (D-17 to D-21)", () => {
     updater.download = null;
     const second = updates.check("interval");
     await settle(() => updater.download !== null);
+    // The newer one downloads behind the ready one, which the line keeps naming.
+    updater.emit("download-progress", { percent: 50 });
+    expect(updates.status().phase).toEqual({ kind: "ready", version: "0.5.0" });
     updater.download!.resolve([]);
     await second;
+    expect(updates.status().phase).toEqual({ kind: "ready", version: "0.5.1" });
+
+    // A newer download that fails leaves the ready one shown (B26).
+    setReleases([release("v0.5.2"), release("v0.5.1")]);
+    updater.available = "0.5.2";
+    updater.download = null;
+    const third = updates.check("interval");
+    await settle(() => updater.download !== null);
+    updater.download!.reject(new Error("ERR_CHECKSUM_MISMATCH"));
+    await third;
     expect(updates.status().phase).toEqual({ kind: "ready", version: "0.5.1" });
   });
 
@@ -256,8 +269,11 @@ describe("the updater's states (D-17 to D-21)", () => {
     expect(updater.installs).toHaveLength(2);
   });
 
-  it("reads a test feed in place of GitHub (D-29)", async () => {
-    const { updates, updater } = harness({ feedOverride: "http://127.0.0.1:8123/" });
+  it("reads a test feed in place of GitHub (D-29), and says so in the log at start", async () => {
+    const { updates, updater, events } = harness({ feedOverride: "http://127.0.0.1:8123/" });
+    updates.start();
+    expect(events[0]).toEqual(["update.feed_override", { url: "http://127.0.0.1:8123/" }]);
+    updates.stop();
     updater.available = "0.5.0";
     const check = updates.check("operator");
     await settle(() => updater.download !== null);

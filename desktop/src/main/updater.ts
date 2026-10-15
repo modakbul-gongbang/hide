@@ -32,7 +32,8 @@ import { readJsonFile, writeJsonFile } from "./jsonFile";
 import type { HostLog } from "./log";
 
 export const RELEASES_REPOSITORY = "with-hide/hide";
-const RELEASES_API = `https://api.github.com/repos/${RELEASES_REPOSITORY}/releases?per_page=30`;
+/** GitHub's most a page holds; evidence and preview tags share the list with releases. */
+const RELEASES_API = `https://api.github.com/repos/${RELEASES_REPOSITORY}/releases?per_page=100`;
 const RELEASE_DOWNLOADS = `https://github.com/${RELEASES_REPOSITORY}/releases/download`;
 /** The first look waits for the window and the core to settle. */
 export const FIRST_CHECK_DELAY_MS = 15_000;
@@ -215,6 +216,8 @@ export class AppUpdates {
 
   /** Looks soon after launch and then every six hours, until `stop`. */
   start(): void {
+    // The override decides what the app installs, so a stray one is visible in the log.
+    if (this.feedOverride) this.log.event("update.feed_override", { url: this.feedOverride });
     if (typeof this.system !== "string") {
       this.log.event("update.off", { reason: this.system.off, version: this.current });
       return;
@@ -290,14 +293,17 @@ export class AppUpdates {
       return;
     }
     this.log.event("update.found", { version });
-    this.set({ kind: "downloading", version, percent: 0 });
+    // A ready update stays the one shown while a newer one downloads; the
+    // line names the newer one once it is ready (B19).
+    if (!ready) this.set({ kind: "downloading", version, percent: 0 });
     try {
       await updater.downloadUpdate();
     } catch (error) {
       // A file whose sha512 (or macOS signature) does not match is discarded
-      // by electron-updater and lands here; nothing was installed.
+      // by electron-updater and lands here; nothing was installed. With an
+      // update already ready, a failure behind it is the log's alone (B26).
       this.log.event("update.download_failed", { version, detail: errorDetail(error) });
-      this.set({ kind: "failed", stage: "download" });
+      if (!ready) this.set({ kind: "failed", stage: "download" });
       return;
     }
     this.log.event("update.ready", { version });

@@ -31,6 +31,10 @@ use crate::layout;
 /// a copy that was interrupted, and is never run.
 pub const MARKER: &str = ".hide-runtime";
 
+/// What the package's resources hold for the Electron window alone, which a
+/// copy leaves out.
+const SHELL_ONLY: [&str; 2] = ["app.asar", "app.asar.unpacked"];
+
 /// How many copies may remain after a prepare: the running build's, and a
 /// few that an older Herdr server or a hook still runs from.
 pub const COPIES_CAP: usize = 4;
@@ -63,8 +67,9 @@ pub fn build_name(version: &str, hided_build: &str) -> Result<String, String> {
 }
 
 /// Whether `dir` is a finished runtime copy: `~/.hide/runtime/<build>`
-/// holding the shell archive and a marker that names that build. Read from
-/// the folder rather than trusted from a path, like a package's own layout.
+/// holding the marker that names that build, which is written only once the
+/// whole copy is in place. Read from the folder rather than trusted from a
+/// path alone, like a package's own layout.
 pub fn is_runtime_copy(dir: &Path) -> bool {
     let (Some(build), Some(root)) = (dir.file_name(), dir.parent()) else {
         return false;
@@ -74,7 +79,6 @@ pub fn is_runtime_copy(dir: &Path) -> bool {
     };
     root.file_name() == Some(layout::RUNTIME_ROOT.as_ref())
         && home.file_name() == Some(layout::HIDE_HOME.as_ref())
-        && dir.join("app.asar").is_file()
         && fs::read_to_string(dir.join(MARKER))
             .is_ok_and(|named| named.trim() == build.to_string_lossy())
 }
@@ -106,6 +110,17 @@ pub struct Prepared {
 /// One prepare runs at a time per account.
 pub fn prepare(resources: &Path, home: &Path, build: &str) -> Result<Prepared, String> {
     let root = layout::runtime_root(home);
+    // The installer stops every program under the install folder, so a copy
+    // there would be stopped by the update it exists to survive (D-10).
+    if let Some(install) = resources.parent()
+        && root.starts_with(install)
+    {
+        return Err(format!(
+            "{} is inside the install folder {}, which an update stops",
+            root.display(),
+            install.display()
+        ));
+    }
     fs::create_dir_all(&root)
         .map_err(|error| format!("{} could not be made: {error}", root.display()))?;
     let _lock = lock(&root)?;
@@ -187,6 +202,10 @@ fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
     fs::create_dir(to)?;
     for entry in fs::read_dir(from)? {
         let entry = entry?;
+        // The window's own code runs from the install folder, never from here.
+        if SHELL_ONLY.contains(&entry.file_name().to_string_lossy().as_ref()) {
+            continue;
+        }
         let kind = entry.file_type()?;
         let target = to.join(entry.file_name());
         if kind.is_dir() {
@@ -275,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn prepare_copies_the_whole_package_once_and_the_copy_is_a_package() {
+    fn prepare_copies_the_runtime_once_and_the_copy_is_a_package() {
         let scratch = tempfile::tempdir().unwrap();
         let home = scratch.path().join("home");
         let resources = package(scratch.path());
@@ -287,7 +306,10 @@ mod tests {
             "conpty/conpty.dll"
         );
         assert!(is_runtime_copy(&first.dir));
-        assert!(crate::holds_package_runtime(&first.dir));
+        assert!(
+            !first.dir.join("app.asar").exists(),
+            "the window's code stays in the package"
+        );
         let again = prepare(&resources, &home, "0.4.0-aaaaaaaaaaaa").unwrap();
         assert!(!again.copied, "a finished copy is found, not made again");
         assert_eq!(again.pruned, Pruned::default());
@@ -300,16 +322,27 @@ mod tests {
         let resources = package(scratch.path());
         let dir = layout::runtime_dir(&home, "0.4.0-aaaaaaaaaaaa");
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("app.asar"), "half").unwrap();
+        fs::write(dir.join("hided"), "half").unwrap();
         assert!(!is_runtime_copy(&dir));
         fs::write(dir.join(MARKER), "0.4.0-bbbbbbbbbbbb").unwrap();
         assert!(!is_runtime_copy(&dir), "a marker naming another build");
         let prepared = prepare(&resources, &home, "0.4.0-aaaaaaaaaaaa").unwrap();
         assert!(prepared.copied);
+        let hided = format!("hided{}", std::env::consts::EXE_SUFFIX);
         assert_eq!(
-            fs::read_to_string(prepared.dir.join("app.asar")).unwrap(),
-            "app.asar"
+            fs::read_to_string(prepared.dir.join(&hided)).unwrap(),
+            hided
         );
+    }
+
+    #[test]
+    fn a_home_inside_the_install_folder_is_refused() {
+        let scratch = tempfile::tempdir().unwrap();
+        let resources = package(scratch.path());
+        let home = resources.parent().unwrap().join("profile");
+        let refused = prepare(&resources, &home, "0.4.0-aaaaaaaaaaaa").unwrap_err();
+        assert!(refused.contains("inside the install folder"), "{refused}");
+        assert!(!home.exists(), "nothing is made there");
     }
 
     #[test]
@@ -317,7 +350,6 @@ mod tests {
         let scratch = tempfile::tempdir().unwrap();
         let dir = scratch.path().join("elsewhere/0.4.0-aaaaaaaaaaaa");
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("app.asar"), "").unwrap();
         fs::write(dir.join(MARKER), "0.4.0-aaaaaaaaaaaa").unwrap();
         assert!(!is_runtime_copy(&dir));
     }
