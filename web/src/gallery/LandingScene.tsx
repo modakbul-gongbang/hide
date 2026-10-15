@@ -18,7 +18,7 @@ import { DevicesTab } from "../settings/DevicesTab";
 import { Sidebar } from "../sidebar";
 import { useShellStore } from "../store";
 import { TitleRow } from "../TitleRow";
-import { entryLens, useUiStore } from "../ui";
+import { useUiStore } from "../ui";
 import { landingDevices, landingSidebar } from "./landingSceneData";
 
 export const LANDING_SHOTS = ["attention", "agents", "core"] as const;
@@ -52,7 +52,7 @@ export function LandingScene({ shot, theme, narrow }: LandingSceneParams) {
 
   useLayoutEffect(() => {
     useShellStore.setState({ rest: fixture.rest, agents: fixture.agents, mobile: fixture.mobile, connection: "live" });
-    useUiStore.setState({ sidebarMode: "projects", screen: { kind: "main" }, overviewProjectId: "hide", overviewLens: entryLens(null, "board"), overviewOpen: false });
+    useUiStore.setState({ screen: { kind: "main" }, overviewOpen: false });
     const root = document.documentElement;
     root.classList.toggle("dark", theme === "dark");
     root.classList.toggle("light", theme === "light");
