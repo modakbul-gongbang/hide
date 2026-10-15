@@ -136,7 +136,7 @@ fn a_relative_spelling_converts_only_to_names_this_system_can_hold() {
 #[test]
 fn a_shell_word_on_a_drive_mount_names_that_drive() {
     for (word, native) in [
-        ("/c/Users/x/.env", Some(r"C:\Users\x\.env")),
+        ("/c/work/x/.env", Some(r"C:\work\x\.env")),
         ("/d", Some(r"D:\")),
         ("/c/", Some(r"C:\")),
         ("/cygdrive/e/repo", Some(r"E:\repo")),

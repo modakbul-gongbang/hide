@@ -291,7 +291,7 @@ pub fn is_wire_absolute(path: &str) -> bool {
 
 /// The Windows path a POSIX shell word names on Windows, where Git Bash
 /// (MSYS2) and Cygwin mount each drive at `/c` and `/cygdrive/c`:
-/// `/c/Users/x` is `C:\Users\x`. `None` for a word that names no drive mount.
+/// `/c/work/x` is `C:\work\x`. `None` for a word that names no drive mount.
 /// It reads the spelling only, so every system checks it; a Windows caller
 /// applies it to the words a shell line names.
 pub fn shell_drive_path(word: &str) -> Option<String> {
