@@ -64,21 +64,22 @@ It never speaks for an agent, never stands in for a status mark, and never signa
 Copy beside it describes keeping work in view, never watching people or agents.
 Inside the app the character appears only where a PRD puts it, because the shell's states belong to its status marks (design principle 13).
 
-The current poses are in `site/assets/owls/`, and each moves in one small, calm way that belongs to what it is doing:
+The current poses are in `site/assets/owls/`.
+Each takes part in one clear action that belongs to what it is doing, and under it the owl rises and settles on its own breath and blinks while its eyes are open:
 
 | Pose | Where | Scene | Motion |
 | --- | --- | --- | --- |
 | `owl-peek` | around the hero window | `owl-agents` traced into vector parts, peeking out from behind the window's edges | pops out at an edge, glances at the work there and ducks back, the same loop every time |
-| `owl-ai` | beside the attention pillar | reading an open book | now and then a page turns |
-| `owl-agents` | beside the hand-off pillar | at ease among four terminals | in turn, one terminal clears and its lines type in again |
-| `owl-devices` | beside the core pillar | waving beside a laptop, the always-on core and a phone | a light passes along the dots from the laptop through the core to the phone |
-| `owl-factory` | in the Software Factory section | in a hard hat beside a conveyor | the conveyor steps one box on: the last box rolls off, the next gets its check, a new box is set down |
-| `owl-rest` | at the close | asleep in the crescent moon | slow breathing |
+| `owl-ai` | beside the attention pillar | reading an open book | reads along the lines of each page, lifts the corner with its wing and turns the page, its head and body following the page across |
+| `owl-agents` | beside the hand-off pillar | at ease among four terminals | the terminals clear and type in again one after another, clockwise, and the owl turns its head and leans toward each in turn |
+| `owl-devices` | beside the core pillar | waving beside a laptop, the always-on core and a phone | a light runs along the dots from the laptop through the core to the phone and back, each device flashing as it arrives, and the owl's head follows it |
+| `owl-factory` | in the Software Factory section | in a hard hat beside a conveyor | the conveyor steps one box on (the last box rolls off, the next gets its check, a new box is set down) and the owl turns to watch the box go |
+| `owl-rest` | at the close | asleep in the crescent moon | breathes in and out, and a small Z drifts up on each breath out |
 
-A pose keeps work in view rather than reacting to it: the face keeps its expression whatever a pane shows, a section pose moves only its prop or breathes, and nothing in a loop answers what an agent did.
+A pose keeps work in view rather than reacting to it: the face keeps its expression whatever a pane shows, the owl follows its own prop on a fixed schedule, and nothing in a loop answers what an agent did.
 Every moving pose has a `-still.svg` frame that is complete on its own and is what shows off screen, in a hidden tab and under reduced motion; a section pose's loop starts on that frame.
 The poses were made with the mark as the style reference, so a new pose starts from the mark again rather than from an edited copy of another pose, and it is reviewed against this section before it ships.
-The SVGs are traced from those generated poses into separate flat shapes, with a moving prop redrawn as plain geometry so it can move.
+The SVGs are traced from those generated poses into separate flat shapes, with a moving prop redrawn as plain geometry and the owl's ears, face, eyes, wings and body kept as separate shapes so they can move.
 
 ## Third-party agent marks
 
