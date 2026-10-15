@@ -32,7 +32,6 @@
           <span>hide</span>
         </a>
         <nav aria-label="Main navigation">
-          <a class="nav-extra" href="#night">How it works</a>
           <a class="nav-extra" href="#pillars">Features</a>
           <a class="nav-extra" href="#factory">Factory</a>
           <a class="nav-extra" href="#pricing">Pricing</a>
@@ -72,95 +71,9 @@
         </div>
       </section>
 
-      <section class="night-band" id="night" aria-labelledby="night-title">
-        <div class="wrap">
-          <div class="section-head reveal">
-            <p class="label">One night with hide</p>
-            <h2 id="night-title" class="punch">Hand off three issues at 11 pm.<br> <span class="accent">Wake up to two decisions.</span></h2>
-            <p>Your agents split the work, ask each other, fix what broke and check each other's work. The only row that stays empty all night is yours.</p>
-          </div>
-
-          <p class="night-hint" aria-hidden="true">Swipe sideways to follow the night ↔</p>
-          <div class="night-scroll" role="region" aria-label="An example night, from 23:00 to 07:00. Scroll sideways to see all of it." tabindex="0">
-            <div class="night-stage" id="night-stage">
-              <div class="axis"><div></div><div class="ticks"><span style="--x:0">23:00</span><span style="--x:25">01:00</span><span style="--x:50">03:00</span><span style="--x:75">05:00</span><span style="--x:100">07:00</span></div></div>
-              <div class="lanes">
-                <div class="lane you">
-                  <div class="who"><b>You</b><span>MacBook · lid closed</span></div>
-                  <div class="track">
-                    <span class="ev you" style="--x:0">hand off 3 issues</span>
-                    <div class="idle"><span>asleep · nothing needs you</span></div>
-                    <span class="ev you end" style="--x:100">Needs you · 2</span>
-                  </div>
-                </div>
-                <div class="lane">
-                  <div class="who"><b>Lead</b><span>Claude Code · mini</span></div>
-                  <div class="track">
-                    <i class="bar thin" style="--s:0.4; --e:96"></i>
-                    <span class="ev" style="--x:0.6">splits the work in three</span>
-                    <span class="ev" style="--x:27.5">answers #431</span>
-                    <span class="ev" style="--x:77.1">collects the checks</span>
-                  </div>
-                </div>
-                <div class="lane">
-                  <div class="who"><b>#431 Export invoices</b><span>Codex · mini</span></div>
-                  <div class="track">
-                    <i class="bar" style="--s:1; --e:43.8"><em>Export invoices as CSV</em></i>
-                    <span class="ev" style="--x:27.1">asks the lead</span>
-                    <span class="ev ok" style="--x:43.8">ready for review</span>
-                  </div>
-                </div>
-                <div class="lane">
-                  <div class="who"><b>#432 Sort the export</b><span>Codex · workbox</span></div>
-                  <div class="track">
-                    <i class="bar" style="--s:1; --e:45.8"><em>Sort the export by date</em></i>
-                    <span class="ev fail" style="--x:45.8">a test broke</span>
-                    <i class="bar" style="--s:56.3; --e:59.4"></i>
-                    <span class="ev ok" style="--x:59.4">ready for review</span>
-                  </div>
-                </div>
-                <div class="lane">
-                  <div class="who"><b>Find why the test broke</b><span>OpenCode · workbox · helper</span></div>
-                  <div class="track">
-                    <i class="bar child" style="--s:46.3; --e:56.3"><em>the cause</em></i>
-                    <span class="ev ok" style="--x:56.3">fixed, tells #432</span>
-                  </div>
-                </div>
-                <div class="lane">
-                  <div class="who"><b>Check #431 and #432</b><span>Claude Code · mini</span></div>
-                  <div class="track">
-                    <i class="bar" style="--s:62.5; --e:77.1"><em>checking</em></i>
-                    <span class="ev ok" style="--x:77.1">both look good</span>
-                  </div>
-                </div>
-                <div class="overlay">
-                  <i class="link to-you down" style="--x:0.4; --a:0; --b:1"></i>
-                  <i class="link up" style="--x:27.3; --a:1; --b:2"></i>
-                  <i class="link up" style="--x:56.3; --a:3; --b:4"></i>
-                  <i class="link up" style="--x:77.1; --a:1; --b:5"></i>
-                  <i class="link to-you up" style="--x:96; --a:0; --b:1"></i>
-                </div>
-              </div>
-              <div class="legend">
-                <span><i class="l-bar"></i>an agent working</span>
-                <span><i class="l-letter"></i>a message between agents</span>
-                <span><i class="l-you"></i>reaches you</span>
-                <span><i class="l-fail"></i>a test broke</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="night-foot reveal">
-            <p><b>They talk to each other first.</b>Questions an agent can answer never reach you. Four messages went between agents tonight.</p>
-            <p><b>Different agents check each other.</b>Codex wrote both changes. Claude Code checked them.</p>
-            <p><b>Only decisions wake you.</b>Approve #431 and #432? CSV or XLSX for #433? That is the morning.</p>
-          </div>
-        </div>
-      </section>
-
       <section class="section wrap" id="pillars" aria-labelledby="pillars-title">
         <div class="section-head reveal">
-          <p class="label">What makes that night possible</p>
+          <p class="label">How hide helps</p>
           <h2 id="pillars-title">Three things hide does so you can hold less.</h2>
         </div>
 
@@ -175,19 +88,12 @@
                 <li>Runs on the agent CLI you already signed in to. No new API key.</li>
               </ul>
             </div>
-            <div class="mock reveal" aria-hidden="true">
-              <div class="mock-head"><span>Agents</span><span>3 machines</span></div>
-              <div class="mock-body">
-                <p class="grp"><b>Needs you</b> · 2</p>
-                <div class="row hl"><span class="mk needs">?</span><span><span class="t">Approve #431 and #432?</span><span class="sub">Both checked by Claude Code. Tests pass.</span></span><span class="meta">lead · mini</span></div>
-                <div class="row hl"><span class="mk needs">?</span><span><span class="t">#433: CSV or XLSX for the export?</span><span class="sub">A product call the lead won't make for you.</span></span><span class="meta">lead · mini</span></div>
-                <p class="grp"><b>Done</b> · 1</p>
-                <div class="row"><span class="mk done">✓</span><span><span class="t">Fix the test that broke the export</span><span class="sub">One test's sample data was reset. #432 passes again.</span></span><span class="meta">workbox</span></div>
-                <p class="grp"><b>Working</b> · 1</p>
-                <div class="row"><span class="mk working"></span><span><span class="t">Task detail API</span><span class="sub">Writing the handler tests.</span></span><span class="meta">mini</span></div>
-                <p class="grp"><b>Seen</b> · 4 ›</p>
-              </div>
-            </div>
+            <figure class="shot shot-narrow reveal">
+              <picture>
+                <source media="(prefers-color-scheme: light)" srcset="./assets/shots/attention-light.webp">
+                <img src="./assets/shots/attention-dark.webp" width="856" height="1480" alt="hide's sidebar. Two agents wait under Needs You, with a one-line reason each. A finished fix sits under Done. Below them, the project tree shows who is still working." loading="lazy" decoding="async">
+              </picture>
+            </figure>
           </article>
 
           <article class="pillar" aria-labelledby="handoff-title">
@@ -200,23 +106,15 @@
                 <li>Built on Herdr, so any agent in a pane can join.</li>
               </ul>
             </div>
-            <div class="mock reveal" aria-hidden="true">
-              <div class="mock-head"><span>Lineage</span><span>3 agent CLIs · 1 tree</span></div>
-              <div class="mock-body">
-                <ul class="tree">
-                  <li><span class="node"><b>Lead</b><span class="chip cl">Claude Code</span><em>mini</em></span>
-                    <ul>
-                      <li><span class="node"><b>#431 Export invoices</b><span class="chip cx">Codex</span><em>mini</em></span></li>
-                      <li><span class="node"><b>#432 Sort the export</b><span class="chip cx">Codex</span><em>workbox</em></span>
-                        <ul><li><span class="node"><b>Find why the test broke</b><span class="chip oc">OpenCode</span><em>workbox</em></span></li></ul>
-                      </li>
-                      <li><span class="node"><b>Check #431 and #432</b><span class="chip cl">Claude Code</span><em>mini</em></span></li>
-                    </ul>
-                  </li>
-                </ul>
-                <p class="letter">✉ <b>#431 → Lead</b> · keep the old column order?<br>↳ answered 2 min later. You never saw it.</p>
-              </div>
-            </div>
+            <figure class="shot shot-wide reveal" role="region" aria-label="Product screenshot. Scroll sideways on a narrow screen." tabindex="0">
+              <picture>
+                <source media="(prefers-color-scheme: light)" srcset="./assets/shots/agents-light.webp">
+                <img src="./assets/shots/agents-dark.webp" width="1920" height="1680" alt="A lead agent, Claude Code, open in a pane. Its header shows one child asking and its pull requests, and a popover lists the helpers it started. The sidebar tree beside it shows the lead with Codex workers and an OpenCode helper under them." loading="lazy" decoding="async">
+              </picture>
+            </figure>
+            <figure class="shot shot-detail reveal" role="region" aria-label="Enlarged pane header. Scroll sideways on a narrow screen." tabindex="0">
+              <img src="./assets/shots/pane-header.webp" width="2560" height="1200" alt="The lead's pane header enlarged. Callouts name the agent, what it is doing, and the one child that is asking its parent." loading="lazy" decoding="async">
+            </figure>
           </article>
 
           <article class="pillar" aria-labelledby="core-title">
@@ -229,17 +127,12 @@
                 <li>Everything runs on machines you own. Free, not a hosted plan.</li>
               </ul>
             </div>
-            <div class="mock reveal" aria-hidden="true">
-              <div class="mock-head"><span>Devices</span><span>1 core · 3 screens</span></div>
-              <div class="mock-body core">
-                <div class="core-box"><b>mini</b><span class="pill">core · always on</span><span>Projects, letters, titles, Factory · 4 agents</span></div>
-                <div class="screens">
-                  <div class="screen"><div><b>MacBook</b><span>screen · lid closed</span></div><span class="pill dim">asleep</span></div>
-                  <div class="screen"><div><b>workbox</b><span>ssh alias · 2 agents</span></div><span class="pill">connected</span></div>
-                  <div class="screen"><div><b>Phone</b><span>replies and push</span></div><span class="pill">paired</span></div>
-                </div>
-              </div>
-            </div>
+            <figure class="shot shot-wide reveal" role="region" aria-label="Product screenshot. Scroll sideways on a narrow screen." tabindex="0">
+              <picture>
+                <source media="(prefers-color-scheme: light)" srcset="./assets/shots/core-light.webp">
+                <img src="./assets/shots/core-dark.webp" width="2080" height="1280" alt="Settings in hide. Devices lists the core machine, a laptop that dials in and a server, all connected. Mobile shows Tailscale ready and one paired phone." loading="lazy" decoding="async">
+              </picture>
+            </figure>
           </article>
         </div>
       </section>
@@ -267,9 +160,10 @@
             <h2 id="factory-title">Hand off the whole issue.<br> <span class="accent">Review the pull request.</span></h2>
             <p class="lead">Queue issues with clear requirements. Workers take them in order, verify and merge them, and bring back only what needs a person. Cost, sign-in, deletion and anything irreversible always reach you.</p>
             <div class="actions">
-              <a class="button primary" href="https://github.com/modakbul-gongbang/hide">Watch releases on GitHub <span aria-hidden="true">↗</span></a>
+              <a class="button primary" href="mailto:hello@withhide.dev?subject=Join%20the%20Factory%20list">Email hello@withhide.dev to join the Factory list</a>
+              <a class="button secondary" href="https://github.com/modakbul-gongbang/hide">Watch releases on GitHub <span aria-hidden="true">↗</span></a>
             </div>
-            <p class="quiet">On the repository page, choose Watch, then Custom, then Releases. GitHub tells you when the Factory ships.</p>
+            <p class="quiet">Or watch the repository on GitHub: choose Watch, then Custom, then Releases, and GitHub tells you when the Factory ships.</p>
           </div>
         </div>
       </section>
@@ -312,6 +206,7 @@
               <li>Needs you sent to the right person</li>
               <li>Review requests from teammates</li>
             </ul>
+            <p class="plan-contact">Enterprise and teams: <a href="mailto:hello@withhide.dev">hello@withhide.dev</a></p>
           </article>
         </div>
       </section>
@@ -327,6 +222,7 @@
           <details><summary>I already use Herdr.</summary><p>hide is built on Herdr and opens on top of your running Herdr server as it is. Your workspaces, panes and agents are there on first launch, and nothing is stopped or replaced. No Herdr yet? hide brings its own.</p></details>
           <details><summary>Does my code leave my machines?</summary><p>Not through hide, which has no hosted service. Agents, the core and Hide AI run on machines you own, with the agent CLIs you already signed in to, so code goes only where those CLIs send it. Your phone reaches your machines over your own Tailscale.</p></details>
           <details><summary>Do I need a second machine?</summary><p>No. Everything runs on one laptop. An always-on Mac lets your agents keep working while the laptop sleeps.</p></details>
+          <details><summary>How do I reach you?</summary><p>Email <a href="mailto:hello@withhide.dev">hello@withhide.dev</a> for questions, the Factory list, Enterprise and teams. Bugs and feature requests go to <a href="https://github.com/modakbul-gongbang/hide/issues">GitHub issues <span aria-hidden="true">↗</span></a>.</p></details>
           <details><summary>How fast is it?</summary><p>We publish every measurement with its conditions. Read the method and the results on GitHub: <a href="https://github.com/modakbul-gongbang/hide/blob/main/docs/PERFORMANCE_RESULTS.md">Full results, method &amp; limitations <span aria-hidden="true">↗</span></a></p></details>
         </div>
       </section>
@@ -395,6 +291,7 @@
     <footer class="site-footer">
       <div class="wrap">
         <span>hide · Run more agents. Hold less.</span>
+        <p class="footer-contact">Contact, Enterprise and teams: <a href="mailto:hello@withhide.dev">hello@withhide.dev</a></p>
         <nav aria-label="More about hide">
           <a href="https://github.com/modakbul-gongbang/hide">Source</a>
           <a href="https://github.com/modakbul-gongbang/hide/blob/main/docs/README.md">Docs</a>

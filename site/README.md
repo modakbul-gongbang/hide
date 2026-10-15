@@ -53,9 +53,21 @@ Browser QA should simulate GitHub responses at that external boundary for ready,
 The brand line, approved owl mark, palette and voice come from [BRAND.md](../docs/BRAND.md).
 `assets/hide-mark.png` is an unchanged copy of `design/brand/hide-mark.png`; keep its full square and proportions.
 `assets/hide-icon-blinking.svg` is an unchanged copy of `design/brand/hide-icon-blinking.svg`, the animated app icon, and `assets/hide-icon.svg` is the same file with its `<animateTransform>` elements removed, which leaves the resting pose.
-The page leads with the person's attention: "Run more agents. Hold less." Its sections, in order, are the hero, one night with hide (`#night`), three pillars, the terminal band, the Software Factory (Soon), pricing, the FAQ, and a closing that carries the download chooser.
+The page leads with the person's attention: "Run more agents. Hold less." Its sections, in order, are the hero, three pillars, the terminal band, the Software Factory (Soon), pricing, the FAQ, and a closing that carries the download chooser.
 Each section's claims follow the owning guide: the supported agents and their tiers [agent-hooks.md](../docs/agent-hooks.md), the four groups and status marks [status-model.md](../docs/status-model.md), agents handing work to each other [delivery.md](../docs/delivery.md), the core, devices and the phone [ARCHITECTURE.md](../docs/ARCHITECTURE.md) and [INSTALL.md](../docs/INSTALL.md), Hide AI [AI_PROVIDERS.md](../docs/AI_PROVIDERS.md), the Factory [factory.md](../docs/factory.md), and adopting an existing Herdr server [INSTALL.md](../docs/INSTALL.md), which the FAQ answers.
-The three pillar panels and the night timeline are small HTML drawings of the app's own surfaces (the sidebar's four groups, the lineage tree, the core and its screens) with invented example work; they are illustrations, not captures, and use the app's status marks and colors.
+The three pillars show the app itself: `assets/shots/` holds captures of the shell's own Sidebar, pane header, Settings > Devices and Settings > Mobile over invented example work (a Claude Code lead, Codex workers and an OpenCode helper), each in Dark and Light at 2x, and the page picks one with `prefers-color-scheme`.
+They are produced by the gallery's `landing` scene (`web/src/gallery/LandingScene.tsx`, with its text in `landingSceneData.ts`, the frozen sidebar fixture reworded), so they match the shipped UI and carry no personal data; `/gallery?scene=landing&shot=attention|agents|core&theme=dark|light` opens one.
+Regenerate all of them with one command from the repository root, after `bash scripts/verify-web.sh install` and with `cwebp` installed (`brew install webp`, `apt install webp`):
+
+```sh
+node scripts/capture-site-shots.mjs            # every shot, both themes
+node scripts/capture-site-shots.mjs agents     # one shot
+```
+
+The script starts this checkout's web dev server and a headless Chromium, fails on any Korean text or page error, and writes `attention`, `agents` and `core` as `<name>-dark.webp` and `<name>-light.webp`.
+Set each image's `width` and `height` in `index.html` to the size the script prints, so the page does not shift while it loads.
+`assets/shots/pane-header.webp` is the one illustration drawn in Pen: the lead's pane header and child row enlarged, with three callouts.
+It was built in a scratch copy (`node scripts/design-scratch.mjs`) and exported at 2x through the Pen CLI; the committed `.pen` files are unchanged, and a change to the header's look means redrawing it.
 The night timeline sits in `#night-stage` as a static, complete fallback that reads without script; the visible words avoid developer jargon on purpose ("a test broke", "ready for review").
 Every section owl is an `<img class="owl" data-owl="...">` whose `src` is the pose's still frame and whose `data-motion` is its loop, so a pose is replaced by changing those two files.
 Supported agents are named in text; third-party agent marks stay inside the app, where `web/src/assets/agents/manifest.json` records their terms.
