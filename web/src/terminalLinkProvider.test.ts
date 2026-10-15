@@ -192,7 +192,9 @@ describe("original spelling and bounded hover work", () => {
     ["src/a.ts:12:4", ["src/a.ts"], "src/a.ts"],
     ["docs/a(b).md", ["docs/a(b).md"], "docs/a(b).md"],
     ['docs/a"b.md', ['docs/a"b.md'], 'docs/a"b.md'],
-    ["docs/a.md)없는말", ["docs/a.md"], null],
+    ["docs/a.md)없는말", ["docs/a.md"], "docs/a.md"],
+    ["agents/runs/view-mode.html에", ["agents/runs/view-mode.html"], "agents/runs/view-mode.html"],
+    ["agents/runs/view-mode.html에", ["agents/runs/view-mode.html", "agents/runs/view-mode.html에"], "agents/runs/view-mode.html에"],
   ])("resolves %s to the longest real spelling", async (token, files, expected) => {
     const chosen = await resolveGroups(linkCandidates([row(token, 80)], 0), { cwd: "/w", root: "/r" }, host(files.map((file) => "/w/" + file)));
     expect(chosen.map(({ resolved }) => resolved.found!.real)).toEqual(expected ? ["/w/" + expected] : []);

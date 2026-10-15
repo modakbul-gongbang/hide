@@ -221,6 +221,15 @@ impl SessionSyncContext {
         matches!(self.target, SessionSyncTarget::Local { .. })
     }
 
+    /// The target the runtime keeps this connection's read view under:
+    /// none for this machine's server, the device's id for a device's.
+    fn read_target(&self) -> Option<&str> {
+        match &self.target {
+            SessionSyncTarget::Local { .. } => None,
+            SessionSyncTarget::Remote { target_id, .. } => Some(target_id),
+        }
+    }
+
     fn node(&self) -> Option<&Arc<dyn crate::node_access::NodeLink>> {
         self.node.as_ref()
     }
