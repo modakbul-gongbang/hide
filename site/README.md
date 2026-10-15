@@ -64,9 +64,12 @@ node scripts/capture-site-shots.mjs            # every shot, both themes
 node scripts/capture-site-shots.mjs agents     # one shot
 ```
 
+The agents and core shots also have phone variants, `<name>-narrow-<theme>.webp` (`&narrow=1` on the scene): the sidebar tree alone and Settings alone, at a width a phone shows without sideways scrolling.
+Each `<picture>` serves them through `<source media="(max-width: 600px)">` with the variant's own `width` and `height`, so the page reserves the right box at every width.
+
 The script starts this checkout's web dev server and a headless Chromium, fails on any Korean text or page error, and writes `attention`, `agents` and `core` as `<name>-dark.webp` and `<name>-light.webp`.
 Set each image's `width` and `height` in `index.html` to the size the script prints, so the page does not shift while it loads.
-`assets/shots/pane-header.webp` is the one illustration drawn in Pen: the lead's pane header and child row enlarged, with three callouts.
+`assets/shots/pane-header.webp` is the one illustration drawn in Pen: the lead's pane header and child row enlarged, with three callouts; `pane-header-narrow.webp` is the phone layout of the same frame, with numbered markers and the callout text below it.
 It was built in a scratch copy (`node scripts/design-scratch.mjs`) and exported at 2x through the Pen CLI; the committed `.pen` files are unchanged, and a change to the header's look means redrawing it.
 The night timeline sits in `#night-stage` as a static, complete fallback that reads without script; the visible words avoid developer jargon on purpose ("a test broke", "ready for review").
 Every section owl is an `<img class="owl" data-owl="...">`, so a pose is replaced by changing its `src`.

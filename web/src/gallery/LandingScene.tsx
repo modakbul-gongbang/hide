@@ -23,29 +23,32 @@ import { landingDevices, landingSidebar } from "./landingSceneData";
 
 export const LANDING_SHOTS = ["attention", "agents", "core"] as const;
 export type LandingShot = (typeof LANDING_SHOTS)[number];
-export type LandingSceneParams = { shot: LandingShot; theme: "light" | "dark" };
+/** `narrow` is the phone variant: the key part of the shot alone, at a width a phone shows without sideways scrolling. */
+export type LandingSceneParams = { shot: LandingShot; theme: "light" | "dark"; narrow: boolean };
 
 export function landingSceneParams(params: URLSearchParams): LandingSceneParams {
   const shot = params.get("shot") ?? LANDING_SHOTS[0];
   if (!(LANDING_SHOTS as readonly string[]).includes(shot)) throw new Error(`Unknown landing scene shot ${shot}`);
-  return { shot: shot as LandingShot, theme: params.get("theme") === "light" ? "light" : "dark" };
+  return { shot: shot as LandingShot, theme: params.get("theme") === "light" ? "light" : "dark", narrow: params.get("narrow") === "1" };
 }
 
 /** The sidebar's width: wide enough that the page's example titles read whole, narrower where Settings needs the room. */
 const SIDEBAR_WIDTH: Record<LandingShot, number> = { attention: 380, agents: 380, core: 340 };
+/** The phone variant of the agents shot is the sidebar tree alone. */
+const NARROW_SIDEBAR_WIDTH = 372;
 
-export function LandingScene({ shot, theme }: LandingSceneParams) {
+export function LandingScene({ shot, theme, narrow }: LandingSceneParams) {
   const actions = useMemo(() => createActions(() => true), []);
   const fixture = useMemo(() => {
     const now = Date.now();
     if (shot === "core") return { ...landingDevices(now, SIDEBAR_WIDTH.core), pane: null };
-    const scene = landingSidebar(now, shot === "agents" ? ["a1"] : [], SIDEBAR_WIDTH[shot]);
+    const scene = landingSidebar(now, shot === "agents" ? ["a1"] : [], narrow ? NARROW_SIDEBAR_WIDTH : SIDEBAR_WIDTH[shot]);
     const lead = scene.agents.find((row) => row.pane_id === "a1")!;
     const pane = { ...scene.rest.navigator!.workspaces!.find((row) => row.id === "hide")!.checkouts[0]!.tabs[0]!.panes.find((row) => row.id === "a1")!, identity_label: lead.identity_label };
     // The lead's header carries its child row; nothing else about the pane is staged.
     const rest = { ...scene.rest, terminal: { headers: { a1: { working: true, band: null } } } };
     return { ...scene, rest, pane, mobile: null };
-  }, [shot]);
+  }, [shot, narrow]);
 
   useLayoutEffect(() => {
     useShellStore.setState({ rest: fixture.rest, agents: fixture.agents, mobile: fixture.mobile, connection: "live" });
@@ -62,11 +65,11 @@ export function LandingScene({ shot, theme }: LandingSceneParams) {
 
   return (
     <TooltipProvider>
-      <div className="flex h-full flex-col bg-background text-foreground" data-gallery-scene="landing" data-landing-shot={shot}>
-        <TitleRow actions={actions} />
+      <div className="flex h-full flex-col bg-background text-foreground" data-gallery-scene="landing" data-landing-shot={shot} data-landing-narrow={narrow ? "" : undefined}>
+        {narrow && shot === "core" ? null : <TitleRow actions={actions} />}
         <div className="flex min-h-0 flex-1">
-          <Sidebar actions={actions} />
-          {shot === "agents" && fixture.pane ? (
+          {narrow && shot === "core" ? null : <Sidebar actions={actions} />}
+          {shot === "agents" && fixture.pane && !narrow ? (
             <main className="min-w-0 flex-1 p-lg">
               <div className="h-full min-w-0 overflow-hidden border border-border" data-landing-pane>
                 <PaneView pane={fixture.pane} transport={undefined} focused={false} scale={1} actions={actions} agentKind="claude" markSymbol="●" markTone="text-muted-foreground" paneCount={1} zoomed={false} />

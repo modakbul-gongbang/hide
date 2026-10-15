@@ -106,14 +106,19 @@
                 <li>Built on Herdr, so any agent in a pane can join.</li>
               </ul>
             </div>
-            <figure class="shot shot-wide reveal" role="region" aria-label="Product screenshot. Scroll sideways on a narrow screen." tabindex="0">
+            <figure class="shot reveal">
               <picture>
-                <source media="(prefers-color-scheme: light)" srcset="./assets/shots/agents-light.webp">
+                <source media="(max-width: 600px) and (prefers-color-scheme: light)" srcset="./assets/shots/agents-narrow-light.webp" width="840" height="1560">
+                <source media="(max-width: 600px)" srcset="./assets/shots/agents-narrow-dark.webp" width="840" height="1560">
+                <source media="(prefers-color-scheme: light)" width="1920" height="1680" srcset="./assets/shots/agents-light.webp">
                 <img src="./assets/shots/agents-dark.webp" width="1920" height="1680" alt="A lead agent, Claude Code, open in a pane. Its header shows one child asking and its pull requests, and a popover lists the helpers it started. The sidebar tree beside it shows the lead with Codex workers and an OpenCode helper under them." loading="lazy" decoding="async">
               </picture>
             </figure>
-            <figure class="shot shot-detail reveal" role="region" aria-label="Enlarged pane header. Scroll sideways on a narrow screen." tabindex="0">
-              <img src="./assets/shots/pane-header.webp" width="2560" height="1200" alt="The lead's pane header enlarged. Callouts name the agent, what it is doing, and the one child that is asking its parent." loading="lazy" decoding="async">
+            <figure class="shot shot-detail reveal">
+              <picture>
+                <source media="(max-width: 600px)" srcset="./assets/shots/pane-header-narrow.webp" width="1200" height="1320">
+                <img src="./assets/shots/pane-header.webp" width="2560" height="1200" alt="The lead's pane header enlarged. Callouts name the agent, what it is doing, and the one child that is asking its parent." loading="lazy" decoding="async">
+              </picture>
             </figure>
           </article>
 
@@ -127,9 +132,11 @@
                 <li>Everything runs on machines you own. Free, not a hosted plan.</li>
               </ul>
             </div>
-            <figure class="shot shot-wide reveal" role="region" aria-label="Product screenshot. Scroll sideways on a narrow screen." tabindex="0">
+            <figure class="shot reveal">
               <picture>
-                <source media="(prefers-color-scheme: light)" srcset="./assets/shots/core-light.webp">
+                <source media="(max-width: 600px) and (prefers-color-scheme: light)" srcset="./assets/shots/core-narrow-light.webp" width="800" height="1320">
+                <source media="(max-width: 600px)" srcset="./assets/shots/core-narrow-dark.webp" width="800" height="1320">
+                <source media="(prefers-color-scheme: light)" width="2080" height="1280" srcset="./assets/shots/core-light.webp">
                 <img src="./assets/shots/core-dark.webp" width="2080" height="1280" alt="Settings in hide. Devices lists the core machine, a laptop that dials in and a server, all connected. Mobile shows Tailscale ready and one paired phone." loading="lazy" decoding="async">
               </picture>
             </figure>

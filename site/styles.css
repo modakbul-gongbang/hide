@@ -294,15 +294,10 @@ code, .mono { font-family: var(--font-mono); }
 .pillar-copy li::before { content: ""; position: absolute; left: 0; top: 9px; width: 6px; height: 6px; border-radius: 50%; background: var(--second); }
 
 /* Product shots: the app's own components over invented example work, captured by scripts/capture-site-shots.mjs. */
-.shot { margin: 0; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.shot { margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 .shot img { display: block; width: 100%; height: auto; }
 .shot-narrow { width: min(100%, 440px); justify-self: center; }
 .shot-detail { margin-top: 24px; }
-/* A wide capture keeps its text readable on a phone by scrolling inside its own frame. */
-@media (max-width: 640px) {
-  .shot-wide img { min-width: 720px; }
-  .shot-detail img { min-width: 560px; }
-}
 
 /* Still an IDE */
 .band { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 48px; align-items: center; padding: 40px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-raised); }
