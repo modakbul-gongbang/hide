@@ -75,6 +75,28 @@ jobs:
         run: |
           bin=$(zsh scripts/fetch-herdr-runtime.sh --platform "$HERDR_PLATFORM")
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
+      - name: Fetch an older Herdr release for the device handoff
+        # hided/tests/it/herdr_handoff.rs hands a device server the operator
+        # started from an older Herdr to the pinned one (PRD
+        # device-herdr-update B2). 0.9.1 is the release devices ran when they
+        # started following the pin; a pin it cannot hand over to fails that
+        # test, which is then the device update's real limit to decide on.
+        id: older-herdr
+        timeout-minutes: 5
+        env:
+          HERDR_PLATFORM: ${{ inputs.herdr-platform }}
+        run: |
+          case "$HERDR_PLATFORM" in
+            linux-x86_64) digest=2a02fed16beb651ef006e1d43f048f652ca4dc58ad053cd2d44450563d5c54b7 ;;
+            macos-aarch64) digest=5fc7a7e7adfaca56fa80aa89dcb025693357268dab8285b9ce2d08a2313c89de ;;
+            *) echo "no older Herdr is recorded for $HERDR_PLATFORM" >&2; exit 1 ;;
+          esac
+          bin="$RUNNER_TEMP/herdr-0.9.1/herdr"
+          mkdir -p "$(dirname "$bin")"
+          curl -fsSL --retry 3 -o "$bin" "https://github.com/herdrdev/herdr/releases/download/v0.9.1/herdr-$HERDR_PLATFORM"
+          echo "$digest  $bin" | shasum -a 256 -c -
+          chmod 755 "$bin"
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: Remote mailbox over private SSH
         timeout-minutes: 10
         env:
@@ -109,10 +131,14 @@ jobs:
       - name: A Herdr server an older app started moves onto this app's Herdr
         # hided/tests/it/herdr_handoff.rs: a pinned Herdr server started from
         # one app folder is handed to another app's Herdr with its pane's
-        # process kept, and a Herdr no Hide app holds is left alone.
+        # process kept, and a Herdr no Hide app holds is left alone; a
+        # device's server started from an older Herdr moves to the pinned copy
+        # with its pane, one on another socket stays, and a refused handoff is
+        # not repeated.
         timeout-minutes: 5
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+          HIDE_E2E_HERDR_OLDER_BIN: ${{ steps.older-herdr.outputs.bin }}
         run: bash scripts/verify-cargo.sh nextest --profile ci -p hided --test it -E 'test(/^herdr_handoff::/)' --run-ignored only
       - name: Report flaky and failed tests
         if: ${{ !cancelled() }}
