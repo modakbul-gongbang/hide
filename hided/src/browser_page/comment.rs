@@ -4,8 +4,9 @@
 //! `comment.js` in an isolated world of the page, and turns what the
 //! operator does there into the core's `view_comment` events.
 //!
-//! A session belongs to the screen that turned it on and ends with it, with
-//! Comment off or Esc, and when the page's lease ends. The page's scripts
+//! A session is the View's in its checkout (display ids repeat across
+//! checkouts), belongs to the screen that turned it on and ends with it,
+//! with Comment off or Esc, and when the page's lease ends. The page's scripts
 //! cannot reach the binding the overlay reports through (it exists only in
 //! the `hide-comment` world), and the overlay reads only trusted input, so a
 //! page cannot leave a comment in the operator's name. While a session
@@ -21,7 +22,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use serde_json::{Value, json};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use super::Failure;
 use super::cdp::Cdp;
@@ -53,24 +54,28 @@ pub struct Context {
     pub control: Arc<crate::browser_control::BrowserControl>,
 }
 
-enum Control {
-    Pins {
-        pins: Value,
-        full: bool,
-        strings: Value,
-    },
-    Off,
+/// The page's pins again, while the mode is on.
+struct Pins {
+    pins: Value,
+    full: bool,
+    strings: Value,
 }
 
 struct Session {
     connection: u64,
     generation: u64,
-    control: mpsc::Sender<Control>,
+    pins: mpsc::Sender<Pins>,
+    /// Ending the session never waits on the pins' queue: taking this ends
+    /// it, so a full queue cannot keep a page held (`None` once it is ending).
+    off: Option<oneshot::Sender<()>>,
 }
+
+/// A View in its checkout: device, checkout path and display id.
+type SessionKey = (String, String, String);
 
 #[derive(Default)]
 pub struct CommentSessions {
-    sessions: Mutex<HashMap<String, Session>>,
+    sessions: Mutex<HashMap<SessionKey, Session>>,
     generation: std::sync::atomic::AtomicU64,
 }
 
@@ -81,6 +86,8 @@ struct Request {
     area_id: String,
     display_id: String,
     on: bool,
+    /// Only the pins again: never starts a session.
+    update: bool,
     pins: Value,
     full: bool,
     strings: Value,
@@ -104,17 +111,29 @@ fn request(event: &Value) -> Result<Request, String> {
         area_id: text("/area_id")?,
         display_id: text("/display_id")?,
         on: payload["on"].as_bool().unwrap_or(false),
+        update: payload["update"].as_bool().unwrap_or(false),
         pins: payload.get("pins").cloned().unwrap_or(json!([])),
         full: payload["full"].as_bool().unwrap_or(false),
         strings: payload.get("strings").cloned().unwrap_or(json!({})),
     })
 }
 
-fn frame(display_id: &str, on: bool, reason: Option<&str>) -> String {
+fn frame((device_id, path, display_id): &SessionKey, on: bool, reason: Option<&str>) -> String {
     json!({"type": "browser_comment", "payload": {
+        "workspace": {"device_id": device_id, "path": path},
         "display_id": display_id, "on": on, "reason": reason,
     }})
     .to_string()
+}
+
+impl Request {
+    fn key(&self) -> SessionKey {
+        (
+            self.device_id.clone(),
+            self.path.clone(),
+            self.display_id.clone(),
+        )
+    }
 }
 
 impl CommentSessions {
@@ -128,50 +147,55 @@ impl CommentSessions {
         frames: mpsc::Sender<String>,
     ) -> Result<(), String> {
         let request = request(event)?;
+        let key = request.key();
         let mut sessions = self.sessions.lock().map_err(|_| "comment sessions")?;
-        if let Some(session) = sessions.get(&request.display_id) {
-            if session.connection != connection {
-                let _ = frames.try_send(frame(&request.display_id, false, Some("display_busy")));
+        if let Some(session) = sessions.get_mut(&key) {
+            if !request.on {
+                if session.connection == connection {
+                    session.off.take();
+                }
                 return Ok(());
             }
-            let control = if request.on {
-                Control::Pins {
-                    pins: request.pins,
-                    full: request.full,
-                    strings: request.strings,
-                }
-            } else {
-                Control::Off
-            };
+            // Another screen's, or one still letting the page go.
+            if session.connection != connection || session.off.is_none() {
+                let _ = frames.try_send(frame(&key, false, Some("display_busy")));
+                return Ok(());
+            }
             // A full queue means the session is still drawing the last
             // pins; the next snapshot sends them again.
-            let _ = session.control.try_send(control);
+            let _ = session.pins.try_send(Pins {
+                pins: request.pins,
+                full: request.full,
+                strings: request.strings,
+            });
             return Ok(());
         }
-        if !request.on {
+        if !request.on || request.update {
             return Ok(());
         }
         if sessions.len() >= MAX_SESSIONS {
-            let _ = frames.try_send(frame(&request.display_id, false, Some("comment_limit")));
+            let _ = frames.try_send(frame(&key, false, Some("comment_limit")));
             return Ok(());
         }
-        let (control, controls) = mpsc::channel(8);
+        let (pins, pins_rx) = mpsc::channel(8);
+        let (off, off_rx) = oneshot::channel();
         let generation = self
             .generation
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         sessions.insert(
-            request.display_id.clone(),
+            key.clone(),
             Session {
                 connection,
                 generation,
-                control,
+                pins,
+                off: Some(off),
             },
         );
         drop(sessions);
         let registry = Arc::clone(self);
         tokio::spawn(async move {
             let display_id = request.display_id.clone();
-            let outcome = run(&context, request, controls, &frames).await;
+            let outcome = run(&context, request, pins_rx, off_rx, &frames).await;
             if let Err(failure) = &outcome {
                 herdr_core::diagnostic!(json!({
                     "component": "browser_comment",
@@ -182,27 +206,25 @@ impl CommentSessions {
             }
             if let Ok(mut sessions) = registry.sessions.lock()
                 && sessions
-                    .get(&display_id)
+                    .get(&key)
                     .is_some_and(|session| session.generation == generation)
             {
-                sessions.remove(&display_id);
+                sessions.remove(&key);
             }
             let reason = outcome.err().map(|failure| failure.reason);
-            let _ = frames
-                .send(frame(&display_id, false, reason.as_deref()))
-                .await;
+            let _ = frames.send(frame(&key, false, reason.as_deref())).await;
         });
         Ok(())
     }
 
     /// The screen went: its sessions end and their leases with them.
     pub fn release(&self, connection: u64) {
-        if let Ok(sessions) = self.sessions.lock() {
+        if let Ok(mut sessions) = self.sessions.lock() {
             for session in sessions
-                .values()
+                .values_mut()
                 .filter(|session| session.connection == connection)
             {
-                let _ = session.control.try_send(Control::Off);
+                session.off.take();
             }
         }
     }
@@ -213,7 +235,8 @@ impl CommentSessions {
 async fn run(
     context: &Context,
     request: Request,
-    mut controls: mpsc::Receiver<Control>,
+    mut controls: mpsc::Receiver<Pins>,
+    mut off: oneshot::Receiver<()>,
     frames: &mpsc::Sender<String>,
 ) -> Result<(), Failure> {
     let scope = json!({
@@ -241,18 +264,20 @@ async fn run(
     let mut world = inject(&mut page, &request.strings).await?;
     let mut shown = (request.pins.clone(), request.full, request.strings.clone());
     draw(&mut page, world, &shown).await;
-    let _ = frames.send(frame(&request.display_id, true, None)).await;
+    let _ = frames.send(frame(&request.key(), true, None)).await;
     let ended = loop {
         tokio::select! {
+            // Taken or dropped alike: Comment off, or the screen went.
+            _ = &mut off => break Ok(()),
             control = controls.recv() => match control {
-                Some(Control::Pins { pins, full, strings }) => {
+                Some(Pins { pins, full, strings }) => {
                     if strings != shown.2 {
                         eval(&mut page, world, &format!("__hideComment.start({strings})")).await;
                     }
                     shown = (pins, full, strings);
                     draw(&mut page, world, &shown).await;
                 }
-                Some(Control::Off) | None => break Ok(()),
+                None => break Ok(()),
             },
             event = page.cdp.next_event() => {
                 let event = match event {

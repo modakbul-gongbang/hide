@@ -164,7 +164,7 @@ type FeedbackStore = {
   regionMode: Record<string, true>;
   /** Whether an image or PDF View's file could be read, which Comment needs (B13). */
   readable: Record<string, boolean>;
-  /** Browser Views in Comment mode, by display. */
+  /** Browser Views in Comment mode, by `browserCommentKey`: display ids repeat across checkouts. */
   browser: Record<string, BrowserComment>;
   /** The display each Send of this window was made from, by request id. */
   sentFrom: Record<string, string>;
@@ -210,8 +210,13 @@ export function noteReadable(displayId: string, readable: boolean | null): void 
   });
 }
 
-export function noteBrowserComment(displayId: string, comment: BrowserComment): void {
-  useFeedbackStore.setState((state) => ({ browser: { ...state.browser, [displayId]: comment } }));
+/** A browser View in its checkout, as hided keys its Comment session. */
+export function browserCommentKey(workspace: { device_id: string; path: string }, displayId: string): string {
+  return `${workspace.device_id}\u0000${workspace.path}\u0001${displayId}`;
+}
+
+export function noteBrowserComment(key: string, comment: BrowserComment): void {
+  useFeedbackStore.setState((state) => ({ browser: { ...state.browser, [key]: comment } }));
 }
 
 export function noteSentFrom(requestId: string, displayId: string): void {

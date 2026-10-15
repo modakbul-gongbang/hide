@@ -18,7 +18,7 @@ import { commandLabel } from "./shortcutLabels";
 import { TreeButton } from "./TreeButton";
 import { useInterfaceTranslation } from "./i18n/client";
 import { MessageSquarePlusIcon } from "lucide-react";
-import { commentsOn, COMMENTS_PER_VIEW, useFeedbackStore, noteBrowserComment } from "./viewFeedback";
+import { browserCommentKey, commentsOn, COMMENTS_PER_VIEW, useFeedbackStore, noteBrowserComment } from "./viewFeedback";
 import { useViewFeedback } from "./ViewComments";
 import { keySystem } from "./host";
 
@@ -252,14 +252,15 @@ export function BrowserHost({ actions }: { actions: Actions }) {
  */
 function BrowserCommentButton({ display, workspace, address, actions }: { display: ViewDisplaySnapshot; workspace: string; address: string; actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const mode = useFeedbackStore((s) => s.browser[display.id] ?? null);
+  const view = parseWorkspaceKey(workspace);
+  const key = view ? browserCommentKey(view, display.id) : null;
+  const mode = useFeedbackStore((s) => (key ? s.browser[key] : undefined) ?? null);
   const on = mode?.on === true;
   const feedback = useViewFeedback();
   const areaId = useShellStore((s) => {
     const layout = workspaceViewOf(s.rest)?.layout;
     return layout ? (locateDisplay(layout.root, display.id)?.area.id ?? null) : null;
   });
-  const view = parseWorkspaceKey(workspace);
   const comments = commentsOn(feedback, display.id);
   const pins = comments
     .filter((comment) => comment.url === address && (comment.anchor.kind === "element" || comment.anchor.kind === "area"))
@@ -283,25 +284,29 @@ function BrowserCommentButton({ display, workspace, address, actions }: { displa
     full: t("feedback.note.full", { count: COMMENTS_PER_VIEW }),
   };
   const request = JSON.stringify({ pins, full, strings });
-  const send = (turnOn: boolean) => {
+  // `update` only redraws the pins of a session still on: hided never starts
+  // one for it, so pins that cross the page's own Esc cannot turn Comment on again.
+  const send = (turnOn: boolean, update = false) => {
     if (!view || !areaId) return;
-    actions.browserComment({ workspace: view, area_id: areaId, display_id: display.id, on: turnOn, ...(turnOn ? JSON.parse(request) : {}) });
+    actions.browserComment({ workspace: view, area_id: areaId, display_id: display.id, on: turnOn, ...(update ? { update: true } : {}), ...(turnOn ? JSON.parse(request) : {}) });
   };
   const sendRef = useRef(send);
   sendRef.current = send;
   // The page's pins follow the core's comments while Comment is on.
+  const drawn = useRef(request);
   useEffect(() => {
-    if (on) sendRef.current(true);
+    if (on && drawn.current !== request) sendRef.current(true, true);
+    drawn.current = request;
   }, [on, request]);
   // Leaving the View ends its Comment.
   useEffect(
     () => () => {
-      if (useFeedbackStore.getState().browser[display.id]?.on) {
+      if (key && useFeedbackStore.getState().browser[key]?.on) {
         sendRef.current(false);
-        noteBrowserComment(display.id, { on: false, reason: null });
+        noteBrowserComment(key, { on: false, reason: null });
       }
     },
-    [display.id],
+    [key],
   );
   const reason = !on && mode?.reason ? mode.reason : null;
   const words = reason
@@ -321,7 +326,7 @@ function BrowserCommentButton({ display, workspace, address, actions }: { displa
         disabled={!areaId || !view}
         data-browser-comment={on ? "on" : "off"}
         onClick={() => {
-          noteBrowserComment(display.id, { on: !on, reason: null });
+          if (key) noteBrowserComment(key, { on: !on, reason: null });
           send(!on);
           if (!on) focusBrowserDisplay(workspace, display.id);
         }}

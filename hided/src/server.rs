@@ -1152,6 +1152,7 @@ async fn screen_loop(
                                 };
                                 if let Some(reason) = refused {
                                     let frame = json!({"type": "browser_comment", "payload": {
+                                        "workspace": event.pointer("/payload/workspace"),
                                         "display_id": event.pointer("/payload/display_id"), "on": false, "reason": reason,
                                     }});
                                     if socket.send(Message::Text(frame.to_string().into())).await.is_err() {

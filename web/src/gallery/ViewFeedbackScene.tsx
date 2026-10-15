@@ -16,7 +16,7 @@ import type { EditorDocumentSnapshot, EditorTabSnapshot, ViewComment, ViewDispla
 import { useShellStore, type Documents } from "../store";
 import { TitleRow } from "../TitleRow";
 import { useUiStore } from "../ui";
-import { noteBrowserComment, noteSentFrom, openNote, setRegionMode, useFeedbackStore } from "../viewFeedback";
+import { browserCommentKey, noteBrowserComment, noteSentFrom, openNote, setRegionMode, useFeedbackStore } from "../viewFeedback";
 import { WorkspaceScreen } from "../WorkspaceScreen";
 import { REFERENCE_FOLDS, sidebarStatusAxisScene } from "./sceneData";
 import { sceneParams, type SceneParams } from "./SidebarScene";
@@ -171,7 +171,7 @@ export function ViewFeedbackScene({ theme, scale, content, state }: SceneParams 
     useFeedbackStore.setState({ forms: {}, regionMode: {}, browser: {}, sentFrom: {}, deletedFrom: null });
     // A Send this window made shows its line on the View it was made from.
     if (state === "sent") noteSentFrom("r1", "d1");
-    if (state === "comment-browser") noteBrowserComment("d1", { on: true, reason: null });
+    if (state === "comment-browser") noteBrowserComment(browserCommentKey(fixture.scene.rest.workspace_view!, "d1"), { on: true, reason: null });
     if (state === "comment-diff") openNote({ displayId: "d2", anchor: { kind: "lines", start: 14, end: 15, lines: ["  const [busy, setBusy] = useState(false)", "  const submit = useSubmit({ onStart: () => setBusy(true) })"], side: "new" }, commentId: null, note: "로딩 중에는 버튼을 막아주세요." });
     if (state === "comment-pdf") {
       setRegionMode("d3", true);
