@@ -1191,10 +1191,21 @@ pub fn handle_with_progress(
             let home = env.home("HOME is not set, so the agent hooks have no account to read")?;
             to_value(hide_agent_hooks::Diagnosis::read(&home))
         }
-        Call::GuardrailPolicy { policy } => {
+        Call::GuardrailPolicy { policy, sequence } => {
+            // The last sequence written under each home, held across the
+            // write so two writes in flight land in order.
+            static APPLIED: std::sync::Mutex<std::collections::BTreeMap<PathBuf, u64>> =
+                std::sync::Mutex::new(std::collections::BTreeMap::new());
             let home = env.home("guardrail_policy_home_unavailable")?;
+            let mut applied = APPLIED
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if applied.get(&home).is_some_and(|last| sequence < *last) {
+                return Ok(Value::Null);
+            }
             hide_agent_hooks::guardrails::write_policy(&home, &policy)
                 .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?;
+            applied.insert(home, sequence);
             Ok(Value::Null)
         }
         Call::LabelTranscript { request } => {

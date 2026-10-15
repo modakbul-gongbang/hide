@@ -343,6 +343,22 @@ fn a_removed_registration_takes_its_project_out_of_the_policy() {
 }
 
 #[test]
+fn a_save_on_its_way_cannot_bring_a_removed_projects_protections_back() {
+    let mut runtime = held(fixture());
+    change(&mut runtime, "files-on", files_on());
+    let job = runtime
+        .take_guardrail_publication(crate::node::TEST_NODE)
+        .unwrap();
+    let registration = runtime.snapshot.ui_state.workspace_registrations[0]
+        .id
+        .clone();
+    assert!(runtime.retire_workspace_registration(&registration));
+    runtime.guardrail_policy_answered(crate::node::TEST_NODE, job, Ok(()));
+    let saved = runtime.ui_state_to_save();
+    assert_eq!(saved.project_settings[&id()].guardrails, None);
+}
+
+#[test]
 fn a_project_shown_from_a_herdr_workspace_is_guarded_without_a_registration() {
     let mut runtime = held(fixture());
     runtime.snapshot.ui_state.workspace_registrations.clear();
@@ -359,6 +375,7 @@ fn the_start_writes_this_machines_policy_and_a_save_lands_in_its_file() {
     let home = scratch_dir("herdr-core-guardrails-home-");
     let mut runtime = fixture();
     runtime.own_node = Arc::new(hide_node::Local::new(Some(home.path().to_path_buf())));
+    runtime.set_guardrails_own_file(true);
     let shared = SharedRuntime::new(runtime);
     shared
         .lock()
@@ -380,4 +397,23 @@ fn the_start_writes_this_machines_policy_and_a_save_lands_in_its_file() {
 
 fn job_policy(job: &crate::runtime::guardrails::Publication) -> Policy {
     job.policy().clone()
+}
+
+#[test]
+fn a_core_on_a_relocated_state_folder_writes_no_policy_and_still_saves() {
+    let home = scratch_dir("herdr-core-guardrails-relocated-");
+    let mut runtime = fixture();
+    runtime.own_node = Arc::new(hide_node::Local::new(Some(home.path().to_path_buf())));
+    let shared = SharedRuntime::new(runtime);
+    shared
+        .lock()
+        .unwrap()
+        .install_worker_context(shared.weak(), crate::handle::ChangeNotifier::noop());
+    shared.lock().unwrap().publish_own_guardrail_policy();
+    assert!(change(&mut shared.lock().unwrap(), "files-on", files_on()));
+    wait(&shared, "the save", |runtime| {
+        receipt(runtime).0 == WriteState::Saved
+    });
+    // The account's own core keeps the file its hooks read.
+    assert!(!hide_agent_hooks::guardrails::policy_path(home.path()).exists());
 }

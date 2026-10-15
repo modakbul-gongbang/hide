@@ -32,20 +32,54 @@ const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
 pub(super) struct GuardrailsWork {
+    /// Whether this machine's hooks follow this core: its state folder is
+    /// the account's default one. A core on a relocated folder, a test's or
+    /// a verification run's, writes nothing under `~/.hide` (as `hided`'s
+    /// `connect_build` tests hold), so it never replaces the policy the
+    /// account's own core published; its saves settle as delivered.
+    pub(crate) own_file: bool,
     /// What each machine last confirmed it holds; absent when unknown.
     published: BTreeMap<String, Policy>,
     /// Machines whose policy is to be written by their worker.
     queued: BTreeSet<String>,
     /// Machines whose worker runs.
     running: BTreeSet<String>,
+    /// The last write's [`Publication::sequence`].
+    sequence: u64,
     /// Saves waiting for their machine to take the policy they move, by
     /// settings id. Bounded with the pending saves by `settings::LIMIT`.
     pub(super) awaiting: BTreeMap<String, super::project_settings::Pending>,
 }
 
+/// A machine's worker while it runs; see `start_guardrails_worker`.
+struct WorkerRunning {
+    runtime: std::sync::Weak<Mutex<Runtime>>,
+    device: String,
+    ended: bool,
+}
+
+impl Drop for WorkerRunning {
+    fn drop(&mut self) {
+        if self.ended {
+            return;
+        }
+        if let Some(core) = self.runtime.upgrade() {
+            let mut locked = core
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            locked.guardrails.running.remove(&self.device);
+        }
+    }
+}
+
 /// One write a machine's worker makes.
 pub(crate) struct Publication {
-    link: Result<Arc<dyn NodeLink>, &'static str>,
+    /// The node that writes the file; `None` for this machine when its hooks
+    /// do not follow this core, so nothing is written.
+    link: Result<Option<Arc<dyn NodeLink>>, &'static str>,
+    /// Orders the writes a machine's node applies, so one that outlived its
+    /// timeout never lands over a newer one.
+    sequence: u64,
     policy: Policy,
     /// The awaiting saves this policy carries.
     saves: Vec<String>,
@@ -106,15 +140,18 @@ impl Runtime {
     }
 
     /// A project removed from Hide stops being guarded; added again, it
-    /// starts with every protection off, as a new one does (B2).
+    /// starts with every protection off, as a new one does (B2). A save still
+    /// on its way saves without them too, so it cannot bring them back.
     pub(super) fn forget_project_guardrails(&mut self, device: &str, root: &str) {
-        if let Some(record) = self
-            .snapshot
-            .ui_state
-            .project_settings
-            .get_mut(&settings::key(device, root))
-        {
+        let id = settings::key(device, root);
+        if let Some(record) = self.snapshot.ui_state.project_settings.get_mut(&id) {
             record.guardrails = None;
+        }
+        if let Some(pending) = self.project_settings_pending.get_mut(&id) {
+            pending.record.guardrails = None;
+        }
+        if let Some(pending) = self.guardrails.awaiting.get_mut(&id) {
+            pending.record.guardrails = None;
         }
     }
 
@@ -152,6 +189,11 @@ impl Runtime {
         self.start_guardrails_worker(device);
     }
 
+    /// Whether this machine's hooks follow this core (`GuardrailsWork::own_file`).
+    pub(crate) fn set_guardrails_own_file(&mut self, own_file: bool) {
+        self.guardrails.own_file = own_file;
+    }
+
     /// This machine's hooks read the protections as this core holds them,
     /// whatever an earlier run or an outside edit left in the file (D-28).
     /// Called once the core's workers can run.
@@ -183,7 +225,8 @@ impl Runtime {
                 .map(|record| record.device_id.clone()),
         );
         for device in devices {
-            if self.guardrails.queued.contains(&device) {
+            // A device that is not connected is written when it is (Ready).
+            if self.guardrails.queued.contains(&device) || self.linked_node(&device).is_err() {
                 continue;
             }
             let (policy, _) = self.guardrail_policy(&device);
@@ -221,6 +264,14 @@ impl Runtime {
         let spawned = thread::Builder::new()
             .name("herdr-core-guardrails".into())
             .spawn(move || {
+                // A worker that ends any other way than by finding nothing to
+                // write (a panic, a poisoned lock) leaves its machine free for
+                // the next one.
+                let mut running = WorkerRunning {
+                    runtime: runtime.clone(),
+                    device: worker_device.clone(),
+                    ended: false,
+                };
                 loop {
                     let Some(core) = runtime.upgrade() else {
                         return;
@@ -233,23 +284,23 @@ impl Runtime {
                     };
                     drop(core);
                     let Some(job) = job else {
+                        running.ended = true;
                         return;
                     };
-                    let answer = job
-                        .link
-                        .as_ref()
-                        .map_err(|reason| (*reason).to_owned())
-                        .and_then(|link| {
-                            crate::node_access::call_as::<serde_json::Value>(
-                                link.as_ref(),
-                                hide_node_link::protocol::Call::GuardrailPolicy {
-                                    policy: job.policy.clone(),
-                                },
-                                PUBLISH_TIMEOUT,
-                            )
-                            .map(|_| ())
-                            .map_err(|error| error.to_string())
-                        });
+                    let answer = match &job.link {
+                        Err(reason) => Err((*reason).to_owned()),
+                        Ok(None) => Ok(()),
+                        Ok(Some(link)) => crate::node_access::call_as::<serde_json::Value>(
+                            link.as_ref(),
+                            hide_node_link::protocol::Call::GuardrailPolicy {
+                                policy: job.policy.clone(),
+                                sequence: job.sequence,
+                            },
+                            PUBLISH_TIMEOUT,
+                        )
+                        .map(|_| ())
+                        .map_err(|error| error.to_string()),
+                    };
                     let Some(core) = runtime.upgrade() else {
                         return;
                     };
@@ -296,11 +347,18 @@ impl Runtime {
         let (policy, saves) = self.guardrail_policy(device);
         let link = if self.effects_held() {
             Err("effects_held")
+        } else if device == self.node.as_str() && !self.guardrails.own_file {
+            Ok(None)
         } else {
-            self.linked_node(device).map(|(_, link)| link)
+            self.linked_node(device).map(|(_, link)| Some(link))
         };
+        // Wall-clock milliseconds, kept rising, so a later core's writes
+        // also order after an earlier one's on a node that outlived it.
+        let sequence = unix_milliseconds().max(self.guardrails.sequence + 1);
+        self.guardrails.sequence = sequence;
         Some(Publication {
             link,
+            sequence,
             policy,
             saves,
         })

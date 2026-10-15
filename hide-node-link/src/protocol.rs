@@ -328,9 +328,12 @@ pub enum Call {
     /// Replaces the project guardrails' policy file under the node's home
     /// with `policy`, the projects of this machine with a protection on
     /// (`hide_agent_hooks::guardrails::write_policy`); answers `null` once
-    /// the file is in place.
+    /// the file is in place. A `sequence` below the last one this node
+    /// applied is a write that outlived its caller's wait, and is answered
+    /// without touching the newer file.
     GuardrailPolicy {
         policy: hide_agent_hooks::guardrails::Policy,
+        sequence: u64,
     },
     /// Every worktree Git registers for the repository at `root`, the main
     /// one first (`worktrees::Registered`).

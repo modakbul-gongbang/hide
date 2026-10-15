@@ -924,22 +924,36 @@ fn a_published_guardrail_policy_is_what_the_devices_hooks_read() {
         &*device.link,
         Call::GuardrailPolicy {
             policy: policy.clone(),
+            sequence: 10,
         },
         TIMEOUT,
     )
     .unwrap();
     assert_eq!(answer, Value::Null);
-    assert_eq!(read_policy(&device.home), Ok(policy));
+    assert_eq!(read_policy(&device.home), Ok(policy.clone()));
     // A later publication replaces it whole.
     let none = Policy::new(Vec::new());
     let _: Value = call_as(
         &*device.link,
         Call::GuardrailPolicy {
             policy: none.clone(),
+            sequence: 11,
         },
         TIMEOUT,
     )
     .unwrap();
+    assert_eq!(read_policy(&device.home), Ok(none.clone()));
+    // A write that outlived its caller's wait does not land over a newer one.
+    let late: Value = call_as(
+        &*device.link,
+        Call::GuardrailPolicy {
+            policy,
+            sequence: 10,
+        },
+        TIMEOUT,
+    )
+    .unwrap();
+    assert_eq!(late, Value::Null);
     assert_eq!(read_policy(&device.home), Ok(none));
 }
 

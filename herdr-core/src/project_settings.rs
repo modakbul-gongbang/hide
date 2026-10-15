@@ -75,6 +75,10 @@ pub struct ProjectSettings {
     /// version 1 record reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guardrails: Option<Rules>,
+    /// Fields a newer build wrote, kept so this one's save of the record
+    /// loses none of them (a record of a newer version is read-only here).
+    #[serde(flatten, default)]
+    pub unknown: serde_json::Map<String, serde_json::Value>,
 }
 
 pub use hide_agent_hooks::guardrails::Rules;
@@ -113,6 +117,7 @@ impl ProjectSettings {
             base_branch: None,
             link_scopes: BTreeMap::new(),
             guardrails: None,
+            unknown: serde_json::Map::new(),
         }
     }
 
@@ -155,12 +160,7 @@ impl ProjectSettings {
             next.base_branch = Some(base);
         }
         if let Some(rules) = patch.guardrails {
-            rules.validate().map_err(|refusal| match refusal {
-                PathRefusal::TooMany => "project_settings_paths_limit",
-                PathRefusal::TooLong => "project_settings_path_too_long",
-                PathRefusal::Duplicate => "project_settings_path_duplicate",
-                PathRefusal::Invalid => "project_settings_path_invalid",
-            })?;
+            rules.validate().map_err(PathRefusal::code)?;
             next.guardrails = Some(rules);
             next.version = VERSION;
         }

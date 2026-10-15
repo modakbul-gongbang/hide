@@ -16,6 +16,10 @@ import { fitWindow, isolate, launch, screenshot, test } from "./fixture";
 test("Project settings keep confirmed values through a failed save and restart", async () => {
   const herdr = await startHerdr({ agents: false });
   const run = isolate(herdr, "project-settings");
+  // The account's own state folder under the private HOME, as the installed app keeps it: only a core there writes
+  // this machine's guardrails policy (a relocated one writes nothing under ~/.hide). The fixture's cleanup also
+  // stops a daemon of this folder.
+  run.env.HIDE_STATE_DIR = path.join(run.env.HOME!, ".hide", "state");
   let app: ElectronApplication | null = null;
   try {
     const repo = path.join(run.env.HOME!, "projects", "sample");
