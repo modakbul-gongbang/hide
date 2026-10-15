@@ -1,5 +1,5 @@
-// Page motion: one-time reveals and the hero owl's peeking.
-// Both stop when the visitor asks for reduced motion.
+// Page motion: one-time reveals and the owls' loops, the hero peek's and the section owls'.
+// Under reduced motion the reveals show at once and every owl holds its still frame.
 
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -19,24 +19,31 @@ function mountReveals() {
   items.forEach(item => observer.observe(item));
 }
 
-// The hero owl plays its loop only while the stage is on screen and the tab is visible; otherwise,
-// and under reduced motion, the image holds one still frame.
-function mountPeek() {
-  const owl = document.querySelector("[data-peek]");
-  if (!owl || reduceMotion) return;
-  const still = owl.getAttribute("src");
-  const moving = owl.dataset.peek;
-  let inView = !("IntersectionObserver" in window);
-  const sync = () => {
-    const want = inView && !document.hidden ? moving : still;
-    if (owl.getAttribute("src") !== want) owl.setAttribute("src", want);
+// An animated owl plays its loop only while it is on screen and the tab is visible; otherwise, and
+// under reduced motion, the image holds its still frame. Its src is the still and data-motion the
+// loop; a section owl's loop begins on its still frame, so the swap does not show.
+function mountMotion() {
+  const images = document.querySelectorAll("img[data-motion]");
+  if (!images.length || reduceMotion) return;
+  const watch = "IntersectionObserver" in window;
+  const owls = new Map([...images].map(img => [img, { still: img.getAttribute("src"), moving: img.dataset.motion, inView: !watch }]));
+  const sync = (owl, img) => {
+    const want = owl.inView && !document.hidden ? owl.moving : owl.still;
+    if (img.getAttribute("src") !== want) img.setAttribute("src", want);
   };
-  if ("IntersectionObserver" in window) {
-    new IntersectionObserver(entries => { inView = entries[entries.length - 1].isIntersecting; sync(); }, { threshold: 0.1 }).observe(owl.closest(".stage"));
+  if (watch) {
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        const owl = owls.get(entry.target);
+        owl.inView = entry.isIntersecting;
+        sync(owl, entry.target);
+      }
+    }, { threshold: 0.1 });
+    owls.forEach((_, img) => observer.observe(img));
   }
-  document.addEventListener("visibilitychange", sync);
-  sync();
+  document.addEventListener("visibilitychange", () => owls.forEach(sync));
+  owls.forEach(sync);
 }
 
 mountReveals();
-mountPeek();
+mountMotion();
