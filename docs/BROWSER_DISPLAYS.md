@@ -183,7 +183,7 @@ Native file displays and unrestricted browser-context administration are unsuppo
 A snapshot is text and exits zero; an action prints one JSON line with what it did, `changed` and `next`; every failure prints `{"ok":false,"reason","display","next_action"}` and exits non-zero.
 
 Each command is one connection and one debugger lease: the CLI asks hided for a relay to the display ([ARCHITECTURE.md](ARCHITECTURE.md#hided-and-the-websocket-boundary)), attaches to its page, does its work and disconnects, which releases the lease and turns the tab's attachment mark off.
-A display another debugger holds, an external client or another `hide browser` command, fails `display_busy` at once; nothing queues.
+A display another debugger holds, an external client, another `hide browser` command or the operator's Comment mode ([Comment mode](#comment-mode)), fails `display_busy` at once; nothing queues.
 A display that is not HTTP(S) or blank fails `display_unsupported`, a missing one `display_missing`, and one that closes during the command `display_closed`.
 Nothing outlives the command in hided or on disk, except the file `screenshot` writes: refs are `data-ct-ref` attributes of the page's elements, so they survive a re-snapshot of the same document and start again at `@1` after a navigation, and the `--diff` baselines and the no-change streak live in a non-enumerable property of each frame's document.
 Every CDP step has an eight-second deadline, below the gateway's ten-second command deadline, which would otherwise end the whole lease, and a whole command ends with `page_unresponsive` after two minutes.
@@ -260,6 +260,25 @@ It is one `<hide-agent-overlay>` element, a direct child of the document element
 Drawing it has a one-second deadline and never fails a command; reading commands draw nothing.
 
 The page-side code is chromux's (MIT, `modakbul-gongbang/chromux` `93f770f`), kept as embedded assets that carry its notice: `snapshot.js`, `dom.js` (deep query, target checks, fill and the wait probes), `render.js` (`--diff`, `--grep`, `changed`, evaluated in an isolated world) and `overlay.js`.
+
+## Comment mode
+
+A page is a native view the shell cannot draw over, so the pointing half of the operator's Comment mode on a page ([UI_BEHAVIOR.md](UI_BEHAVIOR.md#view-openers-and-comments), PRD view-opener-feedback D-07) is drawn by hided inside the page (`hided/src/browser_page/comment.rs`).
+The window's `browser_comment` event turns it on: hided takes the display's debugger lease, as a `hide browser` command does, and draws `hided/assets/browser/comment.js` in an isolated world, `hide-comment`, with the page's comments for its current address as numbered pins.
+The overlay only points: it outlines the element under the pointer, takes a click or a drag, and reports the place through a binding that exists only in that world, acting only on trusted input, so the page's own scripts can neither see the binding nor pick a place.
+hided takes the place's screenshot at once, with the overlay hidden for that frame, keeps it as the session's one pick, and sends the window a `browser_comment` frame with `pick` (its id, the anchor, and where it shows as fractions of the page's viewport); a pin pressed sends `open` with the comment's id instead.
+The window writes the note in its own layer over the page's slot (`PageNoteLayer` in `web/src/ViewComments.tsx`), which freezes the page to its still as any overlay does ([Overlays](#overlays)) and takes the keyboard from it, so the page's scripts can neither read nor change the note (D-17).
+Add sends `browser_comment` with `add` {pick, note}; hided takes the pick it holds, once, and hands the add with its screenshot to the window's feedback queue, which stages the screenshot and gives the core the same `view_comment` event the shell sends, in order with that window's other comments and Sends.
+A pick another pick replaced, or one whose session ended, adds nothing and is logged (`pick.gone`); a page that navigates, to a new document or within the same one (a route, a fragment, back or forward), drops the pick it held and sends `dropped`, which closes the note, and a window whose socket closes clears every page's Comment state; an edit or a delete from the card a pin opens is the shell's own `view_comment` event.
+While a pick's screenshot is taken the overlay is drawn clear but still takes every press, and the operator's pointer and mouse events on it never bubble to the page's own listeners; a page's capture-phase listener still sees where a press landed, as it sees any input, and nothing it does there reaches a comment.
+A comment's screenshot is the page clipped to the element or area (scaled down past a pixel cap), staged in this machine's `view-feedback` folder; only its name reaches the core, and a Send carries the bytes to the recipient's machine ([delivery.md](delivery.md#the-operators-view-feedback)).
+Turning it on gives the page the keyboard, so Esc reaches the overlay without a click in the page first.
+While it is on, the window sends the pins again as an `update`, which redraws a running session and never starts one, so pins that cross the page's own Esc cannot turn Comment back on.
+A session is the View's in its checkout, keyed by device, checkout path and display id, because display ids repeat across checkouts; every `browser_comment` frame names the `workspace` and the `display_id`.
+A session belongs to the window that turned it on and ends when Comment or Esc turns it off, when the page navigates away from a document it can draw on, when the lease ends, and when the window goes; ending never waits behind the pins the session still has to draw, so a lost message cannot leave the page held.
+hided answers each end with a `browser_comment` frame whose `reason` is null for the operator's own end.
+At most four sessions run at once (`comment_limit`), a display another debugger holds cannot start one (`display_busy`), and while a session holds the lease an agent's `hide browser` command on that page fails `display_busy`, the known cost of drawing inside the page.
+A screen whose daemon relays a linked node's pages cannot reach their gateway, so Comment there answers `comment_unavailable_here` ([INSTALL.md](INSTALL.md#what-each-system-supports)).
 
 ## The file boundary
 
@@ -354,7 +373,7 @@ The page's `before-input-event` matches the shell's effective Electron shortcut 
 One host slot holds the initiating page, actual release modifier and cycle identifier, including input received after the overlay hides that page.
 The first native cycle chord gives keyboard response to the shell in the same focused window, even when the overlay leaves the initiating page visible.
 Held repeats, release and Escape received by the shell follow the same host IPC route as the first chord, so a quick release cannot arrive before cycle initialization or also run through the DOM listener.
-After hiding that held page, the host reasserts shell keyboard response, because hiding a WebContentsView removes its native keyboard response.
+After hiding that held page, the host reasserts shell keyboard response, because hiding a WebContentsView removes its native keyboard response; any page hidden while it holds the keyboard in the focused window does the same, so a note, a dialog or a palette drawn over the page's still takes the keys.
 The shell retains the initiating page's logical ownership until release commits or Escape restores its input destination.
 When a first start is rejected or has zero or one eligible item, or a release commits nothing because the cycle came back to its origin, or the hold ends because its area shrank to one tab or the daemon went away, it restores the initiating visible page; a release that commits instead follows the chosen page.
 The trusted bridge carries only cycle keydown/keyup and cancellation; the shell keeps the frozen scope and preview and owns the single commit.

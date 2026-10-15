@@ -11,6 +11,7 @@ import { FileMark } from "./components/file-mark";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { revealHost } from "./host";
+import { CommentCount, FeedbackRow, OpenerMark } from "./ViewComments";
 import { DisplayEditor, DocumentKeeper } from "./Editor";
 import { fileIcon } from "./fileIcons";
 import { useInterfaceTranslation } from "./i18n/client";
@@ -125,7 +126,12 @@ function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnaps
     label: (display) => display.label,
     sameContent: showsSameDocument,
     tab: (display, interaction) => <DisplayTab display={display} workspace={workspace} interaction={interaction} actions={actions} />,
-    body: (display) => <DisplayBody key={display.id} display={display} workspace={workspace} actions={actions} />,
+    body: (display) => (
+      <div key={display.id} className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <DisplayBody display={display} workspace={workspace} actions={actions} />
+        <FeedbackRow display={display} workspace={workspace} actions={actions} />
+      </div>
+    ),
     empty: () => <AreaEmpty state="no-view" text={t("documents.view.empty")} />,
     floating: (display) => <>{displayMark(display)}<span className={`truncate ${display.preview ? "italic" : ""}`}>{display.label}</span></>,
     menu: (id, geometry, sizes) => [{ id: "new_tab", label: t("panes.area.newTab"), unavailable: null }, ...displayMenu(layout, geometry, sizes, id, { host: revealHost(), device: workspace.device_id, node: screenDeviceId(useShellStore.getState().rest) })],
@@ -154,7 +160,7 @@ function DisplayBody({ display, workspace, actions }: { display: ViewDisplaySnap
   if (display.kind === "browser") return <BrowserDisplay display={display} workspace={workspace} actions={actions} />;
   if (display.kind === "pull_request") return <PrCardView workspace={{ device_id: workspace.device_id, path: workspace.path }} number={display.pr ?? 0} actions={actions} />;
   if (display.state === "open") {
-    return <DisplayEditor display={display} placeKey={placeKey(workspaceKey(workspace), display)} actions={actions} />;
+    return <DisplayEditor display={display} workspace={workspace} placeKey={placeKey(workspaceKey(workspace), display)} actions={actions} />;
   }
   if (display.state === "opening") return <AreaEmpty state="view-opening" text={t("documents.view.openingNamed", { label: display.label })} />;
   if (display.state === "waiting") return <AreaEmpty state="view-waiting" text={display.reason ?? t("documents.view.waitingPath", { path: display.path })} />;
@@ -183,7 +189,15 @@ export function DisplayTab({ display, workspace, interaction, actions }: { displ
   const unavailable = display.state === "unavailable";
   const attached = useBrowserStore((s) => display.kind === "browser" && workspace !== undefined && s.attached[hostKey(workspaceKey(workspace), display.id)] === true);
   const state = saving ? t("documents.tabSaving") : dirty ? t("documents.unsaved") : null;
-  const identity = [displayIdentity(display, t), state, tabOnly ? t("documents.tabOnly") : null, attached ? t("documents.agentAttached") : null].filter(Boolean).join(" · ");
+  const comments = display.comments ?? 0;
+  const identity = [
+    displayIdentity(display, t),
+    state,
+    tabOnly ? t("documents.tabOnly") : null,
+    attached ? t("documents.agentAttached") : null,
+    comments > 0 ? t("feedback.tab.comments", { count: comments }) : null,
+    (display.not_delivered ?? 0) > 0 ? t("feedback.tab.notDelivered") : null,
+  ].filter(Boolean).join(" · ");
   const closeLabel = t("documents.closeView", { label: display.label });
   return (
     <Hint label={identity} reveals>
@@ -217,6 +231,7 @@ export function DisplayTab({ display, workspace, interaction, actions }: { displ
     >
       <span className={`relative flex size-(--size-icon) shrink-0 items-center justify-center ${unavailable ? "text-muted-foreground opacity-[var(--opacity-dimmed)]" : ""}`}>
         {interaction.fit === "marks" ? collapsedDisplayMark(display) : displayMark(display)}
+        {display.opener ? <OpenerMark opener={display.opener} actions={actions} /> : null}
         {interaction.fit === "marks" && (saving || dirty || tabOnly) ? (
           saving ? <LoaderCircleIcon aria-hidden="true" data-view-save-mark="saving" className="absolute size-(--size-icon) animate-spin bg-inherit text-muted-foreground" />
             : <span aria-hidden="true" data-view-save-mark={tabOnly ? "tab-only" : "dirty"} className="absolute right-0 top-0 size-(--size-tab-status-dot) rounded-full bg-warning" />
@@ -228,6 +243,7 @@ export function DisplayTab({ display, workspace, interaction, actions }: { displ
         {saving ? <span className="text-muted-foreground"> {t("documents.tabSaving")}</span> : dirty ? <span className="text-warning"> ●</span> : null}
         {tabOnly ? <span className="text-muted-foreground"> {t("documents.tabOnly")}</span> : null}
       </span>
+      <CommentCount display={display} />
       <Hint label={closeLabel}>
         <Button
           variant="ghost"

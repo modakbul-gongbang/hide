@@ -24,8 +24,9 @@ import threading
 MAX_BYTES = 16 * 1024 * 1024
 # A tracked source that outgrows that bound for a reason, with its own: the
 # shared screens file the screen builders regenerate, which passed 16 MiB once
-# the Factory AI screens joined it. Every other file keeps MAX_BYTES.
-LARGE_SOURCES = {"design/hide-screens.pen": 32 * 1024 * 1024}
+# the Factory AI screens joined it and 32 MiB once the View feedback boards
+# joined Screen / Workspace. Every other file keeps MAX_BYTES.
+LARGE_SOURCES = {"design/hide-screens.pen": 40 * 1024 * 1024}
 MAX_DIAGNOSTICS = 200
 MAX_MANIFEST_BYTES = 8 * 1024 * 1024
 MAX_TRACKED_FILES = 100000

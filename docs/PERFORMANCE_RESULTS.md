@@ -1,6 +1,6 @@
 # Performance observations, 2026-10-04
 
-These measurements describe one isolated candidate for [issue #340](https://github.com/modakbul-gongbang/hide/issues/340).
+These measurements describe one isolated candidate for [issue #340](https://github.com/with-hide/hide/issues/340).
 They support the qualified figures in the README and introduction site, not a claim that hide is faster than another application.
 The measurement contract and isolation procedure remain [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md).
 This dated report is not an acceptance threshold for future builds.

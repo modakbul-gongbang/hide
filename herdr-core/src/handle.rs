@@ -129,6 +129,15 @@ impl Drop for Core {
         if let Some(worker) = attachment_worker {
             let _ = worker.join();
         }
+        // A Send in flight ends with the core; its comments stay unsent.
+        let feedback_workers = { lock_recover(&self.runtime).take_view_feedback_workers() };
+        for worker in feedback_workers {
+            if worker.join().is_err() {
+                crate::diagnostic!(
+                    serde_json::json!({"component":"view_feedback", "kind":"worker.join_failed"})
+                );
+            }
+        }
         // A layout or View tab changed just before quitting is on disk before
         // the process goes (B19).
         let views_worker = { lock_recover(&self.runtime).take_workspace_views_save_worker() };

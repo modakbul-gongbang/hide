@@ -1,5 +1,6 @@
 /* Generated from design/tokens.json by scripts/gen-tokens.mjs. Do not edit. */
 @custom-variant agent-tab-count-room (@container tab-title (min-width: 48px));
+@custom-variant pane-wide (@container pane (min-width: 640px));
 
 @theme static {
   --color-*: initial;
@@ -246,6 +247,8 @@
   --size-compact-agent-row-vpad: 5px;
   --size-hide-badge: 11px;
   --size-hide-badge-mark: 9px;
+  --size-view-opener-mark: 10px;
+  --size-view-note: 320px;
   --size-agent-badge-compact: 16px;
   --size-icon-button-standard: 32px;
   --size-icon-button-toolbar: 24px;

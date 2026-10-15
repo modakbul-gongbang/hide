@@ -11,6 +11,13 @@ and the nightly call all plan every lane but `package`, which only a change to
 what goes into a package plans. No lane takes a macOS runner for anything but
 what only macOS proves (`os-contract-macos`, `desktop-e2e`, and `package`'s
 packaged app); the rest of the macOS checks are jobs of `nightly.yml`.
+
+A pull request whose last green run still stands plans `policy` alone: what
+it adds to main differs from what that run checked only in paths no lane but
+`policy` reads, and main has changed none of the paths it adds that a lane
+reads. Each pull request run keeps a plan record for the next one to read; a
+missing run or record, or a lookup, fetch or comparison that fails, leaves
+the plan as it is.
 docs/TESTING.md, "Which lanes a pull request runs", owns the rules and the
 reasons for them.
 """
@@ -19,8 +26,10 @@ from fnmatch import fnmatchcase
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -172,6 +181,9 @@ POLICY_ONLY = (
     # hide's own license and copyright notice; no build or package reads them.
     "LICENSE", "NOTICE",
     ".github/pull_request_template.md", ".github/dependabot.yml",
+    # The contribution intake: forms, the approved list and the gate that reads it.
+    ".github/ISSUE_TEMPLATE/*", ".github/DISCUSSION_TEMPLATE/*", ".github/APPROVED_CONTRIBUTORS",
+    ".github/workflows/contribution-gate.yml",
     # Workflows no `pr.yml` job calls; `design-contract.yml` has its own pull
     # request trigger, and the nightly calls `perf.yml`.
     ".github/workflows/nightly.yml", ".github/workflows/herdr-update.yml", ".github/workflows/design-contract.yml",
@@ -403,6 +415,16 @@ def select(entries, crates, root=ROOT, full_reason=None):
     }
 
 
+def reads_no_lane(status, name, crates, root=ROOT):
+    """True when no lane but `policy` reads the changed path."""
+    if status not in ("A", "M", "D") or any(fnmatchcase(name, pattern) for pattern in PACKAGE_PATHS) or reader_entries(name):
+        return False
+    # The status decides only whether a spec is read for its tag, never
+    # whether a path has a lane, so the answer comes from the name alone.
+    lanes, _, _ = classify(PurePosixPath(name), "D", crates, root)
+    return lanes == set()
+
+
 def changed_entries(base, head, root=ROOT):
     raw = subprocess.check_output(
         ["git", "diff", "--name-status", "-z", "--no-renames", base, head], cwd=root, stderr=subprocess.PIPE
@@ -413,7 +435,127 @@ def changed_entries(base, head, root=ROOT):
     return list(zip(fields[:-1:2], fields[1:-1:2]))
 
 
-def plan(event, base, head, root=ROOT, crates=None, draft=False):
+# The workflow whose green runs a pull request may reuse, and the artifact
+# each of its pull request runs keeps the plan record in.
+WORKFLOW = "pr.yml"
+RECORD_ARTIFACT = "ci-plan"
+RECORD_FILE = "ci-plan.json"
+RECORD_VERSION = 1
+COMMIT = re.compile(r"[0-9a-f]{40}")
+
+
+class NotReused(Exception):
+    """Why the last green run does not stand for this one; the plan stays as it is."""
+
+
+def error_detail(error):
+    if isinstance(error, subprocess.CalledProcessError):
+        stderr = error.stderr if isinstance(error.stderr, str) else (error.stderr or b"").decode(errors="replace")
+        return stderr.strip() or str(error)
+    return str(error)
+
+
+def listing(names, shown=5):
+    return ", ".join(names[:shown]) + (f" (+{len(names) - shown} more)" if len(names) > shown else "")
+
+
+def call_gh(*args):
+    try:
+        # gh speaks UTF-8; without a named encoding a Windows runner reads it as cp1252.
+        done = subprocess.run(["gh", *args], capture_output=True, encoding="utf-8")
+    except OSError as error:
+        raise NotReused(f"gh could not run: {error}") from error
+    if done.returncode != 0:
+        raise NotReused(f"`gh {args[0]} {args[1]}` failed: {done.stderr.strip()}")
+    return done.stdout
+
+
+def verified_commits(record, number, run):
+    """What a green run's plan record says its lanes checked: a run, a main and a head."""
+    if not isinstance(record, dict) or record.get("version") != RECORD_VERSION:
+        raise NotReused(f"run {run['id']} kept a plan record this plan cannot read")
+    if record.get("pr") != number or record.get("head") != run["head_sha"]:
+        raise NotReused(f"run {run['id']}'s plan record is not for this pull request's head {run['head_sha']}")
+    verified = record.get("verified")
+    if (not isinstance(verified, dict) or type(verified.get("run")) is not int
+            or not all(isinstance(verified.get(key), str) and COMMIT.fullmatch(verified[key]) for key in ("base", "head"))):
+        raise NotReused(f"run {run['id']} recorded no commits its lanes checked")
+    return {"run": verified["run"], "base": verified["base"], "head": verified["head"]}
+
+
+def last_green_run(repo, number, head_repo, head_ref, run_id, gh=call_gh):
+    """The commits the lanes of this pull request's latest green run checked.
+
+    A run that reused an earlier one recorded that run's commits, so the
+    answer always names a run whose lanes ran.
+    """
+    if not head_repo:
+        raise NotReused("the pull request's head repository is gone")
+    runs = json.loads(gh(
+        "api", "-X", "GET", f"repos/{repo}/actions/workflows/{WORKFLOW}/runs",
+        "-f", "event=pull_request", "-f", "status=success", "-f", f"branch={head_ref}", "-F", "per_page=100",
+    ))["workflow_runs"]
+    # Another fork's branch of the same name is not this pull request.
+    runs = [run for run in runs if run["id"] != run_id and (run.get("head_repository") or {}).get("full_name") == head_repo]
+    if not runs:
+        raise NotReused("this pull request has no earlier green run")
+    run = max(runs, key=lambda run: (run["created_at"], run["id"]))
+    with tempfile.TemporaryDirectory() as directory:
+        gh("run", "download", str(run["id"]), "--repo", repo, "--name", RECORD_ARTIFACT, "--dir", directory)
+        record = json.loads((Path(directory) / RECORD_FILE).read_text(encoding="utf-8"))
+    return verified_commits(record, number, run)
+
+
+def fetch_history(root, *commits):
+    """Make the commits and their history readable: a pull request's checkout is two commits deep."""
+    shallow = subprocess.check_output(
+        ["git", "rev-parse", "--is-shallow-repository"], cwd=root, text=True, stderr=subprocess.PIPE
+    ).strip() == "true"
+    missing = [
+        commit for commit in commits
+        if subprocess.run(["git", "cat-file", "-e", f"{commit}^{{commit}}"], cwd=root, capture_output=True).returncode
+    ]
+    if shallow or missing:
+        # Commits and trees only, about 9 MB for main's whole history;
+        # `merge-tree` fetches the few file contents it has to merge.
+        subprocess.check_output(
+            ["git", "fetch", "--quiet", "--no-tags", "--filter=blob:none", *(["--unshallow"] if shallow else []),
+             "origin", *commits],
+            cwd=root, stderr=subprocess.PIPE,
+        )
+
+
+def still_stands(verified, base, head, entries, crates, root=ROOT):
+    """Why the run in `verified` stands for base..head; NotReused says why it does not.
+
+    It stands when the pull request adds to main what that run's head added,
+    but for paths no lane but `policy` reads, and main has changed none of the
+    paths the pull request changes that a lane reads since that run's main.
+    """
+    run, old_base, old_head = verified["run"], verified["base"], verified["head"]
+    fetch_history(root, old_base, old_head)
+    # The checked head merged into main as it is now. A conflict leaves its
+    # markers in the tree, so a path resolved differently since differs here.
+    merged = subprocess.run(
+        ["git", "merge-tree", "--write-tree", "--no-messages", base, old_head], cwd=root, capture_output=True, text=True
+    )
+    if merged.returncode not in (0, 1) or not merged.stdout.split():
+        raise NotReused(f"`git merge-tree` failed: {merged.stderr.strip()}")
+    changed = [name for status, name in changed_entries(merged.stdout.split()[0], head, root)
+               if not reads_no_lane(status, name, crates, root)]
+    if changed:
+        raise NotReused(f"since run {run} the pull request changed {listing(changed)}, which a lane reads")
+    main_changed = {name for _, name in changed_entries(old_base, base, root)}
+    overlap = [name for status, name in entries if name in main_changed and not reads_no_lane(status, name, crates, root)]
+    if overlap:
+        raise NotReused(f"since run {run} main changed {listing(overlap)}, which the pull request changes too")
+    return (f"run {run} checked head {old_head[:9]} on main {old_base[:9]}; since then the pull request changed only "
+            "paths no lane but policy reads, and main none of the paths it changes that a lane reads")
+
+
+def plan(event, base, head, root=ROOT, crates=None, draft=False, last_green=None):
+    """The lanes for base..head. `last_green` answers the commits of the pull
+    request's latest green run, or raises; None skips the reuse check."""
     if draft:
         # A draft is not a merge candidate: no lane runs, `aggregate` fails
         # `verify` for it, and marking the pull request ready for review
@@ -437,12 +579,36 @@ def plan(event, base, head, root=ROOT, crates=None, draft=False):
         if len(parents) != 3:
             raise ValueError(f"{head} is not a merge commit")
         entries = changed_entries(base, head, root)
-    except subprocess.CalledProcessError as error:
-        detail = error.stderr.strip() if isinstance(error.stderr, str) else (error.stderr or b"").decode(errors="replace").strip()
-        return select([], crates, root, f"comparison unavailable: {detail or error}")
-    except (UnicodeDecodeError, ValueError) as error:
-        return select([], crates, root, f"comparison unavailable: {error}")
-    return select(entries, crates, root)
+    except (subprocess.CalledProcessError, UnicodeDecodeError, ValueError) as error:
+        return select([], crates, root, f"comparison unavailable: {error_detail(error)}")
+    result = select(entries, crates, root)
+    result["commits"] = {"base": parents[1], "head": parents[2]}
+    # `policy` alone is what a reuse plans; nothing to save.
+    if last_green is None or result["lanes"] == ["policy"]:
+        return result
+    try:
+        verified = last_green()
+        why = still_stands(verified, base, head, entries, crates, root)
+    except (NotReused, subprocess.CalledProcessError, OSError, ValueError) as error:
+        # Every failure keeps the plan the change itself needs.
+        result["reuse"] = {"run": None, "why": error_detail(error)}
+        return result
+    return {
+        "full": False,
+        "lanes": ["policy"],
+        "rust_packages": [],
+        "reasons": {"policy": [f"reuses run {verified['run']}: {why}"]},
+        "commits": result["commits"],
+        "reuse": {"run": verified["run"], "why": why},
+        "verified": verified,
+    }
+
+
+def plan_record(result, number, run_id):
+    """What the next run of this pull request reads: the commits this run's lanes checked."""
+    commits = result.get("commits")
+    verified = result.get("verified") or (commits and {"run": run_id, **commits})
+    return {"version": RECORD_VERSION, "pr": number, "head": commits and commits["head"], "verified": verified}
 
 
 def aggregate(needs):
@@ -470,7 +636,7 @@ def aggregate(needs):
         raise ValueError("; ".join(errors))
 
 
-def summary(result):
+def summary(result, runs_url=None):
     if result.get("draft"):
         return "A draft pull request plans no lane; marking it ready for review runs them.\n"
     lines = ["| Lane | Runs | Why |", "| --- | --- | --- |"]
@@ -481,6 +647,14 @@ def summary(result):
     if result["rust_packages"]:
         lines.append("")
         lines.append("Rust packages: " + ", ".join(result["rust_packages"]))
+    reuse = result.get("reuse")
+    if reuse:
+        lines.append("")
+        if reuse["run"] is None:
+            lines.append(f"No earlier green run stands for this one: {reuse['why']}.")
+        else:
+            run = f"[run {reuse['run']}]({runs_url}{reuse['run']})" if runs_url else f"run {reuse['run']}"
+            lines.append(f"Reuses {run} for every lane but policy: {reuse['why']}.")
     return "\n".join(lines) + "\n"
 
 
@@ -492,12 +666,28 @@ def main():
     plan_parser.add_argument("--base", default="HEAD^1")
     plan_parser.add_argument("--head", default="HEAD")
     plan_parser.add_argument("--draft", choices=("true", "false"), default="false", help="the pull request is a draft")
+    plan_parser.add_argument("--record", type=Path, help="write the plan record a pull request's next run reads here")
     sub.add_parser("aggregate", help="check toJSON(needs), read from NEEDS")
     args = parser.parse_args()
 
     if args.command == "plan":
-        result = plan(args.event, args.base, args.head, draft=args.draft == "true")
+        draft = args.draft == "true"
+        repo = os.environ.get("GITHUB_REPOSITORY")
+        run_id = int(os.environ["GITHUB_RUN_ID"]) if os.environ.get("GITHUB_RUN_ID") else None
+        pull = None
+        if args.event == "pull_request" and os.environ.get("GITHUB_EVENT_PATH"):
+            pull = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))["pull_request"]
+        last_green = None
+        if pull is not None and repo and run_id is not None:
+            # A deleted fork leaves the pull request no head repository.
+            head_repo = (pull["head"].get("repo") or {}).get("full_name")
+
+            def last_green():
+                return last_green_run(repo, pull["number"], head_repo, pull["head"]["ref"], run_id)
+        result = plan(args.event, args.base, args.head, draft=draft, last_green=last_green)
         print(json.dumps(result, indent=2))
+        if args.record and pull is not None and not draft:
+            args.record.write_text(json.dumps(plan_record(result, pull["number"], run_id), indent=2) + "\n", encoding="utf-8")
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                 output.write(f"lanes={json.dumps(result['lanes'])}\n")
@@ -506,7 +696,8 @@ def main():
                 output.write(f"rust-packages={json.dumps(result['rust_packages'])}\n")
         if os.environ.get("GITHUB_STEP_SUMMARY"):
             with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
-                output.write(summary(result))
+                server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+                output.write(summary(result, f"{server}/{repo}/actions/runs/" if repo else None))
     else:
         needs = json.loads(os.environ["NEEDS"])
         try:

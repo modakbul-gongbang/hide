@@ -118,7 +118,12 @@ use crate::error::HostError;
 /// Older peers cannot decode the hook answer and are refused at Hello.
 /// 32: link reads carry bounded raw requests and tool-output issue sightings.
 /// Older helpers cannot supply a session work record and are upgraded at Hello.
-pub const PROTOCOL_VERSION: u32 = 32;
+/// 33: `feedback` reads and removes a screen's staged View feedback
+/// screenshots and places, removes and sweeps a letter's attachments on the
+/// recipient's machine (PRD view-opener-feedback D-16). An older helper would
+/// refuse it as unknown, so a Send to its agents could never carry a
+/// screenshot; it is refused at Hello and upgraded.
+pub const PROTOCOL_VERSION: u32 = 33;
 
 /// How a pane's shell is started so that it marks its first prompt
 /// ([`Call::ShellIntegration`]): the command the pane runs, the shell and
@@ -701,6 +706,11 @@ pub enum Call {
     Factory {
         call: crate::factory::FactoryCall,
     },
+    /// View feedback's files on this machine: a screen's staged screenshots
+    /// and a letter's placed attachments ([`crate::feedback::FeedbackCall`]).
+    Feedback {
+        call: crate::feedback::FeedbackCall,
+    },
 }
 
 impl Call {
@@ -814,6 +824,7 @@ impl Call {
             | Self::BrowserGateway { .. }
             | Self::LabelLock { .. }
             | Self::LabelUnlock { .. }
+            | Self::Feedback { .. }
             | Self::Cancel { .. } => true,
             Self::AiAvailability { .. }
             | Self::AiModels { .. }

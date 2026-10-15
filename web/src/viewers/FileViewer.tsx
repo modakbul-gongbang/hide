@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import type { PDFPageProxy } from "pdfjs-dist";
+import type { Actions } from "../actions";
 import { blobUrl } from "../fileBytes";
 import { useInterfaceTranslation } from "../i18n/client";
 import type { EditorDocumentSnapshot } from "../snapshot";
@@ -13,7 +14,15 @@ import { PdfPages } from "./pdfPages";
 import { useFileBytes, type FileBytesState } from "./useFileBytes";
 import { useViewerZoom, type LayoutAt } from "./useViewerZoom";
 import { isVideoPath, videoMime } from "./video";
-import { columnLayout, imageFit, pdfFit, type Size } from "./viewerZoom";
+import { columnLayout, imageFit, pdfFit, type Layout, type Size } from "./viewerZoom";
+import { bytesRevision, cropToPng, RegionHint, RegionLayer, type RegionPage, type RegionSource } from "../ViewComments";
+import { commentsOn, noteReadable } from "../viewFeedback";
+import type { ViewRect } from "../snapshot";
+import type { ViewWorkspace } from "../viewLayout";
+import { workspaceViewOf } from "../workspace";
+
+/** What a viewer needs to take the operator's comments: the View's Workspace and the page's actions. */
+export type ViewerComments = { workspace: ViewWorkspace; actions: Actions };
 
 /** The one line a failed read or an unsupported file leaves behind. */
 export function ViewerNotice({ reason, state }: { reason: string; state: string }) {
@@ -29,11 +38,11 @@ export function ViewerNotice({ reason, state }: { reason: string; state: string 
  * (`viewerZoom.ts`); each file starts at its fit, so a preview retargeted to
  * another file does not carry the last one's zoom.
  */
-export function FileViewer({ document, displayId }: { document: EditorDocumentSnapshot; displayId: string }) {
+export function FileViewer({ document, displayId, comments }: { document: EditorDocumentSnapshot; displayId: string; comments?: ViewerComments }) {
   const { t } = useInterfaceTranslation();
   if (isVideoPath(document.path)) return <VideoView path={document.path} />;
-  if (document.document_kind === "image") return <ImageView key={document.path} path={document.path} displayId={displayId} />;
-  if (document.document_kind === "pdf") return <PdfView key={document.path} path={document.path} displayId={displayId} />;
+  if (document.document_kind === "image") return <ImageView key={document.path} path={document.path} displayId={displayId} comments={comments} />;
+  if (document.document_kind === "pdf") return <PdfView key={document.path} path={document.path} displayId={displayId} comments={comments} />;
   return <ViewerNotice state="binary" reason={t("documents.binary")} />;
 }
 
@@ -51,7 +60,7 @@ function useBlob(state: FileBytesState, type: string): string | null {
   return url;
 }
 
-function ImageView({ path, displayId }: { path: string; displayId: string }) {
+function ImageView({ path, displayId, comments }: { path: string; displayId: string; comments?: ViewerComments }) {
   const { t } = useInterfaceTranslation();
   const state = useFileBytes(path);
   const url = useBlob(state, "image/*");
@@ -65,6 +74,18 @@ function ImageView({ path, displayId }: { path: string; displayId: string }) {
   const box = layout?.boxes[0];
   const pannable = !!layout && !!viewport && (layout.width > viewport.width || layout.height > viewport.height);
   const pan = usePan(scroller, pannable);
+  const image = useRef<HTMLImageElement>(null);
+  const failed = state.status === "failed" || decodeFailed;
+  useReadable(displayId, failed ? false : natural ? true : null);
+  const revision = useRevision(state, displayId, comments);
+  const regions = useMemo<RegionSource | null>(() => {
+    if (!box || !natural) return null;
+    return {
+      pages: [{ left: box.left, top: box.top, width: box.width, height: box.height, page: null }],
+      crop: (_page, rect) => (image.current ? cropToPng(image.current, natural, rect) : Promise.resolve(null)),
+      revision,
+    };
+  }, [box, natural, revision]);
   if (state.status === "failed") return <ViewerNotice state="image-failed" reason={t("documents.imageUnavailable", { reason: state.reason })} />;
   if (decodeFailed) return <ViewerNotice state="image-failed" reason={t("documents.imageUnavailable", { reason: "decode_failed" })} />;
   if (!url) return <ViewerNotice state="image-loading" reason={t("documents.imageLoading")} />;
@@ -76,8 +97,10 @@ function ImageView({ path, displayId }: { path: string; displayId: string }) {
       data-viewer-zoom={zoom}
       {...pan.handlers}
     >
+      <RegionHint displayId={displayId} />
       <div className="relative" style={layout ? { width: layout.width, height: layout.height } : undefined}>
         <img
+          ref={image}
           src={url}
           alt={path}
           draggable={false}
@@ -92,6 +115,7 @@ function ImageView({ path, displayId }: { path: string; displayId: string }) {
           }}
           onError={() => setDecodeFailed(true)}
         />
+        {regions && comments ? <RegionLayer displayId={displayId} path={path} source={regions} workspace={comments.workspace} actions={comments.actions} /> : null}
       </div>
     </div>
   );
@@ -154,7 +178,7 @@ function VideoView({ path }: { path: string }) {
 
 type PdfDocument = { pages: PDFPageProxy[]; sizes: Size[] };
 
-function PdfView({ path, displayId }: { path: string; displayId: string }) {
+function PdfView({ path, displayId, comments }: { path: string; displayId: string; comments?: ViewerComments }) {
   const { t } = useInterfaceTranslation();
   const state = useFileBytes(path);
   const [pdf, setPdf] = useState<PdfDocument | null>(null);
@@ -215,18 +239,85 @@ function PdfView({ path, displayId }: { path: string; displayId: string }) {
     if (drawer && layout) drawer.show(layout);
   }, [drawer, layout]);
 
+  const failed = state.status === "failed" || renderFailed;
+  useReadable(displayId, failed ? false : pdf ? true : null);
+  const revision = useRevision(state, displayId, comments);
+  const regions = useMemo<RegionSource | null>(() => (pdf && layout ? pdfRegions(pdf.pages, layout, revision) : null), [pdf, layout, revision]);
   if (state.status === "failed") return <ViewerNotice state="pdf-failed" reason={t("documents.pdfUnavailable", { reason: state.reason })} />;
   if (renderFailed) return <ViewerNotice state="pdf-render" reason={t("documents.pdfRenderFailed")} />;
   if (state.status !== "ready") return <ViewerNotice state="pdf-loading" reason={t("documents.pdfLoading")} />;
   return (
     <div ref={scrollerRef} className="relative min-h-0 flex-1 overflow-auto [overflow-anchor:none] [scrollbar-gutter:stable]" data-viewer="pdf" data-viewer-zoom={zoom}>
+      <RegionHint displayId={displayId} />
       {layout ? (
         <div className="relative" style={{ width: layout.width, height: layout.height }}>
           {layout.boxes.map((box, index) => (
             <div key={index} className="absolute" style={{ left: box.left, top: box.top, width: box.width, height: box.height }} data-pdf-page={index + 1} />
           ))}
+          {regions && comments ? <RegionLayer displayId={displayId} path={path} source={regions} workspace={comments.workspace} actions={comments.actions} /> : null}
         </div>
       ) : null}
     </div>
   );
+}
+
+/** Tells the header's Comment whether this viewer read its file (B13); the answer goes with the viewer. */
+function useReadable(displayId: string, readable: boolean | null): void {
+  useEffect(() => {
+    noteReadable(displayId, readable);
+  }, [displayId, readable]);
+  useEffect(() => () => noteReadable(displayId, null), [displayId]);
+}
+
+/**
+ * The file's revision, and the region comments of this View it changed
+ * under: they say Changed, and stop saying it if the file comes back (B31).
+ * It runs once per read of the file, never per frame.
+ */
+function useRevision(state: FileBytesState, displayId: string, comments: ViewerComments | undefined): string | null {
+  const [revision, setRevision] = useState<string | null>(null);
+  useEffect(() => {
+    if (state.status !== "ready") return setRevision(null);
+    let live = true;
+    void bytesRevision(state.bytes).then((value) => {
+      if (live) setRevision(value);
+    });
+    return () => {
+      live = false;
+    };
+  }, [state]);
+  const feedback = useShellStore((s) => workspaceViewOf(s.rest)?.feedback);
+  useEffect(() => {
+    if (!revision || !comments) return;
+    for (const comment of commentsOn(feedback, displayId)) {
+      if (comment.anchor.kind !== "region" || !comment.revision) continue;
+      const changed = comment.revision !== revision;
+      if (changed !== comment.changed) comments.actions.commentView(comments.workspace, { action: "relocate", comment_id: comment.id, changed });
+    }
+  }, [revision, feedback, displayId, comments]);
+  return revision;
+}
+
+/** A PDF's laid-out pages as region pages, and a crop drawn fresh from the page at twice its size. */
+function pdfRegions(pages: PDFPageProxy[], layout: Layout, revision: string | null): RegionSource {
+  const boxes: RegionPage[] = layout.boxes.map((box, index) => ({ left: box.left, top: box.top, width: box.width, height: box.height, page: index + 1 }));
+  return {
+    pages: boxes,
+    revision,
+    crop: async (page: number | null, rect: ViewRect) => {
+      const proxy = page ? pages[page - 1] : undefined;
+      if (!proxy) return null;
+      const viewport = proxy.getViewport({ scale: 2 });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.floor(viewport.width));
+      canvas.height = Math.max(1, Math.floor(viewport.height));
+      try {
+        await proxy.render({ canvas, viewport }).promise;
+        return await cropToPng(canvas, { width: canvas.width, height: canvas.height }, rect);
+      } finally {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+    },
+  };
 }

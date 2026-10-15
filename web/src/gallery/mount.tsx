@@ -5,6 +5,7 @@ import { CmdkScene, cmdkSceneParams } from "./CmdkScene";
 import { GALLERY, type Section } from "./manifest";
 import { ServerSessionScene } from "./ServerSessionScene";
 import { RightLaneScene, rightLaneSceneParams } from "./RightLaneScene";
+import { ViewFeedbackScene, viewFeedbackSceneParams } from "./ViewFeedbackScene";
 import { sceneParams, SidebarScene } from "./SidebarScene";
 import { AreaFocusScene } from "./AreaFocusScene";
 import { OnboardingScene, onboardingSceneParams } from "./OnboardingScene";
@@ -58,6 +59,11 @@ export function mountGallery(root: Root) {
     if (scene === "right-lane") {
       document.title = "hide · Right lane scene";
       root.render(<StrictMode><RightLaneScene {...rightLaneSceneParams(params)} /></StrictMode>);
+      return;
+    }
+    if (scene === "view-opener-feedback") {
+      document.title = "hide · View feedback scene";
+      root.render(<StrictMode><ViewFeedbackScene {...viewFeedbackSceneParams(params)} /></StrictMode>);
       return;
     }
     if (scene === "onboarding") {

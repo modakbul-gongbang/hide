@@ -750,11 +750,13 @@ fn owner_loop(
     );
     // What the node measured of each repository's worktrees outlives the
     // daemon, in the core's state folder.
-    own_node = own_node.keeping_worktree_facts_in(hide_kit::layout::worktree_facts(
-        std::path::Path::new(&options.app_state_path)
-            .parent()
-            .unwrap_or(std::path::Path::new(".")),
-    ));
+    let state_dir = std::path::Path::new(&options.app_state_path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
+    own_node = own_node
+        .keeping_worktree_facts_in(hide_kit::layout::worktree_facts(&state_dir))
+        .keeping_feedback_in(state_dir);
     // The install kit's parts ship beside this binary in the app bundle; a
     // daemon anywhere else installs nothing (PRD device-parity D-19).
     if let Some(kit_dir) = std::env::current_exe()

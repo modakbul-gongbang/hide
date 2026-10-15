@@ -818,11 +818,14 @@ export class BrowserViews {
     // A hidden WebContentsView is no longer a native keyboard responder.
     // Keep the held cycle's remaining OS input in this same window: the
     // shell preserves its logical page owner and consumes release/Escape.
+    // A page that had the keyboard hands it to the shell, whose layer over
+    // the page (a note written on it, a dialog) is why it hides.
+    const keyboard = !visible && page.view.webContents.isFocused();
     page.visible = visible;
     page.view.setVisible(visible);
     this.log.event("browser.page_visible", { id: page.id, visible, owed_page: this.returnTo === page, held: this.cycleInput?.page === page });
     if (visible && this.returnTo === page) this.giveBack();
-    if (!visible && this.cycleInput?.page === page && this.window?.isFocused()) this.window.webContents.focus();
+    if (!visible && (keyboard || this.cycleInput?.page === page) && this.window?.isFocused()) this.window.webContents.focus();
   }
 
   private hideAll(): void {

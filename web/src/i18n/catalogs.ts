@@ -31,6 +31,7 @@ import { prWorkCatalogs, prWorkEnglish } from "./resources/prWork";
 import { prListCatalogs, prListEnglish } from "./resources/prList";
 import { workCatalogs, workEnglish } from "./resources/work";
 import { linksCatalogs, linksEnglish } from "./resources/links";
+import { feedbackCatalogs, feedbackEnglish } from "./resources/feedback";
 import { requestsCatalogs, requestsEnglish } from "./resources/requests";
 import { settingsCatalogs, settingsEnglish } from "./resources/settings";
 import { workspaceCatalogs, workspaceEnglish } from "./resources/workspace";
@@ -70,6 +71,7 @@ export const english = {
   ...prListEnglish,
   ...workEnglish,
   ...linksEnglish,
+  ...feedbackEnglish,
   ...overviewEnglish,
   ...factoryEnglish,
   ...firstRunEnglish,
@@ -114,6 +116,7 @@ export const catalogs = {
     ...prListCatalogs.ko,
     ...workCatalogs.ko,
     ...linksCatalogs.ko,
+    ...feedbackCatalogs.ko,
     ...overviewCatalogs.ko,
     ...factoryCatalogs.ko,
     ...firstRunCatalogs.ko,
@@ -153,6 +156,7 @@ export const catalogs = {
     ...prListCatalogs["zh-CN"],
     ...workCatalogs["zh-CN"],
     ...linksCatalogs["zh-CN"],
+    ...feedbackCatalogs["zh-CN"],
     ...overviewCatalogs["zh-CN"],
     ...factoryCatalogs["zh-CN"],
     ...firstRunCatalogs["zh-CN"],
@@ -192,6 +196,7 @@ export const catalogs = {
     ...prListCatalogs.ja,
     ...workCatalogs.ja,
     ...linksCatalogs.ja,
+    ...feedbackCatalogs.ja,
     ...overviewCatalogs.ja,
     ...factoryCatalogs.ja,
     ...firstRunCatalogs.ja,
