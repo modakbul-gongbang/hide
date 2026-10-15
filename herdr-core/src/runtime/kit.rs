@@ -1325,7 +1325,7 @@ impl Runtime {
                 version: version.clone(),
                 cause: *cause,
             }),
-            HerdrUpdate::NoServer
+            HerdrUpdate::NoServer { .. }
             | HerdrUpdate::Current { .. }
             | HerdrUpdate::Kept { .. }
             | HerdrUpdate::HandedOff { .. } => None,

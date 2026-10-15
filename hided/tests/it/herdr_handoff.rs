@@ -209,7 +209,9 @@ fn a_device_server_on_the_pinned_release_is_left_running_its_own_herdr() {
     assert_eq!(std::fs::read(&operator).unwrap(), before);
     assert_eq!(
         device.update(&device.root.path().join("none.sock")),
-        HerdrUpdate::NoServer
+        HerdrUpdate::NoServer {
+            version: crate::private_herdr::pinned_version()
+        }
     );
 }
 

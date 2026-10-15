@@ -85,7 +85,7 @@ it("grows one line under the device for a failed part, with Reinstall, and the l
   await whole.unmount();
 });
 
-it("says in one line when a device's Herdr stays older than Hide's, with the step its cause allows, and nothing once it moved (PRD device-herdr-update B3, B8)", async () => {
+it("says in one line when a device's Herdr stays older than Hide's, with the step its cause allows, and nothing once it moved or while it is out of reach (PRD device-herdr-update B3, B8)", async () => {
   const behind = (cause: "cannot_hand_off" | "handoff_failed") => remote("mini", { herdr_behind: { server_version: "0.9.1", version: "0.9.3", cause } });
   const failed = await mount(state([behind("handoff_failed")]));
   const line = failed.q('[data-device-herdr-behind="mini:handoff_failed"]')!;
@@ -97,6 +97,10 @@ it("says in one line when a device's Herdr stays older than Hide's, with the ste
   const old = await mount(state([behind("cannot_hand_off")]));
   expect(old.q('[data-device-herdr-behind="mini:cannot_hand_off"]')?.textContent).toContain("Update Herdr on this device.");
   await old.unmount();
+
+  const away = await mount(state([remote("mini", { state: "unavailable", herdr_behind: { server_version: "0.9.1", version: "0.9.3", cause: "handoff_failed" } })]));
+  expect(away.q("[data-device-herdr-behind]")).toBeNull();
+  await away.unmount();
 
   const moved = await mount(state([remote("mini", { herdr_behind: null })]));
   expect(moved.q("[data-device-herdr-behind]")).toBeNull();

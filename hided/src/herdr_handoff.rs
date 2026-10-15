@@ -224,28 +224,32 @@ fn hand_over(
 /// handoffs that failed, so each is tried once per server process and pin.
 /// Nothing here fails the kit pass: every outcome is an answer.
 pub fn device_update(pinned: &Path, socket: &Path, record: &Path) -> HerdrUpdate {
-    let failed = |stage: &str, reason: String| HerdrUpdate::Failed {
-        stage: stage.to_owned(),
-        reason,
+    let failed = |stage: &str, reason: String, version: Option<&str>, server: Option<&str>| {
+        HerdrUpdate::Failed {
+            stage: stage.to_owned(),
+            reason,
+            version: version.map(str::to_owned),
+            server_version: server.map(str::to_owned),
+        }
     };
     let pinned_file = match file_id(pinned) {
         Ok(file) => file,
-        Err(error) => return failed("pinned", error.to_string()),
+        Err(error) => return failed("pinned", error.to_string(), None, None),
+    };
+    let version = match version_of(pinned) {
+        Ok(version) => version,
+        Err(reason) => return failed("version", reason, None, None),
     };
     let from_pid = match program_on(socket) {
         Ok(Some((pid, _))) => pid,
-        Ok(None) => return HerdrUpdate::NoServer,
-        Err(error) => return failed("program", error.to_string()),
+        Ok(None) => return HerdrUpdate::NoServer { version },
+        Err(error) => return failed("program", error.to_string(), Some(&version), None),
     };
     let pong = match ask(socket, "ping", herdr_core::wire::ping_params())
         .and_then(herdr_core::wire::server_pong)
     {
         Ok(pong) => pong,
-        Err(reason) => return failed("ping", reason),
-    };
-    let version = match version_of(pinned) {
-        Ok(version) => version,
-        Err(reason) => return failed("version", reason),
+        Err(reason) => return failed("ping", reason, Some(&version), None),
     };
     let server_version = pong.version;
     match device_step(&version, &server_version, pong.live_handoff) {
@@ -266,13 +270,15 @@ pub fn device_update(pinned: &Path, socket: &Path, record: &Path) -> HerdrUpdate
         }
         DeviceStep::HandOver => {}
     }
+    let known =
+        |stage: &str, reason: String| failed(stage, reason, Some(&version), Some(&server_version));
     let attempt = match Attempt::of(socket, from_pid, pinned) {
         Ok(attempt) => attempt,
-        Err(error) => return failed("program", error.to_string()),
+        Err(error) => return known("program", error.to_string()),
     };
     let attempts = match Attempts::read(record) {
         Ok(attempts) => attempts,
-        Err(reason) => return failed("record", reason),
+        Err(reason) => return known("record", reason),
     };
     if let Some(earlier) = attempts.failed(&attempt) {
         return HerdrUpdate::Behind {

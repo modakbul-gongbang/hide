@@ -246,6 +246,16 @@ pub(super) struct Payload {
 }
 
 impl Payload {
+    /// The payload for the machine running the core, which runs its own
+    /// app's Herdr: a device's copy and the pin naming it are not its to
+    /// carry.
+    fn without_herdr(mut self) -> Self {
+        self.herdr = None;
+        self.files
+            .retain(|file| file.relative != hide_kit::device_herdr::HERDR_PIN);
+        self
+    }
+
     /// The build's version: a digest over every file's path, mode and bytes,
     /// so any change to any part is a new folder on the device.
     fn version(&self) -> String {
@@ -1467,16 +1477,13 @@ pub(super) async fn install_build(
     arch: &str,
     helper_root: &str,
 ) -> Result<Installed, EstablishError> {
-    let mut payload = packages.payload(os, arch)?;
+    let payload = packages.payload(os, arch)?.without_herdr();
     if !payload.missing.is_empty() {
         return Err(EstablishError::Install(format!(
             "This build cannot update a core without all of its parts: {}",
             payload.missing.join("; ")
         )));
     }
-    // The core's machine runs its own app's Herdr; a device's copy is not
-    // its to carry.
-    payload.herdr = None;
     let (home, owner, root) = private_root_spelling(raw, helper_root).await?;
     place_payload(raw, &home, owner, &root, &payload).await
 }
@@ -1491,7 +1498,8 @@ impl HelperPackages {
         use hide_platform::fs::{Access, atomic, private};
         let payload = self
             .payload(std::env::consts::OS, std::env::consts::ARCH)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())?
+            .without_herdr();
         if !payload.missing.is_empty() {
             return Err(format!(
                 "This build cannot update a core without all of its parts: {}",
@@ -3258,6 +3266,11 @@ mod tests {
         assert_eq!(pin.bytes, format!("{}\n", &herdr.digest[..16]).into_bytes());
         assert!(!with.files.iter().any(|file| file.relative == "herdr"));
         assert_ne!(with.version(), without.version());
+        // The machine running the core keeps its own app's Herdr, and its
+        // build is the one it would be without a pin.
+        let core = packages.payload(os, arch).unwrap().without_herdr();
+        assert!(core.herdr.is_none());
+        assert_eq!(core.version(), without.version());
 
         write(
             &directory.path().join(HERDR_NAME),

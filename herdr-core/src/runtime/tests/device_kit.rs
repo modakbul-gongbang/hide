@@ -2220,6 +2220,8 @@ fn a_device_server_left_older_than_the_pin_keeps_its_line_until_a_pass_finds_it_
     *helper.answer.lock().unwrap() = Ok(with_herdr(Some(HerdrUpdate::Failed {
         stage: "ping".to_owned(),
         reason: "timed out".to_owned(),
+        version: Some("0.9.3".to_owned()),
+        server_version: None,
     })));
     pass(KitJob::Apply(hide_kit::Scope::automatic()));
     assert_eq!(
@@ -2236,6 +2238,56 @@ fn a_device_server_left_older_than_the_pin_keeps_its_line_until_a_pass_finds_it_
         elapsed_ms: 900,
     })));
     pass(KitJob::Apply(hide_kit::Scope::automatic()));
+    assert_eq!(herdr_behind(&shared), None);
+}
+
+fn live_session(herdr_version: &str) -> RemoteSessionSnapshot {
+    RemoteSessionSnapshot {
+        workspaces: Vec::new(),
+        agents: Vec::new(),
+        active_tab_ids: Default::default(),
+        focused_workspace_id: None,
+        focused_checkout_id: None,
+        focused_tab_id: None,
+        focused_pane_id: None,
+        pane_layouts: Vec::new(),
+        pane_hook_tokens: Default::default(),
+        issue_tokens: Default::default(),
+        issue_links: Default::default(),
+        herdr_version: Some(herdr_version.to_owned()),
+    }
+}
+
+/// PRD device-herdr-update B8: the line is about the server it was left on,
+/// so a server the operator restarted on another release ends it as soon as
+/// that server answers, without waiting for the next kit pass.
+#[test]
+fn a_device_servers_line_ends_once_the_live_server_answers_with_another_release() {
+    use hide_kit::device_herdr::{BehindCause, HerdrUpdate};
+    let helper = KitDevice::answering(Ok(with_herdr(Some(HerdrUpdate::Behind {
+        server_version: "0.9.1".to_owned(),
+        version: "0.9.3".to_owned(),
+        cause: BehindCause::HandoffFailed,
+        reason: "the handoff timed out".to_owned(),
+    }))));
+    let shared = with_consent(Some(helper));
+    shared
+        .lock()
+        .unwrap()
+        .queue_device_kit(DEVICE, KitJob::Apply(hide_kit::Scope::automatic()));
+    settle(&shared);
+    assert!(herdr_behind(&shared).is_some());
+
+    shared
+        .lock()
+        .unwrap()
+        .ingest_remote_session(DEVICE, Ok(live_session("0.9.1")));
+    assert!(herdr_behind(&shared).is_some(), "the same server keeps it");
+
+    shared
+        .lock()
+        .unwrap()
+        .ingest_remote_session(DEVICE, Ok(live_session("0.9.3")));
     assert_eq!(herdr_behind(&shared), None);
 }
 
@@ -2257,21 +2309,7 @@ fn a_device_reads_its_servers_own_version_and_device_advice_for_an_older_protoco
             .cloned()
             .expect("the device's remote status")
     };
-    let session = RemoteSessionSnapshot {
-        workspaces: Vec::new(),
-        agents: Vec::new(),
-        active_tab_ids: Default::default(),
-        focused_workspace_id: None,
-        focused_checkout_id: None,
-        focused_tab_id: None,
-        focused_pane_id: None,
-        pane_layouts: Vec::new(),
-        pane_hook_tokens: Default::default(),
-        issue_tokens: Default::default(),
-        issue_links: Default::default(),
-        herdr_version: Some("0.9.3".to_owned()),
-    };
-    runtime.ingest_remote_session(DEVICE, Ok(session));
+    runtime.ingest_remote_session(DEVICE, Ok(live_session("0.9.3")));
     assert_eq!(remote(&runtime).herdr_version.as_deref(), Some("0.9.3"));
 
     runtime.ingest_remote_session(

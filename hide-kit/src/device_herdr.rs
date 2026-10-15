@@ -52,7 +52,7 @@ pub fn pinned_for_helper(executable: &Path) -> Option<PathBuf> {
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum HerdrUpdate {
     /// Nothing answers on the socket.
-    NoServer,
+    NoServer { version: String },
     /// The server's Herdr is already the pinned version, whatever file it
     /// runs.
     Current { version: String },
@@ -79,8 +79,14 @@ pub enum HerdrUpdate {
         reason: String,
     },
     /// The node could not tell which Herdr the server runs, or could not run
-    /// the pinned copy; nothing was changed.
-    Failed { stage: String, reason: String },
+    /// the pinned copy; nothing was changed. The versions are those read
+    /// before the stage that failed.
+    Failed {
+        stage: String,
+        reason: String,
+        version: Option<String>,
+        server_version: Option<String>,
+    },
 }
 
 /// Why a server older than the pin stays on its Herdr, which decides what
@@ -105,5 +111,67 @@ impl HerdrUpdate {
         record["kind"] = "herdr.handoff".into();
         record["device_id"] = device_id.into();
         record
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    use super::*;
+
+    /// A helper root whose `herdr/current` holds a pinned copy. A real
+    /// folder stands in for the link the node points, which is what the
+    /// paths read through.
+    fn with_pinned_copy(root: &Path) -> PathBuf {
+        let copy = pinned_herdr(root);
+        std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+        std::fs::write(&copy, b"pinned herdr").unwrap();
+        copy
+    }
+
+    /// PRD device-herdr-update B7: the device's terminals run the pinned copy
+    /// only for a helper running from one of its build folders, and only
+    /// when that build brought one.
+    #[test]
+    fn a_helper_in_a_build_folder_finds_the_pinned_herdr_and_any_other_program_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("helper");
+        let helper = root.join("0123456789abcdef").join("hided");
+        assert_eq!(pinned_for_helper(&helper), None, "no copy arrived");
+
+        let copy = with_pinned_copy(&root);
+        assert_eq!(pinned_for_helper(&helper), Some(copy));
+        assert_eq!(
+            pinned_for_helper(&root.join("target").join("hided")),
+            None,
+            "a development build keeps the account's own herdr"
+        );
+    }
+
+    /// PRD device-herdr-update B7: the kit on a device names the pinned copy
+    /// in place of the device's own `herdr`.
+    #[test]
+    fn a_devices_kit_uses_the_pinned_herdr_over_the_devices_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let own = home.join(".local/bin/herdr");
+        std::fs::create_dir_all(own.parent().unwrap()).unwrap();
+        std::fs::write(&own, b"the operator's herdr").unwrap();
+        let root = dir.path().join("helper");
+        let target = |root: &Path| {
+            crate::device_target(
+                root,
+                &home,
+                &home.join(".local/bin"),
+                &home.join("herdr.sock"),
+                Arc::new(AtomicBool::new(false)),
+            )
+        };
+        assert_ne!(target(&root).herdr_bin, Some(pinned_herdr(&root)));
+
+        let copy = with_pinned_copy(&root);
+        assert_eq!(target(&root).herdr_bin, Some(copy));
     }
 }

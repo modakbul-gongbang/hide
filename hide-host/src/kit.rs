@@ -236,7 +236,7 @@ fn run_for_projects(
                     device_herdr::herdr_dir(&placement.root).join(device_herdr::HANDOFF_RECORD);
                 report.herdr = Some(Box::new(update(pinned, &herdr_socket, &record)));
             }
-            remove_unused_herdr(&placement.root, pinned.as_deref());
+            remove_unused_herdr(&placement.root);
             to_value(report)
         }
         KitAction::Status => to_value(hide_kit::status(&target())),
@@ -407,10 +407,7 @@ fn remove_other_builds(root: &Path, keep: &str) {
 fn point_herdr(root: &Path, version: &str) -> Option<PathBuf> {
     let folder = device_herdr::herdr_dir(root);
     let current = folder.join(hide_kit::CURRENT);
-    let pin = std::fs::read_to_string(root.join(version).join(device_herdr::HERDR_PIN))
-        .ok()
-        .map(|pin| pin.trim().to_owned())
-        .filter(|pin| is_build_name(pin));
+    let pin = build_pin(&root.join(version));
     let copy = pin
         .as_deref()
         .map(|pin| folder.join(pin).join(device_herdr::HERDR_PROGRAM))
@@ -434,14 +431,27 @@ fn point_herdr(root: &Path, version: &str) -> Option<PathBuf> {
     }
 }
 
-/// Removes every pinned Herdr copy but `keep` that no process on the device
-/// runs, so a server the operator has not restarted keeps the program it
-/// runs (PRD device-herdr-update D-09). A copy whose use cannot be read is
-/// kept for the next pass.
-fn remove_unused_herdr(root: &Path, keep: Option<&Path>) {
-    let keep = keep.and_then(Path::parent);
+/// The pinned Herdr copy the build folder `build` names, if any.
+fn build_pin(build: &Path) -> Option<String> {
+    std::fs::read_to_string(build.join(device_herdr::HERDR_PIN))
+        .ok()
+        .map(|pin| pin.trim().to_owned())
+        .filter(|pin| is_build_name(pin))
+}
+
+/// Removes every pinned Herdr copy that no build folder names and no process
+/// on the device runs, so a server the operator has not restarted keeps the
+/// program it runs (PRD device-herdr-update D-09), and a copy another
+/// connection uploaded for its build, whose folder it places first, stays
+/// for that build. A copy whose use cannot be read is kept for the next pass.
+fn remove_unused_herdr(root: &Path) {
+    let named = builds(root, None)
+        .iter()
+        .filter_map(|build| build_pin(build))
+        .collect::<std::collections::HashSet<_>>();
     for copy in builds(&device_herdr::herdr_dir(root), None) {
-        if Some(copy.as_path()) == keep || herdr_runs(&copy) {
+        let name = copy.file_name().and_then(|name| name.to_str());
+        if name.is_some_and(|name| named.contains(name)) || herdr_runs(&copy) {
             continue;
         }
         let _ = std::fs::remove_dir_all(copy);
@@ -484,9 +494,7 @@ fn remove_root(root: &Path) -> hide_kit::RemoveOutcome {
             failures.push(format!("{} stayed: {error}", build.display()));
         }
     }
-    if let Some(failure) = remove_herdr(root) {
-        failures.push(failure);
-    }
+    let herdr_kept = remove_herdr(root);
     let current = root.join(hide_kit::CURRENT);
     if std::fs::symlink_metadata(&current).is_ok_and(|meta| meta.file_type().is_symlink())
         && let Err(error) = hide_platform::fs::link::remove_link(&current)
@@ -497,6 +505,9 @@ fn remove_root(root: &Path) -> hide_kit::RemoveOutcome {
         return hide_kit::RemoveOutcome::Failed {
             reason: failures.join("; "),
         };
+    }
+    if let Some(reason) = herdr_kept {
+        return hide_kit::RemoveOutcome::Kept { reason };
     }
     match std::fs::remove_dir(root) {
         Ok(()) => hide_kit::RemoveOutcome::Removed,
@@ -514,7 +525,7 @@ fn remove_root(root: &Path) -> hide_kit::RemoveOutcome {
 
 /// Takes the pinned Herdr copies off a device leaving Hide: every copy no
 /// process runs, the link, the handoff record and the folder. A copy a
-/// server still runs stays with the folder, and says so.
+/// server still runs stays with the folder (D-09), and the answer says why.
 fn remove_herdr(root: &Path) -> Option<String> {
     let folder = device_herdr::herdr_dir(root);
     if !folder.exists() {
@@ -525,12 +536,12 @@ fn remove_herdr(root: &Path) -> Option<String> {
         let _ = hide_platform::fs::link::remove_link(&current);
     }
     let _ = std::fs::remove_file(folder.join(device_herdr::HANDOFF_RECORD));
-    remove_unused_herdr(root, None);
+    remove_unused_herdr(root);
     match std::fs::remove_dir(&folder) {
         Ok(()) => None,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(_) => Some(format!(
-            "{} stayed: a Herdr server on the device still runs a copy in it",
+            "{} stays while a Herdr server on the device runs a copy in it; delete it once that server stops",
             folder.display()
         )),
     }
@@ -695,6 +706,20 @@ mod tests {
         copy
     }
 
+    /// Set on a copy of this test binary that stands in for a Herdr server
+    /// running a pinned copy: it waits for its parent to end it. A copy of a
+    /// system program will not do, because macOS kills a fresh copy of one
+    /// as it starts.
+    const HELD: &str = "HIDE_HOST_HELD_COPY";
+
+    #[test]
+    fn held_copy_role() {
+        if std::env::var_os(HELD).is_some() {
+            use std::io::Read;
+            let _ = std::io::stdin().read(&mut [0]);
+        }
+    }
+
     #[test]
     #[cfg(unix)]
     fn a_build_points_herdr_current_at_its_pinned_copy_and_a_build_without_one_takes_it_away() {
@@ -723,34 +748,64 @@ mod tests {
         );
     }
 
-    #[test]
+    /// A build folder `version` under `root` that names the copy `pin`, and
+    /// that copy.
     #[cfg(unix)]
-    fn an_older_herdr_copy_stays_while_a_process_runs_it_and_goes_once_none_does() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("host-helper");
-        let pinned = herdr_copy(&root, "2222222222222222", Path::new("/bin/sleep"));
-        let older = herdr_copy(&root, "1111111111111111", Path::new("/bin/sleep"));
-        let unused = herdr_copy(&root, "0000000000000000", Path::new("/bin/sleep"));
-        let mut server = hide_platform::process::OwnedChild::spawn(
-            std::process::Command::new(&older).arg("600"),
+    fn pinned_build(root: &Path, version: &str, pin: &str) -> PathBuf {
+        std::fs::create_dir_all(root.join(version)).unwrap();
+        std::fs::write(
+            root.join(version).join(device_herdr::HERDR_PIN),
+            format!("{pin}\n"),
         )
         .unwrap();
-        // The child runs the copy once it has replaced its image.
-        let file = hide_platform::fs::identity::file_id(&older).unwrap();
+        herdr_copy(root, pin, &std::env::current_exe().unwrap())
+    }
+
+    /// A process running the copy `program` of this test binary, once it
+    /// has replaced its image.
+    #[cfg(unix)]
+    fn run_copy(program: &Path) -> hide_platform::process::OwnedChild {
+        let server = hide_platform::process::OwnedChild::spawn(
+            std::process::Command::new(program)
+                .args(["--exact", "kit::tests::held_copy_role", "--test-threads=1"])
+                .env(HELD, "1")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null()),
+        )
+        .unwrap();
+        let file = hide_platform::fs::identity::file_id(program).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while hide_platform::process::running(&file).unwrap().is_empty() {
             assert!(std::time::Instant::now() < deadline, "the copy never ran");
             std::thread::yield_now();
         }
+        server
+    }
 
-        remove_unused_herdr(&root, Some(&pinned));
+    #[test]
+    #[cfg(unix)]
+    fn an_older_herdr_copy_stays_while_a_process_runs_it_and_goes_once_none_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let placement = placed(dir.path(), "bbbbbbbbbbbbbbbb");
+        let root = placement.root;
+        let pinned = pinned_build(&root, "bbbbbbbbbbbbbbbb", "2222222222222222");
+        // Another connection's build, placed before its apply.
+        let arriving = pinned_build(&root, "cccccccccccccccc", "3333333333333333");
+        let test_binary = std::env::current_exe().unwrap();
+        let older = herdr_copy(&root, "1111111111111111", &test_binary);
+        let unused = herdr_copy(&root, "0000000000000000", &test_binary);
+        let mut server = run_copy(&older);
+
+        remove_unused_herdr(&root);
         assert!(pinned.is_file());
+        assert!(arriving.is_file(), "a copy a build names stays");
         assert!(older.is_file(), "the copy a server runs stays");
         assert!(!unused.parent().unwrap().exists());
 
         server.kill_tree().unwrap();
         server.wait().unwrap();
-        remove_unused_herdr(&root, Some(&pinned));
+        remove_unused_herdr(&root);
         assert!(!older.parent().unwrap().exists());
         assert!(pinned.is_file());
     }
@@ -782,6 +837,25 @@ mod tests {
             hide_kit::RemoveOutcome::Removed
         );
         assert!(!placement.root.exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn removal_keeps_the_root_while_a_server_runs_its_herdr_copy_and_says_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let placement = placed(dir.path(), "bbbbbbbbbbbbbbbb");
+        let copy = pinned_build(&placement.root, &placement.version, "1111111111111111");
+        let mut server = run_copy(&copy);
+
+        let outcome = remove_root(&placement.root);
+        server.kill_tree().unwrap();
+        server.wait().unwrap();
+        let hide_kit::RemoveOutcome::Kept { reason } = outcome else {
+            panic!("a copy in use keeps the root: {outcome:?}");
+        };
+        assert!(reason.contains("Herdr server"), "{reason}");
+        assert!(copy.is_file());
+        assert!(!placement.root.join(&placement.version).exists());
     }
 
     #[test]
