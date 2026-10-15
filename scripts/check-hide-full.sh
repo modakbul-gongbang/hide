@@ -41,4 +41,5 @@ node --test scripts/tests/pen-transplant.test.mjs
 node --test scripts/tests/design-scratch.test.mjs
 node --test scripts/tests/design-review.test.mjs
 node --test scripts/tests/hide-screens.test.mjs
+node --test scripts/tests/token-contrast.test.mjs
 node scripts/check-hide-design-enforcement.mjs

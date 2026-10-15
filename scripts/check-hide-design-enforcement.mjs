@@ -14,13 +14,14 @@ const workflowCommands = [
   'node --test scripts/tests/design-scratch.test.mjs',
   'node --test scripts/tests/design-review.test.mjs',
   'node --test scripts/tests/hide-screens.test.mjs',
+  'node --test scripts/tests/token-contrast.test.mjs',
 ];
 const workflowLines = workflow.split(/\r?\n/).map(line => line.trim());
 for (const command of workflowCommands) {
   assert(workflowLines.includes(command), 'Missing CI invocation for ' + command);
 }
 execFileSync(process.execPath, ['scripts/check-design-contract.mjs'], {stdio: 'inherit'});
-for (const suite of ['pen-gallery', 'pen-transplant', 'design-scratch', 'design-review', 'hide-screens']) {
+for (const suite of ['pen-gallery', 'pen-transplant', 'design-scratch', 'design-review', 'hide-screens', 'token-contrast']) {
   execFileSync(process.execPath, ['--test', `scripts/tests/${suite}.test.mjs`], {stdio: 'inherit'});
 }
 console.log('Product enforcement and CI binding PASS');

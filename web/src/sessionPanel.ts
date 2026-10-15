@@ -3,6 +3,7 @@
 import { deviceScope, type AgentScope } from "./agentScope";
 import { deviceConnected, frontDeviceId } from "./devices";
 import { boardProjects } from "./navigation";
+import { allAgents as everyAgent } from "./paneAgents";
 import { scopeAgents, type LensAgent } from "./overviewLens";
 import { catalogWorkspaces, frontCheckout, type AgentRow, type SnapshotRest, type Workspace } from "./snapshot";
 
@@ -40,7 +41,7 @@ export function sessionsModel(rest: SnapshotRest | null, agents: AgentRow[], onl
   return {
     project, scope, members, front, deviceId, projects: projects.map((item) => item.workspace),
     // Lineage can cross devices even when the panel is scoped to one device.
-    agents: [...agents, ...(rest?.status?.remote ?? []).flatMap((status) => status.session?.agents ?? [])],
+    agents: everyAgent(agents, rest?.status?.remote),
     available: deviceConnected(rest, deviceId),
     reason: remote?.message ?? null,
   };

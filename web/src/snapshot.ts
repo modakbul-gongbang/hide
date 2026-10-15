@@ -6,7 +6,7 @@ import type { ProjectSettings, ProjectSettingsWrite } from "./projectSettings";
 // layout. Every selector is a lookup: the snapshot carries every tab's layout,
 // so a tab switch never draws a waiting state (PRD S2 B3).
 
-import type { UsagePreferences } from "./generated/hided-ws";
+import type { AgentLogoMode, UsagePreferences } from "./generated/hided-ws";
 
 /** The status codes the core sends in `status_code`; the catalogs name one word for each (agents.status.*). */
 export type AgentStatusCode = "error" | "question" | "approval" | "working" | "done" | "idle" | "unknown" | "waiting" | "stopped" | "attached" | "sleeping" | "waking" | "sleep_failed";
@@ -1763,6 +1763,10 @@ export type SnapshotRest = {
     accent_hex?: string;
     /** `system`, `light` or `dark`; the page reads anything else as Dark. */
     theme?: string;
+    /** Whether list rows and tabs draw the agent's logo (`contracts/snapshot-wire-enums.json`: `agent_logo_mode`); absent reads as hidden. */
+    agent_logo_mode?: AgentLogoMode;
+    /** `hide` or `neutral` (`contracts/snapshot-wire-enums.json`: `color_theme`); the page reads anything else as Hide. */
+    color_theme?: string;
     /** Core-confirmed explicit choice; null follows this client's system language. */
     interface_language?: "en" | "ko" | "zh-CN" | "ja" | null;
     /** The first-run agent choice (`contracts/snapshot-wire-enums.json`: `agent_onboarding`): absent until this Mac's kit answered, `pending` while its kit record waits for the operator's answer. */

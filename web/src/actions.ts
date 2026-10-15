@@ -8,7 +8,7 @@ import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacen
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
-import type { FocusCheckoutPayload, InterfaceLanguageSetPayload, UiStateUsageHints, UsagePinSetPayload, UsageHiddenSetPayload } from "./generated/hided-ws";
+import type { AgentLogoMode, AgentLogoModeSetPayload, ColorThemeSetPayload, FocusCheckoutPayload, InterfaceLanguageSetPayload, UiStateUsageHints, UsagePinSetPayload, UsageHiddenSetPayload } from "./generated/hided-ws";
 import type { MessageKey } from "./i18n/catalogs";
 import { translate } from "./i18n/client";
 import type { InterfaceLanguage } from "./i18n/locale";
@@ -959,6 +959,17 @@ export function createActions(send: DispatchFn) {
     /** One typed event; the core owns the choice and stores it (D-15). */
     setTheme(theme: ThemeChoice) {
       dispatch({ schema_version: 2, kind: "theme_set", payload: { theme } });
+    },
+    /** One typed event; the core owns the color theme and stores it (hide-color-theme D-08). */
+    setColorTheme(color_theme: ColorThemeSetPayload["color_theme"]) {
+      const payload = { color_theme } satisfies ColorThemeSetPayload;
+      dispatch({ schema_version: 2, kind: "color_theme_set", payload });
+    },
+
+    /** One typed event; the core owns whether list rows and tabs draw the agent's logo (PRD agent-logo-view-mode D-07). */
+    setAgentLogoMode(mode: AgentLogoMode) {
+      const payload = { mode } satisfies AgentLogoModeSetPayload;
+      dispatch({ schema_version: 2, kind: "agent_logo_mode_set", payload });
     },
 
     /** Sleep idle agents after `hours`; null is Never (PRD agent-sleep B2). */
@@ -2075,9 +2086,10 @@ export function createActions(send: DispatchFn) {
     },
 
     openUsageHistory() {
+      // Opening Home resets its view to Agents, so the view is chosen after Overview opens.
+      if (ui().screen?.kind !== "main" && !ui().overviewOpen) this.toggleOverview();
       ui().setOverviewProject(null);
       ui().setMainView("usage");
-      if (ui().screen?.kind !== "main" && !ui().overviewOpen) this.toggleOverview();
     },
 
     openAgentsOverview() {
