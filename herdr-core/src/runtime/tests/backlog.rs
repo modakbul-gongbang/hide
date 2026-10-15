@@ -1243,12 +1243,9 @@ fn a_missed_line_whose_failure_no_retry_can_change_is_added_again_under_a_new_in
     assert_eq!(intents, ["m-2"]);
 }
 
-#[test]
-fn closing_an_items_origin_takes_its_turn_out_of_the_snapshot() {
-    let gh = FakeGh::new();
-    let (shared, _worker) = backlog_runtime(gh);
-    shared.lock().unwrap().snapshot.issue_work.origin = Some(crate::model::BacklogOriginSnapshot {
-        task_key: "github:acme/project#41".into(),
+fn shown_origin(task_key: &str) -> crate::model::BacklogOriginSnapshot {
+    crate::model::BacklogOriginSnapshot {
+        task_key: task_key.into(),
         phase: "ready".into(),
         session: None,
         session_title: None,
@@ -1256,22 +1253,55 @@ fn closing_an_items_origin_takes_its_turn_out_of_the_snapshot() {
         task_name: None,
         request: Some("the operator's request".into()),
         answer: Some("the agent's answer".into()),
-    });
+    }
+}
+
+fn origin_keys(shared: &SharedRuntime) -> Vec<String> {
+    let runtime = shared.lock().unwrap();
+    let mut keys: Vec<_> = runtime
+        .snapshot
+        .issue_work
+        .origins
+        .iter()
+        .map(|origin| origin.task_key.clone())
+        .collect();
+    keys.sort();
+    keys
+}
+
+#[test]
+fn each_items_origin_has_its_own_slot_and_closing_one_leaves_the_others() {
+    let gh = FakeGh::new();
+    let (shared, _worker) = backlog_runtime(gh);
+    // Two windows show two items' panels.
+    shared.lock().unwrap().snapshot.issue_work.origins = vec![
+        shown_origin("github:acme/project#41"),
+        shown_origin("github:acme/project#42"),
+    ];
+    // A third window opens another item: the two already shown stay.
     send(
         &shared,
-        "backlog_origin_close",
-        serde_json::json!({"task_key": "github:acme/project#7"}),
+        "backlog_origin",
+        serde_json::json!({"workspace_id": "w", "task_key": "github:acme/project#43"}),
     );
-    assert!(
-        shared.lock().unwrap().snapshot.issue_work.origin.is_some(),
-        "another item's close leaves this one"
+    assert_eq!(
+        origin_keys(&shared),
+        [
+            "github:acme/project#41",
+            "github:acme/project#42",
+            "github:acme/project#43"
+        ]
     );
     send(
         &shared,
         "backlog_origin_close",
         serde_json::json!({"task_key": "github:acme/project#41"}),
     );
-    assert!(shared.lock().unwrap().snapshot.issue_work.origin.is_none());
+    assert_eq!(
+        origin_keys(&shared),
+        ["github:acme/project#42", "github:acme/project#43"],
+        "closing one item's origin takes only its turn out of the snapshot"
+    );
 }
 
 #[test]

@@ -125,6 +125,9 @@ pub struct AppState {
     /// the core re-reads the pull requests whose checks are running (PRD
     /// overview-request-view D-32).
     pub request_view_demand: Arc<crate::demand::ObservationDemand>,
+    /// Which connections show which backlog item's origin: the core keeps
+    /// an origin until the last of them closes it or leaves.
+    pub origin_holds: Arc<crate::demand::OriginHolds>,
     /// What Settings > About reads about this daemon, sent once after
     /// a handshake. No token, no environment beyond the paths it names.
     pub daemon_info: Arc<Value>,
@@ -1964,6 +1967,21 @@ fn handle_client_text(
             }
             return Ok(ClientAction::Replies(Vec::new()));
         }
+        // An item's origin is read for each window that shows it and closed
+        // in the core only when the last such window lets it go.
+        Some("backlog_origin") => {
+            state
+                .origin_holds
+                .hold(connection, &payload_str(&event, "task_key"))?;
+        }
+        Some("backlog_origin_close") => {
+            if !state
+                .origin_holds
+                .let_go(connection, &payload_str(&event, "task_key"))
+            {
+                return Ok(ClientAction::Replies(Vec::new()));
+            }
+        }
         Some("request_view") => {
             let Some(observing) = event
                 .get("payload")
@@ -3733,6 +3751,19 @@ fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool)
         demand.of(state).release(connection, |observing| {
             dispatch_observation(&state.core, demand, connection, observing)
         });
+    }
+    for task_key in state.origin_holds.release(connection) {
+        let event = json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "backlog_origin_close",
+            "payload": {"task_key": task_key},
+        });
+        if let Err(error) = state.core.dispatch(event.to_string().into_bytes()) {
+            eprintln!(
+                "{}",
+                json!({"component": "hided", "kind": "backlog.origin_release_failed", "connection": connection, "message": error})
+            );
+        }
     }
     let remaining = state
         .clients

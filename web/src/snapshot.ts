@@ -502,8 +502,8 @@ export type IssueWork = {
   backlog?: BacklogItem[];
   /** The last `되돌리기`. */
   undo?: BacklogUndo | null;
-  /** Where the last asked item came from (`backlog_origin`). */
-  origin?: BacklogOrigin | null;
+  /** Where each item a window shows came from, one per item key (`backlog_origin`); kept while any window shows it. */
+  origins?: BacklogOrigin[];
   /** Every item key a missed line made, for the backlog row's flag (B27). */
   missed_keys?: string[];
   /** Every GitHub issue key Hide made for the backlog: only these and memos show `되돌리기` (D-21, B31). */

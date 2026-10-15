@@ -3534,10 +3534,10 @@ pub struct IssueWorkSnapshot {
     /// The latest `되돌리기` (B32).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub undo: Option<BacklogUndoSnapshot>,
-    /// Where the item the backlog panel or the Start dialog shows came from
-    /// (B31, B33).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub origin: Option<BacklogOriginSnapshot>,
+    /// Where each item a backlog panel or a Start dialog shows came from, one
+    /// per item key, kept while any window shows it (B31, B33).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub origins: Vec<BacklogOriginSnapshot>,
     /// Every backlog item key a missed line made, newest first, for the
     /// backlog row's flag (B27).
     #[serde(skip_serializing_if = "Vec::is_empty")]

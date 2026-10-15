@@ -26,7 +26,7 @@ import { useUiStore } from "./ui";
 import { branchProblem, taskFor } from "./workspaceManage";
 import { useErrorSince } from "./WorkspaceDialogs";
 import { fieldLabel } from "./shortcutLabels";
-import { useBacklogOrigin } from "./backlogOrigin";
+import { originOf, useBacklogOrigin } from "./backlogOrigin";
 
 export const DEFAULT_SETTINGS: IssueSettings = { ai_worktree_name: true, closes_instruction: true };
 
@@ -133,7 +133,7 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
   const [prompt, setPrompt] = useState(() => firstPrompt(task, null, settings.closes_instruction, t));
   const promptEdited = useRef(false);
   const detail = useShellStore((s) => (s.rest?.issue_work?.detail?.task_key === task.key ? s.rest.issue_work.detail : null));
-  const origin = useShellStore((s) => (s.rest?.issue_work?.origin?.task_key === task.key ? s.rest.issue_work.origin : null));
+  const origin = useShellStore((s) => originOf(s.rest, task.key));
   const nameAnswer = useShellStore((s) => (s.rest?.issue_work?.name?.request_id === requestId ? s.rest.issue_work.name : null));
   const asked = useRef(false);
   const [request, setRequest] = useState<{ afterId: number; branch: string; at: number } | null>(null);

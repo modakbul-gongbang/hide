@@ -34,6 +34,10 @@ const CREATED_KEPT: usize = 16;
 /// Intents of made items no longer kept, so a late resend of one is still
 /// answered rather than made again.
 const EVICTED_KEPT: usize = 64;
+/// Origins kept at once, one per item a window shows; past it a read is
+/// refused. The daemon lets each window hold a few, so this is reached only
+/// by many windows at once.
+const ORIGIN_LIMIT: usize = 32;
 /// The intent key the shell makes: short, plain, never a path.
 const INTENT_LIMIT: usize = 64;
 
@@ -82,6 +86,9 @@ pub(super) struct BacklogWork {
     evicted: VecDeque<String>,
     undo_generation: u64,
     origin_generation: u64,
+    /// The newest read of each origin in `issue_work.origins`, by item key:
+    /// an answer for an older read lands in nothing.
+    origin_reads: HashMap<String, u64>,
     keys_generation: u64,
 }
 
@@ -1035,32 +1042,46 @@ impl Runtime {
         }
     }
 
-    /// `backlog_origin_close`: the panel and the Start dialog that read an
-    /// item's origin are gone, so the turn's words leave the snapshot.
+    /// `backlog_origin_close`: no window shows the item's panel or Start
+    /// dialog any more (the daemon sends it when the last holder lets go), so
+    /// the turn's words leave the snapshot.
     pub(super) fn close_backlog_origin(&mut self, payload: BacklogKeyPayload) -> bool {
-        if self
-            .snapshot
-            .issue_work
-            .origin
-            .as_ref()
-            .is_none_or(|origin| origin.task_key != payload.task_key)
-        {
-            return false;
-        }
         // A read still on its way is answered into nothing.
-        self.backlog_work.origin_generation += 1;
-        self.snapshot.issue_work.origin = None;
-        true
+        self.backlog_work.origin_reads.remove(&payload.task_key);
+        let origins = &mut self.snapshot.issue_work.origins;
+        let before = origins.len();
+        origins.retain(|origin| origin.task_key != payload.task_key);
+        origins.len() != before
+    }
+
+    fn origin_slot(&mut self, task_key: &str) -> Option<&mut crate::model::BacklogOriginSnapshot> {
+        self.snapshot
+            .issue_work
+            .origins
+            .iter_mut()
+            .find(|origin| origin.task_key == task_key)
     }
 
     /// `backlog_origin`: where an item came from, for its panel's `어디서
     /// 왔나` and the Start prompt (B31, B33). The turn's words are read on the
-    /// session's device and stay in this app.
+    /// session's device and stay in this app. Each item has its own slot, so
+    /// one window's item does not replace another's.
     pub(super) fn read_backlog_origin(&mut self, payload: BacklogItemPayload) -> bool {
+        let task_key = payload.task_key;
+        let known = self.origin_slot(&task_key).is_some();
+        if !known && self.snapshot.issue_work.origins.len() >= ORIGIN_LIMIT {
+            return self.refuse_backlog(
+                "backlog.origin_capacity",
+                "Too many items' origins are open at once",
+            );
+        }
         self.backlog_work.origin_generation += 1;
         let generation = self.backlog_work.origin_generation;
-        let mut slot = crate::model::BacklogOriginSnapshot {
-            task_key: payload.task_key.clone(),
+        self.backlog_work
+            .origin_reads
+            .insert(task_key.clone(), generation);
+        let slot = crate::model::BacklogOriginSnapshot {
+            task_key: task_key.clone(),
             phase: "reading".into(),
             session: None,
             session_title: None,
@@ -1069,12 +1090,16 @@ impl Runtime {
             request: None,
             answer: None,
         };
+        match self.origin_slot(&task_key) {
+            Some(known) => *known = slot,
+            None => self.snapshot.issue_work.origins.push(slot),
+        }
         let Some(client) = self.links_work.client.clone() else {
-            slot.phase = "failed".into();
-            self.snapshot.issue_work.origin = Some(slot);
+            if let Some(slot) = self.origin_slot(&task_key) {
+                slot.phase = "failed".into();
+            }
             return true;
         };
-        self.snapshot.issue_work.origin = Some(slot);
         // Links that are up now, and nothing started for one that is down:
         // the read asks only the one that holds the item's session.
         let nodes: HashMap<String, Arc<dyn NodeLink>> = self
@@ -1088,15 +1113,16 @@ impl Runtime {
                     .map(|(_, node)| (device.id.clone(), node))
             })
             .collect();
-        let task_key = payload.task_key;
+        let asked = task_key.clone();
+        let answered = task_key.clone();
         let spawned = self.spawn_backlog_worker(
             "backlog-origin",
-            move || read_origin(&client, &nodes, &task_key),
+            move || read_origin(&client, &nodes, &asked),
             move |runtime, result| {
-                if runtime.backlog_work.origin_generation != generation {
+                if runtime.backlog_work.origin_reads.get(&answered) != Some(&generation) {
                     return false;
                 }
-                let Some(slot) = runtime.snapshot.issue_work.origin.as_mut() else {
+                let Some(slot) = runtime.origin_slot(&answered) else {
                     return false;
                 };
                 match result {
@@ -1109,13 +1135,13 @@ impl Runtime {
                 true
             },
         );
-        if let Err(code) = spawned
-            && let Some(slot) = self.snapshot.issue_work.origin.as_mut()
-        {
+        if let Err(code) = spawned {
             crate::diagnostic!(
                 serde_json::json!({"component":"backlog","kind":"backlog.worker_unavailable","code":code})
             );
-            slot.phase = "failed".into();
+            if let Some(slot) = self.origin_slot(&task_key) {
+                slot.phase = "failed".into();
+            }
         }
         true
     }

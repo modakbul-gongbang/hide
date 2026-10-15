@@ -12,7 +12,7 @@ import { useInterfaceTranslation } from "./i18n/client";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { cn } from "./lib/utils";
 import { ageWords } from "./overviewLens";
-import { useBacklogOrigin } from "./backlogOrigin";
+import { originOf, useBacklogOrigin } from "./backlogOrigin";
 import { backlogLabels, backlogOf, BACKLOG_SHOWN, backlogTitle, destinationOf, filterRows, pendingItems, startedKeys, titleLeft, undoRetryable, type BacklogRow } from "./overviewBacklog";
 import { isMemoKey, itemToken, taskSections } from "./overviewTasks";
 import { issueDate, type BoardProject } from "./projectBoard";
@@ -259,7 +259,7 @@ export function BacklogItemPanel({ panel, projects, actions }: { panel: Extract<
   const { t, i18n } = useInterfaceTranslation();
   const project = projects.find(({ workspace }) => workspace.id === panel.workspaceId)?.workspace ?? null;
   const task = project?.tasks?.tasks.find((row) => row.key === panel.taskKey) ?? null;
-  const origin = useShellStore((s) => (s.rest?.issue_work?.origin?.task_key === panel.taskKey ? s.rest.issue_work.origin : null));
+  const origin = useShellStore((s) => originOf(s.rest, panel.taskKey));
   const undo = useShellStore((s) => (s.rest?.issue_work?.undo?.task_key === panel.taskKey ? s.rest.issue_work.undo : null));
   const madeByHide = useShellStore((s) => s.rest?.issue_work?.made_keys?.some((key) => key.toLowerCase() === panel.taskKey.toLowerCase()) ?? false);
   const language = requireInterfaceLanguage(i18n.language);
