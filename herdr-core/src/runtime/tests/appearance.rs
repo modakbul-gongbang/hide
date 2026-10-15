@@ -235,6 +235,10 @@ fn an_unknown_agent_logo_mode_event_is_refused_and_changes_nothing() {
     let mut runtime = runtime();
     assert!(runtime.dispatch_json(&agent_logo_mode_set("shown")));
     runtime.dispatch_json(&agent_logo_mode_set("beside"));
+    assert!(
+        runtime.snapshot().status.last_error.is_some(),
+        "the refusal is recorded, not shown as a change"
+    );
     assert_eq!(
         runtime.snapshot().ui_state.agent_logo_mode,
         AgentLogoMode::Shown

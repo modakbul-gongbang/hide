@@ -499,7 +499,7 @@ Choosing the checked choice only closes the menu.
 While the daemon is not connected both choices are disabled and the check stays on the last value received.
 A browser has no Agents hold, so its menu has no key line and no peek.
 The choice is a core preference, `ui_state.agent_logo_mode` (`shown` or `hidden`, `hidden` when never chosen), changed only by `agent_logo_mode_set`; `ui_state_update` never changes it, the check always reads the core's value, every window of one daemon changes at once, and it survives a restart.
-A refused or unsaved change leaves the check and the screens as they were and records a diagnostic, with no alert.
+A mode the core refuses leaves the check and the screens as they were and records a diagnostic, with no alert; a change the core accepts but cannot save is drawn as chosen until the next start and records `ui_state.save_failed`, as the theme does.
 Hidden is the default and draws the screens as before.
 Shown draws the agent's 16-pixel logo after the status mark and before the title in the sidebar's agent rows (a sleeping row after its moon), in Sessions rows and child rows, and in the Agent tabs; a row's second and branch lines indent past it in Sessions, and a kind with no logo draws the neutral `>_`.
 A row Hide AI started that stands alone wears the owl as a badge on the logo; inside a project's Hide AI group it draws the logo alone.

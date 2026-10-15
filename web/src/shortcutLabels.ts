@@ -2,7 +2,7 @@
 // on the system the operator types on, with that host's stored set applied,
 // so a label never names a key the window listener does not answer.
 
-import { hostKind, keySystem } from "./host";
+import { hostKind, keySystem, type HostKind } from "./host";
 import {
   displayChord,
   displayCommand,
@@ -15,6 +15,7 @@ import {
   type Chord,
   type Command,
   type CommandId,
+  type KeySystem,
   type Passthrough,
   type SheetRow,
   type StoredShortcutSets,
@@ -84,9 +85,11 @@ export function fieldLabel(code: string): string {
  * peeks at the agent logos; null where the host has no such family, a browser
  * (PRD agent-logo-view-mode D-11, B16).
  */
-export function agentPeekKey(uiState: StoredShortcutSets = useShellStore.getState().rest?.ui_state): string | null {
-  const host = hostKind();
-  const system = keySystem();
+export function agentPeekKeyOn(uiState: StoredShortcutSets, host: HostKind, system: KeySystem): string | null {
   const modifiers = familyModifiers("agents", hostRegistry(uiState, host, system).registry, host);
   return modifiers ? modifierLabel(modifiers, system) : null;
+}
+
+export function agentPeekKey(uiState: StoredShortcutSets = useShellStore.getState().rest?.ui_state): string | null {
+  return agentPeekKeyOn(uiState, hostKind(), keySystem());
 }
