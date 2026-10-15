@@ -181,17 +181,9 @@
     "owners": {},
     "badge_total": 0,
     "prs": {
-      "counts": {
-        "turn": 0,
-        "fixing": 0,
-        "blocked": 0,
-        "review": 0,
-        "draft": 0,
-        "look": 0
-      },
       "rows": [],
       "groups": [],
-      "open": 0
+      "needs_you": 0
     },
     "rows": [
       {
@@ -573,17 +565,9 @@
     },
     "badge_total": 0,
     "prs": {
-      "counts": {
-        "turn": 0,
-        "fixing": 0,
-        "blocked": 0,
-        "review": 0,
-        "draft": 0,
-        "look": 0
-      },
       "rows": [],
       "groups": [],
-      "open": 0
+      "needs_you": 0
     },
     "rows": [
       {
@@ -944,38 +928,27 @@
     "owners": {},
     "badge_total": 0,
     "prs": {
-      "counts": {
-        "turn": 1,
-        "fixing": 0,
-        "blocked": 0,
-        "review": 0,
-        "draft": 0,
-        "look": 1
-      },
       "rows": [
         {
           "number": 275,
-          "checkout_id": "c-sand",
+          "group": "needs_you",
+          "fold": null,
+          "reason": {
+            "kind": "review",
+            "name": "ada",
+            "since_unix_ms": 1760000000000
+          },
           "agents": [
             {
               "pane_id": "p-child",
               "occurrence": 0
             }
           ],
-          "lineage": [
-            {
-              "pane_id": "p-parent",
-              "occurrence": 0,
-              "depth": 0
-            },
-            {
-              "pane_id": "p-child",
-              "occurrence": 0,
-              "depth": 1
-            }
+          "agent_pane": "p-child",
+          "checkout_id": "c-sand",
+          "checkout_ids": [
+            "c-sand"
           ],
-          "needs_look": true,
-          "group": "turn",
           "issue": {
             "key": "github:acme/hide#273",
             "label": "#273",
@@ -985,17 +958,22 @@
         },
         {
           "number": 260,
-          "checkout_id": null,
-          "agents": [],
-          "lineage": [],
-          "needs_look": false,
           "group": "merged",
+          "fold": null,
+          "reason": {
+            "kind": "merged",
+            "since_unix_ms": 1760000000000
+          },
+          "agents": [],
+          "agent_pane": null,
+          "checkout_id": null,
+          "checkout_ids": [],
           "issue": null
         }
       ],
       "groups": [
         {
-          "group": "turn",
+          "group": "needs_you",
           "numbers": [
             275
           ]
@@ -1007,7 +985,7 @@
           ]
         }
       ],
-      "open": 1
+      "needs_you": 1
     },
     "rows": [
       {
@@ -1252,17 +1230,9 @@
       "owners": {},
       "badge_total": 0,
       "prs": {
-        "counts": {
-          "turn": 0,
-          "fixing": 0,
-          "blocked": 0,
-          "review": 0,
-          "draft": 0,
-          "look": 0
-        },
         "rows": [],
         "groups": [],
-        "open": 0
+        "needs_you": 0
       },
       "rows": [
         {
@@ -1490,17 +1460,9 @@
       "owners": {},
       "badge_total": 0,
       "prs": {
-        "counts": {
-          "turn": 0,
-          "fixing": 0,
-          "blocked": 0,
-          "review": 0,
-          "draft": 0,
-          "look": 0
-        },
         "rows": [],
         "groups": [],
-        "open": 0
+        "needs_you": 0
       },
       "rows": [
         {

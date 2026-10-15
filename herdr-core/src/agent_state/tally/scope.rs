@@ -533,6 +533,10 @@ struct Input {
     factory_workers: HashSet<String>,
     places: Vec<PlaceInput>,
     devices: Vec<DeviceInput>,
+    /// The minute the PRs list was last judged in: a working agent turns
+    /// stalled and a pull request turns old with the clock alone (PRD
+    /// work-tab-pr-lens D-10, D-11), and nothing else would republish.
+    clock_minute: u64,
 }
 
 /// One owned comparison input, bounded by the snapshot's agents and catalog.
@@ -541,6 +545,9 @@ struct Input {
 pub(crate) struct Cache {
     previous: Option<Input>,
     output: Output,
+    /// Where each pull request stood on the last projection, by project: a
+    /// pull request GitHub has not judged yet keeps its place (B12).
+    placements: HashMap<(String, String), HashMap<u32, &'static str>>,
 }
 
 #[derive(Default)]
@@ -638,7 +645,7 @@ fn device_rows(snapshot: &crate::model::Snapshot) -> Vec<DeviceRows<'_>> {
 }
 
 impl Cache {
-    pub(crate) fn refresh(&mut self, snapshot: &mut crate::model::Snapshot) -> bool {
+    pub(crate) fn refresh(&mut self, snapshot: &mut crate::model::Snapshot, now: u64) -> bool {
         let devices = device_rows(snapshot);
         let factory_workers = worker_panes(
             snapshot
@@ -647,6 +654,7 @@ impl Cache {
                 .and_then(|f| f.summary.as_deref()),
         );
         let input = Input {
+            clock_minute: now / 60_000,
             factory_workers,
             devices: devices
                 .iter()
@@ -733,6 +741,7 @@ impl Cache {
         let mut projects = HashMap::new();
         let mut checkouts = HashMap::new();
         let mut device_scopes = HashMap::new();
+        let mut placements = HashMap::new();
         let all: Vec<_> = devices
             .iter()
             .flat_map(|d| d.agents.iter().copied())
@@ -811,8 +820,23 @@ impl Cache {
                 let projected = projects
                     .get_mut(&(project.device_id.clone(), project.id.clone()))
                     .expect("project scope inserted");
-                projected.prs =
-                    crate::agent_state::work::board::project(project, &device.agents, &trees);
+                let key = (project.device_id.clone(), project.id.clone());
+                let previous = self.placements.get(&key).cloned().unwrap_or_default();
+                projected.prs = crate::agent_state::work::board::project(
+                    project,
+                    &device.agents,
+                    &previous,
+                    now,
+                );
+                placements.insert(
+                    key,
+                    projected
+                        .prs
+                        .rows
+                        .iter()
+                        .map(|row| (row.number, row.group))
+                        .collect(),
+                );
                 projected.graph = super::graph::project(
                     project,
                     &projected.members,
@@ -1010,6 +1034,7 @@ impl Cache {
             devices: device_scopes,
             overall,
         };
+        self.placements = placements;
         self.previous = Some(input);
         self.apply(snapshot)
     }

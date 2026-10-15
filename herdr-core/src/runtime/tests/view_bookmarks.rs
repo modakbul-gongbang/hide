@@ -1,6 +1,6 @@
 use super::workspace_view::{layout as view_event, with_new_views};
 use super::*;
-use crate::view_layout::{Layout as ViewLayout, MAX_VIEW_DISPLAYS};
+use crate::view_layout::{Layout as ViewLayout, MAX_TAB_VIEWS, MAX_VIEW_DISPLAYS};
 use crate::workspace_control::{Action, Query, checkout_caller_id};
 
 // The core projects one tab-owned presentation; documents stay shared.
@@ -101,17 +101,20 @@ fn delegated_local_caller_can_manage_background_views() {
 fn rejected_background_open_preserves_documents_lane_and_save_generation() {
     let (mut runtime, checkout, directory) = setup("background-refusal");
     open(&mut runtime, &checkout, &directory, "a.md");
-    // Nothing can close to make room: A's document holds a draft, B's front
-    // is on screen and the rest are files still being read back.
+    // Nothing in A's full tab can close to make room: its document holds a
+    // draft and the rest are files still being read back.
     runtime.dispatch_json(&explorer_event(
         "file_draft",
         serde_json::json!({"contents_utf8": "unsaved text\n"}),
     ));
+    fill_unread(&mut runtime, &directory, MAX_TAB_VIEWS - 1);
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
     open(&mut runtime, &checkout, &directory, "b.md");
-    fill_unread(&mut runtime, &directory, 62);
     runtime.sync_workspace_view();
-    assert_eq!(held(&runtime, &directory), MAX_VIEW_DISPLAYS);
+    assert_eq!(
+        hidden_strip(&runtime, &directory, TABS[0]).len(),
+        MAX_TAB_VIEWS
+    );
     let before = runtime.workspace_views.as_ref().unwrap().views.clone();
     let frame = runtime.snapshot.workspace_view.clone();
     let editor = serde_json::to_value(&runtime.snapshot.editor).unwrap();
@@ -227,6 +230,38 @@ fn empty_agent_presentations_do_not_consume_view_areas() {
     )));
     runtime.sync_workspace_view();
     assert!(strip(&runtime, &directory).is_empty());
+}
+
+/// The reported case: six tabs each showing a page held the checkout's six
+/// View areas, so a seventh tab could open nothing. Each tab's areas are its
+/// own; only the 64 views are the checkout's.
+#[test]
+fn a_seventh_tab_opens_a_page_while_six_tabs_show_pages() {
+    let (mut runtime, checkout_id, directory) = setup("areas-per-tab");
+    let tabs = (1..=7).map(|n| format!("w-order:t{n}")).collect::<Vec<_>>();
+    let ids = tabs.iter().map(String::as_str).collect::<Vec<_>>();
+    for (index, tab) in tabs.iter().enumerate() {
+        runtime.ingest_session(Ok(tab_order_payload(
+            &directory.to_string_lossy(),
+            &ids,
+            &ids,
+            tab,
+        )));
+        runtime.sync_workspace_view();
+        dispatch_focus_tab(&mut runtime, &checkout_id, tab);
+        let url = format!("https://example.test/{index}");
+        runtime.dispatch_json(&explorer_event(
+            "browser_open",
+            serde_json::json!({
+                "url": url,
+                "workspace": {"device_id": crate::node::TEST_NODE, "path": directory.to_string_lossy()},
+            }),
+        ));
+        runtime.sync_workspace_view();
+        assert_eq!(runtime.snapshot.status.last_error, None, "{tab} opens");
+        assert_eq!(strip(&runtime, &directory), [url]);
+    }
+    assert_eq!(held(&runtime, &directory), 7);
 }
 
 #[test]
@@ -392,6 +427,28 @@ fn fill_unread(runtime: &mut Runtime, directory: &Path, count: usize) {
         );
         entry.layout.append(&area, shown).unwrap();
     }
+}
+
+/// `count` pages in the projected presentation's active area, as a tab saved
+/// before the tab cap holds them; the page `index` was looked at `index`th
+/// and the last is in front.
+fn fill_pages(runtime: &mut Runtime, directory: &Path, count: usize) {
+    let entry = runtime
+        .workspace_views
+        .as_mut()
+        .unwrap()
+        .views
+        .entry(crate::node::TEST_NODE, &directory.to_string_lossy());
+    entry.layout.next_id = entry.next_view_identity();
+    let area = entry.layout.active_area.clone();
+    for index in 0..count {
+        let page = entry.layout.new_browser_display(&saved_page(index), 0);
+        entry.layout.insert(&area, page, index as u64 + 1).unwrap();
+    }
+}
+
+fn saved_page(index: usize) -> String {
+    format!("https://example.test/saved/{index}")
 }
 
 fn layout<'a>(runtime: &'a Runtime, directory: &Path) -> &'a ViewLayout {
@@ -647,7 +704,7 @@ fn each_tab_keeps_its_own_list_and_the_lane_stays_the_workspaces() {
     open(&mut runtime, &checkout, &directory, "b.md");
     view_event(
         &mut runtime,
-        serde_json::json!({"tool": "agent_sessions", "pinned": true, "lane_width": 444}),
+        serde_json::json!({"tool": "work", "pinned": true, "lane_width": 444}),
     );
     let b = presentation(&runtime);
     focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
@@ -660,11 +717,7 @@ fn each_tab_keeps_its_own_list_and_the_lane_stays_the_workspaces() {
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
     assert_eq!(
         (view.tool, view.pinned, view.lane_width),
-        (
-            Some(crate::workspace_views::Tool::AgentSessions),
-            true,
-            Some(444)
-        ),
+        (Some(crate::workspace_views::Tool::Work), true, Some(444)),
         "the lane is the Workspace's, so another tab keeps it"
     );
     assert!(
@@ -1195,7 +1248,7 @@ fn closing_a_hidden_owner_does_not_adopt_its_documents_into_b() {
 }
 
 #[test]
-fn repeated_hidden_select_is_a_noop_and_a_full_workspace_closes_its_oldest_view() {
+fn repeated_hidden_select_is_a_noop_and_a_full_tab_closes_its_oldest_view() {
     let (mut runtime, checkout, directory) = setup("presentation-budget");
     open(&mut runtime, &checkout, &directory, "a.md");
     let a = display_id(&runtime, &directory, "a.md");
@@ -1218,12 +1271,15 @@ fn repeated_hidden_select_is_a_noop_and_a_full_workspace_closes_its_oldest_view(
     );
     let before = runtime.snapshot.workspace_view.clone();
     let caller = "w-order:t1:p";
-    for index in 0..62 {
+    for index in 0..MAX_TAB_VIEWS - 1 {
         let action = open_page(&format!("https://example.test/{index}"), false);
         control(&mut runtime, caller, action, &format!("fill-{index}"));
     }
     runtime.sync_workspace_view();
-    assert_eq!(held(&runtime, &directory), MAX_VIEW_DISPLAYS);
+    assert_eq!(
+        hidden_strip(&runtime, &directory, TABS[0]).len(),
+        MAX_TAB_VIEWS
+    );
     control(
         &mut runtime,
         caller,
@@ -1235,8 +1291,8 @@ fn repeated_hidden_select_is_a_noop_and_a_full_workspace_closes_its_oldest_view(
         runtime.snapshot.workspace_view, before,
         "B's own Views stay"
     );
-    assert_eq!(held(&runtime, &directory), MAX_VIEW_DISPLAYS);
     let hidden = hidden_strip(&runtime, &directory, TABS[0]);
+    assert_eq!(hidden.len(), MAX_TAB_VIEWS);
     assert!(
         !hidden.iter().any(|name| name == "a.md"),
         "the view looked at longest ago closed"
@@ -1257,24 +1313,95 @@ fn repeated_hidden_select_is_a_noop_and_a_full_workspace_closes_its_oldest_view(
     );
 }
 
-/// The reported case: hidden tabs fill the Workspace, and a link the
-/// operator clicks still opens beside the agent, in place of the view looked
-/// at longest ago.
+/// A tab's own cap closes its own view looked at longest ago, never another
+/// tab's, even one looked at longer ago.
+#[test]
+fn a_full_tab_closes_its_own_oldest_view_not_an_older_one_elsewhere() {
+    let (mut runtime, checkout, directory) = setup("tab-cap-local");
+    open(&mut runtime, &checkout, &directory, "a.md");
+    open(&mut runtime, &checkout, &directory, "b.md");
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    let url = |index: usize| format!("https://example.test/{index}");
+    for index in 0..=MAX_TAB_VIEWS {
+        runtime.dispatch_json(&explorer_event(
+            "browser_open",
+            serde_json::json!({
+                "url": url(index),
+                "workspace": {"device_id": crate::node::TEST_NODE, "path": directory.to_string_lossy()},
+            }),
+        ));
+        assert_eq!(runtime.snapshot.status.last_error, None);
+    }
+    runtime.sync_workspace_view();
+    let shown = strip(&runtime, &directory);
+    assert_eq!(shown.len(), MAX_TAB_VIEWS);
+    assert!(!shown.contains(&url(0)), "B's view looked at longest ago");
+    assert!(shown.contains(&url(MAX_TAB_VIEWS)));
+    assert_eq!(
+        hidden_strip(&runtime, &directory, TABS[0]),
+        ["a.md", "b.md"],
+        "A's older views stay"
+    );
+}
+
+/// Hidden tabs fill the Workspace, and a link the operator clicks in an
+/// empty tab still opens, in place of the view looked at longest ago,
+/// whichever tab holds it.
 #[test]
 fn a_link_opened_in_a_full_workspace_closes_the_oldest_hidden_view() {
     let (mut runtime, checkout, directory) = setup("link-at-cap");
-    open(&mut runtime, &checkout, &directory, "a.md");
-    for index in 0..62 {
-        control(
-            &mut runtime,
-            "w-order:t1:p",
-            open_page(&format!("https://example.test/{index}"), false),
-            &format!("fill-{index}"),
-        );
+    let full_tabs = MAX_VIEW_DISPLAYS / MAX_TAB_VIEWS;
+    let tabs = (1..=full_tabs + 1)
+        .map(|n| format!("w-order:t{n}"))
+        .collect::<Vec<_>>();
+    let ids = tabs.iter().map(String::as_str).collect::<Vec<_>>();
+    let open_url = |runtime: &mut Runtime, url: &str| {
+        runtime.dispatch_json(&explorer_event(
+            "browser_open",
+            serde_json::json!({
+                "url": url,
+                "workspace": {"device_id": crate::node::TEST_NODE, "path": directory.to_string_lossy()},
+            }),
+        ));
+        assert_eq!(runtime.snapshot.status.last_error, None, "{url}");
+    };
+    for (index, tab) in tabs.iter().enumerate() {
+        runtime.ingest_session(Ok(tab_order_payload(
+            &directory.to_string_lossy(),
+            &ids,
+            &ids,
+            tab,
+        )));
+        runtime.sync_workspace_view();
+        dispatch_focus_tab(&mut runtime, &checkout, tab);
+        if index < full_tabs {
+            for page in 0..MAX_TAB_VIEWS {
+                open_url(
+                    &mut runtime,
+                    &format!("https://example.test/{index}/{page}"),
+                );
+            }
+        }
     }
-    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
-    open(&mut runtime, &checkout, &directory, "b.md");
     assert_eq!(held(&runtime, &directory), MAX_VIEW_DISPLAYS);
+    let url = "https://example.test/clicked";
+    open_url(&mut runtime, url);
+    assert_eq!(strip(&runtime, &directory), [url]);
+    assert_eq!(held(&runtime, &directory), MAX_VIEW_DISPLAYS);
+    let first = hidden_strip(&runtime, &directory, &tabs[0]);
+    assert_eq!(first.len(), MAX_TAB_VIEWS - 1);
+    assert!(!first.iter().any(|name| name == "https://example.test/0/0"));
+}
+
+/// A tab saved with more views than its cap keeps them all until its next
+/// open, which closes its views looked at longest ago down to the cap.
+#[test]
+fn a_tab_saved_with_more_views_keeps_them_until_its_next_open_trims_it() {
+    let (mut runtime, _checkout, directory) = setup("tab-cap-saved");
+    let extra = 4;
+    fill_pages(&mut runtime, &directory, MAX_TAB_VIEWS + extra);
+    runtime.sync_workspace_view();
+    assert_eq!(strip(&runtime, &directory).len(), MAX_TAB_VIEWS + extra);
     let url = "https://example.test/clicked";
     runtime.dispatch_json(&explorer_event(
         "browser_open",
@@ -1284,14 +1411,38 @@ fn a_link_opened_in_a_full_workspace_closes_the_oldest_hidden_view() {
         }),
     ));
     assert_eq!(runtime.snapshot.status.last_error, None);
-    assert_eq!(fronts(&runtime, &directory), [url]);
-    assert_eq!(strip(&runtime, &directory), ["b.md", url]);
-    assert_eq!(held(&runtime, &directory), MAX_VIEW_DISPLAYS);
-    assert!(
-        !hidden_strip(&runtime, &directory, TABS[0])
-            .iter()
-            .any(|name| name == "a.md")
+    let shown = strip(&runtime, &directory);
+    assert_eq!(shown.len(), MAX_TAB_VIEWS);
+    assert!(shown.contains(&url.to_owned()));
+    for index in 0..=extra {
+        assert!(!shown.contains(&saved_page(index)), "page {index} closed");
+    }
+    assert!(shown.contains(&saved_page(extra + 1)));
+}
+
+/// When fewer of a saved tab's views may close than the open needs, the open
+/// is refused and none of them closes.
+#[test]
+fn an_open_that_cannot_trim_a_saved_tab_closes_nothing() {
+    let (mut runtime, _checkout, directory) = setup("tab-cap-saved-held");
+    fill_unread(&mut runtime, &directory, MAX_TAB_VIEWS + 2);
+    fill_pages(&mut runtime, &directory, 2);
+    runtime.sync_workspace_view();
+    let before = runtime.workspace_views.as_ref().unwrap().views.clone();
+    runtime.dispatch_json(&explorer_event(
+        "browser_open",
+        serde_json::json!({
+            "url": "https://example.test/refused",
+            "workspace": {"device_id": crate::node::TEST_NODE, "path": directory.to_string_lossy()},
+        }),
+    ));
+    let refused = runtime.snapshot.status.last_error.clone().unwrap();
+    assert_eq!(refused.kind, "view_layout.display_limit");
+    assert_eq!(
+        refused.message,
+        "This tab has 16 views open. Close a view to open another."
     );
+    assert_eq!(runtime.workspace_views.as_ref().unwrap().views, before);
 }
 
 /// At the cap with nothing that may close, the operator's open is refused
@@ -1300,7 +1451,7 @@ fn a_link_opened_in_a_full_workspace_closes_the_oldest_hidden_view() {
 fn a_link_opened_with_nothing_to_close_is_refused_with_the_view_reason() {
     let (mut runtime, checkout, directory) = setup("link-refused");
     open(&mut runtime, &checkout, &directory, "a.md");
-    fill_unread(&mut runtime, &directory, 63);
+    fill_unread(&mut runtime, &directory, MAX_TAB_VIEWS - 1);
     runtime.sync_workspace_view();
     let before = runtime.workspace_views.as_ref().unwrap().views.clone();
     runtime.dispatch_json(&explorer_event(

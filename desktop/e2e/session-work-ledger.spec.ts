@@ -25,7 +25,7 @@ test("@platform session work records, drafts, ended work and search render in bo
     await workRepositoryReady(run.env.HIDE_STATE_DIR!);
     await enterWorkspace(page, "fixture");
     // Sessions pinned, so the lane stays docked through the sheets below (PRD right-lane B5).
-    await showTool(page, "agent_sessions");
+    await showTool(page, "work");
     await page.locator('[data-lane-pin="off"]').click();
     const first = Date.now();
     github.clock(first, first);

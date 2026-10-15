@@ -100,7 +100,7 @@ export function ProjectSessions({ workspace, actions, target = null, onTarget }:
     actions.openProjectSession(project.id, target.id);
     onTarget?.();
   }, [target, live, named, actions, project, onTarget]);
-  const openPr = useCallback((number: number) => actions.openPullRequestRow(project.id, number), [actions, project]);
+  const openPr = useCallback((number: number) => actions.openPrCard(project.id, number), [actions, project]);
   const openCard = useCallback((number: number) => actions.openMemoryCard(project.deviceId, project.id, number), [actions, project]);
   const clearFilters = useCallback(() => { setProvider("all"); setQuery(""); }, []);
   const total = named === "ours" ? (sessions?.rows.length ?? 0) : 0;

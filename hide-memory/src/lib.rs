@@ -33,7 +33,7 @@ pub use store::{
     InjectedItem, Injection, InjectionKind, InjectionOutcome, MemoryDetail, MemoryError,
     MemoryItem, MemoryLifecycle, MemorySource, MemoryStore, PendingCard, PreviousRevision,
     ProjectMemoryState, Promotion, PromotionState, PromotionSuggestion, ReceiptRecord,
-    RetrievalQuery, SessionCursorRecord, SessionSourceRecord, StoreMode, card_name,
+    RetrievalQuery, SessionCursorRecord, SessionSourceRecord, StoreMode, branch_name, card_name,
     parse_card_name, repository_path,
 };
 pub use verify::{

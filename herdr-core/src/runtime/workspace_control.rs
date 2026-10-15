@@ -397,7 +397,8 @@ impl Runtime {
                 &action,
                 material.as_ref().map(|material| material.path.as_str()),
             ) {
-                self.make_view_room(&key);
+                let tab = self.caller_parked_tab(&key, pane_id);
+                self.make_view_room(&key, tab.as_deref());
             }
             // A pane of a tab the operator is not looking at keeps the
             // operator's fronts and only bookmarks its own tab (D-05).
@@ -936,8 +937,12 @@ impl Runtime {
                             DisplayKind::File => "file",
                             DisplayKind::Diff => "diff",
                             DisplayKind::Browser => "browser",
+                            DisplayKind::PullRequest => "pull_request",
                         },
-                        target: display.url.as_ref().unwrap_or(&display.path).clone(),
+                        target: match display.pr {
+                            Some(number) => format!("#{number}"),
+                            None => display.url.as_ref().unwrap_or(&display.path).clone(),
+                        },
                         selected: area.active.as_deref() == Some(display.id.as_str()),
                         active_area: layout.active_area().id == area.id,
                         page: (display.kind == DisplayKind::Browser).then(|| {

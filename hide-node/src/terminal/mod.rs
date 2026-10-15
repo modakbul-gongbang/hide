@@ -41,7 +41,8 @@ use hide_node_link::terminal::{
 use serde_json::json;
 
 use self::input::{
-    AttachmentHold, HeldChunk, InputFacts, KeyRoute, PaneHold, Refusal, Refusals, Requests,
+    AttachmentHold, HeldChunk, InputFact, InputFacts, KeyRoute, PaneHold, Refusal, Refusals,
+    Requests,
 };
 pub use self::protocol::Mode;
 use self::protocol::SessionEvent;
@@ -1075,7 +1076,7 @@ impl Inner {
         let submitted = input::submits(&chunk.bytes);
         let asleep = self.panes.get(pane).is_some_and(|entry| entry.asleep);
         if asleep {
-            self.input_fact(pane, chunk.typed_at_unix_ms, false, false, now);
+            self.input_fact(pane, &chunk, (false, false), "write_key_asleep", now);
             let entry = self.panes.get_mut(pane).expect("checked above");
             if !entry.asleep_reported {
                 entry.asleep_reported = true;
@@ -1102,7 +1103,13 @@ impl Inner {
                 attachment.hold.queued.extend_from_slice(&chunk.bytes);
                 None
             };
-            self.input_fact(pane, chunk.typed_at_unix_ms, false, false, now);
+            self.input_fact(
+                pane,
+                &chunk,
+                (false, false),
+                "write_key_attachment_hold",
+                now,
+            );
             if let Some(outcome) = outcome {
                 self.report(TerminalReport::AttachmentInput {
                     intent,
@@ -1112,11 +1119,19 @@ impl Inner {
             }
             return;
         }
-        self.input_fact(pane, chunk.typed_at_unix_ms, submitted, focus, now);
+        self.input_fact(pane, &chunk, (submitted, focus), "write_key", now);
         self.write_typed(pane, chunk, now);
     }
 
-    fn input_fact(&mut self, pane: &str, at: u64, submitted: bool, focus: bool, now: Instant) {
+    fn input_fact(
+        &mut self,
+        pane: &str,
+        chunk: &HeldChunk,
+        (submitted, focus): (bool, bool),
+        path: &'static str,
+        now: Instant,
+    ) {
+        let at = chunk.typed_at_unix_ms;
         // Every screen key is the operator's in that pane, but only one into
         // another pane than the last moves the keyboard and cannot wait.
         let moves = focus && self.focus_pane.as_deref() != Some(pane);
@@ -1125,18 +1140,36 @@ impl Inner {
         }
         let facts = self.facts.entry(pane.to_owned()).or_default();
         let waiting = facts.deadline().is_some();
-        let fact = facts.key(now, at, submitted, moves);
+        let fact = facts.key(now, at, submitted, moves, (chunk.bytes.len(), path));
         if !waiting && facts.deadline().is_some() {
             self.wake_clock = true;
         }
         if let Some(fact) = fact {
-            self.report(TerminalReport::Input {
-                pane: pane.to_owned(),
-                at_unix_ms: fact.at_unix_ms,
-                submitted: fact.submitted,
-                focus: fact.focus,
-            });
+            self.report_input(pane.to_owned(), fact);
         }
+    }
+
+    /// Tells the core what the pane's keys amount to, and leaves a record of
+    /// the input that moved the doorbell's draft clock when its window has
+    /// passed: counts and the path, never a byte of what was typed.
+    fn report_input(&mut self, pane: String, fact: InputFact) {
+        if let Some(trace) = &fact.trace {
+            crate::diagnostic!(json!({
+                "component": "terminal_input",
+                "kind": "terminal.input",
+                "pane_id": pane,
+                "path": trace.path,
+                "keys": trace.keys,
+                "bytes": trace.bytes,
+                "submitted": trace.submitted,
+            }));
+        }
+        self.report(TerminalReport::Input {
+            pane,
+            at_unix_ms: fact.at_unix_ms,
+            submitted: fact.submitted,
+            focus: fact.focus,
+        });
     }
 
     /// The writer path every key takes once it is the pane's.
@@ -2141,12 +2174,7 @@ impl Inner {
             .filter_map(|(pane, facts)| facts.due(now).map(|fact| (pane.clone(), fact)))
             .collect::<Vec<_>>();
         for (pane, fact) in reports {
-            self.report(TerminalReport::Input {
-                pane,
-                at_unix_ms: fact.at_unix_ms,
-                submitted: fact.submitted,
-                focus: fact.focus,
-            });
+            self.report_input(pane, fact);
         }
         for unreported in self.refusals.due(now) {
             unreported.log("terminal_service");

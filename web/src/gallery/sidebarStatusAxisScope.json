@@ -100,17 +100,9 @@
   "owners": {},
   "badge_total": 5,
   "prs": {
-    "counts": {
-      "turn": 0,
-      "fixing": 0,
-      "blocked": 0,
-      "review": 0,
-      "draft": 0,
-      "look": 0
-    },
     "rows": [],
     "groups": [],
-    "open": 0
+    "needs_you": 0
   },
   "rows": [
     {

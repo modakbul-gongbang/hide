@@ -6,7 +6,7 @@ import { runInPane, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { chord } from "./chords";
 import { quietFor } from "./wait";
-import { countSent, enterWorkspace, screenshot } from "./wire";
+import { countSent, enterWorkspace, screenshot, showTool } from "./wire";
 
 // PRD right-lane: one lane beside or over Agent Views, a rail of four tools,
 // one pin, the file tree as a column of the files tool. Each test starts one
@@ -114,6 +114,28 @@ test("an opened file comes up over Agent Views without resizing a terminal, stay
   }
 });
 
+test("the rail draws one divider between the Project's tools and the checkout's, and each header says its scope behind an icon (D-37, B54)", async ({ page }) => {
+  test.setTimeout(120_000);
+  const lane = await startLane(page, "lane-scope");
+  try {
+    // One short rule where the Project's tools end and the checkout's begin.
+    const rail = await page.locator("[data-tool-rail] > [data-lane-tool], [data-tool-rail] > [data-tool-rail-divider]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-lane-tool") ?? "divider"));
+    expect(rail).toEqual(["work", "memory", "divider", "files", "changes"]);
+    // The header reads `name · scope` as text, with the icon as decoration only.
+    for (const [tool, name, icon] of [["work", "Work", "folder"], ["memory", "Memory", "folder"], ["files", "Files", "git-branch"], ["changes", "Changes", "git-branch"]] as const) {
+      await showTool(page, tool);
+      const header = page.locator("[data-lane-header]");
+      await expect(header.locator(`svg.lucide-${icon}[aria-hidden="true"]`)).toHaveCount(1);
+      await expect(header.locator("svg.lucide-folder, svg.lucide-git-branch")).toHaveCount(1);
+      const text = (await header.locator("[data-lane-scope]").textContent())!.replace(/\s+/g, " ").trim();
+      expect(text, tool).toMatch(new RegExp(`^${name} · \\S`));
+    }
+  } finally {
+    lane.daemon.stop();
+    lane.herdr.stop();
+  }
+});
+
 test("the pin docks the lane once, keeps it through a terminal click, a tool and an Agent tab, and a restart brings it back docked (B5, B7, B15, B22, B24) @platform", async ({ page }) => {
   test.setTimeout(150_000);
   const lane = await startLane(page, "lane-pin");
@@ -138,8 +160,8 @@ test("the pin docks the lane once, keeps it through a terminal click, a tool and
 
     await pane(page, lane.herdr.panes[0]!).click();
     await expect(screen(page)).toHaveAttribute("data-lane-mode", "docked");
-    await railTool(page, "agent_sessions").click();
-    await expect(page.locator("[data-lane]")).toHaveAttribute("data-lane", "agent_sessions");
+    await railTool(page, "work").click();
+    await expect(page.locator("[data-lane]")).toHaveAttribute("data-lane", "work");
     await expect(screen(page)).toHaveAttribute("data-lane-mode", "docked");
 
     // Another Agent tab keeps the lane and shows its own views.

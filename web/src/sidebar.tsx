@@ -1481,7 +1481,7 @@ function CheckoutOpenButton({
       card={card}
       description={view.detail}
       onOpenPullRequest={(url, external) => actions.openPullRequest(url, workspace.device_id, external)}
-      onShowPullRequestRow={workspace.is_git && readsHere(workspace, devices) ? (number) => actions.openPullRequestRow(workspace.id, number) : undefined}
+      onShowPullRequestRow={workspace.is_git && readsHere(workspace, devices) ? (number) => actions.openPrCard(workspace.id, number) : undefined}
     >
       <button
         type="button"

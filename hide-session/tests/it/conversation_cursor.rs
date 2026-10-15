@@ -222,6 +222,15 @@ fn oversized_native_records_keep_their_turn_mark_without_their_body() {
             }}),
             answered,
         ),
+        // How many questions an async call this large asked is not known.
+        (
+            Agent::Codex,
+            json!({"type":"response_item","payload":{
+                "type":"function_call","call_id":"question-1","name":"request_user_input_async",
+                "arguments":json!({"questions":[{"title":huge}]}).to_string()
+            }}),
+            TurnMark::Unreadable,
+        ),
         (
             Agent::Codex,
             json!({"type":"event_msg","payload":{

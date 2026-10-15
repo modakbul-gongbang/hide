@@ -1864,6 +1864,9 @@ pub const INJECTED_PREFIXES: &[&str] = &[
     "# AGENTS.md instructions",
     "<environment_context>",
     "<user_instructions>",
+    // Codex's record of the operator's answer to an async question: it
+    // answers that question and is not a request.
+    turns::native::ASYNC_REPLY_OPEN,
     // Claude Code's compaction summary, for a version that does not flag it.
     "This session is being continued from a previous conversation",
 ];

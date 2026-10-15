@@ -71,6 +71,13 @@ impl Runtime {
                             &project.checkouts,
                             unix_milliseconds(),
                         );
+                        super::links::associate_pr_sessions(
+                            &mut project.pull_requests,
+                            self.snapshot
+                                .link_summaries
+                                .as_ref()
+                                .and_then(|summaries| summaries.projects.get(&project.id)),
+                        );
                     }
                 }
             }

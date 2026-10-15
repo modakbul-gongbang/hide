@@ -10,6 +10,7 @@ import { clientI18n } from "./i18n/translator";
 import type { MemoryRow, ProjectMemory, SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
+import { emptyScope } from "../test/legacyAgentScope";
 import type { DispatchFn } from "./ws";
 
 const browserCanvas = vi.hoisted(() => {
@@ -27,7 +28,7 @@ const rest = {
   navigator: {
     focused_device_id: "local", focused_checkout_id: "c", focused_workspace_id: "p",
     devices: [{ id: "local", label: "This Mac", kind: "local", state: "local" }],
-    workspaces: [{ id: "p", label: "herdr-ide", device_id: "local", checkouts: [{ id: "c", workspace_id: "p", path: "/p", label: "main", tabs: [], active_tab_id: null, strip: [] }] }],
+    workspaces: [{ id: "p", label: "herdr-ide", device_id: "local", agent_scope: emptyScope(), checkouts: [{ id: "c", workspace_id: "p", path: "/p", label: "main", tabs: [], active_tab_id: null, strip: [] }] }],
   },
 } as unknown as SnapshotRest;
 const row = (number: number, overrides: Partial<MemoryRow> = {}): MemoryRow => ({
@@ -183,7 +184,7 @@ describe("the Memory tab", () => {
     await act(async () => useShellStore.setState({ rest: { ...rest, navigator: { ...rest.navigator, workspaces: [{ ...rest.navigator!.workspaces![0], pull_requests: [{ number: 72, url: "https://github.com/acme/one/pull/72", state: "merged" }] }] } } as unknown as SnapshotRest }));
     expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).toContain("Merged");
     await click("[data-memory-open-pr='72']");
-    expect(useUiStore.getState().overviewLens).toMatchObject({ tab: "prs", prs: { panel: 72, focus: 72 } });
+    expect(sent("pr_open")).toEqual([{ workspace_id: "p", pr_number: 72 }]);
     await render(memory({ rows: [row(7, { promotion: { state: "pr_open", agent: null, pr_number: 72, target_path: null, github_failure: null } })] }));
     expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).toContain("Couldn't check for a PR");
     expect(container.querySelector<HTMLButtonElement>("[data-memory-open-pr='72']")?.disabled).toBe(true);
@@ -238,8 +239,47 @@ describe("the Memory tab", () => {
     expect(status(7)).toBe("Ended without a PR");
     expect(status(8)).toBe("The shell stopped at a question: Update now? [Y/n]");
     expect(status(9)).toBe("The agent didn't start");
-    // Retry stays the one action; nothing else is offered.
+    // Each failed card is retried or left out.
     expect(container.querySelectorAll("[data-memory-retry]")).toHaveLength(3);
+    await click("[data-memory-dismiss='9']");
+    expect(sent("memory_action")).toEqual([{ workspace_id: "p", action: "dismiss", number: 9 }]);
+  });
+
+  it("names a card the agent could not process first and keeps its reason behind the row", async () => {
+    const question = { kind: "failed" as const, number: 7, title: "card 7", start_failure: { code: "card_not_processed" as const, detail: "The behavior is not on main" } };
+    await render(memory({ questions: [question] }));
+    expect(container.querySelector("[data-memory-card='7'] [data-memory-failure]")?.textContent).toBe("Card was not processed · Ended without a PR");
+    expect(container.querySelector("[data-memory-told]")).toBeNull();
+    await render(memory({ questions: [question], expanded: { number: 7, body: "A decision", cited_paths: [], sources: [], previous: null } }));
+    expect(container.querySelector("[data-memory-told='7']")?.textContent).toBe("The agent's reason: The behavior is not on main");
+  });
+
+  it("asks once about a decision nothing builds yet and only offers to keep it", async () => {
+    await render(memory({
+      rows: [row(3), row(7, { kind: "decision" })],
+      questions: [{ kind: "unbuilt", number: 7, title: "card 7", reason: "No branch builds the backlog source" }],
+    }));
+    const asked = container.querySelector("[data-memory-question='unbuilt']");
+    expect(asked?.textContent).toContain("Not built yet · nothing builds it");
+    // Nothing to promote: it is never selected for a batch, retried or promoted.
+    expect(asked?.querySelector("[data-memory-select]")).toBeNull();
+    expect(asked?.querySelector("[data-memory-unbuilt='7']")).not.toBeNull();
+    expect(asked?.querySelector("[data-memory-promote], [data-memory-retry]")).toBeNull();
+    await click("[data-memory-keep='7']");
+    expect(sent("memory_action")).toEqual([{ workspace_id: "p", action: "dismiss", number: 7 }]);
+  });
+
+  it("keeps a card another branch builds in To ask with that work, then its pull request", async () => {
+    const building = { state: "building" as const, agent: { name: "impl-overview", pane_id: "w2:p1" }, pr_number: null, pr_url: null, target_path: "docs/UI_BEHAVIOR.md", github_failure: null };
+    await render(memory({ rows: [row(3), row(7, { promotion: building })] }));
+    const progress = container.querySelector("[data-memory-questions] [data-memory-progress][data-memory-card='7']");
+    expect(progress?.textContent).toContain("Goes in with the PR that builds it");
+    expect(progress?.querySelector("[data-memory-agent='7']")).not.toBeNull();
+    // A card on its way is not drawn again in the list, and nothing is asked.
+    expect(container.querySelector("[data-memory-cards] [data-memory-card='7']")).toBeNull();
+    expect(container.querySelector("[data-memory-question]")).toBeNull();
+    await render(memory({ rows: [row(3), row(7, { promotion: { ...building, pr_number: 1160, pr_url: "https://github.com/acme/one/pull/1160" } })] }));
+    expect(container.querySelector("[data-memory-pr-group='1160']")?.textContent).toContain("Goes in with the PR that builds it");
   });
 
   it("shows a promotion's agent, its pull request, and a merged card dimmed with its file", async () => {

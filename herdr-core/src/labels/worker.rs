@@ -168,8 +168,6 @@ enum WorkerResult {
         generation: u64,
         reference: String,
         from_start: bool,
-        /// The read began at the conversation's start.
-        from_beginning: bool,
         /// Herdr's `state_change_seq` the read was asked under.
         state_change_seq: Option<u64>,
         result: Box<Result<LabelTranscript, ReadFailure>>,
@@ -682,14 +680,13 @@ impl LabelWorker {
                     generation,
                     reference,
                     from_start,
-                    from_beginning,
                     state_change_seq,
                     result,
                 } => self.handle_read(
                     &pane,
                     generation,
                     &reference,
-                    (from_start, from_beginning, state_change_seq),
+                    (from_start, state_change_seq),
                     *result,
                     (now, now_unix_ms),
                 ),
@@ -870,7 +867,7 @@ impl LabelWorker {
         pane_id: &str,
         generation: u64,
         reference: &str,
-        (from_start, from_beginning, asked_seq): (bool, bool, Option<u64>),
+        (from_start, asked_seq): (bool, Option<u64>),
         result: Result<LabelTranscript, ReadFailure>,
         (now, now_unix_ms): (Instant, u64),
     ) -> bool {
@@ -1047,7 +1044,6 @@ impl LabelWorker {
                 },
                 sightings: &transcript.pr_sightings,
                 subagents: &transcript.subagents,
-                from_beginning: from_beginning || transcript.rescanned.is_some(),
             },
             InputView {
                 submits: &submits,
@@ -1713,7 +1709,6 @@ impl Reader {
                             generation: job.generation,
                             reference: job.reference,
                             from_start: job.from_start,
-                            from_beginning: job.request.checkpoint.is_none(),
                             state_change_seq: job.state_change_seq,
                             result: Box::new(result),
                         })
