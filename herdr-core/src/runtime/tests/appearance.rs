@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::model::ThemePreference;
+use crate::model::{ColorTheme, ThemePreference};
 
 pub(super) fn runtime_at(path: &std::path::Path) -> Runtime {
     Runtime::new(
@@ -133,6 +133,174 @@ fn a_ui_state_update_carries_the_theme_through() {
     .unwrap();
     assert!(runtime.dispatch_json(&update));
     assert_eq!(runtime.snapshot().ui_state.theme, ThemePreference::Light);
+}
+
+fn color_theme_set(color_theme: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "color_theme_set",
+        "payload": {"color_theme": color_theme}
+    }))
+    .expect("color theme event")
+}
+
+/// hide-color-theme B6, D-04: a first run opens Hide, and so does an update
+/// from a store written before the color theme existed, which keeps the
+/// mode, accent, language and text size it had.
+#[test]
+fn a_store_without_a_color_theme_opens_hide_and_keeps_the_rest() {
+    assert_eq!(runtime().snapshot().ui_state.color_theme, ColorTheme::Hide);
+    let (_state, path) = state_path("color-theme-update");
+    let mut runtime = runtime_at(&path);
+    assert!(runtime.dispatch_json(&theme_set("light")));
+    assert!(runtime.dispatch_json(&language_set(serde_json::json!("ko"))));
+    let event = ui_state_update(
+        &runtime,
+        serde_json::json!({"accent_hex": "#7DD3FC", "font_size": 15}),
+    );
+    assert!(runtime.dispatch_json(&event));
+    drop(runtime);
+    let mut stored: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    stored.as_object_mut().unwrap().remove("color_theme");
+    std::fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+
+    let updated = runtime_at(&path);
+    let ui = &updated.snapshot().ui_state;
+    assert_eq!(ui.color_theme, ColorTheme::Hide);
+    assert_eq!(ui.theme, ThemePreference::Light);
+    assert_eq!(ui.accent_hex, "#7DD3FC");
+    assert_eq!(ui.font_size, 15.0);
+    assert_eq!(ui.interface_language, Some(serde_json::json!("ko")));
+    assert!(
+        !updated
+            .snapshot()
+            .status
+            .diagnostics
+            .iter()
+            .any(|entry| entry.kind == "ui_state.color_theme_unknown"),
+        "an absent color theme is not an unknown one"
+    );
+}
+
+/// B7, B16, B17, D-08: one event changes the color theme and nothing else,
+/// the same choice again is no change, an unrelated UI save carries it
+/// through, and a restart keeps it.
+#[test]
+fn color_theme_set_changes_only_the_color_theme_and_a_restart_keeps_it() {
+    let (_state, path) = state_path("color-theme-roundtrip");
+    let mut runtime = runtime_at(&path);
+    assert!(runtime.dispatch_json(&theme_set("light")));
+    let before = runtime.snapshot().ui_state.clone();
+    assert!(runtime.dispatch_json(&color_theme_set("neutral")));
+    let after = runtime.snapshot().ui_state.clone();
+    assert_eq!(after.color_theme, ColorTheme::Neutral);
+    assert_eq!(
+        crate::model::UiStateSnapshot {
+            color_theme: before.color_theme,
+            ..after.clone()
+        },
+        before,
+        "nothing but the color theme moved"
+    );
+    assert_eq!(
+        serde_json::to_value(runtime.snapshot()).unwrap()["ui_state"]["color_theme"],
+        "neutral"
+    );
+    assert!(
+        !runtime.dispatch_json(&color_theme_set("neutral")),
+        "the same color theme again is no change"
+    );
+    let stale = ui_state_update(&runtime, serde_json::json!({"font_size": 15}));
+    let mut stale: serde_json::Value = serde_json::from_slice(&stale).unwrap();
+    stale["payload"]["color_theme"] = serde_json::json!("hide");
+    assert!(runtime.dispatch_json(&serde_json::to_vec(&stale).unwrap()));
+    assert_eq!(
+        runtime.snapshot().ui_state.color_theme,
+        ColorTheme::Neutral,
+        "a shared UI save never writes the color theme"
+    );
+    assert!(runtime.dispatch_json(&theme_set("dark")));
+    assert_eq!(runtime.snapshot().ui_state.color_theme, ColorTheme::Neutral);
+    drop(runtime);
+
+    let mut restarted = runtime_at(&path);
+    assert_eq!(
+        restarted.snapshot().ui_state.color_theme,
+        ColorTheme::Neutral
+    );
+    assert_eq!(restarted.snapshot().ui_state.theme, ThemePreference::Dark);
+    assert!(restarted.dispatch_json(&color_theme_set("hide")));
+    drop(restarted);
+    assert_eq!(
+        runtime_at(&path).snapshot().ui_state.color_theme,
+        ColorTheme::Hide
+    );
+}
+
+/// B14, D-09: a stored color theme this build does not know opens Hide and
+/// is recorded only as a diagnostic, beside an unknown mode's own.
+#[test]
+fn an_unknown_stored_color_theme_opens_hide_with_a_diagnostic() {
+    let (_state, path) = state_path("color-theme-unknown");
+    let mut runtime = runtime_at(&path);
+    assert!(runtime.dispatch_json(&color_theme_set("neutral")));
+    drop(runtime);
+    let mut stored: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(stored["color_theme"], "neutral");
+    stored["color_theme"] = serde_json::json!("solarized");
+    stored["theme"] = serde_json::json!("sepia");
+    std::fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+
+    let runtime = runtime_at(&path);
+    assert_eq!(runtime.snapshot().ui_state.color_theme, ColorTheme::Hide);
+    assert_eq!(runtime.snapshot().ui_state.theme, ThemePreference::Dark);
+    let kinds: Vec<&str> = runtime
+        .snapshot()
+        .status
+        .diagnostics
+        .iter()
+        .map(|entry| entry.kind.as_str())
+        .collect();
+    assert!(kinds.contains(&"ui_state.color_theme_unknown"), "{kinds:?}");
+    assert!(kinds.contains(&"ui_state.theme_unknown"), "{kinds:?}");
+    assert!(
+        runtime.snapshot().status.last_error.is_none(),
+        "nothing reaches the screen"
+    );
+}
+
+/// B15, D-09: a color theme the event does not name is refused, and the
+/// stored choice stays.
+#[test]
+fn an_unknown_color_theme_event_is_refused_and_changes_nothing() {
+    let (_state, path) = state_path("color-theme-refused");
+    let mut runtime = runtime_at(&path);
+    assert!(runtime.dispatch_json(&color_theme_set("neutral")));
+    for invalid in [
+        serde_json::json!("solarized"),
+        serde_json::json!(null),
+        serde_json::json!(1),
+    ] {
+        let event = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "color_theme_set",
+            "payload": {"color_theme": invalid}
+        }))
+        .unwrap();
+        runtime.dispatch_json(&event);
+        assert_eq!(
+            runtime.snapshot().ui_state.color_theme,
+            ColorTheme::Neutral,
+            "{invalid} is refused"
+        );
+    }
+    drop(runtime);
+    assert_eq!(
+        runtime_at(&path).snapshot().ui_state.color_theme,
+        ColorTheme::Neutral
+    );
 }
 
 /// The web's `ui_state_update`: the whole current state with `patch` over it.

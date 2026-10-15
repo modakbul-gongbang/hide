@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { accentNameOf, primaryValue, readTheme, resolveTheme } from "./theme";
+import { COLOR_THEMES, accentNameOf, primaryValue, readColorTheme, readTheme, resolveTheme } from "./theme";
 
 describe("theme", () => {
   it("opens Dark when the core has not said, and Dark with a note for a value it does not know", () => {
@@ -15,6 +15,21 @@ describe("theme", () => {
     expect(resolveTheme("system", false)).toBe("light");
     expect(resolveTheme("dark", false)).toBe("dark");
     expect(resolveTheme("light", true)).toBe("light");
+  });
+});
+
+describe("color theme", () => {
+  it("opens Hide when the core has not said, and Hide with a note for a value it does not know (hide-color-theme D-04, D-09)", () => {
+    expect(readColorTheme(undefined)).toEqual({ choice: "hide", unknown: false });
+    expect(readColorTheme(null)).toEqual({ choice: "hide", unknown: false });
+    expect(readColorTheme("neutral")).toEqual({ choice: "neutral", unknown: false });
+    expect(readColorTheme("solarized")).toEqual({ choice: "hide", unknown: true });
+  });
+
+  it("knows exactly the values the core emits, in Settings' order", () => {
+    const contract = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../contracts/snapshot-wire-enums.json"), "utf8"));
+    expect(COLOR_THEMES).toEqual(contract.color_theme);
+    for (const value of contract.color_theme) expect(readColorTheme(value)).toEqual({ choice: value, unknown: false });
   });
 });
 

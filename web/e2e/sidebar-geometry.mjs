@@ -46,7 +46,7 @@ export async function rowBoxes(page) {
       for (const row of document.querySelectorAll(`nav[data-sidebar] ${selector}`)) {
         if (row.getClientRects().length === 0) continue;
         const box = row.getBoundingClientRect();
-        const list = row.closest("[data-project-list]");
+        const list = row.closest("[data-project-list], [data-raised-list]");
         const origin = list ? list.getBoundingClientRect() : { left: 0, top: 0 };
         const left = box.x - origin.left + (list?.scrollLeft ?? 0);
         const top = box.y - origin.top + (list?.scrollTop ?? 0);
@@ -155,7 +155,7 @@ export async function rowPartProblems(page) {
  */
 export async function sidebarColumns(page) {
   return page.evaluate(() => {
-    const list = "nav[data-sidebar] [data-project-list]";
+    const list = "nav[data-sidebar] :is([data-project-list], [data-raised-list])";
     const boxes = (parts) =>
       Array.from(document.querySelectorAll(`${list} :is(${parts})`))
         .filter((part) => part.getClientRects().length > 0)
@@ -186,7 +186,7 @@ export async function sidebarOverflow(page, width) {
     if (!nav) return ["no sidebar"];
     if (value !== null) nav.style.width = value;
     const problems = [];
-    for (const list of Array.from(document.querySelectorAll("[data-project-list]"))) {
+    for (const list of Array.from(document.querySelectorAll("[data-project-list], [data-raised-list]"))) {
       if (list.scrollWidth > list.clientWidth) problems.push(`list scrolls sideways ${list.scrollWidth} > ${list.clientWidth}`);
     }
     for (const row of Array.from(document.querySelectorAll("[data-pane], [data-checkout-row] > *, [data-project] > *"))) {
@@ -214,7 +214,7 @@ export async function sidebarRowsFit(page) {
     // line drawn only in marks is measured too. One drawn transparent or
     // hidden shows nothing: a row's + and ⋯ wait at opacity 0 in its badge's
     // cell until the pointer or the keyboard comes (PRD sidebar-titlebar-refresh D-04).
-    const parts = Array.from(document.querySelectorAll("nav[data-sidebar] [data-project-list] *")).filter(
+    const parts = Array.from(document.querySelectorAll("nav[data-sidebar] :is([data-project-list], [data-raised-list]) *")).filter(
       (part) =>
         part.checkVisibility({ opacityProperty: true, visibilityProperty: true }) &&
         (part.matches("svg, [data-mark], [data-hide-mark]") || Array.from(part.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())),

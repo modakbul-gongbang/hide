@@ -3,8 +3,8 @@
   "short_name": "hide",
   "scope": "/m/",
   "display": "standalone",
-  "background_color": "#101112",
-  "theme_color": "#101112",
+  "background_color": "#0d191b",
+  "theme_color": "#0d191b",
   "icons": [
     { "src": "/m/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/m/icon-512.png", "sizes": "512x512", "type": "image/png" },
