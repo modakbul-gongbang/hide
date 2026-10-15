@@ -142,6 +142,12 @@ impl MemoryCommand {
     }
 }
 
+/// Whether `branch` is a name `hide memory building` takes: one git would
+/// accept for a branch.
+pub fn branch_name(branch: &str) -> bool {
+    hide_memory::branch_name(branch)
+}
+
 /// The number a card name such as `m12` (or a bare `12`) gives.
 pub fn parse_card(value: &str) -> Option<u64> {
     hide_memory::parse_card_name(value).filter(|number| *number > 0)

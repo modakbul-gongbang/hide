@@ -3,9 +3,12 @@
 //! Project's default agent in a new worktree with Hide as its origin, through
 //! the coordination executor's spawn; the agent reads the card with `hide
 //! memory show`, places it where the repository's routing documents say,
-//! names the file with `hide memory placed` and opens a pull request. The core
-//! follows that agent and its pull request to the card's end state; Hide never
-//! writes the repository itself.
+//! names the file with `hide memory placed` and opens a pull request. A card
+//! whose decision the code does not have yet is left to the branch that builds
+//! it (`hide memory building`), whose pull request settles it, or asked about
+//! once when nothing builds it (`hide memory unbuilt`). The core follows that
+//! agent and its pull request to the card's end state; Hide never writes the
+//! repository itself.
 
 use super::*;
 use crate::delivery::HIDE_MEMORY_ROLE;
