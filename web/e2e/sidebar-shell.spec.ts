@@ -175,6 +175,7 @@ test("the window's top row names the device over the rail and the sidebar, and c
     await expect(sidebar).toBeVisible();
     await expect(sidebarSwitch).toHaveAttribute("aria-expanded", "true");
     await expect(terminal).toBeFocused();
+    await expect(page.locator('[data-agent-area-id][data-keyboard-area="true"]')).toHaveCount(1);
   });
 });
 

@@ -61,7 +61,7 @@ function SidebarSwitch({ visible, actions }: { visible: boolean; actions: Action
   const label = visible ? t("sidebar.hide") : t("sidebar.show");
   return (
     <Hint label={label} shortcut={chord}>
-      <Button variant="ghost" size="icon-sm" className="shrink-0 text-subtle-foreground" aria-label={label} aria-expanded={visible} data-sidebar-switch="true" onMouseDown={(event) => event.preventDefault()} onClick={actions.toggleLeftSidebar}>
+      <Button variant="ghost" size="icon-sm" className="shrink-0 text-subtle-foreground" aria-label={label} aria-expanded={visible} data-sidebar-switch="true" data-keyboard-stays="true" onMouseDown={(event) => event.preventDefault()} onClick={actions.toggleLeftSidebar}>
         <PanelLeftIcon />
       </Button>
     </Hint>
