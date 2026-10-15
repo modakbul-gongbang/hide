@@ -1233,21 +1233,22 @@ Opened folder projects use the same neutral selected fill and unboxed tab segmen
 Their required secondary lines and metadata remain visible.
 An opened checkout keeps its rows on the sidebar background, without an enclosing card, border or group fill.
 Checkouts start open, and `session_collapsed_checkout_ids` keeps only the checkouts the operator explicitly closes across launches.
-Within an open checkout or plain folder, every operator root stands at one depth whatever tab holds it: tabs make no depth and, unless named, no row.
+Within an open checkout or plain folder, every operator root stands at one depth whatever tab holds it: tabs make no depth, and a tab adds only the quiet line below.
 The sidebar keeps each root and its complete lineage subtree together under the root's actual tab, in checkout tab order and then the core's root order.
 Groups stay separated by `--spacing-sm` (8px), without a card or border.
 The first group hangs `--spacing-xxs` (2px) under its checkout row, only so the checkout's fill and a selected row's never merge, and the last group ends with the same 8px before the next row, so every agent stands nearer its own checkout than the one below it.
 Root status marks share one axis on the checkout name's column, to the right of the checkout's kind glyph, so no agent row's leftmost ink stands left of its checkout's glyph and a `?` or `!` is scanned on one line.
 Lineage children keep their `--size-lineage-indent` (18px) step and elbow rails from that axis, and a root's lineage disclosure stays in the reserved trailing slot.
-A tab with two or more recognized agent panes draws a 1px vertical guide centered under the checkout's kind glyph (a plain folder's folder glyph) and spanning the group's rows, and opens with one quiet line at its head, a sidebar line and a hairline high, standing inside the guide like a row: the guide runs past it unbroken, the tab glyph stands on the status-mark column and the tab's name in 11px subtle text starts on the title column, so the tab reads as part of its checkout and never as a row beside the checkout's own glyph.
+A tab with two or more recognized agent panes, or with a manual name, draws a 1px vertical guide centered under the checkout's kind glyph (a plain folder's folder glyph) and spanning the group's rows, and opens with one quiet line at its head, a sidebar line and a hairline high, standing inside the guide like a row: the guide runs past it unbroken, the tab glyph stands on the status-mark column and the tab's name in 11px subtle text starts on the title column, so the tab reads as part of its checkout and never as a row beside the checkout's own glyph.
 The name is the tab's manual name, or localized `Tab N` from the core's stable number when it has none.
 Shell panes are not counted, children in other tabs do not inflate their parent's count, and a tab without a sidebar root draws no segment.
 Pointer or keyboard focus on the line shows its hint, the same name and its agent count.
 The line is a button with that accessible name: click, Enter and Space open the real tab without read-state or process effects, and it is a stop in the Arrow Up/Down and Home/End traversal, ahead of its segment's rows.
 The existing tab Rename still sets or clears the manual name; automatic tabbar titles remain independent.
-A single-agent tab draws no guide and no line even when named: its row alone is the segment, and the 8px gap between segments is the tab boundary.
+An unnamed single-agent tab draws no guide and no line: its row alone is the segment, and the 8px gap between segments is the tab boundary.
+Naming a single-agent tab with Rename brings its guide and line, and clearing the name takes them away again.
 A tab has no disclosure and the sidebar saves nothing about it; a stored fold choice from an earlier version is ignored on load and dropped on the next write.
-When two agents become one the segment loses its guide and line, and a second agent brings them back with the name the tab still has.
+When two agents become one an unnamed tab's segment loses its guide and line and a named one keeps them, and a second agent brings them back with the name the tab still has.
 At a 240px sidebar width, its 8px list inset puts the checkout's kind glyph at x28 with the guide centered on x35, root status marks starting at x46 and titles at x62, and a tab line's glyph centered on the status-mark column at x52 with its name at x62; quiet agent rows are 28px high, using the existing 20px line and 4px vertical padding, and a tab line is 22px.
 Focused sidebar agent and checkout rows use the neutral `--secondary` fill.
 Root shortcuts follow the same physical grouping order and deduplicate raised occurrences, with no numbers for tab lines or children.

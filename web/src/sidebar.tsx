@@ -1611,11 +1611,11 @@ function OpenAgentRows({ checkout, groupTabs, deviceId, agentRows, sleeping, ins
 const TAB_LINE = "calc(var(--size-sidebar-line) + var(--spacing-xxs))";
 
 /**
- * A tab is a segment of its checkout's agent list, not a level (docs/UI_BEHAVIOR.md, Sidebar hierarchy): a tab holding two or more agents
- * draws a hairline guide centered under the checkout's kind glyph spanning the segment's rows, and opens with one quiet line inside the
+ * A tab is a segment of its checkout's agent list, not a level (docs/UI_BEHAVIOR.md, Sidebar hierarchy): a tab holding two or more agents,
+ * or one the operator named, draws a hairline guide centered under the checkout's kind glyph spanning the segment's rows, and opens with one quiet line inside the
  * guide, the tab glyph on the status-mark column and its name (the manual one, else `Tab N`) on the title column, so it reads as part of
- * the checkout rather than beside it. The line opens the real tab, and the hint says its name and agent count. A single-agent tab draws
- * nothing: its row alone is the segment, and the gap between segments is the tab boundary.
+ * the checkout rather than beside it. The line opens the real tab, and the hint says its name and agent count. An unnamed single-agent
+ * tab draws nothing: its row alone is the segment, and the gap between segments is the tab boundary.
  */
 function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context }: { group: SidebarTabGroup; checkout: Checkout; deviceId: string; inset: string; glyphColumn: string; context: TreeContext }) {
   const { t } = useInterfaceTranslation();
