@@ -59,5 +59,6 @@ test('a secondary grey is checked on the background, the sidebar and a card', ()
   const found = failures(tokens);
   // Three greys (muted, subtle, the Seen mark's) in Neutral and Hide Light.
   assert.equal(found.length, 6, found.join('\n'));
+  assert.ok(found.some(line => line.includes('--status-seen')), found.join('\n'));
   assert.ok(found.every(line => line.includes('light') && line.includes('on --card')), found.join('\n'));
 });
