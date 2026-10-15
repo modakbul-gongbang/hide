@@ -2,10 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { GitMergeIcon, GitPullRequestClosedIcon, GitPullRequestDraftIcon, GitPullRequestIcon } from "lucide-react";
 import { describe, expect, it } from "vitest";
-import { legacyAgentRow } from "../test/legacyAgentRow";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { agentMark, badgeWord, checksWord, PR_LOOK, reviewWord, staleLabel, staleness } from "./prMark";
-import type { AgentPullRequest, AgentRow, PullRequest } from "./snapshot";
+import { badgeWord, checksWord, PR_LOOK, prMarkParts, reviewWord, staleLabel, staleness } from "./prMark";
+import type { AgentPullRequest, PullRequest } from "./snapshot";
 
 // The one PR mark (docs/status-model.md, Pull request visual states): the
 // palette the operator approved on 2026-10-10, one token per state.
@@ -72,19 +71,19 @@ describe("staleness", () => {
   });
 });
 
-describe("an agent row's mark", () => {
+describe("a PR mark's parts", () => {
   const pull = (number: number): AgentPullRequest => ({ number, title: `PR ${number}`, url: `https://github.com/acme/project/pull/${number}`, badge: "open", checks: "passing", head_branch: `b${number}`, closing_issues: [], live: true, duty: false, created: true, settled_at_unix_ms: null });
-  const row = (pr: AgentRow["state"]["pr"], pulls: AgentPullRequest[]): AgentRow => {
-    const agent = legacyAgentRow({ id: "a", pane_id: "a", identity_label: "a", agent_kind: "claude", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "working", last_activity: "0" });
-    return { ...agent, state: { ...agent.state, pr }, request: { verb: "working" as const, verb_since_unix_ms: 0, request: null, later_by: null, reply: null, pull_requests: pulls } };
-  };
 
-  it("stands for the worst PR the core ordered first, with how many others", () => {
-    const agent = row({ worst: "failed", count: 2, pulls: [{ index: 1, state: "failed" }, { index: 0, state: "pending" }] }, [pull(923), pull(924)]);
-    expect(agentMark(agent)).toEqual({ state: "failed", number: 924, more: 1 });
+  it("draws one PR as its state and number", () => {
+    expect(prMarkParts([{ pull: pull(924), state: "mergeable" }])).toEqual({ state: "mergeable", number: 924 });
   });
 
-  it("draws nothing for a row without its own PR", () => {
-    expect(agentMark(row(null, []))).toBeNull();
+  it("counts several PRs per state, worst first, whatever order they arrive in", () => {
+    const pulls = [{ pull: pull(1), state: "merged" }, { pull: pull(2), state: "mergeable" }, { pull: pull(3), state: "merged" }, { pull: pull(4), state: "failed" }] as const;
+    expect(prMarkParts(pulls)).toEqual({ counts: [{ state: "failed", count: 1 }, { state: "mergeable", count: 1 }, { state: "merged", count: 2 }] });
+  });
+
+  it("draws nothing without a PR", () => {
+    expect(prMarkParts([])).toBeNull();
   });
 });
