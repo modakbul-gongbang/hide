@@ -53,6 +53,7 @@ export function generate(root = process.cwd()) {
       dark.push(`  ${name}: ${color(token.value)};`);
       if (token.hide !== undefined) {
         if (!token.hide.value || !token.hide.light) throw new Error(`${name} has a Hide value without both Dark and Light`);
+        if (token.hide.value === token.value && token.hide.light === token.light) throw new Error(`${name} repeats its Neutral value as Hide; leave hide out so it inherits`);
         hideLight.push(`  ${name}: ${color(token.hide.light)};`);
         hideDark.push(`  ${name}: ${color(token.hide.value)};`);
       }

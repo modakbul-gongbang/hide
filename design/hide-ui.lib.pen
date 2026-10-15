@@ -65044,19 +65044,6 @@
           "theme": {
             "Mode": "Dark"
           }
-        },
-        {
-          "value": "#2A62C4",
-          "theme": {
-            "Palette": "Hide"
-          }
-        },
-        {
-          "value": "#6EA8FF",
-          "theme": {
-            "Mode": "Dark",
-            "Palette": "Hide"
-          }
         }
       ]
     },
@@ -65098,19 +65085,6 @@
           "theme": {
             "Mode": "Dark"
           }
-        },
-        {
-          "value": "#1D4FA8",
-          "theme": {
-            "Palette": "Hide"
-          }
-        },
-        {
-          "value": "#9CC4FF",
-          "theme": {
-            "Mode": "Dark",
-            "Palette": "Hide"
-          }
         }
       ]
     },
@@ -65124,19 +65098,6 @@
           "value": "#91E7E0",
           "theme": {
             "Mode": "Dark"
-          }
-        },
-        {
-          "value": "#0A6162",
-          "theme": {
-            "Palette": "Hide"
-          }
-        },
-        {
-          "value": "#91E7E0",
-          "theme": {
-            "Mode": "Dark",
-            "Palette": "Hide"
           }
         }
       ]
@@ -65152,19 +65113,6 @@
           "theme": {
             "Mode": "Dark"
           }
-        },
-        {
-          "value": "#1D6630",
-          "theme": {
-            "Palette": "Hide"
-          }
-        },
-        {
-          "value": "#A6E9AE",
-          "theme": {
-            "Mode": "Dark",
-            "Palette": "Hide"
-          }
         }
       ]
     },
@@ -65179,19 +65127,6 @@
           "theme": {
             "Mode": "Dark"
           }
-        },
-        {
-          "value": "#7038A8",
-          "theme": {
-            "Palette": "Hide"
-          }
-        },
-        {
-          "value": "#DDBEF8",
-          "theme": {
-            "Mode": "Dark",
-            "Palette": "Hide"
-          }
         }
       ]
     },
@@ -65205,19 +65140,6 @@
           "value": "#FF9DA0",
           "theme": {
             "Mode": "Dark"
-          }
-        },
-        {
-          "value": "#A3212A",
-          "theme": {
-            "Palette": "Hide"
-          }
-        },
-        {
-          "value": "#FF9DA0",
-          "theme": {
-            "Mode": "Dark",
-            "Palette": "Hide"
           }
         }
       ]
@@ -65260,19 +65182,6 @@
           "theme": {
             "Mode": "Dark"
           }
-        },
-        {
-          "value": "#6B4B00",
-          "theme": {
-            "Palette": "Hide"
-          }
-        },
-        {
-          "value": "#F7DA8C",
-          "theme": {
-            "Mode": "Dark",
-            "Palette": "Hide"
-          }
         }
       ]
     },
@@ -65286,19 +65195,6 @@
           "value": "#5FD0C8",
           "theme": {
             "Mode": "Dark"
-          }
-        },
-        {
-          "value": "#0E7576",
-          "theme": {
-            "Palette": "Hide"
-          }
-        },
-        {
-          "value": "#5FD0C8",
-          "theme": {
-            "Mode": "Dark",
-            "Palette": "Hide"
           }
         }
       ]
@@ -65314,19 +65210,6 @@
           "theme": {
             "Mode": "Dark"
           }
-        },
-        {
-          "value": "#2B7A3B",
-          "theme": {
-            "Palette": "Hide"
-          }
-        },
-        {
-          "value": "#7FD88F",
-          "theme": {
-            "Mode": "Dark",
-            "Palette": "Hide"
-          }
         }
       ]
     },
@@ -65341,19 +65224,6 @@
           "theme": {
             "Mode": "Dark"
           }
-        },
-        {
-          "value": "#8A4CC2",
-          "theme": {
-            "Palette": "Hide"
-          }
-        },
-        {
-          "value": "#C99CF0",
-          "theme": {
-            "Mode": "Dark",
-            "Palette": "Hide"
-          }
         }
       ]
     },
@@ -65367,19 +65237,6 @@
           "value": "#F2797D",
           "theme": {
             "Mode": "Dark"
-          }
-        },
-        {
-          "value": "#C8323A",
-          "theme": {
-            "Palette": "Hide"
-          }
-        },
-        {
-          "value": "#F2797D",
-          "theme": {
-            "Mode": "Dark",
-            "Palette": "Hide"
           }
         }
       ]
@@ -65448,19 +65305,6 @@
           "value": "#E8C25F",
           "theme": {
             "Mode": "Dark"
-          }
-        },
-        {
-          "value": "#8A5F00",
-          "theme": {
-            "Palette": "Hide"
-          }
-        },
-        {
-          "value": "#E8C25F",
-          "theme": {
-            "Mode": "Dark",
-            "Palette": "Hide"
           }
         }
       ]

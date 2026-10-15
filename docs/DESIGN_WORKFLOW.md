@@ -308,6 +308,7 @@ Its builder is `scripts/pen-screens-core-move.mjs`, the gallery scenes `core-mov
 
 1. Add the entry to `design/tokens.json`, with both a Dark (`value`) and a Light (`light`) value for a color token, or use `type: "alias"` to point at another token.
    When the Hide color theme draws the color differently, add `hide: {"value": <Dark>, "light": <Light>}` too; an alias takes its target's Hide value and carries none of its own.
+   A `hide` that repeats both Neutral values is refused by the generator, so a later Neutral change cannot leave Hide on the old color.
 2. Run `node scripts/gen-tokens.mjs` to regenerate `web/src/tokens.css` and `web/src/generated/accents.ts`.
 3. Run `node scripts/gen-pen.mjs` to carry the same value into the Pen library's `Mode` and `Palette` variables and Foundations sheet, and `node scripts/gen-screens.mjs` for `design/hide-screens.pen`'s local copy.
 4. Reference the token from Tailwind classes or CSS custom properties in `web/src` (`check-web-tokens.mjs` refuses a literal hex, `rgb()`/`hsl()` or `px` value anywhere in a source, including a CodeMirror theme object or another stylesheet, and Tailwind's own default spacing/text scales, since those are also unchosen literals).
