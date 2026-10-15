@@ -168,6 +168,9 @@ POLICY_ONLY = (
     "agents/*", "site/*", "plugins/*", "tools/*", "spikes/*",
     ".gitignore", "web/.gitignore", "desktop/.gitignore",
     ".github/pull_request_template.md", ".github/dependabot.yml",
+    # The contribution intake: forms, the approved list and the gate that reads it.
+    ".github/ISSUE_TEMPLATE/*", ".github/DISCUSSION_TEMPLATE/*", ".github/APPROVED_CONTRIBUTORS",
+    ".github/workflows/contribution-gate.yml",
     # Workflows no `pr.yml` job calls; `design-contract.yml` has its own pull
     # request trigger, and the nightly calls `perf.yml`.
     ".github/workflows/nightly.yml", ".github/workflows/herdr-update.yml", ".github/workflows/design-contract.yml",

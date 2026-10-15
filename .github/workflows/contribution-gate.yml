@@ -1,0 +1,108 @@
+name: contribution gate
+
+# Closes a pull request whose author is neither a maintainer (write access) nor
+# listed in .github/APPROVED_CONTRIBUTORS, and an issue that did not come through
+# the bug form or runs past its length limit. A maintainer who reopens either
+# keeps it open. CONTRIBUTING.md owns the policy and its reasons.
+#
+# pull_request_target runs this file from main with a write token, so it must
+# never check out or run the pull request's code; it reads only the API.
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+  issues:
+    types: [opened, reopened]
+
+permissions: {}
+
+jobs:
+  gate:
+    if: github.repository == 'modakbul-gongbang/hide'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pull = context.payload.pull_request;
+            const item = pull ?? context.payload.issue;
+            const author = item.user.login;
+            const MARKER = '<!-- hide:contribution-gate -->';
+            const BUG_FORM = /^- \[x\] I reproduced this bug /im;
+            const ISSUE_LIMIT = 8000;
+            // Dependency updates come from these apps, and only they.
+            const BOTS = new Set(['dependabot[bot]', 'github-actions[bot]']);
+
+            async function isMaintainer(login) {
+              try {
+                const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: login });
+                return data.permission === 'admin' || data.permission === 'write';
+              } catch (error) {
+                if (error.status === 404) return false;
+                throw error;
+              }
+            }
+
+            async function approvedContributors() {
+              const { data } = await github.rest.repos.getContent({
+                owner, repo, path: '.github/APPROVED_CONTRIBUTORS', ref: context.payload.repository.default_branch,
+              });
+              return new Set(Buffer.from(data.content, 'base64').toString('utf8')
+                .split('\n')
+                .map(line => line.trim().toLowerCase())
+                .filter(line => line && !line.startsWith('#')));
+            }
+
+            if (BOTS.has(author)) return core.info(`${author} is a dependency bot`);
+            if (await isMaintainer(author)) return core.info(`${author} is a maintainer`);
+            if ((await approvedContributors()).has(author.toLowerCase())) return core.info(`${author} is an approved contributor`);
+            if (context.payload.action === 'reopened' && await isMaintainer(context.payload.sender.login)) {
+              return core.info(`reopened by maintainer ${context.payload.sender.login}`);
+            }
+
+            const policy = `https://github.com/${owner}/${repo}/blob/${context.payload.repository.default_branch}/CONTRIBUTING.md`;
+            const discussions = `https://github.com/${owner}/${repo}/discussions`;
+            let reason;
+            if (pull) {
+              reason = [
+                'hide does not accept pull requests from people who are not listed in `.github/APPROVED_CONTRIBUTORS`, so this one was closed automatically.',
+                '',
+                'If you hit a bug you can reproduce, report it with the bug form; a report does not reserve the work or permit a pull request.',
+                `Ideas, behavior changes and proposals belong in [Discussions](${discussions}).`,
+              ];
+            } else {
+              const body = item.body ?? '';
+              if (BUG_FORM.test(body) && body.length <= ISSUE_LIMIT) return core.info('issue came through the bug form');
+              reason = [
+                body.length > ISSUE_LIMIT
+                  ? `This issue is longer than ${ISSUE_LIMIT} characters, so it was closed automatically. Keep a report to one screen: what happened, what you expected, the steps, and the versions.`
+                  : 'Issues are only for bugs reported through the bug form, so this one was closed automatically.',
+                '',
+                `Ideas, feature requests and questions belong in [Discussions](${discussions}).`,
+              ];
+            }
+            const message = [
+              MARKER,
+              `Hi @${author}, thanks for your interest in hide.`,
+              '',
+              ...reason,
+              '',
+              'A maintainer can reopen this if they want it; a reopen by anyone else is closed again.',
+              '',
+              `The contribution policy: ${policy}`,
+            ].join('\n');
+
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: item.number, per_page: 100 });
+            if (!comments.some(comment => comment.user?.login === 'github-actions[bot]' && comment.body?.includes(MARKER))) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: item.number, body: message });
+            }
+            if (pull) {
+              await github.rest.pulls.update({ owner, repo, pull_number: item.number, state: 'closed' });
+            } else {
+              await github.rest.issues.update({ owner, repo, issue_number: item.number, state: 'closed', state_reason: 'not_planned' });
+            }

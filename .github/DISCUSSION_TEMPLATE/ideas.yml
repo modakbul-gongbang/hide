@@ -1,0 +1,26 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep it short and write it for a person to read: the problem and why it matters, not an implementation you already have. Votes and comments show interest; they do not promise the work or permit a pull request.
+
+  - type: textarea
+    id: task
+    attributes:
+      label: The task you are doing when you want this
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: What hide does today
+    validations:
+      required: true
+
+  - type: textarea
+    id: instead
+    attributes:
+      label: What it should do instead
+    validations:
+      required: true
