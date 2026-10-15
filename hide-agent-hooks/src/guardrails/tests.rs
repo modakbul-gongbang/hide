@@ -1019,11 +1019,14 @@ fn a_git_bash_drive_path_names_the_windows_file() {
     );
     std::fs::write(fixture.repo.join(".env"), "x").unwrap();
     assert_eq!(
-        fixture.shell(&fixture.repo, &format!("cat {mounted}/.env")),
+        fixture.shell(&fixture.repo, &format!("cat '{mounted}/.env'")),
         Some(Rule::Files)
     );
     assert_eq!(
-        fixture.shell(&fixture.worktree, &format!("git -C {mounted} switch topic")),
+        fixture.shell(
+            &fixture.worktree,
+            &format!("git -C '{mounted}' switch topic")
+        ),
         Some(Rule::WorktreeFolder)
     );
 }
