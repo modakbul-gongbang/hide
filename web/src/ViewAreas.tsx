@@ -125,7 +125,7 @@ function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnaps
     sameContent: showsSameDocument,
     tab: (display, interaction) => <DisplayTab display={display} workspace={workspace} interaction={interaction} actions={actions} />,
     body: (display) => (
-      <div key={display.id} className="flex min-h-0 min-w-0 flex-1 flex-col" data-view-body={display.id}>
+      <div key={display.id} className="flex min-h-0 min-w-0 flex-1 flex-col">
         <DisplayBody display={display} workspace={workspace} actions={actions} />
         <FeedbackRow display={display} workspace={workspace} actions={actions} />
       </div>
