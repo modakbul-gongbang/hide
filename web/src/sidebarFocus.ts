@@ -49,9 +49,8 @@ export function revealSidebarFocus(lists: HTMLElement): void {
   const tree = deepest.filter((row) => !raised.includes(row));
   const held = lists.querySelector<HTMLElement>("[data-raised-list]")?.getBoundingClientRect();
   if (held && raised.some((row) => inside(row.getBoundingClientRect(), held.top, held.bottom))) return;
-  const list = lists.querySelector<HTMLElement>("[data-project-list]");
-  if (list && tree.length > 0) revealRow(list, tree, tree[0]!);
-  else raised[0]?.scrollIntoView({ block: "nearest" });
+  if (tree.length > 0) revealRow(lists.querySelector<HTMLElement>("[data-project-list]")!, tree, tree[0]!);
+  else raised[0]!.scrollIntoView({ block: "nearest" });
 }
 
 /**
