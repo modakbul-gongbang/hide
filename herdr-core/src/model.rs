@@ -662,6 +662,21 @@ pub struct DeviceSnapshot {
     /// SSH alias, connection test or helper consent here (PRD
     /// core-host-node-remote-core D-04).
     pub dials_in: bool,
+    /// The device's Herdr server stays on an older release than this
+    /// build's pinned Herdr, as its node last found after a kit pass (PRD
+    /// device-herdr-update B8); `None` while it runs the pin, a newer
+    /// release, or nothing the node could read.
+    pub herdr_behind: Option<HerdrBehindSnapshot>,
+}
+
+/// A device's Herdr server older than the pin, and why it stays there,
+/// which decides the operator's step: `cannot_hand_off` is updated on that
+/// machine, `handoff_failed` is restarted there when its work is safe.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct HerdrBehindSnapshot {
+    pub server_version: String,
+    pub version: String,
+    pub cause: hide_kit::device_herdr::BehindCause,
 }
 
 /// One machine's install kit as Settings shows it (PRD device-parity B7, B8).
@@ -5396,6 +5411,12 @@ pub struct RemoteSessionSnapshot {
     /// in a raw session. Not sent to the shell.
     #[serde(skip)]
     pub issue_links: BTreeMap<String, Vec<crate::issues::IssueReference>>,
+    /// The version the device's Herdr server named in the snapshot this
+    /// session was read from, which follows a live handoff where the status
+    /// read the connection made once does not (PRD device-herdr-update B3).
+    /// Not sent to the shell: the device's remote status carries it.
+    #[serde(skip)]
+    pub herdr_version: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -6434,6 +6455,19 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "agent_logo_mode", &logo_modes);
         checked.insert("agent_logo_mode");
+
+        let behind = [
+            hide_kit::device_herdr::BehindCause::CannotHandOff,
+            hide_kit::device_herdr::BehindCause::HandoffFailed,
+        ];
+        for variant in behind {
+            match variant {
+                hide_kit::device_herdr::BehindCause::CannotHandOff
+                | hide_kit::device_herdr::BehindCause::HandoffFailed => {}
+            }
+        }
+        assert_wire(&contract, "herdr_behind_cause", &behind);
+        checked.insert("herdr_behind_cause");
 
         let kit_availability = [
             hide_kit::Availability::Available,

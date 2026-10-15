@@ -66,6 +66,19 @@ pub(crate) fn protocol_mismatch(
     }
 }
 
+/// What a device's row says when its Herdr speaks an older protocol than
+/// this build: the device's node hands its server to the Herdr Hide brings
+/// when it connects, and the step left is the device's own.
+pub(crate) fn device_protocol_behind(received_protocol: u64, version: Option<&str>) -> String {
+    let herdr = match version {
+        Some(version) => format!("Herdr {version}"),
+        None => "Herdr".to_owned(),
+    };
+    format!(
+        "This device's {herdr} uses protocol {received_protocol}, but Hide requires protocol {HERDR_PROTOCOL_REVISION}. Hide moves the device's Herdr server to its own Herdr when the device connects; if it stays, restart Herdr on the device when its work is safe, or update that machine's Herdr."
+    )
+}
+
 fn malformed(message: impl Into<String>) -> SessionFetchError {
     SessionFetchError::Malformed(message.into())
 }

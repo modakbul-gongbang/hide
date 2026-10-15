@@ -115,6 +115,7 @@ fn report(states: &[(ComponentId, ComponentState)]) -> KitReport {
         codex_daemon_running: None,
         codex_daemon_unreadable: None,
         codex_daemon_off: None,
+        herdr: None,
     }
 }
 
@@ -2119,6 +2120,7 @@ fn a_devices_shown_pane_attaches_again_when_its_link_returns() {
         pane_hook_tokens: Default::default(),
         issue_tokens: Default::default(),
         issue_links: Default::default(),
+        herdr_version: None,
     };
     runtime.snapshot.navigator.focused_device_id = Some(DEVICE.to_owned());
     let attaches = |terminals: &RecordedTerminals| {
@@ -2163,4 +2165,123 @@ fn a_devices_shown_pane_attaches_again_when_its_link_returns() {
         ["install:studio", "remove:studio", "install:studio"]
     );
     assert_eq!(attaches(&terminals), 1, "the shown pane attached again");
+}
+
+fn herdr_behind(shared: &Mutex<Runtime>) -> Option<crate::model::HerdrBehindSnapshot> {
+    shared
+        .lock()
+        .unwrap()
+        .snapshot()
+        .navigator
+        .devices
+        .iter()
+        .find(|device| device.id == DEVICE)
+        .expect("device row")
+        .herdr_behind
+        .clone()
+}
+
+fn with_herdr(update: Option<hide_kit::device_herdr::HerdrUpdate>) -> KitReport {
+    let mut report = report(&[(ComponentId::Cli, ComponentState::Installed)]);
+    report.herdr = update;
+    report
+}
+
+/// PRD device-herdr-update B8, B3: a device server its node left on an
+/// older Herdr puts one line on the device row, with why, until a later
+/// pass finds it on the pin; a read, or a pass that could not tell, keeps it.
+#[test]
+fn a_device_server_left_older_than_the_pin_keeps_its_line_until_a_pass_finds_it_moved() {
+    use hide_kit::device_herdr::{BehindCause, HerdrUpdate};
+    let behind = HerdrUpdate::Behind {
+        server_version: "0.9.1".to_owned(),
+        version: "0.9.3".to_owned(),
+        cause: BehindCause::CannotHandOff,
+        reason: "Herdr 0.9.1 cannot hand its panes over".to_owned(),
+    };
+    let helper = KitDevice::answering(Ok(with_herdr(Some(behind))));
+    let shared = with_consent(Some(Arc::clone(&helper)));
+    let pass = |job: KitJob| {
+        shared.lock().unwrap().queue_device_kit(DEVICE, job);
+        settle(&shared);
+    };
+
+    pass(KitJob::Apply(hide_kit::Scope::automatic()));
+    let line = crate::model::HerdrBehindSnapshot {
+        server_version: "0.9.1".to_owned(),
+        version: "0.9.3".to_owned(),
+        cause: BehindCause::CannotHandOff,
+    };
+    assert_eq!(herdr_behind(&shared), Some(line.clone()));
+
+    *helper.answer.lock().unwrap() = Ok(with_herdr(None));
+    pass(KitJob::Status);
+    assert_eq!(herdr_behind(&shared), Some(line.clone()), "a read keeps it");
+    *helper.answer.lock().unwrap() = Ok(with_herdr(Some(HerdrUpdate::Failed {
+        stage: "ping".to_owned(),
+        reason: "timed out".to_owned(),
+    })));
+    pass(KitJob::Apply(hide_kit::Scope::automatic()));
+    assert_eq!(
+        herdr_behind(&shared),
+        Some(line),
+        "an unreadable server keeps it"
+    );
+
+    *helper.answer.lock().unwrap() = Ok(with_herdr(Some(HerdrUpdate::HandedOff {
+        server_version: "0.9.1".to_owned(),
+        version: "0.9.3".to_owned(),
+        from_pid: 41,
+        to_pid: 42,
+        elapsed_ms: 900,
+    })));
+    pass(KitJob::Apply(hide_kit::Scope::automatic()));
+    assert_eq!(herdr_behind(&shared), None);
+}
+
+/// PRD device-herdr-update B3, B11: the device's Herdr version is the one
+/// its server names in the session, so a handoff shows at once, and a
+/// device on an older protocol is told the device's step, never this
+/// machine's advice to reopen Hide.
+#[test]
+fn a_device_reads_its_servers_own_version_and_device_advice_for_an_older_protocol() {
+    let shared = with_consent(None);
+    let mut runtime = shared.lock().unwrap();
+    let remote = |runtime: &Runtime| {
+        runtime
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == DEVICE)
+            .cloned()
+            .expect("the device's remote status")
+    };
+    let session = RemoteSessionSnapshot {
+        workspaces: Vec::new(),
+        agents: Vec::new(),
+        active_tab_ids: Default::default(),
+        focused_workspace_id: None,
+        focused_checkout_id: None,
+        focused_tab_id: None,
+        focused_pane_id: None,
+        pane_layouts: Vec::new(),
+        pane_hook_tokens: Default::default(),
+        issue_tokens: Default::default(),
+        issue_links: Default::default(),
+        herdr_version: Some("0.9.3".to_owned()),
+    };
+    runtime.ingest_remote_session(DEVICE, Ok(session));
+    assert_eq!(remote(&runtime).herdr_version.as_deref(), Some("0.9.3"));
+
+    runtime.ingest_remote_session(
+        DEVICE,
+        Err(crate::wire::protocol_mismatch(21, Some("0.8.0".to_owned()))),
+    );
+    let status = remote(&runtime);
+    assert_eq!(status.state, "protocol_mismatch");
+    assert_eq!(status.herdr_version.as_deref(), Some("0.8.0"));
+    let message = status.message.expect("the device row says why");
+    assert!(message.contains("restart Herdr on the device"), "{message}");
+    assert!(!message.contains("reopen Hide"), "{message}");
 }

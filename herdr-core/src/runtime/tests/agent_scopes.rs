@@ -129,6 +129,7 @@ fn graph_cross_project_chips_preserve_order_counts_and_stable_device_context() {
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
             issue_links: Default::default(),
+            herdr_version: None,
         }),
     }];
     assert!(runtime.refresh_agent_scopes());
@@ -457,6 +458,7 @@ fn disconnected_devices_zero_the_physical_tile_but_keep_overview_members_from_th
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
             issue_links: Default::default(),
+            herdr_version: None,
         }),
     }];
     assert!(runtime.refresh_agent_scopes());
