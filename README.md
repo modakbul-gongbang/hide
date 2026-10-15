@@ -11,7 +11,6 @@
 
 <p align="center">
   <a href="https://github.com/with-hide/hide/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/with-hide/hide?label=release&color=B9FF66&labelColor=0D191B"></a>
-  <a href="https://github.com/with-hide/hide/actions/workflows/pr.yml?query=branch%3Amain"><img alt="verify on main" src="https://github.com/with-hide/hide/actions/workflows/pr.yml/badge.svg?branch=main"></a>
   <a href="LICENSE"><img alt="Apache License 2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <img alt="macOS, Windows and Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey">
   <a href="https://herdr.dev"><img alt="Built on Herdr" src="https://img.shields.io/badge/built%20on-Herdr-B9FF66?labelColor=0D191B"></a>
@@ -43,13 +42,6 @@ No new API key, no hosted service.
 Hide AI reads what each agent did and gives it a title and a one-line summary.
 Agents sort themselves into four groups, **Needs You, Done, Working and Seen**, and the ones waiting on you sit on top of every screen.
 Hide AI runs on the agent CLI you already use.
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: light)" srcset="site/assets/shots/attention-light.webp">
-    <img src="site/assets/shots/attention-dark.webp" width="420" alt="hide's sidebar. Two agents wait under Needs You, with a one-line reason each. A finished fix sits under Done. Below them, the project tree shows who is still working.">
-  </picture>
-</p>
 
 ### Agents hand work to each other
 
@@ -83,7 +75,7 @@ Add any machine by its SSH alias and its agents join the same groups, and pair y
 - **Files beside the work.** A path an agent names opens next to it, in an editor with a VS Code style Explorer.
 - **Diffs and pull requests.** Each checkout's changes are one click from its tab, with its pull requests in the Work tool.
 - **A browser your agents can drive.** `hide browser open <url>` shows a page beside the agent, which can click, fill and screenshot it.
-- **Keyboard first.** `⌘K` finds any agent, file or pull request.
+- **Keyboard first.** `⌘K` goes to any agent, session, issue or pull request, and `⌘P` opens any file.
 
 > [!NOTE]
 > **Software Factory is coming.** Queue issues with clear requirements; workers take them in order, verify and merge them, and bring back only what needs a person.
@@ -156,6 +148,8 @@ web shell (React) ─ in the Electron app, or a browser on the same machine
 
 The core owns the state behind one snapshot boundary, and the shell only renders it and sends user events back, so the screen never keeps a competing model of the session.
 [ARCHITECTURE.md](docs/ARCHITECTURE.md) explains the boundaries and their reasons.
+
+### Built on Herdr
 
 <!-- herdr-provenance:start -->
 hide distributes the [upstream Herdr release v0.9.3](https://github.com/herdrdev/herdr/releases/tag/v0.9.3).
