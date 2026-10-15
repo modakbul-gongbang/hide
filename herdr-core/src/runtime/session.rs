@@ -5342,6 +5342,14 @@ impl Runtime {
             self.settle_reveal_path(&payload, None);
             return true;
         }
+        if let Some(key) = self.workspace_key(&payload.workspace_id, &payload.checkout_id) {
+            self.expect_view_opener(
+                &key,
+                &payload.path,
+                crate::view_layout::DisplayKind::File,
+                payload.opener_pane.as_deref(),
+            );
+        }
         // A revealed file opens into a display, so a Workspace at its display
         // cap refuses it before it is read.
         if self.separate_view_areas()
@@ -5413,6 +5421,7 @@ impl Runtime {
             workspace_id: workspace_id.to_owned(),
             checkout_id: checkout_id.to_owned(),
             is_directory: false,
+            opener_pane: None,
         };
         self.settle_reveal_path(&payload, prepared);
     }

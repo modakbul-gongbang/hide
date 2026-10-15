@@ -5,6 +5,7 @@
 
 mod actions;
 mod cdp;
+pub mod comment;
 #[cfg(test)]
 mod fake_gateway;
 mod page;

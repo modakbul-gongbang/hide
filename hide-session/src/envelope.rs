@@ -13,6 +13,20 @@ pub fn envelope_sender(text: &str) -> Option<String> {
     envelope_header(text).map(|(sender, _)| sender)
 }
 
+/// Whether the first Hide letter header is the operator's own: the letter a
+/// View feedback Send makes (PRD view-opener-feedback D-11). The core alone
+/// writes the `operator` sender kind; an agent's kind is the provider Herdr
+/// detected.
+pub fn envelope_from_operator(text: &str) -> bool {
+    text.trim_start()
+        .lines()
+        .next()
+        .and_then(|first| first.trim().strip_prefix("Hide letter "))
+        .and_then(|header| header.rsplit_once(" [").map(|(envelope, _)| envelope))
+        .and_then(|envelope| envelope.split_once(" from ").map(|(_, from)| from))
+        .is_some_and(|from| from == "operator (operator)")
+}
+
 /// The canonical envelope sender and kind, for work-giver attribution.
 pub fn envelope_header(text: &str) -> Option<(String, String)> {
     let first = text.trim_start().lines().next()?.trim();
@@ -55,6 +69,11 @@ mod tests {
             assert_eq!(
                 envelope_sender(&body).as_deref(),
                 example["sender"].as_str(),
+                "{line}"
+            );
+            assert_eq!(
+                envelope_from_operator(&body),
+                example["operator"].as_bool().unwrap_or(false),
                 "{line}"
             );
         }

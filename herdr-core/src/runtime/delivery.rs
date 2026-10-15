@@ -834,12 +834,14 @@ impl Runtime {
             }));
         }
         self.hide_started = started;
+        let feedback = self.observe_feedback_letters(&ledger);
         self.delivery_ledger = Ok(ledger);
         let continued = self.settle_dormant_registrations();
         self.feed_link_parents();
         let lineage = (waiters_moved || started_moved) && self.refresh_agent_lineage();
         changed
             | reopened
+            | feedback
             | continued
             | lineage
             | self.sync_session_state()
@@ -873,7 +875,41 @@ impl Runtime {
     pub(crate) fn code_owned_authority_current(&self, caller: &str, actor: &Actor) -> bool {
         caller == actor.pane_id
             && (self.factory_recipient_current(actor)
-                || *actor == Actor::hide(crate::delivery::HIDE_MEMORY_ROLE, self.node.as_str()))
+                || *actor == Actor::hide(crate::delivery::HIDE_MEMORY_ROLE, self.node.as_str())
+                || *actor == Actor::operator(self.node.as_str()))
+    }
+
+    /// A delivery command the operator's Send makes, as the operator's own
+    /// identity, to the agent in `target` (PRD view-opener-feedback D-17).
+    /// Only the shell's `view_feedback_send` reaches this: neither a pane's
+    /// scoped connection nor the CLI can represent that event.
+    pub(crate) fn operator_prepare(
+        &self,
+        target: &str,
+        command: crate::delivery::Command,
+    ) -> Result<crate::delivery::worker::Prepared, String> {
+        let actor = Actor::operator(self.node.as_str());
+        let context = Context {
+            device_id: self.node.as_str().into(),
+            workspace_id: actor.pane_id.clone(),
+            checkout_id: actor.pane_id.clone(),
+            checkout_path: String::new(),
+        };
+        let target = self
+            .delivery_observations
+            .get(target)
+            .cloned()
+            .ok_or("target_unavailable")?;
+        Ok(crate::delivery::worker::Prepared::new(
+            self.delivery_client.clone().ok_or("delivery_unavailable")?,
+            Authority {
+                caller: actor.pane_id.clone(),
+                context,
+            },
+            actor,
+            Some(target),
+            command,
+        ))
     }
 
     /// A delivery client and authority for Hide's own `role`, the origin of
@@ -2261,6 +2297,16 @@ pub(crate) mod tests {
             &Actor::hide("other", crate::node::TEST_NODE)
         ));
         assert!(crate::delivery::reserved_name("hide:memory"));
+        // The operator's identity answers only as itself, and no pane can
+        // take its name (PRD view-opener-feedback D-17, B35).
+        let operator = Actor::operator(crate::node::TEST_NODE);
+        assert!(guard.code_owned_authority_current(&operator.pane_id, &operator));
+        assert!(!guard.code_owned_authority_current("sender", &operator));
+        assert!(crate::delivery::reserved_name("operator"));
+        assert!(crate::delivery::reserved_name(" Operator "));
+        assert!(crate::delivery::reserved_name("OPERATOR:x"));
+        assert!(!crate::delivery::reserved_name("operators"));
+        assert!(crate::delivery::reserved_name(&operator.pane_id));
         let forged = Actor {
             session: Some("forged".into()),
             ..Actor::factory("f-1", crate::node::TEST_NODE)

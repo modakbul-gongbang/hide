@@ -313,6 +313,20 @@ The kind is a closed set in code (`TaskKind`), and each known kind names its hom
 A kind this build does not know loads from the ledger as it was written, so a record a newer build wrote never fails the load or loses the rest of the ledger, and its agent stays an operator's row.
 A new spawn of a kind with no home is refused `task_kind_unknown`, and the first time an agent of such a kind is seen the diagnostic log records `hide_ai.task_kind_unknown` once.
 
+## The operator's View feedback
+
+The operator is a third code-owned identity, `operator` of kind `operator` (`Actor::operator`), the sender of the letter a View feedback Send makes ([UI_BEHAVIOR.md](UI_BEHAVIOR.md#view-openers-and-comments), PRD view-opener-feedback D-17).
+Only the core constructs it, and only for an operator's screen's `view_feedback_send`, which hided accepts from a desktop or web window whose connection its token proved; no pane's scoped connection, `hide` command or page script can represent that event, and a pane or agent name that is `operator` or starts with `operator:` is refused at registration like `factory:` and `hide:`.
+It has no pane and reads no letters; its letter is a `report`, so it waits for no answer, and its first line reads `Hide letter <id> from operator (operator) [report]` (`contracts/delivery-envelope.json`), which `hide_session::envelope_from_operator` recognizes, so the agent reads it as the operator's own prompt and starts working.
+The letter rings the recipient's doorbell and waits for rest exactly as any letter does.
+Its body lists each comment in its recipient's order: a page's URL, View id, selector, element text, source location when known and screenshot path; a file's or diff's path, line range, quoted lines and note; an image's or PDF's path, page, area and screenshot path.
+What a page wrote (its selector, element text and source attribute) is kept to one line of plain words, and a path, address or quoted line has its newlines and control characters as spaces, so nothing but the operator's own note can start a line in the operator's letter.
+A body over the 16 KiB letter cap is written whole to an attachment file and the letter carries a summary and its path.
+Screenshots and that file are attachments: they travel over the recipient device's existing link (node protocol 33's `feedback` call), land in an owner-only folder per letter under the recipient machine's `letter-attachments`, and are removed with the letter; hided sweeps orphans at start, and one machine's attachments are capped at 256 MiB, past which the Send is refused with its reason.
+A Send to a device whose link is down waits like a letter and says so on the View's line.
+The comments leave their View only once the letter is stored; the ledger's outcome decides the rest: delivered drops them, expired returns them marked `Not delivered`.
+A Send names its own request id, and Retry names only that id (`to` `retry`): the core sends again to the agent and Views the Send asked for, so a retried Send converges on the same letter, and a moving core holds it behind its effect hold ([ARCHITECTURE.md](ARCHITECTURE.md#moving-the-core)).
+
 ## Names on the wire and on screen
 
 An agent has two kinds of name, and each is made in one place.

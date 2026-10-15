@@ -2425,13 +2425,19 @@ export function createActions(send: DispatchFn) {
      * (`besideDisplay`) so it stays in view. An address the Workspace
      * already shows is focused and loaded again.
      */
-    openBrowser(url: string, workspace?: ViewWorkspace, areaId?: string, besideDisplay?: string) {
+    openBrowser(url: string, workspace?: ViewWorkspace, areaId?: string, besideDisplay?: string, openerPane?: string) {
       const target = workspace ?? frontViewWorkspace();
       if (!target) return diagnostic("browser_open: no Workspace in front");
       dispatch({
         schema_version: 2,
         kind: "browser_open",
-        payload: { url, workspace: { device_id: target.device_id, path: target.path }, ...(areaId ? { area_id: areaId } : {}), ...(besideDisplay ? { beside_display: besideDisplay } : {}) },
+        payload: {
+          url,
+          workspace: { device_id: target.device_id, path: target.path },
+          ...(areaId ? { area_id: areaId } : {}),
+          ...(besideDisplay ? { beside_display: besideDisplay } : {}),
+          ...(openerPane ? { opener_pane: openerPane } : {}),
+        },
       });
     },
 
@@ -2443,7 +2449,7 @@ export function createActions(send: DispatchFn) {
      * own link is: the desktop host routes `window.open` to the system, and a
      * browser tab opens a tab.
      */
-    openLink(url: string, external: boolean) {
+    openLink(url: string, external: boolean, openerPane?: string) {
       // The core keeps a Workspace in front while the page shows All projects
       // or an Overview; a display opened there would land out of sight.
       const inFront = ui().screen?.kind === "workspace" ? frontViewWorkspace() : null;
@@ -2451,7 +2457,7 @@ export function createActions(send: DispatchFn) {
         window.open(url, "_blank", "noopener,noreferrer");
         return;
       }
-      this.openBrowser(url);
+      this.openBrowser(url, undefined, undefined, undefined, openerPane);
     },
 
     /** A checkout's pull request (PRD checkout-pr-glyph-card D-02, D-11): a link, and the default browser's for an SSH device's checkout. */
@@ -2470,10 +2476,12 @@ export function createActions(send: DispatchFn) {
      * Outside every checkout, or on ⌘ (Ctrl off macOS), the desktop host
      * hands it to the operating system.
      */
-    openTerminalPath(found: FoundPath, line: number | null, column: number | null, external: boolean, mode: "auto" | "source" = "auto") {
+    openTerminalPath(found: FoundPath, line: number | null, column: number | null, external: boolean, mode: "auto" | "source" = "auto", openerPane?: string) {
       const bridge = hostBridge();
       if (!bridge) return diagnostic("terminal link: this host cannot open a path");
       if (external) return bridge.openPath(found.real);
+      // The pane's agent opens what lands in View (PRD view-opener-feedback D-02).
+      const opener = openerPane ? { opener_pane: openerPane } : {};
       void terminalPathOwner(found).then((owner) => {
         if (owner === undefined) return;
         if (!owner) {
@@ -2490,8 +2498,8 @@ export function createActions(send: DispatchFn) {
             schema_version: 2,
             kind: "browser_open",
             payload: here
-              ? { url: fileUrl(path), workspace: here }
-              : { url: fileUrl(path), workspace: { device_id: deviceId, path: owner.checkout.path }, reveal: true },
+              ? { url: fileUrl(path), workspace: here, ...opener }
+              : { url: fileUrl(path), workspace: { device_id: deviceId, path: owner.checkout.path }, reveal: true, ...opener },
           });
           return;
         }
@@ -2500,14 +2508,14 @@ export function createActions(send: DispatchFn) {
           dispatch({
             schema_version: 2,
             kind: "file_open",
-            payload: { path, workspace_id: owner.checkout.workspace_id, checkout_id: owner.checkout.id, preview: false, view: here },
+            payload: { path, workspace_id: owner.checkout.workspace_id, checkout_id: owner.checkout.id, preview: false, view: here, ...opener },
           });
           return;
         }
         dispatch({
           schema_version: 2,
           kind: "reveal_path",
-          payload: { path, workspace_id: owner.checkout.workspace_id, checkout_id: owner.checkout.id, is_directory: found.kind === "directory" },
+          payload: { path, workspace_id: owner.checkout.workspace_id, checkout_id: owner.checkout.id, is_directory: found.kind === "directory", ...opener },
         });
       });
     },
@@ -2517,6 +2525,38 @@ export function createActions(send: DispatchFn) {
       const target = frontViewWorkspace();
       if (!target) return diagnostic("browser_open: no Workspace in front");
       dispatch({ schema_version: 2, kind: "browser_open", payload: { url: fileUrl(path), workspace: { device_id: target.device_id, path: target.path } } });
+    },
+
+    /**
+     * One change to the operator's comments on a View (PRD
+     * view-opener-feedback): add, edit, delete, undo or relocate. An image
+     * or PDF comment's crop rides as `shot_png`, which hided stages before
+     * the core sees the event (D-23).
+     */
+    commentView(workspace: ViewWorkspace, action: { action: "add" | "edit" | "delete" | "undo" | "relocate" } & Record<string, unknown>) {
+      dispatch({ schema_version: 2, kind: "view_comment", payload: { workspace: { device_id: workspace.device_id, path: workspace.path }, ...action } });
+    },
+
+    /**
+     * Sends a recipient group's comments as one letter from the operator
+     * (B16-B20). A Retry sends the same `requestId` with `to` `retry`: the
+     * core sends again what that Send asked, and a letter the first try
+     * stored is not stored twice (B27, engineering principle 11).
+     */
+    sendViewFeedback(workspace: ViewWorkspace, requestId: string, group: string, to: { kind: "default" } | { kind: "pane"; pane_id: string } | { kind: "reopen" } | { kind: "retry" }, displayId: string | null) {
+      dispatch({
+        schema_version: 2,
+        kind: "view_feedback_send",
+        payload: { workspace: { device_id: workspace.device_id, path: workspace.path }, request_id: requestId, group, to, ...(displayId ? { display_id: displayId } : {}) },
+      });
+    },
+
+    /**
+     * Comment mode on a browser View, on or off, and the pins it draws
+     * (B9-B11): hided holds the page while it is on (`browser_comment`).
+     */
+    browserComment(payload: Record<string, unknown>) {
+      dispatch({ schema_version: 2, kind: "browser_comment", payload });
     },
 
     /** The address field: the display loads what was typed. */
@@ -2539,6 +2579,11 @@ export function createActions(send: DispatchFn) {
     keepViewOpen,
 
     focusView,
+    /** A View an agent opened, chosen from its pane's `N views` (B8): the lane shows the files tool and the View comes forward. */
+    revealView(displayId: string) {
+      showTool("files");
+      focusView(displayId, true);
+    },
     focusViewArea,
     moveView,
     splitView,

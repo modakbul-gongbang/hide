@@ -43,6 +43,18 @@ The shell derives tab segments and physical agent counts from the snapshot and k
 A tab has no disclosure state: the former `sidebar_collapsed_tabs` field and its `sidebar_tab_expanded` event are gone, and a state file that still carries the field loads without error and loses it on the next save.
 Nothing in this feature writes state; typing and terminal echo add no event, I/O, timer or subprocess for it.
 
+### View openers and comments
+
+Who opened a View and the operator's comments on Views are core state (PRD view-opener-feedback, `herdr-core/src/view_feedback.rs`, `herdr-core/src/runtime/view_feedback.rs`).
+A View's opener lives on its display in `workspace-views.json`, kept by device, Herdr terminal id, native session and provider, never by pane id, which a restarted Herdr server gives another shell; the pane is found again from terminal and session each time a snapshot is made, and an opener found nowhere is shown closed.
+It is written only by a workspace control open whose pane caller Hide proved and by a terminal-link open that carries the clicked pane, and a navigate the operator types clears it; a caller with no proven pane writes none, which `opener.none` in the diagnostic log records with its reason.
+A checkout's comments live beside its Views in the same file under `feedback`, saved by the existing coalesced save: at most 50 per View and 500 per checkout, each note at most 4000 characters, each quoted range at most 20 lines, checked in the core; each add, edit, delete, undo, relocate and Send is one event.
+The workspace-view snapshot carries `feedback` only while there are comments or a Send to say: the comments of the Views on screen, the recipient groups, the opened Views per pane, and the last Send's state; each display carries its unsent count.
+Finding a comment's lines again after a save is the shell's work on the text it already holds, reported once per change as a `relocate` event, so nothing reads a file for it under the lock or on a keystroke.
+A Send runs on one feedback worker off the lock with at most 64 jobs: it reads the screenshots from the node that staged them, places them on the recipient's node, then stores the letter as the operator ([delivery.md](delivery.md#the-operators-view-feedback)); no screenshot byte passes through an event, the lock or a snapshot.
+Before the core, hided keeps each operator window's comments and Sends on one queue per window, at most 256 waiting and four of them with a screenshot: it stages a comment's screenshot off the socket loop and hands the events to the core in the order the window made them, so a Send never overtakes the comment before it, and a full queue is refused to that window as an error.
+The worker waits on a moving core's effect hold, and the comments, openers and waiting Sends travel with the move like the rest of `workspace-views.json`.
+
 ## The core, the shell and Herdr
 
 The core (`herdr-core`) owns all state behind one `Mutex<Runtime>`.
@@ -862,7 +874,7 @@ A link is closed by an end time, never deleted, and only when its source says it
 Retention follows each Project's Copied history: Off keeps a line only while its file exists, which the own node answers for all of them in one `real_paths` call (a call that fails removes nothing; an OpenCode session, which lives in OpenCode's database, until its read finds it gone), otherwise a line stays while it ended within the period, or within a year while its pull request is still open; the prune runs every 30 minutes on the worker.
 A repository is keyed by GitHub's repository id when `gh repo view` gives it, so a rename keeps its rows.
 
-A connected device's sessions come through its helper: `link_files` lists the device's changed session files and `link_read` reads up to 8 of them, each answer only link facts (helper protocol 32 includes bounded request and issue facts); the worker asks each ready device at most once a minute, a device whose call failed is left alone for a minute before it is asked again, and a device that is gone keeps every row it gave.
+A connected device's sessions come through its helper: `link_files` lists the device's changed session files and `link_read` reads up to 8 of them, each answer only link facts (helper protocol 32 and later include bounded request and issue facts); the worker asks each ready device at most once a minute, a device whose call failed is left alone for a minute before it is asked again, and a device that is gone keeps every row it gave.
 The owning node converts the native cwd in each `LinkRead` answer to the platform layer's wire spelling before sending it, so Windows agent paths relate to catalog paths with the same separators without the core interpreting another device's native path.
 The panel's read is one request at a time, the latest only, answered as `link_panel` on its own delta revision beside `rest`; `links_open` names the pull request or issue, a generation fence drops an answer for one no longer shown, and a failure keeps the lines read before.
 A store that cannot open is tried again every 15 s, and while it is closed, or while the worker's writes keep failing, the panel's answer is that failure rather than a record that stopped growing.
@@ -888,7 +900,7 @@ Only `hide-links` writes it; record reads and session search are latest-only mai
 Missed-work previews capture the common Project repository resolver with their owning device and checkout.
 An unknown original repository or a confirmed connection to another repository refuses creation; connection edits cancel the captured preview or create and reject its late answer while retaining the worker's ownership until it ends.
 Every external create remains pinned to the original reserved repository, and a retry reconciles that durable attempt before another effect.
-The helper's version 32 supplies canonical request senders and letter kinds from every supported native reader; an older helper keeps its existing raw requests and PR facts until updated.
+From version 32 the helper supplies canonical request senders and letter kinds from every supported native reader; an older helper keeps its existing raw requests and PR facts until updated.
 
 The record retains requests of at most 500 characters, goal chapters, assigned tasks, END judgments, created outputs and missed work.
 A Claude Code command record (`<command-name>`) is a request only when what Claude Code wrote after it shows the command went to the model: a command it answers itself, such as `/model` with its `<local-command-stdout>` or a `local_command` system record, is neither a request nor a Sessions last request, a search hit or label context.
@@ -1586,7 +1598,7 @@ The core registers the node as an inbound device, by its node id, named by its h
 Each of those answers is a method of the registration's `LinkOrigin` (`Dialed { ssh_alias }` or `Inbound`), which the store keeps in its old spelling (`ssh_alias`, or `inbound: true`); a stored registration with both or neither is dropped with a diagnostic and the rest of the store loads.
 The attach role ends with its channel, with the core's socket, or after 30 s without a byte from its node (three missed heartbeats), so a half-open connection or a stopped core leaves nothing running on C (B20).
 
-What crosses the link is the node contract of the other layers, in the other direction (NodeLink protocol 32 adds bounded session request and issue facts after 31's typed hook proof and answer, 30's credential-free usage fetch and 29's shell integration call).
+What crosses the link is the node contract of the other layers, in the other direction (NodeLink protocol 33 adds the `feedback` call for View feedback screenshots and letter attachments, after 32's bounded session request and issue facts, 31's typed hook proof and answer, 30's credential-free usage fetch and 29's shell integration call).
 Within 28 a stream's `StreamOpen` may name the caller its node proved (`hide_node_link::panes::StreamCaller`), an optional field: a stream with no proof carries none and its commands are checked with `Call::PaneInspect`. Both ends of a link run one build (a node dials only its core's build, and a core uploads its own build to a device it dials), so the field never meets a peer that lacks it; its serde default only keeps a line without it readable.
 C reaches M's Herdr through link streams (`Call::LinkOpen` naming Herdr as the end, `LinkWrite`, `LinkClose` down, `link_data` and `link_closed` up; the other end a stream names is M's browser relay, below), at most 32 Herdr streams per link with 64 chunks waiting each (a browser relay stream, whose chunks are a relay's CDP, 128), so C's session sync, controls, doorbell, find and phone reply reach M's Herdr with no socket file on C (D-18).
 A stream C gives up (its reader fell 64 chunks behind, or its open went unanswered) keeps its place until its owner drops it, and the node is always told to close it, so the node's 32 slots never leak.

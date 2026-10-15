@@ -244,10 +244,10 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
         if (found) return actions.copyText(found.real, "terminal path");
         return;
       }
-      if (target.kind === "url") return actions.openLink(target.url, id === "link_external");
+      if (target.kind === "url") return actions.openLink(target.url, id === "link_external", pane.id);
       if (!found) return;
       if (id === "link_reveal") return actions.revealExternal(found.real);
-      return actions.openTerminalPath(found, target.line, target.column, id === "link_external", id === "link_source" ? "source" : "auto");
+      return actions.openTerminalPath(found, target.line, target.column, id === "link_external", id === "link_source" ? "source" : "auto", pane.id);
     }
     switch (id) {
       case "copy_name":

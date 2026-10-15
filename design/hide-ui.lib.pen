@@ -64266,6 +64266,34 @@
       "type": "color",
       "value": "#F4F4F61F"
     },
+    "--diff-added-wash": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#15803D26"
+        },
+        {
+          "value": "#5EE69E26",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
+    },
+    "--diff-removed-wash": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#D6232326"
+        },
+        {
+          "value": "#FF595C26",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
+    },
     "--color-emphasis-wash": {
       "type": "color",
       "value": "#F4F4F629"
@@ -66174,6 +66202,14 @@
     "--size-tree-mark": {
       "type": "number",
       "value": 16
+    },
+    "--size-view-note": {
+      "type": "number",
+      "value": 320
+    },
+    "--size-view-opener-mark": {
+      "type": "number",
+      "value": 10
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

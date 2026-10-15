@@ -283,6 +283,10 @@ pub struct WorkspaceViewSnapshot {
     /// machine's and a node's that dialed in); `None` on a device this core
     /// dials, whose Herdr shows one tab.
     pub agent_layout: Option<AgentLayoutSnapshot>,
+    /// The operator's comments on this checkout's Views (PRD
+    /// view-opener-feedback); absent while there are none and no Send to say.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feedback: Option<ViewFeedbackSnapshot>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -383,10 +387,149 @@ pub struct ViewDisplaySnapshot {
     /// loaded asks it to load `url` again. Zero for a file or a diff.
     #[serde(skip_serializing_if = "load_unset")]
     pub load: u64,
+    /// The agent that last opened it (PRD view-opener-feedback D-03);
+    /// absent for a View the operator opened.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opener: Option<ViewOpenerSnapshot>,
+    /// The operator's comments on it that are not sent, and of those the
+    /// ones whose letter expired (B14, B29).
+    #[serde(skip_serializing_if = "count_unset")]
+    pub comments: usize,
+    #[serde(skip_serializing_if = "count_unset")]
+    pub not_delivered: usize,
 }
 
 fn load_unset(load: &u64) -> bool {
     *load == 0
+}
+
+fn count_unset(count: &usize) -> bool {
+    *count == 0
+}
+
+/// A View's opener as the screen shows it: its name and logo, and the pane
+/// it is in now, found by its terminal and session, never by a pane id
+/// (D-23, B40).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ViewOpenerSnapshot {
+    pub name: String,
+    pub provider: String,
+    pub device_id: String,
+    /// The pane the agent is in now; absent while it is closed (B6).
+    pub pane_id: Option<String>,
+    /// Whether `Reopen and send` can start its session again (D-10).
+    pub resumable: bool,
+}
+
+/// The operator's comments on the front Workspace's Views and where their
+/// Send stands (PRD view-opener-feedback). Absent while there is nothing.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ViewFeedbackSnapshot {
+    /// The open comments on the Views the layout shows, with their text.
+    pub comments: Vec<ViewCommentSnapshot>,
+    /// Every recipient with open comments in this checkout, those on closed
+    /// Views included (B30).
+    pub groups: Vec<ViewFeedbackGroupSnapshot>,
+    /// The Views the layout shows that a live agent opened, one row per
+    /// thing shown (B8).
+    pub opened: Vec<OpenedViewSnapshot>,
+    /// The last Send of this checkout, while the screen says it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub send: Option<ViewFeedbackSendSnapshot>,
+    /// The comment the last delete removed, which Undo brings back (B43).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ViewCommentSnapshot {
+    pub id: String,
+    /// The displays of the layout it shows on.
+    pub display_ids: Vec<String>,
+    pub kind: crate::view_layout::DisplayKind,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub committed: Option<bool>,
+    pub anchor: crate::view_feedback::Anchor,
+    pub note: String,
+    pub shot: bool,
+    pub changed: bool,
+    pub not_delivered: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+    /// The group it is sent with, `""` for a View no agent opened.
+    pub group: String,
+    /// Its place in its group's letter, from 1 (B11).
+    pub number: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ViewFeedbackGroupSnapshot {
+    /// The recipient's key, `""` for comments on Views no agent opened,
+    /// whose Send asks for a recipient (B18).
+    pub key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recipient: Option<ViewOpenerSnapshot>,
+    pub comments: usize,
+    pub views: usize,
+    pub not_delivered: usize,
+    /// The displays of the layout that hold some of its comments.
+    pub display_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct OpenedViewSnapshot {
+    pub pane_id: String,
+    pub view_id: String,
+    pub kind: crate::view_layout::DisplayKind,
+    pub label: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    pub comments: usize,
+}
+
+/// Where a Send stands (B21, B27, B28, B20).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ViewFeedbackSendSnapshot {
+    pub request_id: String,
+    pub state: ViewFeedbackSendState,
+    pub count: usize,
+    /// The recipient's name.
+    pub to: String,
+    /// The recipient's pane, for Go to pane.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
+    /// The device a Send waits for, or whose cap or copy failed, by name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<ViewFeedbackSendReason>,
+    pub at_unix_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewFeedbackSendState {
+    Sending,
+    Sent,
+    Waiting,
+    Reopening,
+    Failed,
+}
+
+/// Why a Send did not go, each a sentence the screen says (B27, B20).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewFeedbackSendReason {
+    AttachmentsFull,
+    LetterUnsaved,
+    LettersFull,
+    ShotCopy,
+    ReopenFailed,
+    Closed,
 }
 
 /// `waiting` while its Workspace's root cannot be read yet (a device helper
@@ -6334,6 +6477,46 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "memory_action", &actions);
         checked.insert("memory_action");
+
+        let send_states = [
+            ViewFeedbackSendState::Sending,
+            ViewFeedbackSendState::Sent,
+            ViewFeedbackSendState::Waiting,
+            ViewFeedbackSendState::Reopening,
+            ViewFeedbackSendState::Failed,
+        ];
+        for variant in send_states {
+            match variant {
+                ViewFeedbackSendState::Sending
+                | ViewFeedbackSendState::Sent
+                | ViewFeedbackSendState::Waiting
+                | ViewFeedbackSendState::Reopening
+                | ViewFeedbackSendState::Failed => {}
+            }
+        }
+        assert_wire(&contract, "view_feedback_send_state", &send_states);
+        checked.insert("view_feedback_send_state");
+
+        let send_reasons = [
+            ViewFeedbackSendReason::AttachmentsFull,
+            ViewFeedbackSendReason::LetterUnsaved,
+            ViewFeedbackSendReason::LettersFull,
+            ViewFeedbackSendReason::ShotCopy,
+            ViewFeedbackSendReason::ReopenFailed,
+            ViewFeedbackSendReason::Closed,
+        ];
+        for variant in send_reasons {
+            match variant {
+                ViewFeedbackSendReason::AttachmentsFull
+                | ViewFeedbackSendReason::LetterUnsaved
+                | ViewFeedbackSendReason::LettersFull
+                | ViewFeedbackSendReason::ShotCopy
+                | ViewFeedbackSendReason::ReopenFailed
+                | ViewFeedbackSendReason::Closed => {}
+            }
+        }
+        assert_wire(&contract, "view_feedback_send_reason", &send_reasons);
+        checked.insert("view_feedback_send_reason");
 
         let find_routes = [PaneFindRoute::Agent, PaneFindRoute::Bar];
         for variant in find_routes {

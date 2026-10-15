@@ -60,6 +60,7 @@ pub(crate) mod usage_ledger;
 mod usage_limit;
 mod view_areas;
 mod view_bookmarks;
+mod view_feedback;
 mod workspace_control;
 mod workspace_view;
 
@@ -1073,6 +1074,9 @@ pub struct Runtime {
     hide_started: crate::coordination::started::HideStarted,
     delivery_client: Option<crate::delivery::worker::Client>,
     delivery_observations: HashMap<String, delivery::Observation>,
+    /// View openers waiting for their document, Sends under way, and the
+    /// feedback worker (PRD view-opener-feedback).
+    view_feedback: view_feedback::FeedbackRuntime,
     /// The panes held as an unsent draft, kept across a restart so a daemon
     /// that starts over does not type a bell over what the operator typed
     /// (`composer_store.rs`); absent in a runtime with no state folder.
@@ -2002,6 +2006,7 @@ impl Runtime {
             delivery_ledger,
             delivery_client: None,
             delivery_observations: HashMap::new(),
+            view_feedback: view_feedback::FeedbackRuntime::default(),
             composer_marks: Vec::new(),
             delivery_input_traced: HashMap::new(),
             composer_store: None,
