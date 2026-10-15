@@ -19,13 +19,6 @@ export type { ViewFocusRequest } from "./viewLayout";
 /** What the Workspace screen draws of the lane now, which the rail, the chords and the close shortcut read. */
 export type DrawnLane = { mode: LaneMode; tool: Tool | null };
 
-export type SidebarMode = "agents" | "projects";
-
-/** The sidebar's tabs, left to right, and the order the switch walks; Projects is first and the
- * default (PRD sidebar-shell D-03). The Explorer is not one of them: it lives in the right
- * panel where the core's `right_panel_section` says it does (D-13). */
-export const SIDEBAR_MODES: readonly SidebarMode[] = ["projects"];
-
 /**
  * A close the operator is being asked about. The sheet holds only what is
  * being closed: every snapshot re-derives whether it is the Stop-work sheet
@@ -145,7 +138,6 @@ export type Notice = {
 /** A project or checkout management dialog, named by the row that opened it. */
 export type WorkspaceDialog =
   | { kind: "new_worktree"; workspaceId: string }
-  /** A new issue, in the named project's source to begin with; the dialog can move it to another project. */
   /** Work started from an issue: a worktree named for it, its agent and first prompt. */
   | { kind: "start_issue"; workspaceId: string; taskKey: string }
   /** A pull request linked to an issue of its project's source (PRD overview-lenses-prs B10, B11). */
@@ -216,7 +208,6 @@ type UiStore = {
   mainView: MainView;
   /** The focus asked for by a chip, a Return or a relationship Open, until another replaces it (S6 B15, B16). */
   relation: Relation | null;
-  sidebarMode: SidebarMode;
   sidebarFocus: number;
   /** The raised Projects sections the operator unfolded past their cap; this page's alone, so a fresh list starts short. */
   raisedOpen: readonly string[];
@@ -311,9 +302,7 @@ type UiStore = {
   restoreScreen: (screen: Screen) => void;
   setMainView: (view: MainView) => void;
   setRelation: (relation: Relation | null) => void;
-  setSidebarMode: (mode: SidebarMode) => void;
   setSecretaryStart: (start: import("./factory/secretary").SecretaryStart | null) => void;
-  toggleSidebarMode: () => void;
   toggleRaised: (group: string) => void;
   setExplorerSelection: (path: string | null) => void;
   requestEditorFind: (displayId: string | null) => void;
@@ -372,7 +361,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
   },
   mainView: "tasks",
   relation: null,
-  sidebarMode: "projects",
   sidebarFocus: 0,
   raisedOpen: [],
   secretaryStart: null,
@@ -415,15 +403,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   restoreScreen: (screen) => set({ screen, opening: null, overviewOpen: false }),
   setMainView: (mainView) => set({ mainView }),
   setRelation: (relation) => set({ relation }),
-  setSidebarMode: (sidebarMode) => {
-    if (sidebarMode === "agents") console.info("sidebar.mode.retired", { mode: sidebarMode });
-    set({ sidebarMode: "projects" });
-  },
   setSecretaryStart: (secretaryStart) => set({ secretaryStart }),
-  toggleSidebarMode: () => {
-    const index = SIDEBAR_MODES.indexOf(get().sidebarMode);
-    set({ sidebarMode: SIDEBAR_MODES[(index + 1) % SIDEBAR_MODES.length] });
-  },
   toggleRaised: (group) => {
     const open = get().raisedOpen;
     set({ raisedOpen: open.includes(group) ? open.filter((row) => row !== group) : [...open, group] });

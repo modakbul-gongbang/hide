@@ -496,7 +496,6 @@ export type IssueWork = {
   origin?: BacklogOrigin | null;
   /** Every item key a missed line made, for the backlog row's flag (B27). */
   missed_keys?: string[];
-  create: { id: number; workspace_id: string; phase: "working" | "ready" | "failed"; task_key: string | null; message: string | null } | null;
   detail: IssueDetail | null;
   name: { request_id: string; phase: "working" | "ready" | "failed"; name: string | null; message: string | null } | null;
   /** The answer to a Local issue's edit, by the web's request id. */

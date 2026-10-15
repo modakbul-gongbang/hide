@@ -72,7 +72,7 @@ export function SidebarScene({ theme, width, scale, content, devices, front, rai
   }, [scene, width, rail, axis]);
 
   useLayoutEffect(() => {
-    useUiStore.setState({ sidebarMode: "projects", screen: axis ? { kind: "workspace" } : { kind: "main" }, overview: { ...OVERVIEW_ENTRY, projectId: "hide" }, overviewOpen: false });
+    useUiStore.setState({ screen: axis ? { kind: "workspace" } : { kind: "main" }, overview: { ...OVERVIEW_ENTRY, projectId: "hide" }, overviewOpen: false });
   }, [front, axis]);
 
   useLayoutEffect(() => {

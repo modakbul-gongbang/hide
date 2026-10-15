@@ -66,7 +66,6 @@ async function render(listed: HideAiCheckout[]) {
   const ui = useUiStore.getState();
   const { rest, rows } = setup(listed);
   useShellStore.setState({ rest: legacyRest(rest, rows), agents: rows, connection: "live" });
-  useUiStore.setState({ sidebarMode: "projects" });
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);

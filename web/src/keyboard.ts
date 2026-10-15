@@ -250,7 +250,7 @@ export function installKeyboard(actions: Actions): () => void {
       case "factory_open":
         return actions.openFactory();
       case "sidebar_projects":
-        return actions.focusSidebarMode("projects");
+        return actions.focusSidebar();
       case "add_backlog":
         return actions.openQuickAdd();
       case "toggle_device_rail":

@@ -35,7 +35,6 @@ export function NodeProjectScene({ theme, state, language }: NodeProjectScenePar
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#node=${NODE_DEVICE}`);
     useShellStore.setState({ rest: fixture.rest, agents: fixture.agents, connection: "live" });
     useUiStore.setState({
-      sidebarMode: "projects",
       screen: { kind: "main", deviceId: NODE_DEVICE },
       mainView: state === "cleanup" ? "projects" : "backlog",
       overview: { ...OVERVIEW_ENTRY, deviceId: NODE_DEVICE, projectId: state === "cleanup" ? null : NODE_PROJECT },

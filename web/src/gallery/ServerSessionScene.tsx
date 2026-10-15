@@ -30,7 +30,7 @@ export function ServerSessionScene({ scene: kind, theme, scale, content }: Scene
   const actions = useMemo(() => createActions(() => true), []);
   useLayoutEffect(() => {
     useShellStore.setState({rest:fixture.scene.rest,agents:fixture.scene.agents,connection:"live"});
-    useUiStore.setState({sidebarMode:"projects",screen:{kind:"workspace"}});
+    useUiStore.setState({screen:{kind:"workspace"}});
     document.documentElement.classList.toggle("dark",theme === "dark");
     document.documentElement.classList.toggle("light",theme === "light");
     document.documentElement.style.setProperty("--interface-scale",String(scale));

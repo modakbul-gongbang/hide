@@ -84,7 +84,7 @@ export function RightLaneScene({ theme, scale, content, state }: SceneParams & {
   const actions = useMemo(() => createActions(() => true), []);
   useLayoutEffect(() => {
     useShellStore.setState({ rest: fixture.scene.rest, agents: fixture.scene.agents, connection: "live", editor: fixture.editor, documents: fixture.documents, listings: fixture.listings });
-    useUiStore.setState({ sidebarMode: "projects", screen: { kind: "workspace" }, laneShown: lane.tool !== null, laneExpanded: lane.expanded });
+    useUiStore.setState({ screen: { kind: "workspace" }, laneShown: lane.tool !== null, laneExpanded: lane.expanded });
     document.documentElement.classList.toggle("dark", theme === "dark");
     document.documentElement.classList.toggle("light", theme === "light");
     document.documentElement.style.setProperty("--interface-scale", String(scale));

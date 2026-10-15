@@ -32,16 +32,15 @@ function view(props: { tile: Tile; selected?: boolean; counts?: TileCounts; conn
 const marks = (html: string) => [...html.matchAll(/data-rail-badge="(\w+)"[^>]*>([^<]*)</g)].map((match) => [match[1], match[2]]);
 
 describe("which list fills the sidebar (quick device-rail-badges B3)", () => {
-  it("is the chosen tab for the device in front, one device or many", () => {
-    expect(sidebarBody(world([LOCAL]), "projects")).toBe("projects");
-    expect(sidebarBody(world([LOCAL]), "agents")).toBe("agents");
-    expect(sidebarBody(world([LOCAL, MINI], "mini"), "agents")).toBe("agents");
-    expect(sidebarBody(world([LOCAL, MINI]), "projects")).toBe("projects");
+  it("is the Projects list for a connected device in front, one device or many", () => {
+    expect(sidebarBody(world([LOCAL]))).toBe("projects");
+    expect(sidebarBody(world([LOCAL, MINI], "mini"))).toBe("projects");
+    expect(sidebarBody(world([LOCAL, MINI]))).toBe("projects");
   });
 
   it("is the reconnect view for a front device that is not connected, even when it is the only remote one", () => {
-    expect(sidebarBody(world([LOCAL, OFF], "build-box"), "projects")).toBe("disconnected");
-    expect(sidebarBody(world([LOCAL, MINI], "mini", []), "agents")).toBe("disconnected");
+    expect(sidebarBody(world([LOCAL, OFF], "build-box"))).toBe("disconnected");
+    expect(sidebarBody(world([LOCAL, MINI], "mini", []))).toBe("disconnected");
   });
 });
 

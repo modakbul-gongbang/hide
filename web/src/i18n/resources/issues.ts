@@ -1,7 +1,6 @@
 import type { Catalog, Catalogs } from "../schema";
 
 export const issuesEnglish = {
-  "issue.newTitle": "New issue",
   "issue.title": "Title",
   "issue.content": "Content",
   "issue.creating": "Creating the issue…",
@@ -25,11 +24,6 @@ export const issuesEnglish = {
   "issue.state.open": "Open",
   "issue.state.closed": "Closed",
   "issue.openGitHub": "Open on GitHub",
-  "issue.changedFiles_one": "{{count}} file",
-  "issue.changedFiles_other": "{{count}} files",
-  "issue.body": "Body",
-  "issue.commentCount_one": "{{count}} comment",
-  "issue.commentCount_other": "{{count}} comments",
   "issue.hide": "Hide",
   "issue.creatingWorktree": "Creating the worktree…",
   "issue.worktreeFailed": "The worktree was not created.",
@@ -44,7 +38,6 @@ export const issuesEnglish = {
 } as const;
 
 const ko = {
-  "issue.newTitle": "새 이슈",
   "issue.title": "제목",
   "issue.content": "내용",
   "issue.creating": "이슈를 만드는 중…",
@@ -68,11 +61,6 @@ const ko = {
   "issue.state.open": "열림",
   "issue.state.closed": "닫힘",
   "issue.openGitHub": "GitHub에서 열기",
-  "issue.changedFiles_one": "파일 {{count}}개",
-  "issue.changedFiles_other": "파일 {{count}}개",
-  "issue.body": "본문",
-  "issue.commentCount_one": "댓글 {{count}}개",
-  "issue.commentCount_other": "댓글 {{count}}개",
   "issue.hide": "숨기기",
   "issue.creatingWorktree": "워크트리를 만드는 중…",
   "issue.worktreeFailed": "워크트리를 만들지 못했습니다.",
@@ -87,7 +75,6 @@ const ko = {
 } satisfies Catalog<typeof issuesEnglish>;
 
 const zhCN = {
-  "issue.newTitle": "新议题",
   "issue.title": "标题",
   "issue.content": "内容",
   "issue.creating": "正在创建议题…",
@@ -111,11 +98,6 @@ const zhCN = {
   "issue.state.open": "未关闭",
   "issue.state.closed": "已关闭",
   "issue.openGitHub": "在 GitHub 上打开",
-  "issue.changedFiles_one": "{{count}} 个文件",
-  "issue.changedFiles_other": "{{count}} 个文件",
-  "issue.body": "正文",
-  "issue.commentCount_one": "{{count}} 条评论",
-  "issue.commentCount_other": "{{count}} 条评论",
   "issue.hide": "隐藏",
   "issue.creatingWorktree": "正在创建工作树…",
   "issue.worktreeFailed": "未能创建工作树。",
@@ -130,7 +112,6 @@ const zhCN = {
 } satisfies Catalog<typeof issuesEnglish>;
 
 const ja = {
-  "issue.newTitle": "新しい課題",
   "issue.title": "タイトル",
   "issue.content": "内容",
   "issue.creating": "課題を作成中…",
@@ -154,11 +135,6 @@ const ja = {
   "issue.state.open": "オープン",
   "issue.state.closed": "クローズ",
   "issue.openGitHub": "GitHub で開く",
-  "issue.changedFiles_one": "{{count}} ファイル",
-  "issue.changedFiles_other": "{{count}} ファイル",
-  "issue.body": "本文",
-  "issue.commentCount_one": "コメント {{count}} 件",
-  "issue.commentCount_other": "コメント {{count}} 件",
   "issue.hide": "非表示",
   "issue.creatingWorktree": "ワークツリーを作成中…",
   "issue.worktreeFailed": "ワークツリーを作成できませんでした。",

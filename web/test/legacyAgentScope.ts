@@ -7,7 +7,7 @@ import type { PaneRow } from "../src/snapshot";
 import { projectRows as drawProjectRows, checkoutPresentation as drawCheckoutPresentation, checkoutCard as drawCheckoutCard } from "../src/projects";
 import { projectListNumbers as drawProjectNumbers } from "./legacyProjectNumbers";
 import { checkoutAgentRows as beforeCheckoutAgentRows } from "./legacyAgentTree";
-import { buildTasks as drawBuildTasks, shownAgents as drawShownAgents, type BoardRow } from "../src/projectBoard";
+import type { BoardRow } from "../src/projectBoard";
 import { legacyAgentRow } from "./legacyAgentRow";
 // Frozen scope fixture adapter from main 9f144877. Test data only.
 // Assertions keep the old screen values; production reads the core wire.
@@ -234,10 +234,6 @@ export function legacyTree(rows: readonly BoardRow[], source: readonly AgentRow[
   const needs = rows.some((r) => r.agent.group === "needs_you" || (r.depth === 0 && r.agent.group === "done"));
   const ids = (rows: readonly BoardRow[]) => rows.map((r) => ({ ...legacyRefs([r.agent], source)[0]!, depth: r.depth }));
   return { rows: ids(rows), visible_rows: ids(visible), shown: ranked.slice(0,2).map((r) => r.agent.pane_id), more: Math.max(0, ranked.length-2), needs_you: needs, turn_kind: needs ? (rows.some((r) => r.agent.group === "needs_you") ? "question" : "review") : null };
-}
-export function shownAgents(rows: BoardRow[]) { return drawShownAgents(legacyTree(rows), rows.map((r) => r.agent)); }
-export function buildTasks(projects: readonly BoardProject[], ...args: Parameters<typeof drawBuildTasks> extends [unknown, ...infer R] ? R : never) {
-  return drawBuildTasks(projects.map((p) => ({ ...p, workspace: legacyProject(p.workspace, p.agents) })), ...args);
 }
 
 function legacyRaised(projects: readonly Workspace[], listed: readonly ListedAgent[]) {

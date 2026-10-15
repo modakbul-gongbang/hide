@@ -3,7 +3,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DeviceTitle, SidebarHeader } from "./components/sidebar-header";
 import { TooltipProvider } from "./components/ui/tooltip";
-import { useUiStore } from "./ui";
 
 const MENU = {
   devices: [
@@ -36,7 +35,6 @@ function texts(html: string, attribute: string): string[] {
 
 describe("the device title in the window's top row (PRD sidebar-titlebar-refresh B17, B21)", () => {
   it("names the device in front with its note", () => {
-    expect(useUiStore.getState().sidebarMode).toBe("projects");
     const html = title({ name: { name: "mini", note: "Remote" } });
     expect(texts(html, "data-sidebar-title-name")).toEqual(["mini"]);
     expect(html).toContain("Remote");

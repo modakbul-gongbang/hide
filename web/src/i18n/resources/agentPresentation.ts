@@ -4,8 +4,6 @@ import type { Catalog, Catalogs } from "../schema";
 
 export const agentPresentationEnglish = {
   "graph.workspaceHint": "↵ Workspace",
-  "graph.agents_one": "{{count}} agent",
-  "graph.agents_other": "{{count}} agents",
   "graph.folderMissing": "Folder missing",
   "agents.status.error": "Blocked",
   "agents.status.question": "Question",
@@ -48,22 +46,13 @@ export const agentPresentationEnglish = {
   "agents.subtree.closesWith": "Agents that close with it",
   "agents.subtree.outside": "Agents outside",
   "agents.children.label": "Child agents of {{name}}",
-  "agents.children.title": "Child agents {{count}}",
-  "agents.children.goTo": "Go to",
-  "agents.children.unfold": "Unfold in the list",
-  "agents.children.openChild": "Open {{name}}",
-  "agents.showChildren": "Show {{name}}'s agents",
-  "agents.hideChildren": "Hide {{name}}'s agents",
   "agents.closing": "closing…",
   "agents.closingName": "closing",
-  "agents.checkoutUnnamed": "Checkout",
   "agents.kindAgent": "{{kind}} agent",
 } as const;
 
 const ko = {
   "graph.workspaceHint": "↵ 작업공간",
-  "graph.agents_one": "에이전트 {{count}}개",
-  "graph.agents_other": "에이전트 {{count}}개",
   "graph.folderMissing": "폴더 없음",
   "agents.status.error": "막힘",
   "agents.status.question": "질문",
@@ -106,22 +95,13 @@ const ko = {
   "agents.subtree.closesWith": "함께 닫히는 에이전트",
   "agents.subtree.outside": "외부 에이전트",
   "agents.children.label": "{{name}}의 하위 에이전트",
-  "agents.children.title": "하위 에이전트 {{count}}",
-  "agents.children.goTo": "이동",
-  "agents.children.unfold": "목록에서 펼치기",
-  "agents.children.openChild": "{{name}} 열기",
-  "agents.showChildren": "{{name}}의 에이전트 보기",
-  "agents.hideChildren": "{{name}}의 에이전트 숨기기",
   "agents.closing": "닫는 중…",
   "agents.closingName": "닫는 중",
-  "agents.checkoutUnnamed": "체크아웃",
   "agents.kindAgent": "{{kind}} 에이전트",
 } satisfies Catalog<typeof agentPresentationEnglish>;
 
 const zhCN = {
   "graph.workspaceHint": "↵ 工作区",
-  "graph.agents_one": "{{count}} 个智能体",
-  "graph.agents_other": "{{count}} 个智能体",
   "graph.folderMissing": "文件夹不存在",
   "agents.status.error": "受阻",
   "agents.status.question": "提问",
@@ -164,22 +144,13 @@ const zhCN = {
   "agents.subtree.closesWith": "随之关闭的智能体",
   "agents.subtree.outside": "外部智能体",
   "agents.children.label": "{{name}} 的子智能体",
-  "agents.children.title": "子智能体 {{count}}",
-  "agents.children.goTo": "前往",
-  "agents.children.unfold": "在列表中展开",
-  "agents.children.openChild": "打开 {{name}}",
-  "agents.showChildren": "显示 {{name}} 的智能体",
-  "agents.hideChildren": "隐藏 {{name}} 的智能体",
   "agents.closing": "正在关闭…",
   "agents.closingName": "正在关闭",
-  "agents.checkoutUnnamed": "检出目录",
   "agents.kindAgent": "{{kind}} 智能体",
 } satisfies Catalog<typeof agentPresentationEnglish>;
 
 const ja = {
   "graph.workspaceHint": "↵ ワークスペース",
-  "graph.agents_one": "エージェント {{count}} 件",
-  "graph.agents_other": "エージェント {{count}} 件",
   "graph.folderMissing": "フォルダなし",
   "agents.status.error": "ブロック中",
   "agents.status.question": "質問",
@@ -222,15 +193,8 @@ const ja = {
   "agents.subtree.closesWith": "一緒に閉じるエージェント",
   "agents.subtree.outside": "外部のエージェント",
   "agents.children.label": "{{name}} の下位エージェント",
-  "agents.children.title": "下位エージェント {{count}}",
-  "agents.children.goTo": "移動",
-  "agents.children.unfold": "リストで展開",
-  "agents.children.openChild": "{{name}} を開く",
-  "agents.showChildren": "{{name}} のエージェントを表示",
-  "agents.hideChildren": "{{name}} のエージェントを隠す",
   "agents.closing": "閉じています…",
   "agents.closingName": "閉じています",
-  "agents.checkoutUnnamed": "チェックアウト",
   "agents.kindAgent": "{{kind}} エージェント",
 } satisfies Catalog<typeof agentPresentationEnglish>;
 

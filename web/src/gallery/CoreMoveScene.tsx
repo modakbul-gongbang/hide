@@ -45,7 +45,7 @@ export function CoreMoveScene({ scene, theme, state, content, language }: CoreMo
     window.history.replaceState(null, "", side === "node" ? `${window.location.pathname}${window.location.search}#node=${NODE_DEVICE}` : `${window.location.pathname}${window.location.search}`);
     const shown = WINDOW_STATES[state];
     useShellStore.setState({ rest: fixture.rest, agents: fixture.agents, connection: shown?.connection ?? "live", coreMove: shown?.move ?? DIALOG_VIEWS[state] ?? null, coreMoveRefusal: null, coreLink: shown?.link ?? null });
-    useUiStore.setState({ sidebarMode: "projects", screen: { kind: "main" }, overview: { ...OVERVIEW_ENTRY, projectId: "herdr-ide" } });
+    useUiStore.setState({ screen: { kind: "main" }, overview: { ...OVERVIEW_ENTRY, projectId: "herdr-ide" } });
     document.documentElement.classList.toggle("dark", theme === "dark");
     document.documentElement.classList.toggle("light", theme === "light");
   }, [fixture, side, state, theme]);

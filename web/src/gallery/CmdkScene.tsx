@@ -41,7 +41,7 @@ export function CmdkScene({ theme, front, github }: CmdkSceneParams) {
         if (event.kind === "github_search") {
           const payload = event.payload as { request_id: string; query: string };
           useShellStore.setState((state) => ({
-            rest: state.rest ? { ...state.rest, issue_work: { ...state.rest.issue_work, create: null, detail: null, name: null, search: ANSWERS[github](payload.request_id, payload.query) } } : state.rest,
+            rest: state.rest ? { ...state.rest, issue_work: { ...state.rest.issue_work, detail: null, name: null, search: ANSWERS[github](payload.request_id, payload.query) } } : state.rest,
           }));
         }
         return true;

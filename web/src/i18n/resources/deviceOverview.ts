@@ -11,7 +11,6 @@ const words = {
   "overviewTasks.unansweredSince": ["{{device}} is not responding · {{since}}", "{{device}}가 응답하지 않는다 · {{since}}", "{{device}} が応答しません · {{since}}", "{{device}} 未响应 · {{since}}"],
   "overviewTasks.reconnect": ["Reconnect", "다시 연결", "再接続", "重新连接"],
   "overviewTasks.backlogTab": ["Backlog", "백로그", "バックログ", "待办"],
-  "overviewTasks.tabCount": ["{{count}}", "{{count}}", "{{count}}", "{{count}}"],
   "overviewTasks.allProjects": ["All projects", "모든 프로젝트", "すべてのプロジェクト", "所有项目"],
   "overviewTasks.projectFilter": ["Show one project", "프로젝트 하나만 보기", "1つのプロジェクトだけ表示", "只看一个项目"],
   "overviewTasks.chipAll": ["All", "전체", "すべて", "全部"],

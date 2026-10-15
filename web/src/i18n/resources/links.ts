@@ -5,10 +5,6 @@ import type { Catalog, Catalogs } from "../schema";
 // the Sessions tab. The core sends codes; these are the words for them.
 
 export const linksEnglish = {
-  "links.panel": "PR #{{number}}",
-  "links.updated": "Updated {{age}}",
-  "links.mergedOn": "Merged {{date}}",
-  "links.closedOn": "Closed {{date}}",
   "links.connections": "Links",
   "links.noIssue": "No linked issue",
   "links.source.closes": "Closes",
@@ -53,10 +49,6 @@ export const linksEnglish = {
 } as const;
 
 const ko = {
-  "links.panel": "PR #{{number}}",
-  "links.updated": "{{age}} 업데이트",
-  "links.mergedOn": "{{date}} 머지",
-  "links.closedOn": "{{date}} 닫힘",
   "links.connections": "연결",
   "links.noIssue": "연결된 이슈 없음",
   "links.source.closes": "Closes",
@@ -101,10 +93,6 @@ const ko = {
 } satisfies Catalog<typeof linksEnglish>;
 
 const zhCN = {
-  "links.panel": "PR #{{number}}",
-  "links.updated": "{{age}}更新",
-  "links.mergedOn": "{{date}} 合并",
-  "links.closedOn": "{{date}} 关闭",
   "links.connections": "关联",
   "links.noIssue": "没有关联的议题",
   "links.source.closes": "Closes",
@@ -149,10 +137,6 @@ const zhCN = {
 } satisfies Catalog<typeof linksEnglish>;
 
 const ja = {
-  "links.panel": "PR #{{number}}",
-  "links.updated": "{{age}}に更新",
-  "links.mergedOn": "{{date}} マージ",
-  "links.closedOn": "{{date}} クローズ",
   "links.connections": "つながり",
   "links.noIssue": "つながったイシューなし",
   "links.source.closes": "Closes",

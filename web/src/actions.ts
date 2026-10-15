@@ -68,7 +68,7 @@ import { fileUrl, isHtmlFile } from "./browserViews";
 import { requestLine } from "./editor/lineRequest";
 import { terminalPathOwner, type FoundPath } from "./terminalLinkProvider";
 import { useShellStore } from "./store";
-import { FACTORY_ENTRY, useUiStore, type FactoryPlace, type MainView, type OverviewPanel, type OverviewPlace, type PendingClose, type SidebarMode } from "./ui";
+import { FACTORY_ENTRY, useUiStore, type FactoryPlace, type MainView, type OverviewPanel, type OverviewPlace, type PendingClose } from "./ui";
 import type { FactoryCommand } from "./factory/commands";
 import { FACTORY_OPEN } from "./factory/launch";
 import { SECRETARY_PROMPT, paneListed } from "./factory/secretary";
@@ -377,11 +377,6 @@ export function createActions(send: DispatchFn) {
     }
     if (remoteContext(rest())) return diagnostic(`focus_pane: ${paneId} is not on the selected device`);
     dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: paneId, origin: "operator" } });
-  };
-
-  /** Switches the left sidebar's mode; the Explorer is a right panel now. */
-  const showSidebarMode = (mode: SidebarMode) => {
-    ui().setSidebarMode(mode);
   };
 
   /**
@@ -2110,8 +2105,8 @@ export function createActions(send: DispatchFn) {
       setDeviceRailVisible(true);
     },
 
-    focusSidebarMode(mode: SidebarMode) {
-      useUiStore.setState({ overviewOpen: false, overviewReturnFocus: null, sidebarMode: mode, sidebarFocus: ui().sidebarFocus + 1 });
+    focusSidebar() {
+      useUiStore.setState({ overviewOpen: false, overviewReturnFocus: null, sidebarFocus: ui().sidebarFocus + 1 });
       if (!rest()?.ui_state?.left_sidebar_visible) setLeftSidebarVisible(true);
     },
 
@@ -2312,8 +2307,6 @@ export function createActions(send: DispatchFn) {
     factoryTaskClose() {
       dispatch({ schema_version: 2, kind: "factory_task_close", payload: {} });
     },
-
-    showSidebarMode,
 
     toggleTool,
     toggleFileTree,

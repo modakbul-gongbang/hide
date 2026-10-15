@@ -5,7 +5,6 @@ import { emptyScope } from "../test/legacyAgentScope";
 
 import { describe, expect, it } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { projectStats } from "./projectBoard";
 import {
   EMPTY_SELECTION,
   SMALL_CHECKOUT_BYTES,
@@ -444,7 +443,6 @@ describe("the entrance (B1, B2, B6, D-29)", () => {
 
     it("keeps the entrance as a subtotal instead of removing it, and never as a total", () => {
       expect(entranceBytes(partial)).toEqual({ bytes: 40 * GB, partial: true });
-      expect(projectStats(partial).disk).toBe(40 * GB);
       expect(entranceBytes({ ...partial, disk: { ...partial.disk!, total_bytes: 45 * GB } })).toEqual({ bytes: 45 * GB, partial: false });
       expect(entranceBytes({ ...partial, disk: { total_bytes: null, unavailable_reason: "x", measuring: false } })).toBeNull();
       expect(entranceBytes({ ...partial, disk: { ...partial.disk!, measuring: true } })).toBeNull();
