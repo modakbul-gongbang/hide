@@ -464,7 +464,7 @@ fn spawn(
         || args.iter().map(String::len).sum::<usize>() > 8192
         || args.iter().any(|arg| arg.contains('\0'))
         || task.as_ref().is_some_and(|task| {
-            !super::key(&task.kind) || task.target.as_deref().is_some_and(|t| !super::key(t))
+            task.kind.home().is_none() || task.target.as_deref().is_some_and(|t| !super::key(t))
         })
     {
         return Err("invalid_spawn".into());

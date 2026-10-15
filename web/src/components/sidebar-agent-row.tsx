@@ -6,7 +6,7 @@ import { agentClosing } from "../close";
 import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
 import { branchChip, forkLabel, lineText, lineTone, markTone, rowAccessibleName, sidebarLine } from "../agentRow";
-import { originLine } from "../hideAiOrigin";
+import { homeTurnLine, originLine } from "../hideAiOrigin";
 import { AgentForkMark } from "./fork-mark";
 import { cn } from "../lib/utils";
 import type { AgentRow } from "../snapshot";
@@ -192,7 +192,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       <span className={cn("flex min-w-0 flex-1 items-start gap-xs", tree && "py-xs")}>
         <span className="pointer-events-none flex min-h-(--size-sidebar-line) shrink-0 items-center gap-xs">
           <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.wait ? "waiting" : agent.status_code} />
-          {/* In a project's tree the Hide AI group says who started the row; alone, the Hide owl stands beside the status mark (PRD agent-mark-quiet D-04). The provider's logo follows the view mode or an ⌥ hold, with the owl as its badge (PRD agent-logo-view-mode D-04, D-09). */}
+          {/* A Hide AI row is never in a tree; the Hide owl stands beside the status mark (PRD agent-mark-quiet D-04). The provider's logo follows the view mode or an ⌥ hold, with the owl as its badge (PRD agent-logo-view-mode D-04, D-09). */}
           <AgentRowMark kind={agent.agent_kind} hideAi={agent.hide_ai && !tree ? "sidebar" : null} />
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
@@ -222,7 +222,12 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
             {/* Every row ends in the fold slot, so every time ends on one column (sidebar-readability D-3). */}
             <FoldLane />
           </span>
-          {ask && agent.state.ask ? <span aria-hidden="true" className="pointer-events-none flex min-w-0 leading-(--size-sidebar-line-detail)"><AskLine ask={agent.state.ask} className="flex-1" /></span> : line ? (
+          {ask && agent.state.ask ? <span aria-hidden="true" className="pointer-events-none flex min-w-0 leading-(--size-sidebar-line-detail)"><AskLine ask={agent.state.ask} className="flex-1" /></span> : ask && agent.hide_ai?.turn && !(line && agent.status_code === "error") ? (
+            // What the row's home waits for, after the agent's own ask or block cause (PRD hide-ai-work-home D-14, D-16).
+            <span aria-hidden="true" data-agent-home-turn={agent.hide_ai.turn.kind} className="pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail) text-warning">
+              {homeTurnLine(t, agent.hide_ai.turn)}
+            </span>
+          ) : line ? (
             <span aria-hidden="true" data-agent-line={line.mode} className={cn("pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail)", lineTone(line, agent))}>
               {lineText(t, agent, line)}
             </span>

@@ -927,3 +927,117 @@ fn palette_lineage_keeps_first_anchor_and_last_ancestor_occurrences() {
     );
     assert!(!runtime.refresh_agent_scopes());
 }
+
+/// PRD hide-ai-work-home B1-B4, D-13: a row its home owns is in no operator
+/// list while the home shows its progress, and in Needs You, with the lists
+/// that count it, once the operator has something to do: the home's turn, or
+/// the agent's own unread question.
+#[test]
+fn a_home_owned_row_is_listed_only_while_the_operator_has_something_to_do() {
+    use crate::coordination::TaskHome;
+    use crate::model::{HideAiSnapshot, HomeTurn};
+    let ask = |agent: &mut SidebarAgentSnapshot| {
+        agent.demand = "question".into();
+        agent.unread = true;
+    };
+    let review = |_: &mut SidebarAgentSnapshot| {};
+    type Case = (
+        &'static str,
+        Option<HomeTurn>,
+        fn(&mut SidebarAgentSnapshot),
+        &'static str,
+    );
+    let cases: [Case; 4] = [
+        ("progress only", None, review, "seen"),
+        (
+            "a pull request to review",
+            Some(HomeTurn::PrReview { pr_number: 924 }),
+            review,
+            "needs_you",
+        ),
+        (
+            "failed checks",
+            Some(HomeTurn::CiFailed { pr_number: 924 }),
+            review,
+            "needs_you",
+        ),
+        ("its own unread question", None, ask, "needs_you"),
+    ];
+    for (case, turn, act, group) in cases {
+        let mut runtime = runtime();
+        let mut agents = rows();
+        agents[1].hide_ai = Some(HideAiSnapshot {
+            task: None,
+            home: Some(TaskHome::Memory),
+            workspace_id: Some("p".into()),
+            turn,
+        });
+        act(&mut agents[1]);
+        let workspaces = vec![workspace(
+            "project",
+            "Project",
+            "/fixture",
+            vec![
+                checkout(
+                    "project",
+                    "main",
+                    "/fixture",
+                    Some(pane("root", "/fixture")),
+                ),
+                checkout(
+                    "project",
+                    "memory",
+                    "/fixture/m",
+                    Some(pane("child", "/fixture/m")),
+                ),
+            ],
+        )];
+        crate::agent_state::apply_lineage(&mut agents, &workspaces, &[]);
+        assert_eq!(agents[1].group, group, "{case}");
+        runtime.snapshot.navigator.agents = agents;
+        runtime.snapshot.navigator.workspaces = workspaces;
+        runtime.refresh_agent_scopes();
+        let scope = &runtime.snapshot.navigator.workspaces[0].agent_scope;
+        let listed = scope.rows.iter().any(|row| row.pane_id == "child");
+        assert_eq!(
+            listed,
+            group == "needs_you",
+            "{case}: listed in the project"
+        );
+        assert_eq!(
+            scope.groups.needs_you,
+            usize::from(group == "needs_you"),
+            "{case}: counted in Needs You"
+        );
+        assert_eq!(
+            scope
+                .sessions
+                .groups
+                .iter()
+                .map(|section| section.members.len())
+                .sum::<usize>(),
+            1 + usize::from(group == "needs_you"),
+            "{case}: Sessions lists the operator's own row, and this one only when called out"
+        );
+        assert!(
+            runtime.snapshot.navigator.workspaces[0].checkouts[1]
+                .agent_scope
+                .sidebar_tree
+                .rows
+                .is_empty(),
+            "{case}: no checkout's tree draws it, the raised Needs You and Sessions do"
+        );
+        assert!(
+            runtime.snapshot.navigator.agents[1].hide_ai.is_some(),
+            "{case}: the row stays in the agent data for search and links"
+        );
+        assert!(
+            runtime.snapshot.navigator.devices[0]
+                .agent_scope
+                .listed
+                .iter()
+                .any(|entry| entry.pane_id == "child"),
+            "{case}: the pool search, links and tabs find agents in still has it"
+        );
+    }
+}

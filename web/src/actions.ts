@@ -65,6 +65,8 @@ import {
 import { fileUrl, isHtmlFile } from "./browserViews";
 import { requestLine } from "./editor/lineRequest";
 import { terminalPathOwner, type FoundPath } from "./terminalLinkProvider";
+import { homeOpening } from "./hideAiOrigin";
+import { agentsByPane, allAgents as allPaneAgents } from "./paneAgents";
 import { useShellStore } from "./store";
 import { FACTORY_ENTRY, useUiStore, type FactoryPlace, type PendingClose, type SessionTarget, type SidebarMode } from "./ui";
 import type { FactoryCommand } from "./factory/commands";
@@ -1619,6 +1621,20 @@ export function createActions(send: DispatchFn) {
     /** An agent chosen on an Overview or in the Agents list: its Workspace and pane (B12). */
     resolveSession(paneId: string) {
       dispatch({ schema_version: 2, kind: "resolve_session", payload: { pane_id: paneId } });
+    },
+
+    /**
+     * An agent chosen in a list that shows only what the operator has to do
+     * (the sidebar, Sessions, a digit): a row its home owns opens the home,
+     * the Memory tab with that attempt's row open, and any other row its pane
+     * (PRD hide-ai-work-home B11). Its pane stays one link away from there.
+     */
+    openListedAgent(paneId: string) {
+      const state = useShellStore.getState();
+      const agent = agentsByPane(allPaneAgents(state.agents, state.rest?.status?.remote)).get(paneId);
+      const home = homeOpening(state.rest, agent);
+      if (home) return this.openMemoryCard(home.deviceId, home.workspaceId, home.number);
+      this.openAgent(paneId);
     },
 
     openAgent(paneId: string) {

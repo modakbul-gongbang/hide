@@ -9,8 +9,8 @@ import { useAgentLogosShown } from "./agentLogoMode";
  * operator's view mode shows logos or an ⌥ hold peeks at them (PRD
  * agent-logo-view-mode D-04, D-05); hidden, the row draws nothing here, and a
  * Hide AI-started row stands on its owl alone, as before. `hideAi` is set
- * only where the row stands alone (D-09), never inside a project's Hide AI
- * group, whose head already says who started it.
+ * for a Hide AI row, which is never in a project's tree (PRD
+ * hide-ai-work-home).
  */
 export function AgentRowMark({ kind, hideAi = null }: { kind: string | null | undefined; hideAi?: BadgeGround | null }) {
   const shown = useAgentLogosShown();
