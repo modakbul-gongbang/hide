@@ -737,11 +737,12 @@ A GitHub project keeps only GitHub issues and no memos.
 
 백로그 has one section per project, in Tasks' order (B25).
 A section's head is the project's name, the source chip (`GitHub 이슈` or `메모`), which opens the same Issue source menu as the sidebar, `열림 N`, and, while some of its items are started, `진행 중 N → Tasks`, which opens Tasks on that project (B25, B34).
-Under the head is the input `<project>에 이슈 적기` (GitHub) or `<project>에 메모 적기`, with `Enter · GitHub에 바로 만듦` (`· 공개` for a public repository) or `Enter · 이 기기에만 저장` always beside it (B26).
+Under the head is the input `<project>에 이슈 적기` (GitHub) or `<project>에 메모 적기`, with `Enter · GitHub에 바로 만듦` (`· 공개` for a public repository, `· 공개일 수 있음` while its visibility could not be read) or `Enter · 이 기기에만 저장` always beside it (B26).
 Enter makes the item at once with no form: a memo stands as an `L-N` row at the top right away, and a GitHub project shows a dimmed `만드는 중` row at the top that becomes the `#N` row once the issue exists (B29).
 The input empties and keeps the keyboard for the next title; an empty or blank Enter does nothing, a title stops at 256 characters, and the characters left show at the input's end as it nears the limit.
 A GitHub issue made here, by the quick add or by `백로그로` carries the title alone: no request, answer or body leaves the device.
 A failed GitHub create keeps its row with one line of why (`gh가 없음`, `GitHub에 로그인 안 됨`, `GitHub 원격 없음`, `네트워크 또는 사용량 제한`), `다시 시도` and `지우기` (B30).
+A failure no retry can change (an add the core refused, or a repository that moved) offers `지우기` alone; the core keeps at most eight such rows, the oldest leaving first.
 `다시 시도` names the same add, so an issue the first try made is joined rather than made again, even after a restart; past eight waiting creates a new add fails at once with `만들 것이 너무 많이 밀려 있음`.
 A GitHub create is made only in the repository the project was connected to when it was asked; when Connections changes meanwhile, the create stops before the issue exists, fails with `프로젝트 저장소가 바뀜`, and its `다시 시도` makes nothing in the new repository.
 
@@ -769,6 +770,7 @@ Above the input stand the project it will go to and why it was chosen: `고른 �
 Tab and Shift+Tab walk the projects of that device that keep a backlog; a project of a device the core dials has none and is never offered, and with no project to offer the input reads `백로그를 둘 프로젝트가 없음` and Enter does nothing.
 Under the input the destination always shows and follows the project: `GitHub 이슈로 바로 만듦 · 공개`, `GitHub 이슈로 바로 만듦` for a private repository, `GitHub 이슈로 바로 만듦 · 공개일 수 있음` when whether it is public could not be read, and `메모 · 이 기기에만` (B39).
 Enter makes the item; the input locks as `만드는 중` until it exists, and a failure keeps the typed title with one line of why and `Enter로 다시 시도`, which names the same add, so the issue is made once (B41).
+A failure no retry can change hands the input back with its reason: the title can be edited, Tab chooses another project, and Enter makes a new add.
 Once made, `<project>에 이슈 #N 만듦 · 보기` or `<project> 백로그에 메모 L-N 저장 · 보기` takes the input's place for about 2.4 seconds and the input closes; `보기` opens the item in the Overview's 백로그 (B40).
 Escape or a click outside closes it without making anything, and closing returns the keyboard to where it was, a terminal included, which loses no input meanwhile (B40, B42).
 Pasted text with line breaks joins into one line and stops at 256 characters (B42).
@@ -777,9 +779,9 @@ Pasted text with line breaks joins into one line and stops at 256 characters (B4
 
 Projects is one row per project of the device (B48).
 Its top line is `<device> 디스크 여유 X / 전체 Y · 프로젝트 합계 Z · 정리하면 W`, the free space in the warning colour below 10 GB (`LOW_FREE_BYTES`, the cleanup sheet's own threshold), and a small `재는 중` while the sweep runs; a device the core dials has no top line (B47).
-A row reads the project's name with its GitHub mark or `폴더`, `지금` (a colour bar and `Needs You N · 일하는 중 N · 기다림 N · 끝남 N`, `쉬는 중 N` when all four are zero, `일감 없음` with no task), the backlog's `N ›`, the disk, `챙길 것`, the last activity and `열기 ↗` (B48).
+A row reads the project's name with its GitHub mark (a Git project whose issues are not on GitHub has the folder-with-branch mark) or `폴더`, `지금` (a colour bar and `Needs You N · 일하는 중 N · 기다림 N · 끝남 N`, `쉬는 중 N` when all four are zero, `일감 없음` with no task), the backlog's `N ›`, the disk, `챙길 것`, the last activity and `열기 ↗` (B48).
 The backlog's `N ›` opens 백로그 on that project.
-`챙길 것` is `N merged → 정리` while the project holds merged checkouts and empty otherwise; pressing it opens the disk cleanup sheet on that project's finished checkouts (B49).
+`챙길 것` is `N merged → 정리` while the project holds merged checkouts and empty otherwise; pressing it opens the disk cleanup sheet on that project's finished checkouts (B49); a project of a device the core dials says `N merged` with nothing to press, since its cleanup is that device's.
 Projects that rest with nothing to clean fold at the bottom into `조용한 프로젝트 N · X GB ›`, which opens in place (B50).
 The disk cell is a bar and a number: the bar's length is measured against the device's largest project, its purple share is what a cleanup frees (the build cache and dependencies of finished checkouts), its tooltip lists build cache, dependencies, Git, worktrees and the rest with `정리하면 N GB`, and the number opens the disk cleanup sheet on that project (B51).
 A folder project has its total alone, with the tooltip `폴더 합계`, and no sheet.
@@ -871,10 +873,11 @@ Pressing a child opens its record in the same place with `← <parent title>` as
 A session with no outputs has neither the head nor the list.
 `시킨 일 2/3` heads the assigned work as a checklist, first-asked first, with the finished count over the total and no progress box: one task a line, its state an icon in its colour and nothing written (✓ done in a muted name, a blue ◐ working, a green ◐ review pending, a yellow ◐ left unfinished, blocked and your turn as their marks), the state's name in the icon's tooltip and accessible name, and the task's PRs as PR marks at the line's end, a failed CI being the mark's red.
 A goal title `목표 · 09:00` heads a chapter only when the record holds two or more goals; a task outside every chapter leads without one.
-A missed item sits directly under the task whose turn found it: open ones in the warning colour with `백로그로 · 무시`, and `공개` beside `백로그로` when the project's repository is public; there is no `이슈로` and no drafted form (B43).
+A missed item sits directly under the task whose turn found it: open ones in the warning colour with `백로그로 · 무시`, and `공개` beside `백로그로` when the project's repository is public (`공개일 수 있음` while its visibility could not be read); there is no `이슈로` and no drafted form (B43).
 `백로그로` makes the item at once, in the backlog of the project the session works in on the device it runs on: a GitHub issue titled with the missed sentence and nothing else, or a memo (B44).
 Meanwhile the line ends in `만드는 중`; once made it dims with `· 백로그 #N` (`· 백로그 L-N`), which opens the item in the Overview's 백로그, or its Tasks card once started.
 A failure leaves one line of why and `다시 시도`, and one missed item makes one issue however often it is pressed, a restart included (B45).
+A failed line keeps `무시`, which forgets the failure and closes the line, and offers `다시 시도` only when a retry can succeed.
 A missed item goes to the repository the session started in: when the project's connection now names another repository, or the session's original one is not known, it fails with `프로젝트 저장소가 바뀜` and makes nothing.
 `무시` is as before; a session on a device the core dials, which keeps no backlog, has `무시` alone (B46).
 Closed ones are one muted line that says how they closed (`· 처리됨`, `· 무시함`) or their backlog number, with `되돌리기` or `다시 열기` while the pointer or focus is on the line.
