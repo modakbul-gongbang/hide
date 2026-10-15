@@ -1392,6 +1392,18 @@ fn closing_the_last_tab_passes_over_a_checkout_with_no_tab_and_stays_with_none()
     );
 }
 
+/// A checkout whose project is being removed is no place to go back to,
+/// even while its tabs are still open.
+#[test]
+fn closing_the_last_tab_passes_over_a_checkout_being_removed() {
+    let (mut runtime, checkout, _) = entered_from_elsewhere(&["w-order:t1"]);
+    runtime
+        .workspace_removals_in_flight
+        .insert("workspace:elsewhere".to_owned());
+    close_tab(&mut runtime, "w-order:t1");
+    assert_eq!(front(&runtime).as_deref(), Some(checkout.as_str()));
+}
+
 /// A close that first opens a replacement shell keeps its checkout busy, so
 /// it leaves the screen where it is.
 #[test]

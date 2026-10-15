@@ -1545,10 +1545,9 @@ impl Runtime {
     /// the one their close just emptied, the way choosing it from the
     /// sidebar does, so the screen never stands on a checkout with nothing
     /// left in it (docs/UI_BEHAVIOR.md, Agent areas). A checkout with no tab
-    /// left is no place to go, which also passes over one whose worktree or
-    /// project is being removed, since a removal closes its tabs first. With
-    /// no such checkout, or with another device in front, the screen stays
-    /// and the Agent area's empty state shows.
+    /// left, or one whose worktree or project is being removed, is no place
+    /// to go. With no such checkout, or with another device in front, the
+    /// screen stays and the Agent area's empty state shows.
     fn leave_emptied_checkout(&mut self, checkout_id: &str) {
         if !self.device_in_front(self.node.as_str()) {
             return;
@@ -1571,7 +1570,10 @@ impl Runtime {
                             .checkouts
                             .iter()
                             .find(|checkout| checkout.id == record.checkout_id)
-                            .filter(|checkout| self.has_tab_left(checkout))
+                            .filter(|checkout| {
+                                self.has_tab_left(checkout)
+                                    && !self.removal_in_flight(&workspace.id, &checkout.path)
+                            })
                             .map(|checkout| (workspace.id.clone(), checkout.id.clone()))
                     })
             });
@@ -1579,6 +1581,21 @@ impl Runtime {
             return;
         };
         self.bring_checkout_forward_for_close(&workspace_id, &previous);
+    }
+
+    /// Whether this machine's project `workspace_id`, or its worktree at
+    /// `checkout_path`, is being removed.
+    fn removal_in_flight(&self, workspace_id: &str, checkout_path: &str) -> bool {
+        self.workspace_removals_in_flight.contains(workspace_id)
+            || self
+                .snapshot
+                .worktree_removal
+                .as_ref()
+                .is_some_and(|removal| {
+                    removal.device_id.is_none()
+                        && removal.checkout_path == checkout_path
+                        && matches!(removal.phase.as_str(), "checking" | "closing" | "removing")
+                })
     }
 
     /// A checkout a close moves the operator to, or back from, comes forward
