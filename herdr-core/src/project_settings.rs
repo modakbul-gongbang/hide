@@ -5,9 +5,14 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use hide_agent_hooks::guardrails::PathRefusal;
 use serde::{Deserialize, Serialize};
 
-pub(crate) const VERSION: u32 = 1;
+/// The newest record this build reads and writes. A record that carries
+/// guardrails is version 2, which an older build reads as newer and keeps
+/// read-only; one without them stays version 1 (PRD agent-guardrails D-23).
+pub(crate) const VERSION: u32 = 2;
+const PLAIN_VERSION: u32 = 1;
 pub(crate) const LIMIT: usize = 256;
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -66,7 +71,13 @@ pub struct ProjectSettings {
     /// New explicit links carry their own owner/repo and need no binding.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub link_scopes: BTreeMap<String, LinkScope>,
+    /// The protections of Working style; absent is every one off, as a
+    /// version 1 record reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guardrails: Option<Rules>,
 }
+
+pub use hide_agent_hooks::guardrails::Rules;
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct LinkScope {
@@ -85,12 +96,15 @@ pub struct Patch {
     pub new_work: Option<NewWorkLocation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_branch: Option<BaseBranchChoice>,
+    /// The whole set of protections, replacing the record's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub guardrails: Option<Rules>,
 }
 
 impl ProjectSettings {
     pub(crate) fn new(device: &str, root: &str) -> Self {
         Self {
-            version: VERSION,
+            version: PLAIN_VERSION,
             device_id: device.to_owned(),
             root: root.to_owned(),
             repository: None,
@@ -98,6 +112,7 @@ impl ProjectSettings {
             new_work: None,
             base_branch: None,
             link_scopes: BTreeMap::new(),
+            guardrails: None,
         }
     }
 
@@ -118,7 +133,7 @@ impl ProjectSettings {
     }
 
     pub(crate) fn patched(&self, patch: Patch) -> Result<Self, &'static str> {
-        if self.version != VERSION {
+        if !readable(self.version) {
             return Err("project_settings_newer_version");
         }
         let mut next = self.clone();
@@ -139,7 +154,22 @@ impl ProjectSettings {
         if let Some(base) = patch.base_branch {
             next.base_branch = Some(base);
         }
+        if let Some(rules) = patch.guardrails {
+            rules.validate().map_err(|refusal| match refusal {
+                PathRefusal::TooMany => "project_settings_paths_limit",
+                PathRefusal::TooLong => "project_settings_path_too_long",
+                PathRefusal::Duplicate => "project_settings_path_duplicate",
+                PathRefusal::Invalid => "project_settings_path_invalid",
+            })?;
+            next.guardrails = Some(rules);
+            next.version = VERSION;
+        }
         Ok(next)
+    }
+
+    /// The protections in force: none for a record without them.
+    pub(crate) fn rules(&self) -> Option<&Rules> {
+        self.guardrails.as_ref().filter(|rules| rules.any())
     }
 }
 
@@ -174,8 +204,12 @@ pub(crate) fn get<'a>(
     root: &str,
 ) -> Option<&'a ProjectSettings> {
     records.get(&key(device, root)).filter(|record| {
-        record.version == VERSION && record.device_id == device && record.root == root
+        readable(record.version) && record.device_id == device && record.root == root
     })
+}
+
+fn readable(version: u32) -> bool {
+    (PLAIN_VERSION..=VERSION).contains(&version)
 }
 
 pub(crate) fn issue_choice<'a>(

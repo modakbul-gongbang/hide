@@ -41,6 +41,7 @@ mod factory_screen;
 mod first_run;
 #[path = "tests/github_reads.rs"]
 mod github_reads;
+mod guardrails;
 #[path = "tests/home.rs"]
 mod home;
 #[path = "tests/inbound.rs"]

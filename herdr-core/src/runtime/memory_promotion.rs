@@ -2294,6 +2294,7 @@ mod tests {
                 new_work: None,
                 base_branch: None,
                 link_scopes: Default::default(),
+                guardrails: None,
             };
             runtime
                 .snapshot
