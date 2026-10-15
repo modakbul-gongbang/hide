@@ -245,28 +245,20 @@ impl Runtime {
             PromotionState::Building => MemoryPromotionState::Building,
             PromotionState::Unbuilt => MemoryPromotionState::Unbuilt,
         };
-        if state == MemoryPromotionState::Building && promotion.pr_number.is_none() {
-            return Some(MemoryPromotionSnapshot {
-                state,
-                started_at_unix_ms: promotion.started_at_unix_ms,
-                agent: self.building_agent(promotion.building_branch.as_deref()),
-                pr_number: None,
-                pr_url: None,
-                target_path: promotion.target_path.clone(),
-                github_failure: None,
-            });
-        }
-        let agent = (state == MemoryPromotionState::Running)
-            .then_some(promotion.agent_id.as_deref())
-            .flatten()
-            .and_then(|id| {
+        let agent = match state {
+            MemoryPromotionState::Building => {
+                self.building_agent(promotion.building_branch.as_deref())
+            }
+            MemoryPromotionState::Running => promotion.agent_id.as_deref().and_then(|id| {
                 let ledger = self.delivery_state().ok()?;
                 let record = ledger.agents.iter().find(|record| record.id == id)?;
                 Some(MemoryPromotionAgentSnapshot {
                     name: record.name.clone(),
                     pane_id: (!record.ended).then(|| record.pane.clone()),
                 })
-            });
+            }),
+            _ => None,
+        };
         Some(MemoryPromotionSnapshot {
             state,
             started_at_unix_ms: promotion.started_at_unix_ms,
