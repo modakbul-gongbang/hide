@@ -36,7 +36,7 @@ import { AddProjectDialog } from "./AddProjectDialog";
 import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
 import { applyEditorTheme } from "./editor/theme";
 import { applyGridHolds, applyTerminalTheme, attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
-import { primaryValue, readTheme, resolveTheme } from "./theme";
+import { PALETTE_HIDE_CLASS, primaryValue, readColorTheme, readTheme, resolveTheme } from "./theme";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { useUsageWindowHint } from "./components/usage";
 import { useUiStore } from "./ui";
@@ -165,16 +165,22 @@ export function App() {
 
   // The theme is the core's too (D-14, D-15): System follows the OS
   // appearance while it changes, and the terminals are re-colored in place.
+  // The color theme rides on the same root as one more class
+  // (hide-color-theme D-10), so a change of either re-colors once.
   const storedTheme = useShellStore((s) => s.rest?.ui_state?.theme);
+  const storedColorTheme = useShellStore((s) => s.rest?.ui_state?.color_theme);
   useEffect(() => {
     const { choice, unknown } = readTheme(storedTheme);
     if (unknown) useShellStore.getState().noteDiagnostic("ui_state.theme is not one this page knows; Dark is shown");
+    const palette = readColorTheme(storedColorTheme);
+    if (palette.unknown) useShellStore.getState().noteDiagnostic("ui_state.color_theme is not one this page knows; Hide is shown");
     const query = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
       const theme = resolveTheme(choice, query.matches);
       const root = document.documentElement.classList;
       root.toggle("dark", theme === "dark");
       root.toggle("light", theme === "light");
+      root.toggle(PALETTE_HIDE_CLASS, palette.choice === "hide");
       applyTerminalTheme();
       applyEditorTheme();
     };
@@ -182,7 +188,7 @@ export function App() {
     if (choice !== "system") return;
     query.addEventListener("change", apply);
     return () => query.removeEventListener("change", apply);
-  }, [storedTheme]);
+  }, [storedTheme, storedColorTheme]);
 
   // A reconnect cancels an in-flight drag or cycle; the registration text
   // stays because its component is not remounted (PRD S2 B14).

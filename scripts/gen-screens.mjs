@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {readTokens} from './gen-tokens.mjs';
 import {screenSheets, readLocalVariables, ALIAS, LIBRARY_PATH, RETIRED_SHEETS} from './pen-screens.mjs';
+import {THEMES} from './pen-tokens.mjs';
 import {serialize} from './pen-bands.mjs';
 import {transplant} from './pen-transplant.mjs';
 
@@ -44,7 +45,7 @@ export function generate(root, ownedSheets = []) {
     children = found ? children.map(node => node === found ? sheet : node) : [...children, sheet];
   }
 
-  let document = {version: existing?.version ?? '2.18', themes: {Mode: ['Light', 'Dark']}, imports: {[ALIAS]: LIBRARY_PATH}, variables, children};
+  let document = {version: existing?.version ?? '2.18', themes: THEMES, imports: {[ALIAS]: LIBRARY_PATH}, variables, children};
   if (ownedSheets.length) {
     if (!existing) throw new Error('Scoped regeneration needs an existing screen document');
     document = transplant(document, {...existing, variables}, ownedSheets).document;

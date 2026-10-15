@@ -165,7 +165,9 @@ test("the list and the card read without sideways scrolling in each language and
     await expect(review).toBeVisible({ timeout: 30_000 });
     const overflow = (target: Locator) => target.evaluate((node) => node.scrollWidth - node.clientWidth);
     // The narrowest lane (B48): the divider's keys narrow it to its minimum.
-    await page.locator('[data-lane-pin="off"]').click();
+    // The lane opens unpinned, over the agents; a pinned one would dock and redraw under the keys.
+    if ((await page.locator("[data-lane-pin]").getAttribute("data-lane-pin")) !== "off") await page.locator("[data-lane-pin]").click();
+    await expect(page.locator("[data-lane-pin]")).toHaveAttribute("data-lane-pin", "off");
     const divider = page.locator('[data-lane-divider="lane"]');
     await divider.focus();
     const reading = (name: string) => divider.evaluate((node, attribute) => Number(node.getAttribute(attribute)), name);

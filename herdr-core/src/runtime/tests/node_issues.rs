@@ -685,6 +685,37 @@ fn a_repository_the_node_refused_to_read_says_why_on_its_board() {
     );
 }
 
+/// A node's repository whose origin names no GitHub repository is an answer,
+/// as a local one's is: no reason is drawn on its checkouts.
+#[test]
+fn a_node_repository_without_a_github_remote_draws_no_reason() {
+    let repo = repo(None, "feature");
+    let shared = node_runtime(
+        &repo,
+        FakeDevice::new(),
+        Recording::of(None),
+        Default::default(),
+    );
+    let runtime = shared.lock().unwrap();
+    let project = node_project(&runtime).unwrap();
+    assert!(!project.checkouts.is_empty());
+    for checkout in &project.checkouts {
+        let github = &checkout.github;
+        assert_eq!(
+            (
+                github.available,
+                github.unavailable_reason.as_deref(),
+                github.failure_category
+            ),
+            (
+                true,
+                None,
+                Some(crate::model::GithubFailureCategory::NoGithubRemote)
+            )
+        );
+    }
+}
+
 /// Before this machine's GitHub read answers, and while every read fails,
 /// a node project is named by the repository the node read, so ⌘K's GitHub
 /// search covers it.

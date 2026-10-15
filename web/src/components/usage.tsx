@@ -1,6 +1,6 @@
 // Account windows at the sidebar foot. The core owns reads and preferences;
 // this view formats typed outcomes and sends visibility hints.
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { ChartNoAxesCombinedIcon, SettingsIcon } from "lucide-react";
 import type { Actions } from "../actions";
 import { AgentMark } from "../AgentMark";
@@ -38,6 +38,8 @@ export const Usage = memo(function Usage({ actions }: { actions: Actions }) {
   const node = useShellStore((s) => s.usage?.nodes[0]);
   const [outline, setOutline] = useState<UsageOutline>(null);
   const [open, setOpen] = useState(false);
+  // An action that opens another layer runs once the popover has closed: while it is still open, Overview refuses to open over it.
+  const afterClose = useRef<(() => void) | null>(null);
   // No closed-popover minute clock. Core snapshots expire chip readings.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -64,12 +66,19 @@ export const Usage = memo(function Usage({ actions }: { actions: Actions }) {
         </PopoverTrigger>;
       })}
     </div></PopoverAnchor>
-    <PopoverContent side="top" align="end" className="flex max-h-(--radix-popover-content-available-height) w-(--size-usage-popover) flex-col gap-sm overflow-y-auto p-lg" data-usage-popover="true">
+    <PopoverContent side="top" align="end" className="flex max-h-(--radix-popover-content-available-height) w-(--size-usage-popover) flex-col gap-sm overflow-y-auto p-lg" data-usage-popover="true"
+      onCloseAutoFocus={(event) => {
+        const action = afterClose.current;
+        afterClose.current = null;
+        if (!action) return;
+        event.preventDefault();
+        action();
+      }}>
       <div className="flex flex-wrap items-center gap-sm">
         <span className="min-w-0 flex-1 text-subhead font-semibold">{t("usage.title")}</span>
         <Hint label={t("usage.chooseChips")}><Button variant="ghost" size="icon-sm" onClick={() => { setOpen(false); actions.openSettings("usage"); }}><SettingsIcon /></Button></Hint>
       </div>
-      {node ? <UsageHistory node={node} surface="popover" outline={outline} onHistory={() => { setOpen(false); actions.openUsageHistory(); }}>
+      {node ? <UsageHistory node={node} surface="popover" outline={outline} onHistory={() => { afterClose.current = () => actions.openUsageHistory(); setOpen(false); }}>
         <div className="usage-limits flex flex-col gap-md">
         {visible.map((adapter) => <div key={adapter.id} className="flex flex-col gap-xs" data-usage-row={adapter.herdr_kind}>
         <div className="flex items-center gap-xs text-caption font-semibold"><AgentMark kind={adapter.herdr_kind} />{adapter.label}</div>

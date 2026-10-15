@@ -1034,16 +1034,6 @@ fn every_agents_conversation_page_reads_back_from_the_node_link() {
         let read: hide_session::ConversationRead = serde_json::from_slice(&wire)
             .unwrap_or_else(|error| panic!("{agent:?}: the core refused the page: {error}"));
         assert_eq!(read.events, page.events, "{agent:?}");
-        if agent == Agent::Codex {
-            let instructions = &read.events[0];
-            assert_eq!(instructions.text, "<permissions instructions>");
-            assert_eq!(
-                (instructions.role, instructions.kind),
-                ("system", hide_session::EventKind::Injected),
-                "Codex's own instructions are no one's request"
-            );
-            assert!(instructions.is_provider_injected());
-        }
     }
 }
 

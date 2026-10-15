@@ -64,12 +64,14 @@ describe("the phone's language", () => {
     expect(translate("mobile.group.done")).toBe("Done");
   });
 
-  it("keeps the choice the last agents frame carried", () => {
-    const frame = { type: "agents", groups: [], interface_language: "zh-CN" } satisfies ServerFrame;
+  it("keeps the language and color theme the last agents frame carried", () => {
+    const frame = { type: "agents", groups: [], interface_language: "zh-CN", color_theme: "neutral" } satisfies ServerFrame;
     applyFrame(frame);
     expect(usePhone.getState().interfaceLanguage).toBe("zh-CN");
-    applyFrame({ ...frame, interface_language: null });
+    expect(usePhone.getState().colorTheme).toBe("neutral");
+    applyFrame({ ...frame, interface_language: null, color_theme: "hide" });
     expect(usePhone.getState().interfaceLanguage).toBeNull();
+    expect(usePhone.getState().colorTheme).toBe("hide");
   });
 
   it("gives the service worker the notification words on load and on each language change", async () => {

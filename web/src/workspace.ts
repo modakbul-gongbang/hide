@@ -11,6 +11,10 @@ import type { Checkout, SnapshotRest, StripTab, ViewLayoutSnapshot } from "./sna
 export const TOOLS = ["work", "memory", "files", "changes"] as const;
 export type Tool = (typeof TOOLS)[number];
 
+/** What a tool is about: the Project (Work, Memory) or the front checkout (Files, Changes). The rail and the lane header draw it (PRD work-tab-pr-lens D-37). */
+export type ToolScope = "project" | "checkout";
+export const TOOL_SCOPES: Record<Tool, ToolScope> = { work: "project", memory: "project", files: "checkout", changes: "checkout" };
+
 /** Which basis the Work tool draws (PRD work-tab-pr-lens D-01). */
 export type WorkLens = "sessions" | "prs";
 

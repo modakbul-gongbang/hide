@@ -1,5 +1,5 @@
-import { BrainIcon, EllipsisIcon, FileDiffIcon, FilesIcon, Maximize2Icon, Minimize2Icon, PinIcon, SquareKanbanIcon, XIcon, type LucideIcon } from "lucide-react";
-import { useState } from "react";
+import { BrainIcon, EllipsisIcon, FileDiffIcon, FilesIcon, FolderIcon, GitBranchIcon, Maximize2Icon, Minimize2Icon, PinIcon, SquareKanbanIcon, XIcon, type LucideIcon } from "lucide-react";
+import { Fragment, useState } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { cn } from "./lib/utils";
@@ -17,7 +17,7 @@ import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { ViewAreas } from "./ViewAreas";
 import { workspaceKey } from "./viewLayout";
-import { TOOLS, type LaneFrame, type LaneSizes, type Tool, type WorkspaceView } from "./workspace";
+import { TOOLS, TOOL_SCOPES, type LaneFrame, type LaneSizes, type Tool, type WorkspaceView } from "./workspace";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
 
@@ -74,14 +74,19 @@ export function ToolRail({ actions }: { actions: Actions }) {
   useMemoryProject(actions);
   return (
     <nav className="flex w-(--size-tool-rail) shrink-0 flex-col items-center gap-xxs border-l border-border bg-sidebar py-xs" aria-label={t("panes.lane.rail")} data-tool-rail="true">
-      {TOOLS.map((tool) => {
+      {TOOLS.map((tool, index) => {
         const Icon = TOOL_ICONS[tool];
         const pressed = up && drawn.tool === tool;
         const name = t(TOOL_NAMES[tool]);
         const count = tool === "files" && !pressed ? views : 0;
         const needs = tool === "work" ? work : 0;
+        // One short rule where the Project's tools end and the checkout's begin (D-37).
+        const before = TOOLS[index - 1];
+        const boundary = before !== undefined && TOOL_SCOPES[before] !== TOOL_SCOPES[tool];
         return (
-          <Hint key={tool} label={`${name} · ${scope(tool)}`} side="left">
+          <Fragment key={tool}>
+          {boundary ? <span aria-hidden="true" className="my-xs h-(--size-hairline) w-(--size-icon-lg) shrink-0 bg-border" data-tool-rail-divider="true" /> : null}
+          <Hint label={`${name} · ${scope(tool)}`} side="left">
             <button
               type="button"
               aria-pressed={pressed}
@@ -106,6 +111,7 @@ export function ToolRail({ actions }: { actions: Actions }) {
               {tool === "memory" && asking ? <span role="img" aria-label={t("memory.questionsWaiting")} className="absolute right-xs top-xs size-(--size-status-mark) rounded-full bg-warning" data-lane-tool-dot="memory" /> : null}
             </button>
           </Hint>
+          </Fragment>
         );
       })}
       <LaneMenu actions={actions} />
@@ -172,9 +178,13 @@ export function Lane({ view, tool, frame, sizes, checkout, actions }: { view: Wo
   return (
     <aside className="flex h-full min-h-0 min-w-0 flex-1 flex-col text-foreground" aria-label={t("panes.lane.aria")} data-lane={tool}>
       <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-xxs border-b border-border pl-md pr-xs text-caption" data-lane-header="true">
-        <span className="min-w-0 flex-1 truncate" data-lane-scope={scope(tool)}>
+        <span className="min-w-0 flex-1 truncate" data-lane-scope={scope(tool)} data-lane-scope-kind={TOOL_SCOPES[tool]}>
           <span className="font-semibold text-foreground">{t(TOOL_NAMES[tool])}</span>
-          <span className="text-subtle-foreground"> · {scope(tool)}</span>
+          {/* The scope's icon, Project or checkout, stands where the dot was (D-37). */}
+          <span className="ml-xs text-subtle-foreground">
+            {TOOL_SCOPES[tool] === "project" ? <FolderIcon aria-hidden="true" className="mr-xs inline size-(--size-icon-sm) align-middle" /> : <GitBranchIcon aria-hidden="true" className="mr-xs inline size-(--size-icon-sm) align-middle" />}
+            {scope(tool)}
+          </span>
         </span>
         <Hint label={pinHint}>
           <Button variant={view.pinned ? "secondary" : "ghost"} size="icon-sm" className={view.pinned ? "text-primary" : "text-muted-foreground"} aria-pressed={view.pinned} aria-label={t("panes.lane.pin")} data-lane-pin={view.pinned ? (frame.narrowPin ? "narrow" : "on") : "off"} onClick={() => actions.setLanePinned(!view.pinned)}>

@@ -1956,11 +1956,10 @@ fn node_github_status(
             }
         }
         Some(listed) if is_git && listed.repository.is_none() && !has_repository => {
+            // The answer a local project gets (`github::no_github_remote`):
+            // nothing to draw, so no reason.
             crate::model::GithubStatusSnapshot {
-                available: false,
-                unavailable_reason: Some(
-                    "The repository's origin names no GitHub repository".to_owned(),
-                ),
+                available: true,
                 failure_category: Some(crate::model::GithubFailureCategory::NoGithubRemote),
                 ..Default::default()
             }
