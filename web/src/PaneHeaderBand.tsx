@@ -13,7 +13,7 @@ import { Hint } from "./components/ui/tooltip";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
 import { cn } from "./lib/utils";
-import type { PaneHeader, PaneRow, SnapshotRest, AgentRow } from "./snapshot";
+import { localDeviceId, type PaneHeader, type PaneRow, type SnapshotRest, type AgentRow } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { relationState } from "./lineage";
@@ -23,7 +23,7 @@ import { useRelationProgress } from "./PaneRelations";
 import { lineText } from "./agentRow";
 import { allAgents, agentsByPane, deviceFacts } from "./paneAgents";
 import { paneChildren, type PaneChildren } from "./paneChildren";
-import { sessionOfAgent } from "./sessionWork";
+import { sessionOfAgentOn } from "./sessionWork";
 
 const LABELS: Record<string, MessageKey> = {
   sleeping: "panes.sleep.captionSleeping", waking: "panes.sleep.captionWaking", failed: "panes.sleep.captionFailed", restore_failed: "panes.restore.failed",
@@ -209,8 +209,9 @@ function usePaneChildren(paneId: string, agents: AgentRow[]): { children: PaneCh
 export function PaneRecordButton({ paneId, actions, children, plain }: { paneId: string; actions: Actions; children: ReactNode; plain: ReactNode }) {
   const { t } = useInterfaceTranslation();
   const agent = agentsByPane(usePaneAgents()).get(paneId);
-  const rest = useShellStore((s) => (agent?.session_id ? s.rest : null));
-  const session = agent ? sessionOfAgent(agent, rest) : null;
+  // Only this machine's id, so the head redraws on its own pane's changes rather than on every snapshot.
+  const localId = useShellStore((s) => localDeviceId(s.rest));
+  const session = agent ? sessionOfAgentOn(agent, localId) : null;
   if (!session) return <>{plain}</>;
   return (
     <Hint label={t("record.recordHint")}>

@@ -362,12 +362,13 @@ function MissedLine({ missed, session, cwd, owner, actions }: { missed: MissedWo
     </p>
     {failed ? <p role="status" className={cn("mt-xxs flex items-center gap-xs text-micro text-destructive", LANE)} data-missed-failed={failed.failure ?? "refused"}>
       <span className="min-w-0 flex-1">{t(`backlog.failure.${failed.failure ?? "refused"}`)}</span>
-      <Button size="sm" variant="ghost" className="h-auto px-xs py-0 text-micro" disabled={!connected} onClick={() => actions.retryBacklog(failed.intent)}>{t("common.retry")}</Button>
+      {failed.retry ? <Button size="sm" variant="ghost" className="h-auto px-xs py-0 text-micro" disabled={!connected} onClick={() => actions.retryBacklog(failed.intent)}>{t("common.retry")}</Button> : null}
+      <Button size="sm" variant="ghost" className="h-auto px-xs py-0 text-micro" onClick={() => { actions.dismissBacklog(failed.intent); actions.setMissedStatus(session, missed.id, "dismissed"); }} data-missed-failed-dismiss={missed.id}>{t("sessionWork.dismiss")}</Button>
     </p> : null}
     {open && !making && !failed ? <div className={cn("mt-xs flex items-center gap-xs", LANE)}>
       {project ? <Hint label={!connected ? t("devices.rail.notConnected") : t(`quickAdd.dest.${destination}`)}><span><Button size="sm" variant="outline" disabled={!connected} data-missed-backlog-add={missed.id} onClick={toBacklog}>
         {t("missed.toBacklog")}
-        {destination === "public" ? <span className="text-micro text-warning" data-missed-public="true">{t("missed.public")}</span> : null}
+        {destination === "public" ? <span className="text-micro text-warning" data-missed-public="true">{t("missed.public")}</span> : destination === "unknown" ? <span className="text-micro text-warning" data-missed-public="unknown">{t("missed.maybePublic")}</span> : null}
       </Button></span></Hint> : null}
       <Button size="sm" variant="ghost" onClick={() => actions.setMissedStatus(session, missed.id, "dismissed")}>{t("sessionWork.dismiss")}</Button>
     </div> : null}

@@ -3,7 +3,11 @@ import { localDeviceId, type AgentRow, type Checkout, type Workspace, type Misse
 
 export const workKey = (session: WorkSession) => `${session.device_id}\0${session.agent}\0${session.session_id}`;
 export function sessionOfAgent(agent: AgentRow, rest: SnapshotRest | null): WorkSession | null {
-  return agent.session_id ? { device_id: agent.device_id ?? localDeviceId(rest), agent: agent.agent_kind, session_id: agent.session_id } : null;
+  return sessionOfAgentOn(agent, localDeviceId(rest));
+}
+/** The same, given this machine's id, for a caller that should not read the whole snapshot. */
+export function sessionOfAgentOn(agent: AgentRow, localId: string): WorkSession | null {
+  return agent.session_id ? { device_id: agent.device_id ?? localId, agent: agent.agent_kind, session_id: agent.session_id } : null;
 }
 export function recordTitle(record: Pick<SessionRecord, "title" | "manual_title" | "native_title" | "fallback_title">, summaries: boolean): string {
   return record.manual_title ?? (summaries ? record.title : record.native_title ?? record.fallback_title);

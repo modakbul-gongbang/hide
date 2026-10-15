@@ -1230,7 +1230,11 @@ export function createActions(send: DispatchFn) {
      */
     focusDevice(deviceId: string) {
       const screen = ui().screen;
-      if (screen?.kind === "main" && screen.deviceId !== deviceId) ui().setScreen({ kind: "main", deviceId });
+      if (screen?.kind === "main" && screen.deviceId !== deviceId) {
+        // The rail's choice replaces a device the Overview's own switch picked earlier (D-02, D-17).
+        ui().setOverview({ deviceId: null, projectId: null, panel: null });
+        ui().setScreen({ kind: "main", deviceId });
+      }
       if (frontDeviceId(rest()) === deviceId) return;
       dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
     },
@@ -2121,12 +2125,12 @@ export function createActions(send: DispatchFn) {
         if (frontCheckout(rest()) && rest()?.workspace_view) state.setScreen({ kind: "workspace" });
         return;
       }
+      // Every open starts on the rail's front device with no project chosen (B1), as a page or as a layer.
+      state.setOverview({ deviceId: null, projectId: null, panel: null });
       if (state.screen?.kind !== "workspace" || !frontCheckout(rest()) || !rest()?.workspace_view) {
         state.setScreen({ kind: "main" });
         return;
       }
-      // Every open starts on the rail's front device with no project chosen (B1).
-      state.setOverview({ deviceId: null, projectId: null, panel: null });
       const target = state.overlay === "search" ? state.searchReturnFocus : document.activeElement instanceof HTMLElement ? document.activeElement : null;
       useUiStore.setState({ overviewOpen: true, overviewReturnFocus: target, overlay: "none" });
     },
@@ -2276,7 +2280,11 @@ export function createActions(send: DispatchFn) {
     },
     /** The Overview panel's record closed: the lane's own record, when it shows one, is read again. */
     leaveOverviewRecord() {
-      const lane = ui().sessionWorkTarget;
+      // Another card's record taking the panel reads its own session; only a record that left the screen hands the read back.
+      const state = ui();
+      const shown = state.overviewOpen || state.screen?.kind === "main";
+      if (shown && (state.overview.panel?.kind === "task" || state.overview.panel?.kind === "record")) return;
+      const lane = state.sessionWorkTarget;
       if (lane) dispatch({ schema_version: 2, kind: "session_record_open", payload: { session: lane } });
       else dispatch({ schema_version: 2, kind: "session_record_close", payload: {} });
     },

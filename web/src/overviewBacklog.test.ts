@@ -22,7 +22,7 @@ function workspace(id: string, tasks: Task[], workedOn: string[] = []): Workspac
 }
 
 function item(intent: string, phase: BacklogItem["phase"], at: number, extra: Partial<BacklogItem> = {}): BacklogItem {
-  return { intent, workspace_id: "p", title: intent, phase, task_key: null, failure: null, missed: null, at_unix_ms: at, ...extra };
+  return { intent, workspace_id: "p", title: intent, phase, task_key: null, failure: null, retry: false, missed: null, at_unix_ms: at, ...extra };
 }
 
 describe("a project's backlog (B27, B28)", () => {

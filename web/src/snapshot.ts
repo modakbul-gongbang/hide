@@ -517,6 +517,8 @@ export type BacklogItem = {
   /** The item's task key once it exists. */
   task_key: string | null;
   failure: BacklogFailure | null;
+  /** Whether `backlog_retry` can act on this failed row; a refusal, or a repository that changed, cannot. */
+  retry: boolean;
   /** The missed line it came from. */
   missed: { session: WorkSession; id: string } | null;
   at_unix_ms: number;

@@ -164,7 +164,7 @@ function BacklogInput({ project, actions }: { project: Workspace; actions: Actio
       />
       {title ? <span className="shrink-0 font-mono text-micro text-muted-foreground" data-backlog-left={left}>{t("backlog.remaining", { count: left })}</span> : null}
       <span className="shrink-0 text-micro text-muted-foreground" data-backlog-destination={destination}>
-        {t(destination === "local" ? "backlog.enterLocal" : destination === "public" ? "backlog.enterGithubPublic" : "backlog.enterGithub")}
+        {t(destination === "local" ? "backlog.enterLocal" : destination === "public" ? "backlog.enterGithubPublic" : destination === "unknown" ? "backlog.enterGithubUnknown" : "backlog.enterGithub")}
       </span>
     </div>
   );
@@ -181,7 +181,7 @@ function PendingRow({ item, project, actions }: { item: BacklogItem; project: Wo
       {item.phase === "failed" ? (
         <>
           <span className="shrink-0 text-destructive" data-backlog-failure={item.failure ?? "refused"}>{t(`backlog.failure.${item.failure ?? "refused"}`)}</span>
-          <Button size="sm" variant="ghost" onClick={() => actions.retryBacklog(item.intent)} data-backlog-retry={item.intent}>{t("common.retry")}</Button>
+          {item.retry ? <Button size="sm" variant="ghost" onClick={() => actions.retryBacklog(item.intent)} data-backlog-retry={item.intent}>{t("common.retry")}</Button> : null}
           <Button size="sm" variant="ghost" onClick={() => actions.dismissBacklog(item.intent)} data-backlog-dismiss={item.intent}>{t("backlog.remove")}</Button>
         </>
       ) : item.phase === "created" ? null : (

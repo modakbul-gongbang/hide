@@ -72,6 +72,7 @@ const words = {
   "backlog.placeholderLocal": ["Write a memo for {{project}}", "{{project}}에 메모 적기", "{{project}} にメモを書く", "为 {{project}} 写备忘"],
   "backlog.enterGithub": ["Enter · creates on GitHub now", "Enter · GitHub에 바로 만듦", "Enter · GitHubにすぐ作成", "Enter · 立即在 GitHub 创建"],
   "backlog.enterGithubPublic": ["Enter · creates on GitHub now · public", "Enter · GitHub에 바로 만듦 · 공개", "Enter · GitHubにすぐ作成 · 公開", "Enter · 立即在 GitHub 创建 · 公开"],
+  "backlog.enterGithubUnknown": ["Enter · creates on GitHub now · may be public", "Enter · GitHub에 바로 만듦 · 공개일 수 있음", "Enter · GitHubにすぐ作成 · 公開の可能性あり", "Enter · 立即在 GitHub 创建 · 可能公开"],
   "backlog.enterLocal": ["Enter · saved on this device only", "Enter · 이 기기에만 저장", "Enter · このデバイスにのみ保存", "Enter · 仅保存在此设备"],
   "backlog.remaining": ["{{count}} left", "{{count}}자 남음", "残り {{count}} 文字", "还剩 {{count}} 字"],
   "backlog.moreIssues": ["{{count}} more issues", "나머지 이슈 {{count}}", "残りのIssue {{count}}", "其余议题 {{count}}"],
@@ -120,6 +121,7 @@ const words = {
   "overviewProjects.restingCount": ["Resting {{count}}", "쉬는 중 {{count}}", "休止中 {{count}}", "休息中 {{count}}"],
   "overviewProjects.noTasks": ["No tasks", "일감 없음", "タスクなし", "没有任务"],
   "overviewProjects.merged": ["{{count}} merged → clean up", "{{count}} merged → 정리", "{{count}} merged → 整理", "{{count}} merged → 清理"],
+  "overviewProjects.mergedThere": ["{{count}} merged", "{{count}} merged", "{{count}} merged", "{{count}} merged"],
   "overviewProjects.quiet": ["Quiet projects {{count}} · {{size}}", "조용한 프로젝트 {{count}} · {{size}}", "静かなプロジェクト {{count}} · {{size}}", "安静的项目 {{count}} · {{size}}"],
   "overviewProjects.quietNoSize": ["Quiet projects {{count}}", "조용한 프로젝트 {{count}}", "静かなプロジェクト {{count}}", "安静的项目 {{count}}"],
   "overviewProjects.folderTotal": ["Folder total", "폴더 합계", "フォルダ合計", "文件夹合计"],
@@ -151,6 +153,7 @@ const words = {
   "quickAdd.retry": ["Enter to try again", "Enter로 다시 시도", "Enterで再試行", "按 Enter 重试"],
   "missed.toBacklog": ["To backlog", "백로그로", "バックログへ", "放入待办"],
   "missed.public": ["public", "공개", "公開", "公开"],
+  "missed.maybePublic": ["may be public", "공개일 수 있음", "公開の可能性あり", "可能公开"],
   "missed.inBacklog": ["· backlog {{token}}", "· 백로그 {{token}}", "· バックログ {{token}}", "· 待办 {{token}}"],
 } as const;
 

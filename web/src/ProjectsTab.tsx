@@ -1,4 +1,4 @@
-import { AlertTriangleIcon, ArrowRightIcon, ChevronRightIcon, CircleDotIcon, ExternalLinkIcon, FolderIcon, LoaderCircleIcon, PlusIcon, XIcon } from "lucide-react";
+import { AlertTriangleIcon, ArrowRightIcon, ChevronRightIcon, ExternalLinkIcon, FolderGit2Icon, FolderIcon, LoaderCircleIcon, PlusIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
@@ -6,6 +6,7 @@ import { Hint } from "./components/ui/tooltip";
 import { layerLines } from "./diskCleanup";
 import { LAYER_DOT, openDiskCleanup } from "./DiskCleanupSheet";
 import { readsHere } from "./devices";
+import { GithubIcon } from "./components/github-icon";
 import { formatBytes } from "./i18n/format";
 import { useInterfaceTranslation } from "./i18n/client";
 import { requireInterfaceLanguage } from "./i18n/locale";
@@ -160,12 +161,14 @@ function ProjectRow({ row, largest, actions }: { row: ProjectRowModel; largest: 
   const language = requireInterfaceLanguage(i18n.language);
   const { project } = row;
   const selected = useUiStore((s) => s.overview.panel?.kind === "project" && s.overview.panel.workspaceId === project.id);
+  // A device the core dials is cleaned up on that device (B49): the count stays, with nothing to press.
+  const cleans = useShellStore((s) => readsHere(project, s.rest?.navigator?.devices));
   const activity = project.last_activity_unix_ms ?? null;
   return (
     <div role="row" className={cn(COLUMNS, "relative rounded-sm px-sm py-xs text-caption hover:bg-accent", selected && "bg-secondary")} data-projects-row={project.id}>
       <button type="button" aria-label={project.label} aria-pressed={selected} className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring" onClick={() => useUiStore.getState().setOverview({ panel: { kind: "project", workspaceId: project.id } })} />
       <span role="cell" className="pointer-events-none flex min-w-0 items-center gap-xs">
-        {row.folder ? <FolderIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" /> : <CircleDotIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" />}
+        {row.folder ? <FolderIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" /> : project.tasks?.source?.kind === "github" ? <GithubIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" data-projects-github="true" /> : <FolderGit2Icon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" />}
         <span className="min-w-0 truncate font-medium text-foreground">{project.label}</span>
         {row.folder ? <span className="shrink-0 text-micro text-muted-foreground">{t("overviewProjects.folder")}</span> : null}
       </span>
@@ -179,11 +182,11 @@ function ProjectRow({ row, largest, actions }: { row: ProjectRowModel; largest: 
       </span>
       <span role="cell" className="min-w-0"><DiskCell row={row} largest={largest} /></span>
       <span role="cell">
-        {row.merged > 0 ? (
+        {row.merged > 0 && cleans ? (
           <button type="button" className={cn(LINK, "text-pr-merged")} onClick={() => openDiskCleanup(project.id, "done")} data-projects-merged={row.merged}>
             {t("overviewProjects.merged", { count: row.merged })}
           </button>
-        ) : null}
+        ) : row.merged > 0 ? <span className="pointer-events-none text-pr-merged" data-projects-merged={row.merged}>{t("overviewProjects.mergedThere", { count: row.merged })}</span> : null}
       </span>
       <span role="cell" className="pointer-events-none truncate font-mono text-micro text-muted-foreground">{activity !== null ? ageWords(language, Date.now() - activity, t) : ""}</span>
       <span role="cell">

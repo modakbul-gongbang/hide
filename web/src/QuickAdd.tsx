@@ -60,20 +60,24 @@ function QuickAddDialog({ actions }: { actions: Actions }) {
   const close = () => actions.closeQuickAdd();
   const destination = destinationOf(project?.tasks?.source ?? null);
   const sending = intent !== null && item?.phase !== "failed";
+  // A failure no retry can change (a refusal, a repository that moved) hands the input back for a new add.
+  const final = item?.phase === "failed" && !item.retry;
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Tab") {
       event.preventDefault();
-      if (intent === null) setIndex((current) => cycleIndex(current, initial.projects.length, event.shiftKey));
+      if (intent === null || final) setIndex((current) => cycleIndex(current, initial.projects.length, event.shiftKey));
       return;
     }
     if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
     event.preventDefault();
     if (!project || sending) return;
     // A failed add is tried again under its own intent, so an issue GitHub made before the failure is joined, not made twice (B41).
-    if (intent !== null) return actions.retryBacklog(intent);
+    if (intent !== null && !final) return actions.retryBacklog(intent);
     const text = title.trim();
-    if (text) setIntent(actions.addBacklog(project.id, text));
+    if (!text) return;
+    if (intent !== null) actions.dismissBacklog(intent);
+    setIntent(actions.addBacklog(project.id, text));
   };
 
   const view = () => {
@@ -106,12 +110,12 @@ function QuickAddDialog({ actions }: { actions: Actions }) {
               <span className="min-w-0 truncate font-medium text-foreground" data-quick-add-project={project.id}>{project.label}</span>
               <span className="shrink-0" data-quick-add-reason={index === initial.index ? initial.reason : "cycled"}>{index === initial.index ? `· ${t(`quickAdd.reason.${initial.reason}`)}` : ""}</span>
               <span className="flex-1" />
-              {initial.projects.length > 1 && intent === null ? <span className="shrink-0 text-micro">{t("quickAdd.cycle")}</span> : null}
+              {initial.projects.length > 1 && (intent === null || final) ? <span className="shrink-0 text-micro">{t("quickAdd.cycle")}</span> : null}
             </div>
             <input
               autoFocus
               value={title}
-              readOnly={intent !== null}
+              readOnly={intent !== null && !final}
               placeholder={t(destination === "local" ? "backlog.placeholderLocal" : "backlog.placeholderGithub", { project: project.label })}
               aria-label={t(destination === "local" ? "backlog.placeholderLocal" : "backlog.placeholderGithub", { project: project.label })}
               className="h-(--size-control-lg) w-full min-w-0 bg-transparent text-body text-foreground outline-none placeholder:text-muted-foreground"
@@ -123,7 +127,7 @@ function QuickAddDialog({ actions }: { actions: Actions }) {
               {sending ? (
                 <span className="flex items-center gap-xxs" data-quick-add-creating="true"><LoaderCircleIcon aria-hidden="true" className="size-(--size-icon-sm) animate-spin" />{t("quickAdd.creating")}</span>
               ) : item?.phase === "failed" ? (
-                <span className="min-w-0 truncate text-destructive" role="alert" data-quick-add-failure={item.failure ?? "refused"}>{t(`backlog.failure.${item.failure ?? "refused"}`)} · {t("quickAdd.retry")}</span>
+                <span className="min-w-0 truncate text-destructive" role="alert" data-quick-add-failure={item.failure ?? "refused"}>{t(`backlog.failure.${item.failure ?? "refused"}`)}{item.retry ? ` · ${t("quickAdd.retry")}` : ""}</span>
               ) : (
                 <span className="min-w-0 truncate" data-quick-add-destination={destination}>{t(`quickAdd.dest.${destination}`)}</span>
               )}
