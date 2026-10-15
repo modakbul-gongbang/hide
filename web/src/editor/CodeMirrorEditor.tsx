@@ -156,7 +156,7 @@ export function CodeMirrorEditor({
   const offset = split ? (splitFrontmatter(contents)?.front.split("\n").length ?? 1) - 1 : 0;
   const model = useMemo(() => fileModel(contents, offset), [contents, offset]);
   const [shownBody, setShownBody] = useState<EditorView | null>(null);
-  const commentHost = useLineComments({ view: shownBody, ...comments, model, rows: model.lines().length - offset, saved: contents });
+  const { host: commentHost, blocks: commentBlocks } = useLineComments({ view: shownBody, ...comments, model, rows: model.lines().length - offset, saved: contents });
 
   const combined = () =>
     (frontView.current?.state.doc.toString() ?? "") + (bodyView.current?.state.doc.toString() ?? "");
@@ -405,6 +405,7 @@ export function CodeMirrorEditor({
         </div>
       ) : null}
       <div ref={bodyHost} className="min-h-0 flex-1 overflow-hidden" data-editor-body="true" />
+      {commentBlocks}
     </div>
   );
 }

@@ -45,7 +45,7 @@ export function PatchView({ text, wrap, scale, comments }: { text: string; wrap:
   const [view, setView] = useState<EditorView | null>(null);
   const rows = useMemo(() => patchLines(text), [text]);
   const model = useMemo(() => diffModel(rows), [rows]);
-  const commentHost = useLineComments({ view, ...comments, model, rows: rows.length, saved: text });
+  const { host: commentHost, blocks: commentBlocks } = useLineComments({ view, ...comments, model, rows: rows.length, saved: text });
   useEffect(() => {
     if (!host.current || !text) return;
     const doc = text.endsWith("\n") ? text.slice(0, -1) : text;
@@ -89,5 +89,10 @@ export function PatchView({ text, wrap, scale, comments }: { text: string; wrap:
       editor.destroy();
     };
   }, [text, wrap, scale, rows, commentHost]);
-  return <div ref={host} className="min-h-0 min-w-0 flex-1" data-patch-view="true" />;
+  return (
+    <>
+      <div ref={host} className="min-h-0 min-w-0 flex-1" data-patch-view="true" />
+      {commentBlocks}
+    </>
+  );
 }

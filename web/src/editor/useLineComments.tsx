@@ -4,13 +4,13 @@
 // the saved text changes (PRD view-opener-feedback B12, B31, D-14).
 
 import type { EditorView } from "@codemirror/view";
-import { useEffect, useMemo, useRef } from "react";
-import { createRoot } from "react-dom/client";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { Actions } from "../actions";
 import { useInterfaceTranslation } from "../i18n/client";
-import type { ViewComment, ViewCommentAnchor, ViewDisplaySnapshot } from "../snapshot";
+import type { ViewCommentAnchor, ViewDisplaySnapshot } from "../snapshot";
 import { anchorMeta, CommentCard, NoteFormCard, useViewFeedback } from "../ViewComments";
-import { commentsOn, COMMENTS_PER_VIEW, linesAnchor, openNote, relocation, useFeedbackStore, type NoteForm } from "../viewFeedback";
+import { commentsOn, COMMENTS_PER_VIEW, linesAnchor, openNote, relocation, useFeedbackStore } from "../viewFeedback";
 import type { ViewWorkspace } from "../viewLayout";
 import { setComments, type CommentBlock, type CommentHost } from "./comments";
 import type { PatchLine } from "./patch";
@@ -96,7 +96,9 @@ function blockRow(model: LineModel, anchor: ViewCommentAnchor, rows: number, dif
 /**
  * Keeps an editor's comments in step with the core, and gives the editor
  * the host it reports to. `saved` is the text the comments are found in:
- * a file's saved contents or the diff's text, never a keystroke's.
+ * a file's saved contents or the diff's text, never a keystroke's. The
+ * blocks are drawn as portals the caller renders, so a card keeps the page's
+ * context (its tooltips, its language).
  */
 export function useLineComments({
   view,
@@ -114,7 +116,7 @@ export function useLineComments({
   model: LineModel;
   rows: number;
   saved: string;
-}): { current: CommentHost } {
+}): { host: { current: CommentHost }; blocks: ReactNode } {
   const { t } = useInterfaceTranslation();
   const feedback = useViewFeedback();
   const form = useFeedbackStore((s) => s.forms[display.id] ?? null);
@@ -123,9 +125,8 @@ export function useLineComments({
   const full = commentsOn(feedback, display.id).length >= COMMENTS_PER_VIEW;
   const lineForm = form && form.anchor.kind === "lines" ? form : null;
 
-  // What a block draws, read when the editor builds it.
-  const latest = useRef<{ comments: Map<string, ViewComment>; form: NoteForm | null; full: boolean }>({ comments: new Map(), form: null, full: false });
-  latest.current = { comments: new Map(comments.map((comment) => [comment.id, comment])), form: lineForm, full };
+  // The elements the editor made for its blocks, each drawn by a portal below.
+  const [mounted, setMounted] = useState<ReadonlyMap<HTMLElement, CommentBlock>>(() => new Map());
 
   const host = useRef<CommentHost>(null as unknown as CommentHost);
   host.current = {
@@ -136,15 +137,13 @@ export function useLineComments({
     commentable: (row) => model.at(row) !== null,
     label: (row) => t("feedback.addOnLine", { line: model.at(row)?.line ?? row }),
     render(block, element) {
-      const root = createRoot(element);
-      const now = latest.current;
-      if (block.kind === "form" && now.form) {
-        root.render(<NoteFormCard form={now.form} meta={anchorMeta(t, now.form.anchor, display.path)} full={now.full} workspace={workspace} actions={actions} />);
-      } else {
-        const comment = now.comments.get(block.key);
-        if (comment) root.render(<CommentCard comment={comment} workspace={workspace} displayId={display.id} actions={actions} />);
-      }
-      return () => queueMicrotask(() => root.unmount());
+      setMounted((now) => new Map(now).set(element, block));
+      return () =>
+        setMounted((now) => {
+          const next = new Map(now);
+          next.delete(element);
+          return next;
+        });
     },
   };
 
@@ -198,5 +197,15 @@ export function useLineComments({
     // `saved` is what `model` was built from; the comments move only when it does.
   }, [saved, comments]);
 
-  return host;
+  const byId = new Map(comments.map((comment) => [comment.id, comment]));
+  const blocks = [...mounted].map(([element, block]) => {
+    if (block.kind === "form") {
+      if (!lineForm) return null;
+      return createPortal(<NoteFormCard form={lineForm} meta={anchorMeta(t, lineForm.anchor, display.path)} full={full} workspace={workspace} actions={actions} />, element, block.key);
+    }
+    const comment = byId.get(block.key);
+    return comment ? createPortal(<CommentCard comment={comment} workspace={workspace} displayId={display.id} actions={actions} />, element, block.key) : null;
+  });
+
+  return { host, blocks };
 }

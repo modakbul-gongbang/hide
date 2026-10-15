@@ -365,7 +365,7 @@ function sendRequestId(): string {
  * It sits under the View, so it never covers the page (B14).
  */
 export function FeedbackRow({ display, workspace, actions }: { display: ViewDisplaySnapshot; workspace: ViewWorkspace; actions: Actions }) {
-  const { t } = useInterfaceTranslation();
+  const { t, i18n } = useInterfaceTranslation();
   const feedback = useViewFeedback();
   const sentFrom = useFeedbackStore((s) => s.sentFrom);
   const deletedFrom = useFeedbackStore((s) => s.deletedFrom);
@@ -406,7 +406,7 @@ export function FeedbackRow({ display, workspace, actions }: { display: ViewDisp
         <>
           <AlertCircleIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-destructive" />
           <span className="min-w-0 flex-1 truncate">
-            <Trans t={t} i18nKey="feedback.state.failed" values={{ reason: reasonText(t, send.reason, device, send.to) }} components={{ bad: <span className="text-destructive" /> }} />
+            <Trans i18n={i18n} t={t} i18nKey="feedback.state.failed" values={{ reason: reasonText(t, send.reason, device, send.to) }} components={{ bad: <span className="text-destructive" /> }} />
           </span>
           {group !== null ? (
             <Button
@@ -433,6 +433,7 @@ export function FeedbackRow({ display, workspace, actions }: { display: ViewDisp
           {waiting ? <CircleHelpIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" /> : <CheckIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-success" />}
           <span className="min-w-0 flex-1 truncate">
             <Trans
+              i18n={i18n}
               t={t}
               i18nKey={waiting ? "feedback.state.waiting" : "feedback.state.sent"}
               values={{ count: send.count, name: send.to, device }}
@@ -454,7 +455,7 @@ export function FeedbackRow({ display, workspace, actions }: { display: ViewDisp
       <>
         <span aria-hidden="true" className="flex size-(--size-badge-height) shrink-0 items-center justify-center rounded-full bg-warning font-mono text-micro text-status-foreground">{group.not_delivered}</span>
         <span className="min-w-0 flex-1 truncate">
-          <Trans t={t} i18nKey="feedback.notDeliveredLine" values={{ name: group.recipient.name }} components={{ bad: <span className="text-warning" /> }} />
+          <Trans i18n={i18n} t={t} i18nKey="feedback.notDeliveredLine" values={{ name: group.recipient.name }} components={{ bad: <span className="text-warning" /> }} />
         </span>
         <SendButton group={group} display={display} workspace={workspace} actions={actions} again />
       </>
@@ -464,9 +465,9 @@ export function FeedbackRow({ display, workspace, actions }: { display: ViewDisp
     body = (
       <>
         <span className="min-w-0 flex-1 truncate text-muted-foreground" data-view-feedback-summary="true">
-          <Trans t={t} i18nKey="feedback.row.comments" count={group.comments} values={{ count: group.comments }} components={{ n: <span className="text-foreground" /> }} />
+          <Trans i18n={i18n} t={t} i18nKey="feedback.row.comments" count={group.comments} values={{ count: group.comments }} components={{ n: <span className="text-foreground" /> }} />
           {" · "}
-          <Trans t={t} i18nKey="feedback.row.views" count={group.views} values={{ count: group.views }} components={{ n: <span className="text-foreground" /> }} />
+          <Trans i18n={i18n} t={t} i18nKey="feedback.row.views" count={group.views} values={{ count: group.views }} components={{ n: <span className="text-foreground" /> }} />
         </span>
         <SendButton group={group} display={display} workspace={workspace} actions={actions} />
       </>
