@@ -4,16 +4,24 @@
  * page scripts can neither see its state nor call the binding it reports
  * through; every handler reads only trusted (operator) input events.
  *
+ * The overlay only points: it outlines, takes a click or a drag, and draws
+ * the page's pins. The note is written in the operator's window, over the
+ * page's still, never in the page's document, where the page's scripts
+ * could read or change what the operator types (D-17).
+ *
  * One statement that sets `globalThis.__hideComment`, the API hided calls
  * with Runtime.evaluate in this world:
  *   start(strings)  draw the hint, outline elements, capture click and drag
- *   pins(list)      the page's comments: [{id, number, rect, note, late}]
- *   saved(ok)       the last Add was stored (or not); show the overlay again
+ *   pins(list)      the page's comments: [{id, number, rect, note, late, area}]
+ *   shot(on)        hide the overlay while hided takes a screenshot, or show it
  *   stop()          remove everything; the page takes clicks again
  * and reports through `__hideCommentSend(json)`:
- *   {type: "add", anchor, note} | {type: "edit", id, note}
- *   {type: "delete", id} | {type: "off"}
- * Rectangles are document CSS pixels, which a clipped screenshot reads.
+ *   {type: "pick", anchor, at}   an element or an area to comment on
+ *   {type: "open", id, at}       a pin pressed: that comment
+ *   {type: "off"}                Esc
+ * Anchor rectangles are document CSS pixels, which a clipped screenshot
+ * reads; `at` is the same place as fractions of the page's viewport, which
+ * the window scales to the page's slot whatever either one's zoom.
  */
 (() => {
   if (globalThis.__hideComment) return;
@@ -32,6 +40,10 @@
   const viewRect = (rect) => ({
     left: rect.x - window.scrollX, top: rect.y - window.scrollY, width: rect.width, height: rect.height,
   });
+  const fractionOf = (view) => {
+    const width = Math.max(1, window.innerWidth), height = Math.max(1, window.innerHeight);
+    return { left: view.left / width, top: view.top / height, width: view.width / width, height: view.height / height };
+  };
 
   /* A selector that finds this element again: an id when it is unique,
    * else tag and position up from the nearest ancestor with one. */
@@ -95,122 +107,11 @@
       .pin:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }
       .box { position: absolute; border: 1.5px solid #3b82f6; background: rgba(59,130,246,.06); pointer-events: none; }
       .box.late { border-color: #f97316; background: rgba(249,115,22,.06); }
-      .form { position: fixed; width: 300px; padding: 10px; border-radius: 8px; background: #ffffff; color: #1c1f12;
-        box-shadow: 0 8px 24px rgba(0,0,0,.25); cursor: auto; display: flex; flex-direction: column; gap: 8px; }
-      .what { color: #5b6151; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      textarea { width: 100%; min-height: 64px; resize: vertical; padding: 6px 8px; border: 1px solid #d4d8cc; border-radius: 6px; color: #1c1f12; background: #fff; }
-      textarea:focus { outline: 2px solid #3b82f6; outline-offset: -1px; }
-      .row { display: flex; align-items: center; gap: 6px; }
-      .grow { flex: 1; color: #5b6151; font-size: 11px; }
-      button { border: 1px solid #d4d8cc; background: #fff; color: #1c1f12; border-radius: 6px; padding: 3px 10px; cursor: pointer; }
-      button.primary { background: #1c1f12; color: #f5f7ee; border-color: #1c1f12; }
-      button.danger { color: #b91c1c; }
-      button:disabled { opacity: .45; cursor: default; }
-      button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
-      .full { color: #b45309; font-size: 11px; }
     </style>
     <div class="hint"></div><div class="outline"></div><div class="area"></div><div class="pins"></div>`;
     root.querySelector('.hint').textContent = strings.hint;
     document.documentElement.appendChild(host);
     return { host, root };
-  };
-
-  const placeForm = (form, rect) => {
-    const view = viewRect(rect);
-    const left = Math.min(Math.max(8, view.left), window.innerWidth - 308);
-    const below = view.top + view.height + 8;
-    const top = below + 160 < window.innerHeight ? below : Math.max(8, view.top - 168);
-    form.style.left = `${left}px`;
-    form.style.top = `${top}px`;
-  };
-
-  /* The note form: a new comment's on `target`, or an existing one's
-   * (edit and delete). */
-  const openForm = (what, rect, existing, target) => {
-    closeForm();
-    state.target = target;
-    const { root, strings } = state;
-    const form = document.createElement('div');
-    form.className = 'form';
-    form.innerHTML = '<div class="what"></div><textarea></textarea><div class="row"><span class="grow"></span></div>';
-    form.querySelector('.what').textContent = what;
-    const note = form.querySelector('textarea');
-    note.placeholder = strings.placeholder;
-    note.maxLength = 4000;
-    const row = form.querySelector('.row');
-    row.querySelector('.grow').textContent = strings.shortcut;
-    const button = (label, kind, run) => {
-      const element = document.createElement('button');
-      element.textContent = label;
-      if (kind) element.className = kind;
-      element.addEventListener('click', (event) => { if (event.isTrusted) run(); });
-      row.appendChild(element);
-      return element;
-    };
-    // The shortcut runs the primary action itself: a synthetic click is
-    // untrusted, and the button reads only the operator's own clicks.
-    let submit;
-    let primary = () => {};
-    if (existing) {
-      note.value = existing.note;
-      button(strings.remove, 'danger', () => { send({ type: 'delete', id: existing.id }); closeForm(); });
-      button(strings.cancel, '', closeForm);
-      primary = () => {
-        const text = note.value.trim();
-        if (!text) return;
-        send({ type: 'edit', id: existing.id, note: text });
-        closeForm();
-      };
-      submit = button(strings.save, 'primary', primary);
-    } else if (state.full) {
-      note.disabled = true;
-      const full = document.createElement('div');
-      full.className = 'full';
-      full.textContent = strings.full;
-      form.insertBefore(full, row);
-      button(strings.cancel, '', closeForm);
-      submit = button(strings.add, 'primary', () => {});
-      submit.disabled = true;
-    } else {
-      button(strings.cancel, '', closeForm);
-      primary = () => add(note.value);
-      submit = button(strings.add, 'primary', primary);
-    }
-    const sync = () => { if (!state.full || existing) submit.disabled = !note.value.trim(); };
-    note.addEventListener('input', sync);
-    sync();
-    note.addEventListener('keydown', (event) => {
-      if (!event.isTrusted) return;
-      event.stopPropagation();
-      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); if (!submit.disabled) primary(); }
-      if (event.key === 'Escape') { event.preventDefault(); closeForm(); }
-    });
-    for (const kind of ['mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup']) {
-      form.addEventListener(kind, (event) => event.stopPropagation());
-    }
-    root.appendChild(form);
-    placeForm(form, rect);
-    note.focus();
-    state.form = form;
-  };
-
-  const closeForm = () => {
-    state?.form?.remove();
-    if (state) {
-      state.form = null;
-      state.target = null;
-      state.root.querySelector('.area').style.display = 'none';
-    }
-  };
-
-  /* The overlay hides for two frames so the screenshot hided clips shows
-   * the page alone, then reports. */
-  const add = (text) => {
-    const note = text.trim();
-    if (!note || !state.target) return;
-    const anchor = state.target;
-    state.host.style.setProperty('visibility', 'hidden', 'important');
-    requestAnimationFrame(() => requestAnimationFrame(() => send({ type: 'add', anchor, note })));
   };
 
   const drawPins = () => {
@@ -230,11 +131,12 @@
       dot.setAttribute('aria-label', `${pin.number}: ${pin.note}`);
       Object.assign(dot.style, { left: `${view.left + view.width}px`, top: `${view.top}px` });
       dot.addEventListener('mousedown', (event) => event.stopPropagation());
+      dot.addEventListener('mouseup', (event) => event.stopPropagation());
       dot.addEventListener('click', (event) => {
         if (!event.isTrusted) return;
         event.stopPropagation();
         event.preventDefault();
-        openForm(`${pin.number}`, pin.rect, pin, null);
+        send({ type: 'open', id: pin.id, at: fractionOf(view) });
       });
       layer.appendChild(dot);
     }
@@ -247,9 +149,11 @@
     return element && element !== document.documentElement ? element : null;
   };
 
+  const pick = (anchor) => send({ type: 'pick', anchor, at: fractionOf(viewRect(anchor.rect)) });
+
   const handlers = {
     mousemove(event) {
-      if (!event.isTrusted || state.form) return;
+      if (!event.isTrusted) return;
       const outline = state.root.querySelector('.outline');
       if (state.drag) {
         const area = state.root.querySelector('.area');
@@ -268,7 +172,7 @@
       if (!event.isTrusted || event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
-      if (state.form) { closeForm(); return; }
+      state.root.querySelector('.area').style.display = 'none';
       state.drag = { x: event.clientX, y: event.clientY };
     },
     mouseup(event) {
@@ -279,57 +183,56 @@
       state.drag = null;
       const moved = Math.abs(event.clientX - start.x) > 6 || Math.abs(event.clientY - start.y) > 6;
       if (moved) {
+        // The dashed area stays drawn while its note is written.
         const rect = docRect({ left: Math.min(start.x, event.clientX), top: Math.min(start.y, event.clientY),
           width: Math.abs(event.clientX - start.x), height: Math.abs(event.clientY - start.y) });
-        openForm(`${Math.round(rect.width)} × ${Math.round(rect.height)}`, rect, null, { kind: 'area', rect });
+        pick({ kind: 'area', rect });
         return;
       }
-      state.root.querySelector('.area').style.display = 'none';
       const element = elementAt(event.clientX, event.clientY);
       if (!element) return;
       const rect = docRect(element.getBoundingClientRect());
       const selector = selectorOf(element);
       const text = textOf(element);
       const source = sourceOf(element);
-      openForm(text ? `${selector}  “${text.slice(0, 60)}”` : selector, rect, null,
-        { kind: 'element', selector, text, rect, ...(source ? { source } : {}) });
+      pick({ kind: 'element', selector, text, rect, ...(source ? { source } : {}) });
     },
     click(event) { if (event.isTrusted) { event.preventDefault(); event.stopPropagation(); } },
     keydown(event) {
-      if (!event.isTrusted || event.key !== 'Escape' || state.form) return;
+      if (!event.isTrusted || event.key !== 'Escape') return;
       event.preventDefault();
       event.stopPropagation();
       send({ type: 'off' });
     },
-    scroll() { if (state && !state.form) drawPins(); },
+    scroll() { if (state) drawPins(); },
   };
 
   globalThis.__hideComment = {
     start(strings) {
       if (state) { state.strings = strings; return true; }
       const { host, root } = build(strings);
-      state = { host, root, strings, pins: [], form: null, target: null, drag: null, full: false };
+      state = { host, root, strings, pins: [], drag: null };
       // The pointer handlers listen as a press bubbles out of the overlay, so
-      // the form and the pins, which stop their own presses, keep them.
-      for (const [kind, handler] of Object.entries(handlers)) {
-        if (kind === 'scroll') window.addEventListener(kind, handler, { passive: true });
-        else if (kind !== 'keydown') host.addEventListener(kind, handler);
-      }
+      // the pins, which stop their own presses, keep them.
+      for (const kind of ['mousemove', 'mousedown', 'mouseup', 'click']) host.addEventListener(kind, handlers[kind]);
+      window.addEventListener('scroll', handlers.scroll, { passive: true });
       window.addEventListener('keydown', handlers.keydown, true);
       return true;
     },
-    pins(list, full) {
+    pins(list) {
       if (!state) return false;
       state.pins = Array.isArray(list) ? list : [];
-      state.full = Boolean(full);
+      // A new comment's own box replaces the area drawn while it was written.
+      state.root.querySelector('.area').style.display = 'none';
       drawPins();
       return true;
     },
-    saved(ok) {
+    /* Resolves once the page has drawn a frame without (or with) the overlay. */
+    shot(on) {
       if (!state) return false;
-      state.host.style.removeProperty('visibility');
-      if (ok) closeForm();
-      return true;
+      if (on) state.host.style.setProperty('visibility', 'hidden', 'important');
+      else state.host.style.removeProperty('visibility');
+      return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))));
     },
     stop() {
       if (!state) return true;

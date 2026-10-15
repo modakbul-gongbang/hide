@@ -1,20 +1,27 @@
 //! The operator's Comment mode on a browser View (PRD view-opener-feedback
 //! D-07, B9-B11): a page is a native view the shell cannot draw over, so
-//! while Comment is on, hided holds the View's debugger lease, draws
-//! `comment.js` in an isolated world of the page, and turns what the
-//! operator does there into the core's `view_comment` events.
+//! while Comment is on, hided holds the View's debugger lease and draws
+//! `comment.js` in an isolated world of the page, where the operator points
+//! at an element or drags an area.
+//!
+//! The overlay only points. Each place it reports is taken as a screenshot
+//! at once and kept here as the session's one pick; the screen then draws
+//! the note over the page's still, in the operator's window, and its Add
+//! names that pick (`take_pick`). The note is never in the page's document,
+//! so the page's scripts can neither read nor change what the operator
+//! writes, and nothing the page does can make a comment (D-17): the binding
+//! the overlay reports through exists only in the `hide-comment` world, and
+//! the overlay reads only trusted input.
 //!
 //! A session is the View's in its checkout (display ids repeat across
 //! checkouts), belongs to the screen that turned it on and ends with it,
-//! with Comment off or Esc, and when the page's lease ends. The page's scripts
-//! cannot reach the binding the overlay reports through (it exists only in
-//! the `hide-comment` world), and the overlay reads only trusted input, so a
-//! page cannot leave a comment in the operator's name. While a session
+//! with Comment off or Esc, and when the page's lease ends. While a session
 //! holds the lease, an agent's `hide browser` command on that page is
 //! answered `display_busy` (the PRD's known effect).
 //!
-//! A comment's screenshot is the page clipped to what it points at, staged
-//! on this machine's state folder; only its name reaches the core (D-23).
+//! A comment's screenshot is the page clipped to what it points at; the
+//! screen's feedback queue stages it on this machine's state folder, and
+//! only its name reaches the core (D-23).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -39,8 +46,8 @@ const EVENTS: &[&str] = &[
 ];
 /// Comment sessions at once: one per View the operator comments on.
 const MAX_SESSIONS: usize = 4;
-/// What one overlay message may be; a note is at most 4000 characters.
-const MAX_MESSAGE_BYTES: usize = 64 * 1024;
+/// What one overlay message may be: a place, its selector and its text.
+const MAX_MESSAGE_BYTES: usize = 16 * 1024;
 const CALL: Duration = Duration::from_secs(10);
 /// The most pixels a screenshot clip keeps; a larger area is scaled down
 /// so the capture stays well under the gateway's message cap.
@@ -49,16 +56,28 @@ const MAX_SHOT_PIXELS: f64 = 2_000_000.0;
 /// What a session needs of the daemon.
 #[derive(Clone)]
 pub struct Context {
-    pub core: Arc<crate::core::CoreHandle>,
-    pub attachments: Arc<crate::attachments::Attachments>,
     pub control: Arc<crate::browser_control::BrowserControl>,
 }
 
 /// The page's pins again, while the mode is on.
 struct Pins {
     pins: Value,
-    full: bool,
     strings: Value,
+}
+
+/// The place the operator picked last, waiting for its note: what the
+/// overlay said it points at and the page's screenshot of it.
+struct Pick {
+    id: u64,
+    anchor: Value,
+    png: Option<Vec<u8>>,
+}
+
+/// A note the screen added on the session's pick: the core's `view_comment`
+/// add, and the screenshot to stage for it.
+pub struct Added {
+    pub event: Value,
+    pub png: Option<Vec<u8>>,
 }
 
 struct Session {
@@ -68,6 +87,8 @@ struct Session {
     /// Ending the session never waits on the pins' queue: taking this ends
     /// it, so a full queue cannot keep a page held (`None` once it is ending).
     off: Option<oneshot::Sender<()>>,
+    /// One at a time: a new pick replaces one never written.
+    pick: Option<Pick>,
 }
 
 /// A View in its checkout: device, checkout path and display id.
@@ -89,8 +110,9 @@ struct Request {
     /// Only the pins again: never starts a session.
     update: bool,
     pins: Value,
-    full: bool,
     strings: Value,
+    /// A note on the session's pick: its id and the note.
+    add: Option<(u64, String)>,
 }
 
 fn request(event: &Value) -> Result<Request, String> {
@@ -113,17 +135,35 @@ fn request(event: &Value) -> Result<Request, String> {
         on: payload["on"].as_bool().unwrap_or(false),
         update: payload["update"].as_bool().unwrap_or(false),
         pins: payload.get("pins").cloned().unwrap_or(json!([])),
-        full: payload["full"].as_bool().unwrap_or(false),
         strings: payload.get("strings").cloned().unwrap_or(json!({})),
+        add: match payload.get("add") {
+            None => None,
+            Some(add) => Some((
+                add["pick"]
+                    .as_u64()
+                    .ok_or("browser_comment/add/pick is missing")?,
+                add["note"]
+                    .as_str()
+                    .ok_or("browser_comment/add/note is missing")?
+                    .to_owned(),
+            )),
+        },
     })
 }
 
 fn frame((device_id, path, display_id): &SessionKey, on: bool, reason: Option<&str>) -> String {
-    json!({"type": "browser_comment", "payload": {
-        "workspace": {"device_id": device_id, "path": path},
-        "display_id": display_id, "on": on, "reason": reason,
-    }})
-    .to_string()
+    framed(
+        (device_id, path, display_id),
+        json!({"on": on, "reason": reason}),
+    )
+}
+
+/// A frame for the session's screen while it is on: a pick to write a note
+/// on, or a pin the operator pressed.
+fn framed((device_id, path, display_id): (&str, &str, &str), mut payload: Value) -> String {
+    payload["workspace"] = json!({"device_id": device_id, "path": path});
+    payload["display_id"] = json!(display_id);
+    json!({"type": "browser_comment", "payload": payload}).to_string()
 }
 
 impl Request {
@@ -137,45 +177,48 @@ impl Request {
 }
 
 impl CommentSessions {
-    /// A screen turns Comment on or off for a View, or sends the page's
-    /// pins again.
+    /// A screen turns Comment on or off for a View, sends the page's pins
+    /// again, or adds a note on the session's pick, which it answers with
+    /// the comment for the screen's feedback queue.
     pub fn handle(
         self: &Arc<Self>,
         context: Context,
         connection: u64,
         event: &Value,
         frames: mpsc::Sender<String>,
-    ) -> Result<(), String> {
+    ) -> Result<Option<Added>, String> {
         let request = request(event)?;
         let key = request.key();
         let mut sessions = self.sessions.lock().map_err(|_| "comment sessions")?;
+        if let Some((pick, note)) = request.add {
+            return Ok(take_pick(&mut sessions, &key, connection, pick, note));
+        }
         if let Some(session) = sessions.get_mut(&key) {
             if !request.on {
                 if session.connection == connection {
                     session.off.take();
                 }
-                return Ok(());
+                return Ok(None);
             }
             // Another screen's, or one still letting the page go.
             if session.connection != connection || session.off.is_none() {
                 let _ = frames.try_send(frame(&key, false, Some("display_busy")));
-                return Ok(());
+                return Ok(None);
             }
             // A full queue means the session is still drawing the last
             // pins; the next snapshot sends them again.
             let _ = session.pins.try_send(Pins {
                 pins: request.pins,
-                full: request.full,
                 strings: request.strings,
             });
-            return Ok(());
+            return Ok(None);
         }
         if !request.on || request.update {
-            return Ok(());
+            return Ok(None);
         }
         if sessions.len() >= MAX_SESSIONS {
             let _ = frames.try_send(frame(&key, false, Some("comment_limit")));
-            return Ok(());
+            return Ok(None);
         }
         let (pins, pins_rx) = mpsc::channel(8);
         let (off, off_rx) = oneshot::channel();
@@ -189,13 +232,19 @@ impl CommentSessions {
                 generation,
                 pins,
                 off: Some(off),
+                pick: None,
             },
         );
         drop(sessions);
         let registry = Arc::clone(self);
         tokio::spawn(async move {
             let display_id = request.display_id.clone();
-            let outcome = run(&context, request, pins_rx, off_rx, &frames).await;
+            let own = Own {
+                registry: &registry,
+                key: &key,
+                generation,
+            };
+            let outcome = run(&context, request, own, pins_rx, off_rx, &frames).await;
             if let Err(failure) = &outcome {
                 herdr_core::diagnostic!(json!({
                     "component": "browser_comment",
@@ -214,7 +263,7 @@ impl CommentSessions {
             let reason = outcome.err().map(|failure| failure.reason);
             let _ = frames.send(frame(&key, false, reason.as_deref())).await;
         });
-        Ok(())
+        Ok(None)
     }
 
     /// The screen went: its sessions end and their leases with them.
@@ -230,11 +279,61 @@ impl CommentSessions {
     }
 }
 
+/// The screen's note on its session's pick: the comment it makes, once.
+/// A pick another one replaced, or a session gone, adds nothing; the screen
+/// drew the newer pick's note or heard the session end.
+fn take_pick(
+    sessions: &mut HashMap<SessionKey, Session>,
+    key: &SessionKey,
+    connection: u64,
+    pick: u64,
+    note: String,
+) -> Option<Added> {
+    let taken = sessions
+        .get_mut(key)
+        .filter(|session| session.connection == connection && session.off.is_some())
+        .and_then(|session| session.pick.take_if(|held| held.id == pick));
+    let Some(Pick { anchor, png, .. }) = taken else {
+        herdr_core::diagnostic!(json!({
+            "component": "browser_comment",
+            "kind": "pick.gone",
+            "display_id": key.2,
+            "pick": pick,
+        }));
+        return None;
+    };
+    let (device_id, path, display_id) = key;
+    let event = json!({"schema_version": 2, "kind": "view_comment", "payload": {
+        "workspace": {"device_id": device_id, "path": path},
+        "action": "add", "display_id": display_id, "anchor": anchor, "note": note,
+    }});
+    Some(Added { event, png })
+}
+
+/// The running session's own entry: where its picks are kept.
+struct Own<'a> {
+    registry: &'a CommentSessions,
+    key: &'a SessionKey,
+    generation: u64,
+}
+
+impl Own<'_> {
+    fn keep(&self, pick: Pick) {
+        if let Ok(mut sessions) = self.registry.sessions.lock()
+            && let Some(session) = sessions.get_mut(self.key)
+            && session.generation == self.generation
+        {
+            session.pick = Some(pick);
+        }
+    }
+}
+
 /// One session: lease, overlay, and the loop that reads the operator's
-/// comments and the screen's pins until either side ends it.
+/// picks and the screen's pins until either side ends it.
 async fn run(
     context: &Context,
     request: Request,
+    own: Own<'_>,
     mut controls: mpsc::Receiver<Pins>,
     mut off: oneshot::Receiver<()>,
     frames: &mpsc::Sender<String>,
@@ -262,19 +361,21 @@ async fn run(
     )
     .await?;
     let mut world = inject(&mut page, &request.strings).await?;
-    let mut shown = (request.pins.clone(), request.full, request.strings.clone());
+    let mut shown = (request.pins.clone(), request.strings.clone());
     draw(&mut page, world, &shown).await;
-    let _ = frames.send(frame(&request.key(), true, None)).await;
+    let key = request.key();
+    let _ = frames.send(frame(&key, true, None)).await;
+    let mut picks = 0_u64;
     let ended = loop {
         tokio::select! {
             // Taken or dropped alike: Comment off, or the screen went.
             _ = &mut off => break Ok(()),
             control = controls.recv() => match control {
-                Some(Pins { pins, full, strings }) => {
-                    if strings != shown.2 {
+                Some(Pins { pins, strings }) => {
+                    if strings != shown.1 {
                         eval(&mut page, world, &format!("__hideComment.start({strings})")).await;
                     }
-                    shown = (pins, full, strings);
+                    shown = (pins, strings);
                     draw(&mut page, world, &shown).await;
                 }
                 None => break Ok(()),
@@ -291,7 +392,7 @@ async fn run(
                     {
                         // A new document: the overlay goes in again, with the
                         // pins of the address it is at now.
-                        match inject(&mut page, &shown.2).await {
+                        match inject(&mut page, &shown.1).await {
                             Ok(id) => {
                                 world = id;
                                 draw(&mut page, world, &shown).await;
@@ -310,10 +411,24 @@ async fn run(
                         let Ok(message) = serde_json::from_str::<Value>(message) else {
                             continue;
                         };
-                        if message["type"] == "off" {
-                            break Ok(());
+                        match message["type"].as_str() {
+                            Some("off") => break Ok(()),
+                            Some("pick") => {
+                                let Some((anchor, at)) = picked(&message) else { continue };
+                                picks += 1;
+                                let png = capture(&mut page, world, &anchor["rect"]).await;
+                                own.keep(Pick { id: picks, anchor: anchor.clone(), png });
+                                let pick = json!({"id": picks, "anchor": anchor, "at": at});
+                                let line = (key.0.as_str(), key.1.as_str(), key.2.as_str());
+                                let _ = frames.send(framed(line, json!({"on": true, "reason": null, "pick": pick}))).await;
+                            }
+                            Some("open") => {
+                                let (Some(id), Some(at)) = (message["id"].as_str(), fraction(&message["at"])) else { continue };
+                                let line = (key.0.as_str(), key.1.as_str(), key.2.as_str());
+                                let _ = frames.send(framed(line, json!({"on": true, "reason": null, "open": {"id": id, "at": at}}))).await;
+                            }
+                            _ => {}
                         }
-                        report(context, &request, &mut page, world, message).await;
                     }
                     "Inspector.detached" => break Err(Failure::new("display_missing", None)),
                     _ => {}
@@ -367,84 +482,53 @@ async fn eval(page: &mut Page, world: i64, expression: &str) {
     .await;
 }
 
-async fn draw(page: &mut Page, world: i64, shown: &(Value, bool, Value)) {
-    eval(
-        page,
-        world,
-        &format!("__hideComment.pins({}, {})", shown.0, shown.1),
-    )
-    .await;
+async fn draw(page: &mut Page, world: i64, shown: &(Value, Value)) {
+    eval(page, world, &format!("__hideComment.pins({})", shown.0)).await;
 }
 
-/// One overlay message: a new comment with its screenshot, an edit or a
-/// delete, each the core's `view_comment` event.
-async fn report(context: &Context, request: &Request, page: &mut Page, world: i64, message: Value) {
-    let workspace = json!({"device_id": request.device_id, "path": request.path});
-    let payload = match message["type"].as_str() {
-        Some("add") => {
-            let anchor = message["anchor"].clone();
-            let shot = match shot(page, &anchor["rect"]).await {
-                Some(png) => {
-                    let attachments = Arc::clone(&context.attachments);
-                    tokio::task::spawn_blocking(move || attachments.stage_view_shot(&png))
-                        .await
-                        .ok()
-                        .and_then(|staged| {
-                            staged
-                                .map_err(|error| {
-                                    herdr_core::diagnostic!(json!({
-                                        "component": "browser_comment",
-                                        "kind": "shot.stage_failed",
-                                        "display_id": request.display_id,
-                                        "error": error,
-                                    }));
-                                })
-                                .ok()
-                        })
-                }
-                None => None,
-            };
-            let mut payload = json!({
-                "workspace": workspace, "action": "add", "display_id": request.display_id,
-                "anchor": anchor, "note": message["note"],
-            });
-            if let Some(name) = shot {
-                payload["shot"] = json!({"node": context.core.node().as_str(), "name": name});
-            }
-            payload
-        }
-        Some("edit") => json!({
-            "workspace": workspace, "action": "edit",
-            "comment_id": message["id"], "note": message["note"],
-        }),
-        Some("delete") => json!({
-            "workspace": workspace, "action": "delete", "comment_id": message["id"],
-        }),
-        _ => return,
-    };
-    let event = json!({"schema_version": 2, "kind": "view_comment", "payload": payload});
-    let core = Arc::clone(&context.core);
-    let dispatched =
-        tokio::task::spawn_blocking(move || core.dispatch(event.to_string().into_bytes()))
-            .await
-            .map_err(|error| error.to_string())
-            .and_then(|result| result);
-    if let Err(error) = &dispatched {
-        herdr_core::diagnostic!(json!({
-            "component": "browser_comment",
-            "kind": "comment.dispatch_failed",
-            "display_id": request.display_id,
-            "error": error,
-        }));
+/// The overlay's pick: an element or an area of the page in document
+/// pixels, and where it shows in the page's viewport. The core checks the
+/// anchor again when the note adds it.
+fn picked(message: &Value) -> Option<(Value, Value)> {
+    let anchor = &message["anchor"];
+    if !matches!(anchor["kind"].as_str(), Some("element" | "area")) {
+        return None;
     }
-    if message["type"] == "add" {
-        eval(
-            page,
-            world,
-            &format!("__hideComment.saved({})", dispatched.is_ok()),
-        )
-        .await;
+    let rect = &anchor["rect"];
+    let finite = |key: &str| rect[key].as_f64().is_some_and(f64::is_finite);
+    if !["x", "y", "width", "height"].into_iter().all(finite) {
+        return None;
     }
+    Some((anchor.clone(), fraction(&message["at"])?))
+}
+
+/// A place as fractions of the page's viewport, which the screen scales to
+/// the page's slot.
+fn fraction(at: &Value) -> Option<Value> {
+    let read = |key: &str| at[key].as_f64().filter(|value| value.is_finite());
+    Some(json!({
+        "left": read("left")?, "top": read("top")?,
+        "width": read("width")?, "height": read("height")?,
+    }))
+}
+
+/// The page clipped to `rect` with the overlay out of the picture, which
+/// shows again once the shot is taken.
+async fn capture(page: &mut Page, world: i64, rect: &Value) -> Option<Vec<u8>> {
+    let hidden = call(
+        page,
+        "Runtime.evaluate",
+        json!({"expression": "__hideComment.shot(true)", "contextId": world, "awaitPromise": true, "returnByValue": true}),
+    )
+    .await;
+    let png = if hidden.is_ok() { shot(page, rect).await } else { None };
+    let _ = call(
+        page,
+        "Runtime.evaluate",
+        json!({"expression": "__hideComment.shot(false)", "contextId": world, "awaitPromise": true, "returnByValue": true}),
+    )
+    .await;
+    png
 }
 
 /// The page clipped to `rect` (document CSS pixels), scaled down past

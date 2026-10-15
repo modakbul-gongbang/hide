@@ -263,10 +263,13 @@ The page-side code is chromux's (MIT, `modakbul-gongbang/chromux` `93f770f`), ke
 
 ## Comment mode
 
-A page is a native view the shell cannot draw over, so the operator's Comment mode on a page ([UI_BEHAVIOR.md](UI_BEHAVIOR.md#view-openers-and-comments), PRD view-opener-feedback D-07) is drawn by hided inside the page (`hided/src/browser_page/comment.rs`).
+A page is a native view the shell cannot draw over, so the pointing half of the operator's Comment mode on a page ([UI_BEHAVIOR.md](UI_BEHAVIOR.md#view-openers-and-comments), PRD view-opener-feedback D-07) is drawn by hided inside the page (`hided/src/browser_page/comment.rs`).
 The window's `browser_comment` event turns it on: hided takes the display's debugger lease, as a `hide browser` command does, and draws `hided/assets/browser/comment.js` in an isolated world, `hide-comment`, with the page's comments for its current address as numbered pins.
-What the operator does there reaches the core as the same `view_comment` events the shell sends, through a binding that exists only in that world; the overlay acts only on trusted input, so the page's own scripts can neither see the binding nor leave a comment in the operator's name.
-The note is typed into the page's own document, so the page's scripts can read the keys while the operator types it; a note on a page the operator does not trust belongs in a file comment instead.
+The overlay only points: it outlines the element under the pointer, takes a click or a drag, and reports the place through a binding that exists only in that world, acting only on trusted input, so the page's own scripts can neither see the binding nor pick a place.
+hided takes the place's screenshot at once, with the overlay hidden for that frame, keeps it as the session's one pick, and sends the window a `browser_comment` frame with `pick` (its id, the anchor, and where it shows as fractions of the page's viewport); a pin pressed sends `open` with the comment's id instead.
+The window writes the note in its own layer over the page's slot (`PageNoteLayer` in `web/src/ViewComments.tsx`), which freezes the page to its still as any overlay does ([Overlays](#overlays)) and takes the keyboard from it, so the page's scripts can neither read nor change the note (D-17).
+Add sends `browser_comment` with `add` {pick, note}; hided takes the pick it holds, once, and hands the add with its screenshot to the window's feedback queue, which stages the screenshot and gives the core the same `view_comment` event the shell sends, in order with that window's other comments and Sends.
+A pick another pick replaced, or one whose session ended, adds nothing and is logged (`pick.gone`); an edit or a delete from the card a pin opens is the shell's own `view_comment` event.
 A comment's screenshot is the page clipped to the element or area (scaled down past a pixel cap), staged in this machine's `view-feedback` folder; only its name reaches the core, and a Send carries the bytes to the recipient's machine ([delivery.md](delivery.md#the-operators-view-feedback)).
 Turning it on gives the page the keyboard, so Esc reaches the overlay without a click in the page first.
 While it is on, the window sends the pins again as an `update`, which redraws a running session and never starts one, so pins that cross the page's own Esc cannot turn Comment back on.

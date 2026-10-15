@@ -110,11 +110,11 @@ describe("the line under a View", () => {
   it("offers Undo on the View the delete was made on, for a moment", () => {
     const feedback: ViewFeedback = { comments: [], groups: [], opened: [], deleted: "c1" };
     const deletedFrom = { commentId: "c1", displayId: "d1", at: 0 };
-    expect(deletedHere(feedback, deletedFrom, "d1", SHOWN_MS - 1, false)).toBe(true);
-    expect(deletedHere(feedback, deletedFrom, "d2", 0, false)).toBe(false);
-    expect(deletedHere(feedback, deletedFrom, "d1", SHOWN_MS, false)).toBe(false);
-    // A delete in a page's own overlay: the page in Comment mode says it.
-    expect(deletedHere(feedback, null, "d3", 0, true)).toBe(true);
+    expect(deletedHere(feedback, deletedFrom, "d1", SHOWN_MS - 1)).toBe(true);
+    expect(deletedHere(feedback, deletedFrom, "d2", 0)).toBe(false);
+    expect(deletedHere(feedback, deletedFrom, "d1", SHOWN_MS)).toBe(false);
+    // Another window's delete: that window offers Undo.
+    expect(deletedHere(feedback, null, "d1", 0)).toBe(false);
   });
 
   it("speaks for the group of the View's own comments, in their letter's order", () => {

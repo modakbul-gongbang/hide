@@ -8,7 +8,8 @@ import { isOperatorFocus, numbered } from "./operatorFocus";
 import { noteArrival, probeEnabled } from "./probe";
 import { useShellStore, type TerminalChunk } from "./store";
 import { hostKind } from "./host";
-import { browserCommentKey, noteBrowserComment } from "./viewFeedback";
+import type { ViewCommentAnchor } from "./snapshot";
+import { browserCommentKey, noteBrowserComment, openBrowserNote, type PagePlace } from "./viewFeedback";
 
 export type DispatchFn = (event: {
   schema_version: number;
@@ -194,8 +195,18 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
         return;
       }
       if (frame.type === "browser_comment") {
-        const answer = frame.payload as unknown as { workspace: { device_id: string; path: string }; display_id: string; on: boolean; reason: string | null };
-        noteBrowserComment(browserCommentKey(answer.workspace, answer.display_id), { on: answer.on, reason: answer.reason });
+        const answer = frame.payload as unknown as {
+          workspace: { device_id: string; path: string };
+          display_id: string;
+          on: boolean;
+          reason: string | null;
+          pick?: { id: number; anchor: ViewCommentAnchor; at: PagePlace };
+          open?: { id: string; at: PagePlace };
+        };
+        const key = browserCommentKey(answer.workspace, answer.display_id);
+        noteBrowserComment(key, { on: answer.on, reason: answer.reason });
+        if (answer.on && answer.pick) openBrowserNote(key, { kind: "pick", pick: answer.pick.id, anchor: answer.pick.anchor, at: answer.pick.at });
+        else if (answer.on && answer.open) openBrowserNote(key, { kind: "open", commentId: answer.open.id, at: answer.open.at });
         return;
       }
       if (frame.type === "attachment_refused") {

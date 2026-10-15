@@ -18,9 +18,8 @@ import { commandLabel } from "./shortcutLabels";
 import { TreeButton } from "./TreeButton";
 import { useInterfaceTranslation } from "./i18n/client";
 import { MessageSquarePlusIcon } from "lucide-react";
-import { browserCommentKey, commentsOn, COMMENTS_PER_VIEW, useFeedbackStore, noteBrowserComment } from "./viewFeedback";
-import { useViewFeedback } from "./ViewComments";
-import { keySystem } from "./host";
+import { browserCommentKey, commentsOn, useFeedbackStore, noteBrowserComment } from "./viewFeedback";
+import { PageNoteLayer, useViewFeedback } from "./ViewComments";
 
 // A browser display (issue 155): its toolbar and the place its page shows.
 // In the desktop app the page is a native view the host lays over the slot
@@ -86,6 +85,8 @@ function HostedPage({ display, workspace, actions }: { display: ViewDisplaySnaps
   }, [display.id]);
   const command = (name: BrowserCommand) => browserBridge()?.command(workspace, display.id, name);
   const address = page?.url || display.url || "";
+  const view = parseWorkspaceKey(workspace);
+  const areaId = useAreaOf(display.id);
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-browser-display={display.id}>
       <div className="flex h-(--size-tab-strip) shrink-0 items-center gap-xs border-b border-border pl-xs pr-sm" data-browser-toolbar={display.id}>
@@ -114,7 +115,7 @@ function HostedPage({ display, workspace, actions }: { display: ViewDisplaySnaps
           </Hint>
         )}
         <AddressField address={address} onSubmit={(url) => actions.navigateBrowser(display.id, url)} />
-        <BrowserCommentButton display={display} workspace={workspace} address={address} actions={actions} />
+        <BrowserCommentButton display={display} workspace={workspace} areaId={areaId} address={address} actions={actions} />
       </div>
       <div ref={slot} className="relative min-h-0 min-w-0 flex-1" data-browser-slot={display.id}>
         {page?.failure ? (
@@ -125,6 +126,16 @@ function HostedPage({ display, workspace, actions }: { display: ViewDisplaySnaps
           </AreaEmpty>
         ) : still ? (
           <img src={still} alt="" aria-hidden="true" draggable={false} className="absolute inset-0 size-full select-none object-fill" data-browser-still={display.id} />
+        ) : null}
+        {view && areaId ? (
+          <PageNoteLayer
+            commentKey={browserCommentKey(view, display.id)}
+            displayId={display.id}
+            workspace={view}
+            actions={actions}
+            add={(pick, note) => actions.browserComment({ workspace: view, area_id: areaId, display_id: display.id, on: true, update: true, add: { pick, note } })}
+            done={() => focusBrowserDisplay(workspace, display.id)}
+          />
         ) : null}
       </div>
     </div>
@@ -241,26 +252,31 @@ export function BrowserHost({ actions }: { actions: Actions }) {
   return null;
 }
 
+/** The area that holds a display in the front Workspace's layout, or none. */
+function useAreaOf(displayId: string): string | null {
+  return useShellStore((s) => {
+    const layout = workspaceViewOf(s.rest)?.layout;
+    return layout ? (locateDisplay(layout.root, displayId)?.area.id ?? null) : null;
+  });
+}
+
 /**
  * Comment on a page (PRD view-opener-feedback B9-B11, B32): while it is on,
  * hided holds the page and draws the overlay in it, so a click or a drag
- * there makes a comment rather than reaching the page. The pins are the
- * page's own comments, those left at the address it shows now; they are sent
- * again whenever the core's comments change. Turning it on gives the page the
+ * there picks a place rather than reaching the page, and the note on it is
+ * written in the window (`PageNoteLayer`). The pins are the page's own
+ * comments, those left at the address it shows now; they are sent again
+ * whenever the core's comments change. Turning it on gives the page the
  * keyboard, so Esc there ends it as the hint says; so do Comment again and
  * leaving the View.
  */
-function BrowserCommentButton({ display, workspace, address, actions }: { display: ViewDisplaySnapshot; workspace: string; address: string; actions: Actions }) {
+function BrowserCommentButton({ display, workspace, areaId, address, actions }: { display: ViewDisplaySnapshot; workspace: string; areaId: string | null; address: string; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const view = parseWorkspaceKey(workspace);
   const key = view ? browserCommentKey(view, display.id) : null;
   const mode = useFeedbackStore((s) => (key ? s.browser[key] : undefined) ?? null);
   const on = mode?.on === true;
   const feedback = useViewFeedback();
-  const areaId = useShellStore((s) => {
-    const layout = workspaceViewOf(s.rest)?.layout;
-    return layout ? (locateDisplay(layout.root, display.id)?.area.id ?? null) : null;
-  });
   const comments = commentsOn(feedback, display.id);
   const pins = comments
     .filter((comment) => comment.url === address && (comment.anchor.kind === "element" || comment.anchor.kind === "area"))
@@ -272,18 +288,8 @@ function BrowserCommentButton({ display, workspace, address, actions }: { displa
       late: comment.not_delivered,
       area: comment.anchor.kind === "area",
     }));
-  const full = comments.length >= COMMENTS_PER_VIEW;
-  const strings = {
-    hint: t("feedback.hint.browser"),
-    placeholder: t("feedback.note.placeholder"),
-    shortcut: t("feedback.note.shortcut", { chord: keySystem() === "mac" ? "⌘↩" : "Ctrl+Enter" }),
-    add: t("feedback.note.add"),
-    cancel: t("common.cancel"),
-    save: t("feedback.note.save"),
-    remove: t("feedback.note.delete"),
-    full: t("feedback.note.full", { count: COMMENTS_PER_VIEW }),
-  };
-  const request = JSON.stringify({ pins, full, strings });
+  const strings = { hint: t("feedback.hint.browser") };
+  const request = JSON.stringify({ pins, strings });
   // `update` only redraws the pins of a session still on: hided never starts
   // one for it, so pins that cross the page's own Esc cannot turn Comment on again.
   const send = (turnOn: boolean, update = false) => {

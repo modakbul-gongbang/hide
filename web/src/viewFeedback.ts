@@ -157,6 +157,19 @@ export type NoteForm = {
 /** A browser View's Comment mode as hided last answered it. */
 export type BrowserComment = { on: boolean; reason: string | null };
 
+/** A place in a page as fractions of its viewport, which the window scales to the page's slot. */
+export type PagePlace = { left: number; top: number; width: number; height: number };
+
+/**
+ * What the window draws over a page in Comment mode, written in the window
+ * and never in the page (D-17): the note on the place the operator just
+ * picked there, which hided holds with its screenshot as `pick`, or the
+ * comment whose pin the operator pressed.
+ */
+export type BrowserNote =
+  | { kind: "pick"; pick: number; anchor: ViewCommentAnchor; at: PagePlace }
+  | { kind: "open"; commentId: string; at: PagePlace };
+
 type FeedbackStore = {
   /** One open note per display. */
   forms: Record<string, NoteForm>;
@@ -166,13 +179,15 @@ type FeedbackStore = {
   readable: Record<string, boolean>;
   /** Browser Views in Comment mode, by `browserCommentKey`: display ids repeat across checkouts. */
   browser: Record<string, BrowserComment>;
+  /** The note or comment drawn over each page in Comment mode, by `browserCommentKey`. */
+  browserNotes: Record<string, BrowserNote>;
   /** The display each Send of this window was made from, by request id. */
   sentFrom: Record<string, string>;
   /** The display the last delete of this window was made on, and when. */
   deletedFrom: { commentId: string; displayId: string; at: number } | null;
 };
 
-export const useFeedbackStore = create<FeedbackStore>(() => ({ forms: {}, regionMode: {}, readable: {}, browser: {}, sentFrom: {}, deletedFrom: null }));
+export const useFeedbackStore = create<FeedbackStore>(() => ({ forms: {}, regionMode: {}, readable: {}, browser: {}, browserNotes: {}, sentFrom: {}, deletedFrom: null }));
 
 /** The longest list of Sends a window remembers the display of. */
 const SENT_FROM_CAP = 32;
@@ -215,8 +230,23 @@ export function browserCommentKey(workspace: { device_id: string; path: string }
   return `${workspace.device_id}\u0000${workspace.path}\u0001${displayId}`;
 }
 
+/** A page's Comment mode as hided answered it; a mode that ended takes its note with it. */
 export function noteBrowserComment(key: string, comment: BrowserComment): void {
   useFeedbackStore.setState((state) => ({ browser: { ...state.browser, [key]: comment } }));
+  if (!comment.on) closeBrowserNote(key);
+}
+
+export function openBrowserNote(key: string, note: BrowserNote): void {
+  useFeedbackStore.setState((state) => ({ browserNotes: { ...state.browserNotes, [key]: note } }));
+}
+
+export function closeBrowserNote(key: string): void {
+  useFeedbackStore.setState((state) => {
+    if (!state.browserNotes[key]) return state;
+    const browserNotes = { ...state.browserNotes };
+    delete browserNotes[key];
+    return { browserNotes };
+  });
 }
 
 export function noteSentFrom(requestId: string, displayId: string): void {
@@ -242,11 +272,9 @@ export function sendDisplay(send: ViewFeedbackSend | undefined, sentFrom: Record
   return fallback;
 }
 
-/** Whether `Comment deleted · Undo` belongs on this display now. */
-export function deletedHere(feedback: ViewFeedback | undefined, deletedFrom: FeedbackStore["deletedFrom"], displayId: string, now: number, browserOn: boolean): boolean {
+/** Whether `Comment deleted · Undo` belongs on this display now: the one this window deleted on, for a moment. */
+export function deletedHere(feedback: ViewFeedback | undefined, deletedFrom: FeedbackStore["deletedFrom"], displayId: string, now: number): boolean {
   const deleted = feedback?.deleted;
-  if (!deleted) return false;
-  if (deletedFrom?.commentId === deleted) return deletedFrom.displayId === displayId && now - deletedFrom.at < SHOWN_MS;
-  // A delete made in a page's own overlay: the page in Comment mode says it.
-  return browserOn;
+  if (!deleted || deletedFrom?.commentId !== deleted) return false;
+  return deletedFrom.displayId === displayId && now - deletedFrom.at < SHOWN_MS;
 }

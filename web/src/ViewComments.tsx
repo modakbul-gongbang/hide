@@ -5,10 +5,11 @@
 // draw from are in `viewFeedback.ts`; the core owns every comment.
 
 import { AlertCircleIcon, CheckIcon, ChevronDownIcon, CircleHelpIcon, FilesIcon, MessageSquarePlusIcon, PencilIcon, RotateCcwIcon, SendIcon, SquareIcon, Trash2Icon, UndoIcon, ArrowUpLeftIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Trans } from "react-i18next";
 import type { Actions } from "./actions";
 import { agentProductName } from "./agentAdapters";
+import { noteShellLayer } from "./browserViews";
 import { agentMarkOf } from "./agentLogos";
 import { useAgentLogosShown } from "./agentLogoMode";
 import { markTone } from "./agentRow";
@@ -26,7 +27,7 @@ import { displayMark } from "./ViewAreas";
 import { workspaceViewOf } from "./workspace";
 import type { ViewWorkspace } from "./viewLayout";
 import {
-  browserCommentKey,
+  closeBrowserNote,
   closeNote,
   commentsOn,
   COMMENTS_PER_VIEW,
@@ -184,9 +185,11 @@ function addChord(): string {
 /**
  * The note form under a commented place (B10, B12, B13, B15): ⌘↩ or Add
  * adds, Esc or Cancel cancels, and an empty note adds nothing. A View at its
- * 50 comments takes no new one and says why in place.
+ * 50 comments takes no new one and says why in place. A page's note adds
+ * through `add`, which names the place hided holds; `close` is where the
+ * form goes, its display's open note unless said.
  */
-export function NoteFormCard({ form, meta, full, workspace, actions }: { form: NoteForm; meta: string; full: boolean; workspace: ViewWorkspace; actions: Actions }) {
+export function NoteFormCard({ form, meta, full, workspace, actions, add, close = () => closeNote(form.displayId) }: { form: NoteForm; meta: string; full: boolean; workspace: ViewWorkspace; actions: Actions; add?: (note: string) => void; close?: () => void }) {
   const { t } = useInterfaceTranslation();
   const [note, setNote] = useState(form.note);
   const [busy, setBusy] = useState(false);
@@ -201,6 +204,8 @@ export function NoteFormCard({ form, meta, full, workspace, actions }: { form: N
     if (!text || refused || busy) return;
     if (editing) {
       actions.commentView(workspace, { action: "edit", comment_id: form.commentId, note: text });
+    } else if (add) {
+      add(text);
     } else {
       setBusy(true);
       const shot = form.shot ? await form.shot().catch(() => null) : null;
@@ -213,7 +218,7 @@ export function NoteFormCard({ form, meta, full, workspace, actions }: { form: N
         ...(shot ? { shot_png: shot } : {}),
       });
     }
-    closeNote(form.displayId);
+    close();
   };
   return (
     <div
@@ -226,7 +231,7 @@ export function NoteFormCard({ form, meta, full, workspace, actions }: { form: N
         if (event.nativeEvent.isComposing) return;
         if (event.key === "Escape") {
           event.preventDefault();
-          closeNote(form.displayId);
+          close();
         } else if (event.key === "Enter" && holdsFieldModifier(event, keySystem())) {
           event.preventDefault();
           void submit();
@@ -255,7 +260,7 @@ export function NoteFormCard({ form, meta, full, workspace, actions }: { form: N
         ) : (
           <span className="flex-1 text-micro text-muted-foreground">{t("feedback.note.shortcut", { chord: addChord() })}</span>
         )}
-        <Button variant="ghost" size="sm" onClick={() => closeNote(form.displayId)} data-view-note-cancel="true">
+        <Button variant="ghost" size="sm" onClick={close} data-view-note-cancel="true">
           {t("common.cancel")}
         </Button>
         <Button size="sm" disabled={!text || refused || busy} onClick={() => void submit()} data-view-note-submit="true">
@@ -373,7 +378,6 @@ export function FeedbackRow({ display, workspace, actions }: { display: ViewDisp
   const feedback = useViewFeedback();
   const sentFrom = useFeedbackStore((s) => s.sentFrom);
   const deletedFrom = useFeedbackStore((s) => s.deletedFrom);
-  const browserOn = useFeedbackStore((s) => s.browser[browserCommentKey(workspace, display.id)]?.on === true);
   const [lastRetry, setLastRetry] = useState<string | null>(null);
   const group = groupOn(feedback, display.id);
   const send = feedback?.send;
@@ -385,7 +389,7 @@ export function FeedbackRow({ display, workspace, actions }: { display: ViewDisp
   const now = useNow(until);
   // A failed Send's line lasts while its View still holds comments to retry.
   const showSend = sendHere && sendShown(send, now) && send!.reason !== "reopen_failed" && send!.reason !== "closed" && (send!.state !== "failed" || (group?.comments ?? 0) > 0);
-  const deleted = deletedHere(feedback, deletedFrom, display.id, now, browserOn);
+  const deleted = deletedHere(feedback, deletedFrom, display.id, now);
   const late = group && group.comments > 0 && group.not_delivered === group.comments;
 
   let body: ReactNode = null;
@@ -795,6 +799,96 @@ function notePlace(rect: ViewRect | null, page: { width: number }): { left: numb
   if (rect.x + rect.width + width + 8 <= page.width) return { left: rect.x + rect.width + 8, top: rect.y };
   if (rect.x - width - 8 >= 0) return { left: rect.x - width - 8, top: rect.y };
   return { left: Math.max(0, Math.min(rect.x, page.width - width)), top: rect.y + rect.height + 8 };
+}
+
+/**
+ * The note over a page in Comment mode (B10, B12, D-17): the place the
+ * operator just picked in the page, or the comment whose pin they pressed,
+ * drawn in the window and never in the page, so the page's scripts can
+ * neither read nor change what is written. The layer covers the page's
+ * slot, which shows the page's still meanwhile; a press beside the note,
+ * Esc, Cancel and Add each close it, and `done` hands the page its keyboard
+ * back. A new note adds through `add`, which names the place hided holds.
+ */
+export function PageNoteLayer({ commentKey, displayId, workspace, actions, add, done }: { commentKey: string; displayId: string; workspace: ViewWorkspace; actions: Actions; add: (pick: number, note: string) => void; done: () => void }) {
+  const { t } = useInterfaceTranslation();
+  const note = useFeedbackStore((s) => s.browserNotes[commentKey] ?? null);
+  const edit = useFeedbackStore((s) => s.forms[displayId] ?? null);
+  const feedback = useViewFeedback();
+  const layer = useRef<HTMLDivElement>(null);
+  const doneRef = useRef(done);
+  doneRef.current = done;
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  const comment = note?.kind === "open" ? (commentsOn(feedback, displayId).find((each) => each.id === note.commentId) ?? null) : null;
+  const shown = note !== null && (note.kind === "pick" || comment !== null);
+  useLayoutEffect(() => {
+    const element = layer.current;
+    if (!shown || !element) return undefined;
+    const measure = () => setSize({ width: element.clientWidth, height: element.clientHeight });
+    measure();
+    // The layer covers the page: the page shows its still until it goes.
+    noteShellLayer();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(element);
+    return () => {
+      observer?.disconnect();
+      noteShellLayer();
+    };
+  }, [shown]);
+  // A comment deleted, or gone from another window, takes its card with it.
+  useEffect(() => {
+    if (note?.kind !== "open" || comment !== null) return;
+    closeBrowserNote(commentKey);
+    doneRef.current();
+  }, [note, comment, commentKey]);
+  // A card opened from a pin takes the keyboard, so Esc closes it.
+  useEffect(() => {
+    if (note?.kind === "open" && comment) layer.current?.focus({ preventScroll: true });
+  }, [note, comment]);
+  if (!shown || !note) return null;
+  const close = () => {
+    closeBrowserNote(commentKey);
+    closeNote(displayId);
+    done();
+  };
+  const at = size ? { x: note.at.left * size.width, y: note.at.top * size.height, width: note.at.width * size.width, height: note.at.height * size.height } : null;
+  const place = at && size ? notePlace(at, size) : { left: 0, top: 0 };
+  // Low on the page, the note hangs above its place's bottom edge rather than past the slot.
+  const style = at && size && place.top > size.height / 2 ? { left: place.left, bottom: Math.max(0, size.height - at.y - at.height) } : place;
+  const full = commentsOn(feedback, displayId).length >= COMMENTS_PER_VIEW;
+  let body: ReactNode = null;
+  if (note.kind === "pick") {
+    const form: NoteForm = { displayId, anchor: note.anchor, commentId: null, note: "" };
+    body = <NoteFormCard key={`pick-${note.pick}`} form={form} meta={anchorMeta(t, note.anchor, "")} full={full} workspace={workspace} actions={actions} add={(text) => add(note.pick, text)} close={close} />;
+  } else if (comment && edit?.commentId === comment.id) {
+    body = <NoteFormCard key={`edit-${comment.id}`} form={edit} meta={anchorMeta(t, comment.anchor, comment.path)} full={full} workspace={workspace} actions={actions} close={close} />;
+  } else if (comment) {
+    body = <CommentCard comment={comment} workspace={workspace} displayId={displayId} actions={actions} />;
+  }
+  return (
+    <div
+      ref={layer}
+      tabIndex={-1}
+      className="absolute inset-0 z-10 outline-none"
+      data-slot="view-note-overlay"
+      data-page-note={note.kind}
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) close();
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
+        event.preventDefault();
+        event.stopPropagation();
+        close();
+      }}
+    >
+      {at ? (
+        <div className="absolute w-(--size-view-note)" style={style}>
+          {body}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 /** The Comment button of an image or PDF View's header (B13): on while its regions show; off a PDF Hide cannot read. */
