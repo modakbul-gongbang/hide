@@ -880,7 +880,7 @@ async fn screen_loop(
     let (device_bytes_tx, mut device_bytes) = tokio::sync::mpsc::channel::<Message>(2);
     // The operator's comments and Sends from this screen, in the order it
     // made them, off the socket loop; started by the first one.
-    let mut feedback: Option<tokio::sync::mpsc::Sender<FeedbackJob>> = None;
+    let mut feedback: Option<FeedbackQueue> = None;
     let mut device_reads: std::collections::VecDeque<DeviceRead> =
         std::collections::VecDeque::new();
     let daemon = json!({"type": "daemon", "payload": state.daemon_info.as_ref()});
@@ -2099,20 +2099,61 @@ struct FeedbackJob {
     png: Option<Vec<u8>>,
 }
 
-/// Comments and Sends a screen may have waiting: each can carry a
-/// screenshot of up to 16 MiB.
-const FEEDBACK_QUEUE: usize = 4;
+impl FeedbackJob {
+    /// Whether it carries a screenshot: a page's pick, or a screen's crop.
+    fn shot(&self) -> bool {
+        self.png.is_some() || self.event.pointer("/payload/shot_png").is_some()
+    }
+}
+
+/// Comments and Sends a screen may have waiting. A View moves its line
+/// comments as one relocate each, at most 50 per View, so a burst of them
+/// fits.
+const FEEDBACK_QUEUE: usize = 256;
+/// Of those, the ones with a screenshot, each of up to 16 MiB.
+const FEEDBACK_SHOTS: usize = 4;
+
+/// The screen's feedback queue: what it holds, in the order the screen made
+/// it, and how many of those carry a screenshot.
+struct FeedbackQueue {
+    jobs: tokio::sync::mpsc::Sender<FeedbackJob>,
+    shots: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl FeedbackQueue {
+    fn new() -> (Self, tokio::sync::mpsc::Receiver<FeedbackJob>) {
+        let (jobs, receiver) = tokio::sync::mpsc::channel(FEEDBACK_QUEUE);
+        let shots = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        (Self { jobs, shots }, receiver)
+    }
+
+    /// Takes `job` behind those waiting, or refuses it: the queue is full, or
+    /// it holds as many screenshots as it may.
+    fn push(&self, job: FeedbackJob) -> Result<(), ()> {
+        use std::sync::atomic::Ordering;
+        let shot = job.shot();
+        if shot && self.shots.fetch_add(1, Ordering::SeqCst) >= FEEDBACK_SHOTS {
+            self.shots.fetch_sub(1, Ordering::SeqCst);
+            return Err(());
+        }
+        self.jobs.try_send(job).map_err(|_| {
+            if shot {
+                self.shots.fetch_sub(1, Ordering::SeqCst);
+            }
+        })
+    }
+}
 
 /// Hands one comment or Send to the screen's feedback queue, which starts
 /// with the first. A full queue is refused, and the answer says so.
 fn queue_feedback(
     state: &AppState,
-    feedback: &mut Option<tokio::sync::mpsc::Sender<FeedbackJob>>,
+    feedback: &mut Option<FeedbackQueue>,
     job: FeedbackJob,
     frames: &tokio::sync::mpsc::Sender<String>,
 ) -> Option<String> {
     let queue = feedback.get_or_insert_with(|| spawn_feedback(state, frames.clone()));
-    queue.try_send(job).err().map(|_| {
+    queue.push(job).err().map(|()| {
         json!({"type": "error", "payload": {"kind": "view_feedback", "reason": "busy"},
             "message": "Too many comments are still being saved; try again."})
         .to_string()
@@ -2125,17 +2166,16 @@ fn queue_feedback(
 /// Send made after a comment reaches the core after it. It ends with the
 /// screen, when the socket loop drops its sender. A refusal reaches that
 /// screen as an error.
-fn spawn_feedback(
-    state: &AppState,
-    frames: tokio::sync::mpsc::Sender<String>,
-) -> tokio::sync::mpsc::Sender<FeedbackJob> {
-    let (queue, mut jobs) = tokio::sync::mpsc::channel::<FeedbackJob>(FEEDBACK_QUEUE);
+fn spawn_feedback(state: &AppState, frames: tokio::sync::mpsc::Sender<String>) -> FeedbackQueue {
+    let (queue, mut jobs) = FeedbackQueue::new();
+    let shots = Arc::clone(&queue.shots);
     let attachments = Arc::clone(&state.attachments);
     let core = Arc::clone(&state.core);
     let boundary = Arc::clone(&state.boundary);
     let roots = Arc::clone(&state.roots);
     tokio::spawn(async move {
         while let Some(job) = jobs.recv().await {
+            let shot = job.shot();
             let (attachments, core, boundary, roots) = (
                 Arc::clone(&attachments),
                 Arc::clone(&core),
@@ -2162,6 +2202,9 @@ fn spawn_feedback(
             })
             .await
             .unwrap_or_else(|error| Err(format!("comment failed: {error}")));
+            if shot {
+                shots.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            }
             let frame = match outcome {
                 Ok(None) => continue,
                 Ok(Some(reply)) => reply,
@@ -4115,6 +4158,43 @@ pub fn allowed_origins(port: u16, vite: Option<&str>) -> HashSet<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_screens_feedback_keeps_its_order_and_holds_at_most_four_screenshots() {
+        let (queue, mut jobs) = super::FeedbackQueue::new();
+        let job = |kind: &str, shot: bool| super::FeedbackJob {
+            event: json!({"kind": kind}),
+            png: shot.then(Vec::new),
+        };
+        for _ in 0..super::FEEDBACK_SHOTS {
+            assert!(queue.push(job("add", true)).is_ok());
+        }
+        assert!(
+            queue.push(job("add", true)).is_err(),
+            "a fifth screenshot waits for none"
+        );
+        // A burst of relocates behind them still fits.
+        for _ in 0..50 {
+            assert!(queue.push(job("relocate", false)).is_ok());
+        }
+        assert!(queue.push(job("send", false)).is_ok());
+        let kinds: Vec<String> = std::iter::from_fn(|| jobs.try_recv().ok())
+            .map(|job| job.event["kind"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(kinds.len(), super::FEEDBACK_SHOTS + 51);
+        assert_eq!(
+            kinds.last().map(String::as_str),
+            Some("send"),
+            "the Send comes after every comment"
+        );
+        for _ in 0..super::FEEDBACK_QUEUE {
+            assert!(queue.push(job("relocate", false)).is_ok());
+        }
+        assert!(
+            queue.push(job("relocate", false)).is_err(),
+            "a full queue refuses"
+        );
+    }
+
     use super::*;
 
     /// A pane id a screen sends straight to a node is refused past the
