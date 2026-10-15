@@ -1001,3 +1001,29 @@ fn the_status_read_runs_no_command_the_repository_configures() {
     assert_eq!(git_dirty(&repo, true), Some(true));
     assert!(!marker.exists(), "the repository's fsmonitor ran");
 }
+
+#[cfg(windows)]
+#[test]
+fn a_git_bash_drive_path_names_the_windows_file() {
+    let fixture = Fixture::new();
+    let mut rules = rules(|rules| rules.files = true);
+    rules.worktree_folder = true;
+    fixture.policy(rules, Some("main"));
+    // `C:\...\repo` as Git Bash spells it: `/c/.../repo`.
+    let native = fixture.repo.to_string_lossy().into_owned();
+    let (drive, rest) = native.split_once(":\\").unwrap();
+    let mounted = format!(
+        "/{}/{}",
+        drive.to_ascii_lowercase(),
+        rest.replace('\\', "/")
+    );
+    std::fs::write(fixture.repo.join(".env"), "x").unwrap();
+    assert_eq!(
+        fixture.shell(&fixture.repo, &format!("cat {mounted}/.env")),
+        Some(Rule::Files)
+    );
+    assert_eq!(
+        fixture.shell(&fixture.worktree, &format!("git -C {mounted} switch topic")),
+        Some(Rule::WorktreeFolder)
+    );
+}

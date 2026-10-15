@@ -617,6 +617,13 @@ fn absolute(home: &Path, cwd: &Path, path: &Path) -> PathBuf {
         home.to_path_buf()
     } else if let Some(rest) = text.strip_prefix("~/") {
         home.join(rest)
+    } else if let Some(native) = cfg!(windows)
+        .then(|| hide_platform::path::shell_drive_path(&text))
+        .flatten()
+    {
+        // Git Bash, the shell Claude Code runs on Windows, names a drive
+        // `/c/...`.
+        PathBuf::from(native)
     } else if path.is_absolute() {
         path.to_path_buf()
     } else {
