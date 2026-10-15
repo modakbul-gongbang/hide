@@ -246,6 +246,13 @@ impl Runtime {
     /// A typed item's attempt stops being offered after a restart.
     fn put_away_attempt(&self, intent: String) {
         let Some(client) = self.links_work.client.clone() else {
+            // With no record open there is no attempt to put away; the row
+            // may come back once the record opens again.
+            crate::diagnostic!(serde_json::json!({
+                "component": "backlog",
+                "kind": "backlog.dismiss_unrecorded",
+                "intent": intent,
+            }));
             return;
         };
         let spawned = self.spawn_backlog_worker(
@@ -1068,12 +1075,23 @@ impl Runtime {
     /// one window's item does not replace another's.
     pub(super) fn read_backlog_origin(&mut self, payload: BacklogItemPayload) -> bool {
         let task_key = payload.task_key;
-        let known = self.origin_slot(&task_key).is_some();
-        if !known && self.snapshot.issue_work.origins.len() >= ORIGIN_LIMIT {
-            return self.refuse_backlog(
-                "backlog.origin_capacity",
-                "Too many items' origins are open at once",
-            );
+        // Another window already showing it keeps what it shows: a read in
+        // flight or a turn already read is not blanked by a second open. Only
+        // a failed read is tried again.
+        if let Some(slot) = self.origin_slot(&task_key) {
+            if slot.phase != "failed" {
+                return false;
+            }
+        } else if self.snapshot.issue_work.origins.len() >= ORIGIN_LIMIT {
+            // The panel shows no origin; nobody looking at it can act on the
+            // cap, so it goes to the log, not the screen (design principle 13).
+            crate::diagnostic!(serde_json::json!({
+                "component": "backlog",
+                "kind": "backlog.origin_capacity",
+                "open": self.snapshot.issue_work.origins.len(),
+                "limit": ORIGIN_LIMIT,
+            }));
+            return false;
         }
         self.backlog_work.origin_generation += 1;
         let generation = self.backlog_work.origin_generation;

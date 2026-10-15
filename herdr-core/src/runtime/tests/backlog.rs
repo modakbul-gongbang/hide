@@ -1305,6 +1305,46 @@ fn each_items_origin_has_its_own_slot_and_closing_one_leaves_the_others() {
 }
 
 #[test]
+fn a_second_window_opening_an_item_already_shown_keeps_the_turn_it_shows() {
+    let gh = FakeGh::new();
+    let (shared, _worker) = backlog_runtime(gh);
+    shared.lock().unwrap().snapshot.issue_work.origins =
+        vec![shown_origin("github:acme/project#41")];
+    send(
+        &shared,
+        "backlog_origin",
+        serde_json::json!({"workspace_id": "w", "task_key": "github:acme/project#41"}),
+    );
+    let runtime = shared.lock().unwrap();
+    let origin = &runtime.snapshot.issue_work.origins[0];
+    assert_eq!(
+        origin.phase, "ready",
+        "the first window's turn is not blanked"
+    );
+    assert_eq!(origin.request.as_deref(), Some("the operator's request"));
+}
+
+#[test]
+fn an_origin_past_the_open_limit_is_logged_and_shows_no_error() {
+    let gh = FakeGh::new();
+    let (shared, _worker) = backlog_runtime(gh);
+    shared.lock().unwrap().snapshot.issue_work.origins = (0..32)
+        .map(|number| shown_origin(&format!("github:acme/project#{number}")))
+        .collect();
+    send(
+        &shared,
+        "backlog_origin",
+        serde_json::json!({"workspace_id": "w", "task_key": "github:acme/project#99"}),
+    );
+    let runtime = shared.lock().unwrap();
+    assert_eq!(runtime.snapshot.issue_work.origins.len(), 32);
+    assert!(
+        runtime.snapshot.status.last_error.is_none(),
+        "nobody looking at the panel can act on the cap"
+    );
+}
+
+#[test]
 fn a_missed_lines_retry_waits_for_summaries_and_its_dismiss_puts_the_line_away() {
     let gh = FakeGh::new();
     *gh.create_prints.lock().unwrap() = Some("Something went wrong".into());
