@@ -118,7 +118,11 @@ use crate::error::HostError;
 /// Older peers cannot decode the hook answer and are refused at Hello.
 /// 32: link reads carry bounded raw requests and tool-output issue sightings.
 /// Older helpers cannot supply a session work record and are upgraded at Hello.
-pub const PROTOCOL_VERSION: u32 = 32;
+/// 33: `guardrail_policy` writes the project guardrails' policy the agent
+/// hooks of the node's account read (PRD agent-guardrails D-11). A node on 32
+/// would refuse it as unknown, and a protection saved for a project there
+/// would not reach its agents, so it is refused at Hello and reinstalled.
+pub const PROTOCOL_VERSION: u32 = 33;
 
 /// How a pane's shell is started so that it marks its first prompt
 /// ([`Call::ShellIntegration`]): the command the pane runs, the shell and
@@ -321,6 +325,13 @@ pub enum Call {
     /// Whether the node's account has Hide's agent hooks in place, read from
     /// that account's own configuration (`hide_agent_hooks::Diagnosis`).
     HookDiagnosis,
+    /// Replaces the project guardrails' policy file under the node's home
+    /// with `policy`, the projects of this machine with a protection on
+    /// (`hide_agent_hooks::guardrails::write_policy`); answers `null` once
+    /// the file is in place.
+    GuardrailPolicy {
+        policy: hide_agent_hooks::guardrails::Policy,
+    },
     /// Every worktree Git registers for the repository at `root`, the main
     /// one first (`worktrees::Registered`).
     WorktreesRegistered {
@@ -767,6 +778,7 @@ impl Call {
             | Self::WorktreeRemovalCheck { .. }
             | Self::Kit { .. }
             | Self::HookDiagnosis
+            | Self::GuardrailPolicy { .. }
             | Self::WorktreesRegistered { .. }
             | Self::IgnoredRepository { .. }
             | Self::ProjectCreate { .. }

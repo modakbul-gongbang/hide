@@ -1191,6 +1191,12 @@ pub fn handle_with_progress(
             let home = env.home("HOME is not set, so the agent hooks have no account to read")?;
             to_value(hide_agent_hooks::Diagnosis::read(&home))
         }
+        Call::GuardrailPolicy { policy } => {
+            let home = env.home("guardrail_policy_home_unavailable")?;
+            hide_agent_hooks::guardrails::write_policy(&home, &policy)
+                .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?;
+            Ok(Value::Null)
+        }
         Call::LabelTranscript { request } => {
             let home = env.home("label_session_home_unavailable")?;
             label_transcript(Path::new(&home), &request)

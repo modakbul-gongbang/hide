@@ -909,6 +909,41 @@ fn the_core_s_own_node_and_a_device_link_answer_alike() {
 }
 
 #[test]
+fn a_published_guardrail_policy_is_what_the_devices_hooks_read() {
+    use hide_agent_hooks::guardrails::{Policy, ProjectPolicy, Rules, read_policy};
+    let device = Device::start();
+    let policy = Policy::new(vec![ProjectPolicy {
+        root: device.project.to_str().unwrap().to_owned(),
+        base: Some("main".to_owned()),
+        rules: Rules {
+            files: true,
+            ..Rules::default()
+        },
+    }]);
+    let answer: Value = call_as(
+        &*device.link,
+        Call::GuardrailPolicy {
+            policy: policy.clone(),
+        },
+        TIMEOUT,
+    )
+    .unwrap();
+    assert_eq!(answer, Value::Null);
+    assert_eq!(read_policy(&device.home), Ok(policy));
+    // A later publication replaces it whole.
+    let none = Policy::new(Vec::new());
+    let _: Value = call_as(
+        &*device.link,
+        Call::GuardrailPolicy {
+            policy: none.clone(),
+        },
+        TIMEOUT,
+    )
+    .unwrap();
+    assert_eq!(read_policy(&device.home), Ok(none));
+}
+
+#[test]
 fn a_device_s_channels_share_its_one_connection() {
     let device = Device::start();
     // The link, the install's reads and its SFTP made one connection.
