@@ -1518,6 +1518,14 @@ impl Runtime {
                 .iter()
                 .map(|registration| registration.id.clone()),
         );
+        // Every tick asks; only a machine not yet swept and linked now has
+        // anything to do, and most ticks have none.
+        machines.retain(|machine| {
+            !self.view_feedback.swept.contains(machine) && self.linked_node(machine).is_ok()
+        });
+        if machines.is_empty() {
+            return;
+        }
         let comments: Vec<&Comment> = store
             .views
             .workspaces
@@ -1532,9 +1540,6 @@ impl Runtime {
             .collect();
         let mut sweeps = Vec::new();
         for machine in machines {
-            if self.view_feedback.swept.contains(&machine) || self.linked_node(&machine).is_err() {
-                continue;
-            }
             let shots = comments
                 .iter()
                 .filter_map(|comment| comment.shot.as_ref())
@@ -1793,7 +1798,7 @@ fn feedback_worker(
                 }
             }
             Job::Send(job) => {
-                let outcome = run_send(&job, &context.runtime);
+                let outcome = run_send(&job, &context.runtime, &stop);
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
@@ -1821,13 +1826,24 @@ fn removal_name(call: &FeedbackCall) -> &'static str {
 
 /// One Send, off the lock: screenshots read where they were staged and
 /// placed on the recipient's machine, the letter rendered, and stored as
-/// the operator's. Every step repeats safely under the same intent.
-fn run_send(job: &SendJob, runtime: &Weak<Mutex<Runtime>>) -> SendOutcome {
+/// the operator's. Every step repeats safely under the same intent, so a
+/// core that stops between two calls leaves the comments for the next Send
+/// rather than waiting out each call's timeout.
+fn run_send(job: &SendJob, runtime: &Weak<Mutex<Runtime>>, stop: &AtomicBool) -> SendOutcome {
+    let stopped = || {
+        SendOutcome::Failed(
+            ViewFeedbackSendReason::LetterUnsaved,
+            "Hide stopped before the letter was stored".into(),
+        )
+    };
     let mut files = Vec::new();
     for comment in &job.comments {
         let Some(shot) = &comment.shot else {
             continue;
         };
+        if stop.load(Ordering::Acquire) {
+            return stopped();
+        }
         let Some(link) = job.shots.get(&shot.node) else {
             return SendOutcome::Failed(
                 ViewFeedbackSendReason::ShotCopy,
@@ -1867,6 +1883,9 @@ fn run_send(job: &SendJob, runtime: &Weak<Mutex<Runtime>>) -> SendOutcome {
     }
     let mut placed: HashMap<String, String> = HashMap::new();
     for chunk in chunks(files) {
+        if stop.load(Ordering::Acquire) {
+            return stopped();
+        }
         let names: Vec<String> = chunk.iter().map(|file| file.name.clone()).collect();
         match place(job, chunk) {
             Ok(paths) => placed.extend(names.into_iter().zip(paths)),
@@ -1906,8 +1925,11 @@ fn run_send(job: &SendJob, runtime: &Weak<Mutex<Runtime>>) -> SendOutcome {
         body =
             crate::view_feedback::overflow_letter(&job.checkout, job.comments.len(), views, &path);
     }
+    if stop.load(Ordering::Acquire) {
+        return stopped();
+    }
     let Some(runtime) = runtime.upgrade() else {
-        return SendOutcome::Failed(ViewFeedbackSendReason::LetterUnsaved, "core stopped".into());
+        return stopped();
     };
     let prepared = runtime
         .lock()
