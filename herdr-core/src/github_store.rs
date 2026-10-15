@@ -211,6 +211,7 @@ mod tests {
                 closed_at_unix_ms: Some(8),
                 head_oid: Some("0123456789abcdef".to_owned()),
                 cross_repository: true,
+                work: Default::default(),
             }],
             pull_requests_read: true,
             issues_read: true,

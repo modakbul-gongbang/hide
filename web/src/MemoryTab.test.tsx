@@ -10,6 +10,7 @@ import { clientI18n } from "./i18n/translator";
 import type { MemoryRow, ProjectMemory, SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
+import { emptyScope } from "../test/legacyAgentScope";
 import type { DispatchFn } from "./ws";
 
 const browserCanvas = vi.hoisted(() => {
@@ -27,7 +28,7 @@ const rest = {
   navigator: {
     focused_device_id: "local", focused_checkout_id: "c", focused_workspace_id: "p",
     devices: [{ id: "local", label: "This Mac", kind: "local", state: "local" }],
-    workspaces: [{ id: "p", label: "herdr-ide", device_id: "local", checkouts: [{ id: "c", workspace_id: "p", path: "/p", label: "main", tabs: [], active_tab_id: null, strip: [] }] }],
+    workspaces: [{ id: "p", label: "herdr-ide", device_id: "local", agent_scope: emptyScope(), checkouts: [{ id: "c", workspace_id: "p", path: "/p", label: "main", tabs: [], active_tab_id: null, strip: [] }] }],
   },
 } as unknown as SnapshotRest;
 const row = (number: number, overrides: Partial<MemoryRow> = {}): MemoryRow => ({
@@ -183,7 +184,7 @@ describe("the Memory tab", () => {
     await act(async () => useShellStore.setState({ rest: { ...rest, navigator: { ...rest.navigator, workspaces: [{ ...rest.navigator!.workspaces![0], pull_requests: [{ number: 72, url: "https://github.com/acme/one/pull/72", state: "merged" }] }] } } as unknown as SnapshotRest }));
     expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).toContain("Merged");
     await click("[data-memory-open-pr='72']");
-    expect(useUiStore.getState().overviewLens).toMatchObject({ tab: "prs", prs: { panel: 72, focus: 72 } });
+    expect(sent("pr_open")).toEqual([{ workspace_id: "p", pr_number: 72 }]);
     await render(memory({ rows: [row(7, { promotion: { state: "pr_open", agent: null, pr_number: 72, target_path: null, github_failure: null } })] }));
     expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).toContain("Couldn't check for a PR");
     expect(container.querySelector<HTMLButtonElement>("[data-memory-open-pr='72']")?.disabled).toBe(true);

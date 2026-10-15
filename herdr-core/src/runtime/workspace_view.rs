@@ -143,7 +143,7 @@ impl AreaIntent {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct WorkspaceViewPayload {
-    /// `files`, `changes`, `agent_sessions` or `memory` opens the lane on
+    /// `files`, `changes`, `work` or `memory` opens the lane on
     /// that tool, a call the page shows even when the tool was already the
     /// lane's; `null` closes the lane.
     #[serde(default, deserialize_with = "present")]
@@ -154,6 +154,12 @@ pub(super) struct WorkspaceViewPayload {
     /// Whether the files tool shows the file tree column (D-05).
     #[serde(default)]
     pub(super) tree: Option<bool>,
+    /// `sessions` or `prs`: the basis the Work tool draws.
+    #[serde(default)]
+    pub(super) work_lens: Option<String>,
+    /// Whether the Work tool's scope is `<checkout> only`.
+    #[serde(default)]
+    pub(super) work_only_checkout: Option<bool>,
     /// The lane's width, in CSS pixels.
     #[serde(default)]
     pub(super) lane_width: Option<u32>,
@@ -504,6 +510,20 @@ impl Runtime {
             );
             return true;
         }
+        let lens = match payload.work_lens.as_deref() {
+            None => None,
+            Some(value) => match workspace_views::WorkLens::parse(value) {
+                Some(lens) => Some(lens),
+                None => {
+                    self.set_error(
+                        "workspace_view.unknown_work_lens",
+                        format!("{value} is not a Work basis; expected sessions or prs"),
+                        false,
+                    );
+                    return true;
+                }
+            },
+        };
         let tool = match payload.tool.as_ref() {
             None => None,
             Some(None) => Some(None),
@@ -513,7 +533,7 @@ impl Runtime {
                     self.set_error(
                         "workspace_view.unknown_tool",
                         format!(
-                            "{value} is not a lane tool; expected files, changes, agent_sessions or memory"
+                            "{value} is not a lane tool; expected files, changes, work or memory"
                         ),
                         false,
                     );
@@ -545,6 +565,12 @@ impl Runtime {
         let before = entry.clone();
         if let Some(tool) = tool {
             entry.tool = tool;
+        }
+        if let Some(lens) = lens {
+            entry.work.lens = lens;
+        }
+        if let Some(only) = payload.work_only_checkout {
+            entry.work.only_checkout = only;
         }
         if let Some(pinned) = payload.pinned {
             entry.pinned = pinned;
@@ -899,6 +925,7 @@ impl Runtime {
             device_id: view.device_id.clone(),
             path: view.path.clone(),
             tool: view.tool,
+            work: view.work,
             pinned: view.pinned,
             tree: view.tree,
             lane_width: view.lane_width,
@@ -924,7 +951,7 @@ impl Runtime {
             let (visible, section) = match view.tool {
                 Some(Tool::Files) => (view.shows_tree(), RightPanelSection::Explorer),
                 Some(Tool::Changes) => (true, RightPanelSection::Changes),
-                Some(Tool::AgentSessions) => (true, RightPanelSection::AgentSessions),
+                Some(Tool::Work) => (true, RightPanelSection::AgentSessions),
                 Some(Tool::Memory) => (true, RightPanelSection::Memory),
                 None => (false, self.snapshot.ui_state.right_panel_section),
             };

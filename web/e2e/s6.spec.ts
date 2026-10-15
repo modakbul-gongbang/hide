@@ -109,10 +109,10 @@ test("Main, Overview and a Workspace with its lane, tools and delegated child", 
     // B1, B20: each rail icon names itself and its scope in its hint, and
     // reads pressed only while the lane shows its tool.
     const filesIcon = page.locator('[data-lane-tool="files"]');
-    const sessionsIcon = page.locator('[data-lane-tool="agent_sessions"]');
+    const sessionsIcon = page.locator('[data-lane-tool="work"]');
     await expect(filesIcon).toHaveAttribute("aria-pressed", "false");
     await sessionsIcon.hover();
-    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("Sessions");
+    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("Work");
     await filesIcon.hover();
     await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("Files");
     await page.mouse.move(bodyBox.x + 40, bodyBox.y + 40);
@@ -123,9 +123,9 @@ test("Main, Overview and a Workspace with its lane, tools and delegated child", 
     const lane = page.locator("[data-lane-frame]");
     const agentArea = page.locator("[data-agent-area]");
     await sessionsIcon.click();
-    await expect(workspace).toHaveAttribute("data-lane-shows", "agent_sessions");
+    await expect(workspace).toHaveAttribute("data-lane-shows", "work");
     await expect(workspace).toHaveAttribute("data-lane-mode", "overlay");
-    await expect.poll(() => last.get("workspace_view")).toEqual({ tool: "agent_sessions" });
+    await expect.poll(() => last.get("workspace_view")).toEqual({ tool: "work" });
     await expect(sessionsIcon).toHaveAttribute("aria-pressed", "true");
     const laneIdeal = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--size-lane-ideal")));
     expect((await lane.boundingBox())!.width).toBeCloseTo(laneIdeal, 0);

@@ -43,7 +43,7 @@ const QUESTION = "긴 한국어 요청을 읽은 뒤 질문 표시가 흐려지�
 const sentTotal = (sent: Map<string, number>) => [...sent.values()].reduce((sum, count) => sum + count, 0);
 
 async function ensureSessions(page: Page) {
-  await showTool(page, "agent_sessions");
+  await showTool(page, "work");
   await expect(page.locator("[data-session-panel]")).toBeVisible();
 }
 
@@ -85,8 +85,8 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator(`nav[data-sidebar] [data-agent-open="${parent}"]`).first().click();
-    await expect.poll(() => page.locator("[data-lane-tool]").evaluateAll((tools) => tools.map((tool) => tool.getAttribute("aria-label")))).toEqual(["Files", "Changes", "Sessions", "Memory"]);
-    await showTool(page, "agent_sessions");
+    await expect.poll(() => page.locator("[data-lane-tool]").evaluateAll((tools) => tools.map((tool) => tool.getAttribute("aria-label")))).toEqual(["Work", "Memory", "Files", "Changes"]);
+    await showTool(page, "work");
     const panel = page.locator("[data-session-panel]");
     const showSessions = () => ensureSessions(page);
     const row = (pane: string) => panel.locator(`[data-session-row="${pane}"]`);
@@ -137,7 +137,7 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     daemon = await daemon.restart();
     await page.goto("about:blank");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await expect(page.locator('[data-workspace-screen][data-lane-mode="overlay"]')).toHaveAttribute("data-lane-shows", "agent_sessions");
+    await expect(page.locator('[data-workspace-screen][data-lane-mode="overlay"]')).toHaveAttribute("data-lane-shows", "work");
     await showSessions();
     await expect(head("resolved")).toContainText("1");
     await expect(page.locator(`nav[data-sidebar] [data-pane="${stopped}"]`)).toHaveCount(0);
@@ -156,7 +156,7 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await page.keyboard.press(chord("sidebar_agents"));
     const modal = page.getByRole("dialog", { name: "Overview", exact: true });
     await modal.getByRole("tab", { name: "repo", exact: true }).click();
-    expect(await modal.locator("[data-lens-tile]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-lens-tile")))).toEqual(["agents", "issues", "prs", "sessions"]);
+    expect(await modal.locator("[data-lens-tile]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-lens-tile")))).toEqual(["agents", "issues", "sessions"]);
     await expect(modal.locator('[data-lens-tile="sessions"]')).toContainText("Conversation history");
     await modal.getByRole("tab", { name: "All projects", exact: true }).click();
     expect(await modal.locator("[data-main-tab]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-main-tab")))).toEqual(["agents", "tasks", "projects", "usage"]);

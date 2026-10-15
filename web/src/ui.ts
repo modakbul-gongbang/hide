@@ -92,8 +92,8 @@ export const FACTORY_ENTRY: FactoryPlace = { tab: "line", factory: null, column:
  */
 export type MainView = "requests" | "tasks" | "agents" | "projects" | "usage";
 
-/** A Project Overview's lens tabs (PRD overview-lenses-tiles-agents D-02, D-36; overview-lenses-prs D-14; overview-request-view): its agents, its requests, its issues, its pull requests, its sessions. */
-export type OverviewTab = "requests" | "agents" | "issues" | "prs" | "sessions";
+/** A Project Overview's lens tabs (PRD overview-lenses-tiles-agents D-02, D-36; overview-lenses-prs D-14; overview-request-view): its agents, its requests, its issues, its sessions. */
+export type OverviewTab = "requests" | "agents" | "issues" | "sessions";
 
 /**
  * The request view's own state (PRD overview-request-view B3, B6): the rows
@@ -103,15 +103,6 @@ export type OverviewTab = "requests" | "agents" | "issues" | "prs" | "sessions";
 export type RequestLens = { open: readonly string[]; full: readonly string[]; resting: boolean };
 
 export const NO_REQUEST_LENS: RequestLens = { open: [], full: [], resting: false };
-
-/**
- * The PRs tab's own state (PRD overview-lenses-prs B19, B21, link-graph B2):
- * the pull request whose panel is open beside the list, the row the keyboard
- * or a chip asked for, and whether `최근 머지` is open.
- */
-export type PrLens = { panel: number | null; focus: number | null; merged: boolean };
-
-export const NO_PR_LENS: PrLens = { panel: null, focus: null, merged: false };
 
 /** The session `View conversation` or a parent line opens on the Sessions tab, and the request it scrolls to once (PRD link-graph B11). */
 export type SessionTarget = { id: string; request: string | null };
@@ -140,8 +131,6 @@ export type OverviewLens = {
   panel: string | null;
   /** The Issues filter (B21). */
   filter: IssueFilter;
-  /** The PRs tab's rows and folds (PRD overview-lenses-prs). */
-  prs: PrLens;
   /** The request view's rows and fold (PRD overview-request-view). */
   requests: RequestLens;
   /** The session the Sessions tab opens on arrival, or null. */
@@ -159,7 +148,7 @@ export function toggledFold(folds: readonly string[], fold: string): string[] {
  * Tasks shows too (task-agents-views D-10).
  */
 export function entryLens(box: string | null, tasksMode: TasksMode): OverviewLens {
-  return { tab: "agents", tasksMode, box, folds: [], graph: NO_GRAPH_FILTER, focusTask: null, panel: null, filter: NO_FILTER, prs: NO_PR_LENS, requests: NO_REQUEST_LENS, session: null };
+  return { tab: "agents", tasksMode, box, folds: [], graph: NO_GRAPH_FILTER, focusTask: null, panel: null, filter: NO_FILTER, requests: NO_REQUEST_LENS, session: null };
 }
 
 /**
@@ -195,7 +184,7 @@ export type WorkspaceDialog =
   /** A new issue made from a pull request's title and body, then linked (B12, B13). */
   | { kind: "pr_new_issue"; workspaceId: string; prNumber: number }
   /** A pull request handed to an agent on its branch (B15, B16, B18). */
-  | { kind: "pr_delegate"; workspaceId: string; prNumber: number }
+  | { kind: "pr_delegate"; workspaceId: string; prNumber: number; /** `review`: the agent reads the pull request and reports to the operator (PRD work-tab-pr-lens B35). */ intent?: "review" }
   | { kind: "purpose"; workspaceId: string; checkoutId: string }
   | { kind: "delete_worktree"; workspaceId: string; checkoutId: string }
   /** The disk cleanup sheet of a local Git project, opened on a filter (PRD disk-layers B1-B3). */

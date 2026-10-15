@@ -79,7 +79,7 @@ export function memorySceneProject(state: MemorySceneState): ProjectMemory {
 }
 
 /** The lane pinned on its Memory tool, the scene's width wide. */
-const VIEW: WorkspaceView = { device_id: "local", path: "/projects/herdr-ide", tool: "memory", pinned: true, tree: false, lane_width: null, tree_width: null, lane_called: 0, lane_calls: 0 };
+const VIEW: WorkspaceView = { device_id: "local", path: "/projects/herdr-ide", tool: "memory", work: { lens: "sessions", only_checkout: false }, pinned: true, tree: false, lane_width: null, tree_width: null, lane_called: 0, lane_calls: 0 };
 const FRAME: LaneFrame = { mode: "docked", agents: 0, width: 0, document: 0, tree: null, treeOnly: false, narrowPin: false };
 const SIZES: LaneSizes = { agentMin: 480, laneMin: 360, laneIdeal: 520, treeMin: 180, treeIdeal: 240, divider: 8 };
 

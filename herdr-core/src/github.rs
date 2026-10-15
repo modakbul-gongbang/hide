@@ -17,15 +17,18 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
+pub(crate) mod card;
+
 use crate::model::{
-    GithubFailureCategory, GithubProjectSnapshot, GithubSnapshot, GithubStatusSnapshot,
-    PullRequestBadge, PullRequestChecks, PullRequestSnapshot, ReviewDecision,
+    GithubFailureCategory, GithubProjectSnapshot, GithubSnapshot, GithubStatusSnapshot, MergeState,
+    PrFailedCheck, PullRequestBadge, PullRequestChecks, PullRequestSnapshot, PullRequestWork,
+    ReviewDecision, ReviewRequest, ReviewRequestKind,
 };
 use crate::node_access::NodeLink;
 use crate::reader::BackgroundRead;
 use hide_node_link::gh::{
-    GhAnswer, ISSUE_DETAIL_FIELDS, PR_FEEDBACK_FIELDS, SEARCH_ISSUE_FIELDS, SEARCH_LIMIT,
-    SEARCH_PR_FIELDS, is_number,
+    GhAnswer, ISSUE_DETAIL_FIELDS, PR_FEEDBACK_FIELDS, REVIEW_ASKED_FIELDS, REVIEW_ASKED_SEARCH,
+    SEARCH_ISSUE_FIELDS, SEARCH_LIMIT, SEARCH_PR_FIELDS, VIEWER_LOGIN, is_number,
 };
 pub(crate) use hide_node_link::gh::{SEARCH_QUERY_LIMIT, SEARCH_REPOSITORY_LIMIT};
 use hide_node_link::git::GitCommand;
@@ -224,7 +227,7 @@ fn read(
 /// inside a git repository at all and so has nothing to report.
 fn read_root(
     node: &dyn NodeLink,
-    authentication: &std::cell::OnceCell<Result<(), GhFailure>>,
+    authentication: &std::cell::OnceCell<Result<String, GhFailure>>,
     request: &GithubProjectRequest,
     known: &KnownChecks,
 ) -> GithubProjectSnapshot {
@@ -261,7 +264,14 @@ fn read_root(
                 },
                 ..GithubProjectSnapshot::default()
             },
-            Ok(()) => read_project(node, &place, root_path, &request.links, known),
+            Ok(viewer) => read_project(
+                node,
+                &place,
+                root_path,
+                viewer.clone(),
+                &request.links,
+                known,
+            ),
         }
     };
     // A failure and an empty answer are both stated, separately: an empty
@@ -287,19 +297,32 @@ fn read_root(
     project
 }
 
-/// Authentication is read-only and uses the same bounded subprocess as PR listing.
-fn authentication(node: &dyn NodeLink) -> Result<(), GhFailure> {
-    gh(node, None, &["auth", "status"]).map(|_| ())
+/// Authentication is read-only and uses the same bounded subprocess as PR
+/// listing. It answers the signed-in account's login, read once per pass: the
+/// PRs list needs it to tell the operator's own pull requests from others'
+/// (PRD work-tab-pr-lens D-25).
+fn authentication(node: &dyn NodeLink) -> Result<String, GhFailure> {
+    gh(node, None, &["auth", "status"])?;
+    let login = gh(node, None, &VIEWER_LOGIN)?;
+    let login = login.trim();
+    if login.is_empty() {
+        return Err(GhFailure::network(
+            "gh did not name the signed-in account".to_owned(),
+        ));
+    }
+    Ok(login.to_owned())
 }
 
 fn read_project(
     node: &dyn NodeLink,
     root: &Where,
     root_path: String,
+    viewer: String,
     links: &[crate::issues::IssueReference],
     known: &KnownChecks,
 ) -> GithubProjectSnapshot {
-    let pull_requests = match list_pull_requests(&|arguments| gh_at(node, root, arguments), known) {
+    let run = |arguments: &[&str]| gh_at(node, root, arguments);
+    let mut pull_requests = match list_pull_requests(&run, known) {
         Ok(value) => value,
         Err(reason) if reason.category == GithubFailureCategory::NoGithubRemote => {
             return no_github_remote(root_path);
@@ -312,9 +335,23 @@ fn read_project(
             };
         }
     };
+    // The review asks and the merge queue are part of the same answer: a read
+    // without them would place a pull request on the wrong side of "mine" or
+    // "queued", so a failure here fails the read like a failed list does.
+    let facts = issue_repository(node, root)
+        .map_err(GhFailure::network)
+        .and_then(|repository| add_viewer_facts(&run, &repository, &viewer, &mut pull_requests));
+    if let Err(reason) = facts {
+        return GithubProjectSnapshot {
+            root_path,
+            status: failed(reason),
+            ..GithubProjectSnapshot::default()
+        };
+    }
     match read_issues(node, root, links) {
         Ok((issues, warning)) => GithubProjectSnapshot {
             root_path,
+            viewer: Some(viewer),
             issues,
             pull_requests,
             pull_requests_read: true,
@@ -332,12 +369,159 @@ fn read_project(
         },
         Err(reason) => GithubProjectSnapshot {
             root_path,
+            viewer: Some(viewer),
             pull_requests,
             pull_requests_read: true,
             status: failed(reason),
             ..Default::default()
         },
     }
+}
+
+/// Marks each open pull request the signed-in account wrote, was asked to
+/// review (directly or through a team) and, where the repository has a merge
+/// queue, its place in it.
+///
+/// "Directly" is a review request naming the login; a request that `gh`'s
+/// `review-requested:@me` search finds with no such name is the team's
+/// (PRD work-tab-pr-lens D-15).
+fn add_viewer_facts(
+    run: &(impl Fn(&[&str]) -> Result<String, GhFailure> + Sync),
+    repository: &str,
+    viewer: &str,
+    pull_requests: &mut [PullRequestSnapshot],
+) -> Result<(), GhFailure> {
+    let asked = run(&[
+        "pr",
+        "list",
+        "--state",
+        "open",
+        "--search",
+        REVIEW_ASKED_SEARCH,
+        "--limit",
+        PULL_REQUEST_LIMIT,
+        "--json",
+        REVIEW_ASKED_FIELDS,
+    ])?;
+    let asked = parse_review_asked(&asked).map_err(GhFailure::network)?;
+    let facts = read_facts(run, repository)?;
+    for pull_request in pull_requests {
+        let open = is_open(pull_request);
+        let number = pull_request.number;
+        let work = &mut pull_request.work;
+        work.mine = work.author.as_deref() == Some(viewer);
+        work.asked_of_me = if !open {
+            crate::model::ReviewAsk::None
+        } else if work.review_requests.iter().any(|request| {
+            request.kind == crate::model::ReviewRequestKind::User && request.name == viewer
+        }) {
+            crate::model::ReviewAsk::Direct
+        } else if asked.contains(&number) {
+            crate::model::ReviewAsk::Team
+        } else {
+            crate::model::ReviewAsk::None
+        };
+        let fact = facts.get(&number);
+        work.queue_position = fact.and_then(|fact| fact.queue_position);
+        work.review_requested_at_unix_ms = fact.and_then(|fact| fact.review_requested_at);
+    }
+    Ok(())
+}
+
+fn parse_review_asked(output: &str) -> Result<std::collections::HashSet<u32>, String> {
+    #[derive(Deserialize)]
+    struct Row {
+        number: u32,
+    }
+    let rows: Vec<Row> = serde_json::from_str(output)
+        .map_err(|error| format!("gh pr list returned review asks Hide could not read: {error}"))?;
+    Ok(rows.into_iter().map(|row| row.number).collect())
+}
+
+/// What the facts query knows of one open pull request.
+struct PullRequestFacts {
+    queue_position: Option<u32>,
+    review_requested_at: Option<u64>,
+}
+
+/// The newest open pull requests of the repository with their place in its
+/// merge queue and when a review was last asked; a repository without a queue
+/// has no positions.
+fn read_facts(
+    run: &(impl Fn(&[&str]) -> Result<String, GhFailure> + Sync),
+    repository: &str,
+) -> Result<HashMap<u32, PullRequestFacts>, GhFailure> {
+    let query = hide_node_link::gh::pr_facts_query(repository).ok_or_else(|| {
+        GhFailure::network("the repository name cannot be asked about its queue".to_owned())
+    })?;
+    let answer = run(&["api", "graphql", "-f", &query])?;
+    parse_facts(&answer).map_err(GhFailure::network)
+}
+
+fn parse_facts(output: &str) -> Result<HashMap<u32, PullRequestFacts>, String> {
+    #[derive(Deserialize)]
+    struct Answer {
+        data: Data,
+    }
+    #[derive(Deserialize)]
+    struct Data {
+        repository: Option<Repository>,
+    }
+    #[derive(Deserialize)]
+    struct Repository {
+        #[serde(rename = "pullRequests")]
+        pull_requests: Nodes,
+    }
+    #[derive(Deserialize)]
+    struct Nodes {
+        nodes: Vec<Node>,
+    }
+    #[derive(Deserialize)]
+    struct Node {
+        number: u32,
+        #[serde(rename = "mergeQueueEntry")]
+        entry: Option<Entry>,
+        #[serde(rename = "timelineItems")]
+        asked: Option<Asked>,
+    }
+    #[derive(Deserialize)]
+    struct Entry {
+        position: u32,
+    }
+    #[derive(Deserialize)]
+    struct Asked {
+        nodes: Vec<AskedNode>,
+    }
+    #[derive(Deserialize)]
+    struct AskedNode {
+        #[serde(rename = "createdAt")]
+        created_at: Option<String>,
+    }
+    let answer: Answer = serde_json::from_str(output)
+        .map_err(|error| format!("gh returned a merge queue Hide could not read: {error}"))?;
+    let repository = answer
+        .data
+        .repository
+        .ok_or_else(|| "gh returned no repository for the merge queue".to_owned())?;
+    Ok(repository
+        .pull_requests
+        .nodes
+        .into_iter()
+        .map(|node| {
+            (
+                node.number,
+                PullRequestFacts {
+                    queue_position: node.entry.map(|entry| entry.position),
+                    review_requested_at: node
+                        .asked
+                        .and_then(|asked| asked.nodes.into_iter().next())
+                        .and_then(|asked| asked.created_at)
+                        .as_deref()
+                        .and_then(parse_rfc3339_ms),
+                },
+            )
+        })
+        .collect())
 }
 
 /// Every pull request, with the checks of the open ones.
@@ -379,13 +563,21 @@ fn list_pull_requests(
     for pull_request in &mut pull_requests {
         // An open pull request's checks are the open list's or nothing: a
         // remembered value could be of a commit it has since moved past.
-        pull_request.checks = if is_open(pull_request) {
-            open_checks.remove(&pull_request.number)
+        if is_open(pull_request) {
+            match open_checks.remove(&pull_request.number) {
+                Some(open) => {
+                    pull_request.checks = open.rollup;
+                    pull_request.work.failed_checks = open.failed;
+                    pull_request.work.pending_checks = open.pending;
+                }
+                None => pull_request.checks = PullRequestChecks::Unknown,
+            }
         } else {
             let head = pull_request.head_oid.clone();
-            head.and_then(|head| known.get(&(pull_request.number, head)).copied())
+            pull_request.checks = head
+                .and_then(|head| known.get(&(pull_request.number, head)).copied())
+                .unwrap_or(PullRequestChecks::Unknown);
         }
-        .unwrap_or(PullRequestChecks::Unknown);
     }
     Ok(pull_requests)
 }
@@ -1499,6 +1691,36 @@ struct GhPullRequest {
     closed_at: Option<String>,
     #[serde(default)]
     closing_issues_references: Vec<GhIssueReference>,
+    #[serde(default)]
+    author: Option<GhAuthor>,
+    #[serde(default)]
+    merge_state_status: Option<String>,
+    #[serde(default)]
+    review_requests: Vec<GhReviewRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GhAuthor {
+    #[serde(default)]
+    login: Option<String>,
+    #[serde(default)]
+    is_bot: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "__typename")]
+enum GhReviewRequest {
+    User {
+        login: String,
+    },
+    Team {
+        #[serde(default)]
+        slug: Option<String>,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    #[serde(other)]
+    Other,
 }
 
 /// One row of the open list: a number and its checks, nothing else.
@@ -1614,6 +1836,20 @@ const FAILED_CONCLUSIONS: [&str; 6] = [
 const FAILED_STATES: [&str; 2] = ["FAILURE", "ERROR"];
 
 impl GhCheck {
+    /// A check that has not finished.
+    fn is_pending(&self) -> bool {
+        match self {
+            GhCheck::CheckRun { status, .. } => matches!(
+                status.as_str(),
+                "QUEUED" | "IN_PROGRESS" | "WAITING" | "PENDING" | "REQUESTED"
+            ),
+            GhCheck::StatusContext { state, .. } => {
+                matches!(state.as_str(), "PENDING" | "EXPECTED")
+            }
+            GhCheck::Unknown => false,
+        }
+    }
+
     /// The check by the name GitHub shows and the page that says why, when
     /// it failed; `None` for any other check.
     fn failure(&self) -> Option<crate::model::PrFailedCheck> {
@@ -1703,18 +1939,39 @@ pub fn parse_pull_requests(output: &str) -> Result<Vec<PullRequestSnapshot>, Str
 
 /// The open list's rows as checks by pull request number. A row whose rollup
 /// is absent is `Unknown`, as it always was.
-fn parse_open_checks(output: &str) -> Result<HashMap<u32, PullRequestChecks>, String> {
+fn parse_open_checks(output: &str) -> Result<HashMap<u32, OpenChecks>, String> {
     let listed: Vec<GhOpenChecks> = serde_json::from_str(output)
         .map_err(|error| format!("gh pr list returned checks Hide could not read: {error}"))?;
     Ok(listed
         .into_iter()
         .map(|row| {
+            let rollup = row.status_check_rollup.as_deref();
             (
                 row.number,
-                rollup_checks(row.status_check_rollup.as_deref()),
+                OpenChecks {
+                    rollup: rollup_checks(rollup),
+                    failed: rollup
+                        .into_iter()
+                        .flatten()
+                        .filter_map(GhCheck::failure)
+                        .collect(),
+                    pending: rollup
+                        .into_iter()
+                        .flatten()
+                        .filter(|check| check.is_pending())
+                        .count() as u32,
+                },
             )
         })
         .collect())
+}
+
+/// One open pull request's checks as the open list read them: the rollup, the
+/// checks that failed by name, and how many are still running.
+struct OpenChecks {
+    rollup: PullRequestChecks,
+    failed: Vec<PrFailedCheck>,
+    pending: u32,
 }
 
 fn project(listed: GhPullRequest) -> Result<PullRequestSnapshot, String> {
@@ -1740,6 +1997,32 @@ fn project(listed: GhPullRequest) -> Result<PullRequestSnapshot, String> {
         closed_at_unix_ms: listed.closed_at.as_deref().and_then(parse_rfc3339_ms),
         head_oid: listed.head_ref_oid.filter(|oid| !oid.is_empty()),
         cross_repository: listed.is_cross_repository,
+        work: PullRequestWork {
+            author_is_bot: listed.author.as_ref().is_some_and(|author| author.is_bot),
+            author: listed.author.and_then(|author| author.login),
+            merge_state: listed
+                .merge_state_status
+                .as_deref()
+                .map_or(MergeState::Unknown, MergeState::parse),
+            review_requests: listed
+                .review_requests
+                .into_iter()
+                .filter_map(|request| match request {
+                    GhReviewRequest::User { login } => Some(ReviewRequest {
+                        kind: ReviewRequestKind::User,
+                        name: login,
+                    }),
+                    GhReviewRequest::Team { slug, name } => {
+                        slug.or(name).map(|name| ReviewRequest {
+                            kind: ReviewRequestKind::Team,
+                            name,
+                        })
+                    }
+                    GhReviewRequest::Other => None,
+                })
+                .collect(),
+            ..PullRequestWork::default()
+        },
     })
 }
 
@@ -3056,5 +3339,120 @@ mod tests {
             error.contains("/broken") && error.contains("502"),
             "{error}"
         );
+    }
+
+    const SAMPLE_LIST: &str = r#"[
+      {"number":7,"title":"Add thing","headRefName":"thing","headRefOid":"0123456789abcdef0123456789abcdef01234567","baseRefName":"main","state":"OPEN","reviewDecision":"","isDraft":false,"url":"https://github.com/acme/app/pull/7","mergedAt":null,"updatedAt":"2026-10-14T01:00:00Z","createdAt":"2026-10-13T01:00:00Z","closedAt":null,"closingIssuesReferences":[],"isCrossRepository":false,
+       "author":{"id":"x","is_bot":false,"login":"hoyeon","name":"H"},"mergeStateStatus":"BEHIND",
+       "reviewRequests":[{"__typename":"User","login":"hoyeon"},{"__typename":"Team","name":"Core","slug":"core"},{"__typename":"Mannequin"}]},
+      {"number":8,"title":"Bump","headRefName":"dependabot/x","baseRefName":"main","state":"OPEN","reviewDecision":"","isDraft":false,"url":"https://github.com/acme/app/pull/8","mergedAt":null,"updatedAt":null,"closingIssuesReferences":[],
+       "author":{"is_bot":true,"login":"app/dependabot"},"mergeStateStatus":"SOMETHING_NEW","reviewRequests":[]},
+      {"number":9,"title":"Old gh","headRefName":"old","baseRefName":"main","state":"OPEN","reviewDecision":"","isDraft":true,"url":"https://github.com/acme/app/pull/9","mergedAt":null,"updatedAt":null,"closingIssuesReferences":[]}
+    ]"#;
+
+    #[test]
+    fn a_listed_pull_request_keeps_who_wrote_it_how_it_stands_and_whom_a_review_was_asked_of() {
+        let pull_requests = parse_pull_requests(SAMPLE_LIST).unwrap();
+        let first = &pull_requests[0].work;
+        assert_eq!(first.author.as_deref(), Some("hoyeon"));
+        assert!(!first.author_is_bot);
+        assert_eq!(first.merge_state, MergeState::Behind);
+        assert_eq!(
+            first.review_requests,
+            vec![
+                ReviewRequest {
+                    kind: ReviewRequestKind::User,
+                    name: "hoyeon".into()
+                },
+                ReviewRequest {
+                    kind: ReviewRequestKind::Team,
+                    name: "core".into()
+                },
+            ],
+            "a request of a kind Hide does not know is dropped, not guessed"
+        );
+        let bot = &pull_requests[1].work;
+        assert!(bot.author_is_bot);
+        assert_eq!(
+            bot.merge_state,
+            MergeState::Unknown,
+            "a value Hide does not know keeps the place"
+        );
+        assert_eq!(pull_requests[2].work, PullRequestWork::default());
+    }
+
+    #[test]
+    fn the_open_list_names_failed_checks_and_counts_running_ones() {
+        let output = r#"[{"number":7,"statusCheckRollup":[
+          {"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"unit","detailsUrl":"https://ci/1"},
+          {"__typename":"CheckRun","status":"IN_PROGRESS","conclusion":null,"name":"e2e"},
+          {"__typename":"StatusContext","state":"PENDING","context":"deploy"},
+          {"__typename":"StatusContext","state":"ERROR","context":"lint"},
+          {"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS","name":"fmt"}]}]"#;
+        let checks = parse_open_checks(output).unwrap();
+        let seven = &checks[&7];
+        assert_eq!(seven.rollup, PullRequestChecks::Failed);
+        assert_eq!(
+            seven
+                .failed
+                .iter()
+                .map(|check| check.name.as_str())
+                .collect::<Vec<_>>(),
+            ["unit", "lint"]
+        );
+        assert_eq!(seven.pending, 2);
+    }
+
+    #[test]
+    fn viewer_facts_tell_mine_direct_and_team_asks_and_the_queue_place() {
+        let mut pull_requests = parse_pull_requests(SAMPLE_LIST).unwrap();
+        pull_requests[1].work.review_requests.clear();
+        let run = |arguments: &[&str]| -> Result<String, GhFailure> {
+            match arguments {
+                ["pr", "list", ..] => Ok(r#"[{"number":7},{"number":8}]"#.to_owned()),
+                ["api", "graphql", "-f", query] => {
+                    assert!(query.contains("HidePrFacts"));
+                    Ok(r#"{"data":{"repository":{"pullRequests":{"nodes":[{"number":7,"mergeQueueEntry":null,"timelineItems":{"nodes":[{"createdAt":"2026-10-14T01:00:00Z"}]}},{"number":8,"mergeQueueEntry":{"position":3},"timelineItems":{"nodes":[]}}]}}}}"#.to_owned())
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+        };
+        add_viewer_facts(&run, "acme/app", "hoyeon", &mut pull_requests).unwrap();
+        assert!(pull_requests[0].work.mine);
+        assert_eq!(
+            pull_requests[0].work.asked_of_me,
+            crate::model::ReviewAsk::Direct
+        );
+        assert_eq!(pull_requests[0].work.queue_position, None);
+        assert!(!pull_requests[1].work.mine);
+        assert_eq!(
+            pull_requests[1].work.asked_of_me,
+            crate::model::ReviewAsk::Team,
+            "found by the search without a request naming the login"
+        );
+        assert_eq!(pull_requests[1].work.queue_position, Some(3));
+        assert_eq!(
+            pull_requests[0].work.review_requested_at_unix_ms,
+            parse_rfc3339_ms("2026-10-14T01:00:00Z")
+        );
+        assert_eq!(pull_requests[1].work.review_requested_at_unix_ms, None);
+        assert_eq!(
+            pull_requests[2].work.asked_of_me,
+            crate::model::ReviewAsk::None
+        );
+    }
+
+    #[test]
+    fn a_failed_review_ask_or_queue_read_fails_the_read_instead_of_reading_as_none() {
+        let mut pull_requests = parse_pull_requests(SAMPLE_LIST).unwrap();
+        let run = |arguments: &[&str]| -> Result<String, GhFailure> {
+            match arguments {
+                ["pr", "list", ..] => Ok("[]".to_owned()),
+                _ => Err(GhFailure::network("boom".to_owned())),
+            }
+        };
+        assert!(add_viewer_facts(&run, "acme/app", "hoyeon", &mut pull_requests).is_err());
+        assert!(parse_facts("not json").is_err());
+        assert!(parse_facts(r#"{"data":{"repository":null}}"#).is_err());
     }
 }

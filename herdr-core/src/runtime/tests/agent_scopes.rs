@@ -586,40 +586,24 @@ fn checkout_trees_and_folded_badges_preserve_cross_checkout_lineage_and_priority
 }
 
 #[test]
-fn pr_board_keeps_branch_turn_separate_from_its_maker_and_tracks_issue_changes() {
-    use crate::request_view::{AgentPullRequestSnapshot, AgentRequestSnapshot};
+fn pr_board_follows_the_record_s_live_session_and_tracks_github_and_issue_changes() {
     let mut runtime = runtime();
-    let pr: PullRequestSnapshot = serde_json::from_value(serde_json::json!({
+    let mut pr: PullRequestSnapshot = serde_json::from_value(serde_json::json!({
         "number":42,"title":"Ship","url":"https://github.com/acme/app/pull/42",
         "head_branch":"feature","base_branch":"main","badge":"open","checks":"failed","is_draft":false,
         "closing_issues":[{"repository":"acme/app","number":7}]
     })).unwrap();
+    pr.work.mine = true;
+    pr.work.merge_state = crate::model::MergeState::Blocked;
+    // The record says the maker's session worked on the branch; the maker
+    // is in another checkout and still working there.
+    pr.work.sessions = vec!["s-maker".into()];
     let mut agents = rows();
-    // The PR maker moved to another checkout and is still working there.
-    agents[0].request = Some(AgentRequestSnapshot {
-        verb: crate::agent_state::RequestVerb::Working,
-        verb_since_unix_ms: 1,
-        line: None,
-        end: None,
-        request: None,
-        later_by: None,
-        reply: None,
-        pull_requests: vec![AgentPullRequestSnapshot {
-            number: pr.number,
-            title: pr.title.clone(),
-            url: pr.url.clone(),
-            badge: pr.badge,
-            checks: pr.checks,
-            review: pr.review,
-            is_draft: pr.is_draft,
-            head_branch: pr.head_branch.clone(),
-            closing_issues: pr.closing_issues.clone(),
-            live: true,
-            duty: true,
-            created: true,
-            settled_at_unix_ms: None,
-        }],
-    });
+    agents[0].session_id = Some("s-maker".into());
+    agents[0].activity = "working".into();
+    agents[0].changed_at_unix_ms = Some(unix_milliseconds());
+    agents[0].state = crate::agent_state::turn::row_state(&agents[0]);
+    // A finished agent of the same folder is not the pull request's agent.
     agents[1].group = "done".into();
     agents[1].activity = "stopped".into();
     agents[1].state = crate::agent_state::turn::row_state(&agents[1]);
@@ -644,39 +628,16 @@ fn pr_board_keeps_branch_turn_separate_from_its_maker_and_tracks_issue_changes()
             .iter()
             .map(|r| r.pane_id.as_str())
             .collect::<Vec<_>>(),
-        vec!["child", "root"]
+        vec!["root"]
     );
-    assert_eq!(board.rows[0].group, "blocked");
-    assert!(board.rows[0].needs_look);
+    assert_eq!(board.rows[0].group, "working");
     assert_eq!(board.rows[0].issue.as_ref().unwrap().label, "#7");
-    assert_eq!(board.open, 1);
-    assert_eq!(board.counts.blocked, 1);
     assert_eq!(board.groups[0].numbers, vec![42]);
-    runtime.snapshot.navigator.workspaces[0].pull_requests[0].checks = PullRequestChecks::Passing;
-    assert!(
-        runtime.refresh_agent_scopes(),
-        "GitHub changes invalidate work scope even when agents stay still"
-    );
-    assert_eq!(
-        runtime.snapshot.navigator.workspaces[0]
-            .agent_scope
-            .prs
-            .rows[0]
-            .group,
-        "turn"
-    );
-    runtime.snapshot.navigator.agents[1].activity = "working".into();
-    assert_eq!(
-        runtime.snapshot.navigator.workspaces[0]
-            .agent_scope
-            .prs
-            .counts
-            .look,
-        1
-    );
-    runtime.snapshot.navigator.agents[1].group = "working".into();
-    runtime.snapshot.navigator.agents[1].state =
-        crate::agent_state::turn::row_state(&runtime.snapshot.navigator.agents[1]);
+    assert_eq!(board.needs_you, 0);
+    runtime.snapshot.navigator.agents[0].activity = "stopped".into();
+    runtime.snapshot.navigator.agents[0].group = "seen".into();
+    runtime.snapshot.navigator.agents[0].state =
+        crate::agent_state::turn::row_state(&runtime.snapshot.navigator.agents[0]);
     assert!(runtime.refresh_agent_scopes());
     assert_eq!(
         runtime.snapshot.navigator.workspaces[0]
@@ -684,9 +645,73 @@ fn pr_board_keeps_branch_turn_separate_from_its_maker_and_tracks_issue_changes()
             .prs
             .rows[0]
             .group,
-        "fixing"
+        "blocked",
+        "no live working agent: the failed checks decide"
     );
+    runtime.snapshot.navigator.workspaces[0].pull_requests[0].checks = PullRequestChecks::Passing;
+    runtime.snapshot.navigator.workspaces[0].pull_requests[0]
+        .work
+        .merge_state = crate::model::MergeState::Clean;
+    assert!(
+        runtime.refresh_agent_scopes(),
+        "GitHub changes invalidate work scope even when agents stay still"
+    );
+    let board = &runtime.snapshot.navigator.workspaces[0].agent_scope.prs;
+    assert_eq!(board.rows[0].group, "needs_you");
+    assert_eq!(board.rows[0].reason.kind, "merge");
+    assert_eq!(board.needs_you, 1);
     assert!(!runtime.refresh_agent_scopes());
+}
+
+#[test]
+fn a_working_agent_turns_stalled_and_a_quiet_pull_request_old_with_the_clock_alone() {
+    let mut runtime = runtime();
+    let mut pr: PullRequestSnapshot = serde_json::from_value(serde_json::json!({
+        "number":42,"title":"Ship","url":"https://github.com/acme/app/pull/42",
+        "head_branch":"feature","base_branch":"main","badge":"open","checks":"passing","is_draft":false,
+        "closing_issues":[], "updated_at_unix_ms": 1_000_000
+    })).unwrap();
+    pr.work.mine = true;
+    pr.work.merge_state = crate::model::MergeState::Clean;
+    pr.work.sessions = vec!["s-maker".into()];
+    let mut agents = rows();
+    agents[0].session_id = Some("s-maker".into());
+    agents[0].activity = "working".into();
+    agents[0].changed_at_unix_ms = Some(1_000_000);
+    agents[0].state = crate::agent_state::turn::row_state(&agents[0]);
+    let mut project = workspace(
+        "project",
+        "Project",
+        "/fixture",
+        vec![checkout("project", "feature", "/fixture/feature", None)],
+    );
+    project.pull_requests = vec![pr];
+    runtime.snapshot.navigator.workspaces = vec![project];
+    runtime.snapshot.navigator.agents = agents;
+    let quiet = crate::delivery::INACTIVITY_MS;
+    assert!(runtime.tick_work_clock(1_000_000 + 60_000));
+    fn row(runtime: &Runtime) -> crate::agent_state::work::board::Row {
+        runtime.snapshot.navigator.workspaces[0]
+            .agent_scope
+            .prs
+            .rows[0]
+            .clone()
+    }
+    assert_eq!(
+        (row(&runtime).group, row(&runtime).reason.kind),
+        ("working", "working")
+    );
+    assert!(
+        !runtime.tick_work_clock(1_000_000 + 60_000 + 1_000),
+        "the same minute judges nothing"
+    );
+    assert!(runtime.tick_work_clock(1_000_000 + quiet + 60_000));
+    assert_eq!(
+        (row(&runtime).group, row(&runtime).reason.kind),
+        ("needs_you", "check")
+    );
+    assert!(runtime.tick_work_clock(1_000_000 + crate::agent_state::work::board::OLD_MS + 120_000));
+    assert_eq!(row(&runtime).fold, Some("old"));
 }
 
 #[test]
@@ -864,7 +889,7 @@ fn factory_workers_leave_requests_and_overview_count_without_leaving_physical_li
 }
 
 #[test]
-fn palette_and_pr_lineage_keep_first_anchor_and_last_ancestor_occurrences() {
+fn palette_lineage_keeps_first_anchor_and_last_ancestor_occurrences() {
     let mut runtime = runtime();
     let mut agents = rows();
     agents[1].lineage_parent_pane_id = Some("root".into());
@@ -891,15 +916,6 @@ fn palette_and_pr_lineage_keep_first_anchor_and_last_ancestor_occurrences() {
     runtime.snapshot.navigator.workspaces = vec![project];
     runtime.snapshot.navigator.agents = agents;
     assert!(runtime.refresh_agent_scopes());
-    let scope = &runtime.snapshot.navigator.workspaces[0].agent_scope;
-    assert_eq!(
-        scope.prs.rows[0]
-            .lineage
-            .iter()
-            .map(|r| (r.pane_id.as_str(), r.occurrence, r.depth))
-            .collect::<Vec<_>>(),
-        [("root", 1, 0), ("child", 0, 1)]
-    );
     let relation = &runtime.snapshot.navigator.devices[0].agent_scope.relations["child"][0];
     assert_eq!(
         relation

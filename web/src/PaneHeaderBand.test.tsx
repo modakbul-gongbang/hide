@@ -237,8 +237,8 @@ it("blocks Open on a raised descendant whose device is not connected and says wh
   } finally { await unmount(); }
 });
 
-it("opens the displayed repository even when another project has the same PR number", async () => {
-  const {actions, unmount} = await mount();
+it("opens the card of the displayed repository even when another project has the same PR number", async () => {
+  const {actions, events, unmount} = await mount();
   const url = "https://github.com/acme/other/pull/7";
   try {
     await act(async () => useShellStore.setState({rest: {navigator: {focused_device_id: "local", devices: [{id: "local", kind: "local"}], workspaces: [
@@ -246,8 +246,8 @@ it("opens the displayed repository even when another project has the same PR num
       {id: "other", device_id: "local", pull_requests: [{number: 7, url}], checkouts: []},
     ] as unknown as Workspace[]}} as SnapshotRest}));
     await act(async () => actions.openSessionPullRequest({workspace_id: "here", number: 7, url}));
-    expect(useUiStore.getState().overviewProjectId).toBe("other");
-    expect(useUiStore.getState().overviewLens).toMatchObject({tab: "prs", prs: {panel: 7, focus: 7}});
+    // One event opens the card; the core chooses the Workspace (PRD work-tab-pr-lens D-28).
+    expect(events.filter((event) => event.kind === "pr_open")).toEqual([{schema_version: 2, kind: "pr_open", payload: {workspace_id: "other", pr_number: 7}}]);
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     actions.openSessionPullRequest({workspace_id: "here", number: 7, url: "https://github.com/acme/absent/pull/7"});
     expect(open).toHaveBeenCalledWith("https://github.com/acme/absent/pull/7", "_blank", "noopener,noreferrer");

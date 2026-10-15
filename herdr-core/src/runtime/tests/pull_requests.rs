@@ -50,6 +50,7 @@ fn pull_request(
         closed_at_unix_ms: None,
         head_oid: None,
         cross_repository: false,
+        work: Default::default(),
     }
 }
 
@@ -67,6 +68,7 @@ fn pr_runtime(pull_requests: Vec<PullRequestSnapshot>) -> Runtime {
         .github
         .projects
         .push(crate::model::GithubProjectSnapshot {
+            viewer: None,
             root_path: "/repo".into(),
             issues: ProjectIssuesSnapshot {
                 repository: Some("acme/project".into()),
@@ -393,6 +395,404 @@ fn a_feedback_read_that_cannot_run_says_why_in_its_slot() {
     assert!(feedback.message.unwrap().contains("No worker"));
 }
 
+fn card(runtime: &Runtime, number: u32) -> crate::model::PrCardSnapshot {
+    runtime
+        .snapshot()
+        .pr_work
+        .cards
+        .iter()
+        .find(|card| card.number == number)
+        .cloned()
+        .unwrap()
+}
+
+const HEAD: &str = "0123456789abcdef0123456789abcdef01234567";
+
+/// B52: a card read that cannot run names every part it could not get, and
+/// a later read that lacks one part keeps what the earlier read found.
+#[test]
+fn a_card_read_keeps_the_parts_an_earlier_read_found_when_one_part_fails() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        2,
+        "open-work",
+        PullRequestBadge::Open,
+        None,
+    )]);
+    assert!(runtime.dispatch_json(&event(
+        "pr_card_read",
+        serde_json::json!({"workspace_id": "w", "pr_number": 2}),
+    )));
+    let failed = card(&runtime, 2);
+    assert!(!failed.reading, "no worker: the read ends at once");
+    assert_eq!(failed.failed, vec!["body", "files", "threads"]);
+
+    runtime.ingest_pr_card(
+        "w",
+        2,
+        Ok(crate::github::card::CardRead {
+            head: Some(HEAD.into()),
+            body: Some("Plan".into()),
+            files: Some(Vec::new()),
+            threads: Some(Vec::new()),
+            ..Default::default()
+        }),
+    );
+    runtime.ingest_pr_card(
+        "w",
+        2,
+        Ok(crate::github::card::CardRead {
+            head: Some(HEAD.into()),
+            failed: vec!["body"],
+            ..Default::default()
+        }),
+    );
+    let kept = card(&runtime, 2);
+    assert_eq!(kept.body.as_deref(), Some("Plan"));
+    assert_eq!(kept.failed, vec!["body"]);
+    assert_eq!(kept.head.as_deref(), Some(HEAD));
+}
+
+/// B50: only the newest few cards are kept.
+#[test]
+fn the_cards_kept_are_capped_and_the_least_recently_asked_goes_first() {
+    let pull_requests = (1..=10)
+        .map(|n| pull_request(n, &format!("b{n}"), PullRequestBadge::Open, None))
+        .collect();
+    let mut runtime = pr_runtime(pull_requests);
+    for number in 1..=10u32 {
+        runtime.dispatch_json(&event(
+            "pr_card_read",
+            serde_json::json!({"workspace_id": "w", "pr_number": number}),
+        ));
+    }
+    let kept: Vec<u32> = runtime
+        .snapshot()
+        .pr_work
+        .cards
+        .iter()
+        .map(|c| c.number)
+        .collect();
+    assert_eq!(kept, (3..=10).collect::<Vec<_>>());
+}
+
+/// D-22: a merge asked from a card goes out once; its answer lands on the
+/// card, and the same ask while it is working is not sent again.
+#[test]
+fn a_merge_is_one_write_and_its_failure_is_a_code_on_the_card() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        2,
+        "open-work",
+        PullRequestBadge::Open,
+        None,
+    )]);
+    let ask = event(
+        "pr_merge",
+        serde_json::json!({"workspace_id": "w", "pr_number": 2, "head": HEAD, "method": "squash"}),
+    );
+    assert!(runtime.dispatch_json(&ask));
+    let write = card(&runtime, 2).write.unwrap();
+    assert_eq!(
+        (write.action, write.phase, write.reason),
+        ("merge", "failed", Some("failed"))
+    );
+    assert_eq!(write.head, HEAD);
+
+    // A write in flight is not started twice.
+    runtime.pr_card_slot("w", 2).write.as_mut().unwrap().phase = "working";
+    assert!(!runtime.dispatch_json(&ask));
+
+    runtime.ingest_pr_write(
+        "w",
+        2,
+        None,
+        "/repo",
+        Err(crate::github::card::WriteFailure {
+            reason: "head_moved",
+            detail: "Head branch was modified".into(),
+        }),
+    );
+    let write = card(&runtime, 2).write.unwrap();
+    assert_eq!((write.phase, write.reason), ("failed", Some("head_moved")));
+
+    runtime.pr_card_slot("w", 2).write.as_mut().unwrap().phase = "working";
+    runtime.ingest_pr_write("w", 2, None, "/repo", Ok(()));
+    assert_eq!(card(&runtime, 2).write.unwrap().phase, "done");
+}
+
+/// A merge GitHub accepted reads as merged at once, and keeps reading so
+/// while GitHub's own list still answers open, until a read says merged.
+#[test]
+fn a_merge_that_went_through_reads_as_merged_before_the_list_says_so() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        2,
+        "open-work",
+        PullRequestBadge::Open,
+        None,
+    )]);
+    let badge = |runtime: &Runtime| runtime.github.project("/repo").unwrap().pull_requests[0].badge;
+    let open_list = runtime.github.clone();
+    runtime.dispatch_json(&event(
+        "pr_merge",
+        serde_json::json!({"workspace_id": "w", "pr_number": 2, "head": HEAD, "method": "squash"}),
+    ));
+    runtime.pr_card_slot("w", 2).write.as_mut().unwrap().phase = "working";
+    runtime.ingest_pr_write("w", 2, None, "/repo", Ok(()));
+    assert_eq!(badge(&runtime), PullRequestBadge::Merged);
+
+    // The next read still says open: the merge Hide saw wins over it, with
+    // the time it was seen, the same on every read.
+    let seen = runtime.merged_here[&("/repo".to_owned(), 2)];
+    let mut stale = open_list.clone();
+    runtime.read_merges_made_here(&mut stale);
+    let shown = &stale.project("/repo").unwrap().pull_requests[0];
+    assert_eq!(shown.badge, PullRequestBadge::Merged);
+    assert_eq!(shown.merged_at_unix_ms, Some(seen));
+
+    // A read that failed carries the previous list, overlay included, and
+    // releases nothing: the next good read that still says open is overlaid.
+    let mut failed = stale.clone();
+    failed.projects[0].status.stale = true;
+    runtime.read_merges_made_here(&mut failed);
+    assert!(runtime.merged_here.contains_key(&("/repo".to_owned(), 2)));
+    let mut open_after = open_list.clone();
+    runtime.read_merges_made_here(&mut open_after);
+    assert_eq!(
+        open_after.project("/repo").unwrap().pull_requests[0].badge,
+        PullRequestBadge::Merged
+    );
+
+    // A fresh read that says merged is taken as it is, and the mark is let go.
+    let mut said = open_list.clone();
+    said.projects[0].pull_requests[0].badge = PullRequestBadge::Merged;
+    said.projects[0].pull_requests[0].merged_at_unix_ms = Some(7);
+    runtime.read_merges_made_here(&mut said);
+    assert_eq!(
+        said.project("/repo").unwrap().pull_requests[0].merged_at_unix_ms,
+        Some(7)
+    );
+    let mut open_again = open_list.clone();
+    runtime.read_merges_made_here(&mut open_again);
+    assert_eq!(
+        open_again.project("/repo").unwrap().pull_requests[0].badge,
+        PullRequestBadge::Open
+    );
+
+    // Whatever the reads say, the overlay lapses after its lifetime.
+    runtime.merged_here.insert(
+        ("/repo".to_owned(), 2),
+        unix_milliseconds() - 11 * 60 * 1000,
+    );
+    let mut late = open_list;
+    runtime.read_merges_made_here(&mut late);
+    assert_eq!(
+        late.project("/repo").unwrap().pull_requests[0].badge,
+        PullRequestBadge::Open
+    );
+    assert!(runtime.merged_here.is_empty());
+}
+
+/// D-22, B31: GitHub accepts any head that is its current one, so a write
+/// whose head differs from the head the list's state was judged on is
+/// refused before a worker starts, and both are read again.
+#[test]
+fn a_write_on_a_head_other_than_the_lists_is_refused_before_anything_runs() {
+    let mut listed = pull_request(2, "open-work", PullRequestBadge::Open, None);
+    listed.head_oid = Some("f".repeat(40));
+    let mut runtime = pr_runtime(vec![listed]);
+    let mut before = runtime.github_generations.get("/repo").copied();
+    for (kind, payload) in [
+        (
+            "pr_merge",
+            serde_json::json!({"workspace_id": "w", "pr_number": 2, "head": HEAD, "method": "squash"}),
+        ),
+        (
+            "pr_update_branch",
+            serde_json::json!({"workspace_id": "w", "pr_number": 2, "head": HEAD}),
+        ),
+    ] {
+        assert!(runtime.dispatch_json(&event(kind, payload)));
+        let write = card(&runtime, 2).write.unwrap();
+        assert_eq!(
+            (write.phase, write.reason),
+            ("failed", Some("head_moved")),
+            "{kind}"
+        );
+        let rows = runtime.github_generations.get("/repo").copied();
+        assert!(rows > before, "the list is read again after {kind}");
+        before = rows;
+    }
+}
+
+/// B14, B20: a merged pull request's card reads like any other; only a write
+/// needs the pull request open.
+#[test]
+fn a_merged_pull_requests_card_reads_but_cannot_be_written() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        3,
+        "done-work",
+        PullRequestBadge::Merged,
+        Some(unix_milliseconds() - 2 * DAY),
+    )]);
+    assert!(
+        runtime.read_pr_card(crate::runtime::events::PrCardReadPayload {
+            workspace_id: "w".into(),
+            pr_number: 3,
+            look_again: false,
+        })
+    );
+    let read = card(&runtime, 3);
+    assert!(
+        read.reading || !read.failed.is_empty(),
+        "the card has a read"
+    );
+    let merge = event(
+        "pr_merge",
+        serde_json::json!({"workspace_id": "w", "pr_number": 3, "head": HEAD, "method": "merge"}),
+    );
+    runtime.dispatch_json(&merge);
+    assert_eq!(
+        card(&runtime, 3).write,
+        None,
+        "nothing is written to a merged one"
+    );
+}
+
+/// B44: checks running on a listed pull request nobody's agent works on are
+/// read again each minute while the Work tool's lens or a card is shown.
+#[test]
+fn pending_checks_on_a_pull_request_without_an_agent_are_read_again_each_minute() {
+    let mut pending = pull_request(2, "open-work", PullRequestBadge::Open, None);
+    pending.checks = PullRequestChecks::Pending;
+    pending.work.mine = true;
+    let mut teammates = pull_request(3, "theirs", PullRequestBadge::Open, None);
+    teammates.checks = PullRequestChecks::Pending;
+    let mut runtime = pr_runtime(vec![pending, teammates]);
+    let start = std::time::Instant::now();
+    let generation = |runtime: &Runtime| runtime.github_generations.get("/repo").copied();
+    let before = generation(&runtime);
+    runtime.observe_request_view(true, start);
+    runtime.reread_pending_checks(start + std::time::Duration::from_secs(30));
+    assert_eq!(generation(&runtime), before, "not a minute yet");
+    runtime.reread_pending_checks(start + std::time::Duration::from_secs(61));
+    assert!(generation(&runtime) > before, "a minute later");
+}
+
+/// B33: Look again dismisses a failed write's notice and reads the card; the
+/// read the core starts itself after a moved head keeps the notice drawn.
+#[test]
+fn looking_again_dismisses_a_failed_write_and_the_automatic_read_does_not() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        2,
+        "open-work",
+        PullRequestBadge::Open,
+        None,
+    )]);
+    runtime.pr_card_slot("w", 2).write = Some(crate::model::PrWriteSnapshot {
+        action: "update_branch",
+        head: HEAD.into(),
+        method: None,
+        phase: "failed",
+        reason: Some("head_moved"),
+    });
+    runtime.read_pr_card(crate::runtime::events::PrCardReadPayload {
+        workspace_id: "w".into(),
+        pr_number: 2,
+        look_again: false,
+    });
+    assert_eq!(card(&runtime, 2).write.unwrap().phase, "failed");
+
+    // The web's automatic read (a moved pull request, the card opening) is
+    // the plain event and keeps the notice.
+    runtime.pr_card_slot("w", 2).reading = false;
+    assert!(runtime.dispatch_json(&event(
+        "pr_card_read",
+        serde_json::json!({"workspace_id": "w", "pr_number": 2}),
+    )));
+    assert_eq!(card(&runtime, 2).write.unwrap().phase, "failed");
+
+    runtime.pr_card_slot("w", 2).reading = false;
+    let look = event(
+        "pr_card_read",
+        serde_json::json!({"workspace_id": "w", "pr_number": 2, "look_again": true}),
+    );
+    assert!(runtime.dispatch_json(&look));
+    assert_eq!(card(&runtime, 2).write, None);
+}
+
+/// B37, D-29: a summary is made once per head commit and shown with the
+/// card; a new head drops it; turning the switch off takes it away.
+#[test]
+fn a_summary_is_kept_for_its_head_and_dropped_with_the_head_or_the_switch() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        2,
+        "open-work",
+        PullRequestBadge::Open,
+        None,
+    )]);
+    let settings = hide_ai::AiSettings {
+        chosen: true,
+        ..Default::default()
+    };
+    runtime.ai_settings = Some(settings);
+    let read = |head: &str| crate::github::card::CardRead {
+        head: Some(head.into()),
+        body: Some("Plan".into()),
+        files: Some(Vec::new()),
+        threads: Some(Vec::new()),
+        ..Default::default()
+    };
+    runtime.pr_card_slot("w", 2);
+    // No worker here: the ask fails, and the card simply has no summary.
+    runtime.ingest_pr_card("w", 2, Ok(read(HEAD)));
+    assert_eq!(card(&runtime, 2).summary, None);
+    assert!(runtime.pr_summaries_asked.is_empty());
+
+    runtime.ingest_pr_summary("w", 2, HEAD, Ok("Renames a field.".into()));
+    assert_eq!(
+        card(&runtime, 2).summary.as_deref(),
+        Some("Renames a field.")
+    );
+    runtime.ingest_pr_card("w", 2, Ok(read(HEAD)));
+    assert_eq!(
+        card(&runtime, 2).summary.as_deref(),
+        Some("Renames a field.")
+    );
+
+    let moved = "fedcba9876543210fedcba9876543210fedcba98";
+    runtime.ingest_pr_card("w", 2, Ok(read(moved)));
+    assert_eq!(
+        card(&runtime, 2).summary,
+        None,
+        "a new head is a new summary"
+    );
+
+    runtime.ingest_pr_card("w", 2, Ok(read(HEAD)));
+    assert!(card(&runtime, 2).summary.is_some());
+    runtime.ai_settings.as_mut().unwrap().pr_summary = false;
+    assert!(runtime.drop_pr_summaries_if_inactive());
+    assert_eq!(card(&runtime, 2).summary, None);
+    runtime.ingest_pr_card("w", 2, Ok(read(HEAD)));
+    assert_eq!(card(&runtime, 2).summary, None, "off: not shown, not asked");
+}
+
+/// A merge needs a head commit name; anything else is refused before it can
+/// reach a command line.
+#[test]
+fn a_merge_with_a_head_that_is_not_a_commit_is_refused_on_the_card() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        2,
+        "open-work",
+        PullRequestBadge::Open,
+        None,
+    )]);
+    runtime.dispatch_json(&event(
+        "pr_update_branch",
+        serde_json::json!({"workspace_id": "w", "pr_number": 2, "head": "--force"}),
+    ));
+    let write = card(&runtime, 2).write.unwrap();
+    assert_eq!(write.phase, "failed");
+}
+
 /// The worktree `/repo/task` on `4-task` at `head`, as the worktree reader
 /// reports it.
 fn catalog_at(head: &str) -> crate::model::WorktreeCatalogSnapshot {
@@ -583,4 +983,18 @@ fn a_merged_pull_request_attaches_to_its_worktree_after_a_restart_from_the_saved
     assert_eq!(shown_on_task(&second), (Some(1), Some(1)));
     second.ingest_worktrees(catalog_at("a-new-commit"), 0);
     assert_eq!(shown_on_task(&second), (None, None));
+}
+
+/// B44: a teammate's pull request that nothing of the operator's reaches is
+/// not on the list, so its running checks are not read for each minute.
+#[test]
+fn a_teammates_pending_checks_the_list_does_not_show_are_not_read_for() {
+    let mut theirs = pull_request(3, "theirs", PullRequestBadge::Open, None);
+    theirs.checks = PullRequestChecks::Pending;
+    let mut runtime = pr_runtime(vec![theirs]);
+    let start = std::time::Instant::now();
+    let before = runtime.github_generations.get("/repo").copied();
+    runtime.observe_request_view(true, start);
+    runtime.reread_pending_checks(start + std::time::Duration::from_secs(61));
+    assert_eq!(runtime.github_generations.get("/repo").copied(), before);
 }

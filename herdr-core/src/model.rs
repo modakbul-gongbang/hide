@@ -250,6 +250,8 @@ pub struct WorkspaceViewSnapshot {
     /// The tool the lane shows, or null while it is closed. An unpinned
     /// lane is drawn over the agents only once a call opened it (D-02).
     pub tool: Option<crate::workspace_views::Tool>,
+    /// The Work tool's basis and scope, kept for this Workspace.
+    pub work: crate::workspace_views::WorkView,
     /// Whether the lane is pinned beside Agent Views (D-03).
     pub pinned: bool,
     /// Whether the files tool shows the file tree column (D-05).
@@ -370,6 +372,10 @@ pub struct ViewDisplaySnapshot {
     pub url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// The pull request a card display shows, by number; absent for every
+    /// other kind.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr: Option<u32>,
     /// A browser display's load stamp: a larger one than the host last
     /// loaded asks it to load `url` again. Zero for a file or a diff.
     #[serde(skip_serializing_if = "load_unset")]
@@ -3739,6 +3745,87 @@ pub struct IssueUpdateSnapshot {
 pub struct PrWorkSnapshot {
     pub link: Option<PrLinkSnapshot>,
     pub feedback: Option<PrFeedbackSnapshot>,
+    /// The decision cards open now, one per pull request, newest last, at
+    /// most [`PR_CARD_LIMIT`] (PRD work-tab-pr-lens D-06).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cards: Vec<PrCardSnapshot>,
+}
+
+/// Cards kept at once; the least recently asked for is dropped.
+pub const PR_CARD_LIMIT: usize = 8;
+
+/// What a pull request's card reads beyond the list: its body, changed files,
+/// unresolved review threads and what a merge may be, per head commit. A part
+/// that could not be read is named in `failed` and drawn as
+/// `읽지 못함 · 다시 시도` (B52); the others stand.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct PrCardSnapshot {
+    pub workspace_id: String,
+    pub number: u32,
+    /// A read is in flight; the parts below are the last read's.
+    pub reading: bool,
+    /// The head commit the parts were read at, which a merge is conditioned on.
+    pub head: Option<String>,
+    pub body: Option<String>,
+    pub files: Option<Vec<PrCardFile>>,
+    /// How many files the pull request changes in all; more than `files`
+    /// holds when GitHub's page was full.
+    pub files_total: u32,
+    pub threads: Option<Vec<PrCardThread>>,
+    pub merge: Option<PrCardMerge>,
+    /// `body`, `files` or `threads`, whichever the last read could not get.
+    pub failed: Vec<&'static str>,
+    /// hide-ai's summary of the pull request at `head`; absent while it is
+    /// off, paused by the usage limit, failed or not made yet (B37).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// The Merge or branch update asked for from this card, and how it went.
+    pub write: Option<PrWriteSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrCardFile {
+    pub path: String,
+    pub additions: u32,
+    pub deletions: u32,
+    /// Marked `linguist-generated` in the project's `.gitattributes`, or a
+    /// well-known lock file (D-27).
+    pub generated: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrCardThread {
+    pub reviewer: Option<String>,
+    pub path: String,
+    pub line: Option<u32>,
+    pub text: String,
+}
+
+/// What the repository lets a merge be (D-21).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct PrCardMerge {
+    /// The methods the repository allows, in the order Merge offers them.
+    pub methods: Vec<hide_node_link::gh::PrMergeMethod>,
+    /// The base branch has a merge queue: the button adds to it.
+    pub queue: bool,
+    /// The signed-in account may write to the repository.
+    pub can_merge: bool,
+}
+
+/// One GitHub write asked for from a card (D-22, B31-B34).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrWriteSnapshot {
+    /// `merge` or `update_branch`.
+    pub action: &'static str,
+    /// The head commit the operator was shown.
+    pub head: String,
+    pub method: Option<hide_node_link::gh::PrMergeMethod>,
+    /// `working`, `done` or `failed`.
+    pub phase: &'static str,
+    /// Why it failed, as a code the card words with what to do:
+    /// `head_moved`, `denied`, `conflict`, `not_mergeable`, `unreachable`
+    /// or `failed`. The text GitHub gave goes to the diagnostic log.
+    pub reason: Option<&'static str>,
 }
 
 /// `pr_link_issue`'s progress: the issue made (a new one), the link Hide
@@ -3764,7 +3851,7 @@ pub struct PrLinkSnapshot {
 
 /// One failed check of a pull request, by the name GitHub shows and the page
 /// that says why.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct PrFailedCheck {
     pub name: String,
     pub url: Option<String>,
@@ -4331,6 +4418,100 @@ pub struct PullRequestSnapshot {
     /// nothing about this repository's branch of the same name.
     #[serde(default)]
     pub cross_repository: bool,
+    /// What the Work tab's PRs list groups by (PRD work-tab-pr-lens D-08):
+    /// the GitHub values the 5-minute read adds, none of them parsed from a
+    /// body or a repository's own script (D-05).
+    #[serde(default)]
+    pub work: PullRequestWork,
+}
+
+/// How a pull request stands against its base, GitHub's `mergeStateStatus`
+/// (PRD work-tab-pr-lens D-20). A value this build does not know reads as
+/// `Unknown`, which keeps the pull request where it was.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeState {
+    #[default]
+    Unknown,
+    Clean,
+    HasHooks,
+    /// Merge is allowed but a check that is not required failed.
+    Unstable,
+    Dirty,
+    Behind,
+    Blocked,
+    Draft,
+}
+
+impl MergeState {
+    pub fn parse(value: &str) -> Self {
+        match value.to_ascii_uppercase().as_str() {
+            "CLEAN" => Self::Clean,
+            "HAS_HOOKS" => Self::HasHooks,
+            "UNSTABLE" => Self::Unstable,
+            "DIRTY" => Self::Dirty,
+            "BEHIND" => Self::Behind,
+            "BLOCKED" => Self::Blocked,
+            "DRAFT" => Self::Draft,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewRequestKind {
+    User,
+    Team,
+}
+
+/// One person or team a review was asked of.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct ReviewRequest {
+    pub kind: ReviewRequestKind,
+    pub name: String,
+}
+
+/// Whether a review was asked of the signed-in account.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewAsk {
+    #[default]
+    None,
+    /// Asked of the account itself.
+    Direct,
+    /// Asked of a team the account is in and not of the account.
+    Team,
+}
+
+/// The GitHub values the Work tab's PRs list and the card read beyond the
+/// badge, checks and review: see [`PullRequestSnapshot::work`].
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct PullRequestWork {
+    pub author: Option<String>,
+    pub author_is_bot: bool,
+    /// The signed-in account wrote it.
+    pub mine: bool,
+    pub merge_state: MergeState,
+    pub review_requests: Vec<ReviewRequest>,
+    pub asked_of_me: ReviewAsk,
+    /// The checks of an open pull request that failed, by name, and how many
+    /// are still running: the second line's `✗ <name>` and `CI · N`.
+    pub failed_checks: Vec<PrFailedCheck>,
+    pub pending_checks: u32,
+    /// Its place in the base branch's merge queue, from 1; absent when it is
+    /// not queued.
+    pub queue_position: Option<u32>,
+    /// When the latest review request on it was made, which `리뷰 · N시간째`
+    /// counts from.
+    pub review_requested_at_unix_ms: Option<u64>,
+    /// The sessions the link record says made or worked on it, and the
+    /// checkouts (paths) they ran in. Core only: the runtime attaches them
+    /// from the record (`runtime/links.rs`), the grouping reads them.
+    #[serde(skip)]
+    pub sessions: Vec<String>,
+    #[serde(skip)]
+    pub checkouts: Vec<String>,
 }
 
 impl PullRequestSnapshot {
@@ -4344,7 +4525,7 @@ impl Serialize for PullRequestSnapshot {
         use serde::ser::SerializeStruct;
         // The head commit, the repository and the created and closed times
         // stay off the wire: only the core compares them.
-        let mut out = serializer.serialize_struct("PullRequestSnapshot", 13)?;
+        let mut out = serializer.serialize_struct("PullRequestSnapshot", 14)?;
         out.serialize_field("closing_issues", &self.closing_issues)?;
         out.serialize_field("title", &self.title)?;
         out.serialize_field("checks", &self.checks)?;
@@ -4358,6 +4539,7 @@ impl Serialize for PullRequestSnapshot {
         out.serialize_field("merged_at_unix_ms", &self.merged_at_unix_ms)?;
         out.serialize_field("updated_at_unix_ms", &self.updated_at_unix_ms)?;
         out.serialize_field("state", &self.state())?;
+        out.serialize_field("work", &self.work)?;
         out.end()
     }
 }
@@ -4398,6 +4580,10 @@ pub struct GithubProjectSnapshot {
     /// The repository's main worktree, which is what identifies a project.
     pub root_path: String,
     pub status: GithubStatusSnapshot,
+    /// The account `gh` is signed in as, which "mine" is judged against;
+    /// absent before the first successful read.
+    #[serde(default)]
+    pub viewer: Option<String>,
     /// One entry per branch that has a pull request.
     pub pull_requests: Vec<PullRequestSnapshot>,
 }
@@ -4902,6 +5088,8 @@ pub struct BackgroundAiSnapshot {
     pub chosen: bool,
     /// The `에이전트 요약` switch: agent labels are asked for and shown.
     pub agent_summary: bool,
+    /// The `PR 요약` switch: a pull request's card asks for a summary.
+    pub pr_summary: bool,
     /// One row per agent Hide AI knows, in the fixed order. An agent that is
     /// not on this Mac is still a row, because "not here" and "not signed in"
     /// are different answers.
@@ -4933,6 +5121,7 @@ impl BackgroundAiSnapshot {
                 .map(|provider| BackgroundAiProviderSnapshot::unread(*provider))
                 .collect(),
             agent_summary: true,
+            pr_summary: true,
             usage_limit: Some(hide_ai::DEFAULT_LIMIT_PERCENT),
             ..Self::default()
         }
