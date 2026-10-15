@@ -85,11 +85,7 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator(`nav[data-sidebar] [data-agent-open="${parent}"]`).first().click();
-    // The rail draws icons alone; each tool's name is its accessible name.
-    await expect(page.locator("[data-lane-tool]")).toHaveCount(4);
-    for (const [tool, name] of [["files", "Files"], ["changes", "Changes"], ["agent_sessions", "Sessions"], ["memory", "Memory"]] as const) {
-      await expect(page.locator(`[data-lane-tool="${tool}"]`)).toHaveAttribute("aria-label", name);
-    }
+    await expect.poll(() => page.locator("[data-lane-tool]").evaluateAll((tools) => tools.map((tool) => tool.getAttribute("aria-label")))).toEqual(["Files", "Changes", "Sessions", "Memory"]);
     await showTool(page, "agent_sessions");
     const panel = page.locator("[data-session-panel]");
     const showSessions = () => ensureSessions(page);
