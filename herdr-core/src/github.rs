@@ -1039,6 +1039,7 @@ pub(crate) fn reconcile_issue_attempt(
     repository: &str,
     title: &str,
     since: u64,
+    claimed: &[u64],
 ) -> Result<Option<crate::issues::IssueSnapshot>, String> {
     let query =
         hide_node_link::gh::issue_attempt_query(repository).ok_or("issue_repository_invalid")?;
@@ -1077,7 +1078,13 @@ pub(crate) fn reconcile_issue_attempt(
             .and_then(parse_rfc3339_ms)
             .ok_or("issue_reconcile_invalid")?;
         oldest = oldest.min(created);
-        if created < since || node.get("title").and_then(serde_json::Value::as_str) != Some(title) {
+        if created < since
+            || node.get("title").and_then(serde_json::Value::as_str) != Some(title)
+            || node
+                .get("number")
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|number| claimed.contains(&number))
+        {
             continue;
         }
         let url = node

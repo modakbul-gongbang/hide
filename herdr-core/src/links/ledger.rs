@@ -34,6 +34,9 @@ pub struct IssueAttempt {
     pub reconcile: bool,
     pub number: Option<u64>,
     pub url: Option<String>,
+    /// Issue numbers other attempts in the same repository already name, so
+    /// a reconcile by title never takes one of them for this attempt's.
+    pub claimed: Vec<u64>,
 }
 
 /// A backlog item typed into the backlog's input or the quick add (PRD

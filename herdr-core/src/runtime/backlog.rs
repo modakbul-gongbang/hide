@@ -4,6 +4,11 @@
 //! worker, one at a time per device with `WAITING_LIMIT` waiting, through a
 //! durable attempt in the link ledger, so a retry, even after a restart,
 //! names the issue the first try made instead of making a second one.
+//!
+//! Every add with a valid intent ends in a row: made, on its way, or failed
+//! with why. A failed row the add can be tried again from keeps its job
+//! (`retry`); one it cannot (a refusal, a repository that changed) keeps
+//! none and is one of at most `REFUSED_LIMIT`.
 
 use super::*;
 use crate::links::ledger::{
@@ -21,12 +26,18 @@ use std::collections::{HashMap, VecDeque};
 pub(super) const WAITING_LIMIT: usize = 8;
 /// Failed items kept for `다시 시도`; past it a new item is refused.
 const FAILED_LIMIT: usize = 32;
+/// Failed rows that cannot be tried again, kept so the add that made each
+/// says why; past it the oldest goes.
+const REFUSED_LIMIT: usize = 8;
 /// Made items kept so the quick add and the missed line can name them.
 const CREATED_KEPT: usize = 16;
+/// Intents of made items no longer kept, so a late resend of one is still
+/// answered rather than made again.
+const EVICTED_KEPT: usize = 64;
 /// The intent key the shell makes: short, plain, never a path.
 const INTENT_LIMIT: usize = 64;
 
-/// What a GitHub item needs to be made again on a retry.
+/// What an item needs to be made again on a retry.
 #[derive(Clone)]
 struct Job {
     workspace_id: String,
@@ -35,6 +46,17 @@ struct Job {
     project: String,
     title: String,
     missed: Option<MissedSource>,
+    /// A memo, made in the store; otherwise a GitHub issue.
+    memo: bool,
+    /// The repository target and connection epoch a GitHub item was asked
+    /// under: it is made there or not at all (`None` until one was known).
+    pin: Option<Pin>,
+}
+
+#[derive(Clone, PartialEq)]
+struct Pin {
+    target: crate::github::Where,
+    epoch: u64,
 }
 
 /// A create in flight: the repository target and connection epoch it was
@@ -56,6 +78,8 @@ pub(super) struct BacklogWork {
     /// Each running create's admission, by intent.
     admitted: HashMap<String, Admission>,
     waiting: HashMap<String, VecDeque<String>>,
+    /// Made intents whose rows were let go, newest last.
+    evicted: VecDeque<String>,
     undo_generation: u64,
     origin_generation: u64,
     missed_keys_generation: u64,
@@ -91,6 +115,13 @@ fn summaries_on(settings: Option<&hide_ai::AiSettings>) -> bool {
     settings.is_some_and(|settings| settings.enabled && settings.chosen && settings.agent_summary)
 }
 
+fn same_missed(a: &MissedSource, b: &MissedSource) -> bool {
+    a.id == b.id
+        && a.session.device_id == b.session.device_id
+        && a.session.agent == b.session.agent
+        && a.session.session_id == b.session.session_id
+}
+
 impl Runtime {
     fn backlog_row(&mut self, intent: &str) -> Option<&mut BacklogItemSnapshot> {
         self.snapshot
@@ -111,14 +142,101 @@ impl Runtime {
             .collect();
         let excess = created.len().saturating_sub(CREATED_KEPT);
         for intent in created.into_iter().take(excess) {
-            rows.retain(|row| row.intent != intent);
+            self.snapshot
+                .issue_work
+                .backlog
+                .retain(|row| row.intent != intent);
+            self.backlog_work.jobs.remove(&intent);
+            let evicted = &mut self.backlog_work.evicted;
+            evicted.push_back(intent);
+            while evicted.len() > EVICTED_KEPT {
+                evicted.pop_front();
+            }
+        }
+        self.cap_refused_rows();
+    }
+
+    /// Failed rows nothing can try again stay at most `REFUSED_LIMIT`; the
+    /// oldest go first.
+    fn cap_refused_rows(&mut self) {
+        let refused: Vec<_> = self
+            .snapshot
+            .issue_work
+            .backlog
+            .iter()
+            .filter(|row| row.phase == BacklogPhase::Failed && !row.retry)
+            .map(|row| row.intent.clone())
+            .collect();
+        let excess = refused.len().saturating_sub(REFUSED_LIMIT);
+        for intent in refused.into_iter().take(excess) {
+            crate::diagnostic!(
+                serde_json::json!({"component":"backlog","kind":"backlog.refused_evicted","intent":intent})
+            );
+            self.snapshot
+                .issue_work
+                .backlog
+                .retain(|row| row.intent != intent);
             self.backlog_work.jobs.remove(&intent);
         }
     }
 
+    /// An item failed: it can be tried again while its job is kept and the
+    /// failure is not one a retry repeats.
+    fn fail_backlog_row(&mut self, intent: &str, failure: BacklogFailure) {
+        let retry = failure != BacklogFailure::RepositoryChanged
+            && self.backlog_work.jobs.contains_key(intent);
+        if let Some(row) = self.backlog_row(intent) {
+            row.phase = BacklogPhase::Failed;
+            row.failure = Some(failure);
+            row.retry = retry;
+        }
+        self.cap_refused_rows();
+    }
+
+    fn retryable_failed(&self) -> usize {
+        self.snapshot
+            .issue_work
+            .backlog
+            .iter()
+            .filter(|row| row.phase == BacklogPhase::Failed && row.retry)
+            .count()
+    }
+
+    /// A refusal of an undo or a read, which has no row of its own.
     fn refuse_backlog(&mut self, code: &str, message: &str) -> bool {
         crate::diagnostic!(serde_json::json!({"component":"backlog","kind":code}));
         self.set_error(code, message, false);
+        true
+    }
+
+    /// An add refused before anything was made: its row says why and cannot
+    /// be tried again; the add itself is the next try.
+    fn refuse_add(
+        &mut self,
+        payload: BacklogAddPayload,
+        failure: BacklogFailure,
+        code: &str,
+    ) -> bool {
+        crate::diagnostic!(
+            serde_json::json!({"component":"backlog","kind":code,"intent":payload.intent})
+        );
+        self.backlog_work.jobs.remove(&payload.intent);
+        let title = payload
+            .title
+            .chars()
+            .take(crate::local_issues::TITLE_LIMIT)
+            .collect();
+        self.set_backlog_row(BacklogItemSnapshot {
+            intent: payload.intent,
+            workspace_id: payload.workspace_id,
+            title,
+            phase: BacklogPhase::Failed,
+            task_key: None,
+            failure: Some(failure),
+            retry: false,
+            missed: payload.missed,
+            at_unix_ms: unix_milliseconds(),
+        });
         true
     }
 
@@ -131,45 +249,81 @@ impl Runtime {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         {
-            return self.refuse_backlog("backlog.intent_invalid", "The item has no valid key");
+            crate::diagnostic!(
+                serde_json::json!({"component":"backlog","kind":"backlog.intent_invalid"})
+            );
+            self.set_error("backlog.intent_invalid", "The item has no valid key", false);
+            return true;
         }
-        if self
-            .snapshot
-            .issue_work
-            .backlog
-            .iter()
-            .any(|row| row.intent == payload.intent)
+        let rows = &self.snapshot.issue_work.backlog;
+        if rows.iter().any(|row| row.intent == payload.intent)
+            || self.backlog_work.evicted.contains(&payload.intent)
         {
-            // A repeated send of the same item: the row already answers it.
+            // A repeated send of the same item: the row already answered it.
+            return false;
+        }
+        if let Some(missed) = &payload.missed
+            && rows.iter().any(|row| {
+                row.missed
+                    .as_ref()
+                    .is_some_and(|known| same_missed(known, missed))
+            })
+        {
+            // One missed line is one item, however often it is pressed.
             return false;
         }
         let title = match crate::local_issues::validated_title(&payload.title) {
             Ok(title) => title,
-            Err(message) => return self.refuse_backlog("backlog.title_invalid", &message),
+            Err(_) => {
+                return self.refuse_add(payload, BacklogFailure::Refused, "backlog.title_invalid");
+            }
         };
         // A device the core dials keeps its issues there, so it has no
         // backlog here and is not found (D-33).
         let Some((node, workspace)) = self.issue_project(&payload.workspace_id) else {
-            return self.refuse_backlog(
-                "backlog.unknown_project",
-                "The backlog needs a project whose issues Hide keeps",
-            );
+            return self.refuse_add(payload, BacklogFailure::Refused, "backlog.unknown_project");
         };
         if let Some(missed) = &payload.missed {
             if !summaries_on(self.ai_settings.as_ref()) {
-                return false;
+                return self.refuse_add(payload, BacklogFailure::Refused, "backlog.summaries_off");
             }
             if missed.session.device_id != workspace.device_id {
-                return self.refuse_backlog(
+                return self.refuse_add(
+                    payload,
+                    BacklogFailure::Refused,
                     "backlog.missed_elsewhere",
-                    "Missed work goes to a project on its session's device",
                 );
+            }
+            if self.links_work.client.is_none() {
+                return self.refuse_add(
+                    payload,
+                    BacklogFailure::Refused,
+                    "backlog.ledger_unavailable",
+                );
+            }
+        }
+        if self.retryable_failed() >= FAILED_LIMIT {
+            return self.refuse_add(payload, BacklogFailure::QueueFull, "backlog.queue_full");
+        }
+        let memo = self.project_source_kind(&workspace) == crate::tasks::SourceKind::Local;
+        if !memo {
+            let device = &workspace.device_id;
+            let waiting = self
+                .backlog_work
+                .waiting
+                .get(device)
+                .map_or(0, VecDeque::len);
+            if self.backlog_work.running.contains(device) && waiting >= WAITING_LIMIT {
+                return self.refuse_add(payload, BacklogFailure::QueueFull, "backlog.queue_full");
             }
         }
         crate::diagnostic!(serde_json::json!({
             "component": "backlog", "kind": "backlog.add",
             "intent": payload.intent, "project": workspace.path, "missed": payload.missed.is_some(),
         }));
+        let pin = (!memo)
+            .then(|| self.current_pin(node.as_deref(), &workspace.device_id, &workspace.path))
+            .flatten();
         let job = Job {
             workspace_id: workspace.id.clone(),
             device: workspace.device_id.clone(),
@@ -177,21 +331,25 @@ impl Runtime {
             project: workspace.path.clone(),
             title,
             missed: payload.missed,
+            memo,
+            pin,
         };
-        match self.project_source_kind(&workspace) {
-            crate::tasks::SourceKind::Local => self.add_memo(payload.intent, job),
-            crate::tasks::SourceKind::Github => self.enqueue_issue(payload.intent, job),
+        if memo {
+            self.add_memo(payload.intent, job)
+        } else {
+            self.enqueue_issue(payload.intent, job)
         }
     }
 
     fn add_memo(&mut self, intent: String, job: Job) -> bool {
         let mut row = BacklogItemSnapshot {
-            intent,
+            intent: intent.clone(),
             workspace_id: job.workspace_id.clone(),
             title: job.title.clone(),
             phase: BacklogPhase::Created,
             task_key: None,
             failure: None,
+            retry: false,
             missed: job.missed.clone(),
             at_unix_ms: unix_milliseconds(),
         };
@@ -199,38 +357,49 @@ impl Runtime {
             Ok(number) => {
                 let key = crate::tasks::local_key(&job.project, number);
                 row.task_key = Some(key.clone());
-                if let Some(source) = job.missed {
-                    self.mark_missed_memo(row.intent.clone(), source, key);
+                if let Some(source) = job.missed.clone() {
+                    self.mark_missed_memo(intent, job.node.clone(), source, key);
                 }
+                self.set_backlog_row(row);
             }
             Err(reason) => {
                 crate::diagnostic!(
-                    serde_json::json!({"component":"backlog","kind":"backlog.memo_failed","reason":reason})
+                    serde_json::json!({"component":"backlog","kind":"backlog.memo_failed","intent":intent,"reason":reason})
                 );
+                // Kept, so `다시 시도` makes it again.
+                self.backlog_work.jobs.insert(intent.clone(), job);
                 row.phase = BacklogPhase::Failed;
                 row.failure = Some(BacklogFailure::Refused);
+                row.retry = true;
+                self.set_backlog_row(row);
             }
         }
-        self.set_backlog_row(row);
         true
     }
 
-    /// The missed line that made a memo turns `· 백로그 L-N`.
-    fn mark_missed_memo(&mut self, intent: String, source: MissedSource, key: String) {
+    /// The missed line that made a memo turns `· 백로그 L-N`. A line the
+    /// ledger no longer has open (another view put it away meanwhile) takes
+    /// its memo back, so no memo is left that no line names.
+    fn mark_missed_memo(
+        &mut self,
+        intent: String,
+        node: Option<String>,
+        source: MissedSource,
+        key: String,
+    ) {
         let Some(client) = self.links_work.client.clone() else {
             return;
         };
+        let backlog_key = key.clone();
         let spawned = self.spawn_issue_worker(
             "backlog-memo",
-            move || {
-                client.call(LedgerCall::BacklogLocal {
-                    source,
-                    backlog_key: key,
-                })
-            },
+            move || client.call(LedgerCall::BacklogLocal { source, backlog_key }),
             move |runtime, result| {
                 if let Err(code) = result {
                     crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.missed_mark_failed","intent":intent,"code":code}));
+                    if code == "ledger_missed_not_open" {
+                        runtime.unmake_memo(&intent, node.as_deref(), &key);
+                    }
                 }
                 runtime.feed_links();
                 runtime.refresh_missed_keys();
@@ -244,53 +413,79 @@ impl Runtime {
         }
     }
 
+    fn unmake_memo(&mut self, intent: &str, node: Option<&str>, key: &str) {
+        if let Some((path, number)) = crate::tasks::parse_local_key(key) {
+            let deleted = match self.local_issues.as_mut() {
+                Ok(store) => store.delete(node, path, number),
+                Err(reason) => Err(reason.clone()),
+            };
+            match deleted {
+                Ok(()) => {
+                    self.persist_local_issues();
+                    self.refresh_issue_rows(node);
+                }
+                Err(reason) => crate::diagnostic!(
+                    serde_json::json!({"component":"backlog","kind":"backlog.memo_unmake_failed","intent":intent,"reason":reason})
+                ),
+            }
+        }
+        self.backlog_work.jobs.remove(intent);
+        if let Some(row) = self.backlog_row(intent) {
+            row.task_key = None;
+        }
+        self.fail_backlog_row(intent, BacklogFailure::Refused);
+    }
+
+    /// The repository target and connection epoch a GitHub item of `project`
+    /// would be made under now, when its repository is known.
+    fn current_pin(&self, node: Option<&str>, device: &str, project: &str) -> Option<Pin> {
+        let target = self.github_place(node, project).ok()?;
+        Some(Pin {
+            target,
+            epoch: self.connection_epoch(device, project),
+        })
+    }
+
     fn enqueue_issue(&mut self, intent: String, job: Job) -> bool {
-        let failed = self
-            .snapshot
-            .issue_work
-            .backlog
-            .iter()
-            .filter(|row| row.phase == BacklogPhase::Failed)
-            .count();
         let device = job.device.clone();
-        let waiting = self
-            .backlog_work
-            .waiting
-            .get(&device)
-            .map_or(0, VecDeque::len);
         let busy = self.backlog_work.running.contains(&device);
-        let mut row = BacklogItemSnapshot {
+        self.set_backlog_row(BacklogItemSnapshot {
             intent: intent.clone(),
             workspace_id: job.workspace_id.clone(),
             title: job.title.clone(),
             phase: BacklogPhase::Waiting,
             task_key: None,
             failure: None,
+            retry: false,
             missed: job.missed.clone(),
             at_unix_ms: unix_milliseconds(),
-        };
-        if (busy && waiting >= WAITING_LIMIT) || failed >= FAILED_LIMIT {
-            crate::diagnostic!(
-                serde_json::json!({"component":"backlog","kind":"backlog.queue_full","intent":intent,"device":device,"waiting":waiting,"failed":failed})
-            );
-            row.phase = BacklogPhase::Failed;
-            row.failure = Some(BacklogFailure::QueueFull);
-            self.backlog_work.jobs.insert(intent, job);
-            self.set_backlog_row(row);
-            return true;
-        }
+        });
         self.backlog_work.jobs.insert(intent.clone(), job);
-        self.set_backlog_row(row);
-        if busy {
-            self.backlog_work
-                .waiting
-                .entry(device)
-                .or_default()
-                .push_back(intent);
-        } else {
-            self.start_issue(intent);
+        self.backlog_work
+            .waiting
+            .entry(device.clone())
+            .or_default()
+            .push_back(intent);
+        if !busy {
+            self.drain_backlog(&device);
         }
         true
+    }
+
+    /// Starts the device's next waiting item, and the one after it when one
+    /// fails before a worker takes it, until one runs or none waits.
+    fn drain_backlog(&mut self, device: &str) {
+        while !self.backlog_work.running.contains(device) {
+            let Some(next) = self
+                .backlog_work
+                .waiting
+                .get_mut(device)
+                .and_then(VecDeque::pop_front)
+            else {
+                return;
+            };
+            self.start_issue(next);
+        }
     }
 
     /// `backlog_retry`: a failed item goes back in line, under the same
@@ -299,18 +494,21 @@ impl Runtime {
         let Some(row) = self.backlog_row(&payload.intent) else {
             return false;
         };
-        if row.phase != BacklogPhase::Failed {
+        if row.phase != BacklogPhase::Failed || !row.retry {
             return false;
         }
-        let Some(job) = self.backlog_work.jobs.get(&payload.intent).cloned() else {
+        let Some(job) = self.backlog_work.jobs.remove(&payload.intent) else {
             return false;
         };
         self.snapshot
             .issue_work
             .backlog
             .retain(|row| row.intent != payload.intent);
-        self.backlog_work.jobs.remove(&payload.intent);
-        self.enqueue_issue(payload.intent, job)
+        if job.memo {
+            self.add_memo(payload.intent, job)
+        } else {
+            self.enqueue_issue(payload.intent, job)
+        }
     }
 
     /// `backlog_dismiss` (`지우기`): a failed item is put away; its attempt
@@ -327,7 +525,7 @@ impl Runtime {
         };
         let row = self.snapshot.issue_work.backlog.remove(index);
         let job = self.backlog_work.jobs.remove(&row.intent);
-        if job.is_some_and(|job| job.missed.is_none())
+        if job.is_some_and(|job| !job.memo && job.missed.is_none())
             && let Some(client) = self.links_work.client.clone()
         {
             let intent = row.intent.clone();
@@ -345,34 +543,43 @@ impl Runtime {
         true
     }
 
+    /// Starts one GitHub item's create on a worker, or fails its row when it
+    /// cannot start; `running` names the device only while a worker has it.
     fn start_issue(&mut self, intent: String) {
         let Some(job) = self.backlog_work.jobs.get(&intent).cloned() else {
             return;
-        };
-        let fail = |runtime: &mut Runtime, failure: BacklogFailure| {
-            if let Some(row) = runtime.backlog_row(&intent) {
-                row.phase = BacklogPhase::Failed;
-                row.failure = Some(failure);
-            }
         };
         let Some(client) = self.links_work.client.clone() else {
             crate::diagnostic!(
                 serde_json::json!({"component":"backlog","kind":"backlog.ledger_unavailable","intent":intent})
             );
-            return fail(self, BacklogFailure::Refused);
+            return self.fail_backlog_row(&intent, BacklogFailure::Refused);
         };
-        let place = match self.github_place(job.node.as_deref(), &job.project) {
-            Ok(place) => place,
-            Err(reason) => {
+        let Some(pin) = self.current_pin(job.node.as_deref(), &job.device, &job.project) else {
+            crate::diagnostic!(
+                serde_json::json!({"component":"backlog","kind":"backlog.place_unknown","intent":intent})
+            );
+            return self.fail_backlog_row(&intent, BacklogFailure::NoGithubRemote);
+        };
+        // Made in the repository it was asked for, or not at all.
+        match &job.pin {
+            Some(asked) if *asked != pin => {
                 crate::diagnostic!(
-                    serde_json::json!({"component":"backlog","kind":"backlog.place_unknown","intent":intent,"reason":reason})
+                    serde_json::json!({"component":"backlog","kind":"backlog.repository_moved","intent":intent})
                 );
-                return fail(self, BacklogFailure::NoGithubRemote);
+                return self.fail_backlog_row(&intent, BacklogFailure::RepositoryChanged);
             }
-        };
+            Some(_) => {}
+            None => {
+                if let Some(kept) = self.backlog_work.jobs.get_mut(&intent) {
+                    kept.pin = Some(pin.clone());
+                }
+            }
+        }
         if let Some(row) = self.backlog_row(&intent) {
             row.phase = BacklogPhase::Creating;
             row.failure = None;
+            row.retry = false;
         }
         let cancel = CancelToken::new();
         self.backlog_work.admitted.insert(
@@ -380,8 +587,8 @@ impl Runtime {
             Admission {
                 device: job.device.clone(),
                 project: job.project.clone(),
-                target: place.clone(),
-                epoch: self.connection_epoch(&job.device, &job.project),
+                target: pin.target.clone(),
+                epoch: pin.epoch,
                 cancel: cancel.clone(),
             },
         );
@@ -397,10 +604,22 @@ impl Runtime {
         };
         let own = self.own_node();
         let title = job.title.clone();
+        let place = pin.target;
         let intent_for_refusal = intent.clone();
         let spawned = self.spawn_issue_worker(
             "backlog-issue",
-            move || create_once(&client, &key, own.as_ref(), &place, &title, &cancel),
+            move || {
+                // A worker that panics still answers, so its device is freed.
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    create_once(&client, &key, own.as_ref(), &place, &title, &cancel)
+                }))
+                .unwrap_or_else(|_| {
+                    crate::diagnostic!(
+                        serde_json::json!({"component":"backlog","kind":"backlog.worker_panicked"})
+                    );
+                    Err(BacklogFailure::Unconfirmed)
+                })
+            },
             move |runtime, result| runtime.ingest_backlog_issue(&intent, result),
         );
         if let Err(code) = spawned {
@@ -409,10 +628,7 @@ impl Runtime {
             );
             self.backlog_work.running.remove(&job.device);
             self.backlog_work.admitted.remove(&intent_for_refusal);
-            if let Some(row) = self.backlog_row(&intent_for_refusal) {
-                row.phase = BacklogPhase::Failed;
-                row.failure = Some(BacklogFailure::Refused);
-            }
+            self.fail_backlog_row(&intent_for_refusal, BacklogFailure::Refused);
         }
     }
 
@@ -444,6 +660,7 @@ impl Runtime {
                 if let Some(row) = self.backlog_row(intent) {
                     row.phase = BacklogPhase::Created;
                     row.task_key = Some(key);
+                    row.retry = false;
                 }
                 if job.missed.is_some() {
                     self.feed_links();
@@ -454,20 +671,10 @@ impl Runtime {
                 crate::diagnostic!(
                     serde_json::json!({"component":"backlog","kind":"backlog.issue_failed","intent":intent,"failure":failure})
                 );
-                if let Some(row) = self.backlog_row(intent) {
-                    row.phase = BacklogPhase::Failed;
-                    row.failure = Some(failure);
-                }
+                self.fail_backlog_row(intent, failure);
             }
         }
-        let next = self
-            .backlog_work
-            .waiting
-            .get_mut(&job.device)
-            .and_then(VecDeque::pop_front);
-        if let Some(next) = next {
-            self.start_issue(next);
-        }
+        self.drain_backlog(&job.device);
         true
     }
 
@@ -548,6 +755,10 @@ impl Runtime {
                     project: pending.intent.project.clone(),
                     title: pending.title.clone(),
                     missed: None,
+                    memo: false,
+                    // The ledger's attempt is pinned to its reserved
+                    // repository, which the retry reconciles against.
+                    pin: None,
                 },
             );
             self.snapshot.issue_work.backlog.push(BacklogItemSnapshot {
@@ -557,6 +768,7 @@ impl Runtime {
                 phase: BacklogPhase::Failed,
                 task_key: None,
                 failure: Some(BacklogFailure::Unconfirmed),
+                retry: true,
                 missed: None,
                 at_unix_ms: pending.started_at_unix_ms,
             });
@@ -634,29 +846,38 @@ impl Runtime {
         let spawned = self.spawn_issue_worker(
             "backlog-undo",
             move || {
+                // Only an issue of the project's own repository is closed.
+                let repository = crate::github::issue_repository(own.as_ref(), &place).map_err(|code| {
+                    crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.repository_unread","code":code}));
+                    BacklogFailure::NetworkOrRateLimit
+                })?;
+                if !repository.eq_ignore_ascii_case(&reference.repository) {
+                    crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.undo_other_repository"}));
+                    return Err(BacklogFailure::Refused);
+                }
                 crate::github::close_issue(own.as_ref(), &place, &reference.repository, reference.number)
                     .map(|()| reference)
                     .map_err(|failure| BacklogFailure::from(failure.category))
             },
             move |runtime, result| {
-                if runtime.backlog_work.undo_generation != generation {
-                    return false;
-                }
-                let Some(slot) = runtime.snapshot.issue_work.undo.as_mut() else {
-                    return false;
-                };
-                match result {
+                // What a close did happens whether or not a later undo has
+                // taken the slot; only the slot follows the newest undo.
+                let shown = runtime.backlog_work.undo_generation == generation;
+                let phase = match &result {
                     Ok(reference) => {
-                        slot.phase = "done".into();
-                        runtime.forget_created_issue(node.as_deref(), &project, &reference);
+                        runtime.forget_created_issue(node.as_deref(), &project, reference);
                         let client = runtime.links_work.client.clone();
                         runtime.release_backlog(client, task_key);
+                        ("done", None)
                     }
                     Err(failure) => {
                         crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.close_failed","failure":failure}));
-                        slot.phase = "failed".into();
-                        slot.failure = Some(failure);
+                        ("failed", Some(*failure))
                     }
+                };
+                if shown && let Some(slot) = runtime.snapshot.issue_work.undo.as_mut() {
+                    slot.phase = phase.0.into();
+                    slot.failure = phase.1;
                 }
                 true
             },
@@ -722,15 +943,18 @@ impl Runtime {
             return true;
         };
         self.snapshot.issue_work.origin = Some(slot);
+        // Links that are up now, and nothing started for one that is down:
+        // the read asks only the one that holds the item's session.
         let nodes: HashMap<String, Arc<dyn NodeLink>> = self
             .snapshot
             .navigator
             .devices
             .iter()
-            .map(|device| device.id.clone())
-            .collect::<Vec<_>>()
-            .into_iter()
-            .filter_map(|id| self.node_link(&id).ok().map(|node| (id, node)))
+            .filter_map(|device| {
+                self.linked_node(&device.id)
+                    .ok()
+                    .map(|(_, node)| (device.id.clone(), node))
+            })
             .collect();
         let task_key = payload.task_key;
         let spawned = self.spawn_issue_worker(
@@ -901,6 +1125,7 @@ fn create_once(
                 &attempt.repository,
                 &attempt.title,
                 attempt.started_at_unix_ms,
+                &attempt.claimed,
             ) {
                 Ok(Some(issue)) => return Ok(issue),
                 Ok(None) => {}

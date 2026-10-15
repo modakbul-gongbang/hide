@@ -218,14 +218,40 @@ fn key(session: &SessionIdentity) -> SessionKey {
 }
 
 fn issue_attempt(tx: &Transaction<'_>, key: &AttemptKey) -> Result<Option<IssueAttempt>, String> {
+    let Some(mut attempt) = stored_attempt(tx, key)? else {
+        return Ok(None);
+    };
+    if attempt.number.is_none() {
+        attempt.claimed = claimed_numbers(tx, &attempt.repository)?;
+    }
+    Ok(Some(attempt))
+}
+
+/// Every issue number an attempt in `repository` already names.
+fn claimed_numbers(tx: &Transaction<'_>, repository: &str) -> Result<Vec<u64>, String> {
+    let mut statement = tx
+        .prepare(
+            "SELECT number FROM ledger_issue_attempts WHERE number IS NOT NULL AND repo=?1 COLLATE NOCASE \
+             UNION SELECT number FROM ledger_backlog WHERE number IS NOT NULL AND repo=?1 COLLATE NOCASE",
+        )
+        .map_err(failed)?;
+    let numbers = statement
+        .query_map([repository], |row| row.get::<_, i64>(0))
+        .map_err(failed)?
+        .filter_map(|number| number.ok().and_then(|number| u64::try_from(number).ok()))
+        .collect();
+    Ok(numbers)
+}
+
+fn stored_attempt(tx: &Transaction<'_>, key: &AttemptKey) -> Result<Option<IssueAttempt>, String> {
     match key {
         AttemptKey::Missed(source) => tx.query_row("SELECT repo,title,body,started_at,number,url FROM ledger_issue_attempts WHERE device=?1 AND agent=?2 AND id=?3 AND missed=?4",
             params![source.session.device_id,source.session.agent,source.session.session_id,source.id],|r|Ok(IssueAttempt {
-                repository:r.get(0)?, title:r.get(1)?, body:r.get(2)?, started_at_unix_ms:r.get(3)?,reconcile:true,number:r.get(4)?,url:r.get(5)?,
+                repository:r.get(0)?, title:r.get(1)?, body:r.get(2)?, started_at_unix_ms:r.get(3)?,reconcile:true,number:r.get(4)?,url:r.get(5)?,claimed:Vec::new(),
             })).optional().map_err(failed),
         AttemptKey::Intent(intent) => tx.query_row("SELECT repo,title,started_at,number,url FROM ledger_backlog WHERE intent=?1",
             params![intent.intent],|r|Ok(IssueAttempt {
-                repository:r.get(0)?, title:r.get(1)?, body:String::new(), started_at_unix_ms:r.get(2)?,reconcile:true,number:r.get(3)?,url:r.get(4)?,
+                repository:r.get(0)?, title:r.get(1)?, body:String::new(), started_at_unix_ms:r.get(2)?,reconcile:true,number:r.get(3)?,url:r.get(4)?,claimed:Vec::new(),
             })).optional().map_err(failed),
     }
 }
@@ -498,6 +524,7 @@ impl LinkStore {
                         reconcile: false,
                         number: None,
                         url: None,
+                        claimed: Vec::new(),
                     })
                 }
             }

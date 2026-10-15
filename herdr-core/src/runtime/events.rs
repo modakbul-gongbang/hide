@@ -864,16 +864,6 @@ pub(super) struct IssueSettingsSetPayload {
     pub(super) closes_instruction: Option<bool>,
 }
 
-/// `issue_create`: a new issue in the project's source.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct IssueCreatePayload {
-    pub(super) workspace_id: String,
-    pub(super) title: String,
-    #[serde(default)]
-    pub(super) body: String,
-}
-
 /// `issue_detail_request`: one issue's body, labels, author, assignees and
 /// comments, for its panel and the Start dialog.
 #[derive(Debug, Deserialize)]
@@ -1462,7 +1452,6 @@ pub(super) enum Event {
     IssueSourceSet(IssueSourceSetPayload),
     ProjectSettingsSet(super::project_settings::SetPayload),
     IssueSettingsSet(IssueSettingsSetPayload),
-    IssueCreate(IssueCreatePayload),
     IssueDetailRequest(IssueDetailRequestPayload),
     GithubSearch(GithubSearchPayload),
     WorktreeNameSuggest(WorktreeNameSuggestPayload),
@@ -1710,7 +1699,6 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "issue_source_set" => decode!(IssueSourceSetPayload, IssueSourceSet),
         "project_settings_set" => decode!(super::project_settings::SetPayload, ProjectSettingsSet),
         "issue_settings_set" => decode!(IssueSettingsSetPayload, IssueSettingsSet),
-        "issue_create" => decode!(IssueCreatePayload, IssueCreate),
         "issue_detail_request" => decode!(IssueDetailRequestPayload, IssueDetailRequest),
         "github_search" => decode!(GithubSearchPayload, GithubSearch),
         "worktree_name_suggest" => decode!(WorktreeNameSuggestPayload, WorktreeNameSuggest),
@@ -3652,7 +3640,6 @@ impl Runtime {
             Event::IssueSourceSet(payload) => self.set_issue_source(payload),
             Event::ProjectSettingsSet(payload) => self.set_project_settings(payload),
             Event::IssueSettingsSet(payload) => self.set_issue_settings(payload),
-            Event::IssueCreate(payload) => self.create_issue(payload),
             Event::IssueDetailRequest(payload) => self.request_issue_detail(payload),
             Event::GithubSearch(payload) => self.request_github_search(payload),
             Event::WorktreeNameSuggest(payload) => self.suggest_worktree_name(payload),

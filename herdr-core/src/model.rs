@@ -3415,7 +3415,6 @@ impl AgentStartChoice {
 /// by id and ignores one it did not ask for.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct IssueWorkSnapshot {
-    pub create: Option<IssueCreateSnapshot>,
     pub detail: Option<IssueDetailSnapshot>,
     pub name: Option<WorktreeNameSnapshot>,
     pub update: Option<IssueUpdateSnapshot>,
@@ -3451,6 +3450,9 @@ pub struct BacklogItemSnapshot {
     pub task_key: Option<String>,
     /// Why it was not made, on `failed`.
     pub failure: Option<BacklogFailure>,
+    /// Whether `backlog_retry` can make it again: a failed item whose job
+    /// is kept and whose failure a retry does not repeat.
+    pub retry: bool,
     /// The missed line it is made from.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub missed: Option<crate::links::ledger::MissedSource>,
@@ -3571,18 +3573,6 @@ impl GithubSearchSnapshot {
             ..Self::working(request_id, query)
         }
     }
-}
-
-/// A new issue on its way to the project's source.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct IssueCreateSnapshot {
-    pub id: u64,
-    pub workspace_id: String,
-    /// `working`, `ready` or `failed`.
-    pub phase: String,
-    /// The created task's key, once it exists.
-    pub task_key: Option<String>,
-    pub message: Option<String>,
 }
 
 /// One issue as its panel and the Start dialog read it (PRD

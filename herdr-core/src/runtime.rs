@@ -1565,9 +1565,6 @@ pub struct Runtime {
     /// Each checkout's Local issue number, for a project that reads Local
     /// issues; `sync_issues` fills it from the same chain a GitHub link uses.
     local_issue_links: BTreeMap<String, u32>,
-    /// Ids for the `issue_work` slots, so a late answer for a replaced
-    /// request is recognised and dropped.
-    next_issue_work_id: u64,
     /// The summary hide-ai made of a pull request at a head commit, kept for
     /// that head (D-29). In memory, capped at [`PR_SUMMARY_CACHE_LIMIT`].
     pr_summaries: BTreeMap<(String, u32), (String, String)>,
@@ -2160,7 +2157,6 @@ impl Runtime {
             local_issues_save_pending: false,
             local_issues_save_active: false,
             local_issue_links: BTreeMap::new(),
-            next_issue_work_id: 0,
             pr_summaries: BTreeMap::new(),
             pr_summaries_asked: BTreeSet::new(),
             github_search: issues::GithubSearchWork::default(),

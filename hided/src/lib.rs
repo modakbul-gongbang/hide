@@ -323,7 +323,6 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
             "files": converted.files,
             "projects": converted.projects,
             "retention_rows": converted.retention_rows,
-            "retention_rows_dropped": converted.retention_rows_dropped,
         });
         if let Err(error) =
             herdr_core::diagnostics::record_now(&env.state_dir.join("core-state.json"), record)

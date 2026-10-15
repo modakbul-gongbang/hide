@@ -708,65 +708,22 @@ impl fmt::Display for Refusal {
 pub struct Outcome {
     pub files: Vec<String>,
     pub projects: usize,
+    /// Project ids recorded as moved, for the old search file's retention.
     pub retention_rows: usize,
-    /// Retention rows whose new key was already taken, dropped as stale.
-    pub retention_rows_dropped: usize,
 }
 
-/// Moves each `(old, new)` Project's Copied history days in the old session
-/// search file to its new id: the one table anything still reads (record
-/// retention, `links::store::policies`). A new id that already has a row
-/// keeps it and the old row is dropped as stale. A file without the table,
-/// or with nothing under an old id, is only read, so a converted install
-/// never takes its write lock again. Answers the rows moved and dropped.
-pub(crate) fn rekey_retention(
+/// Records each `(old, new)` project id in the link record, so the
+/// retention the old session search file names under `old` follows the
+/// project (`links::store::policies`). The session search file itself is
+/// only ever read (D-20). The link record is kept as it was first.
+fn alias_retention(
     path: &Path,
     pairs: &[(String, String)],
-) -> Result<(usize, usize), String> {
-    let failed = |error: rusqlite::Error| error.to_string();
-    let mut db =
-        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
-            .map_err(failed)?;
-    db.busy_timeout(std::time::Duration::from_millis(100))
-        .map_err(failed)?;
-    let has_table: bool = db
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='policy')",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(failed)?;
-    if !has_table {
-        return Ok((0, 0));
-    }
-    let mut pending = false;
-    for (old, _) in pairs {
-        pending |= db
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM policy WHERE project=?1)",
-                [old],
-                |row| row.get::<_, bool>(0),
-            )
-            .map_err(failed)?;
-    }
-    if !pending {
-        return Ok((0, 0));
-    }
-    let tx = db.transaction().map_err(failed)?;
-    let (mut moved, mut dropped) = (0, 0);
-    for (old, new) in pairs {
-        moved += tx
-            .execute(
-                "UPDATE OR IGNORE policy SET project=?1 WHERE project=?2",
-                [new, old],
-            )
-            .map_err(failed)?;
-        dropped += tx
-            .execute("DELETE FROM policy WHERE project=?1", [old])
-            .map_err(failed)?;
-    }
-    tx.commit().map_err(failed)?;
-    Ok((moved, dropped))
+    backup: &Backup,
+) -> Result<usize, String> {
+    let (mut store, _) = crate::links::store::LinkStore::open(path)?;
+    backup.copy_with(LINKS, |destination| store.copy_to(destination))?;
+    store.alias_retention(pairs)
 }
 
 /// Converts the state folder at `state_dir` for `node`, with its Project
@@ -901,20 +858,18 @@ pub fn convert(state_dir: &Path, node: &NodeId) -> Result<Outcome, Refusal> {
         }
     }
 
-    let search = state_dir.join(SESSION_SEARCH);
-    if search.is_file() && !project_pairs.is_empty() {
-        // Not copied first: its one transaction either moves every row or
-        // none.
-        (outcome.retention_rows, outcome.retention_rows_dropped) =
-            rekey_retention(&search, &project_pairs).map_err(|reason| refuse(&search, reason))?;
-        if outcome.retention_rows + outcome.retention_rows_dropped > 0 {
-            outcome.files.push(search.display().to_string());
+    let links = hide_kit::layout::links_store(state_dir);
+    if state_dir.join(SESSION_SEARCH).is_file() && !project_pairs.is_empty() {
+        outcome.retention_rows = alias_retention(&links, &project_pairs, &backup)
+            .map_err(|reason| refuse(&links, reason))?;
+        if outcome.retention_rows > 0 {
+            outcome.files.push(links.display().to_string());
         }
     }
 
-    let links = hide_kit::layout::links_store(state_dir);
     if links.is_file()
         && convert_links(&links, node, &backup).map_err(|reason| refuse(&links, reason))?
+        && !outcome.files.contains(&links.display().to_string())
     {
         outcome.files.push(links.display().to_string());
     }
@@ -1571,11 +1526,18 @@ mod tests {
             })
             .unwrap();
         assert_eq!(cursor, new_project);
+        // The session search file is only read (D-20); its retention row
+        // reaches the project under its new id through the link record.
         let search = rusqlite::Connection::open(legacy.state.join(SESSION_SEARCH)).unwrap();
         let policy: String = search
             .query_row("SELECT project FROM policy", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(policy, new_project);
+        assert_eq!(policy, legacy.old_project);
+        drop(search);
+        let (store, _) = crate::links::store::LinkStore::open(&legacy.state.join(LINKS)).unwrap();
+        let policies = store.policies(&legacy.state.join(SESSION_SEARCH)).unwrap();
+        assert_eq!(policies.get(&new_project), Some(&30));
+        drop(store);
         assert_ne!(legacy.old_project, new_project);
 
         let links = rusqlite::Connection::open(legacy.state.join(LINKS)).unwrap();
@@ -1749,7 +1711,7 @@ mod tests {
     }
 
     #[test]
-    fn a_start_retried_after_a_later_store_failed_still_rekeys_an_unregistered_project() {
+    fn a_conversion_leaves_the_search_file_byte_for_byte_and_its_retention_follows_each_project() {
         let legacy = legacy();
         // A Project Memory knows but no folder registers.
         let beta = legacy.project.with_file_name("beta");
@@ -1764,25 +1726,24 @@ mod tests {
             .execute("INSERT INTO policy VALUES(?1, 7)", [&old_beta])
             .unwrap();
         drop(search);
+        let before = std::fs::read(&search_path).unwrap();
 
-        // The session search file fails after Memory has moved its Projects.
-        let index = std::fs::read(&search_path).unwrap();
-        std::fs::write(&search_path, b"not a database").unwrap();
-        let refusal = convert(&legacy.state, &node()).unwrap_err();
-        assert_eq!(refusal.file, search_path);
-        let memory = hide_memory::MemoryStore::open(&legacy.state.join(PROJECT_MEMORY)).unwrap();
-        assert!(!memory.has_device(LEGACY).unwrap(), "Memory moved first");
-        drop(memory);
-
-        std::fs::write(&search_path, index).unwrap();
         convert(&legacy.state, &node()).unwrap();
-        let search = rusqlite::Connection::open(&search_path).unwrap();
-        let beta_policy: String = search
-            .query_row("SELECT project FROM policy WHERE days=7", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(beta_policy, hide_project::project_id(NODE, &beta));
+        assert_eq!(
+            std::fs::read(&search_path).unwrap(),
+            before,
+            "never written"
+        );
+        let (store, _) = crate::links::store::LinkStore::open(&legacy.state.join(LINKS)).unwrap();
+        let policies = store.policies(&search_path).unwrap();
+        assert_eq!(
+            policies.get(&hide_project::project_id(NODE, &beta)),
+            Some(&7)
+        );
+        assert_eq!(
+            policies.get(&hide_project::project_id(NODE, &legacy.project)),
+            Some(&30)
+        );
     }
 
     #[test]

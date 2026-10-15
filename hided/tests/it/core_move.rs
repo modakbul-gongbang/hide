@@ -2733,8 +2733,8 @@ fn a_moved_machine_s_project_keeps_its_issues_through_the_move_and_back() -> Res
             format!("app: {shown:?}")
         })?;
         fixture.event(
-            "issue_create",
-            json!({"workspace_id": app_id, "title": "Made before the move"}),
+            "backlog_add",
+            json!({"intent": "before-move", "workspace_id": app_id, "title": "Made before the move"}),
         )?;
         let before = wait_for("the issue and the checkout it links", || {
             let snapshot = fixture.snapshot()?;
@@ -2763,8 +2763,8 @@ fn a_moved_machine_s_project_keeps_its_issues_through_the_move_and_back() -> Res
             format!("before: {before}\nafter: {shown:?}")
         })?;
         fixture.event(
-            "issue_create",
-            json!({"workspace_id": node_app_id, "title": "Made on the new core"}),
+            "backlog_add",
+            json!({"intent": "after-move", "workspace_id": node_app_id, "title": "Made on the new core"}),
         )?;
         let moved = wait_for("the new issue numbered after the old one", || {
             let snapshot = fixture.snapshot()?;

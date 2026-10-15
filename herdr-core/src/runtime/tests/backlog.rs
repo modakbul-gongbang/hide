@@ -12,8 +12,9 @@ use hide_node_link::protocol::Call;
 use std::sync::Condvar;
 
 /// `gh` for one checkout, whose repository is `acme/project`, and for any
-/// repository named outright: creates are numbered from 41 and wait while the
-/// gate is shut; anything not scripted fails as offline.
+/// repository named outright: creates are numbered from 41, and creates and
+/// closes wait while the gate is shut; anything not scripted fails as
+/// offline.
 struct FakeGh {
     calls: Mutex<Vec<String>>,
     open: Mutex<bool>,
@@ -73,6 +74,10 @@ impl FakeGh {
             return output(format!("https://github.com/acme/project/issues/{number}\n"));
         }
         if line.starts_with("issue close") {
+            let mut open = self.open.lock().unwrap();
+            while !*open {
+                open = self.opened.wait(open).unwrap();
+            }
             return output(String::new());
         }
         if line.starts_with("api graphql") {
@@ -191,6 +196,16 @@ fn phases(runtime: &Runtime) -> Vec<(String, BacklogPhase, Option<BacklogFailure
     rows
 }
 
+fn retry(runtime: &Runtime, intent: &str) -> bool {
+    runtime
+        .snapshot
+        .issue_work
+        .backlog
+        .iter()
+        .find(|row| row.intent == intent)
+        .is_some_and(|row| row.retry)
+}
+
 fn row_key(runtime: &Runtime, intent: &str) -> Option<String> {
     runtime
         .snapshot
@@ -205,7 +220,14 @@ fn row_key(runtime: &Runtime, intent: &str) -> Option<String> {
 #[test]
 fn a_github_item_is_one_title_only_create_and_a_repeated_send_makes_no_second() {
     let gh = FakeGh::new();
-    let (shared, _worker) = backlog_runtime(gh.clone());
+    let (shared, _worker) = backlog_runtime_with(gh.clone(), |runtime| {
+        let mut project = crate::model::GithubProjectSnapshot {
+            root_path: "/repo".into(),
+            ..Default::default()
+        };
+        project.issues.repository = Some("acme/project".into());
+        runtime.github.projects = vec![project];
+    });
     add(&shared, "i-1", "w", "Flaky e2e on Windows");
     add(&shared, "i-1", "w", "Flaky e2e on Windows");
     wait(&shared, "the issue", |runtime| {
@@ -220,11 +242,13 @@ fn a_github_item_is_one_title_only_create_and_a_repeated_send_makes_no_second() 
         gh.calls("issue create"),
         ["issue create --title Flaky e2e on Windows --body "]
     );
-    let issues = &runtime.github.projects;
-    assert!(
-        issues.is_empty() || issues[0].issues.issues[0].reference.number == 41,
-        "the new issue shows before the next read"
-    );
+    let shown: Vec<_> = runtime.github.projects[0]
+        .issues
+        .issues
+        .iter()
+        .map(|issue| issue.reference.number)
+        .collect();
+    assert_eq!(shown, [41], "the new issue shows before the next read");
 }
 
 #[test]
@@ -261,18 +285,28 @@ fn one_create_runs_per_device_with_eight_waiting_and_the_next_is_refused_as_full
     });
     assert_eq!(gh.calls("issue create").len(), 9, "one create per item");
 
+    // The refused add made nothing to try again; adding it again is the
+    // next try.
+    assert!(!retry(&shared.lock().unwrap(), "i-09"));
     send(
         &shared,
         "backlog_retry",
         serde_json::json!({"intent": "i-09"}),
     );
-    wait(&shared, "the refused item", |runtime| {
-        row_key(runtime, "i-09").is_some()
+    add(&shared, "i-10", "w", "Item 9");
+    wait(&shared, "the item added again", |runtime| {
+        row_key(runtime, "i-10").is_some()
     });
+    let runtime = shared.lock().unwrap();
     assert_eq!(
-        row_key(&shared.lock().unwrap(), "i-09").as_deref(),
+        row_key(&runtime, "i-10").as_deref(),
         Some("github:acme/project#50")
     );
+    assert_eq!(
+        failure(&runtime, "i-09"),
+        Some((BacklogPhase::Failed, Some(BacklogFailure::QueueFull)))
+    );
+    assert_eq!(gh.calls("issue create").len(), 10);
 }
 
 #[test]
@@ -537,4 +571,393 @@ fn a_missed_line_whose_session_origin_repository_is_unknown_makes_no_issue() {
         Some(BacklogFailure::Refused)
     );
     assert!(gh.calls("issue create").is_empty());
+}
+
+/// A second Git project, `/other` (workspace `o`), on the same device as
+/// `/repo`, whose repository is `acme/project` too.
+fn add_other_project(runtime: &mut Runtime) {
+    let mut other = workspace(
+        "o",
+        "Other",
+        "/other",
+        vec![checkout("o", "e", "/other", None)],
+    );
+    other.is_git = true;
+    other.home_issues = ProjectIssuesSnapshot {
+        repository: Some("acme/project".into()),
+        ..Default::default()
+    };
+    runtime.snapshot.navigator.workspaces.push(other);
+}
+
+/// Points `/repo` at `acme/other` and waits for the edit to be saved.
+fn move_repository(shared: &SharedRuntime) {
+    send(
+        shared,
+        "project_settings_set",
+        serde_json::json!({
+            "device_id": crate::node::TEST_NODE, "root": "/repo", "request_id": "move",
+            "patch": {"repository": {"mode": "repository", "repository": "acme/other"}},
+        }),
+    );
+    let id = crate::project_settings::key(crate::node::TEST_NODE, "/repo");
+    wait(shared, "the saved connection", |runtime| {
+        runtime
+            .snapshot
+            .ui_state
+            .project_settings_writes
+            .get(&id)
+            .is_some_and(|write| write.state == crate::project_settings::WriteState::Saved)
+    });
+}
+
+#[test]
+fn a_waiting_item_whose_repository_changes_before_it_starts_is_not_made_anywhere() {
+    let gh = FakeGh::new();
+    gh.gate(false);
+    let (shared, _worker) = backlog_runtime(gh.clone());
+    add(&shared, "i-1", "w", "Running");
+    wait(&shared, "the first create to reach gh", |_| {
+        !gh.calls("issue create").is_empty()
+    });
+    add(&shared, "i-2", "w", "Waiting");
+    move_repository(&shared);
+    gh.gate(true);
+    wait(&shared, "the waiting item's answer", |runtime| {
+        failure(runtime, "i-2").is_some_and(|row| row.0 == BacklogPhase::Failed)
+    });
+    let runtime = shared.lock().unwrap();
+    assert_eq!(
+        failure(&runtime, "i-2"),
+        Some((
+            BacklogPhase::Failed,
+            Some(BacklogFailure::RepositoryChanged)
+        ))
+    );
+    assert!(!retry(&runtime, "i-2"), "a retry would repeat the change");
+    assert_eq!(
+        gh.calls("issue create").len(),
+        1,
+        "nothing is made in the repository it was not asked for"
+    );
+}
+
+#[test]
+fn an_item_that_fails_before_it_starts_lets_the_next_one_in_line_run() {
+    let gh = FakeGh::new();
+    gh.gate(false);
+    let (shared, _worker) = backlog_runtime_with(gh.clone(), add_other_project);
+    add(&shared, "i-1", "w", "Running");
+    wait(&shared, "the first create to reach gh", |_| {
+        !gh.calls("issue create").is_empty()
+    });
+    add(&shared, "i-2", "w", "Fails at its start");
+    add(&shared, "i-3", "o", "Runs after it");
+    move_repository(&shared);
+    gh.gate(true);
+    wait(&shared, "the third item", |runtime| {
+        row_key(runtime, "i-3").is_some()
+    });
+    let runtime = shared.lock().unwrap();
+    assert_eq!(
+        row_key(&runtime, "i-3").as_deref(),
+        Some("github:acme/project#42")
+    );
+    assert_eq!(
+        failure(&runtime, "i-2"),
+        Some((
+            BacklogPhase::Failed,
+            Some(BacklogFailure::RepositoryChanged)
+        ))
+    );
+}
+
+#[test]
+fn a_close_answered_after_a_later_undo_still_takes_its_item_out() {
+    let gh = FakeGh::new();
+    let (shared, _worker) = backlog_runtime(gh.clone());
+    add(&shared, "i-1", "w", "Closed late");
+    wait(&shared, "the issue", |runtime| {
+        row_key(runtime, "i-1").is_some()
+    });
+    add(&shared, "m-1", "n", "Undone meanwhile");
+    let memo = row_key(&shared.lock().unwrap(), "m-1").unwrap();
+    gh.gate(false);
+    send(
+        &shared,
+        "backlog_undo",
+        serde_json::json!({"workspace_id": "w", "task_key": "github:acme/project#41"}),
+    );
+    wait(&shared, "the close to reach gh", |_| {
+        !gh.calls("issue close").is_empty()
+    });
+    send(
+        &shared,
+        "backlog_undo",
+        serde_json::json!({"workspace_id": "n", "task_key": memo}),
+    );
+    gh.gate(true);
+    wait(&shared, "the closed issue's row to go", |runtime| {
+        failure(runtime, "i-1").is_none()
+    });
+    let runtime = shared.lock().unwrap();
+    let slot = runtime.snapshot.issue_work.undo.as_ref().unwrap();
+    assert_eq!(
+        (slot.task_key.as_str(), slot.phase.as_str()),
+        (memo.as_str(), "done"),
+        "the slot shows the newest undo"
+    );
+}
+
+#[test]
+fn a_refused_add_is_a_row_that_says_why_and_the_oldest_of_nine_goes() {
+    let gh = FakeGh::new();
+    let (shared, _worker) = backlog_runtime(gh.clone());
+    for index in 1..=9 {
+        add(&shared, &format!("r-{index}"), "gone", "No such project");
+    }
+    add(&shared, "t-1", "w", "");
+    send(
+        &shared,
+        "backlog_retry",
+        serde_json::json!({"intent": "r-9"}),
+    );
+    send(
+        &shared,
+        "backlog_add",
+        serde_json::json!({"intent": "not a key", "workspace_id": "w", "title": "Bad"}),
+    );
+    let runtime = shared.lock().unwrap();
+    let rows = phases(&runtime);
+    let intents: Vec<_> = rows.iter().map(|row| row.0.as_str()).collect();
+    assert_eq!(
+        intents,
+        ["r-3", "r-4", "r-5", "r-6", "r-7", "r-8", "r-9", "t-1"],
+        "eight refused rows are kept and an invalid key makes none"
+    );
+    assert!(
+        rows.iter()
+            .all(|row| { (row.1, row.2) == (BacklogPhase::Failed, Some(BacklogFailure::Refused)) })
+    );
+    assert!(intents.iter().all(|intent| !retry(&runtime, intent)));
+    assert_eq!(
+        runtime.snapshot.status.last_error.as_ref().unwrap().kind,
+        "backlog.intent_invalid"
+    );
+    assert!(gh.calls("issue create").is_empty());
+}
+
+#[test]
+fn a_memo_that_could_not_be_saved_is_made_on_its_retry() {
+    let gh = FakeGh::new();
+    let (shared, _worker) = backlog_runtime_with(gh, |runtime| {
+        runtime.local_issues = Err("the memo file is unreadable".into());
+    });
+    add(&shared, "m-1", "n", "Saved later");
+    {
+        let runtime = shared.lock().unwrap();
+        assert_eq!(
+            failure(&runtime, "m-1"),
+            Some((BacklogPhase::Failed, Some(BacklogFailure::Refused)))
+        );
+        assert!(retry(&runtime, "m-1"));
+    }
+    shared.lock().unwrap().local_issues = Ok(Default::default());
+    send(
+        &shared,
+        "backlog_retry",
+        serde_json::json!({"intent": "m-1"}),
+    );
+    let runtime = shared.lock().unwrap();
+    assert_eq!(
+        row_key(&runtime, "m-1"),
+        Some(crate::tasks::local_key("/notes", 1))
+    );
+}
+
+fn summaries_on(runtime: &mut Runtime) {
+    runtime.ai_settings = Some(hide_ai::settings::AiSettings {
+        enabled: true,
+        chosen: true,
+        agent_summary: true,
+        ..Default::default()
+    });
+}
+
+/// A fresh session in `/repo`, whose repository is `acme/project`, with one
+/// open missed line; answers that line's id.
+fn seed_open_missed(runtime: &Runtime, session: &crate::links::ledger::SessionIdentity) -> String {
+    use crate::links::ledger::{
+        LedgerUpdate, MissedKind, NewMissedWork, RecordedRequest, TurnJudgment, WorkAuthor,
+    };
+    // Recent, so the store's retention keeps the session.
+    let now = super::super::unix_milliseconds();
+    let path = hide_kit::layout::links_store(runtime.state_path.parent().unwrap());
+    let (mut store, _) = crate::links::store::LinkStore::open(&path).unwrap();
+    store
+        .apply_project(
+            &crate::links::ProjectFacts {
+                key: hide_project::project_id(&session.device_id, std::path::Path::new("/repo")),
+                device_id: session.device_id.clone(),
+                root: "/repo".into(),
+                repository: Some("acme/project".into()),
+                ..Default::default()
+            },
+            now - 3_000,
+        )
+        .unwrap();
+    store
+        .apply_answer(
+            &session.device_id,
+            &hide_session::links::ReadAnswer {
+                agent: hide_session::Agent::from_kind(&session.agent).unwrap(),
+                path: format!("/fixture/{}.jsonl", session.session_id),
+                checkpoint: None,
+                has_more: false,
+                rescanned: true,
+                error: None,
+                facts: hide_session::links::LinkFacts {
+                    session_id: Some(session.session_id.clone()),
+                    cwd: Some("/repo".into()),
+                    first_at_unix_ms: Some(now - 2_000),
+                    last_at_unix_ms: Some(now - 2_000),
+                    ..Default::default()
+                },
+            },
+            "initial-native",
+        )
+        .unwrap();
+    for update in [
+        LedgerUpdate::Requests {
+            session: session.clone(),
+            cwd: "/repo".into(),
+            path: None,
+            requests: vec![RecordedRequest {
+                offset: 1,
+                at_unix_ms: now - 2_000,
+                text: "Ship it".into(),
+                author: WorkAuthor::Operator,
+                task_ids: vec![],
+                chapter_id: None,
+                judged: false,
+            }],
+        },
+        LedgerUpdate::Chapter {
+            session: session.clone(),
+            goal: "Ship".into(),
+            at_unix_ms: now - 2_000,
+        },
+        LedgerUpdate::TurnEnd {
+            session: session.clone(),
+            offset: 1,
+            at_unix_ms: now - 1_500,
+            end: crate::labels::analysis::LabelEnd::Done,
+            work_author: true,
+            turn_witness: None,
+            judgment: TurnJudgment {
+                missed: vec![NewMissedWork {
+                    kind: MissedKind::FollowUp,
+                    text: "Update the docs".into(),
+                }],
+                ..Default::default()
+            },
+        },
+    ] {
+        store.apply_ledger_update(&update).unwrap();
+    }
+    let record = store.ledger_record(session).unwrap();
+    assert_eq!(record.repository.as_deref(), Some("acme/project"));
+    record.missed[0].id.clone()
+}
+
+fn missed_session() -> crate::links::ledger::SessionIdentity {
+    crate::links::ledger::SessionIdentity {
+        device_id: crate::node::TEST_NODE.into(),
+        agent: "codex".into(),
+        session_id: "s-1".into(),
+    }
+}
+
+fn add_missed(shared: &SharedRuntime, intent: &str, workspace: &str, id: &str) {
+    let session = missed_session();
+    send(
+        shared,
+        "backlog_add",
+        serde_json::json!({
+            "intent": intent, "workspace_id": workspace, "title": "Update the docs",
+            "missed": {"session": {"device_id": session.device_id, "agent": session.agent, "session_id": session.session_id}, "id": id},
+        }),
+    );
+}
+
+#[test]
+fn a_missed_line_becomes_an_issue_in_its_session_repository_and_is_flagged() {
+    let gh = FakeGh::new();
+    let mut id = String::new();
+    let (shared, _worker) = backlog_runtime_with(gh.clone(), |runtime| {
+        summaries_on(runtime);
+        id = seed_open_missed(runtime, &missed_session());
+    });
+    add_missed(&shared, "m-1", "w", &id);
+    wait(
+        &shared,
+        "the missed line's issue to be flagged",
+        |runtime| {
+            row_key(runtime, "m-1")
+                .is_some_and(|key| runtime.snapshot.issue_work.missed_keys.contains(&key))
+        },
+    );
+    assert_eq!(
+        row_key(&shared.lock().unwrap(), "m-1").as_deref(),
+        Some("github:acme/project#41")
+    );
+    assert_eq!(
+        gh.calls("issue create"),
+        ["issue create --title Update the docs --body "]
+    );
+}
+
+#[test]
+fn a_missed_line_pressed_twice_is_one_item() {
+    let gh = FakeGh::new();
+    let mut id = String::new();
+    let (shared, _worker) = backlog_runtime_with(gh.clone(), |runtime| {
+        summaries_on(runtime);
+        id = seed_open_missed(runtime, &missed_session());
+    });
+    add_missed(&shared, "m-1", "w", &id);
+    add_missed(&shared, "m-2", "w", &id);
+    wait(&shared, "the issue", |runtime| {
+        row_key(runtime, "m-1").is_some()
+    });
+    let runtime = shared.lock().unwrap();
+    let intents: Vec<_> = phases(&runtime).into_iter().map(|row| row.0).collect();
+    assert_eq!(intents, ["m-1"]);
+    assert_eq!(gh.calls("issue create").len(), 1);
+}
+
+#[test]
+fn a_memo_whose_missed_line_is_no_longer_open_is_taken_back() {
+    let gh = FakeGh::new();
+    let (shared, _worker) = backlog_runtime_with(gh, summaries_on);
+    // No such line is open in the ledger, as when another view put it away.
+    add_missed(&shared, "m-1", "n", "missed-1-0");
+    wait(&shared, "the memo to be taken back", |runtime| {
+        failure(runtime, "m-1").is_some_and(|row| row.0 == BacklogPhase::Failed)
+    });
+    let runtime = shared.lock().unwrap();
+    assert_eq!(
+        failure(&runtime, "m-1"),
+        Some((BacklogPhase::Failed, Some(BacklogFailure::Refused)))
+    );
+    assert!(!retry(&runtime, "m-1"));
+    assert!(row_key(&runtime, "m-1").is_none());
+    assert!(
+        runtime
+            .local_issues
+            .as_ref()
+            .unwrap()
+            .issue(None, "/notes", 1)
+            .is_none()
+    );
 }

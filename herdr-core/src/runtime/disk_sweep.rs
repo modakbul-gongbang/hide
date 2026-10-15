@@ -152,8 +152,15 @@ impl Runtime {
         if let Some(node) = machine {
             let sweep = self.disk_sweeps.entry(node.clone()).or_default();
             if sweep.order != order {
+                // A new visit measures what is not fresh again; on a
+                // reorder a project the tab still shows keeps its turn
+                // taken, so a failing one is not measured again.
+                if sweep.order.is_empty() {
+                    sweep.done.clear();
+                } else {
+                    sweep.done.retain(|path| order.contains(path));
+                }
                 sweep.order = order;
-                sweep.done.clear();
             }
             moved.push(node.clone());
             self.advance_disk_sweep(node.as_deref());

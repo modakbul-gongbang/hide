@@ -973,6 +973,35 @@ fn copied_history_days_are_read_from_the_old_search_file_and_never_written() {
     assert!(store.policies(&tableless).unwrap().is_empty());
 }
 
+/// A project whose id a conversion and then a move replaced keeps the days
+/// the search file names under its first id, unless its newest id has a row
+/// of its own.
+#[test]
+fn retention_follows_a_project_through_each_id_it_was_given() {
+    let state = tempfile::tempdir().unwrap();
+    let search = state.path().join("session-search.sqlite3");
+    let written = rusqlite::Connection::open(&search).unwrap();
+    written
+        .execute_batch(
+            "CREATE TABLE policy(project TEXT PRIMARY KEY, days INTEGER NOT NULL);\
+             INSERT INTO policy VALUES('first', 30), ('kept', 7), ('own', 1);",
+        )
+        .unwrap();
+    drop(written);
+    let mut store = open(state.path());
+    let pair = |old: &str, new: &str| (old.to_owned(), new.to_owned());
+    assert_eq!(
+        store
+            .alias_retention(&[pair("first", "second"), pair("kept", "own")])
+            .unwrap(),
+        2
+    );
+    store.alias_retention(&[pair("second", "third")]).unwrap();
+    let policies = store.policies(&search).unwrap();
+    assert_eq!(policies.get("third"), Some(&30));
+    assert_eq!(policies.get("own"), Some(&1), "its own row wins");
+}
+
 #[test]
 fn a_session_that_continues_another_joins_its_line() {
     let home = tempfile::tempdir().unwrap();

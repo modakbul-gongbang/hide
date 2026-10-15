@@ -404,13 +404,10 @@ fn a_project_without_github_reads_local_issues_and_links_by_branch_number() {
         .unwrap();
     assert_eq!((source.kind.as_str(), source.chosen), ("local", false));
 
-    assert!(runtime.dispatch_json(&event(
-        "issue_create",
-        serde_json::json!({"workspace_id": "w", "title": "로컬 첫 이슈", "body": "본문"}),
-    )));
-    let create = runtime.snapshot().issue_work.create.clone().unwrap();
-    assert_eq!(create.phase, "ready");
-    assert_eq!(create.task_key.as_deref(), Some("local:/repo#1"));
+    assert_eq!(
+        runtime.create_local_issue(None, "/repo", "로컬 첫 이슈", "본문"),
+        Ok(1)
+    );
     let workspace = &runtime.snapshot().navigator.workspaces[0];
     assert_eq!(workspace.tasks.tasks[0].id.as_deref(), Some("L-1"));
     assert_eq!(
@@ -490,29 +487,6 @@ fn a_chosen_source_wins_over_the_default_and_auto_returns_it() {
         serde_json::json!({"project_path": "/repo", "source": "jira"}),
     )));
     assert!(runtime.snapshot().ui_state.project_issue_sources.is_empty());
-}
-
-/// A title the store would refuse fails the create slot with the reason; a
-/// GitHub create without a worker says so instead of hanging in `working`.
-#[test]
-fn a_refused_issue_create_settles_its_slot_with_the_reason() {
-    let mut runtime = issue_runtime();
-    runtime.apply_pull_requests();
-    assert!(runtime.dispatch_json(&event(
-        "issue_create",
-        serde_json::json!({"workspace_id": "w", "title": "   "}),
-    )));
-    assert_eq!(
-        runtime.snapshot().issue_work.create.as_ref().unwrap().phase,
-        "failed"
-    );
-    assert!(runtime.dispatch_json(&event(
-        "issue_create",
-        serde_json::json!({"workspace_id": "w", "title": "GitHub issue"}),
-    )));
-    let create = runtime.snapshot().issue_work.create.clone().unwrap();
-    assert_eq!(create.phase, "failed");
-    assert!(create.message.unwrap().contains("No worker"));
 }
 
 /// Issue settings change only the fields sent; the agent a start picks is
@@ -607,10 +581,9 @@ fn local_issue_runtime() -> Runtime {
         "issue_source_set",
         serde_json::json!({"project_path": "/repo", "source": "local"}),
     )));
-    assert!(runtime.dispatch_json(&event(
-        "issue_create",
-        serde_json::json!({"workspace_id": "w", "title": "로컬 이슈", "body": "처음 본문"}),
-    )));
+    runtime
+        .create_local_issue(None, "/repo", "로컬 이슈", "처음 본문")
+        .unwrap();
     runtime
 }
 

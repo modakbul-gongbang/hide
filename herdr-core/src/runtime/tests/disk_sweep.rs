@@ -152,3 +152,19 @@ fn a_git_project_watched_before_its_worktrees_are_listed_is_measured_once_they_a
     assert_eq!(measuring(&runtime), ["/repo"]);
     assert!(disk(&runtime, "r").measuring);
 }
+
+#[test]
+fn a_reorder_of_the_tab_does_not_measure_a_failed_project_again() {
+    let mut runtime = folders();
+    watch(&mut runtime, &["a", "b"]);
+    runtime.ingest_swept_disk(None, measured("/a", None, Some("denied")), true);
+    assert_eq!(measuring(&runtime), ["/b"]);
+    runtime.ingest_swept_disk(None, measured("/b", Some(3), None), true);
+    assert!(measuring(&runtime).is_empty());
+    // An agent's state moved the rows; nothing new is measured.
+    watch(&mut runtime, &["b", "a"]);
+    assert!(measuring(&runtime).is_empty());
+    // A project the tab shows for the first time is.
+    watch(&mut runtime, &["b", "a", "c"]);
+    assert_eq!(measuring(&runtime), ["/c"]);
+}
