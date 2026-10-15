@@ -24,7 +24,7 @@ const words = {
   "overviewTasks.open": ["Open", "열기", "開く", "打开"],
   "overviewTasks.openHint": ["Open the latest checkout of {{project}} with Sessions in the lane", "{{project}}의 가장 최근 체크아웃을 열고 레인에 Sessions 보기", "{{project}} の最新チェックアウトを開き、レーンにSessionsを表示", "打开 {{project}} 最近的检出，并在侧栏显示 Sessions"],
   "overviewTasks.none": ["No task in progress", "진행 중인 일감 없음", "進行中のタスクなし", "没有进行中的任务"],
-  "overviewTasks.newAgent": ["New agent", "New agent", "New agent", "New agent"],
+  "overviewTasks.newAgent": ["New agent", "새 에이전트", "新しいエージェント", "新建智能体"],
   "overviewTasks.resting": ["Resting {{count}}", "쉬는 일감 {{count}}", "休止中 {{count}}", "休息中 {{count}}"],
   "overviewTasks.cleanup": ["To clean up {{count}}", "정리할 것 {{count}}", "整理するもの {{count}}", "待清理 {{count}}"],
   "overviewTasks.fold": ["Fold", "접기", "折りたたむ", "收起"],
