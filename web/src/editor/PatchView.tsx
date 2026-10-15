@@ -55,6 +55,10 @@ export function PatchView({ text, wrap, scale }: { text: string; wrap: boolean; 
         scaleTheme(scale),
         EditorState.readOnly.of(true),
         EditorView.editable.of(false),
+        // Read-only, yet it takes the keyboard like an editor, so an opened
+        // diff answers ⌘W, copy and scrolling rather than leaving them to
+        // the row it was opened from.
+        EditorView.contentAttributes.of({ tabindex: "0" }),
         gutter({ class: "cm-patch-old", lineMarker: (_view, line) => {
           const number = rows[_view.state.doc.lineAt(line.from).number - 1]?.oldLine;
           return number === null || number === undefined ? null : new NumberMarker(number);

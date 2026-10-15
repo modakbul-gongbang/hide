@@ -205,8 +205,7 @@ function usePaneChildren(paneId: string, agents: AgentRow[]): { children: PaneCh
  * the pane's session is known (PRD overview-device-tasks B22-B24): it shows
  * that session's record in the lane, and a press on the record already shown
  * goes back to the list. A shell, or an agent whose session is not known yet,
- * keeps the plain head. The press never takes the keyboard from the terminal,
- * and `data-pane-record` keeps an overlay lane from going away under it.
+ * keeps the plain head. The press never takes the keyboard from the terminal.
  */
 export function PaneRecordButton({ paneId, title, product, actions, children, plain }: { paneId: string; title: string; product: string; actions: Actions; children: ReactNode; plain: ReactNode }) {
   const { t } = useInterfaceTranslation();

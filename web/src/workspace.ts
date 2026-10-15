@@ -69,8 +69,8 @@ export type LaneSizes = {
  * (D-02..D-04, D-07, D-11):
  *
  * - `closed`: no tool; Agent Views has the body.
- * - `hidden`: a tool, but an unpinned lane the operator put away (a terminal
- *   click, Escape, an agent chosen); kept mounted out of sight.
+ * - `hidden`: a tool, but an unpinned lane the operator put away with
+ *   Escape; kept mounted out of sight.
  * - `overlay`: drawn over Agent Views, which keeps its width.
  * - `docked`: pinned, beside Agent Views, which gives up the lane's width.
  * - `expanded`: over the whole body; Agent Views keeps the width it had.
@@ -102,7 +102,7 @@ export type LaneInput = {
   treeWidth: number | null;
   /** The files tool has a view, or a file of this checkout opening into one. */
   hasViews: boolean;
-  /** An unpinned lane is up: called, or opened from the rail, and not yet put away. */
+  /** An unpinned lane is up: not put away with Escape since it was last called or opened. */
   shown: boolean;
   expanded: boolean;
   /** The body's width left of the tool rail. */
@@ -194,27 +194,21 @@ export function agentEntries(checkout: Checkout): StripTab[] {
 export type CallsSeen = {
   /** The core's call count at the last read, or null before the first. */
   last: number | null;
-  /** The Workspace in front at the last read, by device and path. */
-  front: string | null;
 };
 
-export const NO_CALLS_SEEN: CallsSeen = { last: null, front: null };
+export const NO_CALLS_SEEN: CallsSeen = { last: null };
 
-type FrontView = Pick<WorkspaceView, "device_id" | "path" | "lane_called" | "lane_calls">;
+type FrontView = Pick<WorkspaceView, "lane_called" | "lane_calls">;
 
 /**
- * The page's reading of the front Workspace's calls: `reset` when another
- * Workspace came in front (an unpinned lane starts put away there), and
- * `call` when that Workspace was called since the last read, the call that
- * brought it in front included. A call older than the last read is history,
- * so an old call never moves a Workspace chosen later; a core that started
- * again counts from zero, so its lower count is only read.
+ * The page's reading of the front Workspace's calls: `call` when that
+ * Workspace was called since the last read, the call that brought it in
+ * front included. A call older than the last read is history, so an old
+ * call never moves a Workspace chosen later; a core that started again
+ * counts from zero, so its lower count is only read.
  */
-export function readCalls(seen: CallsSeen, view: FrontView | null | undefined): { seen: CallsSeen; reset: boolean; call: boolean } {
-  if (!view) return { seen: seen.front === null ? seen : { ...seen, front: null }, reset: false, call: false };
-  const front = `${view.device_id}\u0000${view.path}`;
-  const reset = front !== seen.front;
+export function readCalls(seen: CallsSeen, view: FrontView | null | undefined): { seen: CallsSeen; call: boolean } {
+  if (!view) return { seen, call: false };
   const call = seen.last !== null && view.lane_calls >= seen.last && view.lane_called > seen.last;
-  const next = seen.last === view.lane_calls && !reset ? seen : { last: view.lane_calls, front };
-  return { seen: next, reset, call };
+  return { seen: seen.last === view.lane_calls ? seen : { last: view.lane_calls }, call };
 }

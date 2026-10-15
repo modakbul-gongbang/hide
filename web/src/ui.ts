@@ -225,9 +225,10 @@ type UiStore = {
   viewFocusRequest: ViewFocusRequest | null;
   /**
    * Whether the front Workspace's unpinned lane is up over Agent Views (PRD
-   * right-lane D-02, D-11): a call or the rail puts it up, a terminal click,
-   * Escape or an agent chosen puts it away. Never sent, so a restart starts
-   * an unpinned lane put away.
+   * right-lane D-02, D-11): Escape puts it away, and a call or the rail puts
+   * it up again; nothing else moves it, so a lane the operator left open
+   * stays open across a terminal click, an agent chosen, another Workspace
+   * and a restart. Never sent.
    */
   laneShown: boolean;
   /** Whether the lane takes the whole body (D-04); never sent. */
@@ -369,7 +370,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   editorFindDisplay: null,
   agentFindRequest: null,
   viewFocusRequest: null,
-  laneShown: false,
+  laneShown: true,
   laneExpanded: false,
   laneCallsSeen: NO_CALLS_SEEN,
   drawnLane: { mode: "closed", tool: null },

@@ -130,11 +130,11 @@ describe("readCalls", () => {
 
   it("takes the first count as history, then shows the lane for a call to the Workspace in front", () => {
     const first = readCalls(NO_CALLS_SEEN, view("/a", 3, 5));
-    expect(first).toMatchObject({ reset: true, call: false });
+    expect(first.call).toBe(false);
     const same = readCalls(first.seen, view("/a", 3, 5));
-    expect(same).toMatchObject({ reset: false, call: false });
+    expect(same.call).toBe(false);
     const called = readCalls(same.seen, view("/a", 6, 6));
-    expect(called).toMatchObject({ reset: false, call: true });
+    expect(called.call).toBe(true);
     expect(readCalls(called.seen, view("/a", 6, 6)).call).toBe(false);
   });
 
@@ -143,10 +143,10 @@ describe("readCalls", () => {
     const elsewhere = readCalls(start, view("/a", 0, 3));
     expect(elsewhere.call).toBe(false);
     // That older call does not move its Workspace when it is chosen later.
-    expect(readCalls(elsewhere.seen, view("/b", 3, 3))).toMatchObject({ reset: true, call: false });
+    expect(readCalls(elsewhere.seen, view("/b", 3, 3)).call).toBe(false);
     // A reveal from the Overview: the called Workspace comes in front with the call.
     const away = readCalls(elsewhere.seen, null).seen;
-    expect(readCalls(away, view("/c", 4, 4))).toMatchObject({ reset: true, call: true });
+    expect(readCalls(away, view("/c", 4, 4)).call).toBe(true);
   });
 
   it("counts again from a core that started again", () => {
