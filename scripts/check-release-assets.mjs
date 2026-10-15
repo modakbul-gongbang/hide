@@ -56,9 +56,9 @@ const UPDATE_INFO_LIMIT = 64 * 1024;
 
 /**
  * The fields of an update file electron-updater reads, from the one shape
- * electron-builder writes and `desktop/scripts/installers.mjs` writes for
- * Linux: top-level `key: value` lines and a `files:` list of `- key: value`
- * items. Anything else is refused rather than guessed at.
+ * `desktop/scripts/installers.mjs` writes for every system: top-level
+ * `key: value` lines and a `files:` list of `- key: value` items. Anything
+ * else is refused rather than guessed at.
  */
 export function parseUpdateInfo(text) {
   const scalar = (raw) => {

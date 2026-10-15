@@ -5,14 +5,18 @@
 // package.mjs built and checked:
 //
 //   macOS    hide-v<v>-macos-arm64.dmg (hide and an Applications link) and
-//            the .zip the updater installs, with latest-mac.yml and the
-//            zip's blockmap. A Developer ID build also signs, notarizes and
+//            the .zip the updater installs, with latest-mac.yml naming the
+//            zip and the zip's blockmap. A Developer ID build also signs, notarizes and
 //            staples the dmg (macos-signing.mjs).
 //   Windows  hide-v<v>-windows-x64-setup.exe, a per-user NSIS installer into
 //            %LOCALAPPDATA%\Programs\hide, with latest.yml and its blockmap.
 //            Unsigned (D-07).
 //   Linux    hide-v<v>-linux-x64.deb and .rpm into /opt/hide, with one
 //            latest-linux.yml naming both. Unsigned (D-07).
+//
+// The update files are written here, not by electron-builder: a prepackaged
+// macOS zip left none on the package lane, and Linux builds each type on its
+// own, so one writer gives every system the same file from the same facts.
 //
 // Each installer gets a `.sha256` naming only it. `out` ends holding exactly
 // the system's release files (`systemAssetNames`); anything else there is
@@ -167,12 +171,12 @@ async function buildLinux(app, version, work, type) {
 }
 
 /**
- * The one update file for both Linux packages: electron-updater picks the
- * entry of the type the app was installed as. Written here because each type
- * is built on its own and would otherwise leave a file naming only itself.
+ * The system's update file, naming each file its updater installs: the zip on
+ * macOS, setup.exe on Windows, and both Linux packages, of which
+ * electron-updater picks the type the app was installed as.
  */
-function writeLinuxUpdateInfo(out, version) {
-  const files = systemFiles(version, "linux");
+function writeUpdateInfo(out, version, system) {
+  const files = systemFiles(version, system);
   const entries = files.updates.map((name) => ({ url: name, sha512: sha512Base64(path.join(out, name)), size: fs.statSync(path.join(out, name)).size }));
   const lines = [`version: ${version}`, "files:"];
   for (const entry of entries) lines.push(`  - url: ${entry.url}`, `    sha512: ${entry.sha512}`, `    size: ${entry.size}`);
@@ -193,7 +197,7 @@ export async function buildInstallers({ app, version, out, signing = null }) {
   fs.mkdirSync(out, { recursive: true });
   const work = fs.mkdtempSync(path.join(path.dirname(out), "installers-"));
   try {
-    const kept = [...files.installers, ...files.blockmaps, ...(system === "linux" ? [] : [files.updateInfo])];
+    const kept = [...files.installers, ...files.blockmaps];
     if (system === "macos") await buildMacos(app, version, work, signing);
     else if (system === "windows") await buildWindows(app, version, work);
     else for (const type of ["deb", "rpm"]) await buildLinux(app, version, path.join(work, type), type);
@@ -202,7 +206,7 @@ export async function buildInstallers({ app, version, out, signing = null }) {
       if (!fs.statSync(source, { throwIfNoEntry: false })?.isFile()) throw new Error(`electron-builder did not write ${name}`);
       fs.renameSync(source, path.join(out, name));
     }
-    if (system === "linux") writeLinuxUpdateInfo(out, version);
+    writeUpdateInfo(out, version, system);
     for (const name of files.installers) fs.writeFileSync(path.join(out, `${name}.sha256`), `${sha256File(path.join(out, name))}  ${name}\n`);
     const landed = fs.readdirSync(out).sort();
     const expected = systemAssetNames(version, system);
