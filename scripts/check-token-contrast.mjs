@@ -28,6 +28,7 @@ function channel(byte) {
 }
 
 function luminance(hex) {
+  if (!/^#[0-9A-Fa-f]{6}$/.test(hex)) throw new Error(`not a #RRGGBB color: ${hex}`);
   const [r, g, b] = [1, 3, 5].map(at => channel(Number.parseInt(hex.slice(at, at + 2), 16)));
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }

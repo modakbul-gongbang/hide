@@ -14,6 +14,12 @@ test('the ratio is WCAG contrast of relative luminance', () => {
   assert.equal(contrast('#218BFF', '#FFFFFF').toFixed(2), '3.39');
 });
 
+test('a color that is not #RRGGBB is refused rather than compared', () => {
+  for (const value of ['#FFF', 'red', '#FFFFFF80']) {
+    assert.throws(() => contrast(value, '#000000'), /not a #RRGGBB color/);
+  }
+});
+
 const color = (value, light, hide) => ({type: 'color', value, light, ...(hide ? {hide} : {})});
 const ANSI = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'];
 
