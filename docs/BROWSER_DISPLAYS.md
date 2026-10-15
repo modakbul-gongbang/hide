@@ -182,7 +182,7 @@ Native file displays and unrestricted browser-context administration are unsuppo
 A snapshot is text and exits zero; an action prints one JSON line with what it did, `changed` and `next`; every failure prints `{"ok":false,"reason","display","next_action"}` and exits non-zero.
 
 Each command is one connection and one debugger lease: the CLI asks hided for a relay to the display ([ARCHITECTURE.md](ARCHITECTURE.md#hided-and-the-websocket-boundary)), attaches to its page, does its work and disconnects, which releases the lease and turns the tab's attachment mark off.
-A display another debugger holds, an external client or another `hide browser` command, fails `display_busy` at once; nothing queues.
+A display another debugger holds, an external client, another `hide browser` command or the operator's Comment mode ([Comment mode](#comment-mode)), fails `display_busy` at once; nothing queues.
 A display that is not HTTP(S) or blank fails `display_unsupported`, a missing one `display_missing`, and one that closes during the command `display_closed`.
 Nothing outlives the command in hided or on disk, except the file `screenshot` writes: refs are `data-ct-ref` attributes of the page's elements, so they survive a re-snapshot of the same document and start again at `@1` after a navigation, and the `--diff` baselines and the no-change streak live in a non-enumerable property of each frame's document.
 Every CDP step has an eight-second deadline, below the gateway's ten-second command deadline, which would otherwise end the whole lease, and a whole command ends with `page_unresponsive` after two minutes.
@@ -259,6 +259,16 @@ It is one `<hide-agent-overlay>` element, a direct child of the document element
 Drawing it has a one-second deadline and never fails a command; reading commands draw nothing.
 
 The page-side code is chromux's (MIT, `modakbul-gongbang/chromux` `93f770f`), kept as embedded assets that carry its notice: `snapshot.js`, `dom.js` (deep query, target checks, fill and the wait probes), `render.js` (`--diff`, `--grep`, `changed`, evaluated in an isolated world) and `overlay.js`.
+
+## Comment mode
+
+A page is a native view the shell cannot draw over, so the operator's Comment mode on a page ([UI_BEHAVIOR.md](UI_BEHAVIOR.md#view-openers-and-comments), PRD view-opener-feedback D-07) is drawn by hided inside the page (`hided/src/browser_page/comment.rs`).
+The window's `browser_comment` event turns it on: hided takes the display's debugger lease, as a `hide browser` command does, and draws `hided/assets/browser/comment.js` in an isolated world, `hide-comment`, with the page's comments for its current address as numbered pins.
+What the operator does there reaches the core as the same `view_comment` events the shell sends, through a binding that exists only in that world; the overlay acts only on trusted input, so the page's own scripts can neither see the binding nor leave a comment in the operator's name.
+A comment's screenshot is the page clipped to the element or area (scaled down past a pixel cap), staged in this machine's `view-feedback` folder; only its name reaches the core, and a Send carries the bytes to the recipient's machine ([delivery.md](delivery.md#the-operators-view-feedback)).
+A session belongs to the window that turned it on and ends when Comment or Esc turns it off, when the page navigates away from a document it can draw on, when the lease ends, and when the window goes; hided answers each end with a `browser_comment` frame whose `reason` is null for the operator's own end.
+At most four sessions run at once (`comment_limit`), a display another debugger holds cannot start one (`display_busy`), and while a session holds the lease an agent's `hide browser` command on that page fails `display_busy`, the known cost of drawing inside the page.
+A screen whose daemon relays a linked node's pages cannot reach their gateway, so Comment there answers `comment_unavailable_here` ([INSTALL.md](INSTALL.md#what-each-system-supports)).
 
 ## The file boundary
 
