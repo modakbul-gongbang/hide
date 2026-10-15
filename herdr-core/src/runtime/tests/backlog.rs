@@ -27,6 +27,8 @@ struct FakeGh {
     reconcile: Mutex<Vec<(u32, String, bool)>>,
     /// The repository each create was pinned to (`GH_REPO`).
     create_repositories: Mutex<Vec<Option<String>>>,
+    /// A call starting with this panics in the worker that made it.
+    panics: Mutex<Option<&'static str>>,
 }
 
 impl FakeGh {
@@ -39,6 +41,7 @@ impl FakeGh {
             create_prints: Mutex::new(None),
             reconcile: Mutex::new(Vec::new()),
             create_repositories: Mutex::new(Vec::new()),
+            panics: Mutex::new(None),
         })
     }
 
@@ -122,6 +125,10 @@ impl NodeLink for FakeGh {
             return Err(LinkError::NotConnected("only gh is scripted".into()));
         };
         self.calls.lock().unwrap().push(args.join(" "));
+        let panics = *self.panics.lock().unwrap();
+        if panics.is_some_and(|prefix| args.join(" ").starts_with(prefix)) {
+            panic!("the scripted gh panics on {}", args.join(" "));
+        }
         if args.starts_with(&["issue".to_owned(), "create".to_owned()]) {
             self.create_repositories
                 .lock()
@@ -515,6 +522,51 @@ fn undo_closes_only_an_issue_hide_made() {
         gh.calls("issue close"),
         ["issue close 41 --repo acme/project"]
     );
+}
+
+#[test]
+fn an_undo_whose_worker_panics_ends_failed_and_can_be_tried_again() {
+    let gh = FakeGh::new();
+    let (shared, _worker) = backlog_runtime(gh.clone());
+    add(&shared, "i-1", "w", "Ship it");
+    wait(&shared, "the made issue to be named", |runtime| {
+        runtime.snapshot.issue_work.made_keys == ["github:acme/project#41"]
+    });
+    *gh.panics.lock().unwrap() = Some("issue close");
+    let undo = serde_json::json!({"workspace_id": "w", "task_key": "github:acme/project#41"});
+    send(&shared, "backlog_undo", undo.clone());
+    wait(&shared, "the panicked undo to be released", |runtime| {
+        runtime
+            .snapshot
+            .issue_work
+            .undo
+            .as_ref()
+            .is_some_and(|undo| undo.phase == "failed")
+    });
+    assert_eq!(
+        shared
+            .lock()
+            .unwrap()
+            .snapshot
+            .issue_work
+            .undo
+            .as_ref()
+            .unwrap()
+            .failure,
+        Some(BacklogFailure::Unconfirmed),
+        "a close that may have reached GitHub offers a retry"
+    );
+
+    *gh.panics.lock().unwrap() = None;
+    send(&shared, "backlog_undo", undo);
+    wait(&shared, "the retried close", |runtime| {
+        runtime
+            .snapshot
+            .issue_work
+            .undo
+            .as_ref()
+            .is_some_and(|undo| undo.phase == "done")
+    });
 }
 
 #[test]

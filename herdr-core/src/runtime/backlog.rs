@@ -129,6 +129,51 @@ fn same_missed(a: &MissedSource, b: &MissedSource) -> bool {
         && a.session.session_id == b.session.session_id
 }
 
+/// What a backlog worker answers when its work panicked: the slot or row it
+/// holds is released as a failure rather than left `working` forever.
+trait WorkerPanicked {
+    fn worker_panicked() -> Self;
+}
+
+impl WorkerPanicked for String {
+    fn worker_panicked() -> Self {
+        "backlog_worker_panicked".to_owned()
+    }
+}
+
+/// A create or a close that panicked may have reached GitHub; a retry
+/// reconciles it, so it is unconfirmed rather than refused.
+impl WorkerPanicked for BacklogFailure {
+    fn worker_panicked() -> Self {
+        Self::Unconfirmed
+    }
+}
+
+impl Runtime {
+    /// Every backlog worker runs here: a panic in its work still answers
+    /// `ingest`, so what the worker held is released on every exit.
+    fn spawn_backlog_worker<T: Send + 'static, E: WorkerPanicked + Send + 'static>(
+        &self,
+        name: &str,
+        work: impl FnOnce() -> Result<T, E> + Send + 'static,
+        ingest: impl FnOnce(&mut Runtime, Result<T, E>) -> bool + Send + 'static,
+    ) -> Result<(), String> {
+        let worker = name.to_owned();
+        self.spawn_issue_worker(
+            name,
+            move || {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).unwrap_or_else(|_| {
+                    crate::diagnostic!(
+                        serde_json::json!({"component":"backlog","kind":"backlog.worker_panicked","worker":worker})
+                    );
+                    Err(E::worker_panicked())
+                })
+            },
+            ingest,
+        )
+    }
+}
+
 impl Runtime {
     fn backlog_row(&mut self, intent: &str) -> Option<&mut BacklogItemSnapshot> {
         self.snapshot
@@ -416,7 +461,7 @@ impl Runtime {
             return;
         };
         let backlog_key = key.clone();
-        let spawned = self.spawn_issue_worker(
+        let spawned = self.spawn_backlog_worker(
             "backlog-memo",
             move || client.call(LedgerCall::BacklogLocal { source, backlog_key }),
             move |runtime, result| {
@@ -567,7 +612,7 @@ impl Runtime {
             && let Some(client) = self.links_work.client.clone()
         {
             let intent = row.intent.clone();
-            let _ = self.spawn_issue_worker(
+            let _ = self.spawn_backlog_worker(
                 "backlog-dismiss",
                 move || client.call(LedgerCall::DismissBacklog { intent }),
                 |_, result| {
@@ -644,20 +689,10 @@ impl Runtime {
         let title = job.title.clone();
         let place = pin.target;
         let intent_for_refusal = intent.clone();
-        let spawned = self.spawn_issue_worker(
+        let spawned = self.spawn_backlog_worker(
             "backlog-issue",
-            move || {
-                // A worker that panics still answers, so its device is freed.
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    create_once(&client, &key, own.as_ref(), &place, &title, &cancel)
-                }))
-                .unwrap_or_else(|_| {
-                    crate::diagnostic!(
-                        serde_json::json!({"component":"backlog","kind":"backlog.worker_panicked"})
-                    );
-                    Err(BacklogFailure::Unconfirmed)
-                })
-            },
+            // A worker that panics still answers, so its device is freed.
+            move || create_once(&client, &key, own.as_ref(), &place, &title, &cancel),
             move |runtime, result| runtime.ingest_backlog_issue(&intent, result),
         );
         if let Err(code) = spawned {
@@ -725,7 +760,7 @@ impl Runtime {
         };
         self.backlog_work.keys_generation += 1;
         let generation = self.backlog_work.keys_generation;
-        let spawned = self.spawn_issue_worker(
+        let spawned = self.spawn_backlog_worker(
             "backlog-keys",
             move || client.call(LedgerCall::BacklogKeys),
             move |runtime, answer| match answer {
@@ -759,7 +794,7 @@ impl Runtime {
             return;
         };
         self.refresh_backlog_keys();
-        let spawned = self.spawn_issue_worker(
+        let spawned = self.spawn_backlog_worker(
             "backlog-restore",
             move || client.call(LedgerCall::PendingBacklog),
             |runtime, answer| match answer {
@@ -895,7 +930,7 @@ impl Runtime {
         self.snapshot.issue_work.undo = Some(snapshot);
         let own = self.own_node();
         let project = workspace.path.clone();
-        let spawned = self.spawn_issue_worker(
+        let spawned = self.spawn_backlog_worker(
             "backlog-undo",
             move || {
                 let made = ledger
@@ -967,7 +1002,7 @@ impl Runtime {
         let Some(client) = client else {
             return;
         };
-        let spawned = self.spawn_issue_worker(
+        let spawned = self.spawn_backlog_worker(
             "backlog-release",
             move || client.call(LedgerCall::ReleaseBacklog { backlog_key }),
             |runtime, result| {
@@ -1040,7 +1075,7 @@ impl Runtime {
             })
             .collect();
         let task_key = payload.task_key;
-        let spawned = self.spawn_issue_worker(
+        let spawned = self.spawn_backlog_worker(
             "backlog-origin",
             move || read_origin(&client, &nodes, &task_key),
             move |runtime, result| {
