@@ -2206,11 +2206,11 @@ fn a_childs_progress_counts_its_own_tasks_or_its_last_end_and_hides_while_one_is
         )
     };
     let (states, fraction) = progress(&store);
-    // The finished child's grandchild still works, which holds its task open.
+    // A grandchild that still works adds no count of the root's.
     assert_eq!(
         states,
         [
-            ChildWork::Working,
+            ChildWork::Done,
             ChildWork::Working,
             ChildWork::Done,
             ChildWork::Unjudged
@@ -2223,7 +2223,7 @@ fn a_childs_progress_counts_its_own_tasks_or_its_last_end_and_hides_while_one_is
     judge(&mut store, &silent, LabelEnd::Question, TaskDecision::None);
     let (states, fraction) = progress(&store);
     assert_eq!(states[3], ChildWork::Other);
-    assert_eq!(fraction, Some(1));
+    assert_eq!(fraction, Some(2));
 }
 
 #[test]
