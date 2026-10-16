@@ -365,6 +365,9 @@ pub const REPOSITORY_FIELDS: &str = "nameWithOwner,id,visibility";
 
 pub fn allowed(arguments: &[&str]) -> bool {
     arguments == ["auth", "status"]
+        || is_conditional_read(arguments)
+        || is_pull_digest_read(arguments)
+        || is_checks_verdict_read(arguments)
         || matches!(
             arguments,
             ["pr", "list", "--state", "open", "--limit", PULL_REQUEST_LIMIT, "--json", OPEN_CHECK_FIELDS]
@@ -421,6 +424,169 @@ pub fn allowed(arguments: &[&str]) -> bool {
                 || is_issue_attempt_query(arguments[3])
                 || is_pr_facts_query(arguments[3])
                 || is_pr_card_query(arguments[3])))
+}
+
+/// A conditional read prints the response headers and no body: only the
+/// entity tag and the rate limit matter to it, and a 304 has no body to read.
+pub const CONDITIONAL_READ_BODY: &str = "--silent";
+
+/// The header a conditional read sends with the entity tag it holds.
+const IF_NONE_MATCH: &str = "If-None-Match: ";
+
+/// `gh api -i [-H 'If-None-Match: ETAG'] --silent ENDPOINT`: the one way
+/// the advisory poll asks GitHub whether a list changed. GitHub answers 304,
+/// which does not count against the rate limit, when the tag still holds.
+pub fn conditional_read_arguments(endpoint: &str, etag: Option<&str>) -> Option<Vec<String>> {
+    if !is_conditional_endpoint(endpoint) || etag.is_some_and(|etag| !is_etag(etag)) {
+        return None;
+    }
+    let mut arguments = vec!["api".to_owned(), "-i".to_owned()];
+    if let Some(etag) = etag {
+        arguments.push("-H".to_owned());
+        arguments.push(format!("{IF_NONE_MATCH}{etag}"));
+    }
+    arguments.extend([CONDITIONAL_READ_BODY.to_owned(), endpoint.to_owned()]);
+    Some(arguments)
+}
+
+/// What the poll keeps of the open pull request list: each pull request's
+/// number, head commit and draft flag, so a comment, a label, a review or a
+/// new `updated_at` does not look like a change. `gh` prints the one string.
+pub const PULL_DIGEST_JQ: &str = "map([.number,.head.sha,.draft])|tostring";
+
+/// `gh api --jq PULL_DIGEST_JQ repos/OWNER/NAME/pulls?state=open&per_page=100`:
+/// asked after the list's entity tag moved, to learn whether the pull
+/// requests themselves did.
+pub fn pull_digest_arguments(repository: &str) -> Option<Vec<String>> {
+    if !is_repository(repository) {
+        return None;
+    }
+    Some(vec![
+        "api".to_owned(),
+        "--jq".to_owned(),
+        PULL_DIGEST_JQ.to_owned(),
+        format!("repos/{repository}/pulls?state=open&per_page=100"),
+    ])
+}
+
+/// The result a commit's check runs add up to, in the words the PR mark uses,
+/// by the same rule as the core's `rollup_checks`: any failed run fails it,
+/// else any unfinished run leaves it pending.
+pub const CHECK_RUNS_VERDICT_JQ: &str = "[.check_runs[]|if .status!=\"completed\" then \"pending\" elif (.conclusion|IN(\"failure\",\"timed_out\",\"cancelled\",\"action_required\",\"startup_failure\",\"stale\")) then \"failed\" elif (.conclusion|IN(\"success\",\"neutral\",\"skipped\")) then \"passing\" else \"unknown\" end]|if any(.==\"failed\") then \"failed\" elif any(.==\"pending\") then \"pending\" elif any(.==\"unknown\") then \"unknown\" elif length==0 then \"none\" else \"passing\" end";
+
+/// The same for a commit's combined status (a commit with no statuses reports
+/// `pending` with a count of zero, which is no result).
+pub const COMMIT_STATUS_VERDICT_JQ: &str = "if .total_count==0 then \"none\" else (.state|if .==\"success\" then \"passing\" elif .==\"pending\" then \"pending\" elif IN(\"failure\",\"error\") then \"failed\" else \"unknown\" end) end";
+
+/// Which of a commit's two check lists a verdict read is of.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChecksList {
+    CheckRuns,
+    Status,
+}
+
+/// `gh api --jq VERDICT repos/OWNER/NAME/commits/SHA/(check-runs?per_page=100|status)`:
+/// asked after a list's entity tag moved, to learn whether the result the
+/// mark shows moved, and not only one job of many.
+pub fn checks_verdict_arguments(
+    repository: &str,
+    commit: &str,
+    list: ChecksList,
+) -> Option<Vec<String>> {
+    if !is_repository(repository) || !is_commit(commit) {
+        return None;
+    }
+    let (filter, tail) = match list {
+        ChecksList::CheckRuns => (CHECK_RUNS_VERDICT_JQ, CHECK_RUNS_TAIL),
+        ChecksList::Status => (COMMIT_STATUS_VERDICT_JQ, "status"),
+    };
+    Some(vec![
+        "api".to_owned(),
+        "--jq".to_owned(),
+        filter.to_owned(),
+        format!("repos/{repository}/commits/{commit}/{tail}"),
+    ])
+}
+
+/// The check runs list as the poll reads it: a hundred a page, so a commit
+/// with many jobs is not cut at GitHub's default thirty.
+pub const CHECK_RUNS_TAIL: &str = "check-runs?per_page=100";
+
+fn is_checks_verdict_read(arguments: &[&str]) -> bool {
+    let ["api", "--jq", filter, endpoint] = arguments else {
+        return false;
+    };
+    let Some((repository, rest)) = endpoint
+        .strip_prefix("repos/")
+        .and_then(|rest| rest.split_once("/commits/"))
+    else {
+        return false;
+    };
+    let Some((commit, list)) = rest.split_once('/') else {
+        return false;
+    };
+    is_repository(repository)
+        && is_commit(commit)
+        && ((list == CHECK_RUNS_TAIL && *filter == CHECK_RUNS_VERDICT_JQ)
+            || (list == "status" && *filter == COMMIT_STATUS_VERDICT_JQ))
+}
+
+fn is_pull_digest_read(arguments: &[&str]) -> bool {
+    matches!(arguments, ["api", "--jq", PULL_DIGEST_JQ, endpoint]
+        if endpoint.strip_prefix("repos/")
+            .and_then(|rest| rest.strip_suffix("/pulls?state=open&per_page=100"))
+            .is_some_and(is_repository))
+}
+
+fn is_conditional_read(arguments: &[&str]) -> bool {
+    match arguments {
+        ["api", "-i", CONDITIONAL_READ_BODY, endpoint] => is_conditional_endpoint(endpoint),
+        ["api", "-i", "-H", header, CONDITIONAL_READ_BODY, endpoint] => {
+            header.strip_prefix(IF_NONE_MATCH).is_some_and(is_etag)
+                && is_conditional_endpoint(endpoint)
+        }
+        _ => false,
+    }
+}
+
+/// The three lists the poll watches, in one repository (`owner/name`): its
+/// open pull requests, and the check runs and the commit status of one head
+/// commit.
+pub fn is_conditional_endpoint(endpoint: &str) -> bool {
+    let Some(rest) = endpoint.strip_prefix("repos/") else {
+        return false;
+    };
+    let mut parts = rest.splitn(3, '/');
+    let (Some(owner), Some(name), Some(tail)) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    if !is_repository(&format!("{owner}/{name}")) {
+        return false;
+    }
+    tail == "pulls?state=open&per_page=100"
+        || tail
+            .strip_prefix("commits/")
+            .and_then(|tail| tail.split_once('/'))
+            .is_some_and(|(commit, list)| {
+                is_commit(commit) && (list == CHECK_RUNS_TAIL || list == "status")
+            })
+}
+
+/// An entity tag as GitHub sends it, `"hex"` or the weak `W/"hex"`: quoted
+/// plain characters, so one cannot carry a second header or a flag.
+pub fn is_etag(value: &str) -> bool {
+    let quoted = value.strip_prefix("W/").unwrap_or(value);
+    let Some(inner) = quoted
+        .strip_prefix('"')
+        .and_then(|quoted| quoted.strip_suffix('"'))
+    else {
+        return false;
+    };
+    !inner.is_empty()
+        && inner.len() <= 128
+        && inner
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._:-".contains(&byte))
 }
 
 /// Whether `value` names a repository as `gh` takes it, `[HOST/]OWNER/NAME`:
@@ -936,6 +1102,136 @@ mod tests {
             "open",
             "--search",
             REVIEW_ASKED_SEARCH
+        ]));
+    }
+
+    #[test]
+    fn a_conditional_read_is_a_list_of_one_repository_with_an_optional_plain_etag() {
+        const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+        let pulls = "repos/acme/app/pulls?state=open&per_page=100";
+        let runs = format!("repos/acme/app/commits/{COMMIT}/check-runs?per_page=100");
+        let status = format!("repos/acme/app/commits/{COMMIT}/status");
+        for endpoint in [pulls, runs.as_str(), status.as_str()] {
+            for etag in [None, Some("W/\"abc123\""), Some("\"abc-1.2:3_4\"")] {
+                let arguments = conditional_read_arguments(endpoint, etag).expect(endpoint);
+                let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
+                assert!(allowed(&borrowed), "{borrowed:?}");
+            }
+        }
+        for endpoint in [
+            "repos/acme/app/pulls?state=all&per_page=100",
+            "repos/acme/app/pulls",
+            "repos/acme/app/commits/main/status",
+            "repos/acme/app/commits/0123/check-runs",
+            "repos/acme/app/issues",
+            "repos/acme/../pulls?state=open&per_page=100",
+            "repos/ghe.example.com/acme/app/pulls?state=open&per_page=100",
+            "user",
+            "graphql",
+        ] {
+            assert!(
+                conditional_read_arguments(endpoint, None).is_none(),
+                "{endpoint}"
+            );
+            assert!(
+                !allowed(&["api", "-i", "--jq", "length", endpoint])
+                    && !allowed(&["api", "-i", "--silent", "--jq", "length", endpoint]),
+                "{endpoint}"
+            );
+        }
+        for etag in [
+            "",
+            "abc",
+            "\"\"",
+            "W/abc",
+            "\"a b\"",
+            "\"a\\nX-Other: 1\"",
+            "\"--flag\"; rm",
+        ] {
+            assert!(
+                conditional_read_arguments(pulls, Some(etag)).is_none(),
+                "{etag:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_conditional_read_refuses_any_other_header_flag_or_filter() {
+        let pulls = "repos/acme/app/pulls?state=open&per_page=100";
+        assert!(!allowed(&[
+            "api",
+            "-i",
+            "-H",
+            "Authorization: x",
+            "--silent",
+            pulls
+        ]));
+        assert!(!allowed(&["api", "-i", "--jq", "length", pulls]));
+        assert!(!allowed(&["api", "--silent", pulls]));
+        assert!(!allowed(&["api", "-i", "--paginate", "--silent", pulls]));
+        assert!(!allowed(&[
+            "api",
+            "-i",
+            "-H",
+            "If-None-Match: \"abc\"",
+            "-H",
+            "X-Other: 1",
+            "--silent",
+            pulls
+        ]));
+    }
+
+    #[test]
+    fn the_pull_digest_read_is_the_open_list_of_one_repository_with_the_fixed_filter() {
+        let arguments = pull_digest_arguments("acme/app").expect("a repository");
+        let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        assert!(allowed(&borrowed), "{borrowed:?}");
+        assert!(pull_digest_arguments("../app").is_none());
+        assert!(pull_digest_arguments("ghe.example.com/acme/app").is_none());
+        let pulls = "repos/acme/app/pulls?state=open&per_page=100";
+        assert!(!allowed(&["api", "--jq", ".[]", pulls]));
+        assert!(!allowed(&[
+            "api",
+            "--jq",
+            PULL_DIGEST_JQ,
+            "repos/acme/app/pulls?state=all"
+        ]));
+        assert!(!allowed(&[
+            "api",
+            "--jq",
+            PULL_DIGEST_JQ,
+            "repos/../x/pulls?state=open&per_page=100"
+        ]));
+        assert!(!allowed(&[
+            "api",
+            "--paginate",
+            "--jq",
+            PULL_DIGEST_JQ,
+            pulls
+        ]));
+    }
+
+    #[test]
+    fn a_checks_verdict_read_is_one_commit_list_with_its_own_fixed_filter() {
+        const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+        for list in [ChecksList::CheckRuns, ChecksList::Status] {
+            let arguments = checks_verdict_arguments("acme/app", COMMIT, list).expect("a commit");
+            let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
+            assert!(allowed(&borrowed), "{borrowed:?}");
+        }
+        assert!(checks_verdict_arguments("acme/app", "main", ChecksList::Status).is_none());
+        assert!(checks_verdict_arguments("../app", COMMIT, ChecksList::Status).is_none());
+        // A filter belongs to its own list, and no other filter is run.
+        let runs = format!("repos/acme/app/commits/{COMMIT}/check-runs?per_page=100");
+        let status = format!("repos/acme/app/commits/{COMMIT}/status");
+        assert!(!allowed(&["api", "--jq", COMMIT_STATUS_VERDICT_JQ, &runs]));
+        assert!(!allowed(&["api", "--jq", CHECK_RUNS_VERDICT_JQ, &status]));
+        assert!(!allowed(&["api", "--jq", ".check_runs", &runs]));
+        assert!(!allowed(&[
+            "api",
+            "--jq",
+            CHECK_RUNS_VERDICT_JQ,
+            "repos/acme/app/commits/main/check-runs?per_page=100"
         ]));
     }
 }
