@@ -260,7 +260,7 @@ impl BrowserControl {
         let mut hosts = self.hosts.lock().map_err(|_| unavailable())?;
         live(&mut hosts);
         let host = hosts.get(&pid).ok_or_else(unavailable)?;
-        Ok(herdr_core::workspace_control::checkout_caller_id(
+        Ok(herdr_core::workspace_control::gateway_caller_id(
             &host.caller_key,
             checkout_path,
         ))
@@ -359,7 +359,7 @@ impl BrowserControl {
             .find(|(name, _)| *name == node)
             .and_then(|(_, windows)| windows.owners.iter().find(|(owner, _)| *owner == pid))
             .ok_or_else(unavailable)?;
-        Ok(herdr_core::workspace_control::checkout_caller_id(
+        Ok(herdr_core::workspace_control::gateway_caller_id(
             key,
             checkout_path,
         ))

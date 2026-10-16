@@ -137,21 +137,22 @@ impl Runtime {
     }
 
     /// Whether a Workspace command's caller leaves the selection as it found
-    /// it. On the Workspace in front, every pane but the one the operator is
-    /// in does, another pane of the same tab included. On a Workspace not on
-    /// screen, a pane of a tab other than its active one does (B7); the
-    /// active tab's panes change what only that Workspace shows, so a page
-    /// they open is in front and can be driven. A pane-less checkout caller
-    /// never does: the browser gateway acts as one for the agent holding a
-    /// capability, and a page it creates loads only in front (D-04, D-10).
+    /// it. On the Workspace in front, every caller but the pane the operator
+    /// is in does: another pane of the same tab, and a shell bound only to
+    /// the checkout, which no pane vouches for. On a Workspace not on screen,
+    /// a pane of a tab other than its active one does (B7); the active tab's
+    /// panes and a checkout shell change what only that Workspace shows, so
+    /// a page they open is in front and can be driven (D-04, D-10). A
+    /// window's browser gateway never does: a page a CDP client creates
+    /// loads only in front.
     pub(super) fn caller_stays_behind(&self, key: &WorkspaceKey, caller_id: &str) -> bool {
-        let Caller::Pane(pane_id) = Caller::parse(caller_id) else {
-            return false;
-        };
-        if self.front_workspace_key().as_ref() == Some(key) {
-            return self.operator_pane(&key.0) != Some(pane_id);
+        let on_screen = self.front_workspace_key().as_ref() == Some(key);
+        match Caller::parse(caller_id) {
+            Caller::Checkout { gateway: true, .. } => false,
+            Caller::Checkout { .. } => on_screen,
+            Caller::Pane(pane_id) if on_screen => self.operator_pane(&key.0) != Some(pane_id),
+            Caller::Pane(_) => self.background_caller_tab(key, caller_id).is_some(),
         }
-        self.background_caller_tab(key, caller_id).is_some()
     }
 
     /// The pane the operator is in on `device`, the device in front: this

@@ -1,7 +1,7 @@
 use super::workspace_view::{layout as view_event, with_new_views};
 use super::*;
 use crate::view_layout::{Layout as ViewLayout, MAX_VIEW_DISPLAYS};
-use crate::workspace_control::{Action, Query, checkout_caller_id};
+use crate::workspace_control::{Action, Query, checkout_caller_id, gateway_caller_id};
 
 // The checkout owns one View list, split and selection; each Agent tab only
 // remembers the View the operator last had in front on it, and an agent moves
@@ -636,8 +636,9 @@ fn a_front_tab_open_calls_the_lane_and_keeps_a_lone_tree() {
 /// B8: on the Workspace in front only the agent in the pane the operator is in
 /// brings its open forward. Another pane of the operator's own tab adds its
 /// View behind the operator's, and the tab remembers only what the operator
-/// had in front on it. A caller with no pane, as the browser gateway is,
-/// still brings its page forward, where the page loads.
+/// had in front on it. So does a shell bound only to the checkout, which no
+/// pane vouches for; a window's browser gateway brings its page forward,
+/// where the page loads.
 #[test]
 fn only_the_operators_pane_brings_its_open_forward() {
     let (mut runtime, checkout, directory) = setup("operator-pane");
@@ -664,17 +665,35 @@ fn only_the_operators_pane_brings_its_open_forward() {
     assert_eq!(calls(&runtime), before, "no lane call");
     assert_eq!(bookmark(&runtime, &directory, TABS[0]), Some(a));
 
-    let caller = checkout_caller_id("fixture", &directory.to_string_lossy());
+    let shell = checkout_caller_id("fixture", &directory.to_string_lossy());
+    control_file(
+        &mut runtime,
+        &shell,
+        &directory,
+        "c.md",
+        false,
+        "shell-open",
+    );
+    runtime.sync_workspace_view();
+    assert_eq!(strip(&runtime, &directory), ["a.md", "b.md", "c.md"]);
+    assert_eq!(
+        fronts(&runtime, &directory),
+        ["a.md"],
+        "a checkout shell stays behind"
+    );
+    assert_eq!(calls(&runtime), before, "no lane call");
+
+    let gateway = gateway_caller_id("window", &directory.to_string_lossy());
     control(
         &mut runtime,
-        &caller,
-        open_page("https://example.test/checkout"),
-        "checkout-open",
+        &gateway,
+        open_page("https://example.test/gateway"),
+        "gateway-open",
     );
     runtime.sync_workspace_view();
     assert_eq!(
         fronts(&runtime, &directory),
-        ["https://example.test/checkout"]
+        ["https://example.test/gateway"]
     );
 
     let mine = control(
@@ -687,7 +706,7 @@ fn only_the_operators_pane_brings_its_open_forward() {
     assert_eq!(fronts(&runtime, &directory), ["https://example.test/mine"]);
     assert!(
         calls(&runtime) > before,
-        "the operator's pane and the pane-less caller call the lane"
+        "the gateway and the operator's pane call the lane"
     );
     assert_eq!(
         bookmark(&runtime, &directory, TABS[0]),
@@ -701,7 +720,7 @@ fn only_the_operators_pane_brings_its_open_forward() {
         &mut runtime,
         "w-order:t1:p",
         &directory,
-        "c.md",
+        "d.md",
         false,
         "left-tab",
     );

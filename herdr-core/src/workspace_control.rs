@@ -23,28 +23,44 @@ pub enum Query {
 /// for a local process it could only bind to a checkout by its kernel-reported
 /// cwd, the encoded form `checkout:<key>:<canonical path>`. `key` is unique per
 /// issued capability so two callers in one checkout never share a retry record.
+/// A desktop window's browser gateway, acting for a CDP client on a page in
+/// that checkout, is `gateway:<key>:<canonical path>`, its key one per window.
 /// Herdr pane ids are `w..:p..` and remote ones `remote:<device>:pane:<id>`, so
-/// the prefix cannot collide with a pane.
+/// neither prefix can collide with a pane.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Caller<'a> {
     Pane(&'a str),
-    Checkout { key: &'a str, path: &'a str },
+    Checkout {
+        key: &'a str,
+        path: &'a str,
+        gateway: bool,
+    },
 }
 
 const CHECKOUT_CALLER_PREFIX: &str = "checkout:";
+const GATEWAY_CALLER_PREFIX: &str = "gateway:";
 
 impl<'a> Caller<'a> {
     pub fn parse(id: &'a str) -> Self {
         id.strip_prefix(CHECKOUT_CALLER_PREFIX)
-            .and_then(|rest| rest.split_once(':'))
-            .filter(|(key, path)| {
+            .map(|rest| (rest, false))
+            .or_else(|| {
+                id.strip_prefix(GATEWAY_CALLER_PREFIX)
+                    .map(|rest| (rest, true))
+            })
+            .and_then(|(rest, gateway)| {
+                let (key, path) = rest.split_once(':')?;
+                Some((key, path, gateway))
+            })
+            .filter(|(key, path, _)| {
                 !key.is_empty()
                     && key.bytes().all(|byte| byte.is_ascii_alphanumeric())
                     && hide_platform::path::is_wire_absolute(path)
             })
-            .map_or(Caller::Pane(id), |(key, path)| Caller::Checkout {
+            .map_or(Caller::Pane(id), |(key, path, gateway)| Caller::Checkout {
                 key,
                 path,
+                gateway,
             })
     }
 }
@@ -52,6 +68,11 @@ impl<'a> Caller<'a> {
 /// The caller id hided records for a checkout-bound capability.
 pub fn checkout_caller_id(key: &str, canonical_path: &str) -> String {
     format!("{CHECKOUT_CALLER_PREFIX}{key}:{canonical_path}")
+}
+
+/// The caller id a desktop window's browser gateway acts as on a checkout.
+pub fn gateway_caller_id(key: &str, canonical_path: &str) -> String {
+    format!("{GATEWAY_CALLER_PREFIX}{key}:{canonical_path}")
 }
 
 /// One pane request is one core transition. The transport supplies the pane
@@ -326,7 +347,7 @@ pub fn local_file_path(url: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, Caller, checkout_caller_id, local_file_path};
+    use super::{Action, Caller, checkout_caller_id, gateway_caller_id, local_file_path};
 
     #[test]
     fn legacy_browser_open_decodes_and_serializes_without_target_options() {
@@ -391,7 +412,8 @@ mod tests {
             Caller::parse(&id),
             Caller::Checkout {
                 key: "0123abcd",
-                path: "/srv/project"
+                path: "/srv/project",
+                gateway: false
             }
         );
         let colon = checkout_caller_id("k", "/mnt/a:b/c");
@@ -399,7 +421,8 @@ mod tests {
             Caller::parse(&colon),
             Caller::Checkout {
                 key: "k",
-                path: "/mnt/a:b/c"
+                path: "/mnt/a:b/c",
+                gateway: false
             }
         );
         // A checkout on a Windows screen machine, in the spelling between
@@ -409,7 +432,18 @@ mod tests {
             Caller::parse(&windows),
             Caller::Checkout {
                 key: "k",
-                path: "C:/work/app"
+                path: "C:/work/app",
+                gateway: false
+            }
+        );
+        // A window's gateway is a checkout caller that says so.
+        let gateway = gateway_caller_id("k", "/srv/project");
+        assert_eq!(
+            Caller::parse(&gateway),
+            Caller::Checkout {
+                key: "k",
+                path: "/srv/project",
+                gateway: true
             }
         );
         assert_eq!(Caller::parse("w8P:pM"), Caller::Pane("w8P:pM"));
@@ -421,6 +455,10 @@ mod tests {
         assert_eq!(
             Caller::parse("checkout:k:relative"),
             Caller::Pane("checkout:k:relative")
+        );
+        assert_eq!(
+            Caller::parse("gateway:k:relative"),
+            Caller::Pane("gateway:k:relative")
         );
     }
 

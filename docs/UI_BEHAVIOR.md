@@ -146,7 +146,8 @@ These commands do not move the keyboard target; a close that would lose the last
 Only an agent in the pane the operator is in, the selected pane of the front Workspace, changes what the operator sees: its open or `hide view select` brings the View to the front and opens the lane on Files as a click does, the tree staying on when it showed alone.
 Another pane of that Workspace, of the same tab or another, adds its View to the checkout's list and leaves the selection, the active area, the keyboard, the lane and the tab on screen as they were, and the Files icon's badge counts the new view (see File Views per checkout).
 A Workspace not on screen is not what the operator sees: there, an agent in its active tab brings its View to that Workspace's front, so a page it opens loads and can be driven, and an agent in another tab adds its View behind.
-A checkout-bound caller with no pane, such as the browser gateway creating a page for a CDP client, brings its View forward as before.
+A shell bound only to the checkout, which no pane vouches for (a pane Hide has not connected yet, or a command run with its pane reference removed), counts as another pane on the Workspace on screen and as the active tab on one that is not.
+The desktop window's browser gateway, creating a page for a CDP client, brings its page forward, since a page loads only in front.
 No option brings a View forward from another pane; the operator does that.
 A browser page's own new target, bound to its area, does not open the lane.
 `hide view split`, `move` and `close` apply to the checkout's list, from any tab, including a tab that is not on screen.
@@ -282,7 +283,7 @@ Closing the last View leaves the files tool on the tree when the tree is on, and
 From the pane the operator is in, a file, diff or browser open or a select brings the View to the front, its area becomes the active one and the lane is called to Files.
 From another pane of the Workspace on screen, of the same tab or another, the View is added at the end of the area it lands in; the selection, the active area, the keyboard, the lane and the tab on screen stay as they were, and the Files icon's badge counts it.
 On a Workspace not on screen, the agent in its active tab brings the View to that Workspace's front and an agent in another tab adds it behind; neither moves the screen or calls the lane.
-A caller with no pane brings its View forward.
+A shell bound only to the checkout counts as another pane there; the browser gateway's new page comes to the front of its area, where it loads.
 The operator brings it forward from the strip; selecting the caller's tab does not.
 A GUI action, such as a click on a terminal link, acts for the operator as before.
 A file read remains bound to the original tab and native session: a closed, moved or replaced caller is refused rather than falling back to the operator's tab.

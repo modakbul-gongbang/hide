@@ -31,7 +31,8 @@ Only checkouts in the current connected catalog contribute to that inventory; a 
   On the checkout on screen, only an open from the pane the operator is in, the selected pane of the front Workspace, brings the page to the front of its area and calls the lane.
   Another pane there, of the same tab or another, adds its page to the checkout's one list, in the area it lands in and behind the one in front, and moves no tab, checkout or keyboard; the same address opened from two tabs is one page, so the operator's page and load stay unchanged.
   On a checkout not on screen, a pane of its active tab brings its page to the front of that checkout, where it loads and can be driven, and a pane of another tab adds it behind; neither calls the lane or moves the screen.
-  A caller with no pane, as the browser gateway is for a page a CDP client creates, brings its page forward, since a page loads only in front.
+  A shell bound only to the checkout counts as another pane on the checkout on screen and as its active tab on one that is not.
+  The desktop window's gateway, acting for a CDP client that creates a page, brings that page forward, since a page loads only in front; it acts as `gateway:<key>:<path>`, one key per window, so the core tells it from a checkout shell (`gateway_caller_id`).
   A new page that is not in front can stay pending until it first appears.
   An agent reads the checkout's Views (`hide view list`, `hide view status`, select, close, `--wait`) from any of its tabs, even when its tab is not the Workspace's active tab and the Workspace was never in front: every caller sees the same list, so such a page is listed as `pending` rather than missing.
   `--wait` polls that state for at most ten seconds and returns a failure if the page fails, disconnects, or remains pending; it does not reveal a hidden View.
