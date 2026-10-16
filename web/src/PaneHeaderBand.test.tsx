@@ -220,7 +220,7 @@ it("draws a raised ask as verb, what and who", async () => {
   const {container, unmount} = await mount();
   try {
     const band = container.querySelector("[data-pane-header-band=raised]")!;
-    expect(band.querySelector("[data-verb=approval]")?.textContent).toBe("Approve");
+    expect(band.querySelector("[data-verb=approval]")?.textContent).toBe("Approval");
     expect(band.textContent).toContain("하위 검증 권한이 필요합니다");
     expect(band.querySelector("[data-pane-band-who=child]")?.textContent).toBe("자식 검증");
     expect(band.querySelector("[data-pane-band-more]")).toBeNull();

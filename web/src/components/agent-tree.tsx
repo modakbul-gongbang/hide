@@ -10,7 +10,7 @@ import type { AgentRow, RaiseVerb } from "../snapshot";
 // elbow rails and the chevron lane of a tree row, and the tree button. The
 // core decides every value; these only draw it.
 
-/** 승인 · 답변 · 확인 · 초안: colored text, no box (D-37). */
+/** 승인 · 질문 · 확인 · 초안: colored text, no box (D-37); a row's turn word (status-marks B5). */
 export function VerbText({ verb }: { verb: RaiseVerb }) {
   const { t } = useInterfaceTranslation();
   return (
@@ -32,6 +32,7 @@ export function AskLine({ ask, className }: { ask: NonNullable<AgentRow["state"]
   return (
     <span className={cn("flex min-w-0 items-baseline gap-xs text-caption", className)} data-ask-line={ask.verb}>
       <VerbText verb={ask.verb} />
+      <span aria-hidden="true" className="shrink-0 text-warning">·</span>
       <span className="min-w-0 truncate text-warning" title={what}>
         {what}
       </span>

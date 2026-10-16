@@ -1942,7 +1942,7 @@ function buildProjectsSidebar(tokens) {
   // Needs You and Agents lists carry; a remote row wears the device chip.
   const AGENTS = {
     deploy: {title: '배포 전 확인', status: 'asking', age: '30s', line: '승인  e2e 테스트 돌리던 중', place: 'hide › main', bright: true},
-    blog: {title: '블로그 초안 정리', status: 'asking', age: '2m', line: '답변  톤을 이대로 갈까요?', place: 'Home', bright: true},
+    blog: {title: '블로그 초안 정리', status: 'asking', age: '2m', line: '질문 · 톤을 이대로 갈까요?', place: 'Home', bright: true},
     research: {title: '두 프로젝트 비교 조사', status: 'seen', age: '14m', place: 'Home'},
     ci: {title: 'CI 러너 샤드 정리', status: 'done', age: '6m', place: 'hide › ci-shards', bright: true},
     readable: {title: '사이드바 가독성 개선', status: 'working', age: '1m', place: 'hide › main'},

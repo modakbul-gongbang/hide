@@ -44,7 +44,7 @@ export function buildAgentTreeParts(tokens) {
     instance,
   ]);
 
-  // Verb: 승인 · 답변 · 확인 · 초안, coloured text with no box (D-37).
+  // Verb: 승인 · 질문 · 확인 · 초안, coloured text with no box (D-37).
   const verb = frame(AGENT_TREE_MASTERS.verb, 'Verb', {reusable: true, layout: 'horizontal', width: 'fit_content'}, [
     caption('ath-verb-t', '승인', '$--warning', {weight: '600'}),
   ]);
@@ -112,7 +112,7 @@ export function buildAgentTreeParts(tokens) {
 
   const states = suffix => {
     const id = name => `ath-${suffix}-${name}`;
-    const verbs = ['승인', '답변', '확인', '초안'].map((word, index) => cell(`Verb ${index + 1}`, ref(id(`verb-${index}`), AGENT_TREE_MASTERS.verb, 'Verb', {}, {'ath-verb-t': {content: word}})));
+    const verbs = ['승인', '질문', '확인', '초안'].map((word, index) => cell(`Verb ${index + 1}`, ref(id(`verb-${index}`), AGENT_TREE_MASTERS.verb, 'Verb', {}, {'ath-verb-t': {content: word}})));
     const icons = PR_STATES.map(([state, glyph, fill, label]) => cell(label, ref(id(`pr-${state}`), AGENT_TREE_MASTERS.prIcon, 'PR mark', {}, {'ath-pr-g': {icon: glyph, fill}})));
     // Several PRs: each state's icon and count in its colour, worst first (a mergeable and a merged PR read green 1 purple 1).
     const counted = [['mergeable', 1], ['merged', 1]].map(([state, count]) => {

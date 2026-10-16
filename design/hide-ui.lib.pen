@@ -46724,7 +46724,7 @@
                   "name": "Verb",
                   "descendants": {
                     "ath-verb-t": {
-                      "content": "답변"
+                      "content": "질문"
                     }
                   }
                 }
@@ -47701,7 +47701,7 @@
                   "name": "Verb",
                   "descendants": {
                     "ath-verb-t": {
-                      "content": "답변"
+                      "content": "질문"
                     }
                   }
                 }

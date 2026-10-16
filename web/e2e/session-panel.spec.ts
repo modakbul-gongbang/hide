@@ -94,8 +94,8 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     const head = (name: string) => group(name).locator('[data-session-focus="group"]');
     // B26 to B32: Needs You asks with the verb; unfinished work is Idle with its line led by its word, a read question rests in Idle unfolded; a
     // chevron opens children, whose Resolve slot keeps the root's time column; Resolved holds a resolved row, folded.
-    await expect(group("needs_you").locator(`[data-session-row="${asking}"]`)).toContainText("Approve", { timeout: 30_000 });
-    await expect(group("needs_you").locator(`[data-session-row="${question}"]`)).toContainText("Answer", { timeout: 30_000 });
+    await expect(group("needs_you").locator(`[data-session-row="${asking}"]`)).toContainText("Approval", { timeout: 30_000 });
+    await expect(group("needs_you").locator(`[data-session-row="${question}"]`)).toContainText("Question", { timeout: 30_000 });
     await expect(group("idle").locator(`[data-session-row="${stopped}"] [data-session-line="unfinished"]`)).toBeVisible({ timeout: 30_000 });
     await expect(row(stopped)).toContainText("테스트 환경이 없어 멈췄어요");
     await expect(group("working").locator(`[data-session-row="${parent}"]`)).toBeVisible();
@@ -115,11 +115,11 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await showSessions();
     await expect(group("needs_you").locator(`[data-session-row="${question}"]`)).toHaveCount(0);
     await expect(group("idle").locator(`[data-session-row="${question}"]`)).toBeVisible();
-    await expect(row(question)).not.toContainText("Answer");
+    await expect(row(question)).not.toContainText("Question");
     await row(asking).locator('[data-session-focus="row"]').click();
     await expect(page.locator(`[data-pane-view="${asking}"]`)).toHaveAttribute("data-focused", "true");
     await showSessions();
-    await expect(group("needs_you").locator(`[data-session-row="${asking}"]`)).toContainText("Approve");
+    await expect(group("needs_you").locator(`[data-session-row="${asking}"]`)).toContainText("Approval");
     // Keyboard arrows reach the next row; Resolve is a named keyboard action.
     await row(stopped).locator('[data-session-focus="row"]').focus();
     await page.keyboard.press("Home");

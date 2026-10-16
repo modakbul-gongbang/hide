@@ -295,6 +295,7 @@ Only a finished verdict draws the green dot and the word Done (`끝남`); work l
 Read, a stop with work left or an unproven wait keeps its line, subdued, with its word (`line.mode: kept`, B7).
 
 A line leads with the word for what is asked or how the turn ended (`질문 · …`, `승인 · …`, `막힘 · …`, `끝남 · …`, `일 남음 · …`, `대기 · …`); an in-progress row says its sentence alone, or with none the cause Hide proved (B10).
+A Needs You line's ask verb says the same word: an Answer reads `질문` (Question) and an Approval `승인` (Approval), followed by ` · ` and what to do.
 A row with no mark that is asleep, waking, unreachable or of unknown state is drawn dimmed whole, and its line says why (B16).
 
 Regression owners: `precedence_is_the_turn_then_progress_then_a_stop_to_read`, `a_dot_to_read_is_green_only_on_a_finished_verdict` in `agent_state/turn.rs`, and `web/src/agentRow.test.ts`.

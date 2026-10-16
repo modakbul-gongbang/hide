@@ -168,7 +168,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
     const root='hide 에이전트 지원 PR 묶…';
     const bands=[
       ['approval',{verb:'승인',what:'권한 요청에서 멈춤',who:['codex','테스트 작성'],age:'12m'}],
-      ['answer',{verb:'답변',what:'PR을 하나로 합칠까요, 나눌까요?',who:['claude','P7 Pi·omp 재우기'],unreceived:'hide 에이전트 지원 PR… 60분째 못 받음'}],
+      ['answer',{verb:'질문',what:'PR을 하나로 합칠까요, 나눌까요?',who:['claude','P7 Pi·omp 재우기'],unreceived:'hide 에이전트 지원 PR… 60분째 못 받음'}],
       ['confirm',{verb:'확인',what:'리뷰 지적 3건 반영하고 멈춤',who:['claude','사전 리뷰'],age:'1h'}],
       ['draft',{verb:'초안',what:'내 입력 초안 때문에 질문이 못 감',who:['codex','P8 읽기 전용 준비'],age:'8m'}],
     ];

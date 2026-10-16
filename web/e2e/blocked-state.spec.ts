@@ -1,6 +1,7 @@
-// A turn that ended blocked or unfinished draws its own mark on a real daemon
-// (PRD agent-blocked-state B1-B4): the triangle in Needs You until it is read,
-// the half-disc beside the Done rows, each with its word leading the sentence.
+// A turn that ended blocked or unfinished draws its mark on a real daemon
+// (PRD agent-blocked-state B1-B4, status-marks B5-B8): the turn badge in Needs
+// You, dimmed once read, and a plain dot to read for work left, each with its
+// word leading the sentence.
 import { expect, test, type Page } from "@playwright/test";
 import { herdrGate } from "./herdr-gate";
 import { elsewhereTab, finishFixtureTurn, labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "./herdr-fixture";
