@@ -18,6 +18,10 @@ pub const ANSWER_WAIT_MS: u64 = 24 * 60 * 60 * 1_000;
 pub const INPUT_QUIET_MS: u64 = 30_000;
 pub const TICK_MS: u64 = 60_000;
 pub const INACTIVITY_MS: u64 = 20 * 60_000;
+/// How long a watch waits before telling a pane observer that its target
+/// stopped on a question it asked only in its own pane: one tick, the grace
+/// in which the target may still go on by itself.
+pub const QUESTION_WINDOW_MS: u64 = TICK_MS;
 pub const SECOND_WARNING_MS: u64 = 60 * 60_000;
 /// How long a finished letter stays after it finished. It exists so a retried
 /// send with the same intent returns the first letter, which happens within

@@ -625,6 +625,7 @@ fn removed_device_late_snapshot_cannot_retire_manual_or_delegated_watches_on_tic
             failure: None,
             gone: work.gone,
             inactivity_ms: work.inactivity_ms,
+            asking: work.asking,
         })
         .collect::<Vec<_>>();
     let mut after = (*test.runtime.lock().unwrap().delivery_state().unwrap()).clone();

@@ -168,7 +168,7 @@ The doorbell types `🔔 <writer> <kind>: <the letter's first line>`, then ` · 
 
 The kind reads 요청 for a request, 막힘 for a block, 보고 for a report, 답장 for a reply and 감시 for a watch warning.
 The writer is the name the sender registered under (`hide agent register`, `hide agent spawn --name`), else the title Hide's screens give it while its pane still hosts that session, else its runtime's name, such as Codex; never a pane id and never its registration id, which belong to the letter's envelope ([Names](#names-on-the-wire-and-on-screen)).
-A watch warning is named by the agent it watches, and its first line says for how long nothing moved.
+A watch warning is named by the agent it watches, and its first line says for how long nothing moved, or that the agent stopped with a question ([Watch activity and completion](#watch-activity-and-completion)).
 Both are looked up in memory when the bell rings, on the doorbell's thread, never on the session-sync thread.
 The first line is the body's first line that has anything to show, cut to 60 characters with `…`, and the writer is cut to 32; a body with no such line leaves the colon and summary out.
 Agents learn from their session guidance that this first line is the letter's one-line summary, and that a prompt beginning with `🔔` brings a letter that `hide inbox` shows if the prompt did not.
@@ -253,7 +253,7 @@ Every `capacity` refusal of a letter writes one `letter.capacity_refused` diagno
 | Pending delivery deadline | 60 minutes of the recipient's machine being reachable (wall time on the core's own machine), then `undelivered`; visible through CLI |
 | Quiet period | 30 seconds since hide last routed a key and since Herdr last changed the pane's status |
 | Doorbell reservations per letter | Three total, persisted across restart |
-| First inactivity warning | 20 minutes without activity; the Factory's stall window (30 minutes by default) when the observer is a Factory |
+| First inactivity warning | 20 minutes without activity; one minute (one tick) when the target stopped on a question and the observer is a pane; the Factory's stall window (30 minutes by default) when the observer is a Factory |
 | Second inactivity warning | First-warning time plus 60 minutes, at most two warnings per episode |
 | Unanswered parent warning notification | First-warning time plus 60 minutes, once per native target and inactivity episode |
 | Answer wait of a `request` or `block` | 24 hours from the send, then `answer_wait_ended: "deadline"`; an end of either registration ends it at once as `party_ended` for a letter the recipient took in |
@@ -302,6 +302,14 @@ Its digest reports `projection_unavailable` and an unavailable current status; t
 Proven original-target absence or a different positive native identity ends the watch.
 There is no cached response or retry during the same tick.
 Three consecutive read failures produce a rate-limited diagnostic.
+
+A target that stopped on a question it asked only in its own pane is told to a pane observer after one tick, 60 seconds of no activity, instead of 20 minutes, so the parent decides within about a minute whether to answer the child or ask the operator.
+The fact is the target's own row while its pane runs the watched session: activity stopped, a question demand ([status-model.md](status-model.md#where-each-axis-comes-from)), and no blocked prompt.
+A child that works, such as Codex while its async question stays open, or that Herdr holds at a blocked prompt, keeps the 20 minutes; a blocked child already rises to the operator ([Delegated escalation](status-model.md#delegated-escalation)).
+A question the target already sent this observer as a `request` or `block` letter still awaiting its answer keeps the 20 minutes too, since that letter rang the observer's doorbell, and a Factory observer keeps its stall window, since its engine stops the worker on the first warning.
+The early warning is the episode's first warning, and only its first line differs: `Stopped with a question (watch <id>).` instead of `No activity for N minutes`.
+The second warning, the unanswered-parent human notice and the escalation to the operator follow from its time exactly as from a 20-minute warning, and new activity of the target starts a new episode, so one question gives at most one early warning.
+The runtime reads the row it already holds when it hands each watch to the tick, under the lock that builds the tick's work; nothing is added to the tick's reads, threads or timers.
 
 The minute tick admits at most one read per watched target, at most four remote reads at once, each with a five-second deadline.
 Different parents watching one exact target share that tick's activity sample while keeping independent warning clocks and intent keys.
