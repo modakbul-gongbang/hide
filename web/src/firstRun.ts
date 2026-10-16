@@ -25,7 +25,7 @@ export function firstRunStep(rest: SnapshotRest | null, desktop: boolean): Wizar
 }
 
 /** The agents whose sign-in Hide checks (D-06); the others can only say they are installed. */
-export const SIGN_IN_CHECKED: ReadonlySet<string> = new Set(["claude-code", "codex", "grok", "pi"]);
+export const SIGN_IN_CHECKED: ReadonlySet<string> = new Set(["claude-code", "codex", "grok", "pi", "antigravity"]);
 
 /** What a tile says under the agent's name (B8, B9, B49). */
 export type TileStatus = "checking" | "ready" | "not_signed_in" | "installed" | "not_installed" | "unsupported";
