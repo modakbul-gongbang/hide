@@ -501,9 +501,9 @@ The sidebar is one list of operator-owned roots under projects and checkouts, wi
 A root whose descendant is raised enters Needs You itself, at any depth, and the raised descendant never appears there on its own row; its second line is the verb and what to do, with no name, count, PR or path.
 What to do is the core's `detail`: the label's reply, else the first line of a native question waiting now in the agent's own words (up to 40 characters, `…` when cut), else the label's line, else the verb's own words (`답을 기다림`); a native question therefore reads as itself with Hide AI off and while the label still describes the turn's work ([status-model.md](status-model.md#the-second-line)).
 An idle or done parent still owns its children, and a closed pane or ended parent agent makes them orphan roots.
-A parent waiting on a working or asking descendant stays Working.
+A parent waiting on a working descendant stays Working; a descendant that asks waits on its parent, so the parent keeps its own state, unread because the ask is news to it ([status-model.md](status-model.md#a-quiet-row-that-waits)).
 A root with direct children has a chevron at its left and starts folded; the opened roots persist across launches and device reconnects.
-Folded, it wears its descendant mark, `! N` for raised descendants, and nothing when its descendants are working, idle or done: a parent waiting on its children already shows its blue ring and the working child's line, and the operator did not read a `● N` (PRD session-record-redesign D-04).
+Folded, it wears its descendant mark, `! N` for raised descendants, and nothing when its descendants are working, asking it, idle or done: a parent waiting on a working child already shows its blue ring and that child's line, a child's ask that is not raised already turns the parent unread, and the operator did not read a `● N` (PRD session-record-redesign D-04).
 The core still computes the working mark; no surface draws it.
 Opened, its children follow most urgent first, joined to it by rails, and a child with children has its own chevron; grandchildren are one step further in, and a grandchild with children opens the tree popover from its chevron.
 Past five siblings the rest wait behind `N개 더`, which opens them in place.

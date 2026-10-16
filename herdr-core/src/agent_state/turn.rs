@@ -428,9 +428,9 @@ impl AgentGroup {
 /// The group a row belongs to, given who owns it.
 ///
 /// `waiting` is the answer for a row that is quiet itself while something it
-/// started is still going: a busy descendant, a background job, a request
-/// awaiting its reply. Such a row has not finished, so it sits in Working,
-/// and it reaches Done only once nothing is left to wait on
+/// started is still going: a working descendant, a background job, a
+/// request whose reply is still being made. Such a row has not finished, so
+/// it sits in Working, and it reaches Done only once nothing is left to wait on
 /// (sidebar-agent-status D-01). Its own unread demand or a blocked prompt
 /// still wins, because the flag is only ever set on a row with no demand of
 /// its own.

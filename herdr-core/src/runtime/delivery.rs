@@ -851,14 +851,24 @@ impl Runtime {
                 &record.id == id && !record.ended && record.actor.same_identity(&rebind.from)
             })
         });
-        // Only a change in who waits for a reply moves a row's wait, so the
-        // lineage is not rebuilt for every letter's delivery step.
+        // Only a change in who waits for a reply, from whom, and whether that
+        // agent took the letter in moves a row's wait, so the lineage is not
+        // rebuilt for every other step of a letter's delivery.
         let waiters = |ledger: &Ledger| {
             ledger
                 .letters
                 .iter()
                 .filter(|letter| letter.waiting_answer)
-                .map(|letter| (letter.sender.pane_id.clone(), letter.sender.session.clone()))
+                .map(|letter| {
+                    (
+                        (letter.sender.pane_id.clone(), letter.sender.session.clone()),
+                        (
+                            letter.recipient.pane_id.clone(),
+                            letter.recipient.session.clone(),
+                        ),
+                        letter.awaiting_intake(),
+                    )
+                })
                 .collect::<std::collections::BTreeSet<_>>()
         };
         let waiters_moved = self

@@ -1337,11 +1337,12 @@ pub struct SidebarAgentSnapshot {
     /// Facts for the common direct-child popover, independent of tree folding.
     pub direct_child_counts: DescendantCountsSnapshot,
     /// What a quiet row, one with no demand of its own that is stopped, idle
-    /// or done, is waiting on: its working or asking descendants, a
-    /// background job its session proves is still running, or the reply to a
-    /// Hide request it sent. A waiting row has not finished, so it stays in
-    /// Working rather than reading as finished, and it reaches Done only
-    /// once nothing it waits on is left (sidebar-agent-status D-01). It
+    /// or done, is waiting on: a working descendant, a background job its
+    /// session proves is still running, or the reply to a Hide request it
+    /// sent while the recipient is still making it. A waiting row has not
+    /// finished, so it stays in Working rather than reading as finished, and
+    /// it reaches Done only once nothing it waits on is in progress
+    /// (sidebar-agent-status D-01). It
     /// travels as this additive field beside `group: working`, never as a new
     /// group value, so a decoder that does not know it draws an ordinary
     /// Working row (D-10).
@@ -1383,11 +1384,13 @@ pub struct SidebarAgentSnapshot {
     /// block is built from (PRD overview-request-view D-14).
     #[serde(skip_serializing)]
     pub(crate) row_facts: Option<crate::request_view::RowFacts>,
-    /// The agent sent a request or block letter whose answer it still waits
-    /// for. Set by the runtime from the delivery ledger, never by a session
-    /// read, so it does not make `row_facts` present.
+    /// The request and block letters the agent's session sent whose answer
+    /// it still waits for, each with who will answer it. Laid by the runtime
+    /// from the delivery ledger, never by a session read, so it does not make
+    /// `row_facts` present; the lineage pass decides from the recipients
+    /// whether one of those answers is still being made.
     #[serde(skip_serializing)]
-    pub(crate) reply_wait: bool,
+    pub(crate) awaited_replies: Vec<AwaitedReply>,
     /// Hide AI started this agent (PRD hide-ai-origin-mark D-01). Set by the
     /// runtime from the coordination ledger, so a session read never makes
     /// it; absent from the wire for every other agent.
@@ -1923,13 +1926,25 @@ fn sidebar_tab_naming<S: serde::Serializer>(
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentWait {
-    /// A live descendant is working or asking.
+    /// A live descendant is working, or stopped on a background task its
+    /// session proves.
     Children,
     /// A background command, monitor or task the agent started is still
     /// running in the process that started it.
     Background,
-    /// A Hide request the agent sent still waits for its reply.
+    /// A Hide request the agent sent still waits for its reply, and the
+    /// recipient has not taken it in yet or is still making the answer.
     Reply,
+}
+
+/// One answer a row's session waits for: the agent the letter went to, as
+/// the rows name it, and whether it has taken the letter in.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AwaitedReply {
+    pub(crate) recipient_pane_id: String,
+    /// The recipient's session digest, as the letter named it.
+    pub(crate) recipient_session: Option<String>,
+    pub(crate) taken_in: bool,
 }
 
 /// The status of one agent as a code, never as a sentence: the screen chooses

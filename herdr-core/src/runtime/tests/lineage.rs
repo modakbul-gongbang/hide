@@ -1427,11 +1427,12 @@ fn a_blocked_grandchild_raises_its_lineage_root_once_and_never_itself() {
 }
 
 // sidebar-agent-status B1-B4, D-01: a root that is quiet itself while a
-// descendant works or asks is waiting on it: a Working row with the hollow
-// ring, never Done and never Needs You, until it and every descendant are
-// quiet. Its own question or its own work outranks the waiting state.
+// descendant works is waiting on it: a Working row with the hollow ring,
+// never Done and never Needs You, until no descendant works. A descendant
+// that asks waits on the root, so the root does not wait on it. Its own
+// question or its own work outranks the waiting state.
 #[test]
-fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() {
+fn a_quiet_root_waits_in_working_while_a_descendant_works_and_not_on_one_that_asks() {
     let mut runtime = runtime();
     // B1: the root finished its own turn and a child is working.
     ingest_lineage(
@@ -1461,8 +1462,9 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
         "reading a waiting root does not make it Seen"
     );
 
-    // B2: the child asks. The root keeps waiting in Working, the badge
-    // carries the question, and the root turns unread - never Needs You.
+    // B2: the child asks. It waits on the root, so the root draws its own
+    // finished turn, unread because the question is news to it, the badge
+    // carries the question, and the root is never Needs You.
     ingest_lineage(
         &mut runtime,
         &[
@@ -1471,8 +1473,8 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
         ],
     );
     let root = agent_row(&runtime, "w1:p1");
-    assert!(root.wait == Some(crate::model::AgentWait::Children));
-    assert_eq!(root.group, "working");
+    assert!(root.wait.is_none(), "an asking child is not progress");
+    assert_eq!((root.group.as_str(), root.symbol.as_str()), ("done", "✓"));
     assert_eq!(root.descendant_counts.question, 1);
     assert!(root.unread, "a child's question is news to the root");
     assert!(
@@ -1566,6 +1568,193 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
     );
     assert!(agent_row(&runtime, "w1:p1").wait.is_none());
     let _ = std::fs::remove_file(&runtime.state_path);
+}
+
+/// A pane's agent as a letter names it, running the fixtures' one session.
+fn letter_actor(runtime: &Runtime, pane: &str) -> crate::delivery::Actor {
+    crate::delivery::Actor {
+        pane_id: pane.into(),
+        name: pane.into(),
+        kind: "claude".into(),
+        device_id: runtime.node.to_string(),
+        session: Some(crate::sidebar::fixture_lineage_session()),
+    }
+}
+
+/// A request `from` sent `to` a minute ago, still waiting for its answer.
+fn ask(
+    ledger: &mut crate::delivery::ledger::Ledger,
+    from: &crate::delivery::Actor,
+    to: &crate::delivery::Actor,
+) -> String {
+    crate::delivery::mailbox::send(
+        ledger,
+        from,
+        to,
+        &format!("ask-{}-{}", from.pane_id, to.pane_id),
+        "Which design do we take?",
+        "request",
+        None,
+        unix_milliseconds() - 60_000,
+    )
+    .unwrap()
+    .id
+}
+
+/// The recipient's hook confirmed it took the letter in.
+fn take_in(ledger: &mut crate::delivery::ledger::Ledger, id: &str) {
+    let letter = ledger
+        .letters
+        .iter_mut()
+        .find(|letter| letter.id == id)
+        .unwrap();
+    letter.state = crate::delivery::ledger::State::Delivered;
+    letter.hook_confirmed = Some(true);
+}
+
+// A root whose children all finished waits on nothing, even while a request
+// it sent one of them stays unanswered: the child took it in and stopped,
+// so nothing is making the answer. Until the child takes it in, delivering
+// the letter will wake it, and the root waits for that.
+#[test]
+fn a_root_with_finished_children_draws_its_own_state_past_a_request_a_stopped_child_took_in() {
+    let mut runtime = runtime();
+    let (root, child) = (
+        letter_actor(&runtime, "w1:p1"),
+        letter_actor(&runtime, "w1:p2"),
+    );
+    let mut ledger = crate::delivery::ledger::Ledger::default();
+    let id = ask(&mut ledger, &root, &child);
+    runtime.publish_delivery(Arc::new(ledger.clone()), false);
+    ingest_lineage(
+        &mut runtime,
+        &[
+            ("w1:p1", None, "done", ""),
+            ("w1:p2", Some("w1:p1"), "done", ""),
+            ("w1:p3", Some("w1:p1"), "done", ""),
+        ],
+    );
+    let row = agent_row(&runtime, "w1:p1");
+    assert_eq!(row.wait, Some(crate::model::AgentWait::Reply));
+    assert_eq!(row.group, "working");
+
+    take_in(&mut ledger, &id);
+    // The step reaches the rows through the ledger's publication alone.
+    runtime.publish_delivery(Arc::new(ledger), false);
+    let row = agent_row(&runtime, "w1:p1");
+    assert_eq!(row.wait, None);
+    assert_eq!(
+        (row.group.as_str(), row.symbol.as_str()),
+        ("done", "✓"),
+        "its own finished turn, unread"
+    );
+    look_at(&mut runtime, "w1:p1");
+    let row = agent_row(&runtime, "w1:p1");
+    assert_eq!(row.wait, None);
+    assert_eq!(
+        (row.group.as_str(), row.symbol.as_str()),
+        ("seen", "○"),
+        "read, it is a gray ring"
+    );
+    let _ = std::fs::remove_file(&runtime.state_path);
+}
+
+// A child that asked its parent by letter waits on the parent, never the
+// other way round: while the letter is undelivered the child waits for the
+// parent to be woken and the parent keeps its own state, and once the
+// parent took the letter in and stopped, neither row waits, even with the
+// parent's own request to the child unanswered.
+#[test]
+fn a_child_asking_its_stopped_parent_by_letter_leaves_neither_row_waiting() {
+    let mut runtime = runtime();
+    let (root, child) = (
+        letter_actor(&runtime, "w1:p1"),
+        letter_actor(&runtime, "w1:p2"),
+    );
+    let mut ledger = crate::delivery::ledger::Ledger::default();
+    let assigned = ask(&mut ledger, &root, &child);
+    take_in(&mut ledger, &assigned);
+    let question = ask(&mut ledger, &child, &root);
+    runtime.publish_delivery(Arc::new(ledger.clone()), false);
+    ingest_lineage(
+        &mut runtime,
+        &[
+            ("w1:p1", None, "done", ""),
+            ("w1:p2", Some("w1:p1"), "done", ""),
+        ],
+    );
+    assert_eq!(
+        agent_row(&runtime, "w1:p2").wait,
+        Some(crate::model::AgentWait::Reply),
+        "the letter will wake the parent"
+    );
+    let parent = agent_row(&runtime, "w1:p1");
+    assert_eq!(parent.wait, None, "a child's reply wait is not progress");
+    assert_eq!(parent.group, "done");
+
+    take_in(&mut ledger, &question);
+    // The step reaches the rows through the ledger's publication alone.
+    runtime.publish_delivery(Arc::new(ledger), false);
+    for pane in ["w1:p1", "w1:p2"] {
+        let row = agent_row(&runtime, pane);
+        assert_eq!(row.wait, None, "{pane}");
+        assert_ne!(row.group, "working", "{pane}");
+    }
+    let _ = std::fs::remove_file(&runtime.state_path);
+}
+
+// A waiting state the projection cannot vouch for is not drawn: a
+// code-owned recipient has no row whose progress Hide can see, and an agent
+// on a device that is not connected shows a state that may no longer hold,
+// so a letter to either holds no reply wait, taken in or not.
+#[test]
+fn a_letter_to_a_factory_or_to_a_disconnected_device_holds_no_reply_wait() {
+    let mut runtime = runtime();
+    let mut ledger = crate::delivery::ledger::Ledger::default();
+    let root = letter_actor(&runtime, "w1:p1");
+    let id = ask(&mut ledger, &root, &letter_actor(&runtime, "w1:p2"));
+    ledger.letters[0].recipient = crate::delivery::Actor::factory("f1", &runtime.node.to_string());
+    runtime.publish_delivery(Arc::new(ledger.clone()), false);
+    ingest_lineage(&mut runtime, &[("w1:p1", None, "done", "")]);
+    assert_eq!(agent_row(&runtime, "w1:p1").wait, None);
+    take_in(&mut ledger, &id);
+    // The step reaches the rows through the ledger's publication alone.
+    runtime.publish_delivery(Arc::new(ledger), false);
+    assert_eq!(agent_row(&runtime, "w1:p1").wait, None);
+    let _ = std::fs::remove_file(&runtime.state_path);
+
+    let mut runtime = cross_machine_runtime();
+    let stop = |rows: &mut Vec<SidebarAgentSnapshot>| {
+        for row in rows {
+            row.activity = "stopped".into();
+        }
+    };
+    stop(&mut runtime.snapshot.navigator.agents);
+    stop(
+        &mut runtime.snapshot.status.remote[0]
+            .session
+            .as_mut()
+            .unwrap()
+            .agents,
+    );
+    let mut ledger = crate::delivery::ledger::Ledger::default();
+    let mut device_parent = letter_actor(&runtime, "remote:mini:pane:remote-parent");
+    device_parent.device_id = "mini".into();
+    ask(
+        &mut ledger,
+        &letter_actor(&runtime, "local-parent"),
+        &device_parent,
+    );
+    // The step reaches the rows through the ledger's publication alone.
+    runtime.publish_delivery(Arc::new(ledger), false);
+    assert_eq!(
+        local_lineage_agent(&runtime, "local-parent").wait,
+        Some(crate::model::AgentWait::Reply),
+        "a connected device takes the letter in"
+    );
+    runtime.snapshot.status.remote[0].state = "disconnected".into();
+    runtime.refresh_agent_lineage();
+    assert_eq!(local_lineage_agent(&runtime, "local-parent").wait, None);
 }
 
 // PRD B3, B4, B7, D-05, D-12: the badge sums every live descendant, not the
@@ -2533,44 +2722,54 @@ fn codex_starts_follow_the_capability_the_machines_kit_read() {
 }
 
 /// B18, B19, D-25: a quiet row waits for its children first, then for a
-/// background task its session proves, then for a reply it asked for, and a
-/// delegated child that waits on its own counts as working for its parent.
+/// background task its session proves, then for a reply someone is still
+/// making. A delegated child that waits on a background task counts as
+/// working for its root; one that waits on a reply does not, because the
+/// reply is the answering agent's progress, not the child's.
 #[test]
 fn a_quiet_row_waits_on_children_then_a_proven_device_then_a_reply() {
     let mut rows = project_agents(
         crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [
             {"pane_id":"parent","agent_status":"done","state_change_seq":1},
             {"pane_id":"child","spawned_from_pane_id":"parent","agent_status":"done","state_change_seq":2},
+            {"pane_id":"peer","agent_status":"working","state_change_seq":3},
         ]}))
         .unwrap(),
     )
     .agents;
-    let wait_of = |rows: &[SidebarAgentSnapshot], id: &str| {
-        rows.iter().find(|row| row.pane_id == id).unwrap().wait
+    let index = |rows: &[SidebarAgentSnapshot], id: &str| {
+        rows.iter().position(|row| row.pane_id == id).unwrap()
+    };
+    let wait_of = |rows: &[SidebarAgentSnapshot], id: &str| rows[index(rows, id)].wait;
+    let (child, peer) = (index(&rows, "child"), index(&rows, "peer"));
+    let asked_peer = |taken_in: bool| crate::model::AwaitedReply {
+        recipient_pane_id: "peer".into(),
+        recipient_session: Some(crate::sidebar::fixture_lineage_session()),
+        taken_in,
     };
 
     crate::agent_state::apply_lineage(&mut rows, &[], &[]);
     assert_eq!(wait_of(&rows, "child"), None);
     assert_eq!(wait_of(&rows, "parent"), None);
 
-    rows[1].row_facts = None;
-    rows[1].reply_wait = true;
+    // The peer took the letter in and works on the answer.
+    rows[child].row_facts = None;
+    rows[child].awaited_replies = vec![asked_peer(true)];
     crate::agent_state::apply_lineage(&mut rows, &[], &[]);
-    let child = rows.iter().find(|row| row.pane_id == "child").unwrap();
-    assert_eq!(child.wait, Some(crate::model::AgentWait::Reply));
+    let row = &rows[child];
+    assert_eq!(row.wait, Some(crate::model::AgentWait::Reply));
     assert!(
-        child.row_facts.is_none(),
+        row.row_facts.is_none(),
         "a waiting letter does not stand in for a proven session read"
     );
-    assert_eq!(child.group, "working", "a delegated row that waits works");
+    assert_eq!(row.group, "working", "a delegated row that waits works");
     assert_eq!(
         wait_of(&rows, "parent"),
-        Some(crate::model::AgentWait::Children),
-        "the parent waits on a child that waits"
+        None,
+        "a child's reply wait is not progress under its root"
     );
 
-    rows[1].reply_wait = true;
-    rows[1].row_facts = Some(crate::request_view::RowFacts {
+    rows[child].row_facts = Some(crate::request_view::RowFacts {
         wake_devices: 2,
         ..Default::default()
     });
@@ -2580,12 +2779,31 @@ fn a_quiet_row_waits_on_children_then_a_proven_device_then_a_reply() {
         Some(crate::model::AgentWait::Background),
         "a proven device outranks a reply"
     );
+    assert_eq!(
+        wait_of(&rows, "parent"),
+        Some(crate::model::AgentWait::Children),
+        "the root waits on a child whose background task runs"
+    );
 
-    rows[1].row_facts = None;
-    rows[1].reply_wait = false;
+    // The peer stopped after taking the letter in: nothing makes the answer.
+    rows[child].row_facts = None;
+    rows[peer].activity = "stopped".into();
     crate::agent_state::apply_lineage(&mut rows, &[], &[]);
     assert_eq!(wait_of(&rows, "child"), None);
     assert_eq!(wait_of(&rows, "parent"), None);
+
+    // A letter the peer has not taken in yet will wake it.
+    rows[child].awaited_replies = vec![asked_peer(false)];
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    assert_eq!(
+        wait_of(&rows, "child"),
+        Some(crate::model::AgentWait::Reply)
+    );
+
+    // An agent that took the peer's pane over is not who was asked.
+    rows[peer].lineage_session = crate::wire::session_digest("another-agent");
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    assert_eq!(wait_of(&rows, "child"), None);
 }
 
 /// A source and its fork as Herdr lists them once the fork's pane names the

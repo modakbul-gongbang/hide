@@ -768,18 +768,23 @@ mod tests {
         .unwrap();
         let id = ledger.letters[0].id.clone();
         let session = Some("child-session");
-        assert_eq!(ledger.reply_awaited_since("child", session, 200), Some(100));
+        let awaited = |ledger: &Ledger, pane: &str, session: Option<&str>, now: u64| {
+            ledger
+                .awaited_answers(pane, session, now)
+                .map(|letter| (letter.recipient.pane_id.clone(), letter.created_at_unix_ms))
+                .collect::<Vec<_>>()
+        };
         assert_eq!(
-            ledger.reply_awaited_since("child", Some("older"), 200),
-            None
+            awaited(&ledger, "child", session, 200),
+            vec![("parent".to_owned(), 100)],
+            "the wait names who will answer"
         );
-        assert_eq!(ledger.reply_awaited_since("child", None, 200), None);
-        assert_eq!(
-            ledger.reply_awaited_since("parent", Some("parent-session"), 200),
-            None
-        );
+        assert!(awaited(&ledger, "child", Some("older"), 200).is_empty());
+        assert!(awaited(&ledger, "child", None, 200).is_empty());
+        assert!(awaited(&ledger, "parent", Some("parent-session"), 200).is_empty());
         let late = 100 + crate::delivery::ANSWER_WAIT_MS;
-        assert_eq!(ledger.reply_awaited_since("child", session, late), None);
+        assert!(awaited(&ledger, "child", session, late - 1).len() == 1);
+        assert!(awaited(&ledger, "child", session, late).is_empty());
         mailbox::apply(
             &mut ledger,
             &actor("parent"),
@@ -792,6 +797,6 @@ mod tests {
             300,
         )
         .unwrap();
-        assert_eq!(ledger.reply_awaited_since("child", session, 400), None);
+        assert!(awaited(&ledger, "child", session, 400).is_empty());
     }
 }

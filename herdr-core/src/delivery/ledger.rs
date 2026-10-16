@@ -110,26 +110,22 @@ pub type Reach = BTreeMap<String, bool>;
 pub const CLOCK_FOLD_MS: u64 = 60_000;
 
 impl Ledger {
-    /// When this pane's session sent the newest request or block letter whose
-    /// answer it still waits for at `now`. A letter from another session of
-    /// the same pane does not count: that session ended with its wait.
-    pub(crate) fn reply_awaited_since(
-        &self,
-        pane_id: &str,
-        session: Option<&str>,
+    /// The request and block letters this pane's session sent whose answer
+    /// it still waits for at `now`. A letter from another session of the
+    /// same pane does not count: that session ended with its wait.
+    pub(crate) fn awaited_answers<'a>(
+        &'a self,
+        pane_id: &'a str,
+        session: Option<&'a str>,
         now: u64,
-    ) -> Option<u64> {
-        session?;
-        self.letters
-            .iter()
-            .filter(|letter| {
-                letter.waiting_answer
-                    && !letter.answer_overdue(now)
-                    && letter.sender.pane_id == pane_id
-                    && letter.sender.session.as_deref() == session
-            })
-            .map(|letter| letter.created_at_unix_ms)
-            .max()
+    ) -> impl Iterator<Item = &'a Letter> + 'a {
+        self.letters.iter().filter(move |letter| {
+            session.is_some()
+                && letter.waiting_answer
+                && !letter.answer_overdue(now)
+                && letter.sender.pane_id == pane_id
+                && letter.sender.session.as_deref() == session
+        })
     }
 }
 
