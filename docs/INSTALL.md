@@ -412,7 +412,7 @@ Windows and Linux releases are unsigned, so there the digest in the release's up
 
 The **Get preview versions (rc)** switch in About, off at first, also takes release candidates (`v<version>-rc.<n>`) from the next check on.
 Turning it off never installs a lower version: an app on a release candidate waits for the next stable release above it.
-A development build (a version that is not a release number, such as `0.1.0-main.<commit>`), an app run from a source checkout, and a Linux app not installed from the deb or rpm never look for updates, and About says updates are off.
+A development build (a version that is not a release number, such as `0.4.0-main.<commit>`), an app run from a source checkout, and a Linux app not installed from the deb or rpm never look for updates, and About says updates are off.
 
 The window is the only thing an update closes.
 The core and the agents keep running; the new app replaces a `hided` still running from the previous build with one of its own build, and a `hided` that will not stop makes the app show its start failure instead of attaching to the old one.
