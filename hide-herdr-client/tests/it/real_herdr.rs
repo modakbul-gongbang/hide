@@ -13,6 +13,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use base64::Engine;
 use hide_herdr_client::{request_with_timeout, subscribe};
 use serde_json::{Value, json};
 
@@ -109,6 +110,18 @@ impl PrivateHerdr {
             .args(args)
             .output()
             .expect("herdr cli runs")
+    }
+
+    /// The CLI's JSON answer to `args`, which must succeed.
+    fn cli_json(&self, args: &[&str]) -> Value {
+        let output = self.cli(args);
+        assert!(
+            output.status.success(),
+            "`herdr {}` failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).expect("the CLI answers JSON")
     }
 }
 
@@ -374,4 +387,238 @@ fn the_pinned_herdr_keeps_a_panes_session_against_a_nested_startup_and_follows_c
 #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state
 fn wait_a_moment() {
     thread::sleep(Duration::from_millis(250));
+}
+
+/// A `terminal session control` stream the test drives: its stdin takes the
+/// control lines, and a thread hands every `terminal.frame` it writes over a
+/// channel as the frame's size and decoded bytes.
+struct Controller {
+    child: Child,
+    stdin: std::process::ChildStdin,
+    frames: mpsc::Receiver<(u16, u16, Vec<u8>)>,
+}
+
+impl Controller {
+    fn attach(herdr: &PrivateHerdr, pane: &str, cols: u16, rows: u16) -> Self {
+        let mut child = herdr_command(&herdr.bin, &herdr.home, &herdr.socket, &herdr.config)
+            .args([
+                "terminal",
+                "session",
+                "control",
+                pane,
+                "--cols",
+                &cols.to_string(),
+                "--rows",
+                &rows.to_string(),
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("the control session starts");
+        let stdin = child.stdin.take().expect("piped stdin");
+        let stdout = child.stdout.take().expect("piped stdout");
+        let (sender, frames) = mpsc::channel();
+        thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break };
+                let Ok(record) = serde_json::from_str::<Value>(&line) else {
+                    continue;
+                };
+                if record["type"] != "terminal.frame" {
+                    continue;
+                }
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(record["bytes"].as_str().unwrap_or_default())
+                    .unwrap_or_default();
+                let width = record["width"].as_u64().unwrap_or_default() as u16;
+                let height = record["height"].as_u64().unwrap_or_default() as u16;
+                if sender.send((width, height, bytes)).is_err() {
+                    break;
+                }
+            }
+        });
+        Self {
+            child,
+            stdin,
+            frames,
+        }
+    }
+
+    fn send(&mut self, line: Value) {
+        use std::io::Write;
+        writeln!(self.stdin, "{line}").expect("the control stream takes a line");
+        self.stdin.flush().unwrap();
+    }
+
+    fn type_line(&mut self, text: &str) {
+        let bytes = base64::engine::general_purpose::STANDARD.encode(format!("{text}\r"));
+        self.send(json!({"type": "terminal.input", "bytes": bytes}));
+    }
+
+    fn resize(&mut self, cols: u16, rows: u16) {
+        self.send(json!({
+            "type": "terminal.resize", "cols": cols, "rows": rows,
+            "cell_width_px": 0, "cell_height_px": 0,
+        }));
+    }
+
+    /// Reads frames until one's text shows `marker` (or, with none, until the
+    /// first frame), and says the size every frame read carried; a frame of
+    /// another size fails with what the screen showed. The deadline only
+    /// ends a stream that never answers.
+    fn frames_until(
+        &self,
+        marker: Option<&str>,
+        deadline: Instant,
+    ) -> std::collections::BTreeSet<(u16, u16)> {
+        let mut sizes = std::collections::BTreeSet::new();
+        let mut screen = String::new();
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let (width, height, bytes) = self.frames.recv_timeout(left).unwrap_or_else(|_| {
+                panic!("no frame showed {marker:?}; the screen read: {screen:?}")
+            });
+            sizes.insert((width, height));
+            screen.push_str(&String::from_utf8_lossy(&bytes));
+            match marker {
+                Some(marker) if !plain(&screen).contains(marker) => continue,
+                _ => return sizes,
+            }
+        }
+    }
+}
+
+impl Drop for Controller {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// The screen's text without its escape sequences (CSI, OSC and two-byte
+/// ESC sequences), so a marker the shell printed can be found in it.
+fn plain(screen: &str) -> String {
+    let mut text = String::new();
+    let mut chars = screen.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            text.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if c.is_ascii_alphabetic() || c == '@' || c == '~' {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\x07' {
+                        break;
+                    }
+                    if c == '\x1b' && chars.peek() == Some(&'\\') {
+                        chars.next();
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    text
+}
+
+/// The PTY size is the controller's (PRD grid-ahead-of-herdr D-02, B15): a
+/// pane runs at the grid its controller attached with and last sent as
+/// `terminal.resize`, and neither a zoom nor its sibling's close moves it,
+/// so Hide may size a pane's grid from the rectangle it draws before Herdr
+/// confirms the layout. The frames the controller receives carry the size,
+/// and on Unix the shell's own `stty size` is read as well. A pinned Herdr
+/// that sizes the PTY from its layout fails here, and the bump that brings
+/// it decides what the drawn-ahead grid does on it (`docs/ARCHITECTURE.md`,
+/// Drawn ahead of Herdr).
+#[test]
+#[ignore = "needs the pinned Herdr: set HIDE_E2E_HERDR_BIN and run with --ignored"]
+fn the_pinned_herdr_keeps_the_controllers_pty_size_through_a_zoom_and_a_siblings_close() {
+    let bin = PathBuf::from(
+        std::env::var_os("HIDE_E2E_HERDR_BIN").expect("HIDE_E2E_HERDR_BIN names the pinned herdr"),
+    );
+    let herdr = PrivateHerdr::start(bin);
+    let created = herdr.cli_json(&[
+        "workspace",
+        "create",
+        "--cwd",
+        herdr.home.to_str().unwrap(),
+        "--label",
+        "grid",
+    ]);
+    let pane = created["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .expect("the workspace's pane")
+        .to_owned();
+    let split = herdr.cli_json(&["pane", "split", &pane, "--direction", "right"]);
+    let sibling = split["result"]["pane"]["pane_id"]
+        .as_str()
+        .expect("the split's pane")
+        .to_owned();
+
+    let mut controller = Controller::attach(&herdr, &pane, 45, 20);
+    let deadline = || Instant::now() + Duration::from_secs(60);
+    // The attach draws the pane at the controller's size, and the shell's
+    // prompt in it means the shell reads keys.
+    assert_eq!(
+        controller.frames_until(None, deadline()),
+        [(45, 20)].into(),
+        "the attach frame is the controller's size"
+    );
+    // On Unix the shell prints the PTY's own size after each step, as
+    // `rows x cols`; elsewhere a newline draws a frame to read the size from.
+    let mut step = 0;
+    let mut pty_size = |controller: &mut Controller, cols: u16, rows: u16, after: &str| {
+        step += 1;
+        let marker = format!("SZ{step}=");
+        if cfg!(unix) {
+            controller.type_line(&format!("echo {marker}$(stty size | tr ' ' x)"));
+            let sizes =
+                controller.frames_until(Some(&format!("{marker}{rows}x{cols}")), deadline());
+            assert_eq!(sizes, [(cols, rows)].into(), "frames after {after}");
+        } else {
+            controller.type_line("");
+            let sizes = controller.frames_until(None, deadline());
+            assert_eq!(sizes, [(cols, rows)].into(), "frames after {after}");
+        }
+    };
+    pty_size(&mut controller, 45, 20, "the attach");
+
+    controller.resize(90, 20);
+    pty_size(
+        &mut controller,
+        90,
+        20,
+        "the controller's resize to 90 columns",
+    );
+
+    let zoomed = herdr.cli_json(&["pane", "zoom", &pane, "--on"]);
+    assert_eq!(zoomed["result"]["zoom"]["changed"], true, "{zoomed}");
+    pty_size(&mut controller, 90, 20, "the zoom");
+    let unzoomed = herdr.cli_json(&["pane", "zoom", &pane, "--off"]);
+    assert_eq!(unzoomed["result"]["zoom"]["changed"], true, "{unzoomed}");
+    pty_size(&mut controller, 90, 20, "the unzoom");
+
+    herdr.cli_json(&["pane", "close", &sibling]);
+    pty_size(&mut controller, 90, 20, "the sibling's close");
+
+    // And it still follows the controller afterwards.
+    controller.resize(60, 24);
+    pty_size(
+        &mut controller,
+        60,
+        24,
+        "the controller's resize to 60 by 24",
+    );
+    controller.send(json!({"type": "terminal.release"}));
 }

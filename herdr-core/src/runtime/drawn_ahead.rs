@@ -189,10 +189,12 @@ impl Runtime {
         }
     }
 
-    /// Lays every tab's line over a session about to be ingested (D-07,
-    /// D-08): a tab with predictions gets its predicted layout, a split's new
+    /// Lays every tab's line over a session about to be ingested (D-07): a
+    /// tab with predictions gets its predicted layout, and a split's new
     /// pane gets a pane row with its target's cwd and nothing Herdr has not
-    /// said, and the panes Herdr laid out in that tab keep their grid.
+    /// said. A terminal's grid follows the drawn rectangle at once (PRD
+    /// grid-ahead-of-herdr D-03): the PTY size is the controller's to set,
+    /// never Herdr's layout's, so nothing here holds a resize.
     ///
     /// The caller runs it after the session's confirmations have read Herdr's
     /// own layout, so nothing Hide drew can confirm an operation.
@@ -214,7 +216,6 @@ impl Runtime {
                 })
                 .map(|operation| operation.scope_id.clone()),
         );
-        let mut held = HashSet::new();
         let mut drawn_closes = HashMap::new();
         let mut confirmed = HashMap::new();
         for scope_id in scopes {
@@ -245,12 +246,6 @@ impl Runtime {
             if overlaid.is_none() && closes.is_empty() {
                 continue;
             }
-            held.extend(
-                payload.layouts[index]
-                    .panes
-                    .iter()
-                    .map(|pane| pane.pane_id.clone()),
-            );
             if !closes.is_empty() {
                 drawn_closes.insert(scope_id.clone(), closes);
             }
@@ -288,7 +283,6 @@ impl Runtime {
         }
         self.drawn_closes = drawn_closes;
         self.confirmed_layouts = confirmed;
-        self.set_grid_held_panes(held);
     }
 
     /// The stage records of the tab's predictions are drawn with the next
@@ -317,44 +311,6 @@ impl Runtime {
         match self.drawn_closes.get(&layout.tab_id) {
             Some(closes) => super::pane_prediction::predict(&layout, closes),
             None => layout,
-        }
-    }
-
-    /// Replaces the held set, sending once the size a released pane's view
-    /// reported while it was held.
-    fn set_grid_held_panes(&mut self, held: HashSet<String>) {
-        if held == self.grid_held_panes {
-            return;
-        }
-        let released = self
-            .grid_held_panes
-            .difference(&held)
-            .cloned()
-            .collect::<Vec<_>>();
-        self.grid_held_panes = held;
-        let pane_ids = self
-            .snapshot
-            .terminal
-            .panes
-            .iter()
-            .map(|pane| pane.pane_id.clone())
-            .collect::<Vec<_>>();
-        for pane_id in pane_ids {
-            let held = self.grid_held_panes.contains(&pane_id);
-            if let Some(pane) = self
-                .snapshot
-                .terminal
-                .panes
-                .iter_mut()
-                .find(|pane| pane.pane_id == pane_id)
-            {
-                pane.grid_held = held;
-            }
-        }
-        for pane_id in released {
-            if self.held_resizes.remove(&pane_id) {
-                self.send_terminal_size(&pane_id, true);
-            }
         }
     }
 }

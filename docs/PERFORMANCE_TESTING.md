@@ -408,6 +408,8 @@ Record uptime, the restart time, and both sample windows in the run directory, a
   The catalog is rebuilt only on changed registrations, spaces or worktrees or its refresh window, the purpose mirror syncs only when that catalog or the unconfirmed created purposes changed, and a path is resolved by the node only when the set of paths asked changes (above), never by the core per publish; an agent status change repeats none of them.
   Measure a change to this at both scales of the topology scenario, idle and with its agent churn, against a baseline: idle CPU and RSS must not grow, and a status-change publish must not double when the agents do.
 - A drawn-ahead change adds one publish, a bounded line (`GEOMETRY_QUEUE_LIMIT`, `INPUT_HOLD_LIMIT_BYTES`) and one `pane_op.timing` record per operation, and nothing per frame or per tick.
+  A terminal's PTY is resized once per drawn layout change its rectangle takes part in, at the drawing, and once more only when Herdr's layout differs from the drawing (PRD grid-ahead-of-herdr D-03, D-04); nothing holds a grid for Herdr's confirmation, and nothing compares a held set per publish.
+  For a resized pane the record's `first_frame_ms` is the first frame after its resize went out and may precede `applied_ms`; a change that leaves a pane's grid where it was sends no resize and its record ends `incomplete`.
 - Announce once per burst and clear the `ChangeNotifier` (`herdr-core/src/handle.rs`) latch before taking the snapshot lock.
   Read-then-clear can swallow a concurrent change.
 - Size snapshot traffic by changes: rarely-changing revisioned `rest` and per-event scalars; terminal output never rides a snapshot (it goes from the node to the hub, see `docs/ARCHITECTURE.md`, The terminal path).

@@ -13,8 +13,11 @@
 //! - `applied`: Herdr's own layout showing the change was ingested.
 //! - `sent`: the snapshot carrying that layout was read for the browser.
 //! - `first_frame`: the first terminal frame of the pane the operation is
-//!   about arrived after it was applied (the created pane, or the pane whose
-//!   grid the change resized).
+//!   about: any frame of a created pane, or for the pane whose grid the
+//!   change resized the first after its PTY resize went out (PRD
+//!   grid-ahead-of-herdr D-06), which is at the drawing and so may come
+//!   before `applied`. A change that leaves that pane's grid where it was
+//!   sends no resize and gets no frame, so its record ends `incomplete`.
 //!
 //! Herdr's share is `layout_event - herdr_ack`; Hide's is the rest. The record
 //! carries ids and times only, never terminal content or paths. It is bounded:
@@ -89,8 +92,11 @@ struct OpTiming {
     tab_id: Option<String>,
     pane_ids: Vec<String>,
     /// The pane whose first frame closes the record, and whether only a frame
-    /// after `applied` counts (a resized grid) or any (a created pane).
+    /// after its resize went out counts (a resized grid) or any (a created
+    /// pane).
     frame_pane: Option<(String, bool)>,
+    /// A resize of `frame_pane` went out since the record began.
+    resize_sent: bool,
     requested_at: Instant,
     requested_at_unix_ms: u64,
     stages: [Option<Instant>; 7],
@@ -188,6 +194,7 @@ impl OpTimings {
             tab_id: tab_id.map(str::to_owned),
             pane_ids: pane_ids.iter().map(|id| (*id).to_owned()).collect(),
             frame_pane: None,
+            resize_sent: false,
             requested_at: now,
             requested_at_unix_ms: now_unix_ms,
             stages: [None; 7],
@@ -236,11 +243,29 @@ impl OpTimings {
     }
 
     /// Sets the pane whose first frame ends the record: any frame of a
-    /// created pane, or for a resized grid only one after `applied`.
-    pub(super) fn await_frame(&mut self, id: &str, pane_id: &str, after_applied: bool) {
+    /// created pane, or for a resized grid only one after its resize went
+    /// out.
+    pub(super) fn await_frame(&mut self, id: &str, pane_id: &str, after_resize: bool) {
         if let Some(record) = self.record(id) {
-            record.frame_pane = Some((pane_id.to_owned(), after_applied));
+            record.frame_pane = Some((pane_id.to_owned(), after_resize));
         }
+    }
+
+    /// A resize of `pane_id` went out: every record waiting for its frame
+    /// after a resize now counts the next one. Says whether any record
+    /// started waiting, so the caller asks the pane's node for that frame.
+    pub(super) fn resize_sent(&mut self, pane_id: &str) -> bool {
+        let mut started = false;
+        for record in &mut self.open {
+            if let Some((pane, true)) = &record.frame_pane
+                && pane == pane_id
+                && !record.resize_sent
+            {
+                record.resize_sent = true;
+                started = true;
+            }
+        }
+        started
     }
 
     pub(super) fn observe_arrivals(&mut self, arrivals: &[HerdrArrival]) {
@@ -294,16 +319,9 @@ impl OpTimings {
         }
     }
 
-    /// Herdr's layout applied operation `id`: stamps `applied`, and names
-    /// the pane whose first frame after it the record waits for. A frame
-    /// shown before it did not count, so its node is asked to watch again.
-    pub(super) fn applied(&mut self, id: &str, at: Instant) -> Option<String> {
-        let record = self.record(id)?;
-        record.stamp(Stage::Applied, at);
-        match &record.frame_pane {
-            Some((pane, true)) if !record.has(Stage::FirstFrame) => Some(pane.clone()),
-            _ => None,
-        }
+    /// Herdr's layout applied operation `id`.
+    pub(super) fn applied(&mut self, id: &str, at: Instant) {
+        self.stamp(id, Stage::Applied, at);
     }
 
     /// A terminal frame of `pane_id` was published at `at`.
@@ -312,10 +330,10 @@ impl OpTimings {
             .open
             .iter_mut()
             .filter(|record| match &record.frame_pane {
-                Some((pane, after_applied)) => {
+                Some((pane, after_resize)) => {
                     pane == pane_id
                         && !record.has(Stage::FirstFrame)
-                        && (!after_applied || record.has(Stage::Applied))
+                        && (!after_resize || record.resize_sent)
                 }
                 None => false,
             })
@@ -479,19 +497,30 @@ mod tests {
         );
         timings.await_frame("pane-op-2", "w1:p1", true);
         timings.note_frame("w1:p1", start + Duration::from_millis(5));
+        assert!(
+            timings.resize_sent("w1:p1"),
+            "the record starts waiting at the resize"
+        );
+        assert!(
+            !timings.resize_sent("w1:p1"),
+            "a second resize starts nothing"
+        );
+        timings.note_frame("w1:p1", start + Duration::from_millis(20));
         timings.stamp(
             "pane-op-2",
             Stage::Applied,
             start + Duration::from_millis(40),
         );
-        timings.note_sent(start + Duration::from_millis(41));
         assert_eq!(
             timings.open_ids(),
             vec!["pane-op-2".to_owned()],
-            "a frame before the layout applied is not the resized grid"
+            "the frame after the resize waits for the layout"
         );
-        timings.note_frame("w1:p1", start + Duration::from_millis(70));
-        assert!(timings.open_ids().is_empty());
+        timings.note_sent(start + Duration::from_millis(41));
+        assert!(
+            timings.open_ids().is_empty(),
+            "a frame before the resize is not the resized grid; the one after it is, even ahead of applied"
+        );
     }
 
     #[test]
