@@ -8,7 +8,8 @@ if [ "${CI:-}" != "true" ]; then
   echo "install-agy.sh installs agy on a CI runner only" >&2
   exit 2
 fi
-dir="${RUNNER_TEMP:?RUNNER_TEMP names the runner's scratch folder}/agy-bin"
+# No apostrophe inside the expansion below: bash reads one there as a quote.
+dir="${RUNNER_TEMP:?RUNNER_TEMP names the scratch folder of the runner}/agy-bin"
 mkdir -p "$dir"
 case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN*)

@@ -75,7 +75,11 @@ jobs:
       - name: Install agy
         id: agy
         timeout-minutes: 5
-        run: echo "bin=$(bash scripts/install-agy.sh | tr -d '\r')" >> "$GITHUB_OUTPUT"
+        run: |
+          # Its own line, so a failed install fails the step instead of
+          # writing an empty path.
+          bin=$(bash scripts/install-agy.sh | tr -d '\r')
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: The real agy reads Hide's hook block
         timeout-minutes: 5
         env:
@@ -124,7 +128,11 @@ jobs:
       - name: Install agy
         if: ${{ env.HIDE_AGY_API_KEY != '' }}
         id: agy
-        run: echo "bin=$(bash scripts/install-agy.sh | tr -d '\r')" >> "$GITHUB_OUTPUT"
+        run: |
+          # Its own line, so a failed install fails the step instead of
+          # writing an empty path.
+          bin=$(bash scripts/install-agy.sh | tr -d '\r')
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: The real agy, signed in with the CI key, lists Hide's hooks
         if: ${{ env.HIDE_AGY_API_KEY != '' }}
         env:
