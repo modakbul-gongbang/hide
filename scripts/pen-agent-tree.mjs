@@ -83,8 +83,10 @@ export function buildAgentTreeParts(tokens) {
   ]);
 
   // Tree row: one line; the rails and the chevron lane left of the marks, the
-  // PR icon and the folded parent's mark before the age; a device line only
-  // for a child on another machine (D-38, B14).
+  // PR icon and the folded parent's mark before the age; a second line only
+  // for a block's cause, a waiting ring's 대기 line (status-marks B29) or an
+  // unknown row's reason, and a device line only for a child on another
+  // machine (D-38, B14).
   const rail = (id, props) => frame(id, 'Rail', {fill: '$--lineage-rail', ...props}, []);
   const row = frame(AGENT_TREE_MASTERS.row, 'Tree row', {reusable: true, layout: 'horizontal', alignItems: 'start', width: 260, cornerRadius: '$--radius-sm'}, [
     frame('ath-row-rail', 'Ancestor rail', {layout: 'none', width: INDENT, height: LINE + 8, enabled: false}, [rail('ath-row-rail-v', {x: RAIL_X, y: 0, width: HAIR, height: LINE + 8})]),
@@ -103,6 +105,7 @@ export function buildAgentTreeParts(tokens) {
         ref('ath-row-desc', AGENT_TREE_MASTERS.mark, 'Descendant mark', {enabled: false}),
         caption('ath-row-age', '3m', '$--muted-foreground', {mono: true}),
       ]),
+      {...caption('ath-row-line', '대기 · 자식 1명 작업 중', '$--subtle-foreground'), enabled: false},
       frame('ath-row-device', 'Device line', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', height: DETAIL, padding: [0, '$--spacing-xs'], cornerRadius: '$--radius-xs', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner', enabled: false}, [
         icon('ath-row-device-g', 'server', {size: ICON, fill: '$--muted-foreground'}),
         caption('ath-row-device-t', 'Mac mini', '$--muted-foreground'),
@@ -138,6 +141,7 @@ export function buildAgentTreeParts(tokens) {
       cell('Root, opened', ref(id('row-root'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-chev': {icon: 'chevron-down'}, ...markSwitch('ath-row', 'going'), 'ath-row-title': {content: '루트 에이전트', fill: '$--foreground'}, 'ath-row-pr/ath-pr-g': {fill: '$--pr-mergeable'}})),
       cell('Child, folded with a raised descendant', ref(id('row-child'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-elbow': {enabled: true}, ...markSwitch('ath-row', 'going'), 'ath-row-title': {content: '자식'}, 'ath-row-desc': {enabled: true}, 'ath-row-age': {content: '19h'}})),
       cell('Grandchild, no children', ref(id('row-grand'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-rail': {enabled: true}, 'ath-row-elbow': {enabled: true}, 'ath-row-chev': {enabled: false}, ...markSwitch('ath-row', 'quiet'), 'ath-row-title': {content: '손자'}, 'ath-row-pr': {enabled: false}, 'ath-row-age': {content: '40m'}})),
+      cell('Waiting ring: its line led by 대기', ref(id('row-waiting'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-elbow': {enabled: true}, 'ath-row-chev': {enabled: false}, ...markSwitch('ath-row', 'going'), 'ath-row-title': {content: 'CI 기다리는 자식'}, 'ath-row-line': {enabled: true, content: '대기 · CI · PR #214', fill: '$--subtle-foreground'}, 'ath-row-pr': {enabled: false}, 'ath-row-age': {content: '12m'}})),
       cell('Child on another device', ref(id('row-remote'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-elbow': {enabled: true}, 'ath-row-chev': {enabled: false}, ...markSwitch('ath-row', 'quiet'), 'ath-row-title': {content: '다른 기기의 자식'}, 'ath-row-pr': {enabled: false}, 'ath-row-device': {enabled: true}, 'ath-row-age': {content: '5h'}})),
     ];
     return [...verbs, ...icons, more, stale, hover, compact, ...marks, ...buttons, ...rows];
@@ -152,7 +156,7 @@ export function buildAgentTreeParts(tokens) {
     layout: 'vertical', gap: '$--spacing-xl', padding: '$--spacing-xl', fill: '$--card', cornerRadius: '$--radius-lg', width: 'fit_content',
   }, [
     text(`${id}-title`, 'Agent tree parts', {size: '$--text-headline', weight: '600'}),
-    text(`${id}-spec`, 'web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the one PR mark every PR surface draws (web/src/components/pr-mark.tsx): the state\'s icon in its colour (failed red, pending amber, mergeable green, draft grey, merged purple, closed dim), the number for one PR and, for several, each state\'s icon and count in that state\'s colour, worst first, no border, a fill under the pointer, dimmed while GitHub cannot be read, and a compact variant without the number; the one descendant mark a folded parent wears, ! N while raised, nothing for working alone; the pane header\'s tree button, state counts without a separate total or internal divider, a tree icon when no count is drawn; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, plus a device line only for a child on another machine. Sessions rows, the pane header, the sidebar row and the tree popover all draw the same PR mark.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
+    text(`${id}-spec`, 'web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the one PR mark every PR surface draws (web/src/components/pr-mark.tsx): the state\'s icon in its colour (failed red, pending amber, mergeable green, draft grey, merged purple, closed dim), the number for one PR and, for several, each state\'s icon and count in that state\'s colour, worst first, no border, a fill under the pointer, dimmed while GitHub cannot be read, and a compact variant without the number; the one descendant mark a folded parent wears, ! N while raised, nothing for working alone; the pane header\'s tree button, state counts without a separate total or internal divider, a tree icon when no count is drawn; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, a second line only for a block\'s cause, a waiting ring (led by 대기) or an unknown row, plus a device line only for a child on another machine. Sessions rows, the pane header, the sidebar row and the tree popover all draw the same PR mark.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
     frame(`${id}-masters`, 'Masters', {layout: 'horizontal', gap: '$--spacing-xl', alignItems: 'start'}, [verb, prIcon, mark, treeButton, row]),
     themeFrame(`${id}-light`, 'Light', states('l')),
     themeFrame(`${id}-dark`, 'Dark', states('d')),

@@ -96,16 +96,19 @@ export function markShapes(p) {
       {...text(`${p}-turn-bang`, '!', {fill: '$--status-foreground', size: '$--text-micro', weight: '700', mono: true})},
     ]),
     {type: 'ellipse', id: `${p}-arc`, name: 'In progress', enabled: false, width: 10, height: 10, fill: '$--agent-working', innerRadius: 0.62, startAngle: 90, sweepAngle: -270},
-    {type: 'ellipse', id: `${p}-dot`, name: 'To read', enabled: false, width: 7, height: 7, fill: '$--success'},
+    {type: 'ellipse', id: `${p}-dot`, name: 'Unread', enabled: false, width: 7, height: 7, fill: '$--success'},
   ];
 }
 
 // The overrides that draw `mark` with the shapes `markShapes(p)` made, each
 // color restated so an importing document resolves it per theme; `alias` is
-// the import prefix (`hideui:`) and may be a path.
-export function markSwitch(p, mark, alias = '') {
-  if (!MARKS.includes(mark)) throw new Error(`unknown status mark ${mark}`);
+// the import prefix (`hideui:`) and may be a path. A master that also holds
+// the sleeping moon (`moon`, the sidebar row's `sar-moon`) has it restated
+// too, on only for an agent asleep (status-marks D-21).
+export function markSwitch(p, mark, alias = '', {moon = false} = {}) {
+  if (!MARKS.includes(mark) && !(moon && mark === 'asleep')) throw new Error(`unknown status mark ${mark}`);
   return {
+    ...(moon ? {[`${alias}${p}-moon`]: {enabled: mark === 'asleep', fill: '$--muted-foreground'}} : {}),
     [`${alias}${p}-turn`]: {enabled: mark === 'turn', fill: '$--warning'},
     [`${alias}${p}-turn-bang`]: {fill: '$--status-foreground'},
     [`${alias}${p}-arc`]: {enabled: mark === 'going', fill: '$--agent-working'},

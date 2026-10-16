@@ -309,7 +309,7 @@ function screenField(id, label, control) {
 // sheet drawn before the four marks keeps meaning the same row.
 // The overrides that turn on a master's mark (Sidebar agent row, tree row).
 function markOverrides(prefix, symbol, fill) {
-  return markSwitch(prefix, legacyMark(symbol, fill));
+  return markSwitch(prefix, legacyMark(symbol, fill), '', {moon: prefix === 'sar'});
 }
 
 // The same mark for a row this document draws itself rather than from a master.
@@ -381,15 +381,17 @@ function screenPrMark(id, {state, number, compact = false}) {
   const [glyph, fill] = PR_TREE[state];
   return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': compact ? {enabled: false} : {content: `${number}`}});
 }
-function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', age, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, statusAxis = false, inset = 0, width = 268}) {
+function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', age, line, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, statusAxis = false, inset = 0, width = 268}) {
   const descendants = {
     ...markOverrides('ath-row', symbol, color),
     'ath-row-title': {content: title, ...(bright || selected ? {fill: '$--foreground'} : {})},
     'ath-row-age': {content: age},
-    'ath-row-rail': {enabled: depth > 1},
-    'ath-row-rail-v': {enabled: rail},
-    'ath-row-elbow': {enabled: depth > 0},
-    'ath-row-elbow-v': {height: last ? 13 : 28},
+    'ath-row-line': line ? {enabled: true, content: line, fill: '$--subtle-foreground'} : {enabled: false},
+    // A second line makes the row 16 taller, and the rails that pass it with it.
+    'ath-row-rail': {enabled: depth > 1, ...(line ? {height: 44} : {})},
+    'ath-row-rail-v': {enabled: rail, ...(line ? {height: 44} : {})},
+    'ath-row-elbow': {enabled: depth > 0, ...(line ? {height: 44} : {})},
+    'ath-row-elbow-v': {height: last ? 13 : line ? 44 : 28},
     'ath-row-chev': chevron ? {enabled: true, icon: chevron === 'open' ? 'chevron-down' : 'chevron-right'} : {enabled: false},
     'ath-row-pr': pr ? {enabled: true} : {enabled: false},
     ...(pr ? {'ath-row-pr/ath-pr-g': {icon: PR_TREE[pr.state][0], fill: PR_TREE[pr.state][1]}, 'ath-row-pr/ath-pr-n': {content: `${pr.number}`}} : {}),
@@ -454,7 +456,7 @@ function screenSidebar(tokens, id, suffix, agents, {overview = false} = {}) {
       icon(`${id}-overviewi-${suffix}`, 'layout-dashboard', {size: num(tokens, '--size-checkout-icon'), fill: '$--subtle-foreground'}),
       text(`${id}-overviewt-${suffix}`, 'Overview', {size: '$--text-subhead', weight: '600'}),
       frame(`${id}-overviewgap-${suffix}`, 'Spacer', {width: 'fill_container', height: 1}, []),
-      text(`${id}-overviewn-${suffix}`, '2 asking · ⌘⇧O', {fill: '$--muted-foreground'}),
+      text(`${id}-overviewn-${suffix}`, '내 차례 2 · ⌘⇧O', {fill: '$--muted-foreground'}),
     ]),
     text(`${id}-seen-${suffix}`, 'Projects · Recent activity', {size: '$--text-micro', fill: '$--muted-foreground', weight: '500'}),
     // Root rows keep direct children behind their shared badge.
@@ -1763,7 +1765,7 @@ function buildProjectsSidebar(tokens) {
   function tree(id, {status, ...options}) {
     const [symbol, color] = status ? TREE_STATUS[status] : ['', '$--muted-foreground'];
     const node = screenTreeRow(id, {symbol, color, inset: nameColumn, width: row, statusAxis: true, ...options});
-    treeHeights.set(node, num(tokens, '--size-sidebar-line') + 2 * xs + (options.device ? 16 : 0));
+    treeHeights.set(node, num(tokens, '--size-sidebar-line') + 2 * xs + (options.device ? 16 : 0) + (options.line ? 16 : 0));
     return node;
   }
 
@@ -1917,7 +1919,7 @@ function buildProjectsSidebar(tokens) {
     return frame(`${p}-overview`, 'Overview', {width, height: num(tokens, '--size-tab-strip'), layout: 'horizontal', gap: sm, padding: [0, '$--spacing-md'], alignItems: 'center'}, [
       icon(`${p}-overview-g`, 'layout-dashboard', {size: 16, fill: SUBTLE}),
       text(`${p}-overview-t`, 'Overview', {size: '$--text-body'}), spacer(`${p}-overview-space`),
-      ...(count ? [text(`${p}-overview-n`, `${count} asking`, {size: '$--text-caption', fill: '$--warning'})] : []),
+      ...(count ? [text(`${p}-overview-n`, `내 차례 ${count}`, {size: '$--text-caption', fill: '$--warning'})] : []),
       text(`${p}-overview-k`, '⌘⇧O', {size: '$--text-micro', fill: MUTED, mono: true}),
     ]);
   }
@@ -1996,13 +1998,13 @@ function buildProjectsSidebar(tokens) {
           checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, expanded: true}),
           segment(`psb-seg-main-${s}`, {name: 'Tab 1', rows: [
             tree(`psb-t0-${s}`, {title: '사이드바 가독성 개선', status: 'approval', age: '12m', chevron: 'open', pr: {state: 'mergeable', number: 180}, bright: true}),
-            tree(`psb-t1-${s}`, {title: 'P8 읽기 전용 준비', status: 'waiting', age: '19h', depth: 1, chevron: 'open', pr: {state: 'failed', number: 214}}),
+            tree(`psb-t1-${s}`, {title: 'P8 읽기 전용 준비', status: 'waiting', age: '19h', line: '대기 · 자식 1명 작업 중', depth: 1, chevron: 'open', pr: {state: 'failed', number: 214}}),
             tree(`psb-t2-${s}`, {title: '테스트 작성', status: 'approval', age: '12m', depth: 2, rail: true}),
             tree(`psb-t3-${s}`, {title: '문서 정리', status: 'done', age: '40m', depth: 2, rail: true, last: true}),
             tree(`psb-t4-${s}`, {title: 'P7 Pi·omp 재우기', status: 'asking', age: '1h', depth: 1, pr: {state: 'pending', number: 838}}),
             tree(`psb-t5-${s}`, {title: '미전달 편지 승격 해제', status: 'seen', age: '5h', depth: 1, device: 'Mac mini'}),
             tree(`psb-t6-${s}`, {title: '3개 더', status: null, age: '', depth: 1, last: true, chevron: 'closed', more: true}),
-            tree(`psb-t7-${s}`, {title: 'Mac mini 연동 5단계', status: 'waiting', age: '2m', chevron: 'closed', mark: {kind: 'working', count: 1}}),
+            tree(`psb-t7-${s}`, {title: 'Mac mini 연동 5단계', status: 'waiting', age: '2m', line: '대기 · 자식 1명 작업 중', chevron: 'closed', mark: {kind: 'working', count: 1}}),
           ]}),
           segment(`psb-seg-solo-${s}`, {rows: [tree(`psb-t8-${s}`, {title: '에이전트 패널 표시 규칙', status: 'working', age: '38s'})]}),
         ]),

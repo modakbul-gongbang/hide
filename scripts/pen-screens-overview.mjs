@@ -82,7 +82,7 @@ export function overviewScreens(tokens, {frame, text, icon, screenButton, screen
   }
   const projectChip = id => screenButton(id, '모든 프로젝트  ▾', {variant: 'outline'});
   const search = (id, placeholder) => screenInput(id, {placeholder, width: CARD_W});
-  const taskControls = id => [screenToggleGroup(`${id}-chips`, ['전체', 'Needs You 2', '일하는 중'], 0), projectChip(`${id}-project`), search(`${id}-search`, '일감, 브랜치, #PR, 이슈 검색')];
+  const taskControls = id => [screenToggleGroup(`${id}-chips`, ['전체', '내 차례 2', '일하는 중'], 0), projectChip(`${id}-project`), search(`${id}-search`, '일감, 브랜치, #PR, 이슈 검색')];
   const backlogControls = id => [screenButton(`${id}-labels`, '라벨  ▾', {variant: 'outline'}), projectChip(`${id}-project`), search(`${id}-search`, '이슈, 메모 검색')];
 
   // -- Tasks (TasksTab.tsx) -----------------------------------------------------------------
@@ -122,7 +122,7 @@ export function overviewScreens(tokens, {frame, text, icon, screenButton, screen
     return row(id, label, [
       text(`${id}-name`, label, {size: '$--text-subhead', weight: '600'}),
       caption(`${id}-counts`, counts, MUTED),
-      ...(needs ? [caption(`${id}-needs`, `· Needs You ${needs}`, '$--warning')] : []),
+      ...(needs ? [caption(`${id}-needs`, `· 내 차례 ${needs}`, '$--warning')] : []),
       spacer(`${id}-sp`),
       ...(backlog ? [LINK_CHIP(`${id}-backlog`, `백로그 ${backlog}`, [['circle-dot', 'lead'], ['chevron-right', 'tail']])] : []),
       LINK_CHIP(`${id}-open`, '열기', [['external-link', 'tail']]),
@@ -235,7 +235,7 @@ export function overviewScreens(tokens, {frame, text, icon, screenButton, screen
     return row(id, key, children, {width: COLS[key], gap: XS});
   }
   function nowCell(id, {needs = 0, working = 0, waiting = 0, done = 0, resting = 0}) {
-    const parts = [[needs, `Needs You ${needs}`, '$--warning'], [working, `일하는 중 ${working}`, '$--agent-working'], [waiting, `기다림 ${waiting}`, '$--success'], [done, `끝남 ${done}`, SUBTLE]].filter(([value]) => value > 0);
+    const parts = [[needs, `내 차례 ${needs}`, '$--warning'], [working, `일하는 중 ${working}`, '$--agent-working'], [waiting, `기다림 ${waiting}`, '$--success'], [done, `끝남 ${done}`, SUBTLE]].filter(([value]) => value > 0);
     if (!parts.length) return cell(id, 'now', [caption(`${id}-t`, resting ? `쉬는 중 ${resting}` : '일감 없음', MUTED)]);
     return cell(id, 'now', parts.map(([, label, fill], index) => caption(`${id}-${index}`, index ? `· ${label}` : label, fill)));
   }

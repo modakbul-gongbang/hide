@@ -12232,7 +12232,7 @@
                 {
                   "type": "ellipse",
                   "id": "L87E9-dot",
-                  "name": "To read",
+                  "name": "Unread",
                   "enabled": false,
                   "width": 7,
                   "height": 7,
@@ -16357,7 +16357,7 @@
                     {
                       "type": "ellipse",
                       "id": "F2cOz-dot",
-                      "name": "To read",
+                      "name": "Unread",
                       "enabled": false,
                       "width": 7,
                       "height": 7,
@@ -18503,7 +18503,7 @@
                             {
                               "type": "ellipse",
                               "id": "project-turn-dot",
-                              "name": "To read",
+                              "name": "Unread",
                               "enabled": false,
                               "width": 7,
                               "height": 7,
@@ -18580,7 +18580,7 @@
                             {
                               "type": "ellipse",
                               "id": "project-going-dot",
-                              "name": "To read",
+                              "name": "Unread",
                               "enabled": false,
                               "width": 7,
                               "height": 7,
@@ -18657,7 +18657,7 @@
                             {
                               "type": "ellipse",
                               "id": "project-done-dot",
-                              "name": "To read",
+                              "name": "Unread",
                               "enabled": true,
                               "width": 7,
                               "height": 7,
@@ -18734,7 +18734,7 @@
                             {
                               "type": "ellipse",
                               "id": "project-unread-dot",
-                              "name": "To read",
+                              "name": "Unread",
                               "enabled": true,
                               "width": 7,
                               "height": 7,
@@ -20687,7 +20687,7 @@
                                     {
                                       "type": "ellipse",
                                       "id": "checkout-turn-dot",
-                                      "name": "To read",
+                                      "name": "Unread",
                                       "enabled": false,
                                       "width": 7,
                                       "height": 7,
@@ -20764,7 +20764,7 @@
                                     {
                                       "type": "ellipse",
                                       "id": "checkout-going-dot",
-                                      "name": "To read",
+                                      "name": "Unread",
                                       "enabled": false,
                                       "width": 7,
                                       "height": 7,
@@ -20841,7 +20841,7 @@
                                     {
                                       "type": "ellipse",
                                       "id": "checkout-done-dot",
-                                      "name": "To read",
+                                      "name": "Unread",
                                       "enabled": true,
                                       "width": 7,
                                       "height": 7,
@@ -20918,7 +20918,7 @@
                                     {
                                       "type": "ellipse",
                                       "id": "checkout-unread-dot",
-                                      "name": "To read",
+                                      "name": "Unread",
                                       "enabled": true,
                                       "width": 7,
                                       "height": 7,
@@ -21555,7 +21555,7 @@
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "sidebar-agent-row.tsx SidebarAgentRow, in Agents and under a checkout in Projects: the status mark alone (no provider logo; a row Hide AI started that stands alone also draws the Hide owl, see Component / Hide AI origin), the title at 12/400 in every state (attention and selection brighten it, never thicken it), a branch chip only for a child whose checkout differs from its parent, the device chip, the descendant badge while folded, the elapsed time at 11 that is always shown, and the fold slot every row keeps, its chevron drawn only on a parent, so every row's time and chevron share one column each. Line one is 20 high; a request or news has its own 16 line from the start, so a row is 28 or 44; a quiet sentence is only in the tooltip, and Agents adds a fixed context line. Hover, focus and selection change a fill and a ring, never a height. A row whose pane has letters waiting on a possible draft draws a 12 envelope in the muted colour before the time, with no number; it takes no slot until then.",
+          "content": "sidebar-agent-row.tsx SidebarAgentRow, in Agents and under a checkout in Projects: the status mark alone (no provider logo; a row Hide AI started that stands alone also draws the Hide owl, see Component / Hide AI origin), the title at 12/400 in every state (attention and selection brighten it, never thicken it), a branch chip only for a child whose checkout differs from its parent, the device chip, the descendant badge while folded, the elapsed time at 11 that is always shown, and the fold slot every row keeps, its chevron drawn only on a parent, so every row's time and chevron share one column each. The mark is one of four, or a grey moon for an agent asleep, waking or not reopened, which is never dimmed; an unknown or disconnected row has no mark and is dimmed whole. Line one is 20 high; a request or news has its own 16 line from the start, so a row is 28 or 44; a quiet sentence is only in the tooltip, and Agents adds a fixed context line. Hover, focus and selection change a fill and a ring, never a height. A row whose pane has letters waiting on a possible draft draws a 12 envelope in the muted colour before the time, with no number; it takes no slot until then. A line leads with its word and ends with any tasks a finished turn left; at the narrowest width only the sentence between them is cut. A ring that waits always has a line led by 대기; a ring at work says its sentence alone or has none.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -21627,11 +21627,22 @@
                     {
                       "type": "ellipse",
                       "id": "sar-dot",
-                      "name": "To read",
+                      "name": "Unread",
                       "enabled": false,
                       "width": 7,
                       "height": 7,
                       "fill": "$--success"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "sar-moon",
+                      "name": "Asleep",
+                      "enabled": false,
+                      "width": 12,
+                      "height": 12,
+                      "icon": "moon",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
                     }
                   ],
                   "layout": "horizontal"
@@ -22156,6 +22167,66 @@
         },
         {
           "type": "frame",
+          "id": "sidebar-agent-row-state-done-background",
+          "name": "State / Done with background tasks left: the green dot, the count kept at the line's end",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-done-background-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Done with background tasks left: the green dot, the count kept at the line's end",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-done-background",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / done-background",
+              "descendants": {
+                "sar-turn": {
+                  "enabled": false,
+                  "fill": "$--warning"
+                },
+                "sar-turn-bang": {
+                  "fill": "$--status-foreground"
+                },
+                "sar-arc": {
+                  "enabled": false,
+                  "fill": "$--agent-working"
+                },
+                "sar-dot": {
+                  "enabled": true,
+                  "fill": "$--success"
+                },
+                "sar-moon": {
+                  "enabled": false,
+                  "fill": "$--muted-foreground"
+                },
+                "sar-title": {
+                  "content": "배포 파이프라인 정리",
+                  "fill": "$--foreground"
+                },
+                "sar-elapsed": {
+                  "content": "1m"
+                },
+                "sar-line": {
+                  "enabled": true,
+                  "content": "끝남 · 배포 시작했고 결과는 알림으로 옴 · 백그라운드 2",
+                  "fill": "$--foreground"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
           "id": "sidebar-agent-row-state-question",
           "name": "State / Question: the request from the start",
           "width": "fill_container",
@@ -22433,7 +22504,7 @@
         {
           "type": "frame",
           "id": "sidebar-agent-row-state-waiting",
-          "name": "State / Waiting on its children, a background task or a reply: ring in Working, the cause alone on the line",
+          "name": "State / Waiting on its checks, children, a background task or a reply: ring in Working, its line led by 대기",
           "width": "fill_container",
           "layout": "vertical",
           "gap": "$--spacing-xxs",
@@ -22443,7 +22514,7 @@
               "id": "sidebar-agent-row-state-waiting-label",
               "name": "State name",
               "fill": "$--subtle-foreground",
-              "content": "Waiting on its children, a background task or a reply: ring in Working, the cause alone on the line",
+              "content": "Waiting on its checks, children, a background task or a reply: ring in Working, its line led by 대기",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -22473,7 +22544,7 @@
                 },
                 "sar-line": {
                   "enabled": true,
-                  "content": "CI 끝나기를 기다림",
+                  "content": "대기 · CI · PR #214",
                   "fill": "$--subtle-foreground"
                 },
                 "sar-turn": {
@@ -22614,7 +22685,7 @@
         {
           "type": "frame",
           "id": "sidebar-agent-row-state-unknown",
-          "name": "State / Unknown activity",
+          "name": "State / Unknown activity: no mark, dimmed whole, its line says so",
           "width": "fill_container",
           "layout": "vertical",
           "gap": "$--spacing-xxs",
@@ -22624,7 +22695,7 @@
               "id": "sidebar-agent-row-state-unknown-label",
               "name": "State name",
               "fill": "$--subtle-foreground",
-              "content": "Unknown activity",
+              "content": "Unknown activity: no mark, dimmed whole, its line says so",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -22653,8 +22724,187 @@
                 "sar-dot": {
                   "enabled": false,
                   "fill": "$--success"
+                },
+                "sar-line": {
+                  "enabled": true,
+                  "content": "상태 모름",
+                  "fill": "$--subtle-foreground"
+                }
+              },
+              "opacity": 0.5
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-asleep",
+          "name": "State / Asleep: a grey moon, not dimmed, no line; its hover says 재움 · 열면 깨어남",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-asleep-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Asleep: a grey moon, not dimmed, no line; its hover says 재움 · 열면 깨어남",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-asleep",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / asleep",
+              "descendants": {
+                "sar-turn": {
+                  "enabled": false,
+                  "fill": "$--warning"
+                },
+                "sar-turn-bang": {
+                  "fill": "$--status-foreground"
+                },
+                "sar-arc": {
+                  "enabled": false,
+                  "fill": "$--agent-working"
+                },
+                "sar-dot": {
+                  "enabled": false,
+                  "fill": "$--success"
+                },
+                "sar-moon": {
+                  "enabled": true,
+                  "fill": "$--muted-foreground"
+                },
+                "sar-title": {
+                  "content": "파서 리팩터링"
+                },
+                "sar-elapsed": {
+                  "content": "2h"
                 }
               }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-waking",
+          "name": "State / Waking: the moon, its line says so",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-waking-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Waking: the moon, its line says so",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-waking",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / waking",
+              "descendants": {
+                "sar-turn": {
+                  "enabled": false,
+                  "fill": "$--warning"
+                },
+                "sar-turn-bang": {
+                  "fill": "$--status-foreground"
+                },
+                "sar-arc": {
+                  "enabled": false,
+                  "fill": "$--agent-working"
+                },
+                "sar-dot": {
+                  "enabled": false,
+                  "fill": "$--success"
+                },
+                "sar-moon": {
+                  "enabled": true,
+                  "fill": "$--muted-foreground"
+                },
+                "sar-title": {
+                  "content": "파서 리팩터링"
+                },
+                "sar-elapsed": {
+                  "content": "2h"
+                },
+                "sar-line": {
+                  "enabled": true,
+                  "content": "깨우는 중",
+                  "fill": "$--subtle-foreground"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-disconnected",
+          "name": "State / On a device that is not connected: no mark, dimmed whole, its line names the device",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-disconnected-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "On a device that is not connected: no mark, dimmed whole, its line names the device",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-disconnected",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / disconnected",
+              "descendants": {
+                "sar-turn": {
+                  "enabled": false,
+                  "fill": "$--warning"
+                },
+                "sar-turn-bang": {
+                  "fill": "$--status-foreground"
+                },
+                "sar-arc": {
+                  "enabled": false,
+                  "fill": "$--agent-working"
+                },
+                "sar-dot": {
+                  "enabled": false,
+                  "fill": "$--success"
+                },
+                "sar-moon": {
+                  "enabled": false,
+                  "fill": "$--muted-foreground"
+                },
+                "sar-title": {
+                  "content": "빌드 캐시 정리"
+                },
+                "sar-elapsed": {
+                  "content": "40m"
+                },
+                "sar-line": {
+                  "enabled": true,
+                  "content": "Mac mini 연결 끊김",
+                  "fill": "$--subtle-foreground"
+                }
+              },
+              "opacity": 0.5
             }
           ]
         },
@@ -23363,7 +23613,7 @@
                     {
                       "type": "ellipse",
                       "id": "awt-status-mark-dot",
-                      "name": "To read",
+                      "name": "Unread",
                       "enabled": false,
                       "width": 7,
                       "height": 7,
@@ -23456,7 +23706,7 @@
                     {
                       "type": "ellipse",
                       "id": "awt-icon-status-dot",
-                      "name": "To read",
+                      "name": "Unread",
                       "enabled": false,
                       "width": 7,
                       "height": 7,
@@ -24092,7 +24342,7 @@
                     {
                       "type": "ellipse",
                       "id": "pane-child-chip-mark-dot",
-                      "name": "To read",
+                      "name": "Unread",
                       "enabled": false,
                       "width": 7,
                       "height": 7,
@@ -41802,7 +42052,7 @@
                                     {
                                       "type": "ellipse",
                                       "id": "pr-card-agents-turn-dot",
-                                      "name": "To read",
+                                      "name": "Unread",
                                       "enabled": false,
                                       "width": 7,
                                       "height": 7,
@@ -41879,7 +42129,7 @@
                                     {
                                       "type": "ellipse",
                                       "id": "pr-card-agents-going-dot",
-                                      "name": "To read",
+                                      "name": "Unread",
                                       "enabled": false,
                                       "width": 7,
                                       "height": 7,
@@ -41956,7 +42206,7 @@
                                     {
                                       "type": "ellipse",
                                       "id": "pr-card-agents-done-dot",
-                                      "name": "To read",
+                                      "name": "Unread",
                                       "enabled": true,
                                       "width": 7,
                                       "height": 7,
@@ -42033,7 +42283,7 @@
                                     {
                                       "type": "ellipse",
                                       "id": "pr-card-agents-unread-dot",
-                                      "name": "To read",
+                                      "name": "Unread",
                                       "enabled": true,
                                       "width": 7,
                                       "height": 7,
@@ -42968,7 +43218,7 @@
                             {
                               "type": "ellipse",
                               "id": "agb-row1-dot",
-                              "name": "To read",
+                              "name": "Unread",
                               "enabled": false,
                               "width": 7,
                               "height": 7,
@@ -43063,7 +43313,7 @@
                                 {
                                   "type": "ellipse",
                                   "id": "agb-row1-tk-g-dot",
-                                  "name": "To read",
+                                  "name": "Unread",
                                   "enabled": true,
                                   "width": 7,
                                   "height": 7,
@@ -43228,7 +43478,7 @@
                             {
                               "type": "ellipse",
                               "id": "agb-row2-dot",
-                              "name": "To read",
+                              "name": "Unread",
                               "enabled": false,
                               "width": 7,
                               "height": 7,
@@ -43323,7 +43573,7 @@
                                 {
                                   "type": "ellipse",
                                   "id": "agb-row2-tk-g-dot",
-                                  "name": "To read",
+                                  "name": "Unread",
                                   "enabled": true,
                                   "width": 7,
                                   "height": 7,
@@ -43489,7 +43739,7 @@
                             {
                               "type": "ellipse",
                               "id": "agb-row3-dot",
-                              "name": "To read",
+                              "name": "Unread",
                               "enabled": false,
                               "width": 7,
                               "height": 7,
@@ -43584,7 +43834,7 @@
                                 {
                                   "type": "ellipse",
                                   "id": "agb-row3-tk-g-dot",
-                                  "name": "To read",
+                                  "name": "Unread",
                                   "enabled": true,
                                   "width": 7,
                                   "height": 7,
@@ -46057,7 +46307,7 @@
           "type": "text",
           "id": "cmp-agent-tree-parts-spec",
           "name": "web/src/components/agent-tre",
-          "content": "web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the one PR mark every PR surface draws (web/src/components/pr-mark.tsx): the state's icon in its colour (failed red, pending amber, mergeable green, draft grey, merged purple, closed dim), the number for one PR and, for several, each state's icon and count in that state's colour, worst first, no border, a fill under the pointer, dimmed while GitHub cannot be read, and a compact variant without the number; the one descendant mark a folded parent wears, ! N while raised, nothing for working alone; the pane header's tree button, state counts without a separate total or internal divider, a tree icon when no count is drawn; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, plus a device line only for a child on another machine. Sessions rows, the pane header, the sidebar row and the tree popover all draw the same PR mark.",
+          "content": "web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the one PR mark every PR surface draws (web/src/components/pr-mark.tsx): the state's icon in its colour (failed red, pending amber, mergeable green, draft grey, merged purple, closed dim), the number for one PR and, for several, each state's icon and count in that state's colour, worst first, no border, a fill under the pointer, dimmed while GitHub cannot be read, and a compact variant without the number; the one descendant mark a folded parent wears, ! N while raised, nothing for working alone; the pane header's tree button, state counts without a separate total or internal divider, a tree icon when no count is drawn; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, a second line only for a block's cause, a waiting ring (led by 대기) or an unknown row, plus a device line only for a child on another machine. Sessions rows, the pane header, the sidebar row and the tree popover all draw the same PR mark.",
           "fill": "$--subtle-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -46343,7 +46593,7 @@
                             {
                               "type": "ellipse",
                               "id": "ath-tb-result-mark-dot",
-                              "name": "To read",
+                              "name": "Unread",
                               "enabled": true,
                               "width": 7,
                               "height": 7,
@@ -46546,7 +46796,7 @@
                             {
                               "type": "ellipse",
                               "id": "ath-row-dot",
-                              "name": "To read",
+                              "name": "Unread",
                               "enabled": false,
                               "width": 7,
                               "height": 7,
@@ -46600,6 +46850,17 @@
                       "alignItems": "center",
                       "width": "fill_container",
                       "height": 20
+                    },
+                    {
+                      "type": "text",
+                      "id": "ath-row-line",
+                      "name": "대기 · 자식 1명 작업 중",
+                      "content": "대기 · 자식 1명 작업 중",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400",
+                      "enabled": false
                     },
                     {
                       "type": "frame",
@@ -47559,6 +47820,70 @@
                     },
                     "ath-row-age": {
                       "content": "40m"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-row-waiting-cell",
+              "name": "Waiting ring: its line led by 대기",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-row-waiting-cap",
+                  "name": "Waiting ring: its line led b",
+                  "content": "Waiting ring: its line led by 대기",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-row-waiting",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-elbow": {
+                      "enabled": true
+                    },
+                    "ath-row-chev": {
+                      "enabled": false
+                    },
+                    "ath-row-turn": {
+                      "enabled": false,
+                      "fill": "$--warning"
+                    },
+                    "ath-row-turn-bang": {
+                      "fill": "$--status-foreground"
+                    },
+                    "ath-row-arc": {
+                      "enabled": true,
+                      "fill": "$--agent-working"
+                    },
+                    "ath-row-dot": {
+                      "enabled": false,
+                      "fill": "$--success"
+                    },
+                    "ath-row-title": {
+                      "content": "CI 기다리는 자식"
+                    },
+                    "ath-row-line": {
+                      "enabled": true,
+                      "content": "대기 · CI · PR #214",
+                      "fill": "$--subtle-foreground"
+                    },
+                    "ath-row-pr": {
+                      "enabled": false
+                    },
+                    "ath-row-age": {
+                      "content": "12m"
                     }
                   }
                 }
@@ -48536,6 +48861,70 @@
                     },
                     "ath-row-age": {
                       "content": "40m"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-row-waiting-cell",
+              "name": "Waiting ring: its line led by 대기",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-row-waiting-cap",
+                  "name": "Waiting ring: its line led b",
+                  "content": "Waiting ring: its line led by 대기",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-row-waiting",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-elbow": {
+                      "enabled": true
+                    },
+                    "ath-row-chev": {
+                      "enabled": false
+                    },
+                    "ath-row-turn": {
+                      "enabled": false,
+                      "fill": "$--warning"
+                    },
+                    "ath-row-turn-bang": {
+                      "fill": "$--status-foreground"
+                    },
+                    "ath-row-arc": {
+                      "enabled": true,
+                      "fill": "$--agent-working"
+                    },
+                    "ath-row-dot": {
+                      "enabled": false,
+                      "fill": "$--success"
+                    },
+                    "ath-row-title": {
+                      "content": "CI 기다리는 자식"
+                    },
+                    "ath-row-line": {
+                      "enabled": true,
+                      "content": "대기 · CI · PR #214",
+                      "fill": "$--subtle-foreground"
+                    },
+                    "ath-row-pr": {
+                      "enabled": false
+                    },
+                    "ath-row-age": {
+                      "content": "12m"
                     }
                   }
                 }
