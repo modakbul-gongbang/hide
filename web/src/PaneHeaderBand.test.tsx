@@ -356,3 +356,23 @@ it("names the pane's title and agent product on its record button", async () => 
     expect(container.querySelector("[data-plain]")).toBeNull();
   } finally { await act(async () => root.unmount()); }
 });
+
+// docs/UI_BEHAVIOR.md: a pull request band names only what its verb does not,
+// and nothing Hide could not read reaches it; an approval names no command.
+it("words a pull request band by what its verb leaves out and nothing Hide could not read", async () => {
+  const action = { kind: "pr", workspace_id: "w", url: "https://github.com/acme/app/pull/7", number: 7, checks: "failed", tone: "error" } as const;
+  const band = (kind: string, checks: "failed" | "passing" | "unknown", review: "approved" | "changes_requested" | null): PaneHeader => ({ working: false, band: { kind, tone: "error", reason: "a generated progress line", since_unix_ms: null, action, more: 0, exit_code: null, facts: { kind: "pull_request", checks, review } } });
+  const cases: [PaneHeader, string][] = [
+    [band("fix", "failed", null), "FixCI failedOpen PR"],
+    [band("fix", "failed", "changes_requested"), "FixCI failed · Changes requestedOpen PR"],
+    [band("review", "unknown", null), "ReviewOpen PR"],
+    [band("merge", "passing", "approved"), "MergeOpen PR"],
+    [{ working: false, band: { kind: "approval", tone: "warning", reason: null, since_unix_ms: null, action: null, more: 0, exit_code: null } }, "ApproveStopped at a permission request"],
+  ];
+  for (const [value, text] of cases) {
+    const { container, unmount } = await mount(value, [], { paneId: "solo" });
+    try {
+      expect(container.querySelector("[data-pane-header-band]")?.textContent).toBe(text);
+    } finally { await unmount(); }
+  }
+});

@@ -508,6 +508,17 @@ export function createActions(send: DispatchFn) {
   };
 
   /**
+   * A page the operator opened takes the keyboard the same way (B20): the
+   * open names itself, and the core's answer names the display it shows.
+   * Returns the `request_id` the `browser_open` carries.
+   */
+  const followBrowserOpen = (workspace: ViewWorkspace): string => {
+    const requestId = `follow:${remoteRequestId()}`;
+    ui().setViewFocusRequest({ workspace: workspaceKey(workspace), browserOpen: requestId });
+    return requestId;
+  };
+
+  /**
    * The View areas the operator acted on (contract 4.1): the frame the page
    * has drawn, else the front Workspace's as the store holds it, for a chord
    * while the Views are hidden. Every View action names this frame's
@@ -2533,6 +2544,10 @@ export function createActions(send: DispatchFn) {
     openBrowser(url: string, workspace?: ViewWorkspace, areaId?: string, besideDisplay?: string, openerPane?: string) {
       const target = workspace ?? frontViewWorkspace();
       if (!target) return diagnostic("browser_open: no Workspace in front");
+      // The keyboard goes with a page the operator opened, as with a file;
+      // a page's own new tab leaves it with the page that asked, and a New
+      // tab's address field takes it as it mounts.
+      const follows = url !== "" && !besideDisplay;
       dispatch({
         schema_version: 2,
         kind: "browser_open",
@@ -2542,6 +2557,7 @@ export function createActions(send: DispatchFn) {
           ...(areaId ? { area_id: areaId } : {}),
           ...(besideDisplay ? { beside_display: besideDisplay } : {}),
           ...(openerPane ? { opener_pane: openerPane } : {}),
+          ...(follows ? { request_id: followBrowserOpen(target) } : {}),
         },
       });
     },
@@ -2604,12 +2620,13 @@ export function createActions(send: DispatchFn) {
         const front = ui().screen?.kind === "workspace" ? frontViewWorkspace() : null;
         const here = found.kind === "file" && front?.device_id === deviceId && front.path !== owner.checkout.path ? front : null;
         if (found.kind === "file" && isHtmlFile(path) && mode === "auto") {
+          const request_id = followBrowserOpen(here ?? { device_id: deviceId, path: owner.checkout.path });
           dispatch({
             schema_version: 2,
             kind: "browser_open",
             payload: here
-              ? { url: fileUrl(path), workspace: here, ...opener }
-              : { url: fileUrl(path), workspace: { device_id: deviceId, path: owner.checkout.path }, reveal: true, ...opener },
+              ? { url: fileUrl(path), workspace: here, request_id, ...opener }
+              : { url: fileUrl(path), workspace: { device_id: deviceId, path: owner.checkout.path }, reveal: true, request_id, ...opener },
           });
           return;
         }
@@ -2635,7 +2652,7 @@ export function createActions(send: DispatchFn) {
     openInBrowser(path: string) {
       const target = frontViewWorkspace();
       if (!target) return diagnostic("browser_open: no Workspace in front");
-      dispatch({ schema_version: 2, kind: "browser_open", payload: { url: fileUrl(path), workspace: { device_id: target.device_id, path: target.path } } });
+      dispatch({ schema_version: 2, kind: "browser_open", payload: { url: fileUrl(path), workspace: { device_id: target.device_id, path: target.path }, request_id: followBrowserOpen(target) } });
     },
 
     /**

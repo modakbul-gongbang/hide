@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isolate, launch, type Isolated } from "./fixture";
+import { FUSED_ELECTRON_ENV } from "./fused-env";
 import { endWindowsProcesses } from "../../web/e2e/platform-fixture";
 import { copyFixtureShim } from "../../web/e2e/shims/build";
 
@@ -69,6 +70,7 @@ let root: string;
 let runs: Isolated[];
 let children: ChildProcess[];
 beforeEach(() => {
+  vi.stubEnv(FUSED_ELECTRON_ENV, "/fused/electron");
   root = fs.mkdtempSync(path.join(os.tmpdir(), "hide-fixture-regression-"));
   vi.spyOn(os, "tmpdir").mockReturnValue(root);
   boundary.launch.mockReset();

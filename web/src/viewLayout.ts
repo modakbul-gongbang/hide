@@ -277,19 +277,29 @@ export function viewAreaStepUnavailable(layout: ViewLayoutSnapshot, drawn: { geo
 export type ViewFocusRequest =
   | { workspace: string; displayId: string; from: { areaId: string; index: number } | null }
   | { workspace: string; areaId: string }
-  | { workspace: string; opened: { path: string; kind: "file" | "diff"; committed: boolean | null } };
+  | { workspace: string; opened: { path: string; kind: "file" | "diff"; committed: boolean | null } }
+  | { workspace: string; browserOpen: string };
+
+/** The core's answer to a `browser_open` that named itself (`status.browser_opens`). */
+export type BrowserOpenReceipt = { request_id: string; ok: boolean; display_id: string | null };
 
 /**
  * Whether the core now shows what a focus request asked for, so the keyboard
  * can follow: the named area active, the display active in the active area
  * and no longer where it stood when asked, or the opened file or diff (of
- * its own History group) the active area's view once it is past opening. A move or split of the active
- * view therefore resolves once it has landed, never on the frame it was
- * asked from, and a refused one never resolves.
+ * its own History group) the active area's view once it is past opening,
+ * or the page a named browser open answered with, active in the active area.
+ * A move or split of the active view therefore resolves once it has landed,
+ * never on the frame it was asked from, and a refused one never resolves.
  */
-export function focusRequestArrived(request: ViewFocusRequest, workspace: string, layout: ViewLayoutSnapshot): boolean {
+export function focusRequestArrived(request: ViewFocusRequest, workspace: string, layout: ViewLayoutSnapshot, opens: readonly BrowserOpenReceipt[] = []): boolean {
   if (request.workspace !== workspace) return false;
   if ("areaId" in request) return layout.active_area === request.areaId;
+  if ("browserOpen" in request) {
+    const page = opens.find((receipt) => receipt.request_id === request.browserOpen);
+    const located = page?.ok && page.display_id ? locateDisplay(layout.root, page.display_id) : null;
+    return !!located && layout.active_area === located.area.id && located.area.active === located.display.id;
+  }
   if ("opened" in request) {
     const shown = activeDisplay(layout)?.display;
     const { path, kind, committed } = request.opened;

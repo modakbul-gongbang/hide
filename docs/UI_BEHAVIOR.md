@@ -308,7 +308,7 @@ A single click on an Explorer file or a History row opens it in the active area'
 Each area has at most one preview, and a click never touches another area or a pinned view.
 A double-click on the row or the tab, Keep open, or the first edit pins the preview where it is, including a double-click that lands while the file's first read is still running; because the first edit pins, a document that is dirty, saving, or whose save failed is never a preview in any area that shows it.
 Opening a file that is already shown moves to its view instead of adding a tab, choosing the one used last when several views show it.
-The keyboard goes with every open from the Explorer (a click, a double-click or Enter), a History row, ⌘P, Open to the side or a terminal link into the view that shows it once the core places it, so ⌘W, ⌘S and typing act on that file rather than on the pane that printed the link; the tree's arrow keys only move its selection, so the keyboard stays in the tree until something opens.
+The keyboard goes with every open from the Explorer (a click, a double-click or Enter), a History row, ⌘P, Open to the side or a terminal link into the view that shows it once the core places it, so ⌘W, ⌘S and typing act on that file rather than on the pane that printed the link; a page the operator opens (a terminal link's URL or HTML file, the Explorer's Open in Browser, Open server, or a row's, a card's or ⌘K's link) takes it the same way once the core names the display it opened, so ⌘W closes that page, while a View area's New tab gives it to its address field and a page's own new tab leaves it with that page; a folder a link reveals opens nothing to type in, so the keyboard stays in the pane; the tree's arrow keys only move its selection, so the keyboard stays in the tree until something opens.
 Opening a file while the lane is closed, put away or on another tool opens it on Files first.
 Diffs are placed by the same rules.
 
@@ -481,6 +481,7 @@ The child button opens with the raised branches expanded whenever its core raise
 Blocked is a warning band with its cause, Fix is red, Result is success, and Review or Merge take its pull request's state colour (failed red, mergeable green, pending muted).
 Merge stands for a mergeable pull request and Review for a pending one, so a draft carries neither.
 Task bands carry a reason and stable action age; they navigate only, with answers in the terminal and merges in the PR view.
+A pull request band names only what its verb does not, `고치기 CI 실패` or `고치기 변경 요청`, and Review or Merge stands alone; nothing Hide could not read, such as a check's name, is written on it.
 Working has a thin blue line; CI wait, waiting and idle have no task band, although their children can fill the second row.
 Normal termination, disconnection, starting, sleeping and control elsewhere are gray; a failed exit is red with the actual code.
 Connection and sleep recovery controls stay in the body, and Not connected stays a chip.

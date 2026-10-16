@@ -1,5 +1,7 @@
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { appScheme, browserPartition, isPopup, loadable, popupBounds, MAX_AUTHORIZED_SCOPES, MAX_SYNCED_DISPLAYS, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds } from "./browserSync";
+import { appScheme, browserPartition, isLocalNetworkHost, localPageRequest, isPopup, loadable, popupBounds, MAX_AUTHORIZED_SCOPES, MAX_SYNCED_DISPLAYS, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds } from "./browserSync";
 
 const rect = { x: 0, y: 40, width: 800, height: 600 };
 const display = { id: "d1", area_id: "a1", url: "https://a.test/", load: 3, rect, visible: true };
@@ -186,5 +188,49 @@ describe("keeping pages alive", () => {
     expect(toBounds({ x: 10.4, y: 20.6, width: 100.2, height: 50 }, 1)).toEqual({ x: 10, y: 21, width: 101, height: 50 });
     expect(toBounds({ x: 10, y: 20, width: 100, height: 50 }, 1.25)).toEqual({ x: 13, y: 25, width: 125, height: 63 });
     expect(toBounds(rect, Number.NaN)).toEqual(rect);
+  });
+});
+
+describe("what a local HTML page may load", () => {
+  // Paths are built for the system the test runs on: `file:///checkout/...` is no absolute path on Windows.
+  const root = path.resolve("/checkout");
+  const inside = (file: string) => file.startsWith(root + path.sep);
+  const fileUrl = (...parts: string[]) => pathToFileURL(path.resolve(...parts)).href;
+  const decide = (url: string, type = "image") => localPageRequest(url, type, inside);
+
+  it("names this machine and private networks, in every spelling a URL normalizes to", () => {
+    const local = ["localhost", "LOCALHOST.", "app.localhost", "printer.local", "router", "127.0.0.1", "127.8.8.8", "0.0.0.0", "10.1.2.3", "172.16.0.1", "172.31.255.1",
+      "192.168.1.20", "169.254.169.254", "100.64.0.1", "198.18.0.1", "224.0.0.1", "[::1]", "[::]", "[fe80::1]", "[fd12:3456::1]", "[::ffff:7f00:1]", "[::ffff:a00:1]", "[64:ff9b::7f00:1]", "[ff02::1]"];
+    for (const host of local) expect(isLocalNetworkHost(host), host).toBe(true);
+    // A URL spells 2130706433 and 0x7f.1 as 127.0.0.1 before this sees it.
+    expect(isLocalNetworkHost(new URL("http://2130706433/").hostname)).toBe(true);
+    expect(isLocalNetworkHost(new URL("http://0x7f.1/").hostname)).toBe(true);
+    for (const host of ["example.com", "cdn.jsdelivr.net", "8.8.8.8", "172.32.0.1", "172.15.0.1", "192.169.0.1", "100.128.0.1", "[2606:4700::1111]", "[::ffff:808:808]"]) {
+      expect(isLocalNetworkHost(host), host).toBe(false);
+    }
+  });
+
+  it("loads the page's own address, and files, styles, scripts, images and frames of its checkout", () => {
+    expect(decide(fileUrl("/elsewhere/page.html"), "mainFrame")).toEqual({ cancel: false });
+    for (const type of ["image", "stylesheet", "script", "font", "media", "subFrame"]) expect(decide(fileUrl(root, "a", "b.png"), type), type).toEqual({ cancel: false });
+  });
+
+  it("refuses a file outside its checkout, and any read of a file by a script", () => {
+    for (const type of ["image", "script", "subFrame", "stylesheet"]) expect(decide(fileUrl("/etc/hosts"), type), type).toEqual({ cancel: true, boundary: "file" });
+    expect(decide(`${pathToFileURL(root).href}/../etc/hosts`)).toEqual({ cancel: true, boundary: "file" });
+    for (const type of ["xhr", "webSocket", "ping", "other"]) expect(decide(fileUrl(root, "a.json"), type), type).toEqual({ cancel: true, boundary: "file" });
+    expect(decide("file://server/share/a.png")).toEqual({ cancel: true, boundary: "file" });
+  });
+
+  it("refuses this machine and private networks, and holds a public name until it is resolved", () => {
+    for (const url of ["http://127.0.0.1:7000/", "http://localhost/", "https://192.168.0.5/x", "ws://[::1]:9/", "http://nas/", "http://10.0.0.1/", "http://2130706433/"]) {
+      expect(decide(url, "xhr"), url).toEqual({ cancel: true, boundary: "network" });
+    }
+    expect(decide("https://example.com/a.js", "script")).toEqual({ resolve: "example.com" });
+    expect(decide("https://8.8.8.8/")).toEqual({ cancel: false });
+    expect(decide("data:text/plain,hi")).toEqual({ cancel: false });
+    expect(decide("blob:null/1")).toEqual({ cancel: false });
+    expect(decide("ftp://example.com/a")).toEqual({ cancel: true, boundary: "network" });
+    expect(decide("not a url")).toEqual({ cancel: true, boundary: "network" });
   });
 });

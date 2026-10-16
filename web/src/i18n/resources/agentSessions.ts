@@ -1,14 +1,6 @@
 import type { Catalog, Catalogs } from "../schema";
 
 export const agentSessionsEnglish = {
-  "agentSessions.approvalCommandUnavailable": "Approval command unavailable",
-  "agentSessions.checkNamesUnavailable": "Check names unavailable",
-  "agentSessions.checks.unknown": "Checks unavailable",
-  "agentSessions.checks.none": "No checks",
-  "agentSessions.checks.pending": "Checks pending",
-  "agentSessions.checks.failed": "Checks failed",
-  "agentSessions.checks.passing": "Checks passed",
-  "agentSessions.review.unknown": "Review unavailable",
   "agentSessions.allCheckouts": "All checkouts",
   "agentSessions.onlyCheckout": "{{checkout}} only",
   "agentSessions.tag.blocked": "Blocked",
@@ -58,14 +50,6 @@ export const agentSessionsEnglish = {
 type Messages = Catalog<typeof agentSessionsEnglish>;
 
 const ko: Messages = {
-  "agentSessions.approvalCommandUnavailable": "승인 명령 확인 불가",
-  "agentSessions.checkNamesUnavailable": "check 이름 확인 불가",
-  "agentSessions.checks.unknown": "checks 확인 불가",
-  "agentSessions.checks.none": "checks 없음",
-  "agentSessions.checks.pending": "checks 대기",
-  "agentSessions.checks.failed": "checks 실패",
-  "agentSessions.checks.passing": "checks 통과",
-  "agentSessions.review.unknown": "리뷰 확인 불가",
   "agentSessions.allCheckouts": "모든 체크아웃",
   "agentSessions.onlyCheckout": "{{checkout}}만",
   "agentSessions.tag.blocked": "막힘",
@@ -113,14 +97,6 @@ const ko: Messages = {
 };
 
 const zh: Messages = {
-  "agentSessions.approvalCommandUnavailable": "批准命令不可用",
-  "agentSessions.checkNamesUnavailable": "检查名称不可用",
-  "agentSessions.checks.unknown": "检查不可用",
-  "agentSessions.checks.none": "无检查",
-  "agentSessions.checks.pending": "检查待定",
-  "agentSessions.checks.failed": "检查失败",
-  "agentSessions.checks.passing": "检查通过",
-  "agentSessions.review.unknown": "审查不可用",
   "agentSessions.allCheckouts": "所有检出",
   "agentSessions.onlyCheckout": "仅 {{checkout}}",
   "agentSessions.tag.blocked": "受阻",
@@ -168,14 +144,6 @@ const zh: Messages = {
 };
 
 const ja: Messages = {
-  "agentSessions.approvalCommandUnavailable": "承認コマンド不明",
-  "agentSessions.checkNamesUnavailable": "チェック名不明",
-  "agentSessions.checks.unknown": "チェック不明",
-  "agentSessions.checks.none": "チェックなし",
-  "agentSessions.checks.pending": "チェック待ち",
-  "agentSessions.checks.failed": "チェック失敗",
-  "agentSessions.checks.passing": "チェック成功",
-  "agentSessions.review.unknown": "レビュー不明",
   "agentSessions.allCheckouts": "すべてのチェックアウト",
   "agentSessions.onlyCheckout": "{{checkout}}のみ",
   "agentSessions.tag.blocked": "ブロック中",

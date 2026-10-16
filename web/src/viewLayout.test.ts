@@ -283,6 +283,22 @@ describe("where a display's place and the keyboard go", () => {
     const unavailable = layout(area("a1", [display("b", { state: "unavailable", tab_id: null })]));
     expect(focusRequestArrived(opened, here, unavailable)).toBe(true);
   });
+
+  it("follows a page the operator opened once the core's answer names it and it is the active view", () => {
+    const request = { workspace: here, browserOpen: "follow:1" };
+    const shown = layout(area("a1", ["a", "page"]));
+    shown.root = { area: { id: "a1", active: "page", displays: [display("a"), display("page", { kind: "browser", path: "" })] } };
+    const answered = [{ request_id: "follow:1", ok: true, display_id: "page" }];
+    expect(focusRequestArrived(request, here, shown)).toBe(false);
+    expect(focusRequestArrived(request, here, shown, [{ request_id: "follow:0", ok: true, display_id: "page" }])).toBe(false);
+    expect(focusRequestArrived(request, here, shown, answered)).toBe(true);
+    expect(focusRequestArrived(request, "mini\u0000/repo", shown, answered)).toBe(false);
+    // Not yet the active view, or refused: the keyboard stays where it is.
+    const behind = layout(area("a1", ["a", "page"]));
+    behind.root = { area: { id: "a1", active: "a", displays: [display("a"), display("page", { kind: "browser", path: "" })] } };
+    expect(focusRequestArrived(request, here, behind, answered)).toBe(false);
+    expect(focusRequestArrived(request, here, shown, [{ request_id: "follow:1", ok: false, display_id: null }])).toBe(false);
+  });
 });
 
 describe("a dragged tab's target", () => {

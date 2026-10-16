@@ -928,7 +928,7 @@ export type PaneLayout = {
 
 export type PaneHeader = {
   working: boolean;
-  band: {kind: string; tone: PaneHeaderTone; reason: string | null; since_unix_ms: number | null; action: PaneHeaderAction | null; more: number; exit_code: number | null; raised?: RaisedAsk; facts?: {kind: "approval_command_unavailable"} | {kind: "pull_request"; checks: NonNullable<PullRequest["checks"]>; review: PullRequest["review"]}} | null;
+  band: {kind: string; tone: PaneHeaderTone; reason: string | null; since_unix_ms: number | null; action: PaneHeaderAction | null; more: number; exit_code: number | null; raised?: RaisedAsk; facts?: {kind: "pull_request"; checks: NonNullable<PullRequest["checks"]>; review: PullRequest["review"]}} | null;
 };
 export type PaneHeaderTone = "muted" | "warning" | "error" | "success" | "pr";
 export type PaneHeaderAction = {kind: "pr"; workspace_id: string; url: string; number: number; checks: NonNullable<PullRequest["checks"]>; tone: PaneHeaderTone} | {kind: "child"; pane_id: string; label: string};
@@ -1977,6 +1977,8 @@ export type SnapshotRest = {
     async_operations?: AsyncOperation[];
     tab_rename?: { request_id: string; tab_id: string; label: string; phase: "pending" | "succeeded" | "failed" } | null;
     pane_focus_request?: PaneFocusRequest | null;
+    /** The answers to the latest `browser_open` events that named themselves, oldest first and bounded. */
+    browser_opens?: import("./viewLayout").BrowserOpenReceipt[];
     /** The core's most recent failure; the shell logs its detail (B5). */
     last_error?: { kind: string; message: string; retryable: boolean; occurred_at: number; request_id?: string | null } | null;
   };
