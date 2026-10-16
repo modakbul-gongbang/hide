@@ -381,13 +381,13 @@ impl Runtime {
             // the operator sees. Every other caller, another pane of the same
             // tab and a pane-less checkout caller included, leaves the
             // selection, the lane and every tab's bookmark as they were.
-            let kept =
-                (!self.operator_caller(&key, pane_id)).then(|| self.keep_front(&key));
+            let kept = (!self.operator_caller(&key, pane_id)).then(|| self.keep_front(&key));
             // An open the operator is looking at calls the lane as a click
             // does (PRD right-lane B17), and keeps a tree that showed alone.
             let calls_lane = kept.is_none() && lane_call(&action);
             let lone_tree = calls_lane && self.front_lone_tree().as_ref() == Some(&key);
-            let mut applied = self.apply_workspace_action(&key, &context, request_id, &action, material);
+            let mut applied =
+                self.apply_workspace_action(&key, &context, request_id, &action, material);
             if let Ok(done) = &mut applied {
                 self.stamp_control_opener(&key, pane_id, &action, &done.view_id);
                 if calls_lane {

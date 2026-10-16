@@ -29,8 +29,8 @@
       "expect": 44
     },
     "remote-workspace.spec.ts::remote pane CLI reaches its own Workspace over SSH and leaves the local Workspace in front": {
-      "lines": 722,
-      "expect": 165
+      "lines": 661,
+      "expect": 160
     },
     "terminal-links.spec.ts::links: a pane's URLs and paths open in the Workspace on a click and in macOS on ⌘-click, with no confirm dialog and no click for the program": {
       "lines": 159,

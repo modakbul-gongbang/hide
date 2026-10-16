@@ -494,7 +494,11 @@ fn a_select_calls_the_lane_only_from_the_pane_the_operator_is_in() {
         !views_of(&runtime, key),
         "right-lane B17: a select from another pane leaves the caller's lane as it was"
     );
-    assert_eq!(called(&runtime), 0, "a select from another pane calls no lane");
+    assert_eq!(
+        called(&runtime),
+        0,
+        "a select from another pane calls no lane"
+    );
 
     operator_in(&mut runtime, "workspace-b", "checkout-b", "pane-b");
     runtime

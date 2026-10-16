@@ -665,7 +665,11 @@ fn only_the_operators_pane_brings_its_open_forward() {
         strip(&runtime, &directory),
         ["a.md", "b.md", "https://example.test/checkout"]
     );
-    assert_eq!(fronts(&runtime, &directory), ["a.md"], "the operator's View");
+    assert_eq!(
+        fronts(&runtime, &directory),
+        ["a.md"],
+        "the operator's View"
+    );
     assert_eq!(calls(&runtime), before, "no lane call");
     assert_eq!(bookmark(&runtime, &directory, TABS[0]), Some(a));
 
@@ -677,7 +681,10 @@ fn only_the_operators_pane_brings_its_open_forward() {
     );
     runtime.sync_workspace_view();
     assert_eq!(fronts(&runtime, &directory), ["https://example.test/mine"]);
-    assert!(calls(&runtime) > before, "the operator's pane calls the lane");
+    assert!(
+        calls(&runtime) > before,
+        "the operator's pane calls the lane"
+    );
     assert_eq!(
         bookmark(&runtime, &directory, TABS[0]),
         Some(mine.view_id),
