@@ -207,7 +207,7 @@ function LaneRow({ view, tool, frame, width, body, setBody, sizes, actions, chec
       ) : null}
       {tool !== null ? (
         <div
-          className={cn("absolute flex min-h-0 min-w-0 flex-col bg-card", placed, raised, !up && "invisible")}
+          className={cn("absolute flex min-h-0 min-w-0 flex-col bg-card", placed, raised)}
           style={frame.mode === "expanded" ? undefined : { width: frame.width }}
           inert={!up}
           onKeyDown={escape}
