@@ -52,15 +52,17 @@ Only when the window's frame itself cannot draw does the line take the whole win
 ### The right lane
 
 The Workspace body, under the top row, is Agent Views (the Agent area), one right lane, and the tool rail, 48px wide, at the window's right edge.
-The rail lists Work, Memory, Files and Changes from the top, the Project's tools before the checkout's, each an icon alone (a kanban board, a brain, files, a file diff) whose name and scope are its hint on hover and its accessible name, and the lane shows one of them at a time: Files (the View areas and the file tree), Changes (History), Work (Sessions and PRs), and Memory.
+The rail lists Memory, PRs, Files and Changes from the top, the Project's tools before the checkout's, each an icon alone (a brain, a pull request, files, a file diff) whose name and scope are its hint on hover and its accessible name, and the lane shows one of them at a time: Memory, PRs (see The PRs tool), Files (the View areas and the file tree) and Changes (History).
+There is no Work tool; its Sessions list is the sidebar's 태스크 list and its PRs lens is the PRs tool (PRD sidebar-task-lens D-16, D-17).
 A rail icon is drawn pressed, with a primary bar at the rail's edge, while the lane shows its tool; pressing it opens the lane on that tool, and pressing the pressed one closes the lane.
-Each icon's hint names the tool and its scope (`Files · settings-ui`, `Work · all of hide`); the tools have no chords of their own.
-A short rule between Memory and Files marks where the Project's tools end and the checkout's begin (PRD work-tab-pr-lens D-37); it is derived from each tool's scope, so a tool of the other scope moves it.
-The lane header names the tool, then its scope behind one small icon, a folder for the Project (Work, Memory) and a branch for the checkout (Files, Changes), in the scope text's colour; the icon is decoration, and the accessible name stays the hint's `name · scope`.
-While the lane does not show Files, its icon carries a badge counting the views open, also given as its accessible description; Memory's carries a dot while its Project has questions waiting.
+Each icon's hint names the tool and its scope and ends with its chord (`Memory · herdr-ide  ⇧⌘L`, `PRs · all of hide  ⇧⌘R`, `Files · settings-ui  ⇧⌘E`, `Changes · settings-ui  ⇧⌘G`).
+A short rule between PRs and Files marks where the Project's tools end and the checkout's begin (PRD work-tab-pr-lens D-37); it is derived from each tool's scope, so a tool of the other scope moves it.
+The lane header names the tool, then its scope behind one small icon, a folder for the Project (Memory, PRs) and a branch for the checkout (Files, Changes), in the scope text's colour; the icon is decoration, and the accessible name stays the hint's `name · scope`.
+While the lane does not show Files, its icon carries a badge counting the views open, also given as its accessible description; Memory's carries a dot while its Project has questions waiting, and PRs' a warning-coloured number counting the PRs tool's Needs You rows (folded rows not counted, a session's Needs You never).
+While the 보기 slot holds something, a fifth button stands above Memory with the mark of what it holds, a pull request or a record (see The 보기 slot).
 The rail's `…` menu holds Toggle File Tree with its chord, Pin or Unpin, and Expand.
 A Workspace seen for the first time shows Agent Views alone, its lane closed.
-The lane's header names its tool and scope, `Files · <checkout>`, `Changes · <checkout>`, `Sessions · all of <project>` and `Memory · <project>`, with Pin, Expand and Close at its right; a new checkout in front renames the Files and Changes scopes and leaves Sessions and Memory as they are.
+The lane's header names its tool and scope, `Memory · <project>`, `PRs · all of <project>`, `Files · <checkout>` and `Changes · <checkout>`, with Pin, Expand and Close at its right; a new checkout in front renames the Files and Changes scopes and leaves Memory and PRs as they are.
 
 Unpinned, the lane opens over Agent Views at their right edge, set apart by a shadow and a left border in both themes; the terminals under it keep their grid and layout, are not dimmed, and keep their input and output.
 An unpinned lane stays up until the operator takes it down: a click on a terminal pane, choosing an agent or a tab, another Workspace in front and a restart all leave it as it was.
@@ -85,7 +87,9 @@ Closing the last view leaves the lane on Files in that state, and ⌘E on a Work
 Opening a file, a diff or a page from the tree, Changes, ⌘P, a terminal link, Open in Browser or Open server opens the lane on Files, over the agents or docked as its pin says, with the opened tab in its active View area; another tool showing gives way to Files.
 Select in File Tree, a reveal, or a terminal link that names a folder opens Files with the tree on and the row unfolded and selected.
 ⌘E (`Toggle right lane`) closes the lane while it shows and otherwise brings it back on the tool it last showed in that Workspace, whichever way the lane was closed (its × button, the pressed rail icon, ⌘E or a tool's chord), and on Files for a Workspace whose lane never showed a tool; the tool is kept with the Workspace, so it holds after an app restart, and the path menu's Show right lane brings back the same tool.
-⌥⌘1, ⌥⌘2, ⌥⌘3 and ⌥⌘4 (`Toggle Work tool`, `Toggle Memory tool`, `Toggle Files tool`, `Toggle Changes tool`; Alt+Shift+1-4 on Windows and Linux) press the rail's first to fourth icon: the lane opens on that tool, or closes when it already shows it, and the icon's hover hint ends with the chord (`Memory · <project>  ⌥⌘2`).
+⇧⌘L (`Toggle Memory tool`), ⇧⌘R (`Toggle PRs tool`) and ⇧⌘G (`Toggle Changes tool`) press that tool's rail icon: the lane opens on it, or closes when it already shows it; ⇧⌘E opens Files with its tree as before, and `Toggle Files tool` has no chord until one is bound (PRD sidebar-task-lens D-19, D-29).
+On Windows and Linux they are Alt+Shift+L, R and G; in a browser tab Chrome keeps ⇧⌘R for reload, so PRs is ⌥⇧R there, and ⌥⌘1-4 do nothing anywhere.
+A chord the operator had bound to the retired `Toggle Work tool` is dropped without an error, and the rest of their set stays.
 The desktop app's View menu names the lane commands and `Toggle File Tree`, and a chord bound to any of them in Settings, Shortcuts keeps doing the same.
 Each sends the value the lane should end at, so the same command arriving twice lands where it did once.
 A right-click or the menu key on the Workspace's path offers Show or Hide right lane with the same effect.
@@ -96,14 +100,7 @@ A buffer opened through another path before the read answers retains its draft a
 Closing that buffer's last current display does not cancel another tab's pending GUI open.
 Choosing an agent or a tab from the sidebar, the palette, a tab cycle or the tab strip, or a terminal taking the keyboard, leaves the lane where it is, pinned or not; the lane keeps its tool, pin and tree, and the files tool shows the chosen tab's views (see File Views per Agent tab).
 
-Sessions follows the project of the checkout in front, with All checkouts and a chip for that checkout alone.
-At Home it shows the selected device's projects together.
-Its core-selected groups are the sidebar's own, Needs You, Working, Done, Idle and Resolved, with empty groups absent and Resolved folded initially.
-A row carries its status mark, title, own PR mark, `! N` descendant mark while closed and elapsed time, then its ask or line; there is no counts row and no missed-work flag.
-Selecting a row opens its Workspace, tab and pane, and its chevron opens its children, whose own chevrons open theirs (see Sessions: the task list).
-Sessions is a separate tool from Memory and does not start Memory's reader.
-The sidebar is one list with no mode strip.
-⌘⇧P shows and focuses it.
+⌘⇧P shows and focuses the sidebar.
 `Toggle device rail` has no default chord either and is bound the same way; it shows or hides the device rail.
 
 The lane has a divider at its left edge, docked or over the agents, and the tree a divider between it and the documents.
@@ -413,20 +410,20 @@ The browser display's toolbar and its loading, load failed, and plain browser ta
 
 A pane header is a quiet identity row: the ancestor path, the status mark, the agent's logo, title, the fork mark, the letters-waiting pill, the PR mark, the Not connected chip, and the retained overflow, zoom and close controls at the right end.
 A plain shell keeps its terminal mark.
-On an agent pane whose session Hide knows, the status mark, the logo and the title are one button: under the pointer they light together with the hint `세션 기록 보기`, and a press shows that session's record in the right lane, opening the lane when it is closed or put away and turning the Work tool to Sessions when it was left on PRs, since a record is drawn on Sessions, while the keyboard and the input cursor stay in the pane's terminal (PRD overview-device-tasks B22); the Overview's `lane에서 보기` lands the same way.
-A press while the lane already shows that record goes back to the Sessions list, and the fork mark and the PR mark keep their own presses outside the button (B23).
-Whether the lane shows that record is read from the record the lane draws (`ui.drawnRecord`), not from the lens the core keeps: a project with no pull request draws Sessions whatever lens is kept, and a second press can come before the first press's lens change returns.
+On an agent pane whose session Hide knows, the status mark, the logo and the title are one button: under the pointer they light together with the hint `세션 기록 보기`, and a press shows that session's record in the lane's 보기 slot ([The 보기 slot](#the-보기-slot)), opening the lane when it is closed or put away, while the keyboard and the input cursor stay in the pane's terminal (PRD overview-device-tasks B22, sidebar-task-lens B15); the Overview's `lane에서 보기` lands the same way.
+A press while the lane already draws that record turns the lane back to its tool, and the fork mark and the PR mark keep their own presses outside the button (B23).
+Whether the lane draws that record is read from the slot's front item and the lane's tool, both of which the core keeps.
 A plain shell, and an agent pane whose session is not known yet, keeps the plain head with nothing to press; the head becomes the button in place once the session is known, on a device's pane as on this Mac's (B24).
 Over a narrow window the record shows in the lane floating over the panes (`web/src/PaneHeaderBand.tsx`, `PaneRecordButton`).
 The provider logo is drawn on a pane's own header, and in the heads and places that are about the agent or its provider itself: the start picker, Settings, the footer's usage chips and the Usage pages, the session record's head, the tree popover's head, the last-words popover's head, the phone's detail head, the Memory tab's Hide AI chip, the Factory card, the first-run tiles, and the corner of an agent-opened View tab's kind mark ([View openers and comments](#view-openers-and-comments)).
-The sidebar and Sessions rows and the Agent tabs draw it only by the operator's choice or while ⌥ is held ([Agent logo view mode](#agent-logo-view-mode)); ⌘K and the recent-pane list, the link sessions, the Overview's task cards, a session record's children and the phone's list lead with the status mark alone in both modes (PRD agent-mark-quiet).
+The sidebar's 프로젝트 and 태스크 rows and the Agent tabs draw it only by the operator's choice or while ⌥ is held ([Agent logo view mode](#agent-logo-view-mode)); ⌘K and the recent-pane list, the link sessions, a session record's children and the phone's list lead with the status mark alone in both modes (PRD agent-mark-quiet).
 A pane header draws exactly one logo, the pane's own agent, for each of the seven supported agents: Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, the same logo Settings and the first-run choice draw.
 A row without a logo names its agent by product name (`Claude Code`, `Codex`, the adapter's label, never the raw kind) in its hover hint and its accessible name, and the pane header's logo and title say it the same way.
 Only a plain shell and an agent Hide does not support draw the neutral `>_`.
 A logo drawn dark on a transparent ground (Grok, Cursor) sits on the light plate so it stays visible on the dark theme; the others are drawn as published ([BRAND.md](BRAND.md#third-party-agent-marks)).
 A child pane's ancestor path names each ancestor from the root to its parent, `›` between them, and each name opens that pane; a root has none.
 The names drop before current identity or actions when the pane narrows, leaving `›` with its accessible name.
-The PR mark is the one the Sessions row of the same agent draws (below): a pane without children shows its own PRs, and a parent shows the PRs over itself and every descendant (the `#number` when that is one PR, each state's count when several), pressing which lists each PR with who holds it, so a child's pull request is seen from the pane that delegated it.
+The PR mark is the one the 태스크 row of the same agent draws: a pane without children shows its own PRs, and a parent shows the PRs over itself and every descendant (the `#number` when that is one PR, each state's count when several), pressing which lists each PR with who holds it, so a child's pull request is seen from the pane that delegated it.
 The fork mark, a small fork icon after the title, is drawn only on a pane Fork agent made; its tooltip and accessible name read `Forked from <source name>` while the source still runs the conversation it was forked from, and the mark is then a button, reachable by keyboard, that opens the source; once the source closed or moved on to another conversation it reads `Forked from another pane` and opens nothing (`web/src/PaneHeaderBand.tsx`, `PaneForkMark`; the fact is the core's, `PaneForkSnapshot.forked_from`).
 A delegated child and a handed-off root have none, and neither does a fork made while forks were children (PRD fork-operator-root B20, B21).
 A device's pane header wears the mark too, as its rows do, although a device's pane offers no fork.
@@ -530,12 +527,12 @@ The fact that Hide AI started an agent comes only from the coordination record o
 The work is named in words, `Memory 올리기 · m72`, and never by an icon of its own, because Hide AI will start other work, each kind with its own home.
 `docs/status-model.md`, Work Hide AI does for a home, owns the ownership value, the group rule and the turn table; this section owns what the screen draws.
 
-While the agent works, finishes or rests, the work is in no list: not the sidebar's tree or Working, not Sessions' Working, Done or Idle, not the phone's list, not Overview's requests and graph, and it moves no badge, rail count, checkout count, desktop notification or push.
+While the agent works, finishes or rests, the work is in no list: not the sidebar's tree or Working, not the 태스크 list's 일하는 중, 끝남 or 쉬는 중, not the phone's list, not Overview's requests and graph, and it moves no badge, rail count, checkout count, desktop notification or push.
 The agent is still found by ⌘K, the recent panel, the tab strip and `hide agent list`, and its pane header keeps the owl; only the lists that enumerate the operator's work leave it out.
 The sidebar tree has no `Hide AI` head, and a checkout Hide AI made is drawn as an ordinary checkout only while it is the front checkout or an agent the operator started works in it; the Hide AI agent's own row is never in a tree.
 The same rule applies inside the empty-worktree and Inactive folds, so a fold's count is of the checkouts it draws; the cleanup fold lists every cleanup candidate, because reviewing them is its job, and that is where a worktree kept after its pull request settled is found.
 
-The operator is called out in two cases, and both are one row in the sidebar's Needs You and Sessions' Needs You with the owl beside the status mark, the task name and a place line naming the task where the branch would stand (`herdr-ide › Memory 올리기 · m72`).
+The operator is called out in two cases, and both are one row in the sidebar's Needs You and the 태스크 list's Needs You with the owl beside the status mark, the task name and a place line naming the task where the branch would stand (`herdr-ide › Memory 올리기 · m72`).
 The agent asks: a question, an approval or a block, with the same read rules as an operator's row, so an AI-inferred question leaves once read and a block or native question stays until answered.
 The home has a turn: the attempt's pull request is open, ready, passing or unchecked and nobody asked for changes, so the second line is `PR #924 리뷰` and the row stays after it is read until the pull request is merged, closed, made a draft, or gets a requested change or a failed check; or checks failed and the agent is no longer working, so the second line is `CI 실패` until the agent works again.
 A draft, running checks and a requested change are the author's turn and draw nothing.
@@ -553,7 +550,7 @@ A worktree that is dirty or in use stays and is named in the diagnostic log, and
 A kind of Hide AI task this build does not know, or a record with no task, shows its agent as an operator's row naming its task (`Hide AI` alone for none) and leaves the rest of the ledger alone.
 A feature that makes Hide AI start a new kind of agent names the kind's home in code, and chooses what its turn and cleanup are, before it has a row.
 A connected device's agents follow the same rules, and they hold across a restart of hided because the ledger is persisted.
-Web owners: `web/src/hideAiOrigin.ts` (the words, the place line, the turn line, whether a tree draws a checkout, where a row opens), `web/src/AgentMark.tsx` (the owl, the badge and the pane header's mark), `web/src/AgentRowMark.tsx` (the row's mark by view mode), `web/src/sidebar.tsx` and `web/src/components/sidebar-agent-row.tsx` (the rows), `web/src/AgentSessions.tsx` (Sessions' row) and `openListedAgent` in `web/src/actions.ts`; core owners: `herdr-core/src/coordination/started.rs`, `herdr-core/src/agent_state/axes.rs` and `herdr-core/src/runtime/memory_promotion.rs`.
+Web owners: `web/src/hideAiOrigin.ts` (the words, the place line, the turn line, whether a tree draws a checkout, where a row opens), `web/src/AgentMark.tsx` (the owl, the badge and the pane header's mark), `web/src/AgentRowMark.tsx` (the row's mark by view mode), `web/src/sidebar.tsx` and `web/src/components/sidebar-agent-row.tsx` (the rows), `web/src/TaskLens.tsx` (the 태스크 row) and `openListedAgent` in `web/src/actions.ts`; core owners: `herdr-core/src/coordination/started.rs`, `herdr-core/src/agent_state/axes.rs` and `herdr-core/src/runtime/memory_promotion.rs`.
 
 ### Agent logo view mode
 
@@ -566,17 +563,17 @@ A browser has no Agents hold, so its menu has no key line and no peek.
 The choice is a core preference, `ui_state.agent_logo_mode` (`shown` or `hidden`, `hidden` when never chosen), changed only by `agent_logo_mode_set`; `ui_state_update` never changes it, the check always reads the core's value, every window of one daemon changes at once, and it survives a restart.
 A mode the core refuses leaves the check and the screens as they were and records a diagnostic, with no alert; a change the core accepts but cannot save is drawn as chosen until the next start and records `ui_state.save_failed`, as the theme does.
 Hidden is the default and draws the screens as before.
-Shown draws the agent's 16-pixel logo after the status mark and before the title in the sidebar's agent rows (a sleeping row after its moon), in Sessions rows and child rows, and in the Agent tabs; a row's second and branch lines indent past it in Sessions, and a kind with no logo draws the neutral `>_`.
+Shown draws the agent's 16-pixel logo after the status mark and before the title in the sidebar's agent rows (a sleeping row after its moon), in 태스크 rows and child rows, and in the Agent tabs; a row's second and branch lines indent past it in the 태스크 list, and a kind with no logo draws the neutral `>_`.
 A row Hide AI started wears the owl as a badge on the logo.
 Search, overlays, Overview, a Project's conversation list, the graph, Task boards and the phone never follow the mode, and the pane header, the usage chips and the Usage pages draw their logos in both modes.
 While hidden, holding the Agents key (⌥, or Alt) draws the same logos for as long as the number keycaps show: the peek is the existing hold state, with its 0.15 second delay, its end on any other key, on a window that loses focus and while a layer is open, and it adds no key listener.
 Shown, the same hold shows only the keycaps.
 Changing the mode or peeking never changes a row's height, the scroll position or the selection.
-Web owners: `web/src/components/view-menu.tsx`, `web/src/agentLogoMode.ts` (the one rule), `web/src/AgentRowMark.tsx`, `web/src/TabBar.tsx`, `web/src/AgentSessions.tsx`, `web/src/components/sidebar-agent-row.tsx` and `web/src/components/sleeping-session-row.tsx`; core owner: `herdr-core/src/runtime/events.rs`.
+Web owners: `web/src/components/view-menu.tsx`, `web/src/agentLogoMode.ts` (the one rule), `web/src/AgentRowMark.tsx`, `web/src/TabBar.tsx`, `web/src/TaskLens.tsx`, `web/src/components/sidebar-agent-row.tsx` and `web/src/components/sleeping-session-row.tsx`; core owner: `herdr-core/src/runtime/events.rs`.
 
 ### Subagent count
 
-Hide draws no count of the subagents an agent runs inside its own session, on any surface: not on a sidebar row, in a pane header, in Sessions, in an Overview line, in ⌘K and not in Settings (operator decision on issue #810).
+Hide draws no count of the subagents an agent runs inside its own session, on any surface: not on a sidebar row, in a pane header, in the 태스크 list, in an Overview line, in ⌘K and not in Settings (operator decision on issue #810).
 A subagent has no pane of its own, so it is not a delegated child: it has no row to open and the operator can neither enter it nor act on it, so the number is not a state they would act on (design principle 13).
 The child marks on screen mean only the agents Hide started, which have their own panes and tree rows: the descendant mark `! N` on a row, the tree button with its `자식 에이전트 N` tooltip, and the child popover.
 A subagent count beside them would give "child" two meanings on one row.
@@ -871,79 +868,66 @@ A link panel's `대화 보기` and parent line open that session's record, in th
 The Overview starts on 백로그 when the window loads and keeps the tab chosen while the window runs; neither the tab nor a Recent Panels visit outlives the window, so a Home view chosen before the update (Agents, the Tasks board or tab, 요청) or a visit to a Project Overview cannot come back as an empty screen or an error (B61; PRD sidebar-task-lens B38).
 Nothing of Conversation history remains: the screen, its search and copying are removed, the session reads the labels, the phone's conversation and Memory use stay, and the per-project choice it kept is read only as how long session records are kept (B58; ARCHITECTURE.md, Project sessions and Memory).
 
-## The Work tool
+## Tasks, the 보기 slot and the PRs tool
 
-Web owner: `web/src/WorkPanel.tsx` (the tool and its lenses), `web/src/AgentSessions.tsx` and `web/src/sessionPanel.ts` (Sessions), `web/src/SessionRecord.tsx` and `web/src/sessionWork.ts` (the session record), `web/src/PrList.tsx`, `web/src/PrCard.tsx`, `web/src/prWork.ts`, `web/src/prCardModel.ts`, `web/src/prReason.tsx` and `web/src/workCount.ts` (the PRs lens and the PR card), `web/src/PrDialogs.tsx` (이슈 잇기 and 맡기기), `web/src/prDelegate.ts` (맡기기's first prompt), `web/src/LinkSessions.tsx` and `web/src/linkPanel.ts` (the link record's sections); a row's agent line follows `web/src/agentRow.ts`.
-The verb each row carries is the core's (`docs/status-model.md`, The request view's verb).
+Web owner: `web/src/TaskLens.tsx` and `web/src/taskList.ts` (the sidebar's 태스크 list), `web/src/DetailPanel.tsx` (the lane's 보기 slot), `web/src/SessionRecord.tsx` and `web/src/sessionWork.ts` (the session record), `web/src/PrsPanel.tsx`, `web/src/PrList.tsx`, `web/src/PrCard.tsx`, `web/src/prWork.ts`, `web/src/prCardModel.ts` and `web/src/prReason.tsx` (the PRs tool and the PR card), `web/src/PrDialogs.tsx` (이슈 잇기 and 맡기기), `web/src/prDelegate.ts` (맡기기's first prompt), `web/src/LinkSessions.tsx` and `web/src/linkPanel.ts` (the link record's sections); a row's agent line follows `web/src/agentRow.ts`.
+The core owns the lens, the view option and the slot (`herdr-core/src/runtime/detail.rs`, `ui_state.sidebar_lens`, `task_view` and `detail`) and every task's state and order (`herdr-core/src/agent_state/tally/tasks.rs`).
 
-### Sessions: the task list
+### The sidebar's 태스크 list
 
-Work is the rail's first tool, and the lane remembers its tool per Workspace; Sessions is Work's first lens.
-Sessions belongs to the project of the front checkout; All checkouts and the `<checkout> only` chip, which both lenses share, choose the published project or checkout scope.
-At Home it covers all projects on the selected device and adds the project to each row.
-The core supplies Needs You, Working, Done, Idle and Resolved in that order, leaving empty groups out and folding Resolved initially; there is no counts row.
-Needs You and Done are the same agents as the sidebar's in the same scope; Working holds working agents and quiet roots whose descendants work; Idle holds stopped agents already seen.
-Delegated children and Factory workers are not Sessions rows of their own.
-Resolved holds work resolved in the last 24 hours, by the operator or automatically once the agent stopped with no demand and every PR it held merged or closed.
-Within a group, Needs You waits longest first, Working puts a failed PR first and then the most recent, Done is most recent first, and Idle puts unfinished work, then a failed, mergeable, pending, draft or merged PR, before the rest; every Idle row is drawn, as in Needs You, Working and Done.
+Under the sidebar's head (search ⌘K, Overview ⇧⌘O, Factory), right above the list, a `프로젝트 | 태스크` switch picks the list (PRD sidebar-task-lens D-10, B1, B39): 프로젝트 is the projects tree as before, with its raised Needs You and Done, and 태스크 the device's tasks.
+⌘B shows and hides the sidebar, and ⇧⌘B (`Switch Projects and Tasks`; Alt+Shift+B on Windows and Linux, ⌥⇧B in a browser tab, where Chrome keeps ⇧⌘B) turns the switch; with the sidebar hidden it shows the sidebar on the other list (B2).
+A window starts on 프로젝트, and then the last list and view option chosen stay, through a restart too (B3).
 
-A row's first line is its status mark, title, descendant mark while its tree is closed, PR mark, and elapsed time; a Needs You row has no PR mark and no descendant mark.
-A fork's row, here and in the sidebar, wears the fork mark right after its title, before the PR mark: the fork icon whose tooltip reads `Forked from <source>` or `Forked from another pane`, the same words the row's accessible name adds after the title (PRD fork-operator-root B8; `web/src/components/fork-mark.tsx`).
-A fork is a root row of its own, never a child under its source; ⌘K, the Overview's task cards and the phone draw no fork mark.
-Every row, a child and a resolved row included, ends in the Resolve button's slot, so the times of the panel stand in one column as in the sidebar.
-There is no checkout name, front-checkout bar or status word on a root row.
-Its second line is the ask on Needs You, the label line on Working (or the line of the most recently changed working descendant while it waits on them), the finished turn's line on Done, and on Idle only the remaining work of an unfinished turn after `◐`; with no label line there is no second line.
-The PR mark on a child or a root without descendants shows one own PR as its state's icon and `#number`, and several as each state's icon and count.
-A root with descendants does the same over the distinct PR URLs itself and its descendants hold, including folded trees and siblings behind `N개 더`.
-Several PRs read as one icon and count per state present, in that state's colour, worst first and no `PR` letters (a mergeable and a merged PR are green `1` and purple `1`, never green `2`): `#` means a number, digits alone mean how many.
-The core's own PR projection decides which PRs count; a closed PR is not counted.
-Each mark dims while a contributing GitHub read is stale, with that read's last time in the tooltip; a tree uses the oldest stale contributing read.
-Pressing the mark lists each PR with its mark and title, worst first; a tree's list also names the sessions that hold each PR, and repeated sightings of one URL share one entry.
-Each item's mark has an accessible name for its state in the interface language, so the state is readable without its colour.
-Equal PR numbers in different repositories stay separate.
-Choosing an entry opens the existing PR panel in the project that holds its URL, or the existing URL fallback when the catalog has no match.
-The core verb ladder, read rules and PR summary are owned by [status-model.md](status-model.md#the-sessions-tool).
-Reading an AI question removes its Answer and Needs You attention; an active menu or plan approval stays until answered.
-A row with children, at any depth, opens them under its chevron, closed at first and remembered apart from the sidebar's folds; a row whose tree is closed wears its descendant mark, and the tree itself opens inline.
-Five siblings show per parent and the rest wait behind `N개 더`, as in the sidebar (`web/src/sidebarTree.ts`).
-A child steps one indent right of its parent down to the third level below the root; deeper rows stay in the third level's column and hang from their parent's chevron lane, whose rail runs down through them, so a narrow lane keeps room for titles (`web/src/sessionTree.ts`).
-A child row has the root's first line without the Resolve button, and the same second line.
-When the child works in another checkout than its parent, a separate metadata line below its progress or ask shows a branch glyph and the checkout's full branch (the core's `branch_badge`) in dim mono.
-The branch is cut with `…` at the line's end, with the whole branch and the checkout's path in its tooltip; the progress line has its own width and ellipsis.
-Progress, ask and branch metadata align with the task's title column.
-A child in its parent's checkout carries no branch, an Idle child with no label line has only the branch metadata below its title, and a root row carries none.
-A child's title is quiet (subtle) unless it asks or is selected, by the sidebar's title rule; a root's title is not.
-While a Workspace is in front, the row standing for its focused pane is selected as in the sidebar: the focused pane's row, or, when a closed tree or `N개 더` hides it, the nearest ancestor row the panel draws, with the sidebar's selected fill and `aria-current`; nothing opens by itself, and a root hidden in the folded Resolved has no selected row.
-An agent is drawn once in Sessions: a raised child's ask rides its root's row, and the child's own row, where its root's tree is open, is the one selected.
-The selected fill stays under the pointer, and keyboard focus draws its ring over it.
-When the selected row changes, the list scrolls by as little as brings it into view, and not at all while it is already in view; a selected row that has not changed since it was brought in never scrolls the list, whether a snapshot moves it to another group or the Workspace comes back in front, so a list the operator scrolled stays where they left it (the sidebar's rule, `web/src/sidebarFocus.ts`).
+The list follows the rail's front device, every project of it at once, and turns with the rail (B19).
+Its first line reads `태스크 N`, the open tasks, with a `상태별 | 프로젝트별` option at its right (B4, B6).
+상태별 groups the tasks as `Needs You`, `막힘`, `일하는 중` and `끝남`, each head with its count in the warning colour for Needs You and the danger colour for 막힘, empty groups not drawn, and every row naming its project before its second line.
+막힘 is a task whose root agent errored (the core's `demand == "error"`), not a failed CI.
+Tasks that rest, those resolved included, fold into `쉬는 중 N ›`, and tasks whose pull requests all merged while a worktree remains into `정리할 것 N ›`, at the end; each opens in place and closes with `접기` (B5).
+프로젝트별 draws one group per project, the projects with a Needs You first, its head the project's name with its counts by state (`Needs You 1 · 일하는 중 2`), the same order inside and its own folds, and no project name on the rows.
+Inside a group Needs You stands longest-waiting first, 일하는 중 puts the tasks that work before those waiting on a descendant or an answer, and the others stand most recent first (B9).
 
-Click or Enter opens a row's Workspace, tab and pane, and arrows, Home and End navigate the displayed group heads and rows.
-Resolve hides a session only after its state has been saved; it keeps the pane and conversation alive and appears under Resolved.
-A save failure keeps the row with the existing actionable error.
-Typing into the session, receiving a letter or renewed agent work brings it back.
-Automatic resolution requires every assigned PR settled, no demand and stopped activity.
-A resolution older than 24 hours leaves this list and the sidebar but remains in tabs and in the Overview's Tasks.
-No undo or close is added to Resolve.
+A row is one task, its root agent; descendants are its children only, and a memory question, a pull request with no session, a delegated child and a Factory worker are never rows of their own (B7).
+Its first line is the status mark, the title, while folded one mark per child in that child's colour and `!N` in the warning colour when children ask, the PR mark and the elapsed time (B8, B10).
+Its second line is the question in the warning colour on Needs You, the cause in the danger colour on 막힘, the label line on 일하는 중 (the latest descendant's line while it waits on them), the finished turn's line on 끝남, and on 쉬는 중 only the unfinished work after `◐`; with nothing to say there is no second line, and no stage bar is drawn.
+A row with children opens them in place under its chevron, five per parent and the rest behind `N개 더`, indented to the third level; a child in another checkout carries a branch line, a child on another device a device chip, a finished child a quiet title, and pressing a child goes to its pane, bringing its device to the front (B10, B11).
+Folds are kept apart from the 프로젝트 tree's (`sessions_expanded_agent_pane_ids`).
 
-An empty scope has the quiet existing nothing-to-do line; an unlabelled row keeps its shape without an invented task sentence.
-An unavailable device keeps current connection reasoning and disables actions.
+A press or Enter goes to the task's Workspace, tab and pane; the arrows, Home and End move through group heads, folds and rows, Right and Left open and fold a row, and Space opens its record (B12).
+The row of the pane with the keyboard, or its nearest drawn ancestor while folded away, carries the sidebar's selected fill and `aria-current`; the list scrolls only as far as brings a newly selected row into view, and never while the operator's scroll position holds the selected row unchanged (B13).
+Under the pointer or focus the time's slot holds the record button and `⋯`, which offers `기록 보기` (Space), `pane으로` (↩) and Resolve (B15, B18).
+Resolve moves the row to 쉬는 중 only after the core saved it; a failed save leaves the row with the current error, and input, a letter or new work brings it back.
+The PR mark shows one pull request as its state's icon and `#number`, several as each state's icon and count, worst first; one opens its card in the 보기 slot on a press, several list each first, and ⌘-press opens GitHub (B14).
+A stale GitHub read dims the mark, with `GitHub 읽기 실패 · N분 전 값` in its tooltip, and never draws a zero (B20).
+While the first snapshot is read the list shows a small skeleton and no number; with no task it reads `진행 중인 일감 없음` and `New agent`, which opens the start panel; a device with no project reads `Add a project to start an agent.` with Add project (⇧⌘N, the sentence alone in a browser tab); and a device that does not answer keeps its last rows dimmed under `<device> 응답 없음`, their actions off (B20, B42).
+Every control is reachable from the keyboard with a visible ring and an accessible name, and a state reads as a word as well as a colour (`묻는 중`, `일하는 중`; B21).
+A hidden list draws no rows, the elapsed clock updates only its own text, and the list adds no work to a key or a terminal frame (B22).
+
+### The 보기 slot
+
+The lane has one 보기 slot per window, which holds a pull request's card or a session's record and belongs to no checkout and no Agent tab, so changing either leaves it as it was (PRD sidebar-task-lens D-50, B48).
+Whatever opens a card or a record opens it there, and the Workspace in front, its Agent tab and the keyboard stay (B14, B15, B50); no `PR #N` or record tab appears in Files.
+Its head reads `←`, the item's mark and name (`PR #N · <project>` or `기록 · <title>`), `↗` (GitHub) on a card, and `✕` (B47).
+Opening another item puts it in front, and `←` steps back through the ones opened before, at most 20, the oldest leaving first; `✕` empties the slot and the lane goes back to the tool it showed, or closes when it had none.
+While the slot holds something, the rail carries a fifth button above Memory with its mark, pressed while the lane draws the slot; calling a tool turns the lane to that tool and the button stays, so pressing it comes back to the slot (B46).
+A changed file pressed on a card opens its diff in this tab's Files and the lane turns to Files, the slot staying on the rail (B49).
+At Home, with no Workspace in front, a record opens in the Overview's panel beside the tabs and a PR mark opens the pull request's Workspace with its card in the slot (B17).
+A pane head's agent-tree button and a started backlog item (from ⌘K, a Factory card, a record or a missed line's `· 백로그 #N`) show the sidebar on 태스크 with the row unfolded and selected, and open the agent's record in the slot, or in the Overview's panel at Home (B40).
 
 ### The session record
 
-Each Sessions row adds a record button, shown under the pointer or focus, and no missed-work flag: missed work lives in the record and in the group above the list.
-An agent pane head's status mark, logo and title open the same record ([Pane header lineage and ownership](#pane-header-lineage-and-ownership)).
-The record replaces the list inside the Work tool under `← Sessions로 돌아가기`, which goes back to the list (B19), and the Overview's panel draws the same record under its own head ([A record beside the tabs](#a-record-beside-the-tabs)); the two differ only in that frame, and a window reads one record at a time (PRD overview-device-tasks D-07, B17).
+A 태스크 row's record button or Space, and an agent pane head's status mark, logo and title, open the record in the 보기 slot ([Pane header lineage and ownership](#pane-header-lineage-and-ownership)); pressing the title again while the slot shows that record turns the lane back to its tool.
+The Overview's panel draws the same record under its own head ([A record beside the tabs](#a-record-beside-the-tabs)); the two differ only in that frame, and a window reads one record at a time (PRD overview-device-tasks D-07, B17).
 From the top it reads the logo and title; the place line `<device> · <project> · ⌂ <checkout> · <state> <age> · 자식 N`; what to do now (`지금 할 일`: the question, why it is blocked, `#N 머지 차례`) or, with nothing to do, the stage bar `작업 → PR → 검토 → 머지`; the PRs; the assigned work with each task's missed work under it; `지금` while it works, the last words otherwise; the children; and `워크트리`, the task's checkouts, a removed one as `<name> (없어짐)`.
 What to do now and the stage bar are the task's, its root's, so a child's record shows the place line alone.
-Pressing a child opens its record in the same place with `← <parent title>` as its head; a grandchild does the same, and each press of ← goes up one level (B20).
+Pressing a child opens its record as the slot's next item with a `← <parent title>` chip, and the slot's ← comes back to the parent (PRD sidebar-task-lens B16).
 `PR N` heads every PR the session and all its descendants made, worst state first: the PR mark with its `#number`, the title (ellipsized, in full in its tooltip) and, for a descendant's PR, that descendant's name at the row's end; it opens the PR panel, and an issue the session made follows as an issue mark.
 A session with no outputs has neither the head nor the list.
 `시킨 일 2/3` heads the assigned work as a checklist, first-asked first, with the finished count over the total and no progress box: one task a line, its state an icon in its colour and nothing written (✓ done in a muted name, a blue ◐ working, a green ◐ review pending, a yellow ◐ left unfinished, blocked and your turn as their marks), the state's name in the icon's tooltip and accessible name, and the task's PRs as PR marks at the line's end, a failed CI being the mark's red.
 A goal title `목표 · 09:00` heads a chapter only when the record holds two or more goals; a task outside every chapter leads without one.
 A missed item sits directly under the task whose turn found it: open ones in the warning colour with `백로그로 · 무시`, and `공개` beside `백로그로` when the project's repository is public (`공개일 수 있음` while its visibility could not be read); there is no `이슈로` and no drafted form (B43).
 `백로그로` makes the item at once, in the backlog of the project the session works in on the device it runs on: a GitHub issue titled with the missed sentence and nothing else, or a memo (B44).
-Meanwhile the line ends in `만드는 중`; once made it dims with `· 백로그 #N` (`· 백로그 L-N`), which opens the item in the Overview's 백로그, or its Tasks card once started.
+Meanwhile the line ends in `만드는 중`; once made it dims with `· 백로그 #N` (`· 백로그 L-N`), which opens the item in the Overview's 백로그, or, once started, its task in the sidebar's 태스크 list with its record.
 A failure leaves one line of why and `다시 시도`, and one missed item makes one issue however often it is pressed, a restart included (B45).
 A failed line keeps `무시`, which forgets the failure and closes the line, and offers `다시 시도` when a retry can succeed, else `백로그로` again, which reads the project's repository anew.
 A missed item goes to the repository the session started in: when the project's connection now names another repository, or the session's original one is not known, it fails with `프로젝트 저장소가 바뀜` and makes nothing.
@@ -956,28 +940,22 @@ The newest request not yet judged shows as `지금` with a turning mark and its 
 Otherwise the record ends with `마지막 말`: the newest line of what the session's agent last reported, while its pane is still known (B17).
 A child opens to its own checklist by these rules, its PRs being in the list above and its missed work last in its parent's list; its row is the title and status only.
 At narrow Tools widths, Korean text in a task, a bubble and a missed item wraps between words; titles truncate with their full text in a tooltip.
-The folded missed-work group above Sessions lists every open missed item in the current scope, of live and ended sessions, newest first, and a session that works again keeps its items there; with Hide AI off there is no group.
-Untitled records use the same agent-name fallback as Sessions, including with summaries Off and after the pane ends; native session ids remain identity keys.
+Untitled records use the same agent-name fallback as the 태스크 list, including with summaries Off and after the pane ends; native session ids remain identity keys.
 With summaries Off, a record shows the title, the status with child and request counts, the PRs, `요청 N` and the saved raw requests oldest first with the last five open and the earlier ones behind `이전 요청 N`, and the children; it has no checklist, no button, no judgment and no missed-work action.
 A first record read uses a small skeleton; a failed read shows Retry, and a disconnected device retains the last read dimmed until reconnection refreshes it.
 GitHub values that cannot be refreshed stay dimmed with their last-read time in the tooltip; failure is never a false zero.
-While Sessions is visible it shares the existing request-view observation so the core re-reads only projects with running checks, once a minute.
-Unchanged row, scope and PR inputs retain the rendered row tree; the elapsed clock updates only its own text.
-Sessions never starts the separate Memory reader.
-Web owners: `web/src/AgentSessions.tsx`, `web/src/sessionPanel.ts`, and `web/e2e/session-panel.spec.ts`.
+Web owners: `web/src/SessionRecord.tsx`, `web/src/DetailPanel.tsx`, and `web/e2e/session-panel.spec.ts`.
 
 
-### Work: the PRs lens and the PR card
+### The PRs tool and the PR card
 
-Work is the rail's first tool, drawn as a kanban board (PRD work-tab-pr-lens D-34, D-35), the rail reading `Work · Memory · Files · Changes` (`Work · 기억 · 파일 · 변경` in Korean); the name is `Work` in all four languages, and its icon tooltip and the lane header read `Work · <project> 전체`.
-The Work tool holds the project's name, `Sessions | PRs` and the scope chip (`All checkouts` or `<checkout> only`); the lens a Workspace was last on, and the chip, are remembered per Workspace across restarts.
-A Workspace saved on the sessions tool (`agent_sessions`) opens on Work's Sessions lens, and the rest of its lane (open tool, pin, tree, widths) and its View layout stay.
-The switch has no numbers: a lens with something for the operator carries a warning dot, whose tooltip and accessible name say the lens and the count, `PRs · Needs You 4`, and PRs carries ⚠ instead of the count while its last GitHub read failed.
-The Work icon's number badge on the rail adds the Needs You rows of both lenses, an agent that asks and also stands in its pull request's Needs You row counted once, and leaves the folded lines out; the sidebar's Needs You is unchanged.
-The Sessions lens is [Sessions](#sessions-the-task-list) above; a PR mark on a session row opens that pull request's card, or lists them when there are several.
-A project with no GitHub remote has Sessions only, whatever it was left on.
+PRs is the rail's second tool, a pull request icon, its hint and lane header `PRs · <project> 전체` (PRD sidebar-task-lens D-17, B26).
+Its head holds the scope chip, `All checkouts` or `<checkout> only`, remembered per Workspace across restarts, then ⚠ while the last GitHub read failed and `열린 PR N`.
+A Workspace saved on the old Work tool (`work` or `agent_sessions`) opens once on PRs, and the rest of its lane (pin, tree, widths) and its View layout stay (B30).
+The rail icon's number is the tool's Needs You rows, the folded lines left out; a session's Needs You is not counted (B29).
+A project with no GitHub remote reads `GitHub 원격 없음` alone.
 
-The PRs lens lists the pull requests of the project that concern the operator: their own, those their Hide sessions made or worked on, those asked of them or of their team for review, and bots'.
+The PRs tool lists the pull requests of the project that concern the operator: their own, those their Hide sessions made or worked on, those asked of them or of their team for review, and bots'.
 At Home it gathers the device's projects and puts the project's name on each row, and a project on a connected device lists like the rest with the device's name on its rows.
 `<checkout> only` keeps the pull requests that checkout's sessions made or worked on, and with none reads `이 체크아웃의 세션이 만든 PR 없음` with `All checkouts`.
 The core decides the group, the reason and the order (`herdr-core/src/agent_state/work/board.rs`; the rules are `docs/status-model.md`, Pull request groups); the web draws them, and every pull request is in the first group it fits.
@@ -993,11 +971,11 @@ A click or Enter opens the card, ⌘-click or ⌘Enter opens GitHub, an agent's 
 Under the pointer or the keyboard the time's slot holds the row's buttons and nothing moves: `▷ 맡기기` on a blocked row, `정리` on a merged one with a worktree, otherwise the GitHub icon and `⋯` with 맡기기, 이슈 잇기, 새 이슈 만들기 and 브랜치 이름 복사.
 The list has no search field, so Escape has nothing to clear in it.
 
-Until GitHub has answered the lens shows three skeleton rows and no zero is drawn; with nothing concerning the operator it reads `열린 PR 없음` above the folded `Merging · merged`.
-Without `gh` or its sign-in the lens reads one line of why with a `Settings › GitHub` button.
+Until GitHub has answered the tool shows three skeleton rows and no zero is drawn; with nothing concerning the operator it reads `열린 PR 없음` above the folded `Merging · merged`.
+Without `gh` or its sign-in the tool reads one line of why with a `Settings › GitHub` button.
 When a read fails the last pull requests stay, PRs carries ⚠ whose tooltip says `GitHub 읽기 실패 · N분 전 값`, and there is no banner.
-While the lens or a card shows, every listed open pull request whose checks run, an agent's or not, is read again every 60 seconds; hover, focus and a rest publish nothing.
-The lens, the Sessions lens and a card each hold that one demand, and it is released only when the last of them closes.
+While the tool or a card shows, every listed open pull request whose checks run, an agent's or not, is read again every 60 seconds; hover, focus and a rest publish nothing.
+The tool and a card each hold that one demand, and it is released only when the last of them closes.
 
 #### The PR card
 
@@ -1034,7 +1012,7 @@ Off, paused by the limit or failed, the part is absent and the rest of the card 
 
 The card's opened `연결` line is the link record (PRD link-graph), unchanged:
 `연결` lists each issue with its glyph, `#N 제목` and where the link came from, `Closes` (the body's closing reference) or `Hide 링크` (the branch's issue link), then each worktree the branch had, a removed one dim with `정리됨`; with no issue it reads `연결된 이슈 없음` with `이슈 잇기`.
-An issue line opens that item in the Overview's 백로그, or its Tasks card once it is started, or GitHub for one the project does not list.
+An issue line opens that item in the Overview's 백로그, or, once it is started, its task in the sidebar's 태스크 list, or GitHub for one the project does not list.
 What is true now (the pull request, CI, the review, whether a worktree is still here, whether a pane is live) is the snapshot's; the links and the sessions are the link record's, read when the card opens.
 `세션 N` lists the sessions that made the pull request or worked on its branch while it lived, N counted from the record: a session asking the operator and one working come first, then the ended ones newest first, joined by a vertical line.
 Each line is the agent's mark and the request (for the session that made the pull request, the request just before its address was printed; otherwise the last request on the branch; dim `요청 없음` without one), then `작업 중 · 지금` with `pane으로 가기`, or the question in yellow with `답을 기다림` and `답하러 가기` (the card's only accent button), or the `PR 만듦` chip or a dim `작업함` and the time `10/6 13:10 - 13:52`.
@@ -1209,6 +1187,7 @@ A width outside the bounds is refused into the diagnostic log: a sent one leaves
 
 ### Sidebar hierarchy
 
+This is the 프로젝트 list; the `프로젝트 | 태스크` switch above it, ⇧⌘B, and the 태스크 list are in [The sidebar's 태스크 list](#the-sidebars-태스크-list) (PRD sidebar-task-lens B1-B3).
 The sidebar hierarchy is Project > Workspace > Agents; a Workspace corresponds to one checkout path, including a plain folder.
 Two checkouts of one repository share a project cycle.
 Each checkout row shows a kind glyph: home for the stored primary checkout, otherwise the pull-request lifecycle icon when current GitHub data has a pull request, then branch, commit for detached HEAD, or folder for a plain folder.
@@ -1289,12 +1268,12 @@ A project without a usable checkout opens the shared Overview at that project's 
 Its chevron on the right folds and unfolds alone, without navigating; both folds are this machine's, so a selected SSH device's tree is drawn with nothing folded and its project row uses the same checkout selection rule.
 A web project row carries no time: it ends in its checkouts' badges added up, which stay while its checkouts are open because they are the project's own summary, and a project with no agent draws none.
 Delegated children are reached through their root's tree, including work in another checkout or device.
-The same root-only sidebar and Sessions rules apply while an SSH device is in front.
+The same root-only sidebar and 태스크 list rules apply while an SSH device is in front.
 A checkout whose root came from another checkout prefixes its purpose line with the Return glyph and the parent checkout's branch, adding `+N` when more than one external root raised it.
 Folding a project by its row or chevron, or using a checkout chevron changes the list only: the center, the focused pane and tab, read state, groups and running processes stay as they were.
 Before the first snapshot arrives the Agents and Projects lists say they are connecting rather than drawing an empty list, and a local Projects list with no registered project says so in a line with no button of its own.
 In the desktop app the Projects section title (`Projects · Recent activity · N`) ends in a + that opens Add a project, drawn whether or not a project is registered, with the hint `Add project ⇧⌘N` (`Alt+Shift+N` off macOS) on pointer or keyboard focus; it is the sidebar's one Add project (PRD first-run-onboarding D-27, B51, B52).
-The sidebar has no Home row (PRD sidebar-titlebar-refresh D-06, D-07): a Home agent is found and opened from Needs You and Done, the Sessions tool and ⌘K, the ⌘N start panel can target the Home, and ⌥n numbers the visible rows without it.
+The sidebar has no Home row (PRD sidebar-titlebar-refresh D-06, D-07): a Home agent is found and opened from Needs You and Done, the 태스크 list and ⌘K, the ⌘N start panel can target the Home, and ⌥n numbers the visible rows without it.
 Every device's sidebar starts with the Search row and the shared Overview row, under the device title in the window's top row, followed by one project/checkout/root list with no mode strip.
 Overview shows its glyph, label, Needs You count and current shortcut; zero, an absent snapshot or a disconnected device hides the count.
 The top row's Overview icon has an accessible Overview name and count description, a Needs You dot above zero and a tooltip with its current shortcut.
@@ -1371,7 +1350,7 @@ Search continues to index the complete project tree; choosing a folded result br
 
 ### Tools and Overview
 
-The rail's tools are Files (the View areas and the Explorer), Changes (History), Work (Sessions and PRs) and Memory; Work's project task list is described in [Sessions: the task list](#sessions-the-task-list).
+The rail's tools are Memory, PRs, Files (the View areas and the Explorer) and Changes (History), with the 보기 slot above them while it holds something; the device's task list is the sidebar's, described in [The sidebar's 태스크 list](#the-sidebars-태스크-list).
 The top row's Overview button opens the device's [Overview](#overview), `Tasks · 백로그 · Projects` and Usage; there is no Overview of one project, since looking at one project closely is the lane's work.
 
 
@@ -1458,7 +1437,7 @@ Nothing is made on a device until its Home is first used: the first agent or tab
 Once a device has a Home, registering a project there adds its link and removing the registration removes only that link, never the project's folder; two projects with one folder name get distinct link names.
 A link whose project folder moved away is dropped at the next sync with nothing on screen, only a diagnostic line.
 A `~/hide` that Hide did not make is left untouched, and the start that wanted it says so where it was asked for, in the start panel, with what to do.
-A Home agent reads and edits the projects through their links, the change shows on that project's checkout row, and its own row is found in Needs You and Done, Sessions and ⌘K.
+A Home agent reads and edits the projects through their links, the change shows on that project's checkout row, and its own row is found in Needs You and Done, the 태스크 list and ⌘K.
 
 ## First run
 
@@ -1695,7 +1674,7 @@ The stored sidebar width stays the content column's; the rail adds `--size-rail`
 Each tile is a 32 rounded square with no name under it: This Mac draws the laptop glyph and a device the monogram of its name, the first letter of each of its first two words, split at spaces, dots, dashes and underscores (`Mac mini` → `Mm`, `build-box` → `Bb`, `mini` → `M`); the tile's hint, shown to its right, is the name followed by `연결 안 됨` or each count it marks in full (`mini · Needs You 12 · Done 1`), since the pill stops at `9+`.
 The selected tile is ringed (a 2px ring 2px off the tile), and one tile is selected at a time.
 A tile carries at most one mark, notched into its top-right corner by a ring of the rail's fill, and it is the most urgent state: the Needs You count in a `--warning` pill, `9+` from 10, or, with no Needs You, a `--success` dot with no number while the device has unseen Done.
-Working has no mark on the rail, since it is no reason to switch device; Sessions counts it.
+Working has no mark on the rail, since it is no reason to switch device; the 태스크 list counts it.
 A mark's digits are `--status-foreground`, white in Light and near-black in Dark.
 The counts come from the device's published `agent_scope` values; the browser does not rederive them.
 A device that is not connected dims its glyph and wears a `×` at the bottom-right, with no mark, since its last counts are not current; selected, its sidebar shows only its name, `연결 안 됨` and `다시 연결`, which retries the connection in place, and never the tree it last reported.
@@ -1899,7 +1878,7 @@ Choosing a GitHub result opens it in the browser.
 ### Keys and results
 
 Up and Down move the selection in display order, stopping at either end, while typing continues in the query field.
-Return opens the highlighted result through the existing agent, checkout, Overview or Pull requests actions (an issue or memo opens the Overview on the device that holds it, at the item in 백로그 while it is not started and at its Tasks card once it is, and a pull request opens its PR card); Escape closes the sheet.
+Return opens the highlighted result through the existing agent, checkout, Overview or Pull requests actions (an issue or memo opens the Overview on the device that holds it, at the item in 백로그 while it is not started, and once it is, at its task in the sidebar's 태스크 list with its record, and a pull request opens its PR card); Escape closes the sheet.
 The selected row scrolls into view.
 Filtering preserves a surviving selection by identity; a retired selection moves to the first remaining result.
 Empty results have no selection, and arrows or Return require no modal acknowledgement.

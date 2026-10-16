@@ -25,7 +25,7 @@ A Hide-started agent whose task kind has a home (today a Memory card's promotion
 The coordination ledger's record of the spawn is the only source of the fact (`coordination::started`), and the task kind is a closed enum (`coordination::TaskKind`) whose exhaustive `home()` match makes a new kind fail to compile until it names its home.
 A kind this build does not know, or a record with no task, loads with the rest of the ledger and reads as no home: that one agent stays an operator row with its mark and a `hide_ai.task_kind_unknown` diagnostic (D-19).
 The row stays in the agent data, so ⌘K, tabs, the pane header's owl and `hide agent list` find it as before; what changes is which lists enumerate it.
-`agent_state::listed_for_operator` is the one decision: a `HideAi` row is a member of the sidebar's tree roots, Sessions, Overview's requests and graph, the phone's list, the checkout counts and the pet only while it is in Needs You, and no tree draws it even then (the raised Needs You and Sessions do).
+`agent_state::listed_for_operator` is the one decision: a `HideAi` row is a member of the sidebar's tree roots, the device's tasks, Overview's requests and graph, the phone's list, the checkout counts and the pet only while it is in Needs You, and no tree draws it even then (the raised Needs You and the 태스크 list do).
 Its group is Needs You or Seen and never Working or Done, so it moves no Working or Done badge, rail count or notification.
 It is in Needs You when the agent itself asks (a question, approval or block, read like any row's) or when the home has a turn for the operator.
 The home's turn is computed by the core from what the Memory promotion module already follows, the attempt's pull request in the machine's PR catalog, and published on the row as `hide_ai.turn`:
@@ -326,7 +326,7 @@ Regression owners: `a_parent_declared_as_a_pane_token_is_the_lineage`, `a_child_
 ## The descendant mark and the tree popover
 
 `agent_state/escalation.rs::lift` gives each row one `descendant_mark` over its whole subtree (PRD D-40): `raised` with the number of raised descendants if there are any, else `working` with the number of working descendants, else none.
-The shell draws only the `raised` kind, as `! N` in the warning colour, and only where those descendants are hidden: a folded sidebar parent, a Sessions row whose tree is closed, and a Factory card.
+The shell draws only the `raised` kind, as `! N` in the warning colour, and only where those descendants are hidden: a folded sidebar parent, a 태스크 row whose children are folded, and a Factory card.
 The `working` kind is still computed and draws nowhere: a parent waiting on its children shows its blue ring and the working child's line, and the operator did not read `● N` (PRD session-record-redesign D-04).
 Idle, done and unknown descendants add nothing, so a mark never says only that children exist.
 `row.state.tree_rank` orders siblings in every tree: asking or raised, itself or below it, first; then working; then finished and unread; then the rest.
@@ -603,14 +603,14 @@ A restored answer is stale until a read replaces it: `stale` is set and `last_su
 A file that cannot be read, decoded or is of another schema version is not used and is named in the diagnostic log as `snapshot.discarded`; the next answer replaces it.
 `loading` is true only for a project with no answer to show whose first read has not yet answered; a project the reader answers nothing for is not loading either, and a project with a restored or earlier answer is loading only while an explicit refresh of it is in flight.
 A project's pull requests are two [`gh pr list`](https://cli.github.com/manual/gh_pr_list) calls asked for at the same time, each under the 15-second limit: the 200 newest pull requests of any state without `statusCheckRollup` (with `headRefOid`, `isCrossRepository`, `createdAt`, `closedAt`, `author`, `mergeStateStatus` and `reviewRequests`), and the open ones with `number,statusCheckRollup` only.
-The Work tool's PRs lens (below) adds three reads to the same generation: the signed-in login (`gh api user --jq .login`, once per read of all projects, right after `auth status`), the open pull requests the account was asked to review (`gh pr list --search review-requested:@me`, numbers only), and one GraphQL query for each open pull request's place in the merge queue and the time of its last review request (`HidePrFacts`).
+The PRs tool (below) adds three reads to the same generation: the signed-in login (`gh api user --jq .login`, once per read of all projects, right after `auth status`), the open pull requests the account was asked to review (`gh pr list --search review-requested:@me`, numbers only), and one GraphQL query for each open pull request's place in the merge queue and the time of its last review request (`HidePrFacts`).
 They are part of the answer: a read without them would put a pull request on the wrong side of `mine` or of the queue, so any of them failing fails the project's read like a failed list does, and the last answer stays.
 Asking for the checks of every merged and closed pull request made one read take 11 - 14 seconds, so a settled pull request's checks are not asked for again: the checks read for the same number and head commit while it was open stay in the reader's cache, and without them its checks are `Unknown`, drawn as no mark.
 Either call failing fails the project's read, which keeps the last answer and states the failure, so half an answer is never a repository with no pull requests; `pull_requests.ok`, `pull_requests.empty` and `pull_requests.failed` carry the read's `duration_ms`.
 Which pull request belongs to a checkout is one rule (`github::belongs_to_checkout`, chosen by `pull_request_for_checkout`), because a branch name is used again for new work: a pull request from a fork never belongs to a local branch of the same name, an open one belongs to the checkout on its head branch, and a merged or closed one only while the checkout's commit (the worktree reader's `head_sha`, or, before that reader has answered, the commit `Repository::head_oid` read from the repository's own files with no process) is exactly the pull request's head commit on that branch; a checkout that was amended, rebased or left behind after the last push therefore loses its merged pull request.
 Several candidates resolve open, then merged, then closed, the most recently updated first among equals, and a checkout whose commit is not read yet takes no settled pull request.
 The sidebar row, the worktree catalog, the agent rows' PR mark and the link and hand-off actions all ask that rule, and a catalog read that moves a HEAD decides the connection again.
-The Work tool's PRs lens and a worktree's base still list one pull request per head branch (`preferred_per_branch`).
+The PRs tool and a worktree's base still list one pull request per head branch (`preferred_per_branch`).
 The same generation also reads open issues, their Project Status, and PR closing references for Project Home.
 The issue list uses `sort:updated-desc` and reads one sentinel beyond the 200-issue display cap so overflow is based on evidence.
 Issue references accept a GitHub issue URL, `owner/repo#N`, or `#N` when the repository is known; unsupported hosts and malformed references are rejected.
@@ -648,14 +648,14 @@ A mark dims while GitHub cannot be read again, and its tooltip says when it was 
 
 ### Pull request groups
 
-The Work tool's PRs lens (`docs/UI_BEHAVIOR.md`, Work: the PRs lens and the PR card) lists pull requests in groups the core decides, in `herdr-core/src/agent_state/work/board.rs`, from GitHub values the five-minute read carries and from facts only Hide holds: the link record's sessions and the agents' own state.
+The PRs tool (`docs/UI_BEHAVIOR.md`, The PRs tool and the PR card) lists pull requests in groups the core decides, in `herdr-core/src/agent_state/work/board.rs`, from GitHub values the five-minute read carries and from facts only Hide holds: the link record's sessions and the agents' own state.
 A pull request body's headings and a repository's own scripts decide nothing, so the same rules hold in every repository, and Hide AI never changes a group or a reason.
 The result is the `prs` board of each project's `agent_scope`: rows (group, fold, reason, agents, the pane a reason is about, the checkouts it is the work of, its issue), the groups with their numbers in draw order, and the count of `needs_you` rows that are not folded.
 
 Which pull requests are listed: the operator's own, those a session of theirs made or worked on, those a review was asked of them or of their team for, and bots'; a merged one needs the first two, a closed one that was not merged is never listed, and a teammate's pull request none of these reaches is not.
 "Mine" is the pull request's `author.login` equal to the signed-in login.
 A pull request's agents are the live agents whose session the link record names as having made or worked on its branch; sharing a folder alone ties nothing.
-An agent that finished and is not yet looked at moves no group, because the unread check is Sessions' (Done).
+An agent that finished and is not yet looked at moves no group, because the unread check is the 태스크 list's (끝남).
 
 Each pull request stops at the first slot that fits:
 
@@ -678,16 +678,16 @@ Each pull request stops at the first slot that fits:
 A merged pull request is Merging · merged below the queued ones, newest merge first.
 When GitHub has not computed `mergeStateStatus` (`UNKNOWN`) the pull request keeps the group it stood in on the previous board with the reason `checking`, and waits when it is new, so a pull request never jumps while GitHub thinks.
 A pull request nothing has changed on for 7 days (`OLD_MS`) in any group but Merging · merged is folded as `오래된 PR N` inside its group.
-Folded lines (a team's review asks, old pull requests) are in no count: the Work icon's number is the Sessions Needs You rows plus these unfolded Needs You rows, one for an agent that stands in both, and the sidebar's Needs You is unchanged.
+Folded lines (a team's review asks, old pull requests) are in no count: the PRs icon's number is these unfolded Needs You rows alone (PRD sidebar-task-lens B29), and the sidebar's Needs You is unchanged.
 Within a group the order is the reason's urgency, then the newest update (the newest merge for Merging · merged), then the larger number.
 Times in a reason are the instants they began, never durations, so time passing publishes nothing; the web counts them on its one clock.
 
 `<checkout> only` keeps a row whose `checkout_ids` hold the checkout: the one on the pull request's branch, the ones its recorded sessions ran in and the ones its live agents sit in.
 A project with no GitHub remote has no board, and `gh` missing or signed out is a state of the project's GitHub status, not an empty board.
 
-### The Overview's task stage
+### A task's stage
 
-A task's four-step stage (`작업 → PR → 검토 → 머지`) reuses this cached PR answer through the agents' PR summaries (`agent_state/tally/tasks.rs::stage`): with any pull request the bar stands at the least advanced one that is not merged, a draft, pending, failing or closed one at two steps and a mergeable one at three, and at four once every one merged; with none it is one step while a member works in a linked worktree, and a task that is only a conversation has no bar.
+The session record's four-step stage (`작업 → PR → 검토 → 머지`) reuses this cached PR answer through the agents' PR summaries (`agent_state/tally/tasks.rs::stage`): with any pull request the bar stands at the least advanced one that is not merged, a draft, pending, failing or closed one at two steps and a mergeable one at three, and at four once every one merged; with none it is one step while a member works in a linked worktree, and a task that is only a conversation has no bar.
 A failed or unrequested lookup never becomes a merged or empty stage: a member whose PR state is unread adds nothing.
 The workspace inspector uses the canonical representative agent and disconnected override; inspection itself never acknowledges an agent.
 
@@ -788,7 +788,7 @@ The block also carries the label's `line` and `end` when there is one: the reque
 A row's pull requests are its checkout branch's and those its session made: a tool in the session printed the address within thirty seconds of GitHub's `createdAt` (D-31), judged once by the label worker and kept with the session's facts.
 An address in a reply or a request is a mention and links nothing.
 A pull request on several rows gives its duty to one row, so `fix` and `review` appear once: on its branch's checkout the row nearest its lineage root (`lineage_depth`), then the one whose session printed it, then the lowest pane id; with no row there, the row whose session printed it first.
-Activity never decides, so agents on one checkout that take turns working never trade a pull request; an Observer and the implementor it spawned there keep it on the Observer's row, the one Sessions draws, even when the implementor's session printed it.
+Activity never decides, so agents on one checkout that take turns working never trade a pull request; an Observer and the implementor it spawned there keep it on the Observer's row, the one the 태스크 list draws, even when the implementor's session printed it.
 A settled pull request counts as live only when it settled after the operator's last request (D-43).
 The verb's time is kept per pane in `core-state.json` (`request_verbs`), so a restart does not restart the wait.
 Opening a finished row in the request view (`overview_open_result`) reads the pane the way a focus does and moves no focus; a demand outlives the read as everywhere else.
@@ -797,35 +797,33 @@ The session's first request is the first request any read holds, whichever read 
 Text another program wrote, a title, a label line, a sender's name, a request or a reply, reaches the row without control characters or bidirectional controls, and a title, line or name also without the other Unicode default-ignorable code points (zero-width characters, Hangul fillers; `herdr-core/src/display_text.rs`) and on one line and a sender's name at most 64 characters; a sender whose name reads as the row's word for the operator or an unnamed agent (`나`, `에이전트`, `operator`, compared by its letters and digits after NFKC and case folding) is shown as an unnamed agent.
 Regression owners: `herdr-core/src/request_view/tests.rs` for the verb, the pull request links, duty and senders, and `runtime::tests::labels` for the title ladder, the stopped and waiting verbs with the switch on and off, the open-result read and the running-checks re-read.
 
-### The Sessions tool
+### A task row's session facts
 
-`agent_state/sessions.rs` puts each root row in one of the sidebar's own groups (PRD D-16): Needs You, Working, Done, Idle, and Resolved for a session resolved within the last 24 hours; no PR stage and no task tag decides the group.
+`agent_state/sessions.rs` gives each agent row its own session facts, `row.state.session`: its group among the sidebar's own (Needs You, Working, Done, Idle, and Resolved for a session resolved within the last 24 hours), the line its 태스크 row draws, and whether that line is unfinished work; no PR stage and no task tag decides the group.
+Which task a row belongs to, the task's state and the order the tasks stand in are `agent_state/tally/tasks.rs`'s ([A device's tasks](#a-devices-tasks)), published as `agent_scope.tasks`; there is no separate Sessions membership any more (PRD sidebar-task-lens D-16, D-40).
 A Needs You row draws its `row.state.ask` (verb and what to do) in place of a line, and a blocked one, which has no ask, its cause; a Working row its label line, or while it waits on its children the line of its most recently changed working descendant; a Done row its label line.
 An Idle row carries a line only for a stopped turn (`◐`, the same rule as the sidebar's Stopped mark), marked `unfinished`.
-Needs You is ordered by when the ask began, Working puts a failed PR first and then the most recent, Done is most recent first, and Resolved is most recently resolved first.
-Idle puts unfinished work first, then a failed, mergeable, pending, draft and merged PR, then the rest, and the panel draws every Idle row as it draws the other groups, with no fold.
 A blocked menu takes Approval before an unread AI question's Answer.
 A current native `user_turn.kind = question` instead takes Answer while its session holds for a reply, including after it is read and when its content is absent.
 Native plan approval keeps Approval; the typed native wait, rather than a provider name or an AI question label, distinguishes these cases.
 Reading an AI question skips its demand rung and leaves a dimmed question; menu and plan approval stay in Needs You until answered.
 `row.state.pr` is the row's own PR summary (PRD D-18, D-39): the live PRs it holds the duty of, never a descendant's, with the count, the worst state and each PR worst first, each state the one rule of Pull request visual states decides; a closed PR is not counted.
 Without a label line the row keeps its outline but carries no invented line.
-`agent_scope.sessions` publishes the ordered member indices and the nonempty groups for checkout, project, device and overall scopes, with no counts.
-Delegated children are never Sessions members of their own: they are drawn under their root through every row the operator expands, at any depth (`sessions_expanded_agent_pane_ids` in core UI state holds each expanded pane), and Factory workers retain their dedicated surface.
-A Hide AI row for a home is a member only while it is in Needs You, where it draws the home's turn under the agent's own ask or block cause and opens the home when chosen.
+Delegated children are never tasks of their own: they are drawn under their root through every row the operator expands, at any depth (`sessions_expanded_agent_pane_ids` in core UI state holds each expanded pane), and Factory workers retain their dedicated surface.
+A Hide AI row for a home is a task only while it is in Needs You, where it draws the home's turn under the agent's own ask or block cause and opens the home when chosen.
 
 Resolve records `resolved_sessions` in core UI state and publishes the hidden row only after the existing coalesced writer acknowledges that exact save.
 Failure keeps it visible with the existing actionable save error; input, activity, session replacement or pane closure invalidates a pending acknowledgement.
 New operator input, a received letter or renewed working activity restores the session.
 Automatic resolution requires a stopped agent, no demand and every assigned PR merged or closed; settlements before restored input cannot resolve it again.
-Only resolutions from the last 24 hours (`RESOLVED_WINDOW_MS`) enter Resolved, folded by default; older resolutions stay in tabs and among the sidebar's resting tasks but leave both lists.
+A resolved task rests, folded under the 태스크 list's `쉬는 중`; resolutions older than 24 hours (`RESOLVED_WINDOW_MS`) leave the Resolved group and stay among the resting tasks.
 The existing runtime tick advances that window without adding a timer or per-snapshot clock read.
 Closing a pane prunes its resolution and input record.
-Regression owners: `runtime::tests::session_state`, `request_view::tests`, and `web/e2e/session-panel.spec.ts`.
+Regression owners: `runtime::tests::session_state`, `request_view::tests`, `web/src/TaskLens.test.tsx` and `web/e2e/session-panel.spec.ts`.
 
-### The Sessions work record
+### The session work record
 
-Sessions rows keep their live group and navigation and add a record action; they carry no missed-work flag.
+A 태스크 row keeps its live group and navigation and adds a record action that opens the record in the lane's 보기 slot; it carries no missed-work flag.
 The record's title follows the same summary/native/manual rules, with the current status, the PRs the session and every descendant created, the assigned work as a checklist with each task's missed work under it, and expandable children in that order.
 The PRs come from the record's `outputs`, which already hold every descendant's PR with its source session and name; no wire field was added.
 The checklist lists tasks first-asked first with the finished count over the total.
@@ -840,12 +838,11 @@ Measuring, checking or verifying the assigned task's result, even when the agent
 Records written before `context_label.v10` may still hold such an item with the `leftover` kind.
 Missed items are durable Open, Resolved, Issue or Dismissed records.
 Dismiss can be undone and a resolved item reopened; a closed item stays in the record as one muted line under its task with its status word.
-The Sessions top group holds every open missed item in the visible checkout, project or Home, of live and ended sessions, within the project's Copied history window (90 days by default).
-It is folded by default, newest first, and a session that works again keeps its items in the group.
+An open missed item is read in its session's record, within the project's Copied history window (90 days by default); the 태스크 list draws no missed-work group (PRD sidebar-task-lens D-16).
 
 With summaries Off, the same record shows native/manual title, native status, outputs, children and every saved raw request oldest first, the last five open and the earlier ones behind `이전 요청 N`.
 It hides verdicts, chapters, tasks, END labels, missed items and their actions; turning summaries on restores old judgments and leaves the Off-period requests unjudged.
-This record does not change the phone surface or the live Sessions grouping rules.
+This record does not change the phone surface or the 태스크 list's grouping rules.
 Regression owners: `links::store::ledger::tests`, `labels::tests`, `runtime::tests::session_work`, `web/src/sessionWork.test.ts`, `web/src/SessionRecord.test.tsx`, the command-record tests in `hide-session/tests/it/conversation_cursor.rs`, and the isolated session-work-ledger browser and desktop flows.
 
 ### Delegated escalation
@@ -1015,10 +1012,10 @@ Regression owners: `hided/src/desktop_notices.rs`, `hided/src/mobile/push.rs`, `
 `agent_state/tally/scope.rs` publishes `agent_scope` on the navigator, each device, each project and each checkout.
 Physical group totals preserve every reported row; Overview members use the first checkout owner and deduplicate a pane within each project, while checkout marks retain the existing last-owner rule.
 Physical row references include an occurrence index so duplicate pane IDs keep their distinct labels and states; Overview and task membership retain the first source occurrence.
-The scope projection reads Factory worker panes from the current summary’s column cards, excludes them from Sessions and the Overview attention count, and keeps them in physical agent lists.
+The scope projection reads Factory worker panes from the current summary’s column cards, excludes them from the device's tasks and the Overview attention count, and keeps them in physical agent lists.
 A changed Factory summary refreshes the scope in the same publication; unchanged worker membership reuses the cache.
 The retained request projection keeps its previous internal scope semantics.
-Sessions separately excludes delegated children in every scope and publishes its nonempty groups.
+The device's tasks separately take delegated children only under their root.
 Disconnected devices have empty physical totals but retain their last Overview members, matching the existing rail and board behavior.
 The scope cache compares owned agent rows, device connection facts and checkout membership and summaries; it restores cached values after a catalog rebuild and recomputes only when those inputs change.
 The frozen screen counts are asserted by `agent_state::tally::scope_tests::physical_groups_root_headings_and_requests_keep_the_frozen_screen_values`; ownership, unchanged projection and disconnect retention are asserted by `runtime::tests::agent_scopes`.
