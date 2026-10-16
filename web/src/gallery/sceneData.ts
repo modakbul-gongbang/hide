@@ -63,7 +63,6 @@ const NO_AGENT_PROJECTS = ["investment", "landing-page", "modakbul-site"];
 const SLEEPING_PROJECTS: Record<string, number> = { "codex-daemon-apply-spec": 4, "sticky-notes": 14 };
 
 const ROOT = "/work";
-const NO_MARKS: MarkCounts = { turn: 0, going: 0, done: 0, unread: 0 };
 
 const TITLES: Record<SceneContent, Record<string, string>> = {
   reference: {
@@ -108,8 +107,8 @@ function agent({ elapsed, ...spec }: AgentSpec): AgentRow {
 /** A checkout's agents by mark; `quiet` ones count in Seen and on no badge. */
 type SpecMarks = Partial<MarkCounts> & { quiet?: number };
 
-function marks({ quiet: _quiet, ...partial }: SpecMarks): MarkCounts {
-  return { ...NO_MARKS, ...partial };
+function marks(spec: SpecMarks): MarkCounts {
+  return { turn: spec.turn ?? 0, going: spec.going ?? 0, done: spec.done ?? 0, unread: spec.unread ?? 0 };
 }
 
 type CheckoutSpec = {

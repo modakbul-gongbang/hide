@@ -409,6 +409,105 @@ fn running_checks_are_read_again_once_a_minute_only_while_the_view_is_shown() {
     assert_eq!(generation(&runtime), Some(1), "the view was left");
 }
 
+/// status-marks D-07, D-08, B11-B13: a row whose pull request has checks
+/// running is in progress and read for once a minute whatever the window
+/// shows; a required check that never reported, or a project whose answer is
+/// stale, holds nothing; the end of the checks it waited on is news.
+#[test]
+fn a_row_waits_on_its_running_checks_and_their_end_is_news() {
+    let mut facts = operator_asked("PR 올려줘");
+    facts.created_prs = vec![crate::labels::facts::CreatedPr {
+        repository: "acme/app".to_owned(),
+        number: 7,
+        sighted_at_unix_ms: 5,
+    }];
+    let mut runtime = runtime_with_facts(facts, "done");
+    let mut pull_request = crate::model::PullRequestSnapshot {
+        closing_issues: Vec::new(),
+        title: "Request view".to_owned(),
+        checks: crate::model::PullRequestChecks::Pending,
+        number: 7,
+        head_branch: "prd/request-view".to_owned(),
+        base_branch: "main".to_owned(),
+        url: "https://github.com/acme/app/pull/7".to_owned(),
+        badge: crate::model::PullRequestBadge::Open,
+        review: None,
+        is_draft: false,
+        merged_at_unix_ms: None,
+        updated_at_unix_ms: Some(10),
+        created_at_unix_ms: Some(5),
+        closed_at_unix_ms: None,
+        head_oid: None,
+        cross_repository: false,
+        work: Default::default(),
+    };
+    let github = |pull_request: &crate::model::PullRequestSnapshot, stale: bool| {
+        crate::model::GithubSnapshot {
+            projects: vec![crate::model::GithubProjectSnapshot {
+                root_path: "/work/app".to_owned(),
+                status: crate::model::GithubStatusSnapshot {
+                    available: true,
+                    stale,
+                    ..Default::default()
+                },
+                pull_requests: vec![pull_request.clone()],
+                pull_requests_read: true,
+                ..Default::default()
+            }],
+        }
+    };
+
+    // Only a required check that never reported: it may never run.
+    runtime.ingest_github(github(&pull_request, false));
+    assert_eq!(row(&runtime)["wait"], serde_json::Value::Null);
+    assert!(runtime.checks_wait_projects().is_empty());
+
+    pull_request.work.running_checks = 2;
+    runtime.ingest_github(github(&pull_request, true));
+    assert_eq!(
+        row(&runtime)["wait"],
+        serde_json::Value::Null,
+        "a stale answer may be long over"
+    );
+
+    runtime.ingest_github(github(&pull_request, false));
+    let waiting = row(&runtime);
+    assert_eq!(waiting["wait"], "checks", "{waiting}");
+    assert_eq!(
+        (&waiting["group"], &waiting["mark"], &waiting["status_code"]),
+        (
+            &serde_json::json!("working"),
+            &serde_json::json!("going"),
+            &serde_json::json!("waiting")
+        )
+    );
+    assert_eq!(waiting["state"]["line"]["mode"], "waiting");
+    assert_eq!(waiting["state"]["line"]["pull_request"], 7);
+    let generation = |runtime: &Runtime| runtime.github_generations.get("/work/app").copied();
+    let start = std::time::Instant::now();
+    runtime.reread_pending_checks(start);
+    runtime.reread_pending_checks(start + std::time::Duration::from_secs(61));
+    assert_eq!(
+        generation(&runtime),
+        Some(1),
+        "read again a minute on with no window showing the view"
+    );
+
+    pull_request.checks = crate::model::PullRequestChecks::Failed;
+    pull_request.work.running_checks = 0;
+    runtime.ingest_github(github(&pull_request, false));
+    let ended = row(&runtime);
+    assert_eq!(ended["wait"], serde_json::Value::Null);
+    assert_eq!(
+        (&ended["group"], ended["unread"].as_bool()),
+        (&serde_json::json!("done"), Some(true)),
+        "{ended}"
+    );
+    assert_eq!(ended["state"]["line"]["mode"], "checks_failed");
+    assert_eq!(ended["state"]["line"]["pull_request"], 7);
+    assert!(runtime.checks_wait_projects().is_empty());
+}
+
 /// A fresh projection with one Codex agent on `SESSION` at `status` and
 /// Herdr state `seq`.
 fn codex_projection(status: &str, seq: u64) -> SessionSnapshotPayload {

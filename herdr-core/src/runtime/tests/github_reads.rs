@@ -881,6 +881,37 @@ fn a_pull_request_a_session_just_printed_is_read_for_once_in_its_repository() {
     );
 }
 
+/// status-marks D-09, B14: the turn that printed a pull request's address
+/// is owed GitHub's answer for it, and the answer landing releases it.
+#[test]
+fn a_printed_pull_request_is_owed_its_read_until_the_answer_lands() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![project_with_pane("a", "/tmp/a", "w1:p1")];
+    let start = Instant::now();
+    first_read(
+        &mut runtime,
+        vec![read_ok("/tmp/a", vec![pull_request_in("owner/a", 1)], 10)],
+        start,
+    );
+    let address = ("owner/a".to_owned(), 2);
+    assert!(!runtime.sighted_read_owed(&address));
+
+    runtime.read_sighted_pull_requests(&[sighted("w1:p1", "owner/a", 2)], (start, NOW_MS));
+    assert!(runtime.sighted_read_owed(&address), "its read is out");
+
+    runtime.ingest_github_answer(
+        GithubSnapshot {
+            projects: vec![read_ok(
+                "/tmp/a",
+                vec![pull_request_in("owner/a", 1), pull_request_in("owner/a", 2)],
+                20,
+            )],
+        },
+        true,
+    );
+    assert!(!runtime.sighted_read_owed(&address), "the answer landed");
+}
+
 #[test]
 fn a_repositorys_first_pull_request_is_read_in_the_project_its_session_works_in() {
     let mut runtime = runtime();
