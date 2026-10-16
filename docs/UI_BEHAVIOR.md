@@ -1186,6 +1186,7 @@ Headings hide their hashes; bold, italic, and strikethrough hide their delimiter
 Tables, footnotes and inline HTML other than `<img>` (`<br>`, `<kbd>`, `<sub>`) are not drawn: they stay monospaced source, editable in place, and a parse the view cannot use leaves the whole document monospaced with the reason in the notice bar while typing continues.
 An HTML block at the top level of the document is drawn as its rendered HTML, a Markdown image `![alt](src "title")` and an inline `<img>` as the image, and the Live text of an issue body (read-only, never revealing source) draws them the same way.
 Like a fenced code block, a block is one unit: a selection anywhere in it, edges included, shows its source, and an image shows its source while the caret is on its line.
+A file opens with the caret at 0, which the operator did not put there, so a block or image there stays drawn until the operator first moves the caret or edits; every other mark follows the caret from the start.
 An HTML block inside a quote or a list item, a comment, and a block with nothing visible left after cleaning stay source.
 An empty Markdown file is an empty Live editor with the caret in it.
 Links open on modifier-click only: HTTP(S) in the external browser, a relative file inside the current checkout as an Explorer reveal, and anything else as a caller-visible notice; a plain click places the caret.
