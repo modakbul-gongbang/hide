@@ -66,7 +66,7 @@ fn main() -> ExitCode {
             ) =>
         {
             if cursor_permission_hook(&arguments) {
-                print_line(basic::CURSOR_ALLOW);
+                let _ = print_line(basic::CURSOR_ALLOW);
             }
             return ExitCode::SUCCESS;
         }
@@ -198,25 +198,22 @@ fn run_basic_hook(agent: GuidanceAgent, arguments: &[String], started: Instant) 
     if dialect == HookDialect::Cursor && inside_grok() {
         return;
     }
-    let answer = std::panic::catch_unwind(|| match event {
-        HookEvent::PreToolUse => guard_refusal(dialect, agent.id(), started).map(|reason| {
-            match dialect {
-                HookDialect::Cursor => basic::cursor_deny(&reason),
-                // Grok takes Claude Code's refusal envelope.
-                _ => hide_agent_hooks::spawn_guard::deny_output(&reason),
-            }
-        }),
-        HookEvent::SessionStart => guidance::stdout(
-            agent,
-            &guidance::session_context(workspace_context::live_context().as_deref()),
+    let (answer, intake) = std::panic::catch_unwind(|| match event {
+        HookEvent::PreToolUse => basic_tool_call(dialect, agent.id(), started),
+        HookEvent::SessionStart => (
+            guidance::stdout(
+                agent,
+                &guidance::session_context(workspace_context::live_context().as_deref()),
+            ),
+            None,
         ),
-        _ => None,
+        _ => (None, None),
     })
     .unwrap_or_else(|_| {
         if event == HookEvent::PreToolUse {
             guard_failed(arguments, "panic");
         }
-        None
+        (None, None)
     });
     let answer = match answer {
         None if dialect == HookDialect::Cursor && basic::cursor_permission_event(event) => {
@@ -224,10 +221,64 @@ fn run_basic_hook(agent: GuidanceAgent, arguments: &[String], started: Instant) 
         }
         answer => answer,
     };
-    if let Some(answer) = answer {
-        print_line(&answer);
+    let printed = answer.is_some_and(|answer| print_line(&answer));
+    // The letters the answer carries are received once it reached the agent:
+    // a flush that failed leaves them pending for the next event.
+    if let Some(intake) = intake.filter(|_| printed)
+        && let Err(failure) = hide_agent_hooks::delivery::confirm(&intake, started + GUARD_BUDGET)
+        && let Some(home) = home_directory()
+    {
+        hide_agent_hooks::delivery::diagnose_failure(&home, &failure);
     }
     let _ = std::panic::catch_unwind(|| count_basic(dialect, event, started));
+}
+
+/// A Grok or Cursor tool call: the guards' refusal in the agent's shape, or,
+/// when the call runs, the letters due while the agent works as the context
+/// the agent reads with the tool's result (PRD letters-to-busy-agents D-02),
+/// asked in a Herdr pane for the session the payload names and confirmed by
+/// the caller once printed. Only the tools the agent's matcher names reach
+/// this hook (`guidance`), so a letter waits through the others.
+fn basic_tool_call(
+    dialect: HookDialect,
+    runtime_id: &str,
+    started: Instant,
+) -> (Option<String>, Option<hide_agent_hooks::delivery::Intake>) {
+    let Some((payload, truncated)) = read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)
+    else {
+        if let Some(home) = home_directory() {
+            hide_agent_hooks::guardrails::record_failure(&home, runtime_id, "payload_deadline");
+        }
+        return (None, None);
+    };
+    if let Some(reason) = guard_refusal(dialect, runtime_id, started, &payload, truncated) {
+        let answer = match dialect {
+            HookDialect::Cursor => basic::cursor_deny(&reason),
+            // Grok takes Claude Code's refusal envelope.
+            _ => hide_agent_hooks::spawn_guard::deny_output(&reason),
+        };
+        return (Some(answer), None);
+    }
+    let in_pane = std::env::var("HERDR_PANE_ID").is_ok_and(|value| !value.is_empty());
+    let Some(session) = (in_pane && dialect.adapter().tool_letters.is_some())
+        .then(|| basic::session(&payload, truncated, dialect))
+        .flatten()
+    else {
+        return (None, None);
+    };
+    match hide_agent_hooks::delivery::pull_at_tool(started + GUARD_BUDGET, &session) {
+        Ok(Some(intake)) => (
+            Some(basic::context_answer(dialect, &intake.context)),
+            Some(intake),
+        ),
+        Ok(None) => (None, None),
+        Err(failure) => {
+            if let Some(home) = home_directory() {
+                hide_agent_hooks::delivery::diagnose_failure(&home, &failure);
+            }
+            (None, None)
+        }
+    }
 }
 
 /// The count a Grok or Cursor event makes. Grok's `Stop` names the
@@ -272,14 +323,17 @@ fn count_basic(dialect: HookDialect, event: HookEvent, started: Instant) {
 /// PowerShell, which re-encodes what a program prints in the console code
 /// page, so the answer goes out as ASCII with `\u` escapes, as the runtime
 /// hooks' does.
-fn print_line(json: &str) {
+/// Prints one answer line; whether it was written and flushed.
+fn print_line(json: &str) -> bool {
     let json = if cfg!(windows) {
         hide_agent_hooks::runtime::ascii_json(json)
     } else {
         json.to_owned()
     };
     let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "{json}").and_then(|_| stdout.flush());
+    writeln!(stdout, "{json}")
+        .and_then(|_| stdout.flush())
+        .is_ok()
 }
 
 /// The spawn guard (`hide_agent_hooks::spawn_guard`) of Claude Code's and
@@ -299,7 +353,18 @@ fn run_spawn_guard(arguments: &[String], started: Instant) {
     if hide_agent_hooks::runtime::ForeignOrigin::detect(|name| std::env::var_os(name)).is_some() {
         return;
     }
-    if let Some(reason) = guard_refusal(runtime.dialect(), runtime.id(), started) {
+    let Some((payload, truncated)) = read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)
+    else {
+        guard_failed(arguments, "payload_deadline");
+        return;
+    };
+    if let Some(reason) = guard_refusal(
+        runtime.dialect(),
+        runtime.id(),
+        started,
+        &payload,
+        truncated,
+    ) {
         print_line(&hide_agent_hooks::spawn_guard::deny_output(&reason));
     }
 }
@@ -320,27 +385,26 @@ fn guard_failed(arguments: &[String], cause: &str) {
 /// failure of its own let it run). A refusal and an unreachable daemon are
 /// written to the guard's log here; the caller prints the answer in its
 /// runtime's form.
-fn guard_refusal(dialect: HookDialect, runtime_id: &str, started: Instant) -> Option<String> {
+fn guard_refusal(
+    dialect: HookDialect,
+    runtime_id: &str,
+    started: Instant,
+    payload: &[u8],
+    truncated: bool,
+) -> Option<String> {
     use hide_agent_hooks::spawn_guard::{self as guard, Registration};
 
     let pane = std::env::var("HERDR_PANE_ID")
         .ok()
         .filter(|value| !value.is_empty());
     let home = home_directory();
-    let Some((payload, truncated)) = read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)
-    else {
-        if let Some(home) = &home {
-            hide_agent_hooks::guardrails::record_failure(home, runtime_id, "payload_deadline");
-        }
-        return None;
-    };
     // The project's guardrails come first, in any session of a guarded
     // project, a Herdr pane or not (PRD agent-guardrails B22): they read only
     // local files, and a call they refuse never reaches the daemon.
     if let Some(home) = &home
         && let Some(reason) =
             hide_agent_hooks::guardrails::refusal_for(home, runtime_id, pane.as_deref(), || {
-                hide_agent_hooks::guardrails::payload::read_hook(&payload, truncated, dialect)
+                hide_agent_hooks::guardrails::payload::read_hook(payload, truncated, dialect)
             })
     {
         return Some(reason);
@@ -350,9 +414,9 @@ fn guard_refusal(dialect: HookDialect, runtime_id: &str, started: Instant) -> Op
     // Question tools have no shell command and take their own readonly route,
     // for an agent whose question tools are confirmed to reach this hook
     // (Grok's are not yet, so its questions stay native).
-    if let Some(question) = (guard::may_hold_question(&payload)
+    if let Some(question) = (guard::may_hold_question(payload)
         && hide_agent_adapter::direct_ask_kind(runtime_id).is_some())
-    .then(|| guard::read_question(&payload, truncated, dialect))
+    .then(|| guard::read_question(payload, truncated, dialect))
     .flatten()
     {
         let home = home_directory()?;

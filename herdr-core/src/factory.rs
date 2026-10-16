@@ -1283,6 +1283,7 @@ fn handle(
                 intent,
                 body: body.clone(),
                 kind: kind.into(),
+                now: false,
             },
         )?;
         prepared.run(DELIVERY_TIMEOUT)
@@ -1904,6 +1905,7 @@ impl WorkerRuntime for CoreWorkers {
                 intent: intent.to_owned(),
                 body: body.to_owned(),
                 kind: "report".into(),
+                now: false,
             },
         )?;
         self.watch(worker);
@@ -2588,6 +2590,7 @@ impl Notifier for CoreNotifier {
                 ),
                 body: body.to_owned(),
                 kind: "report".into(),
+                now: false,
             },
         );
         drop(runtime);

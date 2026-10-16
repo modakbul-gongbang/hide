@@ -377,16 +377,17 @@ Inside one it uses three hooks, each calling `hide-agent-hooks opencode <start|p
   The part's id is made the way OpenCode makes its own (`prt_` and a time-ordered id), so it sorts after the operator's text.
 - `event` confirms letters once `message.part.updated` reports Hide's part stored, and counts subagents: a `session.created` with a parent is a child, `session.status` busy and idle move it between working and done, and a root that goes idle while a child still runs in the background keeps it counted (OpenCode's `session.status` list is read then).
   The counts go to the pane's counter file and to Herdr as the Claude Code and Codex hooks report theirs.
+- `tool.execute.after` asks, for the pane's root session and at most once every ten seconds, for the letters due while the agent works (`letters`, which runs `hide inbox --hook --session <id> --tool`), appends them to the tool's `output` inside `<system-reminder>`, and confirms them through `event` once `message.part.updated` reports the completed tool part stored ([docs/delivery.md: Letters while the agent works](delivery.md#letters-while-the-agent-works)); nothing due, a failed helper and a child session leave the result as it is.
 - `tool.execute.before` sends a `bash` call whose command mentions `herdr` or `HERDR_BIN_PATH` to the spawn guard and every `question` call to the Factory question guard (runtime `opencode`), and throws the deny reason; OpenCode hands a thrown error to the model as the tool's error, so the model reads the same reason Claude Code's model does.
   While some project of the machine has a protection on, every `bash` call and the file tools `read`, `edit`, `write`, `apply_patch` and `multiedit` go to the helper too, with only the arguments that name a file (`filePath`, a patch's `*** ` lines), for the [project guardrails](#project-guardrails).
   The plugin reads the policy file again only when its modification time or size changes, so a machine with every protection off starts no helper for them (PRD agent-guardrails B27).
   Any other tool call never reaches the helper.
 
-Each hook has a budget: 1.85 seconds for a prompt (the Claude Code prompt hook's), 2.5 seconds for a tool call (the spawn guard's), 2 seconds for a confirmation or a count and 8 seconds for the one guidance read at load.
+Each hook has a budget: 1.85 seconds for a prompt (the Claude Code prompt hook's), 2.5 seconds for a tool call (the spawn guard's), 1.5 seconds for a tool result's letters, 2 seconds for a confirmation or a count and 8 seconds for the one guidance read at load.
 OpenCode waits on a hook without a limit, so the plugin enforces them: past the budget the helper is killed, the prompt goes on unchanged and the tool call runs.
 At most eight helpers run at once; a call skipped at that cap or given up on is counted and passed on the next call, which records it in the private delivery diagnostic (cause `plugin`), since the plugin has no log of its own and a hook's output reaches nobody who could act on it.
 
-No bell rings for OpenCode: on 2026-10-07 its previous-session picker read `done` and a bell's Enter there opened another session, so its letters ride its next prompt instead and are confirmed only once OpenCode stored that prompt ([docs/delivery.md](delivery.md#safe-intake-and-manual-fallback)).
+No bell rings for OpenCode: on 2026-10-07 its previous-session picker read `done` and a bell's Enter there opened another session, so its letters ride its next prompt instead and are confirmed only once OpenCode stored that prompt ([docs/delivery.md](delivery.md#safe-intake-and-manual-fallback)); while it works they ride a tool result (above).
 Claude Code's hook run inside OpenCode, through an operator plugin that bridges `~/.claude/settings.json`, ends silently (`ForeignOrigin::OpenCode`), so letters and counts are never taken twice.
 
 The kit row reads the plugin as Claude Code's hook part is read: Installed when the file is this build's and unedited; Outdated with the reason when it is another build's, names a helper that is gone, is an older version or was edited; Removed when it was installed and taken out; Off when OpenCode is switched off.
@@ -420,6 +421,8 @@ Each handler calls `hide-agent-hooks <pi|omp> <start|prompt|confirm|tool|subagen
   The message is `display: false`, so the host keeps it off the screen and out of the title while the model reads it, and a letter cannot close Hide's reminder tags.
   Its `details` carry a fresh id per attempt, because omp can prepare one submission more than once and keeps only the attempt it delivers.
 - `message_end` confirms the letters once the host has written Hide's message and then the reply after it, and only for the attempt it wrote; a turn that ends before any reply leaves them pending for the next prompt or `hide inbox`, and a confirmation Hide did not take is made again when the letter rides the next prompt.
+  It also confirms a tool result's letters once the host has written that tool result message (`toolCallId`).
+- `tool_result` asks, for the pane's own agent and at most once every ten seconds, for the letters due while it works (`letters`, which runs `hide inbox --hook --session <file> --tool`) and adds them to the result's `content` as one more text block inside `<system-reminder>`, keeping a tool's `structuredContent` ([docs/delivery.md: Letters while the agent works](delivery.md#letters-while-the-agent-works)); nothing due, a failed or late helper, a print run, an unsaved session and a subagent leave the result as it is.
 - `tool_call` sends a `bash` call whose command mentions `herdr` or `HERDR_BIN_PATH` to the spawn guard and, in omp, every `ask` call to the Factory question guard (runtime `omp`, with the pane's root session also for a subagent's call), and returns `{block: true, reason}`, which the host hands to the model as the tool's result.
   While some project of the machine has a protection on, every `bash` call and the `read`, `edit` and `write` tools (their `path`) go to the helper too, gated on the policy file as OpenCode's plugin is, for the [project guardrails](#project-guardrails).
   Pi has no question tool, so its Factory question is the Hide command's alone.
@@ -428,7 +431,7 @@ Each handler calls `hide-agent-hooks <pi|omp> <start|prompt|confirm|tool|subagen
 The budgets, the cap of eight running helpers and the `plugin` diagnostic cause are OpenCode's plugin's; the `plugin` cause also records a prompt whose host gave no usable session id for Memory.
 Both hosts wait on a handler far longer (omp blocks the tool call after 30 seconds), so the extension enforces them: past the budget the helper is killed, the prompt goes on unchanged and the tool call runs.
 Every callback catches its own error, since a throw from a timer callback ends an omp session.
-No bell rings for Pi or omp: on 2026-10-07 their resume pickers read `done`, as OpenCode's did, so their letters ride the next prompt ([docs/delivery.md](delivery.md#safe-intake-and-manual-fallback)).
+No bell rings for Pi or omp: on 2026-10-07 their resume pickers read `done`, as OpenCode's did, so their letters ride the next prompt, or a tool result while they work ([docs/delivery.md](delivery.md#safe-intake-and-manual-fallback)).
 The host stores Hide's message in the session file as a `custom_message` entry of `customType` `hide`; the shared Pi and omp reader reads that entry, and no other extension's, as provider-injected context, so the Memory pass finds the receipt in it as it finds the Claude and Codex transcripts' (PRD pi-omp-extension D-09).
 The kit row reads the file as it reads OpenCode's plugin, and Settings names the piece Extension.
 
@@ -537,9 +540,11 @@ The helper (`src/bin/hide-agent-hooks.rs`, `run_basic_hook`; the payload and ans
 | Shell call | `toolName` `run_terminal_command`, `toolInput.command`, `cwd` | `tool_name` `Shell`, `tool_input.command`, `tool_input.working_directory` (else `cwd`) |
 | Refusal | Claude Code's envelope, `hookSpecificOutput.permissionDecision = "deny"`, which Grok takes | `{"permission": "deny", "user_message": <reason>, "agent_message": <reason>, "additional_context": <reason>}` |
 | Nothing to refuse | no output | `{"permission": "allow"}` |
+| Letters due while the agent works | `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": <letters>}}`, which Grok's guide says the model reads with the batch's tool results (`sessionId` names the session) | `{"permission": "allow", "additional_context": <letters>}` (`conversation_id` names the session) |
 | Turn end | `Stop`: `subagentType` marks a subagent's own stop, `backgroundTasks` lists what still runs | `stop` |
 
 The refusal's reason and every rule of what is refused are the spawn guard's above, through the same `guard_refusal`.
+A call that runs, in a Herdr pane and with a session in its payload, then asks `hide inbox --hook --session <id> --tool` for the letters due while the agent works and answers them as the row above shows, confirming them once the answer is printed ([docs/delivery.md: Letters while the agent works](delivery.md#letters-while-the-agent-works)); a refused call carries none, and only the tools in each matcher reach the hook, so a letter waits through the others.
 Cursor reads output that is not a valid answer from `preToolUse` and `subagentStart` as a refusal even when the hook exits 0, and only the CLI's own code, not its documentation, says empty output proceeds, so for those two events (`subagentStart` only from a `@2` entry an earlier build installed and the next pass has not yet removed) every path that does not refuse prints `{"permission":"allow"}`: outside a pane or a registered checkout, an unreadable payload, a daemon that is down or slow, a panic, and a failed owner handshake before anything else runs (D-04).
 Grok fails open on everything but a refusal, so its hook prints nothing on those paths, as Claude Code's does.
 A failure goes to the guard's log, never to the agent (B5).
@@ -610,7 +615,7 @@ Its popover groups the feature table into Herdr basics, session reading and mult
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `skill` | always | yes | yes | yes | yes | yes | yes |
 | `guidance` | Hide's hook, plugin or extension prints the session guidance | yes | yes | yes | yes | no | yes |
-| `letters` | its prompt dialect declaration | yes | yes | yes | yes | no | no |
+| `letters` | its prompt dialect declaration (a new prompt's letters; while the agent works, `tool_letters` names the dialect whose tool event hands them over: OpenCode, Pi, omp, Grok and Cursor, never a bell target) | yes | yes | yes | yes | no | no |
 | `spawn_guard` | its refusal dialect declaration | yes | yes | yes | yes | yes | yes |
 | `memory` | its Memory dialect declaration | yes | yes | yes | yes | no | no |
 | `bell` | the core rings the doorbell for that agent (`AgentAdapter::bell`, tied to `delivery::doorbell::bell_target`) | yes | no | no | no | no | no |

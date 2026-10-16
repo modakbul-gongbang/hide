@@ -1955,6 +1955,7 @@ fn run_send(job: &SendJob, runtime: &Weak<Mutex<Runtime>>, stop: &AtomicBool) ->
                 intent: job.intent.clone(),
                 body,
                 kind: "report".into(),
+                now: false,
             },
         );
     drop(runtime);

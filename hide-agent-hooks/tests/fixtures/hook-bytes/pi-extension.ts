@@ -1,4 +1,4 @@
-// hide-extension@4 sha256=effb33b64b4c56cb42e3f2fc0ec2360a7ca5f5dfe9f592ff5266c3ba51caf20e
+// hide-extension@5 sha256=043d732589f163f0566cb61295b232fd4ade46370d418b3c85d29ff3cb41d8f1
 // Hide's extension for Pi and omp, written by Hide's install kit (hide-agent-hooks).
 // An edit is kept and shown as edited in Settings; Reinstall puts Hide's back.
 // Outside a Herdr pane, in an agent started from another Pi's or omp's shell, or when its helper is gone, it does
@@ -13,7 +13,7 @@ import path from "node:path";
 
 const HELPER = "/kit path/it's/hide-agent-hooks";
 const AGENT = "pi";
-const VERSION = 4;
+const VERSION = 5;
 
 // The prompt budget is Claude Code's prompt hook's; the tool budget is the spawn guard's. Both hosts wait for
 // a handler far longer (omp gives up at 30 s and then blocks the tool), so these are the limits.
@@ -22,6 +22,11 @@ const TOOL_BUDGET_MS = 2500;
 const START_BUDGET_MS = 8000;
 const CONFIRM_BUDGET_MS = 2000;
 const COUNT_BUDGET_MS = 2000;
+// A tool result's letters: the helper's budget, and how often the pane's agent asks while it works. A burst of tool
+// calls asks once per interval, so the cost per tool stays bounded, and a letter that is due waits at most this
+// much longer.
+const LETTERS_BUDGET_MS = 1500;
+const LETTERS_ASK_INTERVAL_MS = 10 * 1000;
 const OUTPUT_LIMIT = 64 * 1024;
 // Far inside the helper's 256 KiB input, so a pasted log never costs a prompt its letters.
 const PROMPT_TEXT_LIMIT = 32 * 1024;
@@ -347,18 +352,45 @@ async function onPrompt(state, event, ctx) {
   // own id, and only the one whose message the host writes is confirmed.
   const id = randomBytes(8).toString("hex");
   const letters = Array.isArray(answer?.letters) ? answer.letters.filter((letter) => typeof letter === "string") : [];
-  const now = Date.now();
-  for (const [key, entry] of state.pending) {
-    if (now - entry.at > PENDING_AGE_MS) state.pending.delete(key);
-  }
-  // A letter left out stays pending in Hide and reaches the next prompt, and guidance left out comes again.
-  if (state.pending.size >= PENDING_LIMIT) state.pending.delete(state.pending.keys().next().value);
   const memoryStarted = memoryFirst && answer?.memory_start === true;
-  state.pending.set(id, { session, letters, guided, memoryStarted, at: now });
+  holdPending(state, id, { session, letters, guided, memoryStarted });
   // Hidden: the host keeps it out of the conversation on screen and out of the title, and the reminder tags tell the
   // model it is not the operator's text. Hide writes those tags itself, so a letter cannot close them.
   const text = `<system-reminder>\n${sections.join("\n\n").replace(REMINDER_TAG, "<\u200b$1")}\n</system-reminder>`;
   return { message: { customType: CUSTOM_TYPE, content: text, display: false, details: { hide: id } } };
+}
+
+/** Forgets letters whose write never came, and makes room for `key`; a letter left out stays pending in Hide. */
+function holdPending(state, key, entry) {
+  const now = Date.now();
+  for (const [name, old] of state.pending) {
+    if (now - old.at > PENDING_AGE_MS) state.pending.delete(name);
+  }
+  // A letter left out stays pending in Hide and reaches the next prompt, and guidance left out comes again.
+  if (state.pending.size >= PENDING_LIMIT) state.pending.delete(state.pending.keys().next().value);
+  state.pending.set(key, { ...entry, at: now });
+}
+
+/**
+ * The letters due while the pane's agent works, added to the tool's result so the agent reads them before its next
+ * step (PRD letters-to-busy-agents D-02); confirmed once the host wrote the tool result message. Only the pane's own
+ * agent asks, at most once per interval.
+ */
+async function onToolResult(state, event, ctx) {
+  if (!root(ctx) || typeof event?.toolCallId !== "string") return undefined;
+  const session = sessionFile(ctx);
+  if (!session) return undefined;
+  const now = Date.now();
+  if (now - state.askedAt < LETTERS_ASK_INTERVAL_MS) return undefined;
+  state.askedAt = now;
+  const answer = await helper(state, "letters", { session_id: session, native_session: nativeSession(ctx) }, LETTERS_BUDGET_MS);
+  if (typeof answer?.context !== "string" || !answer.context) return undefined;
+  const letters = Array.isArray(answer.letters) ? answer.letters.filter((letter) => typeof letter === "string") : [];
+  if (letters.length > 0) holdPending(state, event.toolCallId, { session, letters });
+  const text = `<system-reminder>\n${answer.context.replace(REMINDER_TAG, "<\u200b$1")}\n</system-reminder>`;
+  const content = [...(Array.isArray(event.content) ? event.content : []), { type: "text", text }];
+  // Replacing the content alone drops a tool's structured result: it is returned with it.
+  return event.structuredContent === undefined ? { content } : { content, structuredContent: event.structuredContent };
 }
 
 /** A message the host finished: Hide's hidden message is written, and the reply after it means the turn is recorded. */
@@ -376,10 +408,25 @@ function onMessageEnd(state, event, ctx) {
     }
     return;
   }
+  if (message?.role === "toolResult") {
+    // The host wrote the tool result carrying the letters: the agent reads them with its next step.
+    const id = message.toolCallId;
+    const pending = typeof id === "string" ? state.pending.get(id) : null;
+    if (pending) {
+      state.pending.delete(id);
+      confirmWritten(state, [pending]);
+    }
+    return;
+  }
   if (message?.role !== "assistant" || state.written.length === 0) return;
   // The host wrote the prompt and Hide's message before the reply: only now are the letters received.
   const written = state.written;
   state.written = [];
+  confirmWritten(state, written);
+}
+
+/** Confirms the letters of the written messages once each; a letter Hide did not take rides the next ask again. */
+function confirmWritten(state, written) {
   for (const { session, letters } of written) {
     const fresh = letters.filter((letter) => !state.confirmed.has(letter) && !state.confirming.has(letter));
     if (fresh.length === 0) continue;
@@ -478,6 +525,7 @@ export default function hide(pi) {
     guided: new Set(),
     memoryStarted: new Set(),
     pending: new Map(),
+    askedAt: 0,
     written: [],
     confirmed: new Set(),
     confirming: new Set(),
@@ -496,6 +544,8 @@ export default function hide(pi) {
   // Past the budget the prompt goes on unchanged, and letters it would have carried stay pending in Hide.
   on("before_agent_start", async (event, ctx) => (await withBudget(onPrompt(state, event, ctx), PROMPT_BUDGET_MS)) ?? undefined);
   on("message_end", (event, ctx) => onMessageEnd(state, event, ctx));
+  // Past the budget the result goes on unchanged, and the letters it would have carried stay pending in Hide.
+  on("tool_result", async (event, ctx) => (await withBudget(onToolResult(state, event, ctx), LETTERS_BUDGET_MS + 200)) ?? undefined);
   on("tool_call", async (event, ctx) => {
     let reason = null;
     try {

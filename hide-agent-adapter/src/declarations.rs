@@ -28,6 +28,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         subagent_counts: Some(HookDialect::ClaudeCode),
         memory: Some(HookDialect::ClaudeCode),
         bell: true,
+        tool_letters: None,
         session: Some(SessionFormat::Claude),
         sleep: Some(LaunchDialect::Claude),
         fork: Some(LaunchDialect::Claude),
@@ -91,6 +92,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         subagent_counts: Some(HookDialect::Codex),
         memory: Some(HookDialect::Codex),
         bell: true,
+        tool_letters: None,
         session: Some(SessionFormat::Codex),
         sleep: Some(LaunchDialect::Codex),
         fork: Some(LaunchDialect::Codex),
@@ -149,13 +151,16 @@ pub const ADAPTERS: &[AgentAdapter] = &[
             folder: &[".grok"],
         },
         default_on: false,
-        // Grok discards what a prompt hook prints, so letters stay with
-        // `hide inbox` and its bell stays off.
+        // Grok discards what a prompt hook prints, so a new prompt's letters
+        // stay with `hide inbox` and its bell stays off; while it works, its
+        // own `PreToolUse` hook hands the due letters over as the tool's
+        // added context (`tool_letters`).
         prompt_hook: None,
         spawn_guard: Some(HookDialect::Grok),
         subagent_counts: Some(HookDialect::Grok),
         memory: None,
         bell: false,
+        tool_letters: Some(HookDialect::Grok),
         session: Some(SessionFormat::Grok),
         sleep: Some(LaunchDialect::Grok),
         fork: Some(LaunchDialect::Grok),
@@ -226,6 +231,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         // A bell's Enter in OpenCode's session picker opens another session
         // (measured 2026-10-07); letters reach it on its next prompt instead.
         bell: false,
+        tool_letters: Some(HookDialect::OpenCode),
         session: Some(SessionFormat::OpenCode),
         sleep: Some(LaunchDialect::OpenCode),
         fork: Some(LaunchDialect::OpenCode),
@@ -306,6 +312,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         // picks the highlighted item (measured 2026-10-07). Letters reach it on
         // its next prompt instead.
         bell: false,
+        tool_letters: Some(HookDialect::Pi),
         session: Some(SessionFormat::Pi),
         sleep: Some(LaunchDialect::Pi),
         fork: Some(LaunchDialect::Pi),
@@ -382,6 +389,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         // resumes another session (measured 2026-10-07). Letters reach it on
         // its next prompt instead.
         bell: false,
+        tool_letters: Some(HookDialect::Omp),
         session: Some(SessionFormat::Omp),
         sleep: Some(LaunchDialect::Omp),
         fork: Some(LaunchDialect::Omp),
@@ -452,8 +460,10 @@ pub const ADAPTERS: &[AgentAdapter] = &[
             folder: &[".cursor"],
         },
         default_on: false,
-        // Cursor documents no context a prompt hook may add, so letters stay
-        // with `hide inbox` and its bell stays off.
+        // Cursor documents no context a prompt hook may add, so a new
+        // prompt's letters stay with `hide inbox` and its bell stays off;
+        // while it works, its own `preToolUse` hook hands the due letters
+        // over as the tool's added context (`tool_letters`).
         prompt_hook: None,
         spawn_guard: Some(HookDialect::Cursor),
         // Cursor CLI 2026.10.01 runs `subagentStart` and `subagentStop` only
@@ -464,6 +474,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         subagent_counts: None,
         memory: None,
         bell: false,
+        tool_letters: Some(HookDialect::Cursor),
         session: Some(SessionFormat::Cursor),
         sleep: Some(LaunchDialect::Cursor),
         fork: None,

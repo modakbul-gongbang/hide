@@ -657,6 +657,11 @@
                         "id": {
                             "type": "string"
                         },
+                        "immediate": {
+                            "default": false,
+                            "description": "Sent with `hide request send --now`: delivered at the recipient's next safe gap while it works, without the mid-turn wait (PRD letters-to-busy-agents D-05). An older build drops the field at its next save, and the letter then waits as any other.",
+                            "type": "boolean"
+                        },
                         "intake_from": {
                             "default": null,
                             "description": "Where the letter's wait for intake began: on its recipient machine's clock while the ledger keeps one (`Ledger::node_clocks`), on the wall clock otherwise; null is its creation on the wall clock.",
@@ -723,7 +728,8 @@
                         "watch_warning",
                         "answer_wait_ended",
                         "bell_line",
-                        "intake_from"
+                        "intake_from",
+                        "immediate"
                     ],
                     "type": "object"
                 },
@@ -961,6 +967,11 @@
                 "id": {
                     "type": "string"
                 },
+                "immediate": {
+                    "default": false,
+                    "description": "Sent with `hide request send --now`: delivered at the recipient's next safe gap while it works, without the mid-turn wait (PRD letters-to-busy-agents D-05). An older build drops the field at its next save, and the letter then waits as any other.",
+                    "type": "boolean"
+                },
                 "intake_from": {
                     "default": null,
                     "description": "Where the letter's wait for intake began: on its recipient machine's clock while the ledger keeps one (`Ledger::node_clocks`), on the wall clock otherwise; null is its creation on the wall clock.",
@@ -1027,7 +1038,8 @@
                 "watch_warning",
                 "answer_wait_ended",
                 "bell_line",
-                "intake_from"
+                "intake_from",
+                "immediate"
             ],
             "title": "Letter",
             "type": "object"
@@ -1594,6 +1606,12 @@
                             "progress"
                         ]
                     }
+                },
+                {
+                    "name": "--now",
+                    "required": false,
+                    "requires": [],
+                    "value": null
                 }
             ],
             "repeats_at_most": null,
@@ -1716,6 +1734,14 @@
                     "value": {
                         "type": "session"
                     }
+                },
+                {
+                    "name": "--tool",
+                    "required": false,
+                    "requires": [
+                        "--session"
+                    ],
+                    "value": null
                 }
             ],
             "repeats_at_most": null,
@@ -1852,7 +1878,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:70fb06036493e7d6849fc4279d194b90bc35bb15da0bd127050b68fda7ec324b",
+    "digest": "sha256:4c528b1d82d8a13c7ffbd9c6fd8cca487dae90be6c92d41816676fc942057024",
     "envelopes": {
         "agent": {
             "answer": "value",

@@ -685,6 +685,19 @@ fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, boo
                 .filter(|watch| watch.parent.same_identity(actor))
                 .collect::<Vec<_>>()
         )),
+        // A tool event's ask carries the caller's own pane as its target,
+        // which says whether and since when it works.
+        Command::Pull { tool: true, .. } => {
+            let observed = target.as_ref().ok_or("agent_pane_required")?;
+            let working_since =
+                (observed.status == "working").then_some(observed.entered_working_at_unix_ms);
+            Ok(json!(mailbox::tool_pull(
+                ledger,
+                actor,
+                working_since,
+                now
+            )?))
+        }
         command => mailbox::apply(
             ledger,
             actor,
@@ -1431,6 +1444,7 @@ mod tests {
             Command::Pull {
                 prompt_digest: None,
                 session: None,
+                tool: false,
             },
             Command::Confirm {
                 ids: vec![letter.id.clone()],
@@ -1440,6 +1454,7 @@ mod tests {
                 intent: "new".into(),
                 body: "private".into(),
                 kind: "request".into(),
+                now: false,
             },
         ] {
             assert_eq!(
@@ -1496,6 +1511,7 @@ mod tests {
                 intent: "once".into(),
                 body: "private".into(),
                 kind: "request".into(),
+                now: false,
             };
             assert_eq!(
                 client
@@ -1591,6 +1607,7 @@ mod tests {
                         intent: "send-once".into(),
                         body: "private fixture".into(),
                         kind: "request".into(),
+                        now: false,
                     }),
                 },
                 Duration::from_secs(5),

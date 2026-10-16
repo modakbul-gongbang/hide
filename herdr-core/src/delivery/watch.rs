@@ -1004,6 +1004,7 @@ mod tests {
             answer_wait_ended: None,
             bell_line: None,
             intake_from: None,
+            immediate: false,
         }
     }
 

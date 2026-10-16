@@ -17,6 +17,11 @@ pub enum Command {
         body: String,
         #[serde(default = "request_kind")]
         kind: String,
+        /// `hide request send --now`: delivered at the recipient's next safe
+        /// gap while it works, without the mid-turn wait (PRD
+        /// letters-to-busy-agents D-05).
+        #[serde(default)]
+        now: bool,
     },
     Reply {
         id: String,
@@ -45,6 +50,11 @@ pub enum Command {
         /// as a submission in the pane when it is the pane's own session.
         #[serde(default)]
         session: Option<String>,
+        /// The hook asks at a tool event of a working agent, not at a
+        /// prompt: it receives the letters due mid-turn for a kind that takes
+        /// them there (`tool_letters`), and never a bell target's.
+        #[serde(default)]
+        tool: bool,
     },
     Confirm {
         ids: Vec<String>,
@@ -200,6 +210,7 @@ pub(crate) fn send(
         watch_warning: None,
         answer_wait_ended: None,
         bell_line: None,
+        immediate: false,
         // A letter to a machine with a clock waits on that clock from now;
         // the store gives one to a machine a letter waits on.
         intake_from: ledger
@@ -226,17 +237,33 @@ pub fn apply(
     }
     match command {
         Command::Send {
-            intent, body, kind, ..
-        } => Ok(json!(send(
-            ledger,
-            actor,
-            target.ok_or("target_unavailable")?,
             intent,
             body,
             kind,
-            None,
-            now
-        )?)),
+            now: immediate,
+            ..
+        } => {
+            let mut letter = send(
+                ledger,
+                actor,
+                target.ok_or("target_unavailable")?,
+                intent,
+                body,
+                kind,
+                None,
+                now,
+            )?;
+            if *immediate
+                && let Some(stored) = ledger
+                    .letters
+                    .iter_mut()
+                    .find(|stored| stored.id == letter.id)
+            {
+                stored.immediate = true;
+                letter = stored.clone();
+            }
+            Ok(json!(letter))
+        }
         Command::Reply { id, intent, body } => {
             let original = authorized(ledger, actor, id)?.clone();
             if !original.recipient.same_identity(actor) {
@@ -319,6 +346,9 @@ pub fn apply(
                     .collect::<Vec<_>>()
             ))
         }
+        // A tool event's ask is answered by the worker with the pane's own
+        // observation (`tool_pull`); with none, nothing is due.
+        Command::Pull { tool: true, .. } => Ok(json!(Intake::default())),
         Command::Pull {
             prompt_digest: Some(digest),
             ..
@@ -466,17 +496,61 @@ fn operator_prompt_intake(ledger: &Ledger, actor: &Actor, now: u64) -> Result<In
     Ok(intake)
 }
 
+/// Whether the kind's hook, plugin or extension takes letters at a tool event
+/// while the agent works (PRD letters-to-busy-agents D-02, B3): declared on
+/// the adapter, and never for a kind a bell rings for, so one letter has one
+/// path (D-10).
+pub(crate) fn tool_letters(kind: &str) -> bool {
+    hide_agent_adapter::adapter(kind).is_some_and(|row| row.tool_letters.is_some())
+        && !super::doorbell::bell_target(kind)
+}
+
+/// The letters due mid-turn at a tool event of the caller, which has worked
+/// without a rest since `working_since` (`None`: it is not working): each
+/// pending letter whose wait is over (`Patience`), as a prompt pull hands
+/// them over, confirmed by the script once the host wrote them. A kind that
+/// takes no letters at a tool event, a resting pane and a letter still
+/// waiting get nothing.
+pub(crate) fn tool_pull(
+    ledger: &Ledger,
+    actor: &Actor,
+    working_since: Option<u64>,
+    now: u64,
+) -> Result<Intake, String> {
+    actor.require_native_identity()?;
+    let (Some(working_since), true) = (working_since, tool_letters(&actor.kind)) else {
+        return Ok(Intake::default());
+    };
+    let due: Vec<_> = ledger
+        .letters
+        .iter()
+        .filter(|letter| {
+            letter.recipient.same_identity(actor)
+                && letter.state == State::Pending
+                && letter.within_deadline(&ledger.node_clocks, now)
+                && super::doorbell::Patience::of(letter).due(working_since, now)
+        })
+        .collect();
+    Ok(render(due))
+}
+
 /// The letter bodies for the turn Hide's bell opened.
 pub fn pull(ledger: &Ledger, actor: &Actor) -> Result<Intake, String> {
     actor.require_native_identity()?;
     if !prompt_hook(&actor.kind) {
         return Ok(Intake::default());
     }
-    let mut pending: Vec<_> = ledger
+    let pending: Vec<_> = ledger
         .letters
         .iter()
         .filter(|letter| letter.recipient.same_identity(actor) && letter.awaiting_intake())
         .collect();
+    Ok(render(pending))
+}
+
+/// The hook's context for `pending`, oldest first, at most `HOOK_LETTERS`
+/// letters and `HOOK_LIMIT` bytes, with the ids to confirm.
+fn render(mut pending: Vec<&Letter>) -> Intake {
     // The letters a bell rings for come first, so a backlog acknowledged
     // without a receipt never displaces the one that opened this turn.
     pending.sort_by_key(|letter| (letter.state != State::Pending, letter.created_at_unix_ms));
@@ -511,11 +585,11 @@ pub fn pull(ledger: &Ledger, actor: &Actor) -> Result<Intake, String> {
             "\n대기 {remaining}통 더 있음. hide inbox로 확인하세요.\n"
         ));
     }
-    Ok(Intake {
+    Intake {
         context,
         ids,
         remaining,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -637,6 +711,7 @@ mod tests {
             Command::Pull {
                 prompt_digest: None,
                 session: None,
+                tool: false,
             },
             Command::Show {
                 id: letter.id.clone(),
@@ -649,6 +724,7 @@ mod tests {
                 intent: "third".into(),
                 body: "private".into(),
                 kind: "request".into(),
+                now: false,
             },
         ] {
             assert_eq!(
@@ -798,6 +874,7 @@ mod tests {
                 intent: "first".into(),
                 body: "changed".into(),
                 kind: "request".into(),
+                now: false,
             },
             2,
         )
@@ -871,6 +948,7 @@ mod tests {
             &Command::Pull {
                 prompt_digest: Some(hide_agent_hooks::delivery::prompt_digest(prompt)),
                 session: None,
+                tool: false,
             },
             100,
         )
@@ -1001,6 +1079,85 @@ mod tests {
         }
     }
 
+    /// PRD letters-to-busy-agents D-02, D-04, D-05, D-10, D-11: at a tool
+    /// event an agent of a kind whose hook takes letters there gets, oldest
+    /// first, the pending letters whose wait is over, counted from the later
+    /// of arrival and the start of its work, and a `--now` letter at once; a
+    /// resting agent, a letter still waiting, a letter past its deadline and
+    /// a kind a bell rings for get nothing.
+    #[test]
+    fn a_tool_event_hands_a_working_agent_the_letters_due_and_a_bell_target_none() {
+        let wait = super::super::doorbell::MID_TURN_WAIT_MS;
+        for kind in ["opencode", "pi", "omp", "grok", "cursor"] {
+            assert!(tool_letters(kind), "{kind}");
+            let mut ledger = Ledger::default();
+            let mut recipient = actor("recipient");
+            recipient.kind = kind.into();
+            // Arrived at 1 and 2.
+            let ids = pending_for(&mut ledger, &recipient, 2);
+            let pull = |ledger: &Ledger, since, now| {
+                tool_pull(ledger, &recipient, since, now).unwrap().ids
+            };
+            assert!(pull(&ledger, None, 2 + wait).is_empty(), "{kind}: resting");
+            assert!(pull(&ledger, Some(1), wait).is_empty(), "{kind}: waiting");
+            assert_eq!(pull(&ledger, Some(1), 1 + wait), ids[..1], "{kind}");
+            assert_eq!(pull(&ledger, Some(1), 2 + wait), ids, "{kind}");
+            // Work that began at 1000 counts from then.
+            assert!(pull(&ledger, Some(1000), 2 + wait).is_empty(), "{kind}");
+            assert_eq!(pull(&ledger, Some(1000), 1000 + wait), ids, "{kind}");
+            // A --now letter at the next tool event.
+            ledger.letters[1].immediate = true;
+            assert_eq!(pull(&ledger, Some(1000), 1001), ids[1..], "{kind}");
+            let intake = tool_pull(&ledger, &recipient, Some(1000), 1001).unwrap();
+            assert!(intake.context.contains("body-1") && !intake.context.contains("body-0"));
+            // Taken up like a prompt's: confirmed, not received, until then.
+            assert!(
+                ledger
+                    .letters
+                    .iter()
+                    .all(|letter| letter.state == State::Pending)
+            );
+            // A letter past its deadline is not handed over.
+            ledger.letters[1].created_at_unix_ms = 0;
+            assert!(pull(&ledger, Some(1000), 61 * 60_000).is_empty(), "{kind}");
+        }
+        for kind in ["claude", "codex", "gemini", "future-agent"] {
+            assert!(!tool_letters(kind), "{kind}");
+            let mut ledger = Ledger::default();
+            let mut recipient = actor("recipient");
+            recipient.kind = kind.into();
+            pending_for(&mut ledger, &recipient, 1);
+            ledger.letters[0].immediate = true;
+            assert!(
+                tool_pull(&ledger, &recipient, Some(0), 2 + wait)
+                    .unwrap()
+                    .ids
+                    .is_empty(),
+                "{kind}"
+            );
+        }
+        // Through the command table the ask carries no pane, so it is empty:
+        // the worker answers it with the pane's own observation.
+        let mut ledger = Ledger::default();
+        let mut recipient = actor("recipient");
+        recipient.kind = "opencode".into();
+        pending_for(&mut ledger, &recipient, 1);
+        ledger.letters[0].immediate = true;
+        let answer = apply(
+            &mut ledger,
+            &recipient,
+            None,
+            &Command::Pull {
+                prompt_digest: None,
+                session: None,
+                tool: true,
+            },
+            2 + wait,
+        )
+        .unwrap();
+        assert_eq!(answer, json!(Intake::default()));
+    }
+
     #[test]
     fn an_agent_no_bell_rings_for_gets_its_letters_on_any_prompt_and_confirms_them_later() {
         let mut ledger = Ledger::default();
@@ -1082,7 +1239,8 @@ mod tests {
                 Command::from_wire(wire).unwrap(),
                 Command::Pull {
                     prompt_digest: None,
-                    session
+                    session,
+                    tool: false
                 }
             );
         }

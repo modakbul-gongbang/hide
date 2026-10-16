@@ -141,7 +141,11 @@ use crate::error::HostError;
 /// from the file manager (PRD prelaunch explorer-actions). A helper on 36
 /// would refuse them as unknown, so a paste or a drop on a device checkout
 /// could never land; it is refused at Hello and upgraded.
-pub const PROTOCOL_VERSION: u32 = 37;
+/// 38: `LetterPull` carries `tool`, a hook's ask at a tool event for the
+/// letters due while the agent works (PRD letters-to-busy-agents D-02). A
+/// helper on 37 would drop the field and answer a prompt's letters, so it is
+/// refused at Hello and upgraded.
+pub const PROTOCOL_VERSION: u32 = 38;
 
 /// How a pane's shell is started so that it marks its first prompt
 /// ([`Call::ShellIntegration`]): the command the pane runs, the shell and

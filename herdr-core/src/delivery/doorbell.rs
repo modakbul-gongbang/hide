@@ -22,6 +22,11 @@ use super::ledger::{Ledger, Letter, State};
 use super::worker::{Client, Effect, now};
 
 const QUIET_MS: u64 = 30_000;
+/// How long a recipient works on without a rest, counted from the later of
+/// the letter's arrival and the start of its work, before the letter is
+/// delivered to it mid-turn (PRD letters-to-busy-agents D-04). A letter sent
+/// with `--now` does not wait (D-05).
+pub(crate) const MID_TURN_WAIT_MS: u64 = 5 * 60_000;
 const WORK_PER_PASS: usize = 8;
 const RPC_TIMEOUT: Duration = Duration::from_millis(500);
 /// A letter refused between its verdict and the input is tried again in the
@@ -46,6 +51,8 @@ pub(crate) enum Hold {
     Session,
     /// The pane or its device is not observed.
     Absent,
+    /// The agent works, and not yet long enough since the letter arrived for
+    /// a mid-turn delivery (`MID_TURN_WAIT_MS`).
     Working,
     /// Herdr reports a permission or selection menu.
     Blocked,
@@ -132,15 +139,41 @@ pub(crate) enum Turn {
     Read(Waiting),
 }
 
-/// Whether the pane is at rest and a bell can be typed into it. All of these
-/// must hold: Herdr reports `idle` or `done` and has for the quiet period,
-/// the session read, for an agent whose read reports turns, says for that
-/// state that nothing waits for the operator,
+/// How long a letter waits while its recipient works: from its arrival, and
+/// not at all when it was sent with `--now` (PRD letters-to-busy-agents
+/// D-04, D-05).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Patience {
+    pub arrived_at_unix_ms: u64,
+    pub now: bool,
+}
+
+impl Patience {
+    pub(crate) fn of(letter: &Letter) -> Self {
+        Self {
+            arrived_at_unix_ms: letter.created_at_unix_ms,
+            now: letter.immediate,
+        }
+    }
+
+    /// Whether a recipient that has worked without a rest since
+    /// `working_since` is to be given the letter mid-turn at `now`.
+    pub(crate) fn due(self, working_since: u64, now: u64) -> bool {
+        self.now
+            || now.saturating_sub(working_since.max(self.arrived_at_unix_ms)) >= MID_TURN_WAIT_MS
+    }
+}
+
+/// Whether a bell can be typed into the pane. All of these must hold: Herdr
+/// reports `idle` or `done` and has for the quiet period, or reports
+/// `working` and the recipient has worked without a rest for as long as the
+/// letter waits (`Patience`); the session read, for an agent whose read
+/// reports turns, says for that state that nothing waits for the operator;
 /// hide has routed no input for the quiet period, no input hide routed is
 /// newer than the last submission and the last start of work (input before
 /// either was consumed by it, a menu answer for one), and the pane still hosts
 /// the session the letter was written for.
-pub(crate) fn judge(observation: &Observation, now: u64) -> Result<(), Hold> {
+pub(crate) fn judge(observation: &Observation, patience: Patience, now: u64) -> Result<(), Hold> {
     if !bell_target(&observation.actor.kind) {
         return Err(Hold::Kind);
     }
@@ -149,6 +182,9 @@ pub(crate) fn judge(observation: &Observation, now: u64) -> Result<(), Hold> {
     }
     match observation.status.as_str() {
         "idle" | "done" if observation.state_change_seq.is_some() => {}
+        "working"
+            if observation.state_change_seq.is_some()
+                && patience.due(observation.entered_working_at_unix_ms, now) => {}
         "working" => return Err(Hold::Working),
         "blocked" => return Err(Hold::Blocked),
         _ => return Err(Hold::Status),
@@ -243,15 +279,24 @@ struct Tried {
     delay: u64,
 }
 
+/// A pane's last bell: the episode it was typed in and the letter it rang
+/// for.
+struct Rung {
+    episode: Episode,
+    letter: String,
+}
+
 /// What the doorbell keeps between passes. Each map is keyed by a letter or
 /// pane of the current pass and pruned to them, so it is bounded by the
 /// <=1024 open letters.
 #[derive(Default)]
 pub(crate) struct Doorbell {
     tried: HashMap<String, Tried>,
-    /// The episode each pane was belled in. The bell's own turn moves the
-    /// pane, so a pane is not belled again until it has.
-    rung: HashMap<String, Episode>,
+    /// The episode each pane was belled in. The bell's own turn moves a pane
+    /// at rest, so such a pane is not belled again until it has. A bell typed
+    /// into a working pane moves nothing, so that pane is belled again, for a
+    /// later letter, once the letter it rang for has left `pending`.
+    rung: HashMap<String, Rung>,
     /// Why each letter waits, logged once per change.
     held: HashMap<String, Hold>,
 }
@@ -317,7 +362,9 @@ impl Doorbell {
             let pane = &letter.recipient.pane_id;
             let verdict = owner
                 .lock()
-                .map(|guard| guard.delivery_bell_verdict(&letter.recipient, now))
+                .map(|guard| {
+                    guard.delivery_bell_verdict(&letter.recipient, Patience::of(letter), now)
+                })
                 .unwrap_or(Err(Hold::Absent));
             let observed = match verdict {
                 Ok(observed) => observed,
@@ -348,7 +395,10 @@ impl Doorbell {
                 continue;
             };
             let episode = Episode::from(&observed);
-            if self.rung.get(pane) == Some(&episode) {
+            if self.rung.get(pane).is_some_and(|rung| {
+                rung.episode == episode
+                    && (episode.status != "working" || ids.contains(rung.letter.as_str()))
+            }) {
                 // Nothing holds it, so a later hold for the same reason
                 // is a change and is logged again.
                 self.held.remove(&letter.id);
@@ -382,7 +432,13 @@ impl Doorbell {
                 Ok(Outcome::Rung) => {
                     self.held.remove(&letter.id);
                     self.tried.remove(&letter.id);
-                    self.rung.insert(pane.clone(), episode);
+                    self.rung.insert(
+                        pane.clone(),
+                        Rung {
+                            episode,
+                            letter: letter.id.clone(),
+                        },
+                    );
                     record(client, &letter.id, &observed, true);
                 }
                 Ok(Outcome::Held(reason)) => {
@@ -631,6 +687,12 @@ mod tests {
     use crate::delivery::Actor;
 
     const NOW: u64 = 1_000_000;
+    /// A letter whose wait is over, or that never had one: the bell's
+    /// verdict for a pane at rest, where the wait plays no part.
+    const WAITED: Patience = Patience {
+        arrived_at_unix_ms: 0,
+        now: false,
+    };
 
     /// A pane at rest: idle for a minute, last keys and submit a minute ago.
     fn at_rest(kind: &str) -> Observation {
@@ -729,7 +791,7 @@ mod tests {
             for status in ["idle", "done"] {
                 let mut pane = at_rest(kind);
                 pane.status = status.into();
-                assert_eq!(judge(&pane, NOW), Ok(()), "{kind} {status}");
+                assert_eq!(judge(&pane, WAITED, NOW), Ok(()), "{kind} {status}");
             }
         }
     }
@@ -782,7 +844,7 @@ mod tests {
         for (name, change, expected) in cases {
             let mut pane = at_rest("claude");
             change(&mut pane);
-            assert_eq!(judge(&pane, NOW), Err(expected), "{name}");
+            assert_eq!(judge(&pane, WAITED, NOW), Err(expected), "{name}");
         }
     }
 
@@ -796,17 +858,29 @@ mod tests {
             let mut pane = at_rest("codex");
             pane.status = status.into();
             pane.turn = Turn::Read(Waiting::Question);
-            assert_eq!(judge(&pane, NOW), Err(Hold::AwaitingOperator), "{status}");
+            assert_eq!(
+                judge(&pane, WAITED, NOW),
+                Err(Hold::AwaitingOperator),
+                "{status}"
+            );
             pane.turn = Turn::Read(Waiting::PlanApproval);
-            assert_eq!(judge(&pane, NOW), Err(Hold::AwaitingOperator), "{status}");
+            assert_eq!(
+                judge(&pane, WAITED, NOW),
+                Err(Hold::AwaitingOperator),
+                "{status}"
+            );
             pane.turn = Turn::Unread;
-            assert_eq!(judge(&pane, NOW), Err(Hold::SessionUnread), "{status}");
+            assert_eq!(
+                judge(&pane, WAITED, NOW),
+                Err(Hold::SessionUnread),
+                "{status}"
+            );
             pane.turn = Turn::Read(Waiting::Nothing);
-            assert_eq!(judge(&pane, NOW), Ok(()), "{status}");
+            assert_eq!(judge(&pane, WAITED, NOW), Ok(()), "{status}");
         }
         let claude = at_rest("claude");
         assert_eq!(claude.turn, Turn::NotReported);
-        assert_eq!(judge(&claude, NOW), Ok(()));
+        assert_eq!(judge(&claude, WAITED, NOW), Ok(()));
     }
 
     #[test]
@@ -816,14 +890,68 @@ mod tests {
         pane.last_input_at_unix_ms = NOW - 90_000;
         pane.last_submit_at_unix_ms = NOW - 200_000;
         pane.entered_working_at_unix_ms = NOW - 80_000;
-        assert_eq!(judge(&pane, NOW), Ok(()));
+        assert_eq!(judge(&pane, WAITED, NOW), Ok(()));
         // The same key typed after work began is still a draft, minutes later.
         pane.last_input_at_unix_ms = NOW - 70_000;
-        assert_eq!(judge(&pane, NOW), Err(Hold::Draft));
-        assert_eq!(judge(&pane, NOW + 600_000), Err(Hold::Draft));
+        assert_eq!(judge(&pane, WAITED, NOW), Err(Hold::Draft));
+        assert_eq!(judge(&pane, WAITED, NOW + 600_000), Err(Hold::Draft));
         // Submitting it ends the draft.
         pane.last_submit_at_unix_ms = NOW - 69_000;
-        assert_eq!(judge(&pane, NOW), Ok(()));
+        assert_eq!(judge(&pane, WAITED, NOW), Ok(()));
+    }
+
+    /// PRD letters-to-busy-agents D-01, D-04, D-05, D-09: a working pane is
+    /// belled once the letter has waited five minutes of its work, counted
+    /// from the later of its arrival and the start of the work; at once for
+    /// a letter sent with `--now`; and never over a draft typed since the
+    /// work began, nor before Herdr confirmed the state.
+    #[test]
+    fn a_working_pane_is_belled_after_the_wait_or_at_once_for_a_now_letter_and_never_over_a_draft()
+    {
+        let arrived = |at| Patience {
+            arrived_at_unix_ms: at,
+            now: false,
+        };
+        let urgent = Patience {
+            arrived_at_unix_ms: NOW - 1_000,
+            now: true,
+        };
+        let mut pane = at_rest("claude");
+        pane.status = "working".into();
+        pane.entered_working_at_unix_ms = NOW - MID_TURN_WAIT_MS;
+        pane.status_changed_at_unix_ms = NOW - MID_TURN_WAIT_MS;
+        // Arrived as the work began: due at five minutes, not before.
+        assert_eq!(judge(&pane, arrived(NOW - MID_TURN_WAIT_MS), NOW), Ok(()));
+        assert_eq!(
+            judge(&pane, arrived(NOW - MID_TURN_WAIT_MS), NOW - 1),
+            Err(Hold::Working)
+        );
+        // Arrived a minute ago: waits from then.
+        assert_eq!(judge(&pane, arrived(NOW - 60_000), NOW), Err(Hold::Working));
+        assert_eq!(
+            judge(
+                &pane,
+                arrived(NOW - 60_000),
+                NOW - 60_000 + MID_TURN_WAIT_MS
+            ),
+            Ok(())
+        );
+        // Sent with --now: at the next gap, forty seconds into the work.
+        pane.entered_working_at_unix_ms = NOW - 40_000;
+        pane.status_changed_at_unix_ms = NOW - 40_000;
+        assert_eq!(judge(&pane, urgent, NOW), Ok(()));
+        assert_eq!(judge(&pane, arrived(NOW - 1_000), NOW), Err(Hold::Working));
+        // A key typed since the work began is a draft: the letter waits.
+        pane.last_input_at_unix_ms = NOW - 35_000;
+        assert_eq!(judge(&pane, urgent, NOW), Err(Hold::Draft));
+        pane.last_input_at_unix_ms = NOW - 60_000;
+        // A working state Herdr has not confirmed waits.
+        pane.state_change_seq = None;
+        assert_eq!(judge(&pane, urgent, NOW), Err(Hold::Working));
+        // A kind no bell rings for is never typed into, working or not.
+        let mut pane = at_rest("opencode");
+        pane.status = "working".into();
+        assert_eq!(judge(&pane, urgent, NOW), Err(Hold::Kind));
     }
 
     /// A recipient pane at rest on a Herdr whose `agent.get` answer carries
@@ -895,6 +1023,7 @@ mod tests {
                             intent: "report".into(),
                             body: "private".into(),
                             kind: "report".into(),
+                            now: false,
                         }),
                     },
                     Duration::from_secs(5),
@@ -921,6 +1050,50 @@ mod tests {
                 .into_iter()
                 .filter(|record| record["letter_id"] == self.letter.as_str())
                 .collect()
+        }
+
+        /// Another letter from the same sender to the same pane, pending.
+        fn send_another(&self, intent: &str, now: bool) -> String {
+            use crate::delivery::Command;
+            use crate::runtime::delivery::tests::authority;
+            let (sender, recipient) = {
+                use crate::runtime::delivery::tests::observed;
+                let guard = self.runtime.lock().unwrap();
+                (
+                    observed(&guard, "sender").actor,
+                    observed(&guard, "recipient"),
+                )
+            };
+            let sent = self
+                .client
+                .submit(
+                    Effect::Command {
+                        authority: authority(&sender),
+                        actor: sender,
+                        target: Some(Box::new(recipient)),
+                        command: Box::new(Command::Send {
+                            target: "recipient".into(),
+                            intent: intent.into(),
+                            body: "private".into(),
+                            kind: "report".into(),
+                            now,
+                        }),
+                    },
+                    Duration::from_secs(5),
+                )
+                .unwrap();
+            sent["id"].as_str().unwrap().to_owned()
+        }
+
+        /// The pane as the core observes it: working since `since`, confirmed
+        /// by Herdr, with no key typed since.
+        fn working_since(&self, since: u64) {
+            crate::runtime::delivery::tests::observe_working_since(
+                &mut self.runtime.lock().unwrap(),
+                "recipient",
+                since,
+            );
+            *self.flags.lock().unwrap() = json!({"agent_status": "working"});
         }
 
         /// What the pane was typed, in order.
@@ -963,6 +1136,66 @@ mod tests {
                 .unwrap()
                 .attempts()
         }
+    }
+
+    /// PRD letters-to-busy-agents D-01, D-04, D-05, D-10: a working pane is
+    /// belled for a `--now` letter at its next pass while a letter still
+    /// waiting stays held as `working`; a pane belled while working takes
+    /// no second bell until the letter it rang for has left `pending`, so
+    /// one bell line stands for one letter and the agent is never typed
+    /// into twice for the same work. (The five-minute wait itself is judged
+    /// in `a_working_pane_is_belled_after_the_wait_or_at_once_for_a_now_letter_and_never_over_a_draft`;
+    /// the reservation reads the real clock, so a pass cannot stand five
+    /// minutes ahead of it.)
+    #[test]
+    fn a_working_pane_is_belled_for_a_now_letter_and_once_per_pending_letter() {
+        use crate::delivery::Command;
+        use crate::runtime::delivery::tests::{authority, observed};
+        let bell = Bell::start(json!({}));
+        let mut doorbell = Doorbell::default();
+        let start = now();
+        bell.working_since(start - 60_000);
+        assert_eq!(held(&bell.pass(&mut doorbell, start)), ["working"]);
+        assert!(bell.typed().is_empty());
+        let urgent = bell.send_another("urgent", true);
+        bell.pass(&mut doorbell, start + 1);
+        assert_eq!(bell.typed().len(), 1, "the --now letter is typed at once");
+        let attempts = |id: &str| {
+            let guard = bell.runtime.lock().unwrap();
+            let ledger = guard.delivery_state().unwrap();
+            let letter = ledger
+                .letters
+                .iter()
+                .find(|letter| letter.id == id)
+                .unwrap();
+            (letter.attempts(), letter.immediate)
+        };
+        assert_eq!(attempts(&urgent), (1, true));
+        assert_eq!(attempts(&bell.letter), (0, false));
+        // Another --now letter to the same work waits for the first to be
+        // taken up: the pane is not typed into again.
+        let third = bell.send_another("third", true);
+        bell.pass(&mut doorbell, start + RETRY_LIMIT_MS);
+        assert_eq!(bell.typed().len(), 1);
+        assert_eq!(attempts(&third), (0, true));
+        // The first is cancelled while the pane has not moved: the next one
+        // gets its own bell, and the letter still waiting stays held.
+        let sender = observed(&bell.runtime.lock().unwrap(), "sender").actor;
+        bell.client
+            .submit(
+                Effect::Command {
+                    authority: authority(&sender),
+                    actor: sender,
+                    target: None,
+                    command: Box::new(Command::Cancel { id: urgent }),
+                },
+                Duration::from_secs(5),
+            )
+            .unwrap();
+        bell.pass(&mut doorbell, start + RETRY_LIMIT_MS + 1);
+        assert_eq!(bell.typed().len(), 2);
+        assert_eq!(attempts(&third), (1, true));
+        assert_eq!(attempts(&bell.letter), (0, false));
     }
 
     /// A ring whose Herdr call failed as the device's link went away is

@@ -392,6 +392,11 @@ pub struct AgentAdapter {
     pub subagent_counts: Option<HookDialect>,
     pub memory: Option<HookDialect>,
     pub bell: bool,
+    /// The dialect whose hook, plugin or extension hands letters over at a
+    /// tool event while the agent works (PRD letters-to-busy-agents D-02),
+    /// never beside a bell: a bell target reads its letters from the input
+    /// line instead, so one letter has one path.
+    pub tool_letters: Option<HookDialect>,
     pub session: Option<SessionFormat>,
     pub sleep: Option<LaunchDialect>,
     pub fork: Option<LaunchDialect>,

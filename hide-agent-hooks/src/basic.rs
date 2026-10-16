@@ -50,6 +50,58 @@ pub fn cursor_deny(reason: &str) -> String {
     .to_string()
 }
 
+/// The session a Grok or Cursor tool event names (`sessionId`,
+/// `conversation_id`), which a letter pull at that event is made for, or
+/// `None` from a truncated or unreadable payload.
+pub fn session(
+    payload: &[u8],
+    truncated: bool,
+    dialect: hide_agent_adapter::HookDialect,
+) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Grok {
+        #[serde(rename = "sessionId")]
+        session_id: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct Cursor {
+        conversation_id: Option<String>,
+    }
+    if truncated {
+        return None;
+    }
+    let session = match dialect {
+        hide_agent_adapter::HookDialect::Cursor => {
+            serde_json::from_slice::<Cursor>(payload)
+                .ok()?
+                .conversation_id
+        }
+        _ => serde_json::from_slice::<Grok>(payload).ok()?.session_id,
+    };
+    session.filter(|id| crate::delivery::valid_session(id))
+}
+
+/// The answer that lets a tool call run and hands the agent `context` with
+/// its result: Grok reads Claude Code's `additionalContext` (its guide says
+/// a `PreToolUse` one travels with the batch's tool results), Cursor its own
+/// `additional_context` beside the permission.
+pub fn context_answer(dialect: hide_agent_adapter::HookDialect, context: &str) -> String {
+    match dialect {
+        hide_agent_adapter::HookDialect::Cursor => serde_json::json!({
+            "permission": "allow",
+            "additional_context": context,
+        })
+        .to_string(),
+        _ => serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": context,
+            }
+        })
+        .to_string(),
+    }
+}
+
 /// What a Grok `Stop` says about the pane's subagents.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GrokStop {

@@ -17,6 +17,10 @@ const TOOL_BUDGET_MS = 2500;
 const START_BUDGET_MS = 8000;
 const CONFIRM_BUDGET_MS = 2000;
 const COUNT_BUDGET_MS = 2000;
+// A tool result's letters: the helper's budget, and how often a working session asks. A burst of tool calls asks
+// once per interval, so the cost per tool stays bounded, and a letter that is due waits at most this much longer.
+const LETTERS_BUDGET_MS = 1500;
+const LETTERS_ASK_INTERVAL_MS = 10 * 1000;
 const LOOKUP_BUDGET_MS = 300;
 const OUTPUT_LIMIT = 64 * 1024;
 // Far inside the helper's 256 KiB input, so a pasted log never costs a prompt its letters.
@@ -323,13 +327,44 @@ async function onEvent(state, client, event) {
     return;
   }
   if (type === "message.part.updated") {
-    const id = properties.part?.id;
-    const pending = id && state.pending.get(id);
+    const part = properties.part;
+    // Hide's own text part is written once; a tool part is updated through its run and carries the letters its
+    // result got once it is completed.
+    const key = part?.type === "tool" ? (part.state?.status === "completed" ? part.callID : undefined) : part?.id;
+    const pending = key && state.pending.get(key);
     if (!pending) return;
-    state.pending.delete(id);
-    // OpenCode wrote the prompt carrying the letters: only now are they received.
+    state.pending.delete(key);
+    // OpenCode wrote the prompt or the tool result carrying the letters: only now are they received.
     void helper(state, "confirm", { session_id: pending.session, letters: pending.letters }, CONFIRM_BUDGET_MS);
   }
+}
+
+/** Forgets letters whose write never came, and makes room for `key`; a letter left out stays pending in Hide. */
+function holdPending(state, key, entry) {
+  const now = Date.now();
+  for (const [name, old] of state.pending) {
+    if (now - old.at > PENDING_AGE_MS) state.pending.delete(name);
+  }
+  if (state.pending.size >= PENDING_LIMIT) state.pending.delete(state.pending.keys().next().value);
+  state.pending.set(key, { ...entry, at: now });
+}
+
+/**
+ * The letters due while the pane's agent works, written after the tool's result so the agent reads them before its
+ * next step (PRD letters-to-busy-agents D-02); confirmed once OpenCode stored the completed tool part. Only the
+ * pane's root session asks, at most once per interval.
+ */
+async function onToolResult(state, sessionID, input, output) {
+  if (!sessionID || sessionID !== state.root || typeof input?.callID !== "string") return;
+  const now = Date.now();
+  if (now - state.askedAt < LETTERS_ASK_INTERVAL_MS) return;
+  state.askedAt = now;
+  const answer = await helper(state, "letters", { session_id: sessionID }, LETTERS_BUDGET_MS);
+  if (typeof answer?.context !== "string" || !answer.context) return;
+  const text = `<system-reminder>\n${answer.context.replace(REMINDER_TAG, "<\u200b$1")}\n</system-reminder>`;
+  output.output = typeof output.output === "string" && output.output ? `${output.output}\n\n${text}` : text;
+  const letters = Array.isArray(answer.letters) ? answer.letters.filter((letter) => typeof letter === "string") : [];
+  if (letters.length > 0) holdPending(state, input.callID, { session: sessionID, letters });
 }
 
 async function onPrompt(state, client, directory, input, output) {
@@ -371,14 +406,7 @@ async function onPrompt(state, client, directory, input, output) {
   const text = `<system-reminder>\n${sections.join("\n\n").replace(REMINDER_TAG, "<\u200b$1")}\n</system-reminder>`;
   parts.push({ id, sessionID, messageID: message.id, type: "text", text, synthetic: true });
   const letters = Array.isArray(answer?.letters) ? answer.letters.filter((letter) => typeof letter === "string") : [];
-  if (letters.length === 0) return;
-  const now = Date.now();
-  for (const [key, entry] of state.pending) {
-    if (now - entry.at > PENDING_AGE_MS) state.pending.delete(key);
-  }
-  // A letter left out stays pending in Hide and reaches the next prompt.
-  if (state.pending.size >= PENDING_LIMIT) state.pending.delete(state.pending.keys().next().value);
-  state.pending.set(id, { session: sessionID, letters, at: now });
+  if (letters.length > 0) holdPending(state, id, { session: sessionID, letters });
 }
 
 async function onTool(state, sessionID, directory, input, output) {
@@ -419,6 +447,7 @@ export const HidePlugin = async ({ client, directory }) => {
     guided: new Set(),
     started: false,
     pending: new Map(),
+    askedAt: 0,
     root: null,
     published: null,
     closed: false,
@@ -454,6 +483,12 @@ export const HidePlugin = async ({ client, directory }) => {
       } catch {}
       // The refusal is the one error this plugin raises: OpenCode hands its text to the model.
       if (reason) throw new Error(reason);
+    },
+    "tool.execute.after": async (input, output) => {
+      // A throw here would fail the tool call: every failure leaves its result unchanged.
+      try {
+        await onToolResult(state, input?.sessionID, input, output);
+      } catch {}
     },
     dispose: async () => {
       state.closed = true;
