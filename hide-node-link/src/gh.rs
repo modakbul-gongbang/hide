@@ -365,6 +365,7 @@ pub const REPOSITORY_FIELDS: &str = "nameWithOwner,id,visibility";
 
 pub fn allowed(arguments: &[&str]) -> bool {
     arguments == ["auth", "status"]
+        || is_conditional_read(arguments)
         || matches!(
             arguments,
             ["pr", "list", "--state", "open", "--limit", PULL_REQUEST_LIMIT, "--json", OPEN_CHECK_FIELDS]
@@ -421,6 +422,80 @@ pub fn allowed(arguments: &[&str]) -> bool {
                 || is_issue_attempt_query(arguments[3])
                 || is_pr_facts_query(arguments[3])
                 || is_pr_card_query(arguments[3])))
+}
+
+/// A conditional read prints the response headers and no body: only the
+/// entity tag and the rate limit matter to it, and a 304 has no body to read.
+pub const CONDITIONAL_READ_BODY: &str = "--silent";
+
+/// The header a conditional read sends with the entity tag it holds.
+const IF_NONE_MATCH: &str = "If-None-Match: ";
+
+/// `gh api -i [-H 'If-None-Match: ETAG'] --silent ENDPOINT`: the one way
+/// the advisory poll asks GitHub whether a list changed. GitHub answers 304,
+/// which does not count against the rate limit, when the tag still holds.
+pub fn conditional_read_arguments(endpoint: &str, etag: Option<&str>) -> Option<Vec<String>> {
+    if !is_conditional_endpoint(endpoint) || etag.is_some_and(|etag| !is_etag(etag)) {
+        return None;
+    }
+    let mut arguments = vec!["api".to_owned(), "-i".to_owned()];
+    if let Some(etag) = etag {
+        arguments.push("-H".to_owned());
+        arguments.push(format!("{IF_NONE_MATCH}{etag}"));
+    }
+    arguments.extend([CONDITIONAL_READ_BODY.to_owned(), endpoint.to_owned()]);
+    Some(arguments)
+}
+
+fn is_conditional_read(arguments: &[&str]) -> bool {
+    match arguments {
+        ["api", "-i", CONDITIONAL_READ_BODY, endpoint] => is_conditional_endpoint(endpoint),
+        ["api", "-i", "-H", header, CONDITIONAL_READ_BODY, endpoint] => {
+            header.strip_prefix(IF_NONE_MATCH).is_some_and(is_etag)
+                && is_conditional_endpoint(endpoint)
+        }
+        _ => false,
+    }
+}
+
+/// The three lists the poll watches, in one repository (`owner/name`): its
+/// open pull requests, and the check runs and the commit status of one head
+/// commit.
+pub fn is_conditional_endpoint(endpoint: &str) -> bool {
+    let Some(rest) = endpoint.strip_prefix("repos/") else {
+        return false;
+    };
+    let mut parts = rest.splitn(3, '/');
+    let (Some(owner), Some(name), Some(tail)) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    if !is_repository(&format!("{owner}/{name}")) {
+        return false;
+    }
+    tail == "pulls?state=open&per_page=100"
+        || tail
+            .strip_prefix("commits/")
+            .and_then(|tail| tail.split_once('/'))
+            .is_some_and(|(commit, list)| {
+                is_commit(commit) && (list == "check-runs" || list == "status")
+            })
+}
+
+/// An entity tag as GitHub sends it, `"hex"` or the weak `W/"hex"`: quoted
+/// plain characters, so one cannot carry a second header or a flag.
+pub fn is_etag(value: &str) -> bool {
+    let quoted = value.strip_prefix("W/").unwrap_or(value);
+    let Some(inner) = quoted
+        .strip_prefix('"')
+        .and_then(|quoted| quoted.strip_suffix('"'))
+    else {
+        return false;
+    };
+    !inner.is_empty()
+        && inner.len() <= 128
+        && inner
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._:-".contains(&byte))
 }
 
 /// Whether `value` names a repository as `gh` takes it, `[HOST/]OWNER/NAME`:
@@ -936,6 +1011,82 @@ mod tests {
             "open",
             "--search",
             REVIEW_ASKED_SEARCH
+        ]));
+    }
+
+    #[test]
+    fn a_conditional_read_is_a_list_of_one_repository_with_an_optional_plain_etag() {
+        const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+        let pulls = "repos/acme/app/pulls?state=open&per_page=100";
+        let runs = format!("repos/acme/app/commits/{COMMIT}/check-runs");
+        let status = format!("repos/acme/app/commits/{COMMIT}/status");
+        for endpoint in [pulls, runs.as_str(), status.as_str()] {
+            for etag in [None, Some("W/\"abc123\""), Some("\"abc-1.2:3_4\"")] {
+                let arguments = conditional_read_arguments(endpoint, etag).expect(endpoint);
+                let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
+                assert!(allowed(&borrowed), "{borrowed:?}");
+            }
+        }
+        for endpoint in [
+            "repos/acme/app/pulls?state=all&per_page=100",
+            "repos/acme/app/pulls",
+            "repos/acme/app/commits/main/status",
+            "repos/acme/app/commits/0123/check-runs",
+            "repos/acme/app/issues",
+            "repos/acme/../pulls?state=open&per_page=100",
+            "repos/ghe.example.com/acme/app/pulls?state=open&per_page=100",
+            "user",
+            "graphql",
+        ] {
+            assert!(
+                conditional_read_arguments(endpoint, None).is_none(),
+                "{endpoint}"
+            );
+            assert!(
+                !allowed(&["api", "-i", "--jq", "length", endpoint])
+                    && !allowed(&["api", "-i", "--silent", "--jq", "length", endpoint]),
+                "{endpoint}"
+            );
+        }
+        for etag in [
+            "",
+            "abc",
+            "\"\"",
+            "W/abc",
+            "\"a b\"",
+            "\"a\\nX-Other: 1\"",
+            "\"--flag\"; rm",
+        ] {
+            assert!(
+                conditional_read_arguments(pulls, Some(etag)).is_none(),
+                "{etag:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_conditional_read_refuses_any_other_header_flag_or_filter() {
+        let pulls = "repos/acme/app/pulls?state=open&per_page=100";
+        assert!(!allowed(&[
+            "api",
+            "-i",
+            "-H",
+            "Authorization: x",
+            "--silent",
+            pulls
+        ]));
+        assert!(!allowed(&["api", "-i", "--jq", "length", pulls]));
+        assert!(!allowed(&["api", "--silent", pulls]));
+        assert!(!allowed(&["api", "-i", "--paginate", "--silent", pulls]));
+        assert!(!allowed(&[
+            "api",
+            "-i",
+            "-H",
+            "If-None-Match: \"abc\"",
+            "-H",
+            "X-Other: 1",
+            "--silent",
+            pulls
         ]));
     }
 }

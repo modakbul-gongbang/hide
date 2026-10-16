@@ -30,6 +30,7 @@ pub mod find;
 pub mod fixture;
 mod fork;
 mod github;
+mod github_poll;
 mod github_store;
 mod handle;
 pub mod herdr_contract;
