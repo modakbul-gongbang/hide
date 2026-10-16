@@ -4,9 +4,9 @@ import type { AgentRow, Checkout, Tab } from "./snapshot";
 /** One tab's segment of a checkout's agent list; `glyph` is set when its tab holds two or more recognized agents or the operator named it. */
 export type SidebarTabGroup = { tab: Tab | null; rows: BoardRow[]; count: number; glyph: boolean };
 
-/** A tab on the strip the operator named is kept when its last agent leaves, so it stays a segment of its checkout with no rows. */
+/** A tab on the strip the operator named through Rename is kept when its last agent leaves, so it stays a segment of its checkout with no rows; a spawn's name does not keep it. */
 function namedOnStrip(tab: Tab): boolean {
-  return tab.id !== null && tab.sidebar !== undefined && tab.sidebar.manual_name !== null && !tab.delegated;
+  return tab.id !== null && tab.sidebar !== undefined && tab.sidebar.named_by_operator && !tab.delegated;
 }
 
 /** Keep complete lineage subtrees with their root, ordered by the actual tabs; a named tab with no agent keeps its segment, empty. */

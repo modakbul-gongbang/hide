@@ -4,11 +4,12 @@
 use super::*;
 
 impl Runtime {
-    /// A tab the operator named outlives its agents (docs/UI_BEHAVIOR.md,
-    /// Agent areas): closing its only pane while that pane holds an agent
-    /// leaves a shell in the tab. A delegated child's tab carries the name
-    /// its spawn gave it, not the operator's, and a failed terminal must stay
-    /// closable, so neither keeps its tab; neither does the leftover shell.
+    /// A tab the operator named through Rename outlives its agents
+    /// (docs/UI_BEHAVIOR.md, Agent areas): closing its only pane while that
+    /// pane holds an agent leaves a shell in the tab. A spawn's name is not
+    /// the operator's; a delegated child's tab and a failed terminal, which
+    /// must stay closable, never keep their tab; neither does the leftover
+    /// shell.
     pub(super) fn keeps_named_tab(
         &self,
         target: &live::CloseCaptureTarget,
@@ -17,7 +18,7 @@ impl Runtime {
         let live::CloseCaptureTarget::Pane { pane_id } = target else {
             return false;
         };
-        tab.naming.manual_name().is_some()
+        tab.naming.operator_name().is_some()
             && !tab.delegated
             && matches!(tab.panes.as_slice(), [only]
                 if only.id == *pane_id && only.failed_terminal_id.is_none())

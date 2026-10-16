@@ -870,12 +870,11 @@ impl Runtime {
                             }),
                         replacement_shell: self.primary_needs_shell(session_workspace_id, tab_id),
                         replacement_in_tab: false,
-                        tab_name: tab
-                            .naming
-                            .manual_name()
-                            .map_or(ClosedTabName::Unnamed, |name| {
-                                ClosedTabName::Named(name.to_owned())
-                            }),
+                        tab_name: match (tab.naming.operator_name(), tab.naming.manual_name()) {
+                            (Some(name), _) => ClosedTabName::Named(name.to_owned()),
+                            (None, Some(name)) => ClosedTabName::Labeled(name.to_owned()),
+                            (None, None) => ClosedTabName::Unnamed,
+                        },
                     })
             })
     }
@@ -2940,6 +2939,9 @@ impl Runtime {
                         }
                         _ => None,
                     };
+                    if let Some(name) = context.and_then(ClosedContext::operator_tab_name) {
+                        self.remember_operator_tab_name(tab_id, Some(name));
+                    }
                     if let Some(context) = context {
                         match self.queue_restored_agent_tab(context, tab_id) {
                             Ok(()) => self.finish_agent_effect(

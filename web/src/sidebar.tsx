@@ -1608,7 +1608,7 @@ const TAB_LINE = "calc(var(--size-sidebar-line) + var(--spacing-xxs))";
  * A tab is a segment of its checkout's agent list, not a level (docs/UI_BEHAVIOR.md, Sidebar hierarchy): a tab holding two or more agents,
  * or one the operator named, draws a hairline guide centered under the checkout's kind glyph spanning the segment's rows, and opens with one quiet line inside the
  * guide, the tab glyph on the status-mark column and its name (the manual one, else `Tab N`) on the title column, so it reads as part of
- * the checkout rather than beside it. The line opens the real tab, and the hint says its name and agent count. An unnamed single-agent
+ * the checkout rather than beside it. The line opens the real tab, and the hint says its name and agent count, or only its name with no agent. An unnamed single-agent
  * tab draws nothing: its row alone is the segment, and the gap between segments is the tab boundary.
  */
 function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context }: { group: SidebarTabGroup; checkout: Checkout; deviceId: string; inset: string; glyphColumn: string; context: TreeContext }) {
@@ -1617,7 +1617,8 @@ function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context
   const tab = group.tab;
   const naming = tab?.sidebar;
   const name = naming ? naming.manual_name ?? t("sidebar.tabNumber", { number: naming.number }) : "";
-  const label = t("sidebar.tabAgents", { name, count: group.count });
+  // A tab the operator kept with no agent left says its name alone, never a count of none.
+  const label = group.count === 0 ? name : t("sidebar.tabAgents", { name, count: group.count });
   const center = `calc(${glyphColumn} + var(--size-checkout-icon) / 2)`;
   const open = () => context.actions.openSurface(tabSurface(checkout, tab!.id!, deviceId));
   if (!group.glyph) return null;

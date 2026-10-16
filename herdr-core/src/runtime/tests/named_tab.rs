@@ -58,13 +58,33 @@ fn session(label: &str, agent: bool, t1_panes: &[&str]) -> SessionSnapshotPayloa
     .expect("named tab session")
 }
 
+/// t1 carries `label`, which the operator gave it through Rename when the
+/// label is a name.
 fn started(label: &str, agent: bool) -> Runtime {
+    let mut runtime = started_unrenamed(label, agent);
+    rename(&mut runtime, label);
+    runtime
+}
+
+/// t1 carries `label` as Herdr holds it, given by someone other than the
+/// operator's Rename: a spawn, or a Rename before Hide recorded them.
+fn started_unrenamed(label: &str, agent: bool) -> Runtime {
     let (runtime, _) = live_tab_order_runtime(PATH);
     let mut runtime = with_new_views(runtime, "named-tab");
     runtime.ingest_session(Ok(session(label, agent, &[AGENT])));
     runtime.sync_workspace_view();
     runtime.select_terminal_pane(Some(AGENT.to_owned()));
     runtime
+}
+
+/// The operator renames t1 to `label` and Herdr accepts it.
+fn rename(runtime: &mut Runtime, label: &str) {
+    runtime.rename_tab(RenameTabPayload {
+        request_id: format!("rename {label}"),
+        tab_id: "w-order:t1".into(),
+        label: label.into(),
+    });
+    runtime.ingest_tab_rename_result(&format!("rename {label}"), Ok(()));
 }
 
 fn close_pane(runtime: &mut Runtime, pane: &str) {
@@ -204,6 +224,95 @@ fn an_unnamed_tab_and_a_named_tabs_leftover_shell_close_their_tab_as_before() {
     }
 }
 
+/// A name a spawn gave, or one given before Hide recorded the operator's
+/// Rename, is shown but does not make the tab named: it closes with its last
+/// agent and comes back under that name, unnamed. Renaming it makes it
+/// named; clearing the name makes it unnamed again.
+#[test]
+fn only_the_operators_rename_makes_a_tab_named() {
+    let mut runtime = started_unrenamed("agent-6651", true);
+    let tab = tab_t1(&runtime).unwrap();
+    assert_eq!(tab.naming.manual_name(), Some("agent-6651"));
+    assert_eq!(tab.naming.operator_name(), None);
+    close_pane(&mut runtime, AGENT);
+    let context = &the_close(&runtime).request.context;
+    assert!(!context.replacement_in_tab);
+    assert_eq!(
+        context.tab_name,
+        ClosedTabName::Labeled("agent-6651".into())
+    );
+    assert_eq!(
+        shown(&mut runtime),
+        ["w-order:t2"],
+        "the tab leaves at once"
+    );
+
+    let mut runtime = started_unrenamed("Planning", true);
+    rename(&mut runtime, "Planning");
+    assert_eq!(
+        tab_t1(&runtime).unwrap().naming.operator_name(),
+        Some("Planning")
+    );
+    rename(&mut runtime, "");
+    runtime.ingest_session(Ok(session("", true, &[AGENT])));
+    assert_eq!(tab_t1(&runtime).unwrap().naming.operator_name(), None);
+    assert!(runtime.snapshot.ui_state.operator_tab_names.is_empty());
+}
+
+/// A tab the operator named comes back named from Reopen closed tab, under
+/// the tab id Herdr gives it.
+#[test]
+fn a_reopened_tab_the_operator_named_is_named_again() {
+    let mut runtime = started("Planning", true);
+    let context = runtime
+        .close_context(&tab_t1(&runtime).unwrap())
+        .expect("the tab's context");
+    let request = live::ReopenRequest {
+        codex_daemon: Default::default(),
+        item: ClosedItem::Tab {
+            key: "reopen".into(),
+            context,
+            layout: crate::recent_closed::ClosedLayout {
+                workspace_id: "w-order".into(),
+                tab_id: "w-order:t1".into(),
+                zoomed: false,
+                focused_pane_id: AGENT.into(),
+                root: crate::recent_closed::ClosedLayoutNode::Pane {
+                    pane_id: Some(AGENT.into()),
+                    label: None,
+                    cwd: Some(PATH.into()),
+                    command: None,
+                    env: Default::default(),
+                },
+            },
+            panes: Vec::new(),
+        },
+        workspace_exists: true,
+        tab_exists: false,
+        fallback_pane_id: None,
+        owner: None,
+    };
+    runtime.reopen_in_flight = Some("reopen".into());
+    runtime.ingest_reopen_result(
+        &request,
+        Ok(live::FileReopenResultOrHerdr::Herdr(live::ReopenOutcome {
+            tab_id: Some("w-order:t9".into()),
+            consumed: true,
+            focused_pane_id: None,
+            notices: Vec::new(),
+        })),
+    );
+    assert_eq!(
+        runtime
+            .snapshot
+            .ui_state
+            .operator_tab_names
+            .get("w-order:t9")
+            .map(String::as_str),
+        Some("Planning")
+    );
+}
+
 #[test]
 fn close_tab_closes_a_named_tab_and_its_name() {
     let mut runtime = started("Planning", true);
@@ -215,11 +324,11 @@ fn close_tab_closes_a_named_tab_and_its_name() {
     assert_eq!(shown(&mut runtime), ["w-order:t2"]);
 }
 
-/// A delegated child's tab carries the name its spawn gave it, and a failed
-/// terminal must stay closable; neither keeps a shell.
+/// A delegated child's tab and a failed terminal, which must stay closable,
+/// keep no shell even when the operator named the tab.
 #[test]
 fn a_delegated_tab_and_a_failed_terminal_are_not_kept() {
-    let runtime = started("agent-6651", true);
+    let runtime = started("Planning", true);
     let target = live::CloseCaptureTarget::Pane {
         pane_id: AGENT.into(),
     };

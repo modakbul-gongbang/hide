@@ -45,26 +45,40 @@ pub struct ClosedContext {
     pub tab_name: ClosedTabName,
 }
 
-/// What the operator called a closed tab (`ClosedContext::tab_name`).
+/// What a closed tab was called (`ClosedContext::tab_name`).
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClosedTabName {
     /// A record written before the name was kept, which sends `tab_label`
-    /// as it always did.
+    /// as it always did, and is not the operator's.
     #[default]
     Unrecorded,
     Unnamed,
+    /// The name the operator gave it through Rename; the tab it comes back
+    /// as is named again.
     Named(String),
+    /// A name someone else gave it, such as `hide agent spawn`: it comes
+    /// back under that name but stays unnamed.
+    Labeled(String),
 }
 
 impl ClosedContext {
-    /// The label a reopen or a wake sends Herdr; none for a tab the operator
-    /// never named, so Herdr keeps or picks the tab's own.
+    /// The label a reopen or a wake sends Herdr; none for a tab nobody
+    /// named, so Herdr keeps or picks the tab's own.
     pub(crate) fn herdr_tab_label(&self) -> Option<&str> {
         match &self.tab_name {
-            ClosedTabName::Named(name) => Some(name),
+            ClosedTabName::Named(name) | ClosedTabName::Labeled(name) => Some(name),
             ClosedTabName::Unnamed => None,
             ClosedTabName::Unrecorded => Some(&self.tab_label),
+        }
+    }
+
+    /// The name the operator gave the tab, which the tab a reopen or a wake
+    /// opens is named by again.
+    pub(crate) fn operator_tab_name(&self) -> Option<&str> {
+        match &self.tab_name {
+            ClosedTabName::Named(name) => Some(name),
+            _ => None,
         }
     }
 }

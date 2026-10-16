@@ -1,6 +1,6 @@
-// A tab the operator named outlives its agents (docs/UI_BEHAVIOR.md, Agent
-// areas): closing its last agent pane leaves a shell in the tab, and closing
-// that shell closes the tab.
+// A tab the operator named through Rename outlives its agents
+// (docs/UI_BEHAVIOR.md, Agent areas): closing its last agent pane leaves a
+// shell in the tab, and closing that shell closes the tab.
 import { expect, test, type Page } from "@playwright/test";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
@@ -19,10 +19,15 @@ test("closing a named tab's last agent keeps the tab, its name and its sidebar l
     const [first, second] = herdr.panes;
     const snapshot = () => (herdr.run(["api", "snapshot"]) as Snapshot).result.snapshot;
     const panesOfTab = () => snapshot().panes.filter((pane) => pane.tab_id === herdr.tab);
-    herdr.run(["tab", "rename", herdr.tab, "Planning"]);
     daemon = await startHided(herdr, "named-tab-stays");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
+    await page.locator(`[data-agent-tab-bar] [data-tab="${herdr.tab}"]`).click({ button: "right" });
+    await page.locator('[data-menu-item="rename_tab"]').click();
+    const input = page.getByRole("textbox", { name: "Tab name", exact: true });
+    await input.fill("Planning");
+    await input.press("Enter");
+    await expect(input).toHaveCount(0);
     const line = page.locator(`[data-sidebar-tab-line="${herdr.tab}"]`);
     await expect(line).toContainText("Planning");
 
@@ -41,6 +46,8 @@ test("closing a named tab's last agent keeps the tab, its name and its sidebar l
     await expect(page.locator(`[data-pane-view="${shell!.pane_id}"]`)).toBeVisible();
     await expect(page.locator(`[data-pane-view="${shell!.pane_id}"]`)).toHaveAttribute("data-focused", "true");
     await expect(line).toContainText("Planning");
+    // With no agent left, its line says its name alone, never a count of none.
+    await expect(line.locator("[data-sidebar-tab]")).toHaveAttribute("aria-label", "Planning");
     await screenshot(page, "named-tab-kept-with-shell");
 
     // Choosing the line opens the tab; closing the shell closes the tab and its name.

@@ -586,6 +586,8 @@ impl Runtime {
             let mut tab = TabSnapshot {
                 agent: representative.map(Into::into),
                 naming: crate::model::TabNaming {
+                    // Set with any pending rename, below.
+                    by_operator: false,
                     focused_pane_id: layout.focused_pane_id.clone(),
                     number: crate::model::tab_number(&session_tab.label, session_tab.number),
                     processes: payload
