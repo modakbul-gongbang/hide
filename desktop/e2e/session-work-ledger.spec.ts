@@ -9,10 +9,11 @@ import { enterWorkspace, openTaskFolds, showTool, taskRow } from "../../web/e2e/
 import { fitWindow, isolate, launchShell, REPO, test } from "./fixture";
 import { captureElectronWindow } from "./electron-window";
 
-/** The record's words beside the split tasks, then the pane's checklist pinned by Show task list through the app menu's chord. */
-async function captureTaskSurfaces(app: ElectronApplication, pane: string, theme: string, facts: Record<string, unknown>) {
+/** The record, its words beside the split tasks, then the pane's checklist pinned by Show task list through the app menu's chord. */
+async function captureRecordAndTaskList(app: ElectronApplication, pane: string, theme: string, facts: Record<string, unknown>) {
   const page = await app.firstWindow();
-  const record = page.locator("[data-session-record]");
+  const record = page.locator('aside[data-lane="detail"][data-detail="record"] [data-session-record="lane"]');
+  await captureElectronWindow(app, `record-chapters-children-${theme}`, facts);
   // The split request's words show once, under its first task (D-13).
   await record.locator('[data-record-words="off"]').click();
   await expect(record.locator("[data-record-words-bubble]").first()).toBeVisible();
@@ -25,6 +26,12 @@ async function captureTaskSurfaces(app: ElectronApplication, pane: string, theme
   await captureElectronWindow(app, `pane-task-list-${theme}`, facts);
   await page.keyboard.press(chord("toggle_task_list", "electron"));
   await expect(list).toHaveCount(0);
+}
+
+/** Agent summaries off keeps no tasks, so the pane head draws no chip (PRD task-split-checklist B9). */
+async function captureSummariesOff(app: ElectronApplication, pane: string, theme: string, facts: Record<string, unknown>) {
+  await expect((await app.firstWindow()).locator(`[data-pane-task-chip="${pane}"]`)).toHaveCount(0);
+  await captureElectronWindow(app, `record-summaries-off-${theme}`, facts);
 }
 
 test("@platform session work records, missed lines, ended work and search render in both themes in a narrow native lane", async () => {
@@ -88,8 +95,7 @@ test("@platform session work records, missed lines, ended work and search render
       await page.locator('[data-language-option="ko"]').click();
       await page.keyboard.press("Escape");
       const facts = { ...fixtureIdentity, theme, tools: await page.locator("[data-lane-frame]").boundingBox() };
-      await captureElectronWindow(app, `record-chapters-children-${theme}`, facts);
-      await captureTaskSurfaces(app, herdr.panes[0], theme, facts);
+      await captureRecordAndTaskList(app, herdr.panes[0], theme, facts);
       const missed = record.locator('[data-missed-work]', { hasText: MISSED });
       await missed.getByRole("button", { name: "무시", exact: true }).click();
       // A closed one is a muted line under its task; Undo shows under the pointer.
@@ -114,15 +120,13 @@ test("@platform session work records, missed lines, ended work and search render
       await page.locator('[data-ai-agent-summary="true"]').click();
       await page.keyboard.press("Escape");
       await expect(record.locator('[data-record-task]')).toHaveCount(0);
-      // Agent summaries off keeps no tasks, so the pane head draws no chip (B9).
-      await expect(page.locator(`[data-pane-task-chip="${herdr.panes[0]}"]`)).toHaveCount(0);
       // The parent's two requests; the child's is in its own record, behind its row.
       await expect(record.locator('[data-record-request]')).toHaveCount(2);
       await expect(record.getByRole('heading', { level: 2 })).toHaveText('Claude');
       await expect(record.locator('[data-record-child]')).toContainText('Claude');
       // Only the child's pull request names its maker; the session's own say nothing.
       await expect(record.locator('[data-output-source]')).toHaveText(['Claude']);
-      await captureElectronWindow(app, `record-summaries-off-${theme}`, facts);
+      await captureSummariesOff(app, herdr.panes[0], theme, facts);
       await page.locator('[data-open-settings]').click();
       await page.locator('[data-settings-tab="hideAi"]').click();
       await page.locator('[data-ai-agent-summary="false"]').click();
