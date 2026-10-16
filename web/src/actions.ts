@@ -76,6 +76,7 @@ import { FACTORY_OPEN } from "./factory/launch";
 import { SECRETARY_PROMPT, paneListed } from "./factory/secretary";
 import type { DispatchFn } from "./ws";
 import { closeShortcutPolicy, drawnViews, keyboardOwner, newTabPolicy } from "./viewFocus";
+import { focusTerminal } from "./terminals";
 import { zoomViewer } from "./viewers/viewerZoom";
 import { submitDrop, type CapturedDrop } from "./explorerDrop";
 import {
@@ -1740,6 +1741,12 @@ export function createActions(send: DispatchFn) {
         return dispatch(forward ? withDeviceForward(event) : event);
       }
       dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: paneId, origin: "operator", focus_device: forward } });
+      // The core's answer moves the keys only when it moves the focus, so a
+      // pane already focused would leave them on the row, link or mark that
+      // was pressed. The operator asked for the pane, so the open takes the
+      // keys itself while the pane is on screen; the terminal reports no
+      // click for a focus it is given (`focusTerminal`).
+      if (ui().screen?.kind === "workspace" && useShellStore.getState().focusedPaneId === paneId) focusTerminal(paneId);
     },
 
     /**
