@@ -827,6 +827,20 @@ fn wake_overlay_with(
     marks: &[hide_session::turns::WakeMark],
     summaries: bool,
 ) -> LabelOverlay {
+    wake_overlay_ending(
+        seq,
+        marks,
+        summaries,
+        crate::labels::analysis::LabelEnd::Waiting,
+    )
+}
+
+fn wake_overlay_ending(
+    seq: u64,
+    marks: &[hide_session::turns::WakeMark],
+    summaries: bool,
+    end: crate::labels::analysis::LabelEnd,
+) -> LabelOverlay {
     use hide_session::turns::{TurnMark, TurnTracker};
     let mut turns = TurnTracker::default();
     for (offset, mark) in marks.iter().enumerate() {
@@ -839,7 +853,7 @@ fn wake_overlay_with(
         turns_seq: Some(seq),
         goal: Some("빌드 돌리기".to_owned()),
         line: "CI가 끝나기를 기다림".to_owned(),
-        end: Some(crate::labels::analysis::LabelEnd::Waiting),
+        end: Some(end),
         ..PaneRecord::default()
     };
     LabelOverlay::of_records([(&PANE.to_owned(), &record)], true, summaries)
@@ -963,6 +977,58 @@ fn turn_end_owed_overlay(seq: u64) -> LabelOverlay {
         ..PaneRecord::default()
     };
     LabelOverlay::of_records([(&PANE.to_owned(), &record)], true, false)
+}
+
+/// status-marks D-16, B27: a turn the label read as done is announced Done
+/// once that verdict lands, though the background task it started still runs;
+/// until the read lands it is held like any other turn end.
+#[test]
+fn a_turn_read_as_done_is_announced_done_past_the_background_task_it_left() {
+    use crate::agent_state::push::{NoticeState, Transitions};
+    use hide_session::turns::WakeMark;
+    let mut runtime = runtime();
+    let mut transitions = Transitions::default();
+    let mut look = |runtime: &Runtime| {
+        let rest = serde_json::json!({"navigator": {
+            "agents": serde_json::to_value(&runtime.snapshot().navigator.agents).unwrap(),
+            "workspaces": []}});
+        transitions
+            .observe(&crate::agent_state::phone::project(&rest, "local"))
+            .0
+            .iter()
+            .map(|notice| notice.state)
+            .collect::<Vec<_>>()
+    };
+    runtime.ingest_session(Ok(claude_projection("working", 4)));
+    look(&runtime);
+
+    runtime.set_label_overlay(turn_end_owed_overlay(5));
+    runtime.ingest_session(Ok(claude_projection("done", 5)));
+    assert_eq!(look(&runtime), []);
+
+    runtime.set_label_overlay(wake_overlay_ending(
+        5,
+        &[
+            WakeMark::Boot,
+            WakeMark::Started {
+                id: "bg1".into(),
+                expires_at_unix_ms: None,
+            },
+        ],
+        true,
+        crate::labels::analysis::LabelEnd::Done,
+    ));
+    runtime.ingest_session(Ok(claude_projection("done", 5)));
+    assert_eq!(look(&runtime), [NoticeState::Done]);
+    let row = row(&runtime);
+    assert_eq!(
+        (&row["group"], &row["mark"], &row["background_left"]),
+        (
+            &serde_json::json!("done"),
+            &serde_json::json!("done"),
+            &serde_json::json!(1)
+        )
+    );
 }
 
 /// #902: a Claude Code turn ends with a background task running. The phone
