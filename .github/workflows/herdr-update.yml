@@ -89,7 +89,7 @@ jobs:
         run: |
           set -euo pipefail
           zsh scripts/bump-herdr.sh --repo herdrdev/herdr "${{ steps.upstream.outputs.latest_tag }}" \
-            --keep-binary "$RUNNER_TEMP/herdr"
+            --keep-binary "$RUNNER_TEMP/herdr" | tee "$RUNNER_TEMP/bump.json"
 
       - name: Check the API schema against the candidate CLI
         if: steps.existing.outputs.proceed == 'true'
@@ -140,12 +140,11 @@ jobs:
           # create one). This job is the only writer of herdr-bump/*, and a
           # branch without an open PR is its own earlier output, so the push
           # replaces it rather than stopping on non-fast-forward.
-          git add \
-            contracts/herdr-bundle.json \
-            contracts/herdr-api.schema.json \
-            desktop/resources/THIRD_PARTY_NOTICES/herdr-APACHE-2.0.txt \
-            README.md \
-            docs/INSTALL.md
+          # The documents are the ones the bump rewrote, as it reports them:
+          # a second list here once left AGENTS.md and contracts/README.md
+          # quoting the old pin.
+          mapfile -t documents < <(jq -er '.documents[].document' "$RUNNER_TEMP/bump.json")
+          git add contracts/herdr-bundle.json contracts/herdr-api.schema.json "${documents[@]}"
           git commit -m "build: move the bundled Herdr pin to v${latest}"
           git push --force --set-upstream origin "$branch"
           cat > "$RUNNER_TEMP/pr-body.md" <<BODY
