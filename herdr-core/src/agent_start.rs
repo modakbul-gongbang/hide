@@ -201,7 +201,9 @@ pub(crate) fn trust_worktree(
         },
         Duration::from_secs(10),
     )
-    .map_err(|error| format!("agent_trust_failed: agy's trust of {path} could not be recorded ({error})"))
+    .map_err(|error| {
+        format!("agent_trust_failed: agy's trust of {path} could not be recorded ({error})")
+    })
 }
 
 pub(crate) fn shell_launch(
@@ -1290,7 +1292,10 @@ mod tests {
         trust_worktree(Some(&node), "antigravity", "/work/tree-1").unwrap();
         let written: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
-        assert_eq!(written["trustedWorkspaces"], serde_json::json!(["/work/tree-1"]));
+        assert_eq!(
+            written["trustedWorkspaces"],
+            serde_json::json!(["/work/tree-1"])
+        );
         // A trust that cannot be recorded stops the start with its reason.
         std::fs::write(&settings, "{ not json").unwrap();
         let refused = trust_worktree(Some(&node), "antigravity", "/work/tree-2").unwrap_err();

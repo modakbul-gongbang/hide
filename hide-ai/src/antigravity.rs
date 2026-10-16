@@ -182,12 +182,21 @@ impl AntigravityCliBackend {
             .is_some_and(|home| home.join(".gemini").join("antigravity-cli").is_dir())
     }
 
-    fn probe(&self, binary: &Program, args: &[String], cancel: &CancelToken) -> Result<runner::Run, runner::RunError> {
+    fn probe(
+        &self,
+        binary: &Program,
+        args: &[String],
+        cancel: &CancelToken,
+    ) -> Result<runner::Run, runner::RunError> {
         let cwd = self
             .home
             .as_deref()
             .map_or_else(|| self.config.cwd.clone(), read_only_workspace);
-        let cwd = if cwd.is_dir() { cwd } else { self.config.cwd.clone() };
+        let cwd = if cwd.is_dir() {
+            cwd
+        } else {
+            self.config.cwd.clone()
+        };
         runner::run(
             &Spec {
                 binary,
@@ -268,7 +277,11 @@ fn parse_models(run: &runner::Run) -> ModelsOutcome {
     if run.succeeded() && !models.is_empty() {
         return ModelsOutcome::Models(models);
     }
-    match classify_failure("antigravity", run.code, &format!("{}\n{}", run.stdout, run.stderr)) {
+    match classify_failure(
+        "antigravity",
+        run.code,
+        &format!("{}\n{}", run.stdout, run.stderr),
+    ) {
         AiError::NotAuthenticated => ModelsOutcome::NotAuthenticated,
         _ => ModelsOutcome::Unreadable,
     }
@@ -409,7 +422,11 @@ fn answer(run: &runner::Run) -> Result<AiResponse, AiError> {
         .and_then(json_from_text)
         .ok_or_else(|| AiError::InvalidOutput("antigravity_answer_not_json".to_owned()))?;
     let usage = result.get("usage");
-    let tokens = |name: &str| usage.and_then(|usage| usage.get(name)).and_then(Value::as_u64);
+    let tokens = |name: &str| {
+        usage
+            .and_then(|usage| usage.get(name))
+            .and_then(Value::as_u64)
+    };
     Ok(AiResponse {
         value,
         usage: AiUsage {
@@ -444,10 +461,17 @@ mod tests {
     #[test]
     fn the_prompt_is_the_stdin_message_and_never_an_argument() {
         let args = AntigravityCliBackend::print_arguments("", Duration::from_secs(45));
-        assert!(args.windows(2).any(|p| p == ["--input-format", "stream-json"]));
+        assert!(
+            args.windows(2)
+                .any(|p| p == ["--input-format", "stream-json"])
+        );
         assert!(args.windows(2).any(|p| p == ["--print-timeout", "45s"]));
         assert!(args.iter().any(|arg| arg == "--disable-slash-commands"));
-        assert!(!args.iter().any(|arg| arg == "--json-schema" || arg == "--model"));
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg == "--json-schema" || arg == "--model")
+        );
         assert_eq!(args[args.len() - 2..], ["-p".to_owned(), String::new()]);
         let message: Value = serde_json::from_str(&AntigravityCliBackend::stdin_message(
             "Classify.",
@@ -482,13 +506,19 @@ mod tests {
             AiError::InvalidOutput("antigravity_tool_ran".to_owned())
         );
         let prose = result("SUCCESS", "no json", "");
-        assert!(matches!(answer(&run(0, &prose, "")), Err(AiError::InvalidOutput(_))));
+        assert!(matches!(
+            answer(&run(0, &prose, "")),
+            Err(AiError::InvalidOutput(_))
+        ));
     }
 
     #[test]
     fn a_failed_turn_is_classified_from_what_agy_said() {
         let logged_out = result("ERROR", "", "Error: authentication failed");
-        assert_eq!(answer(&run(1, &logged_out, "")).unwrap_err(), AiError::NotAuthenticated);
+        assert_eq!(
+            answer(&run(1, &logged_out, "")).unwrap_err(),
+            AiError::NotAuthenticated
+        );
         assert_eq!(
             answer(&run(0, "", "")).unwrap_err(),
             AiError::CompletionUnknown("antigravity_no_result".to_owned())
@@ -513,17 +543,26 @@ mod tests {
             parse_models(&run(1, "", "Error: authentication failed")),
             ModelsOutcome::NotAuthenticated
         );
-        assert_eq!(parse_models(&run(0, "Fetching available models...\n", "")), ModelsOutcome::Unreadable);
+        assert_eq!(
+            parse_models(&run(0, "Fetching available models...\n", "")),
+            ModelsOutcome::Unreadable
+        );
     }
 
     #[test]
     fn a_request_runs_only_where_hide_wrote_the_hook_and_agy_trusts_the_folder() {
         let home = tempfile::tempdir().unwrap();
-        assert_eq!(read_only_prepared(home.path()), Err("antigravity_read_only_missing"));
+        assert_eq!(
+            read_only_prepared(home.path()),
+            Err("antigravity_read_only_missing")
+        );
         let folder = read_only_workspace(home.path());
         std::fs::create_dir_all(folder.join(".agents")).unwrap();
         std::fs::write(read_only_hooks_file(&folder), READ_ONLY_HOOKS).unwrap();
-        assert_eq!(read_only_prepared(home.path()), Err("antigravity_read_only_untrusted"));
+        assert_eq!(
+            read_only_prepared(home.path()),
+            Err("antigravity_read_only_untrusted")
+        );
         let canonical = hide_platform::fs::identity::canonical(&folder).unwrap();
         let settings = settings_path(home.path());
         std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
@@ -534,6 +573,9 @@ mod tests {
         .unwrap();
         assert_eq!(read_only_prepared(home.path()), Ok(canonical));
         std::fs::write(read_only_hooks_file(&folder), "{}").unwrap();
-        assert_eq!(read_only_prepared(home.path()), Err("antigravity_read_only_hook_changed"));
+        assert_eq!(
+            read_only_prepared(home.path()),
+            Err("antigravity_read_only_hook_changed")
+        );
     }
 }

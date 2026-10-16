@@ -139,7 +139,9 @@ fn workspace(uris: &str) -> Option<PathBuf> {
         .filter(|path| path.is_absolute())
 }
 
-fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(String, Option<String>, String, Option<String>)> {
+fn read_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<(String, Option<String>, String, Option<String>)> {
     Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
 }
 
@@ -311,7 +313,10 @@ pub(crate) fn confirm_route(home: &Path, path: &Path, id: &str, cwd: &Path) -> R
     if !same(&row.cwd, cwd) {
         return Err(anyhow!("session_route_unconfirmed"));
     }
-    let store = home.join(FOLDER).join("conversations").join(format!("{id}.db"));
+    let store = home
+        .join(FOLDER)
+        .join("conversations")
+        .join(format!("{id}.db"));
     if !std::fs::symlink_metadata(store).is_ok_and(|metadata| metadata.is_file()) {
         return Err(anyhow!("session_route_missing"));
     }
@@ -440,7 +445,10 @@ mod tests {
         let LineResult::Event(typed) = typed else {
             panic!("a typed prompt is an event")
         };
-        assert_eq!((typed.kind, typed.text.as_str()), (EventKind::Human, "fix it"));
+        assert_eq!(
+            (typed.kind, typed.text.as_str()),
+            (EventKind::Human, "fix it")
+        );
         assert!(!typed.is_provider_injected());
         let LineResult::Event(given) = parse_line(&step("SYSTEM_SDK", "SYSTEM_MESSAGE", "guide"))
         else {

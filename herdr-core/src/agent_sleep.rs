@@ -295,10 +295,13 @@ impl SleepRecord {
             cwd: self.cwd.clone(),
             agent: Some(self.kind.clone()),
             agent_status: Some(if self.completed { "done" } else { "idle" }.to_owned()),
-            agent_session: self.session_id.clone().map(|value| SessionAgentSessionPayload {
-                kind: "id".to_owned(),
-                value,
-            }),
+            agent_session: self
+                .session_id
+                .clone()
+                .map(|value| SessionAgentSessionPayload {
+                    kind: "id".to_owned(),
+                    value,
+                }),
             spawned_from_pane_id: self
                 .parent_pane_id
                 .as_deref()

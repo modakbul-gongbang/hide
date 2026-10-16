@@ -19,12 +19,12 @@ use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
 use hide_agent_adapter::HookDialect;
-use hide_agent_hooks::{antigravity, basic};
 use hide_agent_hooks::counters::{self, Change, Reporter, SubagentInput};
 use hide_agent_hooks::diagnosis::Diagnosis;
 use hide_agent_hooks::guidance::{self, GuidanceAgent};
 use hide_agent_hooks::report;
 use hide_agent_hooks::runtime::{AgentRuntime, HookEvent, hook_stdout};
+use hide_agent_hooks::{antigravity, basic};
 use hide_platform::process::{OwnedChild, OwnerWatch};
 
 const PROMPT_BUDGET: Duration = Duration::from_millis(1_850);
@@ -271,9 +271,10 @@ fn run_antigravity_hook(arguments: &[String], started: Instant) {
             guard_failed(arguments, "panic");
             None
         });
-        print_line(&refusal.map_or_else(|| antigravity::ALLOW.to_owned(), |reason| {
-            antigravity::deny(&reason)
-        }));
+        print_line(&refusal.map_or_else(
+            || antigravity::ALLOW.to_owned(),
+            |reason| antigravity::deny(&reason),
+        ));
         return;
     }
     let _ = std::panic::catch_unwind(|| antigravity_event(event, started));
@@ -343,9 +344,11 @@ fn antigravity_event(event: HookEvent, started: Instant) {
             });
             let mut context = guidance::session_context(workspace.as_deref());
             if let Some(index) = index {
-                context.push_str("
+                context.push_str(
+                    "
 
-");
+",
+                );
                 context.push_str(&index);
             }
             if let Some(answer) = antigravity::inject(&context) {
@@ -366,13 +369,9 @@ fn antigravity_event(event: HookEvent, started: Instant) {
                 antigravity_prompt(&home, &conversation, started);
             }
         }
-        (HookEvent::Stop, None) => report_count(
-            &home,
-            event,
-            Change::None,
-            reporter(&conversation),
-            true,
-        ),
+        (HookEvent::Stop, None) => {
+            report_count(&home, event, Change::None, reporter(&conversation), true)
+        }
         (HookEvent::PreToolUse | HookEvent::SubagentStart | HookEvent::SubagentStop, None) => {}
     }
 }

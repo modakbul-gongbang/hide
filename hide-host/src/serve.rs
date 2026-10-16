@@ -1104,8 +1104,9 @@ pub fn handle_with_progress(
             since_unix_s,
         } => {
             let home = env.home("antigravity_fork_home_unavailable")?;
-            let cwd = hide_platform::fs::identity::canonical(Path::new(&cwd))
-                .map_err(|_| HostError::new(ErrorCode::InvalidPath, "session_route_cwd_unconfirmed"))?;
+            let cwd = hide_platform::fs::identity::canonical(Path::new(&cwd)).map_err(|_| {
+                HostError::new(ErrorCode::InvalidPath, "session_route_cwd_unconfirmed")
+            })?;
             to_value(
                 hide_session::antigravity::forked(Path::new(&home), &source, &cwd, since_unix_s)
                     .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,

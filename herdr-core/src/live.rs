@@ -3410,6 +3410,7 @@ const ANTIGRAVITY_FORK_POLL: Duration = Duration::from_millis(250);
 /// prompt. Everything the fork assumes of agy's screen is in this function;
 /// a failure leaves the source conversation as it was and the caller closes
 /// the pane.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code: polls Herdr and agy's index, bounded by a deadline
 fn fork_antigravity(
     connector: &dyn ApiConnector,
     node: &dyn crate::node_access::NodeLink,
@@ -3463,7 +3464,9 @@ fn fork_antigravity(
     };
     let seq = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX));
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
+        });
     control_request(
         connector,
         "pane.report_agent_session",
@@ -4615,7 +4618,13 @@ mod tests {
                     assert_eq!(params["text"], "/fork");
                     assert_eq!(params["keys"], json!(["enter"]));
                     // agy writes the fork's row at the source's step count.
-                    crate::fixture::antigravity_conversation(&index_home, &index_cwd, fork, 4, None);
+                    crate::fixture::antigravity_conversation(
+                        &index_home,
+                        &index_cwd,
+                        fork,
+                        4,
+                        None,
+                    );
                     if case == "ambiguous" {
                         crate::fixture::antigravity_conversation(
                             &index_home,
@@ -4652,11 +4661,19 @@ mod tests {
             let expected: &[&str] = match case {
                 "success" => {
                     assert_eq!(result, Ok(()));
-                    &["pane.get", "pane.get", "pane.send_input", "pane.report_agent_session"]
+                    &[
+                        "pane.get",
+                        "pane.get",
+                        "pane.send_input",
+                        "pane.report_agent_session",
+                    ]
                 }
                 _ => {
                     assert!(
-                        result.as_ref().unwrap_err().contains("antigravity_fork_ambiguous"),
+                        result
+                            .as_ref()
+                            .unwrap_err()
+                            .contains("antigravity_fork_ambiguous"),
                         "{result:?}"
                     );
                     &["pane.get", "pane.get", "pane.send_input"]

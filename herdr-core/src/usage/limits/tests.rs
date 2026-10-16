@@ -336,7 +336,11 @@ fn agys_gemini_bucket_is_the_weekly_window_and_other_groups_are_scoped() {
         )
     );
     assert_eq!(
-        parse(LimitSource::AntigravityUsage, r#"{"command":{"data":{}}}"#, 0),
+        parse(
+            LimitSource::AntigravityUsage,
+            r#"{"command":{"data":{}}}"#,
+            0
+        ),
         Err(Cause::FormatChanged)
     );
 }

@@ -4316,7 +4316,8 @@ mod antigravity {
                 rusqlite::Connection::open(folder.join("conversation_summaries.db")).unwrap();
             database
                 .execute_batch(
-                    &fs::read_to_string(fixtures().join("antigravity-1.3.6/summaries.sql")).unwrap(),
+                    &fs::read_to_string(fixtures().join("antigravity-1.3.6/summaries.sql"))
+                        .unwrap(),
                 )
                 .unwrap();
             drop(database);
@@ -4470,7 +4471,11 @@ mod antigravity {
                 .map_err(|error| error.to_string())
         };
         steps(AGY_ID, 7);
-        assert_eq!(forked(AGY_ID).unwrap(), None, "the source is never its own fork");
+        assert_eq!(
+            forked(AGY_ID).unwrap(),
+            None,
+            "the source is never its own fork"
+        );
         let older = "a9c0e2f4-0000-4000-8000-00000000000b";
         native.conversation(older, "", "2026-10-03 01:02:30+00:00");
         steps(older, 7);

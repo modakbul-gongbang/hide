@@ -60,7 +60,11 @@ fn antigravity_usage() {
     assert_eq!(events.len(), 1);
     let event = &events[0];
     assert_eq!(
-        (event.tokens.input, event.tokens.cache_read, event.tokens.output),
+        (
+            event.tokens.input,
+            event.tokens.cache_read,
+            event.tokens.output
+        ),
         (2525, 15528, 100)
     );
     assert_eq!(event.session, id);

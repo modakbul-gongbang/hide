@@ -185,9 +185,7 @@ pub(crate) fn with_read<T>(
         .execute_batch("ROLLBACK")
         .map_err(|error| failed(&error))?;
     connection.close().map_err(|(_, error)| failed(&error))?;
-    source
-        .validate()
-        .map_err(|_| reasons.changed.to_owned())?;
+    source.validate().map_err(|_| reasons.changed.to_owned())?;
     Ok(result)
 }
 

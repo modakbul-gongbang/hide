@@ -31,7 +31,13 @@ pub struct ToolCall {
 }
 
 /// The shell tools by name, across runtimes.
-const SHELL_TOOLS: [&str; 5] = ["Bash", "run_terminal_command", "Shell", "bash", "run_command"];
+const SHELL_TOOLS: [&str; 5] = [
+    "Bash",
+    "run_terminal_command",
+    "Shell",
+    "bash",
+    "run_command",
+];
 
 /// The keys a shell tool's input carries its command under.
 const COMMAND_KEYS: [&str; 2] = ["command", "CommandLine"];

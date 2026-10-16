@@ -139,11 +139,7 @@ impl SessionFormat {
     pub const fn reports_turns(self) -> bool {
         matches!(
             self,
-            Self::Claude
-                | Self::Codex
-                | Self::Grok
-                | Self::Omp
-                | Self::OpenCode
+            Self::Claude | Self::Codex | Self::Grok | Self::Omp | Self::OpenCode
         )
     }
     /// Whether Herdr keeps reporting the agent `working` while it waits for

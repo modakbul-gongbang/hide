@@ -127,6 +127,9 @@ const FIRST_LINE_LIMIT: usize = 64 * 1024;
 /// transcript's first step, or `None` for a conversation of its own. A
 /// subagent's `SessionStart` runs as agy writes that step (both stamped the
 /// same second), so a start waits until `deadline` for the line to appear.
+// A production wait, not test code: agy gives the hook no event for the
+// line it is about to write, and the deadline bounds the wait.
+#[allow(clippy::disallowed_methods)]
 pub fn parent_of(home: &Path, conversation: &str, deadline: Instant) -> Option<String> {
     let path = transcript(home, conversation);
     loop {
@@ -186,7 +189,11 @@ pub fn last_prompt(home: &Path, conversation: &str) -> Option<String> {
     lines
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .filter(|step| step.get("type").and_then(Value::as_str) == Some("USER_INPUT"))
-        .filter_map(|step| step.get("content").and_then(Value::as_str).map(request_text))
+        .filter_map(|step| {
+            step.get("content")
+                .and_then(Value::as_str)
+                .map(request_text)
+        })
         .last()
 }
 
@@ -246,7 +253,12 @@ mod tests {
         );
         assert_eq!(event.conversation.as_deref(), Some(PARENT));
         assert_eq!(event.invocation, Some(0));
-        for id in ["", "../../etc", &PARENT.to_uppercase(), &format!("{PARENT}x")] {
+        for id in [
+            "",
+            "../../etc",
+            &PARENT.to_uppercase(),
+            &format!("{PARENT}x"),
+        ] {
             let read = Event::read(json!({"conversationId": id}).to_string().as_bytes(), false);
             assert_eq!(read.conversation, None, "{id}");
         }
@@ -272,7 +284,9 @@ mod tests {
         write_transcript(
             home.path(),
             PARENT,
-            &[json!({"step_index": 0, "type": "USER_INPUT", "content": "<USER_REQUEST>\nhi\n</USER_REQUEST>"})],
+            &[
+                json!({"step_index": 0, "type": "USER_INPUT", "content": "<USER_REQUEST>\nhi\n</USER_REQUEST>"}),
+            ],
         );
         let now = Instant::now();
         assert_eq!(parent_of(home.path(), CHILD, now).as_deref(), Some(PARENT));
@@ -281,11 +295,7 @@ mod tests {
         let missing = "00000000-0000-4000-8000-000000000000";
         let waited = Instant::now();
         assert_eq!(
-            parent_of(
-                home.path(),
-                missing,
-                waited + Duration::from_millis(60)
-            ),
+            parent_of(home.path(), missing, waited + Duration::from_millis(60)),
             None
         );
         assert!(waited.elapsed() >= Duration::from_millis(60));

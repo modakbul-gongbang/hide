@@ -318,7 +318,12 @@ mod tests {
                 Agent::Claude => {
                     serde_json::json!({"type":"user","sessionId":"native-a","message":{"role":"user","content":"content must not identify the owner"}})
                 }
-                Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode | Agent::Cursor | Agent::Antigravity => {
+                Agent::Grok
+                | Agent::Pi
+                | Agent::Omp
+                | Agent::OpenCode
+                | Agent::Cursor
+                | Agent::Antigravity => {
                     unreachable!("legacy metadata fixtures")
                 }
             };

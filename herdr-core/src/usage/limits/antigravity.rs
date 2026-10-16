@@ -56,10 +56,9 @@ pub(super) fn parse(body: &str, now_s: u64) -> Result<LimitReading, Cause> {
                     cause: Cause::FormatChanged,
                 },
             };
-            if windows
-                .iter()
-                .any(|window: &WindowReading| window.kind == WindowKind::Weekly && window.scope == scope)
-            {
+            if windows.iter().any(|window: &WindowReading| {
+                window.kind == WindowKind::Weekly && window.scope == scope
+            }) {
                 return Err(Cause::FormatChanged);
             }
             windows.push(WindowReading {

@@ -137,10 +137,13 @@ pub fn trust(home: &Path, folder: &Path) -> Result<(), InstallFailure> {
     let folder = spelling(folder)?;
     let settings = settings_path(home);
     let _lock = hold(home)?;
-    let mut document =
-        read_document(&settings)?.unwrap_or_else(|| HookDocument::new(Value::Object(Default::default())));
+    let mut document = read_document(&settings)?
+        .unwrap_or_else(|| HookDocument::new(Value::Object(Default::default())));
     let list = entries(&mut document, &settings)?;
-    if list.iter().any(|entry| entry.as_str() == Some(folder.as_str())) {
+    if list
+        .iter()
+        .any(|entry| entry.as_str() == Some(folder.as_str()))
+    {
         return Ok(());
     }
     // The record is written first: a settings write that then fails leaves a
@@ -247,7 +250,11 @@ fn forget_where(home: &Path, chosen: impl Fn(&str) -> bool) -> Result<usize, Ins
     if let Some(mut document) = read_document(&settings)? {
         let list = entries(&mut document, &settings)?;
         let before = list.len();
-        list.retain(|entry| entry.as_str().is_none_or(|entry| !gone.iter().any(|g| g == entry)));
+        list.retain(|entry| {
+            entry
+                .as_str()
+                .is_none_or(|entry| !gone.iter().any(|g| g == entry))
+        });
         removed = before - list.len();
         if removed > 0 {
             write_document(&settings, &document)?;
@@ -277,7 +284,10 @@ mod tests {
         trust(home.path(), Path::new("/work/tree-1")).unwrap();
         trust(home.path(), Path::new("/Users/me")).unwrap();
         let written: Value = serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
-        assert_eq!(written[KEY], serde_json::json!(["/Users/me", "/work/tree-1"]));
+        assert_eq!(
+            written[KEY],
+            serde_json::json!(["/Users/me", "/work/tree-1"])
+        );
         // The operator's own folder is never Hide's to take out.
         forget(home.path(), Path::new("/Users/me")).unwrap();
         forget(home.path(), Path::new("/work/tree-1")).unwrap();

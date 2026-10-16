@@ -374,7 +374,12 @@ fn start_dormant(
         )
     };
     match started {
-        Ok(_) => match super::report_resumed_session(connector, pane, &work.record.kind, &work.record.native_session_id) {
+        Ok(_) => match super::report_resumed_session(
+            connector,
+            pane,
+            &work.record.kind,
+            &work.record.native_session_id,
+        ) {
             Ok(()) => DormantStartOutcome::Started,
             Err(error) => {
                 crate::diagnostic!(serde_json::json!({
@@ -517,7 +522,12 @@ mod tests {
             id: SleepId::new().unwrap(),
             record,
         };
-        let result = super::super::report_resumed_session(&herdr.connector(), "w1:p9", &work.record.kind, &work.record.native_session_id);
+        let result = super::super::report_resumed_session(
+            &herdr.connector(),
+            "w1:p9",
+            &work.record.kind,
+            &work.record.native_session_id,
+        );
         let reports = reports.lock().unwrap().clone();
         (result, reports)
     }

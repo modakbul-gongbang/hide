@@ -177,14 +177,20 @@ pub(crate) fn report_resumed_session(
         .map_or(0, |elapsed| {
             u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
         });
-    let params = wire::report_agent_session_params(pane, kind, session_id, seq).map_err(
-        |message| ApiError::Remote {
-            code: "session_report_unavailable".into(),
-            message,
-        },
-    )?;
-    request_with_connector(connector, "pane.report_agent_session", params, REQUEST_TIMEOUT)
-        .map(|_| ())
+    let params =
+        wire::report_agent_session_params(pane, kind, session_id, seq).map_err(|message| {
+            ApiError::Remote {
+                code: "session_report_unavailable".into(),
+                message,
+            }
+        })?;
+    request_with_connector(
+        connector,
+        "pane.report_agent_session",
+        params,
+        REQUEST_TIMEOUT,
+    )
+    .map(|_| ())
 }
 
 /// What a wake needs, gathered under the lock before the worker starts.
