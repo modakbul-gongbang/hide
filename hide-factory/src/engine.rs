@@ -47,7 +47,9 @@ pub struct Inbound {
     pub id: String,
     pub factory: String,
     pub sender_pane: String,
-    /// `request`, `block`, `report` or `watch`.
+    /// `request`, `block`, `report` or `watch`; a `progress` letter is no
+    /// Factory command and is refused `letter_invalid` like any other kind
+    /// the engine does not read.
     pub kind: String,
     pub body: String,
 }

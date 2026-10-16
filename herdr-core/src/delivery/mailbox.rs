@@ -140,7 +140,10 @@ pub(crate) fn send(
     if !super::valid_key(intent) {
         return Err("invalid_intent".into());
     }
-    if !matches!(kind, "request" | "block" | "report" | "reply" | "watch") {
+    if !matches!(
+        kind,
+        "request" | "block" | "report" | "progress" | "reply" | "watch"
+    ) {
         return Err("invalid_kind".into());
     }
     if let Some(letter) = existing_intent(ledger, sender, intent, now) {
@@ -359,8 +362,9 @@ pub fn apply(
     }
 }
 
-/// Records that the recipient took the letter in. A report returns the pair
-/// whose watch the intake ends.
+/// Records that the recipient took the letter in. A report, the letter that
+/// says the work is finished, returns the pair whose watch the intake ends;
+/// a progress letter is an interim report and ends nothing.
 fn record_intake(letter: &mut Letter, now: u64) -> Option<(Actor, Actor)> {
     if letter.intake_confirmed() {
         return None;
@@ -1105,6 +1109,45 @@ mod tests {
         pending_for(&mut ledger, &hooked, 1);
         let inbox = apply(&mut ledger, &hooked, None, &Command::Inbox, 5).unwrap();
         assert!(inbox[0].get("ack_command").is_none());
+    }
+
+    /// docs/delivery.md, Watch activity and completion: an interim report
+    /// such as a plan is a `progress` letter, delivered like a report, and
+    /// its receipt leaves the parent's watch in place.
+    #[test]
+    fn a_progress_letter_is_received_like_a_report_and_ends_no_watch() {
+        let mut ledger = Ledger::default();
+        let child = actor("child");
+        let parent = actor("parent");
+        super::super::watch::start(&mut ledger, &parent, &child, 1).unwrap();
+        let plan = send(
+            &mut ledger,
+            &child,
+            &parent,
+            "plan",
+            "Plan: core first, then web.",
+            "progress",
+            None,
+            2,
+        )
+        .unwrap();
+        assert!(!plan.waiting_answer);
+        assert_eq!(pull(&ledger, &parent).unwrap().ids, vec![plan.id.clone()]);
+        apply(
+            &mut ledger,
+            &parent,
+            None,
+            &Command::Confirm {
+                ids: vec![plan.id.clone()],
+            },
+            3,
+        )
+        .unwrap();
+        assert_eq!(ledger.letters[0].state, State::Delivered);
+        assert!(ledger.letters[0].intake_confirmed());
+        assert_eq!(ledger.watches.len(), 1, "a plan ends no watch");
+        let restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+        assert_eq!(restored.letters[0].kind, "progress");
     }
 
     #[test]

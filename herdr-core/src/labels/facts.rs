@@ -673,6 +673,11 @@ mod tests {
             10_400,
             5,
         );
+        let progress = human(
+            "Hide letter letter-4 from lead (claude) [progress]\nPlan: core first",
+            10_500,
+            6,
+        );
         fold(
             &mut facts,
             &[
@@ -681,17 +686,18 @@ mod tests {
                 parent.clone(),
                 report.clone(),
                 peer.clone(),
+                progress.clone(),
             ],
             &[submit(1, 10_000, false)],
             &mut None,
         );
         assert!(facts.feeds_work(&initial, Some("lead")));
         assert!(facts.feeds_work(&parent, Some("lead")));
-        for event in [&direct, &report, &peer] {
+        for event in [&direct, &report, &peer, &progress] {
             assert!(!facts.feeds_work(event, Some("lead")));
         }
         assert!(facts.feeds_work(&direct, None));
-        for event in [&parent, &report, &peer] {
+        for event in [&parent, &report, &peer, &progress] {
             assert!(!facts.feeds_work(event, None));
         }
     }

@@ -258,6 +258,8 @@ pub(crate) struct WatchWork {
     pub inactivity_ms: Option<u64>,
     /// The target's own row says it stopped on a question.
     pub asking: bool,
+    /// The target's own row says Herdr holds it at a blocked prompt.
+    pub blocked: bool,
 }
 
 /// The node whose files hold a watched session's conversation, through its
@@ -280,6 +282,7 @@ fn read_activity(work: WatchWork) -> watch::Reading {
         gone: work.gone,
         inactivity_ms: work.inactivity_ms,
         asking: work.asking,
+        blocked: work.blocked,
     };
     if work.gone {
         return reading;
@@ -1171,6 +1174,7 @@ mod tests {
                     },
                     inactivity_ms: None,
                     asking: false,
+                    blocked: false,
                 })
                 .collect();
             let readings: Vec<_> = group_targets(work)
@@ -1304,17 +1308,18 @@ mod tests {
     }
 
     /// docs/delivery.md, Watch activity and completion: the watch reads the
-    /// child's own row, so only a child stopped on a question tells its
-    /// parent one tick later; one stopped without a question, one working
-    /// on an async question and one Herdr holds at a blocked question wait
-    /// as before.
+    /// child's own row, so a child stopped on a question, or one Herdr holds
+    /// at a blocked prompt with or without a question, tells its parent one
+    /// tick later with its own first line; one stopped without a question
+    /// and one working on an async question wait as before.
     #[test]
-    fn only_a_child_stopped_on_a_question_warns_its_parent_after_one_tick() {
-        for (status, question, warns) in [
-            ("idle", true, true),
-            ("idle", false, false),
-            ("working", true, false),
-            ("blocked", true, false),
+    fn a_child_stopped_on_a_question_or_held_at_a_prompt_warns_its_parent_after_one_tick() {
+        for (status, question, first_line) in [
+            ("idle", true, Some("Stopped with a question")),
+            ("idle", false, None),
+            ("working", true, None),
+            ("blocked", true, Some("Blocked at a prompt")),
+            ("blocked", false, Some("Blocked at a prompt")),
         ] {
             let root = tempfile::tempdir().unwrap();
             let (runtime, parent, observed, _) = fixture(root.path());
@@ -1345,11 +1350,18 @@ mod tests {
                 stopped + crate::delivery::QUESTION_WINDOW_MS,
             )
             .unwrap();
-            assert_eq!(
-                ledger.letters.len(),
-                usize::from(warns),
-                "{status}, question {question}"
-            );
+            let lines: Vec<&str> = ledger
+                .letters
+                .iter()
+                .filter_map(|letter| letter.body.lines().next())
+                .collect();
+            match first_line {
+                Some(first) => {
+                    assert_eq!(lines.len(), 1, "{status}, question {question}");
+                    assert!(lines[0].starts_with(first), "{status}: {}", lines[0]);
+                }
+                None => assert!(lines.is_empty(), "{status}, question {question}"),
+            }
         }
     }
 

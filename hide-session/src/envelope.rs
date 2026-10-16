@@ -33,7 +33,10 @@ pub fn envelope_header(text: &str) -> Option<(String, String)> {
     let header = first.strip_prefix("Hide letter ")?;
     let (envelope, kind) = header.rsplit_once(" [")?;
     let kind = kind.strip_suffix(']')?;
-    if !matches!(kind, "request" | "block" | "report" | "reply" | "watch") {
+    if !matches!(
+        kind,
+        "request" | "block" | "report" | "progress" | "reply" | "watch"
+    ) {
         return None;
     }
     let (id, from) = envelope.split_once(" from ")?;

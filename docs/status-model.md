@@ -895,7 +895,7 @@ That time is the session's own request record (`RowFacts` `operator_request` and
 Working activity hides a letter or watch cause while it lasts, and a causal reply or child disappearance clears any cause.
 Doorbell hold reasons remain diagnostics and never become UI copy; the letters-waiting mark says only that letters wait on a possible draft, never why in words ([delivery.md](delivery.md#delivering-a-held-letter-now)).
 Phone groups follow these same core values: the first three causes and menu blocking send one Needs You push; undelivered letters and unanswered watches retain their existing human notice without another push.
-An ordinary delegated question produces no root push: the parent hears of it from its watch one tick after the child stopped on it ([delivery.md](delivery.md#watch-activity-and-completion)), and clearing an escalation resets the existing effective push state immediately.
+An ordinary delegated question produces no root push: the parent hears of it from its watch one tick after the child stopped on it, as it hears of a blocked child one tick after Herdr held it ([delivery.md](delivery.md#watch-activity-and-completion)), and clearing an escalation resets the existing effective push state immediately.
 Regression owners: `agent_state::escalation::tests`, `runtime::tests::lineage`, and `hided/src/mobile/push.rs`.
 
 ### Quiet pane headers
