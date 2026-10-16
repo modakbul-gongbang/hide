@@ -97,7 +97,7 @@ function Head({ project, pr, entry, card, actions }: { project: Workspace; pr: P
   const checkout = checkoutId ? project.checkouts.find((row) => row.id === checkoutId && row.exists) ?? null : null;
   const checks = checksWord(pr.checks);
   const review = reviewWord(pr.review);
-  const author = pr.work && !pr.work.mine ? pr.work.author : null;
+  const author = pr.work && pr.work.mine !== true ? pr.work.author : null;
   const files = card?.files ?? null;
   const added = files?.reduce((sum, file) => sum + file.additions, 0) ?? 0;
   const removed = files?.reduce((sum, file) => sum + file.deletions, 0) ?? 0;
@@ -359,7 +359,7 @@ function Buttons({ project, pr, entry, card, actions }: { project: Workspace; pr
   const agent = entry?.agents[0] ?? null;
   const method = picked ?? defaultMethod(card);
   const queue = card?.merge?.queue === true;
-  const queued = pr.work?.queue_position != null;
+  const queued = pr.work?.queue.state === "at";
   const why = mergeWhy(pr, card, working);
   const write = card?.write ?? null;
   const writing = write?.phase === "working";

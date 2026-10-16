@@ -137,13 +137,13 @@ export type ProjectTasksScope = {
 };
 
 /** Why a pull request stands where it does, as a kind the web words (`Reason`, PRD work-tab-pr-lens D-16). */
-export type PrReasonKind = "merge" | "update" | "assign_reviewer" | "review" | "team_review" | "reply" | "check" | "working" | "conflict" | "failed" | "changes" | "ci" | "waiting_review" | "draft" | "queued" | "merged" | "checking";
+export type PrReasonKind = "merge" | "update" | "assign_reviewer" | "review" | "team_review" | "reply" | "check" | "working" | "conflict" | "failed" | "changes" | "ci" | "waiting_review" | "draft" | "queued" | "merged" | "checking" | "unjudged";
 
 export type PrReason = {
   kind: PrReasonKind;
   /** A person, team, agent or check the reason is about. */
   name?: string;
-  /** A question's first line. */
+  /** A question's first line; for `unjudged`, the question that went unanswered (`ExtraQuery`). */
   text?: string;
   count?: number;
   /** The instant the reason began; durations are drawn from it. */

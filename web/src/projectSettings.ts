@@ -81,6 +81,20 @@ export function projectSettings(rest: SnapshotRest | null, target: ProjectSettin
   return { record, write };
 }
 
+/** The repository the core detected for a Git project: its issue source when that is GitHub, else the one its remote names. */
+export const detectedRepository = (workspace: Workspace): string | null =>
+  workspace.home_issues?.repository ?? (workspace.tasks?.source?.kind === "github" ? workspace.tasks.source.name : null);
+
+/**
+ * The GitHub repository a project is connected to as `owner/repo`: the one the operator confirmed in Project Settings,
+ * else the one detected. A folder has none.
+ */
+export function projectRepository(rest: SnapshotRest | null, workspace: Workspace): string | null {
+  if (!workspace.is_git) return null;
+  const confirmed = projectSettings(rest, settingsTarget(workspace)).record?.repository;
+  return confirmed?.mode === "repository" ? confirmed.repository : detectedRepository(workspace);
+}
+
 export function projectIssueSource(rest: SnapshotRest | null, workspace: Workspace): string | undefined {
   return projectSettings(rest, settingsTarget(workspace)).record?.issue_source ?? rest?.ui_state?.project_issue_sources?.[workspace.path];
 }

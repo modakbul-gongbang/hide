@@ -137,14 +137,19 @@ export class BrowserViews {
 
   cdpIncarnation(scope: CdpScope): number | null { return this.cdpScopes.get(JSON.stringify([scope.workspace, scope.area_id])) ?? null; }
 
-  /** Only display pages enter CDP. The shell and popup windows are absent. */
+  /**
+   * Only display pages enter CDP. The shell and popup windows are absent. A
+   * page of the file partition is listed as `local`, which the gateway shows
+   * to the comment capability alone (BROWSER_DISPLAYS.md, Comment mode).
+   */
   cdpPages(): CdpPage[] {
     const result: CdpPage[] = [];
     for (const page of this.pages.values()) {
       const area_id = this.cdpAreas.get(page.key);
       const contents = page.view.webContents;
-      if (area_id && page.fileRestricted && !contents.isDestroyed() && !isFileAddress(page.state.url)
-        && !isFileAddress(page.route?.source_url ?? "") && !isFileAddress(contents.getURL())
+      if (!area_id || contents.isDestroyed()) continue;
+      if (!page.fileRestricted) result.push({ workspace: page.workspace, area_id, id: page.id, local: true, contents });
+      else if (!isFileAddress(page.state.url) && !isFileAddress(page.route?.source_url ?? "") && !isFileAddress(contents.getURL())
         && !page.cdpFileFrame) {
         result.push({ workspace: page.workspace, area_id, id: page.id, contents });
       }
