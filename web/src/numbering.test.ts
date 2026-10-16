@@ -5,7 +5,8 @@ import { describe, expect, it } from "vitest";
 import type { AgentLayout } from "./agentLayout";
 import type { TreeRow } from "./agentRow";
 import { numberedTarget } from "./keyboard";
-import { agentListOrder, numberedAgents, numberedTabs, numberOf, sidebarAgentNumbers } from "./numbering";
+import { agentListOrder, numberedAgents, numberedTabs, numberOf, sidebarAgentNumbers, sidebarNumbers, taskListOrder } from "./numbering";
+import type { TaskCardScope } from "./agentScope";
 
 import type { AgentRow, Checkout, SnapshotRest, Workspace } from "./snapshot";
 
@@ -186,4 +187,39 @@ it("numbers a project's checkouts in the order the sidebar draws them, with no g
   const project = { id: "p", device_id: "local", is_git: true, expanded: true, pinned: false, checkouts, agent_scope: emptyScope(), inactive_checkouts: { expanded: false, checkout_ids: [] } } as unknown as Workspace;
   const rest = { navigator: { focused_device_id: "local", workspaces: [project], devices: [{ id: "local", kind: "local", agent_scope: emptyScope() }], hide_ai_checkouts: [{ device_id: "local", path: "/repo/hide", task: null }] }, status: { remote: [] } } as unknown as SnapshotRest;
   expect([...numberedAgents(agentListOrder({ rest, agents: rows }))]).toEqual([[1, "main-pane"], [2, "hide-pane"], [3, "feature-pane"]]);
+});
+
+describe("⌥n over the 태스크 list (sidebar-task-lens)", () => {
+  // The core's cards in its order; the list regroups them by state, puts a waiting task after the working ones and folds the resting one.
+  const panes = ["works", "ask", "waits", "rest", "parent", "child"];
+  const rows = [agent("works"), agent("ask", { group: "needs_you" }), agent("waits"), agent("rest"), agent("parent", { lineage_child_pane_ids: ["child"] }), agent("child", { delegated: true, lineage_parent_pane_id: "parent" })];
+  const card = (root: string, state: TaskCardScope["state"], members = [root]): TaskCardScope => ({ root, state, members, checkouts: ["c1"], recency: "" });
+  const cards = [card("works", "working"), card("ask", "needs_you"), card("waits", "waiting"), card("rest", "resting"), card("parent", "working", ["parent", "child"])];
+  const checkout = { ...checkoutWith(["t1"]), tabs: [{ id: "t1", label: "t1", panes: panes.map((id) => ({ id })) }] };
+  // The legacy projector rebuilds every device scope, so the device's tasks go on after it, the way the core sends them.
+  const rest = (lens: "projects" | "tasks") => {
+    const built = legacyRest({
+      navigator: { focused_device_id: "local", devices: [{ id: "local", kind: "local", agent_scope: emptyScope() }], workspaces: [{ id: "w1", device_id: "local", expanded: true, checkouts: [checkout] }] },
+      status: { remote: [] },
+      ui_state: { sidebar_lens: lens, task_view: "status" },
+    } as unknown as SnapshotRest, rows);
+    built.navigator!.devices![0]!.agent_scope = { ...built.navigator!.devices![0]!.agent_scope!, tasks: { cards, needs_you: 1, recency: "" } };
+    return built;
+  };
+
+  it("numbers the task rows as the list draws them, a child never, and an opened fold's rows after the groups", () => {
+    const state = { rest: rest("tasks"), agents: rows };
+    expect(taskListOrder(state, [])).toEqual(["ask", "works", "parent", "waits"]);
+    expect(taskListOrder(state, ["rest:"])).toEqual(["ask", "works", "parent", "waits", "rest"]);
+    expect(numberedTarget("agents", 1, state)).toBe("ask");
+    expect(numberedTarget("agents", 4, state)).toBe("waits");
+    expect(numberedTarget("agents", 5, state)).toBeNull();
+    expect([...sidebarNumbers(state, { raisedOpen: [], taskFoldsOpen: ["rest:"] }).values()]).toEqual(["ask", "works", "parent", "waits", "rest"]);
+  });
+
+  it("follows the switch: on 프로젝트 the numbers are the projects tree's", () => {
+    const state = { rest: rest("projects"), agents: rows };
+    expect([...sidebarNumbers(state, { raisedOpen: [], taskFoldsOpen: ["rest:"] }).values()]).toEqual([...numberedAgents(agentListOrder(state)).values()]);
+    expect([...sidebarNumbers(state, { raisedOpen: [], taskFoldsOpen: [] }).values()]).not.toEqual(["ask", "works", "parent", "waits"]);
+  });
 });

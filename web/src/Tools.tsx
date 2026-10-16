@@ -215,7 +215,7 @@ export function Lane({ view, tool: drawn, frame, sizes, checkout, actions }: { v
     return (
       <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col">
         <DetailPanel actions={actions} />
-        <div className="invisible absolute inset-0 flex min-h-0 min-w-0" inert data-lane-hidden="true">
+        <div className="absolute inset-0 flex min-h-0 min-w-0" inert data-lane-hidden="true">
           <FilesTool view={view} frame={frame} sizes={sizes} shown={false} actions={actions} />
         </div>
       </div>
@@ -250,7 +250,7 @@ export function Lane({ view, tool: drawn, frame, sizes, checkout, actions }: { v
         </Hint>
       </div>
       <div className="relative flex min-h-0 min-w-0 flex-1">
-        <div className={cn("flex min-h-0 min-w-0 flex-1", !filesShown && "invisible absolute inset-0")} inert={!filesShown} data-lane-hidden={filesShown ? undefined : "true"}>
+        <div className={cn("flex min-h-0 min-w-0 flex-1", !filesShown && "absolute inset-0")} inert={!filesShown} data-lane-hidden={filesShown ? undefined : "true"}>
           <FilesTool view={view} frame={frame} sizes={sizes} shown={filesShown} actions={actions} />
         </div>
         {filesShown ? null : (

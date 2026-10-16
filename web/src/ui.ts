@@ -218,6 +218,8 @@ type UiStore = {
   sidebarFocus: number;
   /** The raised Projects sections the operator unfolded past their cap; this page's alone, so a fresh list starts short. */
   raisedOpen: readonly string[];
+  /** The 태스크 list's 쉬는 중 and 정리할 것 folds the operator opened (`rest:<group>`, `cleanup:<group>`); this page's alone, so a fresh list starts folded (sidebar-task-lens B5). */
+  taskFoldsOpen: readonly string[];
   /** The Factory secretary being started (PRD software-factory-ui B23). */
   secretaryStart: import("./factory/secretary").SecretaryStart | null;
   /** The Explorer row the operator last touched; the core owns the opened
@@ -313,6 +315,7 @@ type UiStore = {
   setRelation: (relation: Relation | null) => void;
   setSecretaryStart: (start: import("./factory/secretary").SecretaryStart | null) => void;
   toggleRaised: (group: string) => void;
+  toggleTaskFold: (key: string) => void;
   setExplorerSelection: (path: string | null) => void;
   requestEditorFind: (displayId: string | null) => void;
   setAgentFindRequest: (request: { id: string; owner: KeyboardOwner } | null) => void;
@@ -373,6 +376,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   relation: null,
   sidebarFocus: 0,
   raisedOpen: [],
+  taskFoldsOpen: [],
   secretaryStart: null,
   explorerSelection: null,
   editorFindRequest: 0,
@@ -417,6 +421,10 @@ export const useUiStore = create<UiStore>((set, get) => ({
   toggleRaised: (group) => {
     const open = get().raisedOpen;
     set({ raisedOpen: open.includes(group) ? open.filter((row) => row !== group) : [...open, group] });
+  },
+  toggleTaskFold: (key) => {
+    const open = get().taskFoldsOpen;
+    set({ taskFoldsOpen: open.includes(key) ? open.filter((row) => row !== key) : [...open, key] });
   },
   setExplorerSelection: (explorerSelection) => set({ explorerSelection }),
   requestEditorFind: (displayId) => set({ editorFindRequest: get().editorFindRequest + 1, editorFindDisplay: displayId }),

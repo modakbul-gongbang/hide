@@ -80,10 +80,6 @@ pub(super) struct WorkspaceViewStore {
     /// stored (D-11).
     pub(super) lane_calls: u64,
     pub(super) lane_called: HashMap<WorkspaceKey, u64>,
-    pub(super) presentation_choice: Option<(WorkspaceKey, String)>,
-    /// An owner-lock transaction suppresses intermediate saves. Its reserved
-    /// layout is the unchanged operator frame when a shown tab opens behind it.
-    pub(super) view_transaction: Option<(WorkspaceKey, Option<crate::view_layout::Layout>)>,
     /// The Workspace the operator last chose, in this process or before it
     /// started: the one the app opens on (D-11); none on a first run.
     resumable: Option<WorkspaceKey>,
@@ -282,8 +278,6 @@ impl WorkspaceViewStore {
                 browser_load: 0,
                 lane_calls: 0,
                 lane_called: HashMap::new(),
-                presentation_choice: None,
-                view_transaction: None,
                 unshown: HashSet::new(),
                 resumable,
                 pending_choice: None,
@@ -765,16 +759,7 @@ impl Runtime {
                     .iter()
                     .any(|key| key.0 == view.device_id && key.1 == view.path)
             }) {
-                // The projected layout's empty area can always take a page,
-                // since each tab's areas are its own; a parked empty one owns
-                // no area.
-                for area in view
-                    .layouts()
-                    .filter(|layout| {
-                        layout.display_count() > 0 || std::ptr::eq(*layout, &view.layout)
-                    })
-                    .flat_map(|layout| layout.areas())
-                {
+                for area in view.layout.areas() {
                     scopes.push(BrowserAreaScopeRow {
                         device_id: view.device_id.clone(),
                         path: view.path.clone(),
@@ -1029,13 +1014,6 @@ impl Runtime {
     /// Queues a write of the Workspace view file on its own worker, outside
     /// the runtime mutex; one pending flag coalesces newer state.
     pub(super) fn persist_workspace_views(&mut self) {
-        if self
-            .workspace_views
-            .as_ref()
-            .is_some_and(|store| store.view_transaction.is_some())
-        {
-            return;
-        }
         let Some(store) = self.workspace_views.as_mut() else {
             return;
         };

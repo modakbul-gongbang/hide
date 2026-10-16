@@ -241,7 +241,7 @@ pub const COMMANDS: &[Spec] = &[
         &[
             required("--intent", Key),
             required("--body", Body),
-            optional("--kind", OneOf(&["request", "block", "report"])),
+            optional("--kind", OneOf(&["request", "block", "report", "progress"])),
         ],
         &["letter"],
     ),

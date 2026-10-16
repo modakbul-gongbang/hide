@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
+import { focusTerminal } from "./terminals";
+import { useUiStore } from "./ui";
 import { useShellStore } from "./store";
 import type { AgentRow, SnapshotRest } from "./snapshot";
 import type { DispatchFn } from "./ws";
@@ -9,6 +11,8 @@ import type { DispatchFn } from "./ws";
 vi.hoisted(() => {
   HTMLCanvasElement.prototype.getContext = () => null;
 });
+
+vi.mock("./terminals", async (importOriginal) => ({ ...(await importOriginal<typeof import("./terminals")>()), focusTerminal: vi.fn() }));
 
 const saved = useShellStore.getState();
 afterEach(() => useShellStore.setState(saved, true));
@@ -44,4 +48,23 @@ it("opens the Memory tab on the attempt's card for a row its home owns, and the 
     expect(events.map((event) => event.kind), pane).toContain("focus_pane");
     expect(events.some((event) => event.kind === "memory_open"), pane).toBe(false);
   }
+});
+
+// The core's answer to opening the pane already focused moves nothing, so the
+// open itself takes the keys from the row or mark pressed (docs/UI_BEHAVIOR.md).
+it("takes the keyboard when the pane opened is already the focused one on a Workspace", () => {
+  const { events, actions } = open([{ pane_id: "w1:p1" }, { pane_id: "w1:p2" }]);
+  useShellStore.setState({ focusedPaneId: "w1:p1" });
+  useUiStore.setState({ screen: { kind: "workspace" } });
+  vi.mocked(focusTerminal).mockClear();
+  actions.openAgent("w1:p2");
+  expect(focusTerminal).not.toHaveBeenCalled();
+  actions.openAgent("w1:p1");
+  expect(focusTerminal).toHaveBeenCalledWith("w1:p1");
+  expect(events.filter((event) => event.kind === "focus_pane")).toHaveLength(2);
+  // Off a Workspace the pane is not on screen; the Workspace coming forward focuses it.
+  vi.mocked(focusTerminal).mockClear();
+  useUiStore.setState({ screen: { kind: "main", deviceId: "mac" } });
+  actions.openAgent("w1:p1");
+  expect(focusTerminal).not.toHaveBeenCalled();
 });

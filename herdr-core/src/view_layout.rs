@@ -20,17 +20,13 @@
 
 use serde::{Deserialize, Serialize};
 
-/// View areas one tab's layout may hold at once.
+/// View areas one checkout's layout may hold at once.
 pub const MAX_VIEW_AREAS: usize = 6;
 /// Split nodes on the path from the root to any area.
 pub const MAX_SPLIT_DEPTH: usize = 3;
-/// Views one tab keeps open; an open past it closes that tab's view looked
-/// at longest ago.
-pub const MAX_TAB_VIEWS: usize = 16;
-/// Displays one Workspace may hold at once, across every tab's layout. It is
-/// also the tree's own cap, since no tab holds more than its Workspace; a tab
-/// saved with more than `MAX_TAB_VIEWS` keeps them until its next open.
-pub const MAX_VIEW_DISPLAYS: usize = 256;
+/// Displays one checkout may hold at once; an open past it closes the view
+/// looked at longest ago (PRD lane-files-checkout-views D-07).
+pub const MAX_VIEW_DISPLAYS: usize = 32;
 #[cfg(test)]
 use crate::split_tree::successor;
 use crate::split_tree::{AreaItem, TreeLimits};
@@ -262,7 +258,7 @@ impl LayoutError {
             Self::UnknownArea(_) => "view_layout.unknown_area",
             Self::UnknownSplit(_) => "view_layout.unknown_split",
             Self::AreaLimit | Self::DepthLimit => "view_layout.limit",
-            Self::DisplayLimit | Self::TabDisplayLimit => "view_layout.display_limit",
+            Self::DisplayLimit => "view_layout.display_limit",
             Self::NothingToSplit => "view_layout.nothing_to_split",
             Self::InvalidRatio => "view_layout.invalid_ratio",
         }
@@ -274,7 +270,7 @@ impl LayoutError {
             Self::UnknownArea(id) => format!("View area {id} is not in this Workspace"),
             Self::UnknownSplit(id) => format!("Divider {id} is not in this Workspace"),
             Self::AreaLimit => format!(
-                "This tab already has {MAX_VIEW_AREAS} view areas. Close a view to split again."
+                "This Workspace already has {MAX_VIEW_AREAS} view areas. Close a view to split again."
             ),
             Self::DepthLimit => format!(
                 "This view area is already split {MAX_SPLIT_DEPTH} levels deep. Split another area instead."
@@ -282,9 +278,6 @@ impl LayoutError {
             Self::DisplayLimit => format!(
                 "This Workspace has {MAX_VIEW_DISPLAYS} views open. Close a view to open another."
             ),
-            Self::TabDisplayLimit => {
-                format!("This tab has {MAX_TAB_VIEWS} views open. Close a view to open another.")
-            }
             Self::NothingToSplit => {
                 "This view is the only one in its area, so splitting it there would change nothing"
                     .to_owned()
@@ -422,7 +415,7 @@ mod tests {
         assert_eq!(layout, before);
     }
 
-    /// B19: the 64th display fits, and every way of adding one more is
+    /// B19: the 33rd display fits, and every way of adding one more is
     /// refused and changes nothing, whichever path asked.
     #[test]
     fn every_way_of_adding_a_display_past_the_cap_is_refused() {

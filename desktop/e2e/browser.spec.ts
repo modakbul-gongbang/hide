@@ -207,7 +207,7 @@ async function displayIdOf(page: Page, text: string): Promise<string> {
 // The native child-view lifetime is shared; the pane CLI uses cmd on Windows
 // and a POSIX shell elsewhere, through the same portable fixture boundary.
 for (const width of [1500, 720]) {
-test(`browser: Agent tabs retain independent same-URL pages through a background reopen and reveal the caller (${width}px)`, { tag: "@platform" }, async () => {
+test(`browser: Agent tabs share one page per address through a background open and reveal the caller (${width}px)`, { tag: "@platform" }, async () => {
   ({ app } = await launch(run.env));
   await fitWindow(app, { width, height: 900 });
   const page = await shellPage(app);
@@ -216,6 +216,7 @@ test(`browser: Agent tabs retain independent same-URL pages through a background
     result: { tab: { tab_id: string }; root_pane: { pane_id: string } };
   };
   const other = created.result.tab.tab_id;
+  const otherPane = created.result.root_pane.pane_id;
   const url = `${origin}/a.html`;
   const chooseTab = async (id: string, callFiles = true) => {
     // The lane over the agents can cover their tab strip: the Files icon
@@ -232,41 +233,38 @@ test(`browser: Agent tabs retain independent same-URL pages through a background
     expect(opened).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
     const a = (opened.result as { view_id: string }).view_id;
     await shownAndSelected(page, url, a);
-    const original = await viewOf(url);
-    // The other tab is shown for the first time, so it starts with no Views;
-    // its own agent opens the same address there as a page of its own.
-    await chooseTab(other, false);
-    await expect(page.locator(`[data-agent-tab-bar] [data-tab="${other}"]`)).toHaveAttribute("aria-selected", "true");
-    await expect(tab(page, "Page A")).toHaveCount(0);
-    const openedB = await cliFromPane(["browser", "open", url, "--reveal", "--wait"], created.result.root_pane.pane_id);
-    expect(openedB).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
-    const b = (openedB.result as { view_id: string }).view_id;
-    expect(b).not.toBe(a);
-    await expect.poll(() => displayIdOf(page, "Page A")).toBe(b);
-    await expect.poll(async () => (await views()).filter((view) => view.url === url).length).toBe(2);
-    const pageB = (await views()).find((view) => view.url === url && view.id !== original.id)!;
-    await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([pageB.id]);
     const mark = async (id: number, script: string) => app!.evaluate(({ webContents }, { id, script }) => webContents.fromId(id)!.executeJavaScript(script), { id, script });
-    await mark(pageB.id, "window.marker='B'; document.getElementById('q').value='B 한글 입력'");
-    const before = (await views()).find((view) => view.id === pageB.id)!;
-    expect(await openFromCli(url)).toMatchObject({ status: 0, ok: true, result: { view_id: a } });
-    await expect(page.locator(`[data-view-tab-bar] [aria-selected=true][data-display="${b}"]`)).toBeVisible();
-    expect((await views()).find((view) => view.id === pageB.id)).toEqual(before);
-    expect(await mark(pageB.id, "[window.marker, document.getElementById('q').value]")).toEqual(["B", "B 한글 입력"]);
-    await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([pageB.id]);
-    expect(await cliFromPane(["view", "status", a])).toMatchObject({ status: 0, ok: true, view: { page: { state: "pending" } } });
-    const waiting = await openFromCli(`${origin}/c.html`, ["--wait"]);
-    expect(waiting).toMatchObject({ status: 2, ok: false, applied: "applied", reason: "page_wait_timeout", page: { state: "pending" } });
-    expect(await mark(pageB.id, "[window.marker, document.getElementById('q').value]")).toEqual(["B", "B 한글 입력"]);
-    await chooseTab(herdr.tab);
-    await expect(tab(page, "Page C")).toBeVisible();
-    await expect.poll(async () => (await viewOf(`${origin}/c.html`)).visible).toBe(true);
+    const original = await viewOf(url);
+    // The other tab is shown for the first time and has no bookmark: the
+    // checkout's one list stays as it is, and the same address opened from
+    // its pane is the page already there, not a second one (PRD
+    // lane-files-checkout-views B1, B3, B12).
     await chooseTab(other);
-    await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([pageB.id]);
-    expect(await mark(pageB.id, "[window.marker, document.getElementById('q').value]")).toEqual(["B", "B 한글 입력"]);
-    await windowShot(`background-tab-B-retained-${width}`, process.platform === "darwin");
-    expect(await openFromCli(url, ["--reveal", "--wait"])).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
-    await expect(page.locator(`[data-agent-tab-bar] [data-tab="${herdr.tab}"]`)).toHaveAttribute("aria-selected", "true");
+    await expect(tab(page, "Page A")).toHaveCount(1);
+    const again = await cliFromPane(["browser", "open", url, "--reveal", "--wait"], otherPane);
+    expect(again).toMatchObject({ status: 0, ok: true, result: { view_id: a } });
+    await expect.poll(async () => (await views()).filter((view) => view.url === url).length).toBe(1);
+    await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([original.id]);
+    // The reopen loaded the one page again; what the page holds from here must survive the background open.
+    await mark(original.id, "window.marker='A'; document.getElementById('q').value='A 한글 입력'");
+    // Back on the first tab, the other tab's pane opens a page behind it: the
+    // page joins the strip, waits unloaded behind the one in front and moves
+    // nothing (B7).
+    await chooseTab(herdr.tab);
+    const waiting = await cliFromPane(["browser", "open", `${origin}/c.html`, "--wait"], otherPane);
+    expect(waiting).toMatchObject({ status: 2, ok: false, applied: "applied", reason: "page_wait_timeout", page: { state: "pending" } });
+    await expect(page.locator(`[data-view-tab-bar] [aria-selected=true][data-display="${a}"]`)).toBeVisible();
+    // Still unloaded, the page has no title yet, so its tab names its address.
+    await expect(tab(page, "/c.html")).toBeVisible();
+    await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([original.id]);
+    expect(await mark(original.id, "[window.marker, document.getElementById('q').value]")).toEqual(["A", "A 한글 입력"]);
+    await tab(page, "/c.html").click();
+    await expect.poll(async () => (await viewOf(`${origin}/c.html`)).visible).toBe(true);
+    await windowShot(`background-tab-C-behind-${width}`, process.platform === "darwin");
+    // `--reveal` from the other tab's pane brings the page forward and makes
+    // that pane's tab the one on screen (B8).
+    expect(await cliFromPane(["browser", "open", url, "--reveal", "--wait"], otherPane)).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
+    await expect(page.locator(`[data-agent-tab-bar] [data-tab="${other}"]`)).toHaveAttribute("aria-selected", "true");
     await expect(page.locator(`[data-view-tab-bar] [aria-selected=true][data-display="${a}"]`)).toBeVisible();
     await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([original.id]);
     await windowShot(`background-tab-A-revealed-${width}`, process.platform === "darwin");
