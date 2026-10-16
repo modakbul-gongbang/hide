@@ -231,7 +231,6 @@ export function DisplayTab({ display, workspace, interaction, actions }: { displ
     >
       <span className={`relative flex size-(--size-icon) shrink-0 items-center justify-center ${unavailable ? "text-muted-foreground opacity-[var(--opacity-dimmed)]" : ""}`}>
         {interaction.fit === "marks" ? collapsedDisplayMark(display) : displayMark(display)}
-        {display.opener ? <OpenerMark opener={display.opener} actions={actions} /> : null}
         {interaction.fit === "marks" && (saving || dirty || tabOnly) ? (
           saving ? <LoaderCircleIcon aria-hidden="true" data-view-save-mark="saving" className="absolute size-(--size-icon) animate-spin bg-inherit text-muted-foreground" />
             : <span aria-hidden="true" data-view-save-mark={tabOnly ? "tab-only" : "dirty"} className="absolute right-0 top-0 size-(--size-tab-status-dot) rounded-full bg-warning" />
@@ -243,6 +242,7 @@ export function DisplayTab({ display, workspace, interaction, actions }: { displ
         {saving ? <span className="text-muted-foreground"> {t("documents.tabSaving")}</span> : dirty ? <span className="text-warning"> ●</span> : null}
         {tabOnly ? <span className="text-muted-foreground"> {t("documents.tabOnly")}</span> : null}
       </span>
+      {display.opener ? <OpenerMark opener={display.opener} actions={actions} /> : null}
       <CommentCount display={display} />
       <Hint label={closeLabel}>
         <Button
