@@ -10,6 +10,11 @@ const GITHUB_REREAD: std::time::Duration = std::time::Duration::from_secs(5 * 60
 /// in a row doubles it, up to `GITHUB_REREAD`.
 const GITHUB_RETRY_FIRST: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// How old a good answer must be before the operator looking at its project
+/// asks for another (`read_when_looked_at`): a burst of window focuses inside
+/// it adds no read.
+const GITHUB_LOOK_AFTER: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// A project's place in the re-read cycle. The wait runs from the answer, not
 /// from the ask: counted from the ask, a pass over many projects that
 /// outlasts it would be overtaken by its own next ask and never land.
@@ -73,7 +78,7 @@ pub(super) struct Sighted {
     waiting: BTreeSet<String>,
 }
 
-/// What a sighting may do to one project now.
+/// What a sighting or a look may do to one project now.
 enum SightedRead {
     /// The project's last read answered and worked, and nothing has asked
     /// since: read it again now.
@@ -84,6 +89,19 @@ enum SightedRead {
     AfterAnswer,
     /// The last read failed; the project's own retry comes within five
     /// minutes and reads the pull request then.
+    Never,
+}
+
+/// What a look at a project did (`read_when_looked_at`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum LookRead {
+    /// The project was asked for again.
+    Asked,
+    /// An ask is outstanding or the answer is too young; it would be asked
+    /// once that passes.
+    Later,
+    /// Nothing for a look to add: the project is not read, its repository has
+    /// no GitHub remote, or its last read failed and its own retry is coming.
     Never,
 }
 
@@ -1445,6 +1463,48 @@ impl Runtime {
                 moved
             }
         }
+    }
+
+    /// Reads `path` again because the operator is looking at it (the window
+    /// came forward, or the project did), when its last read worked and is
+    /// `GITHUB_LOOK_AFTER` old. It is the stale re-read's ask: the clock waits
+    /// for the answer, nothing is asked while an ask is outstanding or in
+    /// failure backoff, a repository with no GitHub remote is never asked,
+    /// and `loading` is left alone, so a project that already has an answer
+    /// does not flicker. `now` is passed in so a test moves it without
+    /// sleeping.
+    pub(super) fn read_when_looked_at(&mut self, path: &str, now: std::time::Instant) -> LookRead {
+        let at = match self.github_clock.get(path) {
+            Some(GithubClock::Answered {
+                at,
+                failures: 0,
+                pull_requests_read: true,
+            }) => *at,
+            Some(GithubClock::Waiting { .. }) => return LookRead::Later,
+            _ => return LookRead::Never,
+        };
+        if !matches!(self.sighted_read(path), SightedRead::Now)
+            || now.duration_since(at) < GITHUB_LOOK_AFTER
+        {
+            return LookRead::Later;
+        }
+        self.ask_github_again(path);
+        LookRead::Asked
+    }
+
+    /// The path of the local Git project with this workspace id, if the
+    /// core reads GitHub for one.
+    pub(super) fn local_git_project_path(&self, workspace_id: &str) -> Option<String> {
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| {
+                workspace.id == workspace_id
+                    && workspace.is_git
+                    && workspace.remote_target_id.is_none()
+            })
+            .map(|workspace| workspace.path.clone())
     }
 
     /// Asks for `path` again and waits for that answer, as the stale re-read

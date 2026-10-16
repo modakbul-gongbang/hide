@@ -102,6 +102,11 @@ pub(super) struct GithubRequestPayload {
     pub(super) workspace_id: String,
     #[serde(default)]
     pub(super) refresh: bool,
+    /// The operator is looking at this project (its window came forward, or
+    /// the project did): read it again if its answer is old
+    /// (`Runtime::read_when_looked_at`). A refresh outranks it.
+    #[serde(default)]
+    pub(super) look: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3579,17 +3584,20 @@ impl Runtime {
                 changed
             }
             Event::GithubRequest(payload) => {
-                let project = self
-                    .snapshot
-                    .navigator
-                    .workspaces
-                    .iter()
-                    .find(|workspace| {
-                        workspace.id == payload.workspace_id
-                            && workspace.is_git
-                            && workspace.remote_target_id.is_none()
-                    })
-                    .map(|workspace| workspace.path.clone());
+                if payload.look && !payload.refresh {
+                    // A look changes nothing the operator sees, and a look at
+                    // a project that is not the one in front, or not read,
+                    // is not an error.
+                    if let Some(project) = self.local_git_project_path(&payload.workspace_id)
+                        && self
+                            .focused_local_checkout()
+                            .is_some_and(|(workspace, _)| workspace.path == project)
+                    {
+                        self.read_when_looked_at(&project, std::time::Instant::now());
+                    }
+                    return false;
+                }
+                let project = self.local_git_project_path(&payload.workspace_id);
                 if project.is_none()
                     && let Some((Some(node), workspace)) = self.issue_project(&payload.workspace_id)
                     && workspace.is_git
