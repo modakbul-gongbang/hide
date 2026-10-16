@@ -103,6 +103,9 @@ describe("shortcut registry", () => {
       move_to_trash: "⌘⌫",
       copy_path: "⌥⌘C",
       copy_relative_path: "⌥⇧⌘C",
+      explorer_cut: "⌘X",
+      explorer_copy: "⌘C",
+      explorer_paste: "⌘V",
       settings: "⌘,",
       shortcuts: "⌘/",
       // The area commands have no chord until the operator binds one (PRD cmdk-navigation D-05).
@@ -434,6 +437,9 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
       move_to_trash: "Delete",
       copy_path: "Alt+Shift+C",
       copy_relative_path: "Alt+Shift+R",
+      explorer_cut: "Ctrl+X",
+      explorer_copy: "Ctrl+C",
+      explorer_paste: "Ctrl+V",
       settings: "Ctrl+Shift+,",
       shortcuts: "Ctrl+Shift+/",
       ...Object.fromEntries(AREA_COMMANDS.map((id) => [id, ""])),
@@ -443,9 +449,11 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
     expect(Object.fromEntries(pc.map((command) => [command.id, displayCommand(command.id, "electron", pc, "pc")]))).toEqual(pcSet);
   });
 
-  it("leaves every plain Ctrl key to the terminal but text size and Ctrl+Tab", () => {
+  it("leaves every plain Ctrl key to the terminal but text size, Ctrl+Tab and the tree's own clipboard", () => {
     for (const host of ["browser", "electron"] as const) {
+      // A command with a passthrough is answered by the Explorer alone while it holds the keyboard, so a terminal still gets its Ctrl+C, X and V.
       const plainCtrl = pc
+        .filter((command) => !command.passthrough)
         .map((command) => (host === "electron" ? command.electron : command.browser))
         .filter((chord) => chord && chord.ctrl && !chord.shift && !chord.alt && !chord.meta)
         .map((chord) => chord!.code);

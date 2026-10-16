@@ -28,8 +28,26 @@ pub fn read_sources(
     paths: &[String],
     go_on: &mut dyn FnMut(usize) -> bool,
 ) -> Result<Vec<ReadFile>, String> {
-    if paths.is_empty() || paths.len() > MAX_FILES {
-        return Err("Choose between 1 and 8 regular files.".to_owned());
+    read_files(paths, MAX_FILES, go_on)
+}
+
+/// Reads the staged files of a drop from the file manager, which may hold
+/// more files than a terminal attachment but not more bytes
+/// (`hide_node_link::mutate::IMPORT_MAX_ITEMS`).
+pub fn read_dropped(
+    paths: &[String],
+    go_on: &mut dyn FnMut(usize) -> bool,
+) -> Result<Vec<ReadFile>, String> {
+    read_files(paths, hide_node_link::mutate::IMPORT_MAX_ITEMS, go_on)
+}
+
+fn read_files(
+    paths: &[String],
+    max_files: usize,
+    go_on: &mut dyn FnMut(usize) -> bool,
+) -> Result<Vec<ReadFile>, String> {
+    if paths.is_empty() || paths.len() > max_files {
+        return Err(format!("Choose between 1 and {max_files} regular files."));
     }
     let mut files = Vec::with_capacity(paths.len());
     let mut total = 0u64;

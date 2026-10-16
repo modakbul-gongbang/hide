@@ -333,6 +333,126 @@ test("the Explorer's root row creates, folds and copies paths, and a long tree k
   }
 });
 
+test("the Explorer copies, pastes, duplicates and cuts items inside one checkout", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, sent, lastSent } = fixture;
+  try {
+    const row = (name: string) => page.locator(`[data-explorer-row="${repo}/${name}"]`);
+    // Opening a file hands the keyboard to its View, so the tree takes it back as a Tab press from the row would.
+    const select = async (name: string, opens = true) => {
+      await row(name).click();
+      if (opens && !name.endsWith("/src") && !name.endsWith("src")) await expect(page.locator('[data-tab-kind="file"]').filter({ hasText: name.split("/").pop()! })).toBeVisible();
+      await page.locator("[data-explorer-tree]").focus();
+    };
+
+    // Copy README.md and paste with the tree focused and the file selected: the
+    // root is its folder, so the host names the copy `README copy.md`.
+    await select("README.md");
+    await page.keyboard.press("ControlOrMeta+c");
+    await page.keyboard.press("ControlOrMeta+v");
+    await expect.poll(() => sent.get("path_copy")).toBe(1);
+    expect(lastSent.get("path_copy")).toMatchObject({ root: repo, path: `${repo}/README.md`, destination: repo });
+    await expect(row("README copy.md")).toBeVisible();
+    expect(fs.readFileSync(`${repo}/README copy.md`, "utf8")).toBe("# repo\n");
+    // The copy is selected once it has landed; the clipboard still holds README.md, so the next paste is a second copy of it.
+    await expect(row("README copy.md")).toHaveAttribute("data-selected", "true");
+    await page.keyboard.press("ControlOrMeta+v");
+    await expect(row("README copy 2.md")).toBeVisible();
+    expect(fs.existsSync(`${repo}/README copy 2.md`)).toBe(true);
+    await screenshot(page, "s3-explorer-pasted-copy");
+
+    // Duplicate in a row's menu is a copy into the item's own folder.
+    await row("src/main.ts").click({ button: "right" });
+    const menu = page.locator("[data-explorer-menu]");
+    await expect(menu.locator('[data-menu-item="paste"]')).toBeVisible();
+    await screenshot(page, "s3-explorer-row-menu-clipboard");
+    await menu.locator('[data-menu-item="duplicate"]').click();
+    await expect(row("src/main copy.ts")).toBeVisible();
+    expect(fs.existsSync(`${repo}/src/main copy.ts`)).toBe(true);
+
+    // Cut moves on paste: one path_move, and the clipboard is empty afterwards.
+    await select("README copy.md");
+    await page.keyboard.press("ControlOrMeta+x");
+    await expect(row("README copy.md")).toHaveAttribute("data-cut", "true");
+    await select("src");
+    await page.keyboard.press("ControlOrMeta+v");
+    await expect.poll(() => sent.get("path_move")).toBe(1);
+    expect(lastSent.get("path_move")).toMatchObject({ root: repo, path: `${repo}/README copy.md`, destination: `${repo}/src` });
+    await expect(row("README copy.md")).toHaveCount(0);
+    expect(fs.existsSync(`${repo}/README copy.md`)).toBe(false);
+    expect(fs.existsSync(`${repo}/src/README copy.md`)).toBe(true);
+    await page.locator("[data-explorer-root-row]").click({ button: "right" });
+    await expect(menu.locator('[data-menu-item="paste"]')).toHaveCount(0);
+    await page.keyboard.press("Escape");
+
+    // A folder pasted into itself is refused where it was pasted, with nothing sent.
+    await select("src");
+    await page.keyboard.press("ControlOrMeta+c");
+    await page.keyboard.press("ControlOrMeta+v");
+    await expect(page.locator(`[data-explorer-failure="${repo}/src"]`)).toBeVisible();
+    expect(sent.get("path_copy")).toBe(1 + 1 + 1);
+  } finally {
+    close(fixture);
+  }
+});
+
+test("the Explorer takes files dropped from the file manager into a folder, and refuses a drop past a cap whole", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, sent, lastSent } = fixture;
+  try {
+    /** A drag from the file manager: files in a DataTransfer, dropped on the element at `selector`. */
+    const dropFiles = (selector: string, files: { name: string; text?: string; bytes?: number }[]) =>
+      page.evaluate(
+        ([target, list]) => {
+          const element = document.querySelector(target);
+          if (!element) throw new Error(`drop target ${target} not found`);
+          const data = new DataTransfer();
+          for (const file of list) data.items.add(new File([file.bytes ? new Uint8Array(file.bytes) : (file.text ?? "")], file.name));
+          element.dispatchEvent(new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer: data }));
+          element.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: data }));
+          element.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: data }));
+        },
+        [selector, files] as const,
+      );
+    const folder = `[data-explorer-row="${repo}/src"]`;
+
+    // The folder under the pointer lights up while a file is over it.
+    await page.evaluate((target) => {
+      const data = new DataTransfer();
+      data.items.add(new File(["x"], "over.txt"));
+      document.querySelector(target)!.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: data }));
+    }, folder);
+    await expect(page.locator(folder)).toHaveAttribute("data-drop", "true");
+    await screenshot(page, "s3-explorer-drop-over");
+
+    await dropFiles(folder, [{ name: "dropped.txt", text: "from the file manager" }]);
+    await expect.poll(() => sent.get("path_import")).toBe(1);
+    expect(lastSent.get("path_import")).toMatchObject({ root: repo, destination: `${repo}/src` });
+    await expect(page.locator(`[data-explorer-row="${repo}/src/dropped.txt"]`)).toBeVisible();
+    expect(fs.readFileSync(`${repo}/src/dropped.txt`, "utf8")).toBe("from the file manager");
+    await screenshot(page, "s3-explorer-dropped");
+
+    // The same name again is a new item, never a replacement.
+    await dropFiles(folder, [{ name: "dropped.txt", text: "second" }]);
+    await expect(page.locator(`[data-explorer-row="${repo}/src/dropped copy.txt"]`)).toBeVisible();
+    expect(fs.readFileSync(`${repo}/src/dropped.txt`, "utf8")).toBe("from the file manager");
+
+    // The empty room under the rows is the root.
+    await dropFiles("[data-explorer-tail]", [{ name: "at-root.txt", text: "root" }]);
+    await expect(page.locator(`[data-explorer-row="${repo}/at-root.txt"]`)).toBeVisible();
+
+    // A file past the cap adds nothing and says so under the folder dropped on.
+    await dropFiles(folder, [{ name: "ok.txt", text: "ok" }, { name: "big.bin", bytes: 21 * 1024 * 1024 }]);
+    await expect(page.locator(`[data-explorer-failure="${repo}/src"]`)).toContainText("20 MiB");
+    expect(fs.existsSync(`${repo}/src/ok.txt`)).toBe(false);
+    expect(fs.existsSync(`${repo}/src/big.bin`)).toBe(false);
+    expect(sent.get("path_import")).toBe(3);
+    await screenshot(page, "s3-explorer-drop-refused");
+  } finally {
+    close(fixture);
+  }
+});
+
 test("the Explorer filter keeps matches under their folders and Escape restores the tree", async ({ page }) => {
   const fixture = await openCheckout(page);
   const { repo } = fixture;

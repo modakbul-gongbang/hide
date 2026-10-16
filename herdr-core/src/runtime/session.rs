@@ -4303,7 +4303,7 @@ impl Runtime {
             )),
             None => Err("No checkout is focused".to_owned()),
         };
-        let (operation, target, (document_root, channel)) = match planned {
+        let (mut operation, target, (document_root, channel)) = match planned {
             Ok(planned) => planned,
             Err(message) => {
                 self.snapshot.explorer_operation = Some(ExplorerOperationSnapshot {
@@ -4330,9 +4330,22 @@ impl Runtime {
             "component": "explorer", "kind": "explorer.change_requested",
             "operation": operation.kind.as_str(), "id": id, "device": target.device_id,
         }));
+        // A drop's bytes wait in hided's staging on this machine, whatever
+        // device the checkout is on, so its worker reads them through the
+        // core's own node.
+        let own_node = if operation.kind == files::ExplorerOperationKind::PathImport {
+            let node = self.node.as_str().to_owned();
+            self.node_link(&node).ok()
+        } else {
+            None
+        };
         let Some(context) = self.worker_context.clone() else {
-            let result =
-                files::apply_explorer_operation(channel.as_ref(), &document_root, &operation);
+            let result = files::run_explorer_operation(
+                channel.as_ref(),
+                own_node.as_deref(),
+                &document_root,
+                &mut operation,
+            );
             return self.ingest_explorer_operation_result(id, &target, &operation, result);
         };
         let worker_operation = operation.clone();
@@ -4340,9 +4353,13 @@ impl Runtime {
         match thread::Builder::new()
             .name(format!("herdr-core-explorer-{}", operation.kind.as_str()))
             .spawn(move || {
-                let operation = worker_operation;
-                let result =
-                    files::apply_explorer_operation(channel.as_ref(), &document_root, &operation);
+                let mut operation = worker_operation;
+                let result = files::run_explorer_operation(
+                    channel.as_ref(),
+                    own_node.as_deref(),
+                    &document_root,
+                    &mut operation,
+                );
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
@@ -4396,7 +4413,7 @@ impl Runtime {
         id: u64,
         target: &ExplorerTarget,
         operation: &files::ExplorerOperation,
-        result: Result<(), String>,
+        result: Result<files::Applied, String>,
     ) -> bool {
         let Some(slot) = self.snapshot.explorer_operation.as_mut() else {
             return false;
@@ -4405,9 +4422,23 @@ impl Runtime {
             return false;
         }
         let source = operation.source.clone();
-        let destination = operation.destination.clone();
+        let mut destination = operation.destination.clone();
+        let mut selection = operation.selection.clone();
+        // A copy, or a drop, adds items and moves none: no path the core
+        // carries (an expanded folder, an open tab) follows it anywhere.
+        let adds_only = matches!(
+            operation.kind,
+            files::ExplorerOperationKind::PathCopy | files::ExplorerOperationKind::PathImport
+        );
         match result {
-            Ok(()) => {
+            Ok(applied) => {
+                // The host chose the new item's name when the wanted one was
+                // taken, so the slot and the selection name what exists.
+                if let Some(named) = applied.destination {
+                    destination = named.clone();
+                    selection = named;
+                }
+                slot.destination = destination.clone();
                 slot.phase = "finished".to_owned();
                 let in_checkout: Vec<String> = self
                     .snapshot
@@ -4421,7 +4452,7 @@ impl Runtime {
                     })
                     .map(|tab| tab.id.clone())
                     .collect();
-                if source != destination {
+                if source != destination && !adds_only {
                     for folder in self.expanded_paths_on(&target.device_id).iter_mut() {
                         if let Some(moved) = retarget_path(folder, &source, &destination) {
                             *folder = moved;
@@ -4477,7 +4508,7 @@ impl Runtime {
                     }
                     self.sync_active_editor_document();
                 }
-                self.snapshot.ui_state.selected_path = Some(operation.selection.clone());
+                self.snapshot.ui_state.selected_path = Some(selection);
                 self.push_diagnostic(
                     format!("explorer.{}", operation.kind.as_str()),
                     format!("{source} -> {destination}"),
