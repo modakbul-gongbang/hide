@@ -98,10 +98,11 @@ export function SessionRecord({ actions, target, frame }: { actions: Actions; ta
   const leave = useRef(frame.onLeave);
   leave.current = frame.onLeave;
   useEffect(() => () => leave.current(), []);
-  // Read again on a reconnect, and once when the record is drawn with no read
-  // behind it: a slot restored after a relaunch shows a record no event opened.
+  // Read again on a reconnect, and once when the slot draws a record with no
+  // read behind it: one restored after a relaunch was opened by no event. The
+  // Overview's panel starts its own read when it opens.
   useEffect(() => {
-    const unread = !own && !asked.current;
+    const unread = frame.kind === "lane" && !own && !asked.current;
     if (connected && (!wasConnected.current || unread)) {
       asked.current = true;
       frame.onRead();
