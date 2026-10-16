@@ -98,9 +98,9 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
     const id=`tsc-ph-board-${suffix}`;
     const labeled = (key, label, children) => frame(`${id}-sec-${key}`, label, {width:'fill_container',layout:'vertical',gap:8}, [caption(`${id}-sec-${key}-label`, label, '$--subtle-foreground', {weight:'600'}), ...children]);
     // One request's tasks share one state (B5): four in review behind its PR.
-    const GLYPH = {review:['◐','$--success']};
+    // A task a pull request holds draws an empty slot; its PR mark says the state (status-marks D-23, B34).
     const item = (key, state, name, pr) => frame(`${id}-pop-${key}`, name, {width:'fill_container',layout:'horizontal',gap:'$--spacing-xs',alignItems:'start',padding:[2,0]}, [
-      caption(`${id}-pop-${key}-g`, GLYPH[state][0], GLYPH[state][1], {weight:'600'}),
+      frame(`${id}-pop-${key}-g`, 'Empty slot', {width:12,height:12}, []),
       caption(`${id}-pop-${key}-n`, name, state === 'done' ? '$--subtle-foreground' : '$--foreground', {width:'fill_container'}),
       ...(pr ? [prChip(`${id}-pop-${key}-pr`, pr)] : []),
     ]);
@@ -114,7 +114,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
         item('t2', 'review', 'HTML 페이지에서 댓글이 동작하게 하기'),
         item('t3', 'review', '드래그한 영역 남겨두기'),
         frame(`${id}-pop-kids`, 'Children progress', {width:'fill_container',layout:'horizontal',gap:'$--spacing-xs',alignItems:'center',padding:[6,0,0,0]}, [caption(`${id}-pop-kids-t`, '자식 일', '$--subtle-foreground'), text(`${id}-pop-kids-n`, '4/5', {size:'$--text-micro',fill:'$--muted-foreground',mono:true}), segments(['done','done','working','done','done'])]),
-        frame(`${id}-pop-line`, 'Current line', {width:'fill_container',layout:'horizontal',gap:'$--spacing-xs',alignItems:'center',padding:[6,0,0,0]}, [icon(`${id}-pop-line-g`, 'loader-circle', {size:12,fill:'$--agent-working'}), caption(`${id}-pop-line-t`, '파일 페이지 댓글 PR 검증 중', '$--muted-foreground', {width:'fill_container'})]),
+        frame(`${id}-pop-line`, 'Current line', {width:'fill_container',layout:'horizontal',gap:'$--spacing-xs',alignItems:'center',padding:[6,0,0,0]}, [caption(`${id}-pop-line-t`, '파일 페이지 댓글 PR 검증 중', '$--muted-foreground', {width:'fill_container'})]),
       ]),
       frame(`${id}-pop-foot`, 'Open record', {width:'fill_container',layout:'horizontal',alignItems:'center',padding:['$--spacing-xs','$--spacing-sm'],stroke:'$--border',strokeWidth:{top:1},strokeAlignment:'inner'}, [
         caption(`${id}-pop-open`, '기록 열기', '$--foreground', {width:'fill_container'}),

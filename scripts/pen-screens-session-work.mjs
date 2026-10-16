@@ -5,6 +5,7 @@
 // library through pen-screens' themed helpers; the PR mark is a ref of
 // Component / Agent tree parts, as the Sessions rows draw it.
 import {AGENT_TREE_MASTERS, PR_STATES} from './pen-agent-tree.mjs';
+import {markSlot} from './pen-system.mjs';
 
 export function sessionWorkScreens({frame, text, icon, screenButton, themedXref}) {
   const WIDTH = 372;
@@ -59,11 +60,18 @@ export function sessionWorkScreens({frame, text, icon, screenButton, themedXref}
       screenButton(`${id}-dismiss`, '무시', {variant: 'ghost', height: 22}),
     ])] : []),
   ]);
-  const GLYPH = {done: ['✓', '$--success'], working: ['◐', '$--agent-working'], review: ['◐', '$--success'], unfinished: ['◐', '$--warning']};
+  // A task's mark is the row's (status-marks D-23, B34): `✓` done, the ring
+  // in progress, `!` a question or a block, an empty slot for work left (its
+  // name says 일 남음) and for a task a PR holds, whose PR mark says the state.
+  const taskMark = (id, state) => state === 'done' ? label(id, '✓', '$--success', {weight: '600'})
+    : state === 'working' ? markSlot(id, 'going')
+      : state === 'question' || state === 'blocked' ? markSlot(id, 'turn')
+        : frame(id, 'Empty slot', {width: 12, height: 12}, []);
   const task = (id, {state, name, pr, words = [], misses = []}) => frame(id, name, {width: 'fill_container', layout: 'vertical', gap: 2, padding: [4, 0]}, [
     frame(`${id}-head`, 'Task', {width: 'fill_container', layout: 'horizontal', gap: 6, alignItems: 'start'}, [
-      label(`${id}-glyph`, GLYPH[state][0], GLYPH[state][1], {weight: '600'}),
+      taskMark(`${id}-glyph`, state),
       label(`${id}-name`, name, state === 'done' ? '$--subtle-foreground' : '$--foreground', {width: 'fill_container', weight: state === 'done' ? '400' : '500'}),
+      ...(state === 'unfinished' ? [label(`${id}-left`, '일 남음', '$--muted-foreground')] : []),
       ...(pr ? [prMark(`${id}-pr`, pr[0], pr[1])] : []),
     ]),
     ...words.map((word, index) => said(`${id}-w${index}`, word.text ?? word, word)),
@@ -182,7 +190,6 @@ export function sessionWorkScreens({frame, text, icon, screenButton, themedXref}
       group('now', '판정 전 마지막 요청: 내 말을 꺼도 맨 끝에 보임', [
         task(`${id}-now-t`, {state: 'done', name: '설치 빌드 실측 및 개선 제안 안전성 평가'}),
         frame(`${id}-now-row`, 'Not yet judged', {width: 'fill_container', layout: 'horizontal', gap: 6, alignItems: 'start', padding: [4, 0]}, [
-          icon(`${id}-now-g`, 'loader-circle', {size: 12, fill: '$--agent-working'}),
           label(`${id}-now-w`, '지금', '$--agent-working', {weight: '500'}),
           label(`${id}-now-t2`, '설치하고 재측정해줘', '$--foreground', {width: 'fill_container'}),
         ]),

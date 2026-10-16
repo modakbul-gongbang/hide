@@ -179,6 +179,8 @@ it("draws a split request's pull request once, on its first task, and the shared
     expect(items[0]!.querySelector("[aria-label^='#7']")).not.toBeNull();
     expect(items[1]!.querySelector("[aria-label^='#7']")).toBeNull();
     expect(items.map((item) => item.querySelector("[data-task-state]")?.getAttribute("data-task-state"))).toEqual(["review", "review"]);
+    // Nothing turns in the list (status-marks B34).
+    expect(view.list()!.querySelector(".animate-spin")).toBeNull();
   } finally { await view.unmount(); }
 });
 

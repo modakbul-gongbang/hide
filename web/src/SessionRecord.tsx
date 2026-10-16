@@ -6,7 +6,7 @@ import { agentProductName } from "./agentAdapters";
 import { deviceConnected, readsHere } from "./devices";
 import { Button } from "./components/ui/button";
 import { PrMark } from "./components/pr-mark";
-import { ChildProgressHead, TaskMark } from "./components/task-progress";
+import { ChildProgressHead, TaskMark, TaskName } from "./components/task-progress";
 import { Hint } from "./components/ui/tooltip";
 import { formatDateTime } from "./i18n/format";
 import { requireInterfaceLanguage } from "./i18n/locale";
@@ -252,7 +252,7 @@ function Work({ record, descendants = NO_RECORDS, words, actions, head = false }
     {nothing ? <p className="text-micro text-muted-foreground">{t("sessionWork.empty")}</p> : null}
     {list.groups.map((group) => <div key={group.id ?? "outside"}>
       {group.goal ? <GoalLine goal={group.goal} at={group.at} /> : null}
-      {group.tasks.map((item) => <TaskRow key={item.task.id} item={item} session={record.session} cwd={record.cwd} words={words} actions={actions} />)}
+      {group.tasks.map((item) => <TaskRow key={item.task.id} item={item} session={record.session} cwd={record.cwd} words={words} waiting={record.state === "waiting"} actions={actions} />)}
     </div>)}
     {list.otherMissed.length || (words && list.otherWords.length) || list.now ? <OtherWork list={list} words={words} actions={actions} /> : null}
     {head && !list.now ? <LastWords session={record.session} /> : null}
@@ -285,13 +285,13 @@ function GoalLine({ goal, at }: { goal: string; at: number }) {
   return <h4 className="mt-sm mb-xs min-w-0 whitespace-normal text-micro font-medium text-subtle-foreground [overflow-wrap:anywhere]" title={goal}>{goal} · <time dateTime={new Date(at).toISOString()}>{time}</time></h4>;
 }
 
-function TaskRow({ item, session, cwd, words, actions }: { item: ChecklistTask; session: WorkSession; cwd: string | null; words: boolean; actions: Actions }) {
+function TaskRow({ item, session, cwd, words, waiting, actions }: { item: ChecklistTask; session: WorkSession; cwd: string | null; words: boolean; waiting: boolean; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const { task, state } = item;
   return <div className="py-xxs" data-record-task={task.id}>
     <div className="flex min-w-0 items-start gap-xs">
-      <TaskMark state={state} />
-      <span className={cn("min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]", state === "done" ? "text-subtle-foreground" : "font-medium")}>{task.name}</span>
+      <TaskMark state={state} waiting={waiting} />
+      <TaskName state={state} name={task.name} className={state === "done" ? "text-subtle-foreground" : "font-medium"} />
       {item.prs.map((output) => <button key={output.url} type="button" data-record-task-pr={output.number} className={cn(ROW, "shrink-0 px-xxs hover:bg-accent")} aria-label={[`#${output.number} ${t(PR_LOOK[outputPrState(output.state)].word)}`, output.title, staleHint(output, t("common.unavailable"))].filter(Boolean).join(" · ")} title={output.title} onClick={() => actions.openRecordedOutput(output)}><PrMark state={outputPrState(output.state)} number={output.number} stale={output.stale} /></button>)}
     </div>
     {words ? item.words.map((request) => <Bubble key={request.offset} request={request} />) : null}
@@ -303,7 +303,7 @@ function TaskRow({ item, session, cwd, words, actions }: { item: ChecklistTask; 
 function OtherWork({ list, words, actions }: { list: Checklist; words: boolean; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   return <div data-record-other="true">
-    {list.now ? <div className="flex min-w-0 items-start gap-xs py-xs" data-record-now={list.now.offset}><LoaderCircleIcon aria-hidden="true" className="mt-xxs size-(--size-icon-sm) shrink-0 animate-spin text-agent-working" /><span className="shrink-0 font-medium text-agent-working">{t("sessionWork.now")}</span><span className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]" title={list.now.text}>{list.now.text.split(/\r?\n/)[0]}</span></div> : null}
+    {list.now ? <div className="flex min-w-0 items-start gap-xs py-xs" data-record-now={list.now.offset}><span className="shrink-0 font-medium text-agent-working">{t("sessionWork.now")}</span><span className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]" title={list.now.text}>{list.now.text.split(/\r?\n/)[0]}</span></div> : null}
     {words && list.otherWords.length ? <div className="mt-xs"><h4 className="mb-xxs text-micro font-medium text-muted-foreground">{t("sessionWork.otherWords")}</h4>{list.otherWords.map((request) => <Bubble key={request.offset} request={request} quiet />)}</div> : null}
     {list.otherMissed.map(({ owner, missed, named }) => <MissedLine key={`${workKey(owner.session)}:${missed.id}`} missed={missed} session={owner.session} cwd={owner.cwd} owner={named ? owner.title : null} actions={actions} />)}
   </div>;
