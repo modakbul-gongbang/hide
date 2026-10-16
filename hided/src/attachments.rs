@@ -447,7 +447,11 @@ impl Attachments {
         self.commit_files(stages, hide_node_link::mutate::IMPORT_MAX_ITEMS)
     }
 
-    fn commit_files(&self, stages: &[String], max_files: usize) -> Result<Vec<String>, &'static str> {
+    fn commit_files(
+        &self,
+        stages: &[String],
+        max_files: usize,
+    ) -> Result<Vec<String>, &'static str> {
         if stages.len() > max_files || stages.is_empty() {
             return Err("too_many_files");
         }

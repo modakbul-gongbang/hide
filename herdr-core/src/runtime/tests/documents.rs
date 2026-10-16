@@ -2434,13 +2434,24 @@ fn a_copy_takes_the_host_chosen_name_and_moves_no_open_tab() {
         serde_json::json!({"path": f.path("a.txt"), "destination": f.root_text()}),
     );
     f.settled("path_copy", &f.path("a.txt"), "finished");
-    assert_eq!(std::fs::read_to_string(f.root.join("a copy.txt")).unwrap(), "old\n");
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("a copy.txt")).unwrap(),
+        "old\n"
+    );
     let runtime = f.shared.lock().unwrap();
     let slot = runtime.snapshot.explorer_operation.as_ref().unwrap();
     assert_eq!(slot.destination, f.path("a copy.txt"));
-    assert_eq!(runtime.snapshot.ui_state.selected_path.as_deref(), Some(f.path("a copy.txt").as_str()));
+    assert_eq!(
+        runtime.snapshot.ui_state.selected_path.as_deref(),
+        Some(f.path("a copy.txt").as_str())
+    );
     assert!(
-        runtime.snapshot.editor.tabs.iter().all(|tab| tab.path == f.path("a.txt")),
+        runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .all(|tab| tab.path == f.path("a.txt")),
         "the source's tab still shows the source"
     );
 }
@@ -2459,7 +2470,10 @@ fn a_copy_into_a_missing_folder_fails_where_it_was_pasted_and_adds_nothing() {
     let slot = runtime.snapshot.explorer_operation.as_ref().unwrap();
     assert!(slot.message.is_some());
     drop(runtime);
-    let names: Vec<_> = std::fs::read_dir(&f.root).unwrap().map(|e| e.unwrap().file_name()).collect();
+    let names: Vec<_> = std::fs::read_dir(&f.root)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
     assert_eq!(names.len(), 1, "only a.txt is there");
 }
 
@@ -2487,13 +2501,24 @@ fn a_drop_is_written_from_its_staged_files_under_free_names() {
             .snapshot
             .explorer_operation
             .as_ref()
-            .is_some_and(|operation| operation.kind == "path_import" && operation.phase == "finished")
+            .is_some_and(|operation| {
+                operation.kind == "path_import" && operation.phase == "finished"
+            })
     });
-    assert_eq!(std::fs::read_to_string(f.root.join("a copy.txt")).unwrap(), "dropped");
-    assert_eq!(std::fs::read_to_string(f.root.join("a.txt")).unwrap(), "old\n");
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("a copy.txt")).unwrap(),
+        "dropped"
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("a.txt")).unwrap(),
+        "old\n"
+    );
     assert!(f.root.join("dir").is_dir());
     let runtime = f.shared.lock().unwrap();
-    assert_eq!(runtime.snapshot.ui_state.selected_path.as_deref(), Some(f.path("a copy.txt").as_str()));
+    assert_eq!(
+        runtime.snapshot.ui_state.selected_path.as_deref(),
+        Some(f.path("a copy.txt").as_str())
+    );
 }
 
 /// At most four changes wait behind the running one; the newest past that is

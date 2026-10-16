@@ -1653,9 +1653,7 @@ async fn a_drop_names_only_uploads_hided_staged_and_shapes_it_can_forward() {
     let mut socket = live_socket(&running).await;
     let request_id = "01234567-0123-0123-0123-0123456789ab";
     let refusal = |frame: &Value| frame["type"] == "attachment_refused";
-    let drop = |items: Value| {
-        json!({"request_id": request_id, "root": "/nowhere", "destination": "/nowhere", "items": items})
-    };
+    let drop = |items: Value| json!({"request_id": request_id, "root": "/nowhere", "destination": "/nowhere", "items": items});
 
     // An upload id that was never opened names no file.
     let refused = send_event_expecting(
@@ -1681,10 +1679,12 @@ async fn a_drop_names_only_uploads_hided_staged_and_shapes_it_can_forward() {
         json!([{"path": "dir", "directory": true, "stage": "s1"}]),
         json!([{"path": "a.txt", "directory": false}]),
     ] {
-        let refused = send_event_expecting(&mut socket, "path_import", drop(items.clone()), refusal).await;
+        let refused =
+            send_event_expecting(&mut socket, "path_import", drop(items.clone()), refusal).await;
         assert_eq!(refused["type"], "attachment_refused", "{items}");
         assert!(
-            ["invalid_item", "too_many_files"].contains(&refused["payload"]["reason"].as_str().unwrap()),
+            ["invalid_item", "too_many_files"]
+                .contains(&refused["payload"]["reason"].as_str().unwrap()),
             "{items}: {refused}"
         );
     }

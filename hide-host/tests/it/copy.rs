@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use base64::Engine;
 use hide_host::copy::{copy_into, import};
 use hide_host::{ErrorCode, Root};
-use hide_node_link::mutate::{COPY_MAX_ITEMS, IMPORT_MAX_FILE_BYTES, IMPORT_MAX_ITEMS, ImportEntry};
+use hide_node_link::mutate::{
+    COPY_MAX_ITEMS, IMPORT_MAX_FILE_BYTES, IMPORT_MAX_ITEMS, ImportEntry,
+};
 
 struct Fixture {
     _outer: tempfile::TempDir,
@@ -65,15 +67,29 @@ fn a_copy_keeps_the_source_and_takes_the_next_free_copy_name() {
     assert_eq!(first.name, "a copy.txt");
     let second = copy_into(f.root.dir(), Path::new("src/a.txt"), Path::new("src")).unwrap();
     assert_eq!(second.name, "a copy 2.txt");
-    assert_eq!(fs::read_to_string(f.checkout.join("src/a.txt")).unwrap(), "a");
-    assert_eq!(fs::read_to_string(f.checkout.join("src/a copy 2.txt")).unwrap(), "a");
+    assert_eq!(
+        fs::read_to_string(f.checkout.join("src/a.txt")).unwrap(),
+        "a"
+    );
+    assert_eq!(
+        fs::read_to_string(f.checkout.join("src/a copy 2.txt")).unwrap(),
+        "a"
+    );
 
     // Into another folder a free name is kept; a taken one is not replaced.
-    let moved = copy_into(f.root.dir(), Path::new("src/nested/deep.txt"), Path::new("dest")).unwrap();
+    let moved = copy_into(
+        f.root.dir(),
+        Path::new("src/nested/deep.txt"),
+        Path::new("dest"),
+    )
+    .unwrap();
     assert_eq!(moved.name, "deep.txt");
     let clash = copy_into(f.root.dir(), Path::new("src/a.txt"), Path::new("dest")).unwrap();
     assert_eq!(clash.name, "a copy.txt");
-    assert_eq!(fs::read_to_string(f.checkout.join("dest/a.txt")).unwrap(), "kept");
+    assert_eq!(
+        fs::read_to_string(f.checkout.join("dest/a.txt")).unwrap(),
+        "kept"
+    );
 }
 
 #[test]
@@ -89,14 +105,18 @@ fn a_folder_is_copied_with_everything_under_it_and_leaves_no_working_folder() {
 
     let again = copy_into(f.root.dir(), Path::new("src"), Path::new("dest")).unwrap();
     assert_eq!(again.name, "src copy");
-    assert_eq!(names_in(&f.checkout.join("dest")), ["a.txt", "src", "src copy"]);
+    assert_eq!(
+        names_in(&f.checkout.join("dest")),
+        ["a.txt", "src", "src copy"]
+    );
 }
 
 #[test]
 fn a_folder_is_not_copied_into_itself_or_below_itself() {
     let f = fixture();
     for destination in ["src", "src/nested"] {
-        let refused = copy_into(f.root.dir(), Path::new("src"), Path::new(destination)).unwrap_err();
+        let refused =
+            copy_into(f.root.dir(), Path::new("src"), Path::new(destination)).unwrap_err();
         assert_eq!(refused.code, ErrorCode::InvalidPath, "{destination}");
     }
     assert_eq!(names_in(&f.checkout.join("src")), ["a.txt", "nested"]);
@@ -130,7 +150,11 @@ fn a_copy_past_the_item_cap_is_refused_before_anything_is_written() {
     }
     let refused = copy_into(f.root.dir(), Path::new("many"), Path::new("dest")).unwrap_err();
     assert_eq!(refused.code, ErrorCode::TooLarge);
-    assert!(refused.message.contains("nothing was copied"), "{}", refused.message);
+    assert!(
+        refused.message.contains("nothing was copied"),
+        "{}",
+        refused.message
+    );
     assert_eq!(names_in(&f.checkout.join("dest")), ["a.txt"]);
 }
 
@@ -147,7 +171,8 @@ mod unix {
         assert_eq!(refused.code, ErrorCode::Unsupported);
         assert!(refused.message.contains("outside"), "{}", refused.message);
         assert_eq!(names_in(&f.checkout.join("dest")), ["a.txt"]);
-        let direct = copy_into(f.root.dir(), Path::new("src/outside"), Path::new("dest")).unwrap_err();
+        let direct =
+            copy_into(f.root.dir(), Path::new("src/outside"), Path::new("dest")).unwrap_err();
         assert_eq!(direct.code, ErrorCode::Unsupported);
     }
 
@@ -158,7 +183,10 @@ mod unix {
         fs::write(&script, "#!/bin/sh\n").unwrap();
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
         copy_into(f.root.dir(), Path::new("src/run.sh"), Path::new("dest")).unwrap();
-        let mode = fs::metadata(f.checkout.join("dest/run.sh")).unwrap().permissions().mode();
+        let mode = fs::metadata(f.checkout.join("dest/run.sh"))
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0o755);
     }
 }
@@ -179,10 +207,22 @@ fn a_drop_lands_each_item_under_its_name_and_a_taken_name_becomes_copy() {
     )
     .unwrap();
     assert_eq!(imported.names, ["a copy.txt", "photos"]);
-    assert_eq!(fs::read_to_string(f.checkout.join("dest/a.txt")).unwrap(), "kept");
-    assert_eq!(fs::read_to_string(f.checkout.join("dest/a copy.txt")).unwrap(), "dropped");
-    assert_eq!(fs::read_to_string(f.checkout.join("dest/photos/raw/two.png")).unwrap(), "raw");
-    assert_eq!(names_in(&f.checkout.join("dest")), ["a copy.txt", "a.txt", "photos"]);
+    assert_eq!(
+        fs::read_to_string(f.checkout.join("dest/a.txt")).unwrap(),
+        "kept"
+    );
+    assert_eq!(
+        fs::read_to_string(f.checkout.join("dest/a copy.txt")).unwrap(),
+        "dropped"
+    );
+    assert_eq!(
+        fs::read_to_string(f.checkout.join("dest/photos/raw/two.png")).unwrap(),
+        "raw"
+    );
+    assert_eq!(
+        names_in(&f.checkout.join("dest")),
+        ["a copy.txt", "a.txt", "photos"]
+    );
 }
 
 #[test]
@@ -229,16 +269,25 @@ fn a_drop_refuses_paths_that_leave_the_folder_and_shapes_the_page_never_sends() 
     )
     .unwrap_err();
     assert_eq!(twice.code, ErrorCode::InvalidPath);
-    assert_eq!(import(f.root.dir(), Path::new("dest"), &[]).unwrap_err().code, ErrorCode::InvalidRequest);
+    assert_eq!(
+        import(f.root.dir(), Path::new("dest"), &[])
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidRequest
+    );
     assert_eq!(names_in(&f.checkout.join("dest")), ["a.txt"]);
 }
 
 #[test]
 fn a_drop_past_a_cap_is_refused_whole() {
     let f = fixture();
-    let too_many: Vec<ImportEntry> = (0..=IMPORT_MAX_ITEMS).map(|n| file(&format!("f{n}"), b"")).collect();
+    let too_many: Vec<ImportEntry> = (0..=IMPORT_MAX_ITEMS)
+        .map(|n| file(&format!("f{n}"), b""))
+        .collect();
     assert_eq!(
-        import(f.root.dir(), Path::new("dest"), &too_many).unwrap_err().code,
+        import(f.root.dir(), Path::new("dest"), &too_many)
+            .unwrap_err()
+            .code,
         ErrorCode::TooLarge
     );
     let big = vec![0u8; IMPORT_MAX_FILE_BYTES as usize + 1];

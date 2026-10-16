@@ -2915,15 +2915,18 @@ fn handle_path_import(state: &AppState, event: &Value) -> Vec<Message> {
     }
     // This machine's checkout is judged against its registered roots; a
     // device's paths are its helper's to confine.
-    if event_device(&state.boundary, &core_event).is_none() {
-        if let Some(refusal) =
-            explorer_rooted_path(&state.boundary, &mut core_event, "path_import", "destination")
-        {
-            for stage in &stages {
-                state.attachments.discard(stage);
-            }
-            return vec![Message::Text(refusal.to_string().into())];
+    if event_device(&state.boundary, &core_event).is_none()
+        && let Some(refusal) = explorer_rooted_path(
+            &state.boundary,
+            &mut core_event,
+            "path_import",
+            "destination",
+        )
+    {
+        for stage in &stages {
+            state.attachments.discard(stage);
         }
+        return vec![Message::Text(refusal.to_string().into())];
     }
     let paths = if stages.is_empty() {
         Vec::new()

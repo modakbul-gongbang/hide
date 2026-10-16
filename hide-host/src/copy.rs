@@ -183,18 +183,21 @@ fn copy_tree(
     })?;
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
-    let mut output = to.open_with(Path::new(to_name), &options).map_err(|error| {
-        HostError::io(
-            &error,
-            format!("{} could not be written", to_name.to_string_lossy()),
-        )
-    })?;
-    let copied = io::copy(&mut (&mut input).take(meta.len() + 1), &mut output).map_err(|error| {
-        HostError::io(
-            &error,
-            format!("{} could not be copied", name.to_string_lossy()),
-        )
-    })?;
+    let mut output = to
+        .open_with(Path::new(to_name), &options)
+        .map_err(|error| {
+            HostError::io(
+                &error,
+                format!("{} could not be written", to_name.to_string_lossy()),
+            )
+        })?;
+    let copied =
+        io::copy(&mut (&mut input).take(meta.len() + 1), &mut output).map_err(|error| {
+            HostError::io(
+                &error,
+                format!("{} could not be copied", name.to_string_lossy()),
+            )
+        })?;
     if copied != meta.len() {
         return Err(HostError::new(
             ErrorCode::Conflict,
@@ -452,7 +455,13 @@ pub fn import(dir: &Dir, destination: &Path, entries: &[ImportEntry]) -> HostRes
         let directory = checked
             .iter()
             .any(|checked| checked.entry.path == *item && checked.entry.directory);
-        match place(&staged, OsStr::new(item), &folder, OsStr::new(item), directory) {
+        match place(
+            &staged,
+            OsStr::new(item),
+            &folder,
+            OsStr::new(item),
+            directory,
+        ) {
             Ok(name) => names.push(name),
             Err(mut error) => {
                 if !names.is_empty() {

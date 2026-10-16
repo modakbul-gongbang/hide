@@ -650,7 +650,9 @@ pub fn apply_explorer_operation(
                 CHANGE_TIMEOUT,
             )
             .map_err(|error| change_failure(operation, error))?;
-            let named = folder.join(&copied.name).map_err(|error| error.to_string())?;
+            let named = folder
+                .join(&copied.name)
+                .map_err(|error| error.to_string())?;
             return Ok(Applied {
                 destination: Some(path::wire_join(&root.path, &named)),
             });
@@ -711,23 +713,20 @@ pub fn load_dropped(
     if paths.is_empty() {
         return Ok(());
     }
-    let read: Vec<hide_node_link::attachments::ReadFile> = crate::node_access::call_as(
-        own_node,
-        Call::ReadDropped { paths },
-        DROP_READ_TIMEOUT,
-    )
-    .map_err(|error| match error {
-        LinkError::Refused(refusal) => refusal.message,
-        other => format!("The dropped files could not be read: {other}; nothing was added"),
-    })?;
+    let read: Vec<hide_node_link::attachments::ReadFile> =
+        crate::node_access::call_as(own_node, Call::ReadDropped { paths }, DROP_READ_TIMEOUT)
+            .map_err(|error| match error {
+                LinkError::Refused(refusal) => refusal.message,
+                other => format!("The dropped files could not be read: {other}; nothing was added"),
+            })?;
     let mut read = read.into_iter();
     for item in &mut operation.import {
         if item.staged.is_none() {
             continue;
         }
-        let file = read.next().ok_or_else(|| {
-            "A dropped file was not read; nothing was added".to_owned()
-        })?;
+        let file = read
+            .next()
+            .ok_or_else(|| "A dropped file was not read; nothing was added".to_owned())?;
         item.data = file.data;
     }
     Ok(())
