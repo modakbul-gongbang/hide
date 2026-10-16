@@ -175,12 +175,19 @@ impl LabelOverlay {
                         == label.owner.as_deref()
                 })
                 .cloned();
+            // The reference a lifecycle proof takes is the one its reader
+            // names: a file reader's proven path, or the id Herdr reported
+            // (OpenCode's session, agy's conversation, which agy's reader
+            // finds its transcript by).
             facts.native_reference = facts.native_session_id.as_ref().and_then(|_| {
                 if agent
                     .agent
                     .as_deref()
                     .and_then(hide_session::Agent::from_kind)
-                    .is_some_and(hide_session::Agent::requires_native_file_proof)
+                    .is_some_and(|native| {
+                        native.requires_native_file_proof()
+                            && native.proof_reference_kind() == "path"
+                    })
                 {
                     label.native_source_path.as_ref().map(|path| {
                         crate::sidebar::SessionAgentSessionPayload {
@@ -273,5 +280,54 @@ impl ProvenLabel {
             self.proven_reference.as_deref(),
             reference,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A proven label's row, for `kind` reported by Herdr as `reported`.
+    fn proven_row(kind: &str, reported: (&str, &str)) -> SessionAgentPayload {
+        let id = "13cffb10-48e7-4642-b333-c4f57952b637";
+        let record = PaneRecord {
+            owner: label_reference_token(kind, "id", id),
+            native_session_id: Some(id.to_owned()),
+            native_source_path: Some(format!("/home/me/.native/{id}.jsonl")),
+            ..PaneRecord::default()
+        };
+        let overlay = LabelOverlay::of_records([(&"w1:p1".to_owned(), &record)], true, false);
+        let mut payload: SessionSnapshotPayload =
+            crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [{
+                "id": "w1:p1", "pane_id": "w1:p1", "agent": kind, "agent_status": "idle",
+                "state_change_seq": 1,
+                "agent_session": {"kind": reported.0, "value": reported.1},
+            }]}))
+            .unwrap();
+        overlay.apply(&mut payload);
+        payload.agents.remove(0)
+    }
+
+    #[test]
+    fn an_agy_row_carries_the_conversation_id_its_fork_and_sleep_prove() {
+        let id = "13cffb10-48e7-4642-b333-c4f57952b637";
+        let row = proven_row("antigravity", ("id", id));
+        let reference = row.facts.unwrap().native_reference.unwrap();
+        assert_eq!(
+            (reference.kind.as_str(), reference.value.as_str()),
+            ("id", id)
+        );
+        assert_eq!(
+            reference.kind,
+            hide_session::Agent::Antigravity.proof_reference_kind()
+        );
+        // A file reader's row still carries the proven path.
+        let row = proven_row("pi", ("id", id));
+        let reference = row.facts.unwrap().native_reference.unwrap();
+        assert_eq!(reference.kind, "path");
+        assert_eq!(
+            reference.kind,
+            hide_session::Agent::Pi.proof_reference_kind()
+        );
     }
 }

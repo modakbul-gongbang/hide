@@ -1,4 +1,5 @@
 //! Pure parsers. Transport, scheduling and UI wording do not belong here.
+mod antigravity;
 mod claude;
 mod codex;
 use super::model::{Cause, LimitReading, Scope, WindowKind, WindowOutcome, WindowReading};
@@ -8,6 +9,7 @@ pub(super) fn parse(source: LimitSource, body: &str, now_s: u64) -> Result<Limit
     match source {
         LimitSource::ClaudeUsageText => claude::parse(body, now_s),
         LimitSource::CodexUsage => codex::parse(body, now_s),
+        LimitSource::AntigravityUsage => antigravity::parse(body, now_s),
     }
 }
 fn complete(

@@ -1020,6 +1020,14 @@ pub(crate) fn pane_scroll(value: Value) -> Result<Option<crate::live::PaneScroll
         _ => Err(missing.into()),
     }
 }
+/// The agent status a `pane.get` answer carries for the pane.
+pub(crate) fn pane_agent_status(value: Value) -> Result<String, String> {
+    let missing = "pane response is missing pane";
+    match response(value, missing)? {
+        res::ResponseResult::PaneInfo { pane } => Ok(pane.agent_status.to_string()),
+        _ => Err(missing.into()),
+    }
+}
 pub(crate) fn pane_send_keys_params(pane_id: &str, keys: &[&str]) -> Result<Value, String> {
     params(req::PaneSendKeysParams {
         pane_id: pane_id.into(),
@@ -1321,7 +1329,9 @@ pub(crate) fn report_agent_session_params(
         .ok_or_else(|| format!("{kind} has no Herdr integration to report as"))?;
     params(req::PaneReportAgentSessionParams {
         pane_id: pane_id.into(),
-        source: format!("herdr:{}", adapter.herdr.name),
+        // The source the agent's own Herdr integration reports under, named
+        // by its integration target (`herdr:antigravity_cli` for agy).
+        source: format!("herdr:{}", adapter.herdr.target.replace('-', "_")),
         agent: adapter.herdr.name.into(),
         agent_session_id: Some(session_id.into()),
         agent_session_path: None,

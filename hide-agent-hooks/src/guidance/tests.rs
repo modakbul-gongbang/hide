@@ -864,8 +864,71 @@ fn a_retired_agent_gets_no_new_hook_and_its_old_entry_comes_out() {
     }
     assert_eq!(
         GuidanceAgent::LIVE,
-        [GuidanceAgent::Grok, GuidanceAgent::Cursor]
+        [
+            GuidanceAgent::Grok,
+            GuidanceAgent::Cursor,
+            GuidanceAgent::Antigravity
+        ]
     );
     assert!(!GuidanceAgent::is_retired_id("cursor"));
     assert!(!GuidanceAgent::is_retired_id("grok"));
+}
+
+/// agy's installed tool command run as agy runs it, with `helper` placed as
+/// `script` (or absent): what it prints and whether it succeeded.
+#[cfg(unix)]
+fn agy_tool_answer(script: Option<&str>) -> (std::process::Output, Value) {
+    use std::os::unix::fs::PermissionsExt;
+    let home = tempfile::tempdir().unwrap();
+    fs::create_dir_all(home.path().join(".gemini/config")).unwrap();
+    let helper = home.path().join("Hide Kit/hide-agent-hooks");
+    install(GuidanceAgent::Antigravity, home.path(), &helper).unwrap();
+    if let Some(script) = script {
+        fs::create_dir_all(helper.parent().unwrap()).unwrap();
+        fs::write(&helper, script).unwrap();
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let document: Value = serde_json::from_str(
+        &fs::read_to_string(GuidanceAgent::Antigravity.config_path(home.path())).unwrap(),
+    )
+    .unwrap();
+    let command = document["hide"]["PreToolUse"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap();
+    let output = std::process::Command::new("/bin/sh")
+        .args(["-c", command])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    let answer = serde_json::from_slice(&output.stdout).unwrap_or(Value::Null);
+    (output, answer)
+}
+
+#[cfg(unix)]
+#[test]
+fn agys_tool_command_leaves_the_call_to_agy_when_the_helper_is_gone_cannot_run_or_fails() {
+    let ask = json!({ "decision": "ask" });
+    for (case, script) in [
+        ("gone", None),
+        ("cannot run", Some("#!/nonexistent/interpreter\n")),
+        ("fails", Some("#!/bin/sh\nexit 3\n")),
+        ("crashes", Some("#!/bin/sh\nkill -SEGV $$\n")),
+    ] {
+        let (output, answer) = agy_tool_answer(script);
+        assert!(output.status.success(), "{case}: {output:?}");
+        assert_eq!(answer, ask, "{case}: {output:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn agys_tool_command_passes_the_helpers_own_answer_through_alone() {
+    let deny = r#"{"decision":"deny","reason":"no"}"#;
+    let (output, answer) = agy_tool_answer(Some(&format!("#!/bin/sh\nprintf '%s\\n' '{deny}'\n")));
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!("{deny}\n")
+    );
+    assert_eq!(answer["decision"], "deny");
 }

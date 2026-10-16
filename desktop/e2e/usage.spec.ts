@@ -49,7 +49,8 @@ test("three usage chips, View, Help and Settings fit the minimum native window i
         const label = row.querySelector('[data-usage-pin-label]')!.getBoundingClientRect();
         return { right: control.right, centered: Math.abs((control.top + control.bottom - label.top - label.bottom) / 2) < 4 };
       }));
-      expect(alignment).toHaveLength(4);
+      // Claude Code's and Codex CLI's 5-hour and weekly windows, and agy's weekly window.
+      expect(alignment).toHaveLength(5);
       expect(alignment.every(row => row.centered && Math.abs(row.right - alignment[0]!.right) < 1)).toBe(true);
       await capture(`usage-settings-${language}-electron`);
       const settings = page.locator('[data-usage-settings]');

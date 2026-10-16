@@ -21,9 +21,16 @@ fn every_installed_hook_dialect_resolves_through_the_shared_adapter() {
                     if dialect.prints_guidance() {
                         let actual: serde_json::Value =
                             serde_json::from_str(&printed.expect("session guidance")).unwrap();
-                        let expected: serde_json::Value = serde_json::from_str(include_str!(
-                            "../../../hide-agent-adapter/tests/fixtures/cursor-guidance.json"
-                        ))
+                        // Each agent reads its own answer shape: Cursor's
+                        // `additional_context`, agy's `injectSteps`.
+                        let expected: serde_json::Value = serde_json::from_str(match row.id {
+                            "antigravity" => include_str!(
+                                "../../../hide-agent-adapter/tests/fixtures/antigravity-guidance.json"
+                            ),
+                            _ => include_str!(
+                                "../../../hide-agent-adapter/tests/fixtures/cursor-guidance.json"
+                            ),
+                        })
                         .unwrap();
                         assert_eq!(actual, expected);
                     } else {

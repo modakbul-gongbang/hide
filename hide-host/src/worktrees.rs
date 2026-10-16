@@ -1766,12 +1766,34 @@ pub fn remove_worktree(
     };
     match (answer, remains) {
         (_, false) => {
+            forget_agent_trust(checkout);
             Ok("Worktree folder and its build output removed. Branch and Git history kept.".into())
         }
         (Err(error), true) => Err(error),
         (Ok(_), true) => Err(
             "Git acknowledged removal but the folder or registration remains. Review again.".into(),
         ),
+    }
+}
+
+/// Takes out the agy folder trust Hide recorded for a removed worktree
+/// (PRD antigravity-first-class D-08). The worktree is already gone, so a
+/// trust that cannot be taken out is only recorded: the operator has nothing
+/// to do, and switching agy off still takes it out.
+fn forget_agent_trust(checkout: &Path) {
+    let Ok(home) = hide_platform::host::home_dir() else {
+        return;
+    };
+    if let Err(failure) = hide_agent_hooks::antigravity_trust::forget(&home, checkout) {
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "worktree_removal",
+                "kind": "agent_trust_kept",
+                "checkout": checkout,
+                "reason": failure.message(),
+            })
+        );
     }
 }
 

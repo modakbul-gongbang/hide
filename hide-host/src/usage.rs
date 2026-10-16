@@ -35,6 +35,10 @@ pub fn fetch(source: LimitSource, root: &Path, report: &mut dyn FnMut() -> bool)
                 .and_then(|_| codex_session_usage(root));
             LimitFetch { result, fallback }
         }
+        LimitSource::AntigravityUsage => LimitFetch {
+            result: antigravity_usage(root, report),
+            fallback: None,
+        },
     }
 }
 
@@ -226,6 +230,32 @@ fn claude_usage_text(cwd: &Path, report: &mut dyn FnMut() -> bool) -> Result<Str
     let running = cancel.clone();
     crate::reporting::run_reporting(
         "hide-node-claude-usage",
+        move || backend.usage_text(&running),
+        &|| cancel.cancel(),
+        report,
+    )
+    .unwrap_or_else(|_| Err(hide_ai::UsageError::Failed("usage_worker".into())))
+    .map_err(LimitFailure::cli)
+    .and_then(|text| {
+        if text.len() as u64 <= BODY_LIMIT {
+            Ok(text)
+        } else {
+            Err(LimitFailure::new(FailureDisposition::Schema, "body_limit"))
+        }
+    })
+}
+
+/// agy's `/usage`, run by the backend that keeps an agy child from opening a
+/// sign-in page or updating itself, on a worker that ends with the read.
+fn antigravity_usage(cwd: &Path, report: &mut dyn FnMut() -> bool) -> Result<String, LimitFailure> {
+    let backend = hide_ai::AntigravityCliBackend::new(hide_ai::TextCliConfig {
+        cwd: cwd.to_path_buf(),
+        ..hide_ai::TextCliConfig::new(hide_ai::CLI_DEFAULT_MODEL)
+    });
+    let cancel = CancelToken::new();
+    let running = cancel.clone();
+    crate::reporting::run_reporting(
+        "hide-node-antigravity-usage",
         move || backend.usage_text(&running),
         &|| cancel.cancel(),
         report,

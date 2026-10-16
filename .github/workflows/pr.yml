@@ -558,6 +558,21 @@ jobs:
       contents: read
       issues: write
 
+  # agy against stand-ins and its installed binary on Windows, for a change
+  # to a crate that writes agy's files, reads its conversations or drives it
+  # for Hide AI. `rust` runs the same agy tests on Linux; the nightly runs the
+  # whole contract on all three systems.
+  agy-contract:
+    name: agy contract
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'agy-contract')
+    uses: ./.github/workflows/agy-contract.yml
+    with:
+      systems: '["windows"]'
+    permissions:
+      contents: read
+      issues: write
+
   # The Electron app on macOS, the system it is written against: the whole
   # suite, for a change to what the app runs: the desktop host, the web shell
   # or a crate.
@@ -609,7 +624,7 @@ jobs:
 
   verify:
     name: verify
-    needs: [plan, policy, rust, checks, os-contract, os-contract-macos, windows-check, windows-e2e, windows-desktop, web-e2e, remote-mailbox, desktop-e2e, package]
+    needs: [plan, policy, rust, checks, os-contract, os-contract-macos, agy-contract, windows-check, windows-e2e, windows-desktop, web-e2e, remote-mailbox, desktop-e2e, package]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

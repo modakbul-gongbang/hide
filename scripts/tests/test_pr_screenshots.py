@@ -30,6 +30,7 @@ class AScreenChangeMustShowItself(unittest.TestCase):
             '![after](https://github.com/user-attachments/assets/3b296892-7f8f-4c99-a904-6d918fd468b8)',
             '<img alt="after" src="https://github.com/yansfil/pr-assets/blob/main/hide/x/abc1234/after.png?raw=true" width="480">',
             '![after](<https://github.com/user-attachments/assets/abc> "title")',
+            '<img alt="Settings > Agents" src="https://github.com/user-attachments/assets/abc" width="480">',
         ]:
             with self.subTest(line=line):
                 ok, _ = CHECK.verdict(BODY + '\n' + line + '\n', SCREEN)

@@ -76,7 +76,7 @@ class MeasurementResults(unittest.TestCase):
         checkout = Path(__file__).resolve().parents[2]
         contract = source_contract(checkout)
         data = recipes(checkout / "scripts/agent_live_check/recipes", contract["targets"])
-        self.assertEqual(set(data), {"claude-code", "codex", "grok", "opencode", "pi", "omp", "cursor"})
+        self.assertEqual(set(data), {"claude-code", "codex", "grok", "opencode", "pi", "omp", "cursor", "antigravity"})
         for recipe in data.values():
             self.assertEqual(set(recipe["scenes"]), {"rest", "working", "shell_approval", "file_approval",
                 "question", "plan_approval", "model_picker", "resume_picker", "mcp_approval", "startup"})

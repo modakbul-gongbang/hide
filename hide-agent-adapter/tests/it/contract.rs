@@ -169,6 +169,7 @@ fn every_usage_cell_has_an_independent_declaration_and_unshipped_absences() {
                 Support::Supported(source) => match source {
                     UsageSource::Limit(LimitSource::ClaudeUsageText) => "claude_usage_text".into(),
                     UsageSource::Limit(LimitSource::CodexUsage) => "codex_usage".into(),
+                    UsageSource::Limit(LimitSource::AntigravityUsage) => "antigravity_usage".into(),
                     UsageSource::Tokens(source) => serde_json::to_value(source)
                         .unwrap()
                         .as_str()
@@ -246,7 +247,7 @@ fn usage_coverage_is_generated_from_the_complete_registry() {
         let sources: Vec<_> = row.usage.limit_sources().collect();
         assert_eq!(
             sources.len(),
-            usize::from(matches!(row.id, "claude-code" | "codex"))
+            usize::from(matches!(row.id, "claude-code" | "codex" | "antigravity"))
         );
     }
 }
@@ -258,6 +259,7 @@ fn the_factory_question_guard_names_each_agent_with_a_refusable_question_tool_by
     assert_eq!(direct_ask_kind("codex"), Some("codex"));
     assert_eq!(direct_ask_kind("opencode"), Some("opencode"));
     assert_eq!(direct_ask_kind("omp"), Some("omp"));
+    assert_eq!(direct_ask_kind("antigravity"), Some("agy"));
     // The hook passes its canonical id; an alias or an agent with no refusable
     // tool is not a runtime the guard answers for.
     for runtime in ["claude", "grok", "cursor", "pi", ""] {
@@ -309,6 +311,14 @@ fn every_start_dialect_takes_only_the_model_and_effort_it_declares_and_refuses_u
             .arguments(Some("gpt-5.5"), Some("high"))
             .unwrap(),
         ["-m", "gpt-5.5", "-c", "model_reasoning_effort=high"]
+    );
+    // agy 1.4.0 takes a model by `--model`; its effort is not declared yet.
+    assert_eq!(
+        LaunchDialect::Antigravity
+            .options()
+            .arguments(Some("gemini-3.8-flash-high"), None)
+            .unwrap(),
+        ["--model", "gemini-3.8-flash-high"]
     );
 }
 

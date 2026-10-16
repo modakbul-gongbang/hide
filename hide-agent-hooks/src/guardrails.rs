@@ -290,6 +290,9 @@ pub enum Action {
     Shell(String),
     Write(Vec<String>),
     Read(Vec<String>),
+    /// A file write whose target was cut off with the rest of a payload too
+    /// large to read whole (agy names the call after its content).
+    UnreadWrite,
 }
 
 /// The protection a refusal names, and the code its log line carries.
@@ -440,11 +443,32 @@ pub fn decide_with(
         Action::Read(paths) => paths
             .iter()
             .find_map(|path| protected(&facts, &cwd, &absolute(home, &cwd, Path::new(path)))),
+        Action::UnreadWrite => unread_write(&facts, &cwd),
     };
     if facts.word_limit.get() {
         record_word_limit(home);
     }
     refusal.map_or(Outcome::Allow, Outcome::Refuse)
+}
+
+/// A write in `cwd` whose target Hide could not read: refused in a project
+/// where a protection judges writes, since any target may be one it guards.
+fn unread_write(facts: &Facts<'_>, cwd: &Path) -> Option<Refusal> {
+    let located = facts.locate(cwd);
+    let rules = &located.project(facts)?.policy.rules;
+    let rule = if rules.files {
+        Rule::Files
+    } else if rules.worktree_folder {
+        Rule::WorktreeFolder
+    } else if rules.base_branch {
+        Rule::BaseBranch
+    } else {
+        return None;
+    };
+    Some(Refusal::unread(
+        rule,
+        "the file this call writes, cut off with the rest of a call too large to read",
+    ))
 }
 
 /// A file tool's write of `target` (B7, B8, B15).

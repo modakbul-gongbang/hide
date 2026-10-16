@@ -949,11 +949,17 @@ impl Runtime {
                     .as_ref()
                     .filter(|settings| settings.enabled && settings.chosen)
                     .map(|settings| {
+                        // The usage rows are keyed by the agent's Herdr name,
+                        // which is not the provider id for every agent (agy
+                        // runs the `antigravity` provider).
                         settings
                             .router_config()
                             .priority
                             .iter()
-                            .map(|provider| provider.as_str().to_owned())
+                            .filter_map(|provider| {
+                                hide_agent_adapter::adapter(provider.descriptor().agent)
+                            })
+                            .map(|row| row.herdr.name.to_owned())
                             .collect()
                     })
                     .unwrap_or_default()

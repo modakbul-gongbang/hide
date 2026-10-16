@@ -135,6 +135,8 @@ pub enum UsageError {
     Failed(String),
     /// stdout was not a result frame, or the frame had no `result` text.
     NoResultFrame,
+    /// The CLI said it is not signed in, or was never signed in here.
+    NotAuthenticated,
 }
 
 /// Drives the installed Claude Code CLI in print mode, one child per request.
