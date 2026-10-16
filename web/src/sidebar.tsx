@@ -451,6 +451,11 @@ function DisconnectedDevice({ actions }: { actions: Actions }) {
 
 const NO_SLEEPERS: SleepingSession[] = [];
 
+/** How many named tabs of the checkout hold no agent row, each still drawn as its tab line when the list opens. */
+function useEmptyNamedTabs(checkout: Checkout, deviceId: string, agentRows: BoardRow[], agents: readonly AgentRow[]): number {
+  return useMemo(() => sidebarTabGroups(checkout, deviceId, agentRows, agents).filter((group) => group.rows.length === 0).length, [checkout, deviceId, agentRows, agents]);
+}
+
 function useSleepingCheckout(path: string, deviceId: string) {
   const all = useShellStore((s) => s.rest?.navigator?.sleeping_sessions ?? NO_SLEEPERS);
   return useMemo(() => all.filter((session) => session.node_id === deviceId && session.checkout_path === path), [all, path, deviceId]);
@@ -1189,8 +1194,9 @@ function CleanupRows({ workspaces, context, deviceId }: { workspaces: Workspace[
  * is one (PRD sidebar-typography D-04); opening the agents never grows or
  * shrinks the row.
  */
-function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: CheckoutPresentation, context: ListContext, t: TFunction<"translation">, sleepingCount: number, hideAi: HideAiCheckout | null) {
-  const hasRows = agentRows.length + sleepingCount > 0;
+/** `otherLines` counts what the opened list draws besides agent rows: sleeping conversations and named tabs with no agent. */
+function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: CheckoutPresentation, context: ListContext, t: TFunction<"translation">, otherLines: number, hideAi: HideAiCheckout | null) {
+  const hasRows = agentRows.length + otherLines > 0;
   const foldable = context.disclosure && hasRows;
   const open = hasRows && !context.openCheckouts.includes(checkout.id);
   // A checkout Hide AI made names its task where the purpose stands, ahead of the purpose (D-03).
@@ -1239,7 +1245,8 @@ const CheckoutRowView = memo(function CheckoutRowView({
   const view = checkoutPresentation(workspace, checkout, Date.now(), t);
   const name = checkout.branch ?? checkout.label;
   const sleeping = useSleepingCheckout(checkout.path, workspace.device_id);
-  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length, hideAi);
+  const emptyTabs = useEmptyNamedTabs(checkout, workspace.device_id, agentRows, context.agents);
+  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length + emptyTabs, hideAi);
   const visibleRows = open ? agentRows : agentRows.filter((row) => row.depth === 0 && row.agent.state.needs_you);
   const marks = checkout.agent_summary?.marks;
   return (
@@ -1305,7 +1312,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={view.age} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkout={checkout} groupTabs={open} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={CHECKOUT_NAME_COLUMN} glyphColumn={CHECKOUT_COLUMN} context={context} /> : null}
+      {visibleRows.length > 0 || (open && sleeping.length + emptyTabs > 0) ? <OpenAgentRows checkout={checkout} groupTabs={open} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={CHECKOUT_NAME_COLUMN} glyphColumn={CHECKOUT_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -1341,9 +1348,10 @@ const FolderRowView = memo(function FolderRowView({
   const view = checkoutPresentation(workspace, checkout, Date.now(), t);
   const marks = checkout.agent_summary?.marks;
   const sleeping = useSleepingCheckout(checkout.path, workspace.device_id);
+  const emptyTabs = useEmptyNamedTabs(checkout, workspace.device_id, agentRows, context.agents);
   // A folder whose every agent sleeps follows its own fold, which starts folded (D-03, D-19).
   const asleep = context.disclosure && workspace.agent_presence?.asleep !== undefined;
-  const disclosure = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length, null);
+  const disclosure = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length + emptyTabs, null);
   const { foldable, purpose, raisedFrom } = disclosure;
   const open = asleep ? projectExpanded(workspace) : disclosure.open;
   const secondLine = asleep ? !open && checkoutHasSecondLine(view, purpose, raisedFrom) : disclosure.secondLine;
@@ -1402,7 +1410,7 @@ const FolderRowView = memo(function FolderRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={null} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkout={checkout} groupTabs={open} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={PROJECT_NAME_COLUMN} glyphColumn={PROJECT_COLUMN} context={context} /> : null}
+      {visibleRows.length > 0 || (open && sleeping.length + emptyTabs > 0) ? <OpenAgentRows checkout={checkout} groupTabs={open} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={PROJECT_NAME_COLUMN} glyphColumn={PROJECT_COLUMN} context={context} /> : null}
     </li>
   );
 });

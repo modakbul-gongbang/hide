@@ -226,6 +226,16 @@ The existing close guards run first, and linked workspaces remain untouched.
 If shell creation fails, nothing closes; if closing is refused, the shell remains.
 Retry close reuses that intent's shell, while Dismiss ends the failed intent; detailed Herdr failures are diagnostic-only.
 
+A tab the operator named is a place they keep, like a channel: its name outlives the agents in it.
+A tab is named when it has a manual name, the same test that draws its sidebar tab line ([Sidebar hierarchy](#sidebar-hierarchy)); Rename gives one, and so does `hide agent spawn` for the tab it opens.
+Closing a named tab's only pane while that pane holds an agent (its close button, ⌘W or ⇧⌘W on it, its pane menu, or a subtree close aimed at it) first splits a shell at the tab's checkout into the same tab, then closes the agent pane.
+The tab stays in its place and holds the keyboard while the shell is made, and the keyboard moves to the shell once it is there; Reopen closed tab brings the agent back beside the shell.
+The failure rules above hold: if the shell cannot be made, nothing closes; if the close is refused, the shell stays, and Retry close closes beside that same shell, making another only when the operator closed it meanwhile.
+Closing that shell while it is the tab's only pane, or Close tab… at any time, closes the tab and its name as before.
+An unnamed tab, a delegated child's tab, a pane whose terminal Herdr could not restore and a sleep's own close behave as any other close.
+An agent that quits on its own leaves its shell in the pane, as Herdr starts agents inside the pane's shell, so its named tab stays without Hide doing anything.
+A provider whose sleep closes its pane (Pi, OpenCode, Cursor and omp; [ARCHITECTURE.md](ARCHITECTURE.md#agent-sleep)) still takes a named tab whose only pane it is while it sleeps, and its wake opens a new tab under the same name.
+
 ### View areas
 
 The files tool holds one or more View areas, each with its own tab bar above its own view, split left/right or up/down as often as the limits allow.
@@ -1277,7 +1287,8 @@ Root status marks share one axis on the checkout name's column, to the right of 
 Lineage children keep their `--size-lineage-indent` (18px) step and elbow rails from that axis, and a root's lineage disclosure stays in the reserved trailing slot.
 A tab with two or more recognized agent panes, or with a manual name, draws a 1px vertical guide centered under the checkout's kind glyph (a plain folder's folder glyph) and spanning the group's rows, and opens with one quiet line at its head, a sidebar line and a hairline high, standing inside the guide like a row: the guide runs past it unbroken, the tab glyph stands on the status-mark column and the tab's name in 11px subtle text starts on the title column, so the tab reads as part of its checkout and never as a row beside the checkout's own glyph.
 The name is the tab's manual name, or localized `Tab N` from the core's stable number when it has none.
-Shell panes are not counted, children in other tabs do not inflate their parent's count, and a tab without a sidebar root draws no segment.
+Shell panes are not counted, children in other tabs do not inflate their parent's count, and a tab without a sidebar root draws no segment unless it is named.
+A named tab with no agent left, typically the shell its last agent left behind ([Agent areas](#agent-areas)), keeps its line under its checkout with its name and opens the tab like any tab line; a checkout whose only line it is opens and folds as one with agents, and a delegated child's tab never stands alone.
 Pointer or keyboard focus on the line shows its hint, the same name and its agent count.
 The line is a button with that accessible name: click, Enter and Space open the real tab without read-state or process effects, and it is a stop in the Arrow Up/Down and Home/End traversal, ahead of its segment's rows.
 The existing tab Rename still sets or clears the manual name; automatic tabbar titles remain independent.

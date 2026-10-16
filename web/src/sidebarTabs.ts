@@ -4,7 +4,12 @@ import type { AgentRow, Checkout, Tab } from "./snapshot";
 /** One tab's segment of a checkout's agent list; `glyph` is set when its tab holds two or more recognized agents or the operator named it. */
 export type SidebarTabGroup = { tab: Tab | null; rows: BoardRow[]; count: number; glyph: boolean };
 
-/** Keep complete lineage subtrees with their root, ordered by the actual tabs. */
+/** A tab on the strip the operator named is kept when its last agent leaves, so it stays a segment of its checkout with no rows. */
+function namedOnStrip(tab: Tab): boolean {
+  return tab.id !== null && tab.sidebar !== undefined && tab.sidebar.manual_name !== null && !tab.delegated;
+}
+
+/** Keep complete lineage subtrees with their root, ordered by the actual tabs; a named tab with no agent keeps its segment, empty. */
 export function sidebarTabGroups(checkout: Checkout, device: string, rows: readonly BoardRow[], agents: readonly AgentRow[]): SidebarTabGroup[] {
   const agentPanes = new Set(agents.filter((agent) => agent.device_id === undefined || agent.device_id === device).map((agent) => agent.pane_id));
   const paneTabs = new Map(checkout.tabs.flatMap((tab) => tab.panes.map((pane) => [pane.id, tab] as const)));
@@ -17,8 +22,8 @@ export function sidebarTabGroups(checkout: Checkout, device: string, rows: reado
     byTab.set(owner, group);
   }
   return [...checkout.tabs, null].flatMap((tab) => {
-    const members = byTab.get(tab);
-    if (!members?.length) return [];
+    const members = byTab.get(tab) ?? [];
+    if (!members.length && !(tab !== null && namedOnStrip(tab))) return [];
     const count = tab ? new Set(tab.panes.filter((pane) => agentPanes.has(pane.id)).map((pane) => pane.id)).size : 0;
     const glyph = tab !== null && tab.id !== null && tab.sidebar !== undefined && (count >= 2 || tab.sidebar.manual_name !== null);
     return [{ tab, rows: members, count, glyph }];

@@ -35,6 +35,12 @@ describe("Projects sidebar tab groups", () => {
     expect(at(named, ["a", "b"])).toMatchObject({ count: 2, glyph: true });
   });
 
+  it("keeps a named tab's segment when its last agent is gone, and drops an unnamed or delegated one", () => {
+    const named = (id: string, delegated = false): Tab => ({ ...tab(id, [`${id}-shell`]), sidebar: { manual_name: `name ${id}`, number: 1 }, delegated });
+    const groups = sidebarTabGroups(checkout([tab("t1", ["a"]), named("t2"), tab("t3", ["t3-shell"]), named("t4", true)]), "local", [row("a")], [agent("a")]);
+    expect(groups.map((group) => [group.tab?.id, group.rows.length, group.count, group.glyph])).toEqual([["t1", 1, 1, false], ["t2", 0, 0, true]]);
+  });
+
   it("leaves partial legacy snapshots readable without fabricating a tab name", () => {
     const legacy = { ...tab("t1", ["a", "b"]), sidebar: undefined };
     expect(sidebarTabGroups(checkout([legacy]), "local", [row("a"), row("b")], [agent("a"), agent("b")])[0]).toMatchObject({ glyph: false });
