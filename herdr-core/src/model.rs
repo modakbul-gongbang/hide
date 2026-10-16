@@ -1528,7 +1528,7 @@ pub struct WorkspaceSnapshot {
 /// draws it (`project_context::agent_presence`).
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ProjectAgentPresenceSnapshot {
-    /// An awake agent here draws a mark (turn, going, done or unread);
+    /// An awake agent here draws a mark (turn, going, waiting, done or unread);
     /// quiet, sleeping or no agents leave it false.
     pub working: bool,
     /// Present while the project has a sleeping agent and no awake one.

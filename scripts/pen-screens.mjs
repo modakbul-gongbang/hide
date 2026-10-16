@@ -287,8 +287,9 @@ function screenField(id, label, control) {
 }
 
 // -- the status mark --------------------------------------------------------------
-// status-mark.tsx draws one of four shapes in one 12 px slot (docs/status-model.md,
-// The mark). A board names a mark (`turn`, `going`, `done`, `unread`, `quiet`);
+// status-mark.tsx draws one of four marks in one 12 px slot, the in-progress ring
+// solid or dashed (docs/status-model.md, The mark). A board names a mark (`turn`,
+// `going`, `waiting`, `done`, `unread`, `quiet`);
 // an older board's glyph and colour still name the mark that replaced it, so a
 // sheet drawn before the four marks keeps meaning the same row.
 // The overrides that turn on a master's mark (Sidebar agent row, tree row);
@@ -377,9 +378,7 @@ function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground'
     ...(pr ? {'ath-row-pr/ath-pr-g': {icon: PR_TREE[pr.state][0], fill: PR_TREE[pr.state][1]}, 'ath-row-pr/ath-pr-n': {content: `${pr.number}`}} : {}),
     'ath-row-desc': mark ? {enabled: true} : {enabled: false},
     ...(mark ? {
-      'ath-row-desc/ath-mark-bang': {enabled: mark.kind === 'raised'},
-      'ath-row-desc/ath-mark-dot': {enabled: mark.kind === 'working'},
-      'ath-row-desc/ath-mark-n': {content: String(mark.count), fill: mark.kind === 'raised' ? '$--warning' : '$--agent-working'},
+      'ath-row-desc/ath-mark-n': {content: String(mark.count), fill: '$--warning'},
     } : {}),
     'ath-row-device': device ? {enabled: true} : {enabled: false},
     'ath-row-device-t': {content: device ? `${device}${offline ? ' · 연결 안 됨' : ''}` : ''},
@@ -1980,7 +1979,7 @@ function buildProjectsSidebar(tokens) {
             tree(`psb-t4-${s}`, {title: 'P7 Pi·omp 재우기', status: 'asking', age: '1h', depth: 1, pr: {state: 'pending', number: 838}}),
             tree(`psb-t5-${s}`, {title: '미전달 편지 승격 해제', status: 'seen', age: '5h', depth: 1, device: 'Mac mini'}),
             tree(`psb-t6-${s}`, {title: '3개 더', status: null, age: '', depth: 1, last: true, chevron: 'closed', more: true}),
-            tree(`psb-t7-${s}`, {title: 'Mac mini 연동 5단계', status: 'waiting', age: '2m', line: '대기 · 자식 1명 작업 중', chevron: 'closed', mark: {kind: 'working', count: 1}}),
+            tree(`psb-t7-${s}`, {title: 'Mac mini 연동 5단계', status: 'waiting', age: '2m', line: '대기 · 자식 1명 작업 중', chevron: 'closed'}),
           ]}),
           segment(`psb-seg-solo-${s}`, {rows: [tree(`psb-t8-${s}`, {title: '에이전트 패널 표시 규칙', status: 'working', age: '38s'})]}),
         ]),

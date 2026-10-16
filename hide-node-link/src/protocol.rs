@@ -141,8 +141,8 @@ use crate::error::HostError;
 /// from the file manager (PRD prelaunch explorer-actions). A helper on 36
 /// would refuse them as unknown, so a paste or a drop on a device checkout
 /// could never land; it is refused at Hello and upgraded.
-/// 38: an agent row names its mark (`mark`: turn, going, done, unread,
-/// quiet) instead of a glyph (`symbol`), its mark counts are those four, a
+/// 38: an agent row names its mark (`mark`: turn, going, waiting, done,
+/// unread, quiet) instead of a glyph (`symbol`), its mark counts are four, a
 /// row may wait on its pull request's checks (`wait: checks`) and its status
 /// codes add `unfinished` (status-marks-simplify). A screen relayed through a
 /// node on 37 would draw none of it, so it is refused at Hello and upgraded.

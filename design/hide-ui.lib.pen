@@ -47181,31 +47181,6 @@
                   "alignItems": "center"
                 },
                 {
-                  "type": "frame",
-                  "id": "ath-mark-dot",
-                  "name": "Status mark",
-                  "children": [
-                    {
-                      "type": "ellipse",
-                      "id": "ath-mark-dot-arc",
-                      "name": "In progress",
-                      "enabled": true,
-                      "width": 10,
-                      "height": 10,
-                      "fill": "$--agent-working",
-                      "innerRadius": 0.62,
-                      "startAngle": 90,
-                      "sweepAngle": -270
-                    }
-                  ],
-                  "width": 12,
-                  "height": 12,
-                  "layout": "horizontal",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "enabled": false
-                },
-                {
                   "type": "text",
                   "id": "ath-mark-n",
                   "name": "2",
@@ -48234,45 +48209,6 @@
             },
             {
               "type": "frame",
-              "id": "ath-l-mark-working-cell",
-              "name": "Ring N working",
-              "children": [
-                {
-                  "type": "text",
-                  "id": "ath-l-mark-working-cap",
-                  "name": "Ring N working",
-                  "content": "Ring N working",
-                  "fill": "$--muted-foreground",
-                  "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-micro",
-                  "fontWeight": "600"
-                },
-                {
-                  "id": "ath-l-mark-working",
-                  "type": "ref",
-                  "ref": "ath-mark",
-                  "name": "Descendant mark",
-                  "descendants": {
-                    "ath-mark-bang": {
-                      "enabled": false
-                    },
-                    "ath-mark-dot": {
-                      "enabled": true
-                    },
-                    "ath-mark-n": {
-                      "content": "3",
-                      "fill": "$--agent-working"
-                    }
-                  }
-                }
-              ],
-              "layout": "vertical",
-              "gap": "$--spacing-xs",
-              "alignItems": "start",
-              "width": "fit_content"
-            },
-            {
-              "type": "frame",
               "id": "ath-l-tb-rest-cell",
               "name": "Tree button rest",
               "children": [
@@ -49286,45 +49222,6 @@
                   "type": "ref",
                   "ref": "ath-mark",
                   "name": "Descendant mark"
-                }
-              ],
-              "layout": "vertical",
-              "gap": "$--spacing-xs",
-              "alignItems": "start",
-              "width": "fit_content"
-            },
-            {
-              "type": "frame",
-              "id": "ath-d-mark-working-cell",
-              "name": "Ring N working",
-              "children": [
-                {
-                  "type": "text",
-                  "id": "ath-d-mark-working-cap",
-                  "name": "Ring N working",
-                  "content": "Ring N working",
-                  "fill": "$--muted-foreground",
-                  "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-micro",
-                  "fontWeight": "600"
-                },
-                {
-                  "id": "ath-d-mark-working",
-                  "type": "ref",
-                  "ref": "ath-mark",
-                  "name": "Descendant mark",
-                  "descendants": {
-                    "ath-mark-bang": {
-                      "enabled": false
-                    },
-                    "ath-mark-dot": {
-                      "enabled": true
-                    },
-                    "ath-mark-n": {
-                      "content": "3",
-                      "fill": "$--agent-working"
-                    }
-                  }
                 }
               ],
               "layout": "vertical",

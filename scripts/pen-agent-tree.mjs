@@ -59,10 +59,9 @@ export function buildAgentTreeParts(tokens) {
     caption('ath-pr-n', '924', '$--subtle-foreground', {mono: true}),
   ]);
 
-  // Descendant mark: the turn mark and N raised, else the ring and N working, on a folded parent only (B17; status-marks B21).
+  // Descendant mark: the turn mark and N raised, on a folded parent only; working children are not counted (B17; status-marks D-24, B35).
   const mark = frame(AGENT_TREE_MASTERS.mark, 'Descendant mark', {reusable: true, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', width: 'fit_content'}, [
     markSlot('ath-mark-bang', 'turn'),
-    {...markSlot('ath-mark-dot', 'going'), enabled: false},
     caption('ath-mark-n', '2', '$--warning', {weight: '600', mono: true}),
   ]);
 
@@ -128,7 +127,6 @@ export function buildAgentTreeParts(tokens) {
     const compact = cell('좁은 변형 (번호 없음)', ref(id('pr-compact'), AGENT_TREE_MASTERS.prIcon, 'PR mark', {}, {'ath-pr-g': {icon: 'git-pull-request', fill: '$--pr-mergeable'}, 'ath-pr-n': {enabled: false}}));
     const marks = [
       cell('! N raised', ref(id('mark-raised'), AGENT_TREE_MASTERS.mark, 'Descendant mark')),
-      cell('Ring N working', ref(id('mark-working'), AGENT_TREE_MASTERS.mark, 'Descendant mark', {}, {'ath-mark-bang': {enabled: false}, 'ath-mark-dot': {enabled: true}, 'ath-mark-n': {content: '3', fill: '$--agent-working'}})),
     ];
     const buttons = [
       cell('Tree button rest', ref(id('tb-rest'), AGENT_TREE_MASTERS.treeButton, 'Tree button')),

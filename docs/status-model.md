@@ -715,7 +715,7 @@ Which pull requests are listed: the operator's own, those a session of theirs ma
 "Mine" is the pull request's `author.login` equal to the signed-in login.
 A pull request is left out only when every judgment says it is not the operator's: while the login is unknown, every open or merged pull request may be theirs and is listed, and while a review ask is unknown, the open pull request it concerns is listed (issue #1189).
 A pull request's agents are the live agents whose session the link record names as having made or worked on its branch; sharing a folder alone ties nothing.
-An agent that finished and is not yet looked at moves no group, because the unread check is the 태스크 list's (끝남).
+An agent that finished and is not yet looked at moves no group, because the unread check is the 태스크 list's (읽을 것).
 
 Each pull request stops at the first slot that fits:
 
@@ -1010,7 +1010,7 @@ The core never renames the Herdr tab for this; the Recent Panels label is projec
 ### A device's tasks
 
 A device's tasks (PRD overview-device-tasks D-05) group a root and every descendant on any device into one task, derived by `agent_state/tally/tasks.rs` from the same agent rows and lineage the sidebar draws; the sidebar's 태스크 list draws them (PRD sidebar-task-lens D-20), the Overview's Projects counts them, and the shell adds no state of its own.
-A task's state is its root's, in this order: blocked when the root's demand is an error, Needs You and Done from the root's group, working from its activity, waiting while it waits on its descendants, and otherwise resting, or cleanup when every pull request merged and a linked worktree is still on disk.
+A task's state is its root's, in this order: blocked when the root's demand is an error, Needs You and Done from the root's group, working from its activity, waiting while it waits on proven work (its descendants, a background task, a reply or a pull request's checks), and otherwise resting, or cleanup when every pull request merged and a linked worktree is still on disk.
 A resolved root rests whatever its group was, and a descendant's state moves only its own row, as everywhere else: a child's ask reaches the card through the root's escalation ([Delegated escalation](#delegated-escalation)), never as a second state.
 A project's Needs You counts the tasks whose root asks for the operator, blocked ones included and resolved ones not, and work another device's root delegated here is counted on the root's device alone.
 A checkout names its issue or memo by the resolution below, and a started item rides its task instead of standing in the backlog.

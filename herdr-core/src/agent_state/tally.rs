@@ -365,7 +365,7 @@ pub mod phone {
         /// The pane id of this agent's lineage root on the same device; itself for a root.
         pub root_pane_id: String,
         pub group: String,
-        /// The row's mark (`RowMark`): `turn`, `going`, `done`, `unread`, `quiet` or `asleep`.
+        /// The row's mark (`RowMark`): `turn`, `going`, `waiting`, `done`, `unread`, `quiet` or `asleep`.
         pub mark: String,
         /// What an in-progress row waits on (`AgentWait`), which its line
         /// words when it has no sentence.

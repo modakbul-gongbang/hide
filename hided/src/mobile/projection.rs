@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn phone_rows_take_the_core_mark_and_line() {
         let input = json!({"navigator": {"agents": [
-            agent("root", "working", json!({"wait": "children", "mark": "going",
+            agent("root", "working", json!({"wait": "children", "mark": "waiting",
                 "descendant_counts": {"working": 2},
                 "state": {"line": line("", "waiting", "subtle")}})),
             agent("read-question", "seen", json!({"demand": "question", "mark": "turn",
@@ -247,7 +247,7 @@ mod tests {
                     "unread",
                     Some(("deploy left", "news", "news"))
                 ),
-                ("root", "root", "going", Some(("", "waiting", "subtle"))),
+                ("root", "root", "waiting", Some(("", "waiting", "subtle"))),
                 (
                     "read-question",
                     "read-question",
