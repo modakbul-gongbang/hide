@@ -74,8 +74,9 @@ fn main() -> ExitCode {
     };
     match arguments.first().map(String::as_str) {
         Some("hook") => {
-            // Grok and Cursor have no Memory or letters: their hooks carry the
-            // spawn guard, the subagent count and Cursor's session guidance
+            // Grok and Cursor have no Memory and no bell: their hooks carry the
+            // spawn guard, the subagent count, Cursor's session guidance and,
+            // at a tool call, the letters due while the agent works
             // (`hide_agent_hooks::guidance`, `hide_agent_hooks::basic`).
             if let Some(agent) = argument_value("--runtime", &arguments)
                 .and_then(|value| GuidanceAgent::from_id(&value))
@@ -160,7 +161,7 @@ fn usage() -> String {
      hide-agent-hooks hook --runtime <grok|cursor> \
      --event <SessionStart|PreToolUse|SubagentStart|SubagentStop|Stop> \
      [--source <install marker>]\n       \
-     hide-agent-hooks <opencode|pi|omp> <start|prompt|confirm|tool|subagents>\n       \
+     hide-agent-hooks <opencode|pi|omp> <start|prompt|confirm|tool|letters|subagents>\n       \
      hide-agent-hooks doctor [--json]"
         .to_owned()
 }

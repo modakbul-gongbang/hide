@@ -1,4 +1,4 @@
-// hide-extension@5 sha256=00e152ceee675f56838e33dfb0bf54c3bfccd685220af16a4b0633bce5d9cbfd
+// hide-extension@6 sha256=0f956b1798028342921fa0554d35be8669483ea1a2f253a077c68f1f850243b5
 // Hide's extension for Pi and omp, written by Hide's install kit (hide-agent-hooks).
 // An edit is kept and shown as edited in Settings; Reinstall puts Hide's back.
 // Outside a Herdr pane, in an agent started from another Pi's or omp's shell, or when its helper is gone, it does
@@ -13,7 +13,7 @@ import path from "node:path";
 
 const HELPER = "/kit path/it's/hide-agent-hooks";
 const AGENT = "omp";
-const VERSION = 5;
+const VERSION = 6;
 
 // The prompt budget is Claude Code's prompt hook's; the tool budget is the spawn guard's. Both hosts wait for
 // a handler far longer (omp gives up at 30 s and then blocks the tool), so these are the limits.
@@ -373,8 +373,9 @@ function holdPending(state, key, entry) {
 
 /**
  * The letters due while the pane's agent works, added to the tool's result so the agent reads them before its next
- * step (PRD letters-to-busy-agents D-02); confirmed once the host wrote the tool result message. Only the pane's own
- * agent asks, at most once per interval.
+ * step (PRD letters-to-busy-agents D-02); confirmed as a prompt's letters are, once the host has written the reply
+ * that follows (`message_end` can still replace the tool result itself). Only the pane's own agent asks, at most once
+ * per interval, and a letter handed over and not yet confirmed is not added again.
  */
 async function onToolResult(state, event, ctx) {
   if (!root(ctx) || typeof event?.toolCallId !== "string") return undefined;
@@ -386,6 +387,7 @@ async function onToolResult(state, event, ctx) {
   const answer = await helper(state, "letters", { session_id: session, native_session: nativeSession(ctx) }, LETTERS_BUDGET_MS);
   if (typeof answer?.context !== "string" || !answer.context) return undefined;
   const letters = Array.isArray(answer.letters) ? answer.letters.filter((letter) => typeof letter === "string") : [];
+  if (letters.some((letter) => handed(state, letter))) return undefined;
   if (letters.length > 0) holdPending(state, event.toolCallId, { session, letters });
   const text = `<system-reminder>\n${answer.context.replace(REMINDER_TAG, "<\u200b$1")}\n</system-reminder>`;
   const content = [...(Array.isArray(event.content) ? event.content : []), { type: "text", text }];
@@ -409,12 +411,12 @@ function onMessageEnd(state, event, ctx) {
     return;
   }
   if (message?.role === "toolResult") {
-    // The host wrote the tool result carrying the letters: the agent reads them with its next step.
+    // The host finished the tool result carrying the letters; the reply after it proves it was kept and read.
     const id = message.toolCallId;
     const pending = typeof id === "string" ? state.pending.get(id) : null;
     if (pending) {
       state.pending.delete(id);
-      confirmWritten(state, [pending]);
+      state.written.push(pending);
     }
     return;
   }
@@ -423,6 +425,15 @@ function onMessageEnd(state, event, ctx) {
   const written = state.written;
   state.written = [];
   confirmWritten(state, written);
+}
+
+/** Whether `letter` was handed over by this session and its receipt is still open or already given. */
+function handed(state, letter) {
+  if (state.confirmed.has(letter) || state.confirming.has(letter)) return true;
+  for (const entry of [...state.pending.values(), ...state.written]) {
+    if (entry.letters.includes(letter)) return true;
+  }
+  return false;
 }
 
 /** Confirms the letters of the written messages once each; a letter Hide did not take rides the next ask again. */

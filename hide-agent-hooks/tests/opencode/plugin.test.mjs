@@ -194,11 +194,15 @@ test("a tool result while the root session works carries the letters due, confir
   assert.equal(result.output.match(/<\s*\/?\s*system-reminder/gi).length, 2, result.output);
   assert.deepEqual(result, { title: "cat", output: result.output, metadata: {} });
   // Nothing is confirmed before OpenCode stored the completed tool part.
-  await hooks.event({ event: { type: "message.part.updated", properties: { sessionID: "ses_root", part: { type: "tool", callID: "call_1", state: { status: "running" } } } } });
-  await hooks.event({ event: { type: "message.part.updated", properties: { sessionID: "ses_root", part: { type: "tool", callID: "call_other", state: { status: "completed" } } } } });
+  const part = (sessionID, callID, state) => ({ event: { type: "message.part.updated", properties: { sessionID, part: { type: "tool", sessionID, callID, state } } } });
+  await hooks.event(part("ses_root", "call_1", { status: "running" }));
+  await hooks.event(part("ses_root", "call_other", { status: "completed", output: result.output }));
+  // A child session's call with the same id, and a stored output another plugin stripped the letters from, confirm nothing.
+  await hooks.event(part("ses_child", "call_1", { status: "completed", output: result.output }));
+  await hooks.event(part("ses_root", "call_1", { status: "completed", output: "RESULT" }));
   await sleep(100);
   assert.equal(calls().filter((c) => c.operation === "confirm").length, 0);
-  await hooks.event({ event: { type: "message.part.updated", properties: { sessionID: "ses_root", part: { type: "tool", callID: "call_1", state: { status: "completed" } } } } });
+  await hooks.event(part("ses_root", "call_1", { status: "completed", output: result.output }));
   const [confirm] = await until("confirm");
   assert.deepEqual(confirm.input, { session_id: "ses_root", letters: ["letter-5"] });
 

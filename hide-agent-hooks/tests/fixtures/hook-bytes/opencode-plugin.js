@@ -1,4 +1,4 @@
-// hide-opencode-plugin@3 sha256=cad8d02055ffed7f06bef7ee653f914b7c15303b3af28ceb2cb8b4b89fea2071
+// hide-opencode-plugin@4 sha256=7c5a3b3b2cf23df40273a6cce81566ec9f26fdae40498427ce6f3b51a46730dd
 // Hide's OpenCode plugin, written by Hide's install kit (hide-agent-hooks).
 // An edit is kept and shown as edited in Settings; Reinstall puts Hide's back.
 // Outside a Herdr pane Hide manages, or when its helper is gone, it does nothing.
@@ -331,13 +331,29 @@ async function onEvent(state, client, event) {
     const part = properties.part;
     // Hide's own text part is written once; a tool part is updated through its run and carries the letters its
     // result got once it is completed.
-    const key = part?.type === "tool" ? (part.state?.status === "completed" ? part.callID : undefined) : part?.id;
+    const key = part?.type === "tool" ? (part.state?.status === "completed" ? toolKey(part.sessionID, part.callID) : undefined) : part?.id;
     const pending = key && state.pending.get(key);
     if (!pending) return;
+    // A tool part is Hide's letters' only when the stored output still carries them: a later plugin may have
+    // rewritten the result, and a child session's call may share the id.
+    if (pending.text && !(typeof part.state?.output === "string" && part.state.output.includes(pending.text))) return;
     state.pending.delete(key);
     // OpenCode wrote the prompt or the tool result carrying the letters: only now are they received.
     void helper(state, "confirm", { session_id: pending.session, letters: pending.letters }, CONFIRM_BUDGET_MS);
   }
+}
+
+/** The pending key of a tool part: its session and call, since a child session may reuse a call id. */
+function toolKey(sessionID, callID) {
+  return typeof sessionID === "string" && typeof callID === "string" ? `${sessionID}\u0000${callID}` : undefined;
+}
+
+/** Whether `letter` was handed over by this plugin and its receipt is still open. */
+function handed(state, letter) {
+  for (const entry of state.pending.values()) {
+    if (entry.letters.includes(letter)) return true;
+  }
+  return false;
 }
 
 /** Forgets letters whose write never came, and makes room for `key`; a letter left out stays pending in Hide. */
@@ -352,8 +368,9 @@ function holdPending(state, key, entry) {
 
 /**
  * The letters due while the pane's agent works, written after the tool's result so the agent reads them before its
- * next step (PRD letters-to-busy-agents D-02); confirmed once OpenCode stored the completed tool part. Only the
- * pane's root session asks, at most once per interval.
+ * next step (PRD letters-to-busy-agents D-02); confirmed once OpenCode stored the completed tool part of that session
+ * with the letters still in its output. Only the pane's root session asks, at most once per interval, and a letter
+ * handed over and not yet confirmed is not written again.
  */
 async function onToolResult(state, sessionID, input, output) {
   if (!sessionID || sessionID !== state.root || typeof input?.callID !== "string") return;
@@ -362,10 +379,12 @@ async function onToolResult(state, sessionID, input, output) {
   state.askedAt = now;
   const answer = await helper(state, "letters", { session_id: sessionID }, LETTERS_BUDGET_MS);
   if (typeof answer?.context !== "string" || !answer.context) return;
+  const letters = Array.isArray(answer.letters) ? answer.letters.filter((letter) => typeof letter === "string") : [];
+  // A letter handed over at an earlier result and not yet confirmed is not written twice.
+  if (letters.some((letter) => handed(state, letter))) return;
   const text = `<system-reminder>\n${answer.context.replace(REMINDER_TAG, "<\u200b$1")}\n</system-reminder>`;
   output.output = typeof output.output === "string" && output.output ? `${output.output}\n\n${text}` : text;
-  const letters = Array.isArray(answer.letters) ? answer.letters.filter((letter) => typeof letter === "string") : [];
-  if (letters.length > 0) holdPending(state, input.callID, { session: sessionID, letters });
+  if (letters.length > 0) holdPending(state, toolKey(sessionID, input.callID), { session: sessionID, letters, text });
 }
 
 async function onPrompt(state, client, directory, input, output) {

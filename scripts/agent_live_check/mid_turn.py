@@ -29,7 +29,7 @@ from .conversation import messages
 from .integration import prepare as prepare_integration, project_args
 from .overlay import prepare as prepare_overlay
 from .processes import COMMAND_SECONDS, OwnedProcesses, ProcessError
-from .protection import ProtectionError, beneath, private_directory, write_private
+from .protection import ConfigGuard, ProtectionError, beneath, private_directory, write_private
 from .runtime import Runtime, clean_env
 from .sandbox import WriteSandbox
 from .scenes import transcript
@@ -186,9 +186,10 @@ def allow_hook_route(sandbox, runtime):
     sandbox.rules.extend([f"(allow file-read* (literal {quote(record)}))",
                           f"(allow file-read-metadata (literal {quote(runtime.state)}) (literal {quote(record.parent)}))"])
     # The sandbox matches a resolved path, and /tmp is a link to /private/tmp.
-    for folder in dict.fromkeys((socket.parent, socket.parent.resolve())):
-        sandbox.rules.extend([f"(allow file-read* (subpath {quote(folder)}))",
-                              f"(allow network-outbound (remote unix-socket (subpath {quote(folder)})))"])
+    for path in dict.fromkeys((socket, socket.resolve())):
+        sandbox.rules.extend([f"(allow file-read-metadata (literal {quote(path.parent)}))",
+                              f"(allow file-read* (literal {quote(path)}))",
+                              f"(allow network-outbound (remote unix-socket (literal {quote(path)})))"])
     replacement = sandbox.profile.with_suffix(".next")
     write_private(replacement, ("\n".join(sandbox.rules) + "\n").encode())
     replacement.replace(sandbox.profile)
@@ -228,6 +229,8 @@ class Probe:
         self.scene_overlay = {**self.overlay, "settings": list(self.overlay["settings"])}
         if recipe["kind"] in ("pi", "omp"):
             self.scene_overlay["session_root"] = history
+        # A second probe of the same agent reuses the checkout; the scene's MCP file is written again.
+        (self.cwd / "live-mcp-rest.json").unlink(missing_ok=True)
         extra = configure(runtime, self.launch, recipe, "rest", self.cwd) + project_args(self.integration, recipe, self.cwd)
         helper = helper_wrapper(runtime, self.calls)
         self.record["hook_files"] = [str(p) for p in install_hooks(runtime, recipe, self.integration, self.overlay, helper, self.cwd)]
@@ -269,6 +272,10 @@ class Probe:
                              and not a.get("launch_pending") and a, 60)
         if agent.get("agent") != recipe["kind"]:
             raise ProcessError("agent_not_running:" + str(agent.get("agent")))
+        # Cursor's TUI takes typed input only once Herdr reports it interactive_ready. The
+        # native session is read after the first prompt for some agents (Codex makes its
+        # session file then), so the letter waits for it below rather than the prompt.
+        agent = runtime.wait(lambda: (a := runtime.agent(self.pane)) and a.get("interactive_ready", True) and a, 60)
         self.session = agent.get("agent_session")
         self.record["herdr_session"] = self.session
         self.file = transcript(self.agent_home, recipe["kind"], self.session, self.scene_overlay.get("session_root"))
@@ -277,6 +284,13 @@ class Probe:
         if recipe["kind"] != "grok":
             runtime.send(self.pane, self.prompt)
         self.record["prompt_sent_unix"] = time.time()
+        if recipe["kind"] == "cursor":
+            # Cursor 2026.10.14 showed the typed line as an unsent draft once; one Enter submits it.
+            try:
+                runtime.wait(lambda: (runtime.agent(self.pane) or {}).get("agent_status") == "working", 15)
+            except ProcessError:
+                runtime.command(["pane", "send-keys", self.pane, "enter"])
+                self.record["cursor_enter_resent"] = True
 
     def screen(self):
         return self.runtime.command(["pane", "read", self.pane, "--source", "recent-unwrapped", "--lines", "300"])[1]
@@ -478,14 +492,19 @@ def main(argv=None):
     # Seven agents with a five-minute wait each outlast the bell check's half hour.
     owner.deadline = time.monotonic() + 3 * 3600
     report = {"format": 1, "agents": [], "failures": []}
-    runtime = None
+    runtime = guard = None
     for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(signum, lambda *_: owner.cancelled.set())
     try:
         runtime = Runtime(checkout, run, operator, owner, herdr_bin=args.herdr_bin or default_herdr(checkout, operator))
         chosen = [available[key] for key in selected]
         known = list(dict.fromkeys(operator / rel for r in chosen for rel in r["known"]))
-        shared = {operator / rel for r in chosen for rel in r.get("shared", {})}
+        roots = list(dict.fromkeys(operator / rel for r in chosen for rel in r["roots"]))
+        # Shared account files (Claude's .claude.json) are observed as the bell check observes
+        # them: the sandbox protects the declared files, and the guard reports any change.
+        shared_formats = {operator / rel: fmt for r in chosen for rel, fmt in r.get("shared", {}).items()}
+        shared = set(shared_formats)
+        guard = ConfigGuard(run / "configuration-backup", known, roots, shared=shared_formats)
         executables = [runtime.herdr_bin, Path(sys.executable)]
         executables.extend(Path(v) for r in chosen if (v := shutil.which(r["executable"])))
         sandbox = WriteSandbox(run, runtime.short, operator, runtime.state, checkout=checkout,
@@ -545,6 +564,10 @@ def main(argv=None):
                     # The first tool call has started before the letter goes, so the letter is
                     # handed over at a later tool event, never read with the prompt.
                     runtime.wait(lambda: True, 3)
+                    probe.session = runtime.wait(lambda: (runtime.agent(probe.pane) or {}).get("agent_session"), 60)
+                    row["herdr_session"] = probe.session
+                    if probe.file is None:
+                        probe.file = transcript(probe.agent_home, recipe["kind"], probe.session, probe.scene_overlay.get("session_root"))
                     marker = "LIVE_MAIL_" + secrets.token_hex(6)
                     letter = send_letter(runtime, probe.pane, "mid-turn-" + secrets.token_hex(4),
                                          marker + " please repeat this marker\nSent while you work; reply with the marker word.", now)
@@ -578,6 +601,11 @@ def main(argv=None):
                 owner.close()
             except Exception:
                 pass
+    if guard is not None:
+        try:
+            report["configuration"] = guard.finish()
+        except Exception as error:
+            report["configuration"] = {"failures": [{"reason": str(error)}]}
     write_private(run / "report.json", json.dumps(report, indent=2, ensure_ascii=False, default=str).encode())
     print(run / "report.json")
     return 0 if not report["failures"] else 1

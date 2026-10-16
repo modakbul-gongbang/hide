@@ -192,7 +192,7 @@ Regression owners are `hide-agent-hooks/tests/it/spawn_guard.rs` (nothing spawne
 ## Letters at a tool event
 
 While an agent works its letters reach it at a tool event ([delivery.md](delivery.md#letters-while-the-agent-works)), which makes a tool call a high-frequency path for five agents.
-Per tool result, OpenCode's plugin and the Pi and omp extension start one helper (`hide-agent-hooks <agent> letters`), which starts one sibling `hide inbox --hook --session <id> --tool`, a credential bootstrap and one typed hook request to the daemon; the core answers it with a read of the ledger under the runtime lock and no I/O.
+Per tool result, OpenCode's plugin and the Pi and omp extension start one helper (`hide-agent-hooks <agent> letters`), which starts one sibling `hide inbox --hook --session <id> --tool`, a credential bootstrap and one typed hook request to the daemon; the core hands it to the delivery worker like a prompt pull, which reads the ledger it holds and renders at most five letters, with no subprocess and no network, and writes the ledger only when the pull's maintenance changed a letter.
 The scripts bound it: only the pane's root session asks, at most once every ten seconds (`LETTERS_ASK_INTERVAL_MS`), with a 1.5 second budget past which the result goes on unchanged, inside the cap of eight running helpers; a burst of tool calls therefore pays one helper start, and the rest pay a clock read.
 Grok's and Cursor's hook already runs per matched tool call for the guards; a call that runs adds the same `hide inbox` call inside the guard's 2.5 second budget, and a refused call adds nothing.
 Claude Code and Codex pay nothing at a tool: their letters are typed by the doorbell, on its own thread, as at rest.
