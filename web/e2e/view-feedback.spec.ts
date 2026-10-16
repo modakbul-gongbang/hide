@@ -32,7 +32,7 @@ test("an agent's View wears its mark, and the operator's line comment reaches th
   let daemon: Daemon | null = null;
   try {
     const fixture = path.join(herdr.root, "fixture");
-    fs.writeFileSync(path.join(fixture, "notes.md"), ["# Notes", "", "The first line.", "The second line.", "The end."].join("\n") + "\n");
+    fs.writeFileSync(path.join(fixture, "notes.md"), ["# Notes", "", "The first line.", "The second line, long enough to wrap onto more rows of the View than one. ".repeat(8).trim(), "The end."].join("\n") + "\n");
     const pane = herdr.panes[0]!;
     daemon = await startHided(herdr, "view-feedback");
     const agent = await agentPane(herdr, daemon.stateDir, pane);
@@ -54,6 +54,16 @@ test("an agent's View wears its mark, and the operator's line comment reaches th
     await expect(mark).toHaveAttribute("aria-label", /Claude Code/);
     // B8: the agent's pane counts the View it opened.
     await expect(page.locator(`[data-pane-views="${pane}"]`)).toHaveText(/1 view/);
+
+    // B12: on a wrapped line the `+` sits beside the line number, on the line's first row, not halfway down.
+    const numberOf = (line: number) => page.locator(".cm-lineNumbers .cm-gutterElement", { hasText: new RegExp(`^${line}$`) });
+    const oneRow = (await numberOf(3).boundingBox())!;
+    const wrapped = (await numberOf(4).boundingBox())!;
+    expect(wrapped.height, "line 4 must wrap for this check").toBeGreaterThan(oneRow.height * 1.5);
+    await numberOf(4).hover();
+    const plus = (await page.locator('[data-view-comment-add="4"]').boundingBox())!;
+    expect(plus.y).toBeGreaterThanOrEqual(wrapped.y);
+    expect(plus.y + plus.height).toBeLessThanOrEqual(wrapped.y + oneRow.height);
 
     // B12, B14: a comment on line 3 shows under it, on the tab and on the line under the View.
     await expect(page.locator(".cm-content")).toContainText("The first line.");
