@@ -417,8 +417,7 @@ function RequestRow({ request }: { request: WorkRequest }) {
   return <div className="flex min-w-0 items-start gap-sm py-xxs" data-record-request="true"><time className="shrink-0 font-mono text-micro text-muted-foreground" dateTime={new Date(request.at_unix_ms).toISOString()}>{time}</time><span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]" title={request.text}>{request.text.split(/\r?\n/)[0]}</span></div>;
 }
 
-/** A child's mark and words when its pane is gone: by its last END, the mark and words a row with that end draws (status-marks D-23). */
-const END_MARK: Record<WorkEnd, RowMark> = { done: "done", working: "going", waiting: "waiting", question: "turn", blocked: "turn", unfinished: "unread" };
+/** A child's words when its pane is gone, by its last END; its mark is quiet, since no pane is left to work, answer or read (status-marks D-06, B24). */
 const END_STATUS: Record<WorkEnd, AgentStatusCode> = { done: "done", working: "working", waiting: "waiting", question: "question", blocked: "error", unfinished: "unfinished" };
 
 /**
@@ -442,7 +441,7 @@ function Children({ record, summaries, onOpen, actions }: { record: RecordValue;
       const title = recordTitle(child, summaries);
       const agent = agentProductName(child.session.agent);
       const state = live ? statusText(t, live.status_code) : child.state ? statusText(t, child.state as AgentStatusCode) : child.last_end ? statusText(t, END_STATUS[child.last_end]) : null;
-      const mark = live ? <StatusMark mark={live.mark} className={markTone(live)} data-agent-status-mark={live.mark} /> : <StatusMark mark={child.last_end ? END_MARK[child.last_end] : "quiet"} data-agent-status-mark={child.last_end ? END_MARK[child.last_end] : "quiet"} />;
+      const mark = live ? <StatusMark mark={live.mark} className={markTone(live)} data-agent-status-mark={live.mark} /> : <StatusMark mark="quiet" data-agent-status-mark="quiet" />;
       const branch = live ? branchChip(live) : child.cwd && child.cwd !== record.cwd ? folderName(child.cwd) : null;
       const device = child.session.device_id !== record.session.device_id ? machineName(rest?.navigator?.devices, child.session.device_id, t) : null;
       const below = recordTree(child).length - 1;
