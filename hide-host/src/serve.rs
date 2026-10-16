@@ -1120,6 +1120,12 @@ pub fn handle_with_progress(
         Call::AntigravityForkMark { source, cwd } => {
             let home = env.home("antigravity_fork_home_unavailable")?;
             let cwd = antigravity_fork_cwd(&cwd)?;
+            // A pane agy resumes in a folder it does not trust opens on its
+            // trust question, which Herdr reads as idle; `/fork` and Enter
+            // would answer it.
+            if !hide_ai::antigravity_trusts(Path::new(&home), &cwd) {
+                return Err(HostError::new(ErrorCode::Io, "antigravity_fork_untrusted"));
+            }
             let mark = hide_session::antigravity::fork_mark(Path::new(&home), &source, &cwd)
                 .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?;
             to_value(crate::protocol::AntigravityForkMark {
@@ -1147,7 +1153,7 @@ pub fn handle_with_progress(
             })?;
             let folder = folder.as_path();
             if trusted {
-                hide_agent_hooks::antigravity_trust::trust(home, folder)
+                hide_agent_hooks::antigravity_trust::trust_worktree(home, folder)
             } else {
                 hide_agent_hooks::antigravity_trust::forget(home, folder).map(drop)
             }

@@ -167,6 +167,41 @@ pub fn trust(home: &Path, folder: &Path) -> Result<(), InstallFailure> {
     written
 }
 
+/// [`trust`] for a worktree Hide made for an agy start, refused unless the
+/// folder is one: a directory with a `.git` entry, named without `.` or
+/// `..`, and neither the filesystem root, the home folder nor a folder above
+/// it. Trust makes agy load the folder's own hooks without asking, so a path
+/// that is not such a worktree is never trusted, whoever asks.
+pub fn trust_worktree(home: &Path, folder: &Path) -> Result<(), InstallFailure> {
+    let refuse = |detail: &str| InstallFailure::UnexpectedShape {
+        path: folder.display().to_string(),
+        detail: detail.to_owned(),
+    };
+    if folder.components().any(|part| {
+        matches!(
+            part,
+            std::path::Component::CurDir | std::path::Component::ParentDir
+        )
+    }) {
+        return Err(refuse(
+            "an agy worktree trust names its folder without . or ..",
+        ));
+    }
+    let canonical = hide_platform::fs::identity::canonical(folder)
+        .map_err(|_| refuse("an agy worktree trust names a folder that exists"))?;
+    if !canonical.is_dir() || std::fs::symlink_metadata(canonical.join(".git")).is_err() {
+        return Err(refuse("an agy worktree trust names a Git worktree"));
+    }
+    let account =
+        hide_platform::fs::identity::canonical(home).unwrap_or_else(|_| home.to_path_buf());
+    if canonical.parent().is_none() || account.starts_with(&canonical) {
+        return Err(refuse(
+            "an agy worktree trust never names the root, the home folder or a folder above it",
+        ));
+    }
+    trust(home, folder)
+}
+
 /// Makes Hide AI's tool-free folder for agy (`hide_ai::read_only_workspace`)
 /// with its refuse-every-tool hook file, and records agy's trust of it, which
 /// is what makes agy load that hook (PRD antigravity-first-class D-09). Done
@@ -366,5 +401,54 @@ mod tests {
         ));
         assert_eq!(std::fs::read_to_string(&settings).unwrap(), "{ not json");
         assert!(trust(home.path(), Path::new("relative")).is_err());
+    }
+
+    #[test]
+    fn only_a_git_worktree_below_home_is_trusted_as_a_worktree() {
+        let home = home();
+        let tree = home.path().join("repo-tree");
+        std::fs::create_dir_all(tree.join(".git")).unwrap();
+        let plain = home.path().join("downloads");
+        std::fs::create_dir_all(&plain).unwrap();
+
+        for refused in [
+            plain.clone(),
+            home.path().to_path_buf(),
+            home.path().parent().unwrap().to_path_buf(),
+            tree.join("..").join("repo-tree"),
+            home.path().join("missing"),
+        ] {
+            assert!(
+                trust_worktree(home.path(), &refused).is_err(),
+                "{}",
+                refused.display()
+            );
+        }
+        assert!(!settings_path(home.path()).exists());
+
+        trust_worktree(home.path(), &tree).unwrap();
+        assert_eq!(read_record(home.path()).unwrap(), [tree.to_str().unwrap()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_trust_whose_settings_write_fails_leaves_no_record_of_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = home();
+        let settings = settings_path(home.path());
+        std::fs::write(&settings, "{}").unwrap();
+        let folder_of_settings = settings.parent().unwrap();
+        std::fs::set_permissions(folder_of_settings, std::fs::Permissions::from_mode(0o555))
+            .unwrap();
+
+        let trusted = trust(home.path(), &folder("tree-1"));
+
+        std::fs::set_permissions(folder_of_settings, std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        assert!(trusted.is_err());
+        assert_eq!(std::fs::read_to_string(&settings).unwrap(), "{}");
+        assert!(read_record(home.path()).unwrap().is_empty());
+        // So a trust the operator gives agy later stays theirs.
+        assert_eq!(forget(home.path(), &folder("tree-1")).unwrap(), 0);
     }
 }

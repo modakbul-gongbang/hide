@@ -4727,9 +4727,20 @@ mod tests {
         // `moved`: the node's clock is behind the core's, so agy stamps the
         // fork's row in the past, and the source takes another step while
         // agy writes it; the fork is still the one row that was not there.
-        for case in ["success", "ambiguous", "moved"] {
+        // `untrusted`: agy does not trust the checkout, so the resumed pane
+        // would open on agy's trust question, which `/fork` must not answer.
+        for case in ["success", "ambiguous", "moved", "untrusted"] {
             let home = tempfile::tempdir().unwrap();
             let cwd = hide_platform::fs::identity::canonical(home.path()).unwrap();
+            if case != "untrusted" {
+                let settings = home.path().join(".gemini/antigravity-cli/settings.json");
+                std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+                std::fs::write(
+                    &settings,
+                    json!({ "trustedWorkspaces": [cwd.to_str().unwrap()] }).to_string(),
+                )
+                .unwrap();
+            }
             crate::fixture::antigravity_conversation(
                 home.path(),
                 &cwd,
@@ -4818,6 +4829,16 @@ mod tests {
                         "pane.send_input",
                         "pane.report_agent_session",
                     ]
+                }
+                "untrusted" => {
+                    assert!(
+                        result
+                            .as_ref()
+                            .unwrap_err()
+                            .contains("antigravity_fork_untrusted"),
+                        "{result:?}"
+                    );
+                    &["pane.get", "pane.get"]
                 }
                 _ => {
                     assert!(

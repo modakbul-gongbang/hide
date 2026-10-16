@@ -92,25 +92,52 @@ pub fn read_only_prepared(home: &Path) -> Result<PathBuf, &'static str> {
         Ok(_) => return Err("antigravity_read_only_hook_changed"),
         Err(_) => return Err("antigravity_read_only_missing"),
     }
+    let spelled = folder.to_str().ok_or("antigravity_read_only_missing")?;
+    let trusted = trusted_entries(home)
+        .map_err(|reason| reason.unwrap_or("antigravity_read_only_untrusted"))?
+        .iter()
+        .any(|entry| entry == spelled);
+    if trusted {
+        Ok(folder)
+    } else {
+        Err("antigravity_read_only_untrusted")
+    }
+}
+
+/// The folders agy's settings list as trusted; `Err(None)` when there are
+/// no settings to read, `Err(Some(reason))` when they are not agy's JSON.
+fn trusted_entries(home: &Path) -> Result<Vec<String>, Option<&'static str>> {
     let settings = std::fs::File::open(settings_path(home))
         .and_then(|file| {
             let mut bytes = Vec::new();
             std::io::Read::read_to_end(&mut std::io::Read::take(file, SETTINGS_LIMIT), &mut bytes)
                 .map(|_| bytes)
         })
-        .map_err(|_| "antigravity_read_only_untrusted")?;
+        .map_err(|_| None)?;
     let settings: Value =
-        serde_json::from_slice(&settings).map_err(|_| "antigravity_settings_unreadable")?;
-    let spelled = folder.to_str().ok_or("antigravity_read_only_missing")?;
-    let trusted = settings
+        serde_json::from_slice(&settings).map_err(|_| Some("antigravity_settings_unreadable"))?;
+    Ok(settings
         .get("trustedWorkspaces")
         .and_then(Value::as_array)
-        .is_some_and(|list| list.iter().any(|entry| entry.as_str() == Some(spelled)));
-    if trusted {
-        Ok(folder)
-    } else {
-        Err("antigravity_read_only_untrusted")
-    }
+        .map(|list| {
+            list.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// Whether agy trusts `folder` (canonical), so starting agy there asks no
+/// trust question: an entry of agy's list names the same folder, however it
+/// is spelled.
+pub fn trusts(home: &Path, folder: &Path) -> bool {
+    trusted_entries(home).is_ok_and(|entries| {
+        entries.iter().any(|entry| {
+            hide_platform::fs::identity::canonical(Path::new(entry))
+                .is_ok_and(|entry| entry == folder)
+        })
+    })
 }
 
 pub struct AntigravityCliBackend {

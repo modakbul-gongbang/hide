@@ -1291,6 +1291,10 @@ mod tests {
         // the native one.
         let tree = |name: &str| home.path().join(name);
         let wire = |name: &str| hide_platform::path::to_wire(&tree(name)).unwrap();
+        for name in ["tree-1", "tree-2"] {
+            std::fs::create_dir_all(tree(name).join(".git")).unwrap();
+        }
+        std::fs::create_dir_all(tree("plain")).unwrap();
         trust_worktree(Some(&node), "claude", &wire("tree-1")).unwrap();
         assert!(!settings.exists(), "Claude asks no folder trust");
         trust_worktree(Some(&node), "antigravity", &wire("tree-1")).unwrap();
@@ -1299,6 +1303,12 @@ mod tests {
         assert_eq!(
             written["trustedWorkspaces"],
             serde_json::json!([tree("tree-1").to_str().unwrap()])
+        );
+        // A folder that is not a worktree is never trusted.
+        assert!(
+            trust_worktree(Some(&node), "antigravity", &wire("plain"))
+                .unwrap_err()
+                .starts_with("agent_trust_failed")
         );
         // A trust that cannot be recorded stops the start with its reason.
         std::fs::write(&settings, "{ not json").unwrap();

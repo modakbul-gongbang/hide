@@ -749,12 +749,15 @@ fn spawn(
                 let snapshot =
                     crate::wire::snapshot_response(snapshot).map_err(|_| "snapshot_unavailable")?;
                 let label = format!("hide:{}", reserved.id);
-                // worktree.create names the workspace it makes after the spawn.
-                let made = existing != *repo
-                    && snapshot
+                let made = made_by_spawn(
+                    &existing,
+                    repo,
+                    snapshot
                         .workspaces
                         .iter()
-                        .any(|workspace| workspace.label == label);
+                        .map(|workspace| workspace.label.as_str()),
+                    &label,
+                );
                 let launch = crate::agent_start::shell_launch(node.as_deref(), &reserved.id);
                 // A tab under the spawn's label is one this spawn opened, with
                 // the launch when there is one; a workspace under it holds
@@ -1221,8 +1224,39 @@ pub(crate) fn link_fork(
     )
 }
 
+/// Whether the existing worktree `existing` of `repo` is one this spawn
+/// made in an attempt whose reply was lost: `worktree.create` names the
+/// workspace it makes `label` (`hide:<spawn id>`). The repository itself,
+/// or a worktree with no such workspace, is the operator's.
+fn made_by_spawn<'a>(
+    existing: &str,
+    repo: &str,
+    mut workspaces: impl Iterator<Item = &'a str>,
+    label: &str,
+) -> bool {
+    existing != repo && workspaces.any(|workspace| workspace == label)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_a_worktree_the_spawn_made_counts_as_made_by_it() {
+        let label = "hide:spawn-1";
+        assert!(made_by_spawn(
+            "/r/wt",
+            "/r",
+            ["main", label].into_iter(),
+            label
+        ));
+        assert!(!made_by_spawn(
+            "/r/wt",
+            "/r",
+            ["main", "hide:spawn-2"].into_iter(),
+            label
+        ));
+        assert!(!made_by_spawn("/r", "/r", [label].into_iter(), label));
+    }
+
     use super::*;
     use crate::fake_herdr::FakeHerdr;
     use std::sync::atomic::{AtomicUsize, Ordering};

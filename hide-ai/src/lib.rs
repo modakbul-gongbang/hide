@@ -26,7 +26,7 @@ mod usage_limit;
 
 pub use antigravity::{
     AntigravityCliBackend, READ_ONLY_HOOKS, read_only_hooks_file, read_only_prepared,
-    read_only_workspace,
+    read_only_workspace, trusts as antigravity_trusts,
 };
 pub use claude::{ClaudeCliBackend, ClaudeConfig, USAGE_ENVIRONMENT, UsageError};
 pub use codex::{CodexAppServerBackend, CodexConfig};
