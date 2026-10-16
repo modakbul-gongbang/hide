@@ -1766,7 +1766,7 @@ function useAgentRowMenu(actions: Actions): AgentRowMenu {
     () => ({
       items: (agent) => {
         const state = useShellStore.getState();
-        const number = agentNumber(state, agent.pane_id, useUiStore.getState().raisedOpen);
+        const number = agentNumber(state, agent.pane_id, useUiStore.getState());
         const chord = number === null ? "" : commandLabel(`select_agent_${number}`, state.rest?.ui_state);
         return agentMenu(agent, chord, t);
       },

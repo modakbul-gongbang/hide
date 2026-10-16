@@ -6,8 +6,9 @@
 // pressed during the hold ends it, losing the window ends it, and a menu or
 // a sheet opening during it ends it; holding
 // ⌥ numbers the Agents rows without moving their time or fold slot, ⌥2
-// opens the second row, and in Projects a raised Needs You agent carries its
-// number once. A private Herdr server, hided and Electron app.
+// opens the second row, in Projects a raised Needs You agent carries its
+// number once, and on the sidebar's 태스크 list the same hold numbers the
+// task rows and ⌥n opens one. A private Herdr server, hided and Electron app.
 
 import { expect, type ElectronApplication, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
@@ -231,6 +232,37 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
     await page.keyboard.press("Alt+Digit3");
     await quietFor(page, 400, "the shortcut with no target sends nothing");
     expect(sent.get("focus_pane") ?? 0).toBe(opened + 1);
+
+    // PRD sidebar-task-lens: on the 태스크 list the hold numbers the task rows
+    // top to bottom, nothing on the rows moves, and ⌥n opens that task; the
+    // switch back returns the numbers to the Projects tree.
+    await page.locator('[data-sidebar-lens-option="tasks"]').click();
+    const taskRows = page.locator("[data-task-list] [data-task-row]");
+    await expect(taskRows).toHaveCount(2);
+    const taskKept = [taskRows.first(), taskRows.nth(1), taskRows.first().locator("[data-task-focus=\"row\"]")];
+    const tasksBefore = await boxes(taskKept);
+    await page.keyboard.down("Alt");
+    const taskCaps = page.locator("[data-task-list] [data-keycap]");
+    await expect(taskCaps).toHaveCount(2);
+    await expect(taskCaps).toHaveText(["1", "2"]);
+    expect(await boxes(taskKept)).toEqual(tasksBefore);
+    await capture(page, "digit-hints-tasks-dark", source);
+    await page.keyboard.up("Alt");
+    await expect(page.locator("[data-keycap]")).toHaveCount(0);
+    const firstTask = await taskRows.first().getAttribute("data-task-row");
+    const openedTask = sent.get("focus_pane") ?? 0;
+    await page.keyboard.press("Alt+Digit1");
+    await exactlyOnce(sent, "focus_pane", openedTask + 1, page);
+    await expect(page.locator(`[data-task-row="${firstTask}"][data-selected="true"]`)).toHaveCount(1);
+    await page.keyboard.press("Alt+Digit3");
+    await quietFor(page, 400, "the shortcut with no task sends nothing");
+    expect(sent.get("focus_pane") ?? 0).toBe(openedTask + 1);
+    await page.locator('[data-sidebar-lens-option="projects"]').click();
+    await expect(rows).toHaveCount(2);
+    // Back on Projects, ⌥2 is the tree's second row again.
+    await page.keyboard.press("Alt+Digit2");
+    await exactlyOnce(sent, "focus_pane", openedTask + 2, page);
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${secondPane}"] [aria-current="true"]`)).toHaveCount(1);
 
     // docs/status-model.md: a Needs You agent is raised above the Projects
     // tree and also stays in it; an ⌥ hold shows its number once, on the
