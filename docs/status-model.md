@@ -898,8 +898,9 @@ An ask band (the pane's own Approval or Answer, or a raised descendant's `Raised
 The duplicate `외 N건` is absent when the child trigger supplies raised-tree access, and remains as a fallback otherwise.
 Other bands carry the core reason, action and stable verb time.
 PR actions select the duty that produced the verb and retain the canonical URL, so equal PR numbers in different repositories cannot redirect the action.
-PR reason facts carry checks and review separately from label progress.
-The existing input does not supply an approval command or failed check names; the band explicitly says those details are unavailable rather than treating a generated sentence as that evidence.
+PR reason facts carry checks and review separately from label progress, and the band words only what its verb does not already say: a failed check and asked-for changes, so Review and Merge carry no reason.
+An Approval band carries no reason either: the core reads no approval command and a generated sentence is not one, so the band shows the ask's own default words.
+What Hide could not read, such as a failed check's name or an approval command, is not written on the band, since the operator cannot act on its absence (design principle #13).
 A failed exit is red with its real exit code, a normal termination is gray, and connection and sleep actions remain in their existing body surfaces.
 The band overlays the terminal so state changes never resize its PTY grid.
 The identity row reads the ancestor path, the status mark, the agent's logo, title, the letters-waiting pill from `row.letters_waiting`, the pane's own PR mark from `row.state.pr`, the Not connected chip and the existing controls; the ancestors' names drop first when narrow, leaving `›` and the accessible name.
