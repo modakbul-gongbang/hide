@@ -6473,6 +6473,21 @@ mod wire_enum_tests {
         assert_wire(&contract, "label_end", &ends);
         checked.insert("label_end");
 
+        use crate::links::ledger::ChildWork;
+        let children = [
+            ChildWork::Done,
+            ChildWork::Working,
+            ChildWork::Other,
+            ChildWork::Unjudged,
+        ];
+        for variant in children {
+            match variant {
+                ChildWork::Done | ChildWork::Working | ChildWork::Other | ChildWork::Unjudged => {}
+            }
+        }
+        assert_wire(&contract, "child_work", &children);
+        checked.insert("child_work");
+
         use hide_session::turns::UserTurnKind;
         let user_turns = [UserTurnKind::PlanApproval, UserTurnKind::Question];
         for variant in user_turns {

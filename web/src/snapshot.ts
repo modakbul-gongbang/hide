@@ -1857,7 +1857,7 @@ export type SessionRecord = {
   /** How its direct children stand; absent without children. */
   child_progress?: ChildProgress | null;
 };
-/** One direct child as its parent counts it: by its own tasks, or with none by its last END; `unjudged` has neither. */
+/** One direct child as its parent counts it (`contracts/snapshot-wire-enums.json`: `child_work`): by its own tasks, or with none by its last END; `unjudged` has neither. */
 export type ChildWork = "done" | "working" | "other" | "unjudged";
 /** One segment per direct child; `done` is null while any child is unjudged, never a false zero. */
 export type ChildProgress = { children: ChildWork[]; done: number | null };
