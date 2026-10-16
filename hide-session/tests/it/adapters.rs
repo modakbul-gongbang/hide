@@ -4345,10 +4345,11 @@ mod antigravity {
             let folder = self.home.path().join(".gemini/antigravity-cli");
             fs::create_dir_all(folder.join("conversations")).unwrap();
             fs::write(folder.join("conversations").join(format!("{id}.db")), b"").unwrap();
-            let uri = format!(
-                "file://{}",
-                self.cwd.display().to_string().replace(' ', "%20")
-            );
+            // agy's spelling: `file:///Users/me/repo`, or on Windows
+            // `file:///C:/Users/me/repo`.
+            let wire = hide_platform::path::to_wire(&self.cwd).unwrap();
+            let slash = if wire.starts_with('/') { "" } else { "/" };
+            let uri = format!("file://{slash}{}", wire.replace(' ', "%20"));
             rusqlite::Connection::open(folder.join("conversation_summaries.db"))
                 .unwrap()
                 .execute(

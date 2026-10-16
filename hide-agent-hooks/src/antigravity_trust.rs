@@ -268,6 +268,15 @@ fn forget_where(home: &Path, chosen: impl Fn(&str) -> bool) -> Result<usize, Ins
 mod tests {
     use super::*;
 
+    /// An absolute folder on this system: `/work/<name>`, or `C:\work\<name>`.
+    fn folder(name: &str) -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(format!(r"C:\work\{name}"))
+        } else {
+            PathBuf::from(format!("/work/{name}"))
+        }
+    }
+
     fn home() -> tempfile::TempDir {
         let home = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(home.path().join(".gemini/antigravity-cli")).unwrap();
@@ -278,19 +287,23 @@ mod tests {
     fn hide_takes_out_only_the_trust_it_added_and_keeps_the_rest_byte_for_byte() {
         let home = home();
         let settings = settings_path(home.path());
-        let original = "{\n  \"theme\": \"dark\",\n  \"trustedWorkspaces\": [\"/Users/me\"]\n}\n";
-        std::fs::write(&settings, original).unwrap();
-        trust(home.path(), Path::new("/work/tree-1")).unwrap();
-        trust(home.path(), Path::new("/work/tree-1")).unwrap();
-        trust(home.path(), Path::new("/Users/me")).unwrap();
+        let (mine, tree) = (folder("me"), folder("tree-1"));
+        let original = format!(
+            "{{\n  \"theme\": \"dark\",\n  \"trustedWorkspaces\": [{}]\n}}\n",
+            serde_json::to_string(mine.to_str().unwrap()).unwrap()
+        );
+        std::fs::write(&settings, &original).unwrap();
+        trust(home.path(), &tree).unwrap();
+        trust(home.path(), &tree).unwrap();
+        trust(home.path(), &mine).unwrap();
         let written: Value = serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
         assert_eq!(
             written[KEY],
-            serde_json::json!(["/Users/me", "/work/tree-1"])
+            serde_json::json!([mine.to_str().unwrap(), tree.to_str().unwrap()])
         );
         // The operator's own folder is never Hide's to take out.
-        forget(home.path(), Path::new("/Users/me")).unwrap();
-        forget(home.path(), Path::new("/work/tree-1")).unwrap();
+        forget(home.path(), &mine).unwrap();
+        forget(home.path(), &tree).unwrap();
         assert_eq!(std::fs::read_to_string(&settings).unwrap(), original);
     }
 
@@ -298,8 +311,8 @@ mod tests {
     fn switching_agy_off_takes_out_every_folder_hide_added() {
         let home = home();
         let settings = settings_path(home.path());
-        trust(home.path(), Path::new("/work/a")).unwrap();
-        trust(home.path(), Path::new("/work/b")).unwrap();
+        trust(home.path(), &folder("a")).unwrap();
+        trust(home.path(), &folder("b")).unwrap();
         assert_eq!(forget_all(home.path()).unwrap(), 2);
         let written: Value = serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
         assert_eq!(written[KEY], serde_json::json!([]));
@@ -309,7 +322,7 @@ mod tests {
     #[test]
     fn removing_where_hide_never_trusted_a_folder_writes_nothing() {
         let home = home();
-        assert_eq!(forget(home.path(), Path::new("/work/a")).unwrap(), 0);
+        assert_eq!(forget(home.path(), &folder("a")).unwrap(), 0);
         assert_eq!(forget_all(home.path()).unwrap(), 0);
         assert!(!home.path().join(".hide").exists());
         assert!(!settings_path(home.path()).exists());
@@ -338,7 +351,7 @@ mod tests {
         let settings = settings_path(home.path());
         std::fs::write(&settings, "{ not json").unwrap();
         assert!(matches!(
-            trust(home.path(), Path::new("/work/a")),
+            trust(home.path(), &folder("a")),
             Err(InstallFailure::Unparsable { .. })
         ));
         assert_eq!(std::fs::read_to_string(&settings).unwrap(), "{ not json");

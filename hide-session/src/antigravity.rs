@@ -413,10 +413,20 @@ mod tests {
 
     #[test]
     fn a_workspace_uri_is_its_folder_on_this_machine() {
+        #[cfg(not(windows))]
         assert_eq!(
             workspace(r#"["file:///Users/me/my%20repo"]"#),
             Some(PathBuf::from("/Users/me/my repo"))
         );
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                workspace(r#"["file:///C:/Users/me/my%20repo"]"#),
+                Some(PathBuf::from(r"C:\Users\me\my repo"))
+            );
+            // A folder with no drive names no folder on Windows.
+            assert_eq!(workspace(r#"["file:///Users/me/my%20repo"]"#), None);
+        }
         assert_eq!(workspace("[]"), None);
         assert_eq!(workspace(r#"["https://example.com/x"]"#), None);
     }
