@@ -398,13 +398,10 @@ pub(crate) fn background_left(agent: &SidebarAgentSnapshot) -> u32 {
 }
 
 /// Whether the label read the turn's end as finished, before any wait is
-/// laid: `stop_verdict` reads the same end once the row is known to wait on
-/// nothing.
+/// laid: the same reading `stop_verdict` makes once the row is known to wait
+/// on nothing.
 fn turn_read_finished(agent: &SidebarAgentSnapshot) -> bool {
-    agent
-        .row_facts
-        .as_ref()
-        .is_some_and(|facts| facts.end == Some(LabelEnd::Done) && !facts.wake_vanished)
+    agent.row_facts.as_ref().and_then(verdict_of) == Some(StopVerdict::Finished)
 }
 
 /// Whether the row moves its own work on: running with nothing asked of
@@ -467,7 +464,11 @@ pub(crate) fn stop_verdict(agent: &SidebarAgentSnapshot) -> Option<StopVerdict> 
     if demand != AgentDemand::None || activity != AgentActivity::Stopped || agent.wait.is_some() {
         return None;
     }
-    let facts = agent.row_facts.as_ref()?;
+    verdict_of(agent.row_facts.as_ref()?)
+}
+
+/// How the label read a turn's end, whatever the row now waits on.
+fn verdict_of(facts: &crate::request_view::RowFacts) -> Option<StopVerdict> {
     let end = facts.end?;
     if facts.wake_vanished {
         return Some(StopVerdict::Unfinished);

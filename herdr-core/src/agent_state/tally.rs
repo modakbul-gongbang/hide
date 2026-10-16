@@ -43,10 +43,19 @@ pub enum RowMark {
 }
 
 impl RowMark {
+    /// The row's mark: an agent asleep draws the moon unless the operator's
+    /// turn is on it, which outranks everything (D-10, D-21).
     pub(crate) fn of(agent: &SidebarAgentSnapshot) -> Self {
-        if agent.sleep.is_some() {
-            return Self::Asleep;
+        match Self::awake(agent) {
+            Self::Turn => Self::Turn,
+            _ if agent.sleep.is_some() => Self::Asleep,
+            mark => mark,
         }
+    }
+
+    /// The mark the row would draw awake, which a sleeping row keeps for its
+    /// place in a tree and its class in a close list.
+    pub(crate) fn awake(agent: &SidebarAgentSnapshot) -> Self {
         let ownership = ownership_of(agent);
         let (demand, activity, _) = axes_of(agent);
         // The group already holds every call on the operator: an own unread
@@ -499,9 +508,23 @@ pub mod phone {
         value.get(field).and_then(Value::as_str).unwrap_or("")
     }
 
-    /// The desktop sidebar's second-line rule (`sidebarLine`): the core's
-    /// line, except a quiet sentence, which no row draws at rest.
+    /// The desktop sidebar's second-line rule (`sidebarLine`): a sleeping
+    /// row has none, a waking, failed or unknown one says its state
+    /// (status-marks B16, B31), else the core's line, except a quiet
+    /// sentence, which no row draws at rest.
     fn line(agent: &Value) -> Option<Line> {
+        match str_of(agent, "status_code") {
+            "sleeping" => return None,
+            "waking" | "sleep_failed" | "unknown" => {
+                return Some(Line {
+                    text: String::new(),
+                    mode: "kept".to_owned(),
+                    tone: "subtle",
+                    pull_request: None,
+                });
+            }
+            _ => {}
+        }
         let line = agent.pointer("/state/line")?;
         let mode = str_of(line, "mode");
         if mode.is_empty() || mode == "quiet" {

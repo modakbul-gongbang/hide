@@ -332,7 +332,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
             "waiting"
         } else if activity == "working" {
             "working"
-        } else if matches!(agent.mark, RowMark::Done | RowMark::Unread) {
+        } else if matches!(RowMark::awake(agent), RowMark::Done | RowMark::Unread) {
             "unread"
         } else {
             "quiet"
@@ -378,7 +378,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
             0
         } else if activity == "working" || waiting {
             1
-        } else if matches!(agent.mark, RowMark::Done | RowMark::Unread) {
+        } else if matches!(RowMark::awake(agent), RowMark::Done | RowMark::Unread) {
             2
         } else {
             3
@@ -1383,11 +1383,27 @@ mod row_tests {
             since_unix_ms: 1,
             progress: None,
         });
+        agent.progress = Some("파서를 나눴어요".into());
         derive_from_axes(&mut agent);
         assert_eq!(agent.mark, RowMark::Asleep);
         let mut counts = crate::model::MarkCountsSnapshot::default();
         agent.mark.count_into(&mut counts);
         assert_eq!(counts, crate::model::MarkCountsSnapshot::default());
+        // It keeps its place in a tree and its class in a close list.
+        assert_eq!((agent.state.tree_rank, agent.state.subtree), (2, "unread"));
+        // The phone draws no line under it, as the sidebar does not.
+        let rest = json!({"navigator": {"agents": [&agent], "workspaces": []}});
+        let phone = super::super::phone::project(&rest, "local");
+        let listed = phone
+            .agents()
+            .next()
+            .expect("the sleeping row on the phone");
+        assert_eq!(listed.line, None);
+
+        // The operator's turn outranks the moon (D-10).
+        agent.demand = "question".into();
+        derive_from_axes(&mut agent);
+        assert_eq!(agent.mark, RowMark::Turn);
     }
 
     /// D-07, D-08: a quiet row waiting on its pull request's checks is in

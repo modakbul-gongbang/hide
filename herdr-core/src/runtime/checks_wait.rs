@@ -58,7 +58,9 @@ impl Runtime {
                 row.checks_wait = None;
                 row.checks_ended = None;
             }
-            self.checks_memory.excluded.clear();
+            // The log-once memory of exclusions stays: a pull request whose
+            // checks run again is not logged again (the full pass bounds it
+            // to listed panes).
             self.checks_memory.projects.clear();
             return;
         }
