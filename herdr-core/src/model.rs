@@ -4926,7 +4926,7 @@ impl Serialize for PullRequestSnapshot {
         use serde::ser::SerializeStruct;
         // The head commit, the repository and the closed time stay off the
         // wire: only the core compares them. The created time is the card's
-        // `PR 열림` milestone (PRD pr-card-and-session-record-redesign B9).
+        // `PR 열림` milestone (PRD pr-card-and-session-record-redesign B5).
         let mut out = serializer.serialize_struct("PullRequestSnapshot", 15)?;
         out.serialize_field("closing_issues", &self.closing_issues)?;
         out.serialize_field("title", &self.title)?;

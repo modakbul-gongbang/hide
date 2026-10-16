@@ -505,19 +505,23 @@ function Body({ card, actions, projectId, number, scroller }: { card: PrCard | n
   const content = useRef<HTMLDivElement>(null);
   const [current, setCurrent] = useState(0);
   // The `##` headings the renderer drew, in the body's order: the chips are read
-  // from them, so a heading inside a comment or a quote never gets a chip (B12).
+  // from them, so a `##` the renderer did not draw, inside an HTML comment, gets
+  // no chip, and a heading with no text (an image alone) gets none either (B12).
   const headings = () => Array.from(content.current?.querySelectorAll<HTMLElement>("[data-markdown-heading='2']") ?? []);
-  const [outline, setOutline] = useState<string[]>([]);
-  useLayoutEffect(() => { setOutline(headings().map((heading) => heading.textContent ?? "")); }, [body]);
+  const [outline, setOutline] = useState<{ at: number; text: string }[]>([]);
+  useLayoutEffect(() => {
+    setOutline(headings().flatMap((heading, at) => { const text = heading.textContent?.trim() ?? ""; return text ? [{ at, text }] : []; }));
+  }, [body]);
   useLayoutEffect(() => {
     const root = scroller.current;
     if (!root || outline.length === 0) return;
     const chips = root.querySelector<HTMLElement>("[data-pr-card-outline]");
     const read = () => {
       const edge = (chips?.getBoundingClientRect().bottom ?? root.getBoundingClientRect().top) + 1;
+      const drawn = headings();
       let passed = 0;
-      headings().forEach((heading, index) => {
-        if (heading.getBoundingClientRect().top <= edge) passed = index;
+      outline.forEach((chip, index) => {
+        if ((drawn[chip.at]?.getBoundingClientRect().top ?? Infinity) <= edge) passed = index;
       });
       setCurrent(passed);
     };
@@ -526,7 +530,8 @@ function Body({ card, actions, projectId, number, scroller }: { card: PrCard | n
     return () => root.removeEventListener("scroll", read);
   }, [outline, scroller]);
   const jump = (index: number) => {
-    const heading = headings()[index];
+    const chip = outline[index];
+    const heading = chip ? headings()[chip.at] : undefined;
     const root = scroller.current;
     if (!heading || !root) return;
     const chips = root.querySelector<HTMLElement>("[data-pr-card-outline]");
@@ -539,9 +544,9 @@ function Body({ card, actions, projectId, number, scroller }: { card: PrCard | n
       <h3 className="flex min-h-(--size-control) items-center text-caption font-medium text-foreground">{t("work.card.body")}</h3>
       {outline.length > 0 ? (
         <nav aria-label={t("work.card.outline")} className="sticky top-none z-10 flex flex-wrap gap-xxs bg-background py-xs" data-pr-card-outline="true">
-          {outline.map((heading, index) => (
-            <button key={`${index}:${heading}`} type="button" aria-pressed={index === current} className={cn("rounded-full border border-border px-sm text-micro outline-none focus-visible:ring-1 focus-visible:ring-ring", index === current ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground")} onClick={() => jump(index)} data-pr-card-outline-chip={index}>
-              {heading}
+          {outline.map((chip, index) => (
+            <button key={`${chip.at}:${chip.text}`} type="button" aria-pressed={index === current} className={cn("rounded-full border border-border px-sm text-micro outline-none focus-visible:ring-1 focus-visible:ring-ring", index === current ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground")} onClick={() => jump(index)} data-pr-card-outline-chip={index}>
+              {chip.text}
             </button>
           ))}
         </nav>

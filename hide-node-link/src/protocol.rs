@@ -141,7 +141,12 @@ use crate::error::HostError;
 /// from the file manager (PRD prelaunch explorer-actions). A helper on 36
 /// would refuse them as unknown, so a paste or a drop on a device checkout
 /// could never land; it is refused at Hello and upgraded.
-pub const PROTOCOL_VERSION: u32 = 37;
+/// 38: the pull request card query also reads the head commit's checks and
+/// the reviews, for the card's timeline (PRD pr-card-and-session-record-
+/// redesign D-04). A helper on 37 allows only the query text it knows, so it
+/// would refuse every card read of a device project; it is refused at Hello
+/// and upgraded.
+pub const PROTOCOL_VERSION: u32 = 38;
 
 /// How a pane's shell is started so that it marks its first prompt
 /// ([`Call::ShellIntegration`]): the command the pane runs, the shell and

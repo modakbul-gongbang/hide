@@ -43,7 +43,6 @@ export function SessionRow({
   right?: ReactNode;
   /** What stands in the right slot while the pointer or the keyboard is on the row. */
   reveal?: ReactNode;
-  /** The second line: a caption, or a question in its colour. */
   /** The caption under the title; `wrap` lets a question wrap between words instead of truncating (B20). */
   line?: { text: string; className?: string; wrap?: boolean } | null;
   /** Under the second line, always shown. */
