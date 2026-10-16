@@ -11,7 +11,7 @@
 // Every name and number is invented example content; the copy is the
 // approved bundle's, word for word.
 
-import {BADGE_VARIANTS, BUTTON_VARIANTS, frame, icon, num, text} from './pen-system.mjs';
+import {BADGE_VARIANTS, BUTTON_VARIANTS, frame, icon, markSlot, num, text} from './pen-system.mjs';
 import {settingsParts} from './pen-screens-settings.mjs';
 
 export function coreMoveRows(tokens, root, {themedXref, screenIconButton, screenSwatch}, suffix) {
@@ -236,18 +236,20 @@ export function coreMoveRows(tokens, root, {themedXref, screenIconButton, screen
     ]);
   }
   const rail = (tiles, h) => f('rail', 'Device rail', {layout: 'vertical', width: RAIL_W, height: h, gap: XS, padding: [8, 0], fill: '$--sidebar', stroke: BORDER, strokeWidth: {right: 1}, strokeAlignment: 'inner'}, tiles);
-  const sideRow = (title, mark = '●', color = '$--agent-working') => f('sr', title, {width: SIDE_W, height: 28, gap: SM, padding: [0, MD], alignItems: 'center'}, [t(mark, {size: '$--text-caption', fill: color}), body(title, FG)]);
+  // A project row leads with its fold chevron; an agent row with its status mark (status-marks B26).
+  const sideRow = (title, mark = 'going') => f('sr', title, {width: SIDE_W, height: 28, gap: SM, padding: [0, MD], alignItems: 'center'}, [
+    ['▾', '▸'].includes(mark) ? t(mark, {size: '$--text-caption', fill: MUT}) : markSlot(uid('mark'), mark), body(title, FG)]);
   function sidebar(head, h) {
     return f('side', 'Sidebar', {layout: 'vertical', width: SIDE_W, height: h, fill: '$--sidebar', stroke: BORDER, strokeWidth: {right: 1}, strokeAlignment: 'inner'}, [
       f('hl', 'Header line', {width: SIDE_W, height: 36, gap: SM, padding: [0, XS, 0, MD], alignItems: 'center'}, [t(head, {size: '$--text-subhead', weight: '600'}), sp(), iconButton('folder-plus'), iconButton('search')]),
       f('ovw', 'Overview', {width: SIDE_W, height: 28, gap: SM, padding: [0, MD], alignItems: 'center'}, [glyph('layout-dashboard', {size: 16, fill: SUB}), body('Overview', FG), sp(), mono('⌘⇧O')]),
       f('sh', 'Section', {width: SIDE_W, height: 24, padding: [0, MD], alignItems: 'center'}, [cap11('Projects', MUT, {weight: '600'})]),
-      sideRow('herdr-ide', '▾', MUT), sideRow('core 옮기기 화면 디자인'), sideRow('5단계 구현과 검증', '○', MUT), sideRow('oh-my-principle', '▸', MUT),
+      sideRow('herdr-ide', '▾'), sideRow('core 옮기기 화면 디자인'), sideRow('5단계 구현과 검증', 'quiet'), sideRow('oh-my-principle', '▸'),
     ]);
   }
   const TERM = ['$ hide agent list', 'agent-2643  w9J:p5J  lead-core-terminal-prd   working', 'agent-3311  wJD:p1   observer                  idle', '$ █'];
   const pane = h => f('main', 'Main', {layout: 'vertical', width: 'fill_container', height: h, fill: '$--background'}, [
-    f('ph', 'Pane header', {width: 'fill_container', height: 32, gap: SM, padding: [0, MD], alignItems: 'center', stroke: BORDER, strokeWidth: {bottom: 1}, strokeAlignment: 'inner'}, [t('●', {size: '$--text-caption', fill: '$--agent-working'}), body('core 옮기기 화면 디자인', FG), sp(), mono('main')]),
+    f('ph', 'Pane header', {width: 'fill_container', height: 32, gap: SM, padding: [0, MD], alignItems: 'center', stroke: BORDER, strokeWidth: {bottom: 1}, strokeAlignment: 'inner'}, [markSlot(uid('mark'), 'going'), body('core 옮기기 화면 디자인', FG), sp(), mono('main')]),
     f('term', 'Terminal', {layout: 'vertical', width: 'fill_container', padding: MD, gap: XS}, TERM.map(l => mono(l, FG))),
   ]);
   // ConnectionBadge's strip (badge.tsx): full width, card fill, caption text; the

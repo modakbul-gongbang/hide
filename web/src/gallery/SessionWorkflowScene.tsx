@@ -6,7 +6,7 @@ import { AgentSessions } from "../AgentSessions";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { PaneView } from "../PaneView";
 import type { AgentRow, AgentState, PaneHeader, PrState, RaisedAsk, SessionGroup } from "../snapshot";
-import type { StatusTone, RequestVerb } from "../snapshot";
+import type { RowMark, StatusTone, RequestVerb } from "../snapshot";
 import { useShellStore } from "../store";
 import { REFERENCE_FOLDS, sidebarScene } from "./sceneData";
 import type { SceneParams } from "./SidebarScene";
@@ -42,10 +42,10 @@ const BANDS: [string, PaneHeader["band"]][] = [
 const CHILD_PANES = ["sleeping", "fix", "merge", "result", "working"];
 
 // Frozen visual examples, not a second implementation of core judgments.
-const MARKS: [string, StatusTone["kind"], RequestVerb][] = [
-  ["!", "warning", "answer"], ["?", "warning", "answer"], ["!", "warning", "answer"],
-  ["✓", "success", "review"], ["✓", "success", "review"], ["●", "working", "working"],
-  ["○", "working", "waiting"], ["○", "subtle", "idle"], ["✓", "subtle", "result"],
+const MARKS: [RowMark, StatusTone["kind"], RequestVerb][] = [
+  ["turn", "warning", "answer"], ["turn", "warning", "answer"], ["turn", "warning", "answer"],
+  ["done", "success", "review"], ["done", "success", "review"], ["going", "working", "working"],
+  ["going", "working", "waiting"], ["quiet", "subtle", "idle"], ["quiet", "subtle", "result"],
 ];
 
 export function SessionWorkflowScene({ scene: kind, theme, content, scale, width }: SceneParams & { scene: "session-panel" | "pane-header" }) {
@@ -57,9 +57,9 @@ export function SessionWorkflowScene({ scene: kind, theme, content, scale, width
     const pane = checkout.tabs[0]!.panes[0]!;
     const seed = base.agents.find((row) => row.pane_id === "a1")!;
     const agents: AgentRow[] = EXAMPLES.map((example, index) => {
-      const [symbol, tone, verb] = MARKS[index]!;
+      const [mark, tone, verb] = MARKS[index]!;
       return {
-        ...seed, id: `s${index}`, pane_id: `s${index}`, symbol, agent_kind: index % 2 ? "codex" : "claude",
+        ...seed, id: `s${index}`, pane_id: `s${index}`, mark, agent_kind: index % 2 ? "codex" : "claude",
         identity_label: content === "long" ? `${example.title} - 긴 한국어 제목과 변경 사항을 좁은 화면에서 확인하는 작업` : example.title,
         lineage_child_pane_ids: index === 5 ? ["a1c1", "a1c2"] : [],
         // One Working root is a fork of the row beside it (PRD fork-operator-root B8).
