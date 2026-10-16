@@ -615,7 +615,10 @@ pub const ADAPTERS: &[AgentAdapter] = &[
                 tools: &["ask_question"],
                 denial: HookDialect::Antigravity,
             }),
-            user_turn: Available(SessionFormat::Antigravity),
+            // agy's transcript names no call on a tool step and no record of
+            // a question still waiting was measured, so the wait cannot be
+            // read; Factory still gets the question through `direct_ask`.
+            user_turn: Unconfirmed,
             turn_end_and_answer: Available(SessionFormat::Antigravity),
             startup_guidance: Available(HookInstall::Guidance(GuidanceDialect::Antigravity)),
             resume: Available(LaunchDialect::Antigravity),

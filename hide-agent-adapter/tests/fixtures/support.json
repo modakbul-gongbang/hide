@@ -297,7 +297,7 @@
     ],
     "factory": {
       "direct_ask": "available",
-      "user_turn": "available",
+      "user_turn": "unconfirmed",
       "turn_end_and_answer": "available",
       "startup_guidance": "available",
       "resume": "available",
