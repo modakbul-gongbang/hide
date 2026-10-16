@@ -207,7 +207,6 @@ it("heads the record with the now box: ended with the elapsed time and no button
     expect(box.getAttribute("data-state-box")).toBe("done");
     expect(text(box)).toContain("Done");
     expect(box.querySelector("[data-record-now-button]")).toBeNull();
-    expect(container.querySelector("[data-record-last-words]")).toBeNull();
   } finally { await unmount(); }
 });
 

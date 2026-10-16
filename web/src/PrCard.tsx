@@ -11,7 +11,7 @@ import { cn } from "./lib/utils";
 import { LinkTimeline } from "./LinkSessions";
 import { renderMarkdown } from "./mobile/markdown";
 import { boardProjects } from "./navigation";
-import { bodyOutline, confirmHolds, defaultMethod, fileOpen, mergeWhy, milestones, prFacts, primaryAction, splitFiles, type Confirmed, type PrFact, type PrimaryAction } from "./prCardModel";
+import { confirmHolds, defaultMethod, fileOpen, mergeWhy, milestones, prFacts, primaryAction, splitFiles, type Confirmed, type PrFact, type PrimaryAction } from "./prCardModel";
 import { PrLinks } from "./PrLinks";
 import { ReasonLine } from "./prReason";
 import { staleLabel, staleness } from "./prMark";
@@ -502,11 +502,13 @@ function FileRow({ file, onOpen }: { file: NonNullable<PrCard["files"]>[number];
 function Body({ card, actions, projectId, number, scroller }: { card: PrCard | null; actions: Actions; projectId: string; number: number; scroller: React.RefObject<HTMLElement | null> }) {
   const { t } = useInterfaceTranslation();
   const body = card?.body ?? null;
-  const outline = useMemo(() => (body === null ? [] : bodyOutline(body)), [body]);
   const content = useRef<HTMLDivElement>(null);
   const [current, setCurrent] = useState(0);
-  // The heading elements the renderer drew, in the body's order, paired with the outline by rank.
+  // The `##` headings the renderer drew, in the body's order: the chips are read
+  // from them, so a heading inside a comment or a quote never gets a chip (B12).
   const headings = () => Array.from(content.current?.querySelectorAll<HTMLElement>("[data-markdown-heading='2']") ?? []);
+  const [outline, setOutline] = useState<string[]>([]);
+  useLayoutEffect(() => { setOutline(headings().map((heading) => heading.textContent ?? "")); }, [body]);
   useLayoutEffect(() => {
     const root = scroller.current;
     if (!root || outline.length === 0) return;

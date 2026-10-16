@@ -9,25 +9,6 @@
 import type { PrReason } from "./agentScope";
 import type { PrCard, PrMergeMethod, PullRequest, PullRequestWork } from "./snapshot";
 
-/** The `##` headings of a body, in order, as the card's table of contents (B27). Fenced code is not searched. */
-export function bodyOutline(body: string): string[] {
-  const headings: string[] = [];
-  let fence: string | null = null;
-  for (const line of body.split("\n")) {
-    const marker = /^\s{0,3}(```+|~~~+)/.exec(line);
-    if (marker) {
-      const mark = marker[1]!;
-      if (fence === null) fence = mark[0]!;
-      else if (mark[0] === fence) fence = null;
-      continue;
-    }
-    if (fence !== null) continue;
-    const heading = /^\s{0,3}##\s+(.+?)\s*#*\s*$/.exec(line);
-    if (heading?.[1]) headings.push(heading[1]);
-  }
-  return headings;
-}
-
 /** What the primary button of the button row is (D-21). */
 export type PrimaryAction = "merge" | "update" | "review" | "assign" | "answer" | "view_pane" | "assign_reviewer" | "github";
 

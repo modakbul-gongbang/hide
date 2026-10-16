@@ -5,20 +5,13 @@
 // their order among the sessions.
 
 import { describe, expect, it } from "vitest";
-import { bodyOutline, confirmHolds, fileOpen, mergeWhy, milestones, prFacts, primaryAction, splitFiles, timeline } from "./prCardModel";
+import { confirmHolds, fileOpen, mergeWhy, milestones, prFacts, primaryAction, splitFiles, timeline } from "./prCardModel";
 import type { PrCard, PullRequest } from "./snapshot";
 
 const pr = (over: Omit<Partial<PullRequest>, "work"> & { work?: Record<string, unknown> }): PullRequest =>
   ({ number: 7, url: "https://github.com/acme/repo/pull/7", head_branch: "feat/x", base_branch: "main", is_draft: false, ...over, work: { merge_state: "clean", pending_checks: 0, queue: { state: "not_queued" }, ...over.work } }) as unknown as PullRequest;
 
 const card = (merge: Partial<NonNullable<PrCard["merge"]>> | null): PrCard => ({ merge: merge === null ? null : { can_merge: true, methods: ["merge"], queue: false, ...merge } }) as unknown as PrCard;
-
-describe("bodyOutline", () => {
-  it("lists the ## headings in order and ignores headings inside fenced code", () => {
-    const body = "# Title\n\n## Summary\ntext\n```md\n## Not a heading\n```\n## Test plan ##\n### Deeper\n~~~\n## Also fenced\n~~~\n";
-    expect(bodyOutline(body)).toEqual(["Summary", "Test plan"]);
-  });
-});
 
 describe("primaryAction", () => {
   it("leads with the button of the case", () => {

@@ -236,8 +236,8 @@ function SessionLineView({ entry, project, checkoutBranch, actions }: { entry: S
     line.ids.length > 1 ? t("links.continued", { count: line.ids.length }) : null,
     line.device_id !== node ? deviceLabel(devices, line.device_id) : null,
   ].filter((part): part is string => part !== null).join(" · ");
-  const mark = live ? <StatusMark symbol={live.agent.symbol} className={markTone(live.agent)} data-agent-status-mark={live.agent.status_code} /> : <StatusMark symbol="●" className={cn("text-muted-foreground", gone && "opacity-(--opacity-secondary)")} data-agent-status-mark="ended" />;
-  const caption = asked ? { text: asked, className: "text-warning" } : { text: `${agent} · ${live ? statusText(t, live.agent.status_code) : t("sessionWork.done")}` };
+  const mark = live ? <StatusMark symbol={live.agent.symbol} className={markTone(live.agent)} data-agent-status-mark={live.agent.status_code} /> : <StatusMark symbol="✓" className={cn("text-success", gone && "opacity-(--opacity-secondary)")} data-agent-status-mark="ended" />;
+  const caption = asked ? { text: asked, className: "text-warning", wrap: true } : { text: `${agent} · ${live ? statusText(t, live.agent.status_code) : t("sessionWork.done")}` };
   const right = live ? <Elapsed since={line.started_at_unix_ms} className="font-mono text-caption text-muted-foreground" data-link-elapsed={line.id} /> : (() => {
     const span = spanText(line.started_at_unix_ms, line.ended_at_unix_ms);
     return span ? <span className="font-mono text-caption text-muted-foreground" data-link-span={line.id}>{span}</span> : null;

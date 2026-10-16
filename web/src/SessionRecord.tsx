@@ -136,8 +136,8 @@ export function SessionRecord({ actions, target, frame }: { actions: Actions; ta
  * The record's place line, then the 지금 box (PRD overview-device-tasks B17;
  * PRD pr-card-and-session-record-redesign B14, B17): device · project ·
  * ⌂ every checkout of the task, a removed one as `(없어짐)` · children. The
- * task's own facts (its question, its block, what it is doing, what it last
- * said) are the root's, so a child's record shows the place line alone.
+ * task's line and question are the root's; a child's box reads its own
+ * agent's state and, once its pane is gone, its record's end.
  */
 function RecordPlace({ record, children, actions }: { record: RecordValue; children: number; actions: Actions }) {
   const { t } = useInterfaceTranslation();

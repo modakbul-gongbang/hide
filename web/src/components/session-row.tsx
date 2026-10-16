@@ -44,7 +44,8 @@ export function SessionRow({
   /** What stands in the right slot while the pointer or the keyboard is on the row. */
   reveal?: ReactNode;
   /** The second line: a caption, or a question in its colour. */
-  line?: { text: string; className?: string } | null;
+  /** The caption under the title; `wrap` lets a question wrap between words instead of truncating (B20). */
+  line?: { text: string; className?: string; wrap?: boolean } | null;
   /** Under the second line, always shown. */
   below?: ReactNode;
   /** Pressing the row itself; the row is then a button and `pressLabel` names it. */
@@ -63,7 +64,7 @@ export function SessionRow({
     <li
       {...rest}
       role={onPress ? "button" : undefined}
-      tabIndex={0}
+      tabIndex={onPress || reveal ? 0 : undefined}
       aria-label={pressLabel ?? rest["aria-label"]}
       onClick={onPress ? (event) => {
         // A button inside the row is its own press.
@@ -86,7 +87,7 @@ export function SessionRow({
             </>
           ) : right ? <span className="flex shrink-0 items-center" data-session-row-right="true">{right}</span> : null}
         </span>
-        {line ? <span className={cn("truncate text-caption leading-(--size-sidebar-line-detail)", line.className ?? "text-muted-foreground")} data-session-row-line="true">{line.text}</span> : null}
+        {line ? <span className={cn("text-caption leading-(--size-sidebar-line-detail)", line.wrap ? "whitespace-normal break-keep [overflow-wrap:anywhere]" : "truncate", line.className ?? "text-muted-foreground")} data-session-row-line="true">{line.text}</span> : null}
         {below ? <span className="flex min-w-0 flex-wrap items-center gap-xs pt-xxs">{below}</span> : null}
         {children}
       </span>
