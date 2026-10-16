@@ -59,7 +59,9 @@ pub const EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 /// `--settings '{"alwaysThinkingEnabled":false}'` left the thinking in place,
 /// and this variable removed it. It is set on the child whatever the
 /// operator's environment says, so a budget exported in their shell cannot
-/// bring the latency back.
+/// bring the latency back. `claude-haiku-5-5` ignores it (384 to 403 thinking
+/// tokens for a 60 token answer, measured 2026-10-16 on claude 2.1.301), which
+/// the attempt line's `thinking_tokens` shows.
 pub const THINKING_OFF: (&str, &str) = ("MAX_THINKING_TOKENS", "0");
 
 /// How long the account's model list is kept before the CLI is asked again.

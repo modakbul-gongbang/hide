@@ -104,7 +104,8 @@ A request reports progress once a second while it runs, and a cancel in the core
   It was excluded by decision until 2026-09-10, when that exclusion was withdrawn; terminal scraping and token reuse remain excluded, and the background AI boundary reads no credential file.
   The default model is `sonnet`.
   Availability is read from `claude auth status --json`: `loggedIn` decides `Ready` against `NeedsLogin`, a binary that is not on `PATH` is `NotInstalled`, and a probe that answers nothing readable is `Unavailable` rather than either guess.
-  The answer is the result frame's `structured_output`, the field the CLI validated against the feature's `--json-schema`; the `result` string is never parsed, because without a schema print mode returns the object inside a fenced code block and reading that back would accept an unvalidated shape.
+  In `Schema` mode the answer is the result frame's `structured_output`, the field the CLI validated against the feature's `--json-schema`, and the `result` string is never parsed.
+  In `PlainJson` mode (see below) the `result` text is parsed, which print mode prints as the object inside a fenced code block or plain, and the router's check against the feature's schema is what stands in for the CLI's.
   The prompt body travels on stdin, so no transcript reaches an argument vector or a process listing.
 
   The child's argument vector is not a preference.
@@ -112,12 +113,24 @@ A request reports progress once a second while it runs, and a cancel in the core
   Adding `--system-prompt` with `--tools ''` and `--setting-sources ''` takes the same request to 1,188 input tokens and returns a schema-validated answer.
   Dropping any of those three is not a cost regression, it is a wrong answer, so `hide-ai/tests/it/claude_cli.rs` asserts the vector the child actually received.
 
-  A model turn runs with thinking off: the child gets `MAX_THINKING_TOKENS=0` whatever the operator's environment says, and the same test file asserts the value the child received.
+  A model turn runs with thinking off where the model honours it: the child gets `MAX_THINKING_TOKENS=0` whatever the operator's environment says, and the same test file asserts the value the child received.
   Print mode thinks by default, and a background answer is a short JSON object; on 2026-10-02 the context label spent a median 2,656 output tokens (at most 9,425) to return about 100, which put its median at 28 seconds and 43 of 252 requests past the 60-second deadline.
   No flag turns it off: `--settings '{"alwaysThinkingEnabled":false}'` left the thinking in place, and the variable removed it.
   Measured on claude 2.1.287 with the same label-style prompt, haiku with thinking answered in 56 to 81 seconds, haiku without it in 5 to 8 seconds but broke the prompt's rules (step verbs, listed items), and sonnet without it in 3.6 to 7 seconds with about 165 output tokens and the best answers, which is why `sonnet` is the default.
+  That measurement does not hold for `claude-haiku-5-5`.
+  Measured 2026-10-16 on claude 2.1.301 with a label-style answer of about 60 tokens, `claude-haiku-5-5` ignored the variable and `--effort low` alike and reported 384 to 403 `thinking_tokens` inside 460 to 739 output tokens, while `claude-sonnet-5-5` reported 0 and answered in 84 to 184.
+  The result frame's `usage.output_tokens_details.thinking_tokens` is read for every Claude turn, and the attempt line carries it when it is above zero (see [Logging](#logging)), so a model that thinks anyway shows in the log instead of in the usage.
+  A Hide AI setting that names a haiku therefore buys a cheaper token and several times as many of them; which of the two the subscription's limit counts is not documented, so compare the limit, not the token count, before choosing it.
   The rest of the vector keeps the turn from reaching anything else or outliving itself: `--strict-mcp-config`, `--disable-slash-commands`, `--no-session-persistence`, `--permission-prompts none`.
   `--bare` cannot be used: it reads `ANTHROPIC_API_KEY` only and never the OAuth keychain, so it is incompatible with the subscription login that is the user's own credential.
+
+  A request asks for its answer one of two ways (`AiRequest.answer`, `AnswerMode`).
+  `Schema` is `--json-schema`: Claude Code answers it with a synthetic tool call, which is a second model turn and a larger prompt, and the answer is the frame's `structured_output`.
+  `PlainJson` drops the flag, names the schema in the system prompt and reads the one object from the `result` text (plain, in a code fence, or the span from the first `{` to the last `}`, the same reader as the text-mode CLIs); a `result` that holds no JSON is `InvalidOutput`, retried like any other, and the router validates the object against the schema either way.
+  Measured on claude 2.1.301 with the same label-style input, `Schema` made two API turns, wrote 2,826 cache tokens and printed 184 output tokens on sonnet, and `PlainJson` made one turn, wrote 2,264 and printed 84.
+  The schema rides in the system prompt, which is an argument of the child, so `PlainJson` is for short schemas only.
+  Agent summaries, pull request summaries and worktree names ask `PlainJson`, because their answers are a few short fields; Project Memory and the Factory keep `Schema`, whose answers are long and strictly shaped.
+  Codex has its own `outputSchema` and the text-mode CLIs have no schema surface, so the mode changes nothing for them.
 
   One child per request, never a persistent one: a second request to a live child reuses its `session_id` and the conversation accumulates.
   A cancelled or expired request kills the child, which is safe because print mode holds no state worth draining.
@@ -452,6 +465,21 @@ Costs go through the same price table as a session call, by provider, and the po
 Per call, Hide AI adds one queue append on a router thread; the worker's extra work is one batched write a second at most, and a publish only while a usage page is visible and the rows changed.
 Those costs are by construction, not measured: no CPU, memory or snapshot-size figure has been taken for this feature.
 
+## Where the tokens go
+
+Measured from the usage ledger (`ai_daily`) on 2026-10-15 and 2026-10-16, per call, with the list prices the cost estimate uses (`price_cache`).
+
+| Feature | Cache read | Cache write | Read share | What is written |
+| --- | --- | --- | --- | --- |
+| agent summaries | 3.7k to 4.0k | about 1.3k | 70 to 75% | the turn's own events |
+| Project Memory | 2.2k to 2.4k | about 8.0k | about 22% | the session events and the cards compared with them |
+| Factory judgments | 0.8k to 1.0k | 12.9k to 14.4k | 5 to 7% | the issue, pull request or diff under judgment |
+
+A new `claude -p` process reads the previous call's cache when the tools, the system prompt and the messages before the changing part are identical and the model is the same, so the fixed prefix (the system prompt and, in `Schema` mode, the schema) is read and the part that differs per call is written and not read again.
+Subscription turns are written with a one-hour lifetime, which prices a write at twice the input rate, so at the list prices the writes of the changing part are the larger share of a call's cost: about two thirds of an agent summary's and about nine tenths of a Memory call's, with the output second.
+The share is a statement about prices; how the subscription's limit counts a cache write or read is not documented.
+Setting `CLAUDE_CODE_PROMPT_CACHE_TTL=5m` is documented to write at 1.25 times instead, and has not been tried on a call whose input differs, so it is not used.
+
 ## Selection and fallback
 
 A request is asked of the chosen provider and then of each provider in the `fallback` list, in that order, once each, and of nothing else (`RouterConfig::priority` is exactly that list).
@@ -526,7 +554,7 @@ The label worker parks a turn for good on a settled failure and asks again after
 ## Logging
 
 The router emits `ai.attempt`, `ai.request.finished`, `ai.request.joined`, `ai.fallback`, `ai.usage_limit`, `ai.provider.degraded`, `ai.provider.recovered`, `ai.budget.exceeded`, `ai.app_server.over_budget` and, once per UTC day, `ai.daily_rollup`; the codex backend emits `ai.app_server.idle_exit`, `ai.codex_home.swept` and `ai.codex_home.sweep_failed`.
-A line carries the request id, feature id, provider, outcome class, attempt, duration, input length, output tokens and schema version.
+A line carries the request id, feature id, provider, outcome class, attempt, duration, input length, output tokens and schema version; an `ai.attempt` line also carries `thinking_tokens` when the provider reported some above zero.
 Every `ai.request.finished` of a provider that declares itself measurable (`AiBackend::measurable()`, today only codex, whose app-server is resident) also carries the app-server pid and the process measurement (`app_server_pid`, `descendants`, `rss_bytes`), or `measurement=unavailable` where the platform cannot measure it.
 It never carries the prompt, the input, the generated text, a token, a file path from a transcript, or a provider thread id.
 Hide's core writes the events of its own routers and backends (the label analyzer, the Factory's judgments, the Settings probe and Project Memory) to its diagnostic log, `Logs/core.jsonl` beside `state.json`, as records with `component` `ai` and the event name as `kind`.
@@ -549,6 +577,7 @@ A backend's events are produced on the node; the node holds at most 256 of them 
   The mapping was measured end to end instead, by answering the CLI's own API request with each HTTP status and reading the frame it printed; the run that measured it is local evidence, not a tracked file.
 - Hide AI's counting is partial by design.
   An `InvalidOutput` or `Cancelled` attempt that did spend tokens (for example a result with no structured output or `error_max_structured_output_retries`, a Codex turn that completed with no JSON message) is counted as an unknown call, not with its tokens, because the error path carries no usage; an error frame's usage is not read.
+  A `PlainJson` answer that holds no JSON (`claude_result_not_json`) is the same case, and the router's two attempts for it are two full-price processes where `Schema` mode retried inside one.
   Gemini CLI, Pi and Grok report no usage the code reads, so their calls are only counts of unknown calls.
   Unreleased experimental rows written before the separate `attempts` field keep their original per-model call count when read or extended; the original attempt boundaries cannot be reconstructed, so their historical count can exceed actual attempts.
   New attempts add exactly one known call regardless of model count; no migration guesses a correction to older experiment data, and a downgrade to that experimental writer can discard this new count when it rewrites a row.
