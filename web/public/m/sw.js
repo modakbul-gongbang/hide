@@ -12,9 +12,9 @@
 // load, on every language change and when a subscription is created, and this
 // worker keeps them in the Cache API (a closed app must still notify). The
 // body joins the row's status word, its untranslated detail and the project
-// with " · ". Without detail it keeps the original state and project format.
-// A cached page that sends only the old words keeps its original state word;
-// with no stored words, only detail and place can be drawn.
+// with " · ", with or without detail (status-marks B22). A payload with no
+// status_code, or a cached page that sends only the section words, says the
+// section; with no stored words, only detail and place can be drawn.
 //
 // There is no start_url in the manifest on purpose: the Home Screen app keeps
 // the address it was added from, whose fragment carries the phone's
@@ -134,7 +134,7 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     Promise.all([closeTags(payload.clear), storedWords()]).then(([, words]) =>
       self.registration.showNotification(payload.title, {
-        body: [isWord(payload.detail) ? words[`status_${payload.status_code}`] || words[payload.state] : words[payload.state], payload.detail, payload.place].filter(isWord).join(" · "),
+        body: [words[`status_${payload.status_code}`] || words[payload.state], payload.detail, payload.place].filter(isWord).join(" · "),
         tag: payload.tag,
         icon: "/m/icon-192.png",
         badge: "/m/icon-192.png",

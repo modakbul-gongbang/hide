@@ -4,7 +4,7 @@ import type { Actions } from "./actions";
 import type { IncomingTaskScope, TaskCardScope } from "./agentScope";
 import { agentProductName } from "./agentAdapters";
 import { HideMark } from "./AgentMark";
-import { markTone } from "./agentRow";
+import { leadWord, markTone } from "./agentRow";
 import { PrMark } from "./components/pr-mark";
 import { StatusMark } from "./components/status-mark";
 import { Button } from "./components/ui/button";
@@ -149,8 +149,11 @@ function lineWords(line: CardLine, t: ReturnType<typeof useInterfaceTranslation>
       return t("overviewTasks.line.pr", { number: line.number, word: t(PR_LOOK[line.state].word) });
     case "working":
       return t("overviewTasks.line.working", { count: Math.max(1, line.agents) });
-    case "done":
-      return t("overviewTasks.line.done");
+    case "done": {
+      // The root's own word, as its row leads with it (status-marks B6, B20).
+      const word = line.status ? leadWord(t, { status_code: line.status }) : null;
+      return word ? t("overviewTasks.line.done", { word }) : t("overviewTasks.line.unseen");
+    }
     case "resting":
       return t("overviewTasks.line.resting");
   }

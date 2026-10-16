@@ -57,14 +57,14 @@ it("asks for agent notices while the switch is on, words each one, withdraws a s
     receiveAgentNotice({ notices: [{ tag: "node|w1:p1", device_id: "node", pane_id: "w1:p1", title: "Add a dark mode switch", state: "needs_you", place: "my-app" }], clear: [] });
     receiveAgentNotice({ notices: [], clear: ["node|w1:p1"] });
   });
-  expect(shown).toEqual([["agent:node|w1:p1", "Add a dark mode switch", "Needs you · my-app", { unlessFocused: true }]]);
+  expect(shown).toEqual([["agent:node|w1:p1", "Add a dark mode switch", "Needs You · my-app", { unlessFocused: true }]]);
   expect(withdrawn).toEqual([["agent:node|w1:p1"]]);
 
-  // The notification contract uses the row's own status word with detail,
-  // and retains the original words with no detail (including old frames).
+  // The notification leads with the row's own status word, with or without
+  // detail (status-marks B23); a frame with no status code says the section.
   await act(async () => {
-    for (const [status_code, detail] of [["question", "배포할 환경을 골라 주세요"], ["approval", "계획 승인 대기"], ["error", "로그인이 필요해요"], ["done", "배포 완료"], ["stopped", "테스트 세 개 남음"]] as const) {
-      receiveAgentNotice({ notices: [{ tag: "node|w1:p1", device_id: "node", pane_id: "w1:p1", title: "Add a dark mode switch", state: status_code === "done" || status_code === "stopped" ? "done" : "needs_you", status_code, detail, place: "my-app" }], clear: [] });
+    for (const [status_code, detail] of [["question", "배포할 환경을 골라 주세요"], ["approval", "계획 승인 대기"], ["error", "로그인이 필요해요"], ["done", "배포 완료"], ["unfinished", "테스트 세 개 남음"]] as const) {
+      receiveAgentNotice({ notices: [{ tag: "node|w1:p1", device_id: "node", pane_id: "w1:p1", title: "Add a dark mode switch", state: status_code === "done" || status_code === "unfinished" ? "done" : "needs_you", status_code, detail, place: "my-app" }], clear: [] });
     }
     receiveAgentNotice({ notices: [{ tag: "node|w1:p1", device_id: "node", pane_id: "w1:p1", title: "Add a dark mode switch", state: "done", status_code: "done", detail: null, place: "" }], clear: [] });
   });
@@ -73,7 +73,7 @@ it("asks for agent notices while the switch is on, words each one, withdraws a s
     ["Add a dark mode switch", "Approval · 계획 승인 대기 · my-app"],
     ["Add a dark mode switch", "Blocked · 로그인이 필요해요 · my-app"],
     ["Add a dark mode switch", "Done · 배포 완료 · my-app"],
-    ["Add a dark mode switch", "Stopped · 테스트 세 개 남음 · my-app"],
+    ["Add a dark mode switch", "Unfinished · 테스트 세 개 남음 · my-app"],
     ["Add a dark mode switch", "Done"],
   ]);
   await act(async () => { await clientI18n.changeLanguage("ko"); });
@@ -83,7 +83,7 @@ it("asks for agent notices while the switch is on, words each one, withdraws a s
     receiveAgentNotice({ notices: [{ tag: "node|w1:p1", device_id: "node", pane_id: "w1:p1", title: "Add a dark mode switch", state: "done", status_code: "done", detail: null, place: "my-app" }], clear: [] });
     receiveAgentNotice({ notices: [{ tag: "node|w1:p1", device_id: "node", pane_id: "w1:p1", title: "Add a dark mode switch", state: "needs_you", status_code: "approval", detail: null, place: "my-app" }], clear: [] });
   });
-  expect(shown.slice(-2).map((notice) => notice[2])).toEqual(["끝 · my-app", "내 확인 대기 · my-app"]);
+  expect(shown.slice(-2).map((notice) => notice[2])).toEqual(["끝남 · my-app", "승인 · my-app"]);
   await act(async () => { await clientI18n.changeLanguage("en"); });
 
   await act(async () => open?.("agent:node|w1:p1"));
@@ -115,9 +115,9 @@ it("counts every device's Needs You group for the app icon, not Done", () => {
 
 it.each([
   [false, false, [], 0, false],
-  [true, false, ["Needs you · my-app"], 2, true],
-  [false, true, ["Done · my-app"], 0, true],
-  [true, true, ["Needs you · my-app", "Done · my-app"], 2, true],
+  [true, false, ["Needs You · my-app"], 2, true],
+  [false, true, ["To read · my-app"], 0, true],
+  [true, true, ["Needs You · my-app", "To read · my-app"], 2, true],
 ] as const)("with Needs You=%s and Done=%s sends only the chosen groups and counts Needs You", async (needsYou, done, bodies, badge, wanted) => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const shown: string[] = [];

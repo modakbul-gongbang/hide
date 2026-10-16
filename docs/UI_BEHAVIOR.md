@@ -805,7 +805,7 @@ A card leads with the status mark alone and draws no provider logo in either age
 A card whose root needs the operator is outlined in the warning colour.
 Its third line is the four-step bar `작업 → PR → 검토 → 머지` and one line of state (B9).
 The bar fills one step with no pull request, two while the open pull request is a draft, running checks or failing them, three when it can merge and four when every pull request merged; a task that is only a conversation, with no worktree and no pull request, has no bar.
-The line is the reason in the warning colour on Needs You (`답변 · Claude가 기다림`), the reason in the danger colour when blocked, `머지됨` once merged (`머지됨 · 정리 남음` while a worktree stays), the open pull request's own line, `일하는 중 · 에이전트 N` while it works, `끝남 · 아직 안 봄` for an unseen finish, and `쉬는 중` otherwise.
+The line is the reason in the warning colour on Needs You (`질문 · Claude가 기다림`), the reason in the danger colour when blocked, `머지됨` once merged (`머지됨 · 정리 남음` while a worktree stays), the open pull request's own line, `일하는 중 · 에이전트 N` while it works, the root's own word for an unseen stop (`끝남 · 아직 안 봄`, `일 남음 · 아직 안 봄`, `대기 · 아직 안 봄`, or `아직 안 봄` for a stop no label judged) under the state `읽을 것` (status-marks B20), and `쉬는 중` otherwise.
 A card is one button that opens its record in the panel, and its chips are buttons of their own: the PR mark opens the pull request's card, the issue chip that item in 백로그, `→ <project>` filters Tasks to that project, and `→ <device>` switches the Overview to that device with the dashed card selected (B13).
 
 A task belongs to the device its root agent runs on.
@@ -1576,7 +1576,7 @@ The desktop app's Help > Set up Hide opens the same steps from the first as this
 
 With Needs You on, the desktop app shows a notification when a root agent newly needs the operator (a question, an approval, a block or an error); Done independently enables new completions.
 Both are sent only while no Hide window has the keyboard: its title is the root's row title (the provider when no task or proven native title exists), and with a second-line sentence its body is `<translated row status> · <exact sentence> · <project>` (D-09 to D-11, B31, B39, operator-approved update 2026-10-13).
-The sentence stays in its original language; without one the body remains exactly `Needs you · <project>` or `Done · <project>` in the interface language, and an empty project omits its separator.
+The sentence stays in its original language; without one the body is the row's word and the project (`Approval · <project>`), a frame with no status code says its section (`Needs You · <project>`, `To read · <project>`), and an empty project omits its separator.
 See [With and without Hide AI](status-model.md#with-and-without-hide-ai) for the title priorities, native and inferred questions, counts and both notification channels in each mode.
 hided judges the changes with the phone push's rules (status-model.md, Row presentation and phone notifications), so a child's raise arrives on its root, the same state never notifies twice, an agent back within ten minutes is not announced again, and nothing already waiting when the app opened is announced (B32, B33).
 A click brings Hide forward and opens that agent's pane, on a device too; an agent the operator has seen takes its notification back, and a newer one for the same agent replaces it (B34, B35).
@@ -2337,7 +2337,7 @@ Every detail has the quick keys (Enter, Escape, 위 화살표, 아래 화살표,
 When hide cannot tell whether a reply reached the pane, the line says so and asks the operator to check the terminal before sending it again.
 A closed pane shows "이 pane은 더 이상 열려 있지 않아요" and disables the reply bar; a disconnected SSH device shows that its device is not connected.
 With push on, the list offers 알림 켜기; a Safari tab without push is told to open hide from the Home Screen first, and a refused permission shows "알림이 꺼져 있어요 · 설정 > 알림에서 hide를 켜세요".
-A notification's title is the root's row title and, with a sentence, its body is `<translated row status> · <exact sentence> · <project>`; without a sentence it keeps 내 확인 대기 or 끝 with the project in Korean, and the corresponding group words in the phone's language.
+A notification's title is the root's row title and, with a sentence, its body is `<translated row status> · <exact sentence> · <project>`; without a sentence it is the row's status word with the project (`승인 · <project>` in Korean), and a payload with no status code says the section (내 차례 or 읽을 것) in the phone's language.
 The sentence is the core's chosen row detail, untranslated, and may appear in lock-screen previews according to the phone's setting (operator-approved update 2026-10-13); tapping the notice opens that agent's detail.
 See [With and without Hide AI](status-model.md#with-and-without-hide-ai) for native question and plain-text question behavior, and cached-worker compatibility.
 A revoked phone shows "이 폰의 연결이 해지됐어요. 맥에서 QR을 다시 여세요." and drops its own push subscription.

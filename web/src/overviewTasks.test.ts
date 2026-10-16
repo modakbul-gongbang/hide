@@ -162,7 +162,9 @@ describe("a card's status line (B9)", () => {
   it("counts the members working, says a finished task is unread, and calls the rest resting", () => {
     const rows = rowsOf(agent("r", { activity: "working" }), agent("c1", { activity: "working" }), agent("c2"));
     expect(cardLine(card("r", "working", { members: ["r", "c1", "c2"] }), rows)).toEqual({ kind: "working", agents: 2 });
-    expect(cardLine(card("r", "done"), new Map())).toEqual({ kind: "done" });
+    expect(cardLine(card("r", "done"), new Map())).toEqual({ kind: "done", status: null });
+    // The card says how the root's turn ended, as its row does (status-marks B6, B20).
+    expect(cardLine(card("r", "done"), rowsOf(agent("r", { status_code: "unfinished" })))).toEqual({ kind: "done", status: "unfinished" });
     expect(cardLine(card("r", "resting"), new Map())).toEqual({ kind: "resting" });
   });
 
