@@ -549,6 +549,9 @@ fn usage(frame: &Value) -> AiUsage {
             .and_then(|usage| usage.get("output_tokens"))
             .and_then(Value::as_u64),
         models: ledger_tokens(frame).unwrap_or_default(),
+        thinking_tokens: usage
+            .and_then(|usage| usage.pointer("/output_tokens_details/thinking_tokens"))
+            .and_then(Value::as_u64),
     }
 }
 

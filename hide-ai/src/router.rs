@@ -831,6 +831,8 @@ impl AiRouter {
                         event.outcome_class = Some("ok".into());
                         event.attempt = Some(attempt);
                         event.output_tokens = response.usage.output_tokens;
+                        event.thinking_tokens =
+                            response.usage.thinking_tokens.filter(|tokens| *tokens > 0);
                     });
                     // A turn that answered still fails if the process it ran in
                     // crossed the cap: crossing a cap is a reported failure,
@@ -1629,6 +1631,49 @@ mod tests {
             Some("measurement=unavailable")
         );
         assert!(finished[0].descendants.is_none());
+    }
+
+    /// A provider that answers with a fixed thinking-token count.
+    struct Thinks(Option<u64>);
+
+    impl AiBackend for Thinks {
+        fn id(&self) -> ProviderId {
+            ProviderId::CLAUDE
+        }
+        fn availability(&self) -> Availability {
+            Availability::Ready
+        }
+        fn models(&self) -> ModelCatalog {
+            ModelCatalog::Offered(Vec::new())
+        }
+        fn execute(&self, _: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
+            Ok(AiResponse {
+                value: json!({"summary": "a"}),
+                usage: crate::AiUsage {
+                    output_tokens: Some(460),
+                    thinking_tokens: self.0,
+                    ..crate::AiUsage::default()
+                },
+            })
+        }
+    }
+
+    /// A turn that thought although thinking was off shows it on the attempt
+    /// line next to its output tokens; a turn that did not think, or whose
+    /// provider reports none, adds no field.
+    #[test]
+    fn thinking_tokens_reach_the_attempt_line_only_when_there_were_some() {
+        for (reported, logged) in [(Some(384), Some(384)), (Some(0), None), (None, None)] {
+            let sink = Arc::new(Recorder::default());
+            let router = make_router(vec![Arc::new(Thinks(reported))], sink.clone());
+            router
+                .execute(&request("p1", "x"), &CancelToken::new())
+                .unwrap();
+            let attempts = sink.events("ai.attempt");
+            assert_eq!(attempts.len(), 1);
+            assert_eq!(attempts[0].output_tokens, Some(460));
+            assert_eq!(attempts[0].thinking_tokens, logged, "{reported:?}");
+        }
     }
 
     #[test]

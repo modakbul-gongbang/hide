@@ -235,6 +235,24 @@ fn a_plain_json_result_without_json_is_invalid_output() {
     });
 }
 
+/// A model that thinks although thinking was turned off shows it in the
+/// usage, which the router logs next to the output tokens.
+#[test]
+fn thinking_tokens_in_the_usage_are_reported_and_absent_ones_are_not() {
+    with_mode("thinking_leak", || {
+        let response = backend()
+            .execute(&request(Duration::from_secs(30)), &CancelToken::new())
+            .unwrap();
+        assert_eq!(response.usage.thinking_tokens, Some(384));
+    });
+    with_mode("ok", || {
+        let response = backend()
+            .execute(&request(Duration::from_secs(30)), &CancelToken::new())
+            .unwrap();
+        assert_eq!(response.usage.thinking_tokens, None);
+    });
+}
+
 /// Print mode thinks by default, which made a short JSON answer take tens of
 /// seconds; a model turn always runs with thinking off, even when the
 /// operator's shell exports a budget of its own.

@@ -394,6 +394,12 @@ pub struct AiUsage {
     /// older build sends none.
     #[serde(default)]
     pub models: Vec<ModelTokens>,
+    /// The thinking tokens the provider reports inside `output_tokens`, for
+    /// the log only; `None` when it reports none. Thinking is turned off for
+    /// a background turn, so a value above zero is a turn that thought
+    /// anyway.
+    #[serde(default)]
+    pub thinking_tokens: Option<u64>,
 }
 
 /// One model's tokens in one answer, in the disjoint components the usage
