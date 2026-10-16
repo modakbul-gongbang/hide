@@ -544,28 +544,28 @@ fn cursor_powershell_command(helper: &Path, event: HookEvent) -> String {
 }
 
 /// agy's tool command on macOS and Linux. agy refuses a tool call whose hook
-/// fails in any way, so the allow answer is printed by the command itself
+/// fails, so the ask answer is printed by the command itself
 /// when the helper is gone and when it ends without answering (a binary that
 /// cannot run, a crash): the helper prints its one line last and exits 0 on
 /// every path it reaches, so a failed run has printed nothing.
 fn antigravity_tool_command(helper: &Path) -> String {
     let quoted = Quoting::Posix.quote(&helper.display().to_string());
     let arguments = arguments(GuidanceAgent::Antigravity, HookEvent::PreToolUse);
-    let allow = Quoting::Posix.quote(crate::antigravity::ALLOW);
+    let ask = Quoting::Posix.quote(crate::antigravity::ASK);
     format!(
-        "if [ -x {quoted} ]; then {quoted} {arguments} || printf '%s\\n' {allow}; else printf '%s\\n' {allow}; fi"
+        "if [ -x {quoted} ]; then {quoted} {arguments} || printf '%s\\n' {ask}; else printf '%s\\n' {ask}; fi"
     )
 }
 
 /// agy's command on Windows, which agy hands to `cmd /c`: it runs the helper
-/// while it is there and, for a tool call, answers allow itself when it is
+/// while it is there and, for a tool call, answers ask itself when it is
 /// gone or fails, as [`antigravity_tool_command`] does.
 fn cmd_command(helper: &Path, agent: GuidanceAgent, event: HookEvent) -> String {
     let quoted = Quoting::Cmd.quote(&helper.display().to_string());
     let run = format!("{quoted} {}", arguments(agent, event));
     if event == HookEvent::PreToolUse {
-        let allow = crate::antigravity::ALLOW;
-        format!("if exist {quoted} ({run} || echo {allow}) else (echo {allow})")
+        let ask = crate::antigravity::ASK;
+        format!("if exist {quoted} ({run} || echo {ask}) else (echo {ask})")
     } else {
         format!("if exist {quoted} ({run})")
     }

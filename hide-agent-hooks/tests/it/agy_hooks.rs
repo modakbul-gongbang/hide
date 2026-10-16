@@ -199,7 +199,7 @@ fn a_direct_agent_start_is_denied_in_agys_shape_and_every_other_call_is_allowed(
     );
     assert!(reason.contains("--branch topic"), "{reason}");
 
-    let allow = json!({ "decision": "allow" });
+    let allow = json!({ "decision": "ask" });
     let view = json!({
         "conversationId": CONVERSATION,
         "toolCall": { "name": "view_file", "args": { "AbsolutePath": machine.checkout.join("README.md") } },
@@ -347,7 +347,7 @@ fn a_guarded_file_is_refused_to_each_of_agys_file_tools_and_its_shell() {
     );
     assert_eq!(
         answer(&machine.run("PreToolUse", &other, Some(PANE))),
-        json!({ "decision": "allow" })
+        json!({ "decision": "ask" })
     );
 }
 
@@ -405,7 +405,7 @@ fn a_hide_that_never_answers_lets_the_call_run_well_inside_the_blocks_timeout() 
         let run = machine.run("PreToolUse", &payload, Some(PANE));
         let took = started.elapsed();
         assert!(run.status_ok);
-        assert_eq!(answer(&run), json!({ "decision": "allow" }), "{payload}");
+        assert_eq!(answer(&run), json!({ "decision": "ask" }), "{payload}");
         assert!(took * 2 < timeout, "{took:?} of {timeout:?} for {payload}");
     }
     let asked = std::fs::read_to_string(machine.root.join("hide-calls")).unwrap();

@@ -169,11 +169,11 @@ test("the installed agy tool command refuses a direct agent start in agy's shape
     expect(answer.reason).toContain("hide agent spawn");
     expect(refusals(home)).toEqual(["antigravity"]);
 
-    // Every other path answers agy's allow, because agy refuses a call whose hook prints nothing it reads.
+    // Every other path leaves the call to agy's own permission question: ask, never allow.
     for (const payload of [call("run_command", { CommandLine: "cargo test", Cwd: checkout }), call("view_file", { AbsolutePath: path.join(checkout, "README.md") })]) {
       const run = runHook(stack, pane, toolCommand(home), payload);
       expect(run.status, run.stderr).toBe(0);
-      expect(JSON.parse(run.stdout)).toEqual({ decision: "allow" });
+      expect(JSON.parse(run.stdout)).toEqual({ decision: "ask" });
     }
     expect(refusals(home)).toEqual(["antigravity"]);
   } finally {

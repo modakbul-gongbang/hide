@@ -10,14 +10,23 @@
 //! | --- | --- |
 //! | `SessionStart` (the first prompt of a conversation, never a resume) | the guidance and the Memory index, as an injected system message |
 //! | `PreInvocation` (every model call; `invocationNum` 0 is a prompt's first) | the prompt's Memory cards and the pane's letters, the same way |
-//! | `PreToolUse` | `{"decision":"deny","reason"}` for a refused call, `{"decision":"allow"}` on every other path |
+//! | `PreToolUse` | `{"decision":"deny","reason"}` for a refused call, `{"decision":"ask"}` on every other path |
 //! | `Stop` (one per turn of each conversation) | nothing; a subagent's own stop counts it done |
 //!
-//! agy refuses a tool call whose `PreToolUse` hook fails in any way (a
-//! nonzero exit, output that is not its JSON, a timeout, a missing program),
-//! unlike every other agent Hide supports, so the tool answer is always one
-//! of the two lines above and the installed command prints the allow line
-//! itself when the helper is gone.
+//! agy refuses a tool call whose `PreToolUse` hook fails (a nonzero exit,
+//! output that is not its JSON, a timeout, a missing program), unlike every
+//! other agent Hide supports; empty output with exit 0 lets the call run
+//! (agy 1.4.0, measured 2026-10-17). So the tool answer is always one of the
+//! two lines above, and the installed command prints the ask line itself when
+//! the helper is gone.
+//!
+//! In agy 1.4.0 only `deny` changes what agy does: `allow`, `ask` and an empty
+//! answer all leave agy's own permission question exactly as it is with no
+//! hook, asking before a command or a write and not before a read (measured
+//! 2026-10-17). Hide answers `ask` because agy's hook contract documents
+//! `allow` as running the call without its question: Hide never makes agy ask
+//! less than agy's own rules would, and so cannot spare the operator agy's
+//! question before Hide's own commands either.
 //!
 //! A subagent is a conversation of its own in the same process and pane,
 //! with its own `SessionStart` and `Stop` and no parent field. Its transcript
@@ -32,8 +41,8 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// agy's answer that lets a tool call run.
-pub const ALLOW: &str = r#"{"decision":"allow"}"#;
+/// agy's answer that leaves a tool call to agy's own permission rules.
+pub const ASK: &str = r#"{"decision":"ask"}"#;
 
 /// agy's refusal of a tool call; the model reads the reason as the step's
 /// error.
@@ -247,8 +256,8 @@ mod tests {
     #[test]
     fn the_answers_are_the_shapes_agy_reads() {
         assert_eq!(
-            serde_json::from_str::<Value>(ALLOW).unwrap(),
-            json!({"decision": "allow"})
+            serde_json::from_str::<Value>(ASK).unwrap(),
+            json!({"decision": "ask"})
         );
         assert_eq!(
             serde_json::from_str::<Value>(&deny("no")).unwrap(),

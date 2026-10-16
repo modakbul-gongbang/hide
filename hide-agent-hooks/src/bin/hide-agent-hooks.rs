@@ -69,7 +69,7 @@ fn main() -> ExitCode {
                 print_line(basic::CURSOR_ALLOW);
             }
             if antigravity_tool_hook(&arguments) {
-                print_line(antigravity::ALLOW);
+                print_line(antigravity::ASK);
             }
             return ExitCode::SUCCESS;
         }
@@ -186,7 +186,7 @@ fn cursor_permission_hook(arguments: &[String]) -> bool {
 }
 
 /// Whether this is agy's tool hook, whose every answer but a refusal must be
-/// agy's allow: agy refuses a call whose hook fails or prints nothing it reads.
+/// agy's ask: agy refuses a call whose hook fails or prints what it cannot read.
 fn antigravity_tool_hook(arguments: &[String]) -> bool {
     argument_value("--runtime", arguments).and_then(|value| GuidanceAgent::from_id(&value))
         == Some(GuidanceAgent::Antigravity)
@@ -272,7 +272,7 @@ fn run_antigravity_hook(arguments: &[String], started: Instant) {
             None
         });
         print_line(&refusal.map_or_else(
-            || antigravity::ALLOW.to_owned(),
+            || antigravity::ASK.to_owned(),
             |reason| antigravity::deny(&reason),
         ));
         return;

@@ -906,8 +906,8 @@ fn agy_tool_answer(script: Option<&str>) -> (std::process::Output, Value) {
 
 #[cfg(unix)]
 #[test]
-fn agys_tool_command_answers_allow_when_the_helper_is_gone_cannot_run_or_fails() {
-    let allow = json!({ "decision": "allow" });
+fn agys_tool_command_leaves_the_call_to_agy_when_the_helper_is_gone_cannot_run_or_fails() {
+    let allow = json!({ "decision": "ask" });
     for (case, script) in [
         ("gone", None),
         ("cannot run", Some("#!/nonexistent/interpreter\n")),
