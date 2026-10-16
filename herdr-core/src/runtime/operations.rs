@@ -17,7 +17,9 @@ use super::*;
 #[derive(Clone, Debug)]
 pub(super) struct PendingClose {
     pub(super) replacement_effect_started: bool,
-    pub(super) replacement_tab_id: Option<String>,
+    /// The shell this close made before closing: its tab, or its pane when
+    /// the shell went into the closing tab (`replacement_in_tab`).
+    pub(super) replacement_id: Option<String>,
     pub(super) allow_replacement_create: bool,
     pub(super) request: live::CloseCaptureRequest,
     pub(super) target_id: String,

@@ -20,9 +20,9 @@ use serde::Deserialize;
 pub(crate) mod card;
 
 use crate::model::{
-    GithubFailureCategory, GithubProjectSnapshot, GithubSnapshot, GithubStatusSnapshot, MergeState,
-    PrFailedCheck, PullRequestBadge, PullRequestChecks, PullRequestSnapshot, PullRequestWork,
-    ReviewDecision, ReviewRequest, ReviewRequestKind,
+    ExtraQuery, GithubFailureCategory, GithubProjectSnapshot, GithubSnapshot, GithubStatusSnapshot,
+    MergeState, PrFailedCheck, PullRequestBadge, PullRequestChecks, PullRequestSnapshot,
+    PullRequestWork, ReviewDecision, ReviewRequest, ReviewRequestKind,
 };
 use crate::node_access::NodeLink;
 use crate::reader::BackgroundRead;
@@ -227,7 +227,7 @@ fn read(
 /// inside a git repository at all and so has nothing to report.
 fn read_root(
     node: &dyn NodeLink,
-    authentication: &std::cell::OnceCell<Result<String, GhFailure>>,
+    authentication: &std::cell::OnceCell<Result<Option<String>, GhFailure>>,
     request: &GithubProjectRequest,
     known: &KnownChecks,
 ) -> GithubProjectSnapshot {
@@ -268,7 +268,7 @@ fn read_root(
                 node,
                 &place,
                 root_path,
-                viewer.clone(),
+                viewer.as_deref(),
                 &request.links,
                 known,
             ),
@@ -298,26 +298,45 @@ fn read_root(
 }
 
 /// Authentication is read-only and uses the same bounded subprocess as PR
-/// listing. It answers the signed-in account's login, read once per pass: the
-/// PRs list needs it to tell the operator's own pull requests from others'
-/// (PRD work-tab-pr-lens D-25).
-fn authentication(node: &dyn NodeLink) -> Result<String, GhFailure> {
+/// listing. `gh auth status` failing is the machine's refusal and fails every
+/// read. The signed-in account's login, read once per pass, only tells the
+/// operator's own pull requests from others' (PRD work-tab-pr-lens D-25), so
+/// failing to read it is `Ok(None)`: the read goes on with "mine" unknown
+/// (issue #1189).
+fn authentication(node: &dyn NodeLink) -> Result<Option<String>, GhFailure> {
     gh(node, None, &["auth", "status"])?;
-    let login = gh(node, None, &VIEWER_LOGIN)?;
+    let login = match gh(node, None, &VIEWER_LOGIN) {
+        Ok(login) => login,
+        Err(reason) => {
+            unread(ExtraQuery::Account, &reason.reason);
+            return Ok(None);
+        }
+    };
     let login = login.trim();
     if login.is_empty() {
-        return Err(GhFailure::network(
-            "gh did not name the signed-in account".to_owned(),
-        ));
+        unread(ExtraQuery::Account, "gh did not name the signed-in account");
+        return Ok(None);
     }
-    Ok(login.to_owned())
+    Ok(Some(login.to_owned()))
+}
+
+/// States that an extra question went unanswered, with the reason, for the
+/// diagnostic log (design principle 13): the operator sees which question,
+/// not `gh`'s words.
+fn unread(query: ExtraQuery, reason: &str) {
+    crate::diagnostic!(serde_json::json!({
+        "component": "github",
+        "kind": "pull_requests.extra_unread",
+        "query": query,
+        "message": reason,
+    }));
 }
 
 fn read_project(
     node: &dyn NodeLink,
     root: &Where,
     root_path: String,
-    viewer: String,
+    viewer: Option<&str>,
     links: &[crate::issues::IssueReference],
     known: &KnownChecks,
 ) -> GithubProjectSnapshot {
@@ -335,23 +354,17 @@ fn read_project(
             };
         }
     };
-    // The review asks and the merge queue are part of the same answer: a read
-    // without them would place a pull request on the wrong side of "mine" or
-    // "queued", so a failure here fails the read like a failed list does.
-    let facts = issue_repository(node, root)
-        .map_err(GhFailure::network)
-        .and_then(|repository| add_viewer_facts(&run, &repository, &viewer, &mut pull_requests));
-    if let Err(reason) = facts {
-        return GithubProjectSnapshot {
-            root_path,
-            status: failed(reason),
-            ..GithubProjectSnapshot::default()
-        };
-    }
+    // The pull request list alone decides whether the read succeeds. The
+    // account, the review asks and the merge queue each fill the judgments
+    // derived from them, and a failed one leaves those unknown on every pull
+    // request, never "no" (issue #1189, replacing PRD work-tab-pr-lens D-25's
+    // all-or-nothing rule).
+    let repository = issue_repository(node, root).map_err(GhFailure::network);
+    let unread_queries = add_extra_facts(&run, repository, viewer, &mut pull_requests);
     match read_issues(node, root, links) {
         Ok((issues, warning)) => GithubProjectSnapshot {
             root_path,
-            viewer: Some(viewer),
+            viewer: viewer.map(str::to_owned),
             issues,
             pull_requests,
             pull_requests_read: true,
@@ -365,32 +378,141 @@ fn read_project(
                     .as_ref()
                     .map(|reason| format!("Project metadata unavailable: {}", reason.reason)),
                 failure_category: warning.map(|reason| reason.category),
+                unread_queries,
             },
         },
         Err(reason) => GithubProjectSnapshot {
             root_path,
-            viewer: Some(viewer),
+            viewer: viewer.map(str::to_owned),
             pull_requests,
             pull_requests_read: true,
-            status: failed(reason),
+            status: GithubStatusSnapshot {
+                unread_queries,
+                ..failed(reason)
+            },
             ..Default::default()
         },
     }
 }
 
-/// Marks each open pull request the signed-in account wrote, was asked to
-/// review (directly or through a team) and, where the repository has a merge
-/// queue, its place in it.
+/// Fills what the three extra questions tell about each pull request, and
+/// returns the ones that went unanswered. Each is asked and judged on its own:
+///
+/// - the account decides "mine";
+/// - the review-requested search, with the account and the request list,
+///   decides whether a review was asked of the account or its team;
+/// - the facts query decides the merge queue place and the time a review was
+///   asked.
+///
+/// A judgment whose question failed stays unknown on every pull request, and
+/// one the list itself answers is still made (a review request naming the
+/// account, a request list with nobody who could be the account or its team).
+fn add_extra_facts(
+    run: &(impl Fn(&[&str]) -> Result<String, GhFailure> + Sync),
+    repository: Result<String, GhFailure>,
+    viewer: Option<&str>,
+    pull_requests: &mut [PullRequestSnapshot],
+) -> Vec<ExtraQuery> {
+    let mut unread_queries = Vec::new();
+    if viewer.is_none() {
+        unread_queries.push(ExtraQuery::Account);
+    }
+    let asked = match read_review_asked(run) {
+        Ok(asked) => Some(asked),
+        Err(reason) => {
+            unread(ExtraQuery::ReviewRequests, &reason.reason);
+            unread_queries.push(ExtraQuery::ReviewRequests);
+            None
+        }
+    };
+    let facts = repository.and_then(|repository| read_facts(run, &repository));
+    let facts = match facts {
+        Ok(facts) => Some(facts),
+        Err(reason) => {
+            unread(ExtraQuery::MergeQueue, &reason.reason);
+            unread_queries.push(ExtraQuery::MergeQueue);
+            None
+        }
+    };
+    for pull_request in pull_requests {
+        let open = is_open(pull_request);
+        let number = pull_request.number;
+        let work = &mut pull_request.work;
+        work.mine = viewer.map(|viewer| work.author.as_deref() == Some(viewer));
+        work.asked_of_me = review_ask(
+            open,
+            &work.review_requests,
+            viewer,
+            asked.as_ref().map(|asked| asked.contains(&number)),
+        );
+        if let Some(facts) = &facts {
+            let fact = facts.get(&number);
+            work.queue = match fact.and_then(|fact| fact.queue_position) {
+                Some(position) => crate::model::MergeQueuePlace::At(position),
+                None => crate::model::MergeQueuePlace::NotQueued,
+            };
+            work.review_requested_at_unix_ms = fact.and_then(|fact| fact.review_requested_at);
+        }
+    }
+    unread_queries
+}
+
+/// Whether a review was asked of the signed-in account or a team of it.
 ///
 /// "Directly" is a review request naming the login; a request that `gh`'s
 /// `review-requested:@me` search finds with no such name is the team's
-/// (PRD work-tab-pr-lens D-15).
-fn add_viewer_facts(
+/// (PRD work-tab-pr-lens D-15). `found` is whether that search found the pull
+/// request, `None` when the search failed, and `viewer` is `None` when the
+/// account is unknown. What the request list alone settles is settled: a
+/// request naming the account is direct, and a list with no request that could
+/// be the account (a team's, or any when the account is unknown) was asked of
+/// neither.
+fn review_ask(
+    open: bool,
+    requests: &[crate::model::ReviewRequest],
+    viewer: Option<&str>,
+    found: Option<bool>,
+) -> crate::model::ReviewAsk {
+    use crate::model::{ReviewAsk, ReviewRequestKind};
+    if !open {
+        return ReviewAsk::None;
+    }
+    let named = viewer.map(|viewer| {
+        requests
+            .iter()
+            .any(|request| request.kind == ReviewRequestKind::User && request.name == viewer)
+    });
+    match (named, found) {
+        (Some(true), _) => ReviewAsk::Direct,
+        // The search finds every request made of the account or its teams.
+        (_, Some(false)) => ReviewAsk::None,
+        (Some(false), Some(true)) => ReviewAsk::Team,
+        (Some(false), None) => {
+            if requests
+                .iter()
+                .any(|request| request.kind == ReviewRequestKind::Team)
+            {
+                ReviewAsk::Unknown
+            } else {
+                ReviewAsk::None
+            }
+        }
+        (None, Some(true)) => ReviewAsk::Unknown,
+        (None, None) => {
+            if requests.is_empty() {
+                ReviewAsk::None
+            } else {
+                ReviewAsk::Unknown
+            }
+        }
+    }
+}
+
+/// The numbers of the open pull requests `gh` finds a review asked for, of the
+/// account or of a team of it.
+fn read_review_asked(
     run: &(impl Fn(&[&str]) -> Result<String, GhFailure> + Sync),
-    repository: &str,
-    viewer: &str,
-    pull_requests: &mut [PullRequestSnapshot],
-) -> Result<(), GhFailure> {
+) -> Result<std::collections::HashSet<u32>, GhFailure> {
     let asked = run(&[
         "pr",
         "list",
@@ -403,29 +525,7 @@ fn add_viewer_facts(
         "--json",
         REVIEW_ASKED_FIELDS,
     ])?;
-    let asked = parse_review_asked(&asked).map_err(GhFailure::network)?;
-    let facts = read_facts(run, repository)?;
-    for pull_request in pull_requests {
-        let open = is_open(pull_request);
-        let number = pull_request.number;
-        let work = &mut pull_request.work;
-        work.mine = work.author.as_deref() == Some(viewer);
-        work.asked_of_me = if !open {
-            crate::model::ReviewAsk::None
-        } else if work.review_requests.iter().any(|request| {
-            request.kind == crate::model::ReviewRequestKind::User && request.name == viewer
-        }) {
-            crate::model::ReviewAsk::Direct
-        } else if asked.contains(&number) {
-            crate::model::ReviewAsk::Team
-        } else {
-            crate::model::ReviewAsk::None
-        };
-        let fact = facts.get(&number);
-        work.queue_position = fact.and_then(|fact| fact.queue_position);
-        work.review_requested_at_unix_ms = fact.and_then(|fact| fact.review_requested_at);
-    }
-    Ok(())
+    parse_review_asked(&asked).map_err(GhFailure::network)
 }
 
 fn parse_review_asked(output: &str) -> Result<std::collections::HashSet<u32>, String> {
@@ -1723,6 +1823,7 @@ fn failed(reason: GhFailure) -> GithubStatusSnapshot {
         last_success_at_unix_ms: None,
         unavailable_reason: Some(reason.reason),
         failure_category: Some(reason.category),
+        unread_queries: Vec::new(),
     }
 }
 
@@ -3469,34 +3570,68 @@ mod tests {
         assert_eq!(seven.pending, 2);
     }
 
-    #[test]
-    fn viewer_facts_tell_mine_direct_and_team_asks_and_the_queue_place() {
+    const ASKED: &str = r#"[{"number":7},{"number":8}]"#;
+    const FACTS: &str = r#"{"data":{"repository":{"pullRequests":{"nodes":[{"number":7,"mergeQueueEntry":null,"timelineItems":{"nodes":[{"createdAt":"2026-10-14T01:00:00Z"}]}},{"number":8,"mergeQueueEntry":{"position":3},"timelineItems":{"nodes":[]}}]}}}}"#;
+
+    /// A `gh` that answers the review search and the facts query, each unless
+    /// named in `failing`.
+    fn gh_answering(
+        failing: &'static [ExtraQuery],
+    ) -> impl Fn(&[&str]) -> Result<String, GhFailure> + Sync {
+        move |arguments: &[&str]| match arguments {
+            ["pr", "list", ..] if failing.contains(&ExtraQuery::ReviewRequests) => {
+                Err(GhFailure::network("search rate limited".to_owned()))
+            }
+            ["pr", "list", ..] => Ok(ASKED.to_owned()),
+            ["api", "graphql", "-f", query] if failing.contains(&ExtraQuery::MergeQueue) => {
+                assert!(query.contains("HidePrFacts"));
+                Err(GhFailure::network("graphql schema differs".to_owned()))
+            }
+            ["api", "graphql", "-f", query] => {
+                assert!(query.contains("HidePrFacts"));
+                Ok(FACTS.to_owned())
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    /// Pull request 7 (written by hoyeon; asked of hoyeon and of team core),
+    /// 8 (a bot's; no request) and 9 (a draft; no request).
+    fn sample_with_requests() -> Vec<PullRequestSnapshot> {
         let mut pull_requests = parse_pull_requests(SAMPLE_LIST).unwrap();
         pull_requests[1].work.review_requests.clear();
-        let run = |arguments: &[&str]| -> Result<String, GhFailure> {
-            match arguments {
-                ["pr", "list", ..] => Ok(r#"[{"number":7},{"number":8}]"#.to_owned()),
-                ["api", "graphql", "-f", query] => {
-                    assert!(query.contains("HidePrFacts"));
-                    Ok(r#"{"data":{"repository":{"pullRequests":{"nodes":[{"number":7,"mergeQueueEntry":null,"timelineItems":{"nodes":[{"createdAt":"2026-10-14T01:00:00Z"}]}},{"number":8,"mergeQueueEntry":{"position":3},"timelineItems":{"nodes":[]}}]}}}}"#.to_owned())
-                }
-                other => panic!("unexpected {other:?}"),
-            }
-        };
-        add_viewer_facts(&run, "acme/app", "hoyeon", &mut pull_requests).unwrap();
-        assert!(pull_requests[0].work.mine);
+        pull_requests
+    }
+
+    #[test]
+    fn extra_facts_tell_mine_direct_and_team_asks_and_the_queue_place() {
+        let mut pull_requests = sample_with_requests();
+        let unread = add_extra_facts(
+            &gh_answering(&[]),
+            Ok("acme/app".to_owned()),
+            Some("hoyeon"),
+            &mut pull_requests,
+        );
+        assert_eq!(unread, Vec::<ExtraQuery>::new());
+        assert_eq!(pull_requests[0].work.mine, Some(true));
         assert_eq!(
             pull_requests[0].work.asked_of_me,
             crate::model::ReviewAsk::Direct
         );
-        assert_eq!(pull_requests[0].work.queue_position, None);
-        assert!(!pull_requests[1].work.mine);
+        assert_eq!(
+            pull_requests[0].work.queue,
+            crate::model::MergeQueuePlace::NotQueued
+        );
+        assert_eq!(pull_requests[1].work.mine, Some(false));
         assert_eq!(
             pull_requests[1].work.asked_of_me,
             crate::model::ReviewAsk::Team,
             "found by the search without a request naming the login"
         );
-        assert_eq!(pull_requests[1].work.queue_position, Some(3));
+        assert_eq!(
+            pull_requests[1].work.queue,
+            crate::model::MergeQueuePlace::At(3)
+        );
         assert_eq!(
             pull_requests[0].work.review_requested_at_unix_ms,
             parse_rfc3339_ms("2026-10-14T01:00:00Z")
@@ -3509,15 +3644,198 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_review_ask_or_queue_read_fails_the_read_instead_of_reading_as_none() {
-        let mut pull_requests = parse_pull_requests(SAMPLE_LIST).unwrap();
-        let run = |arguments: &[&str]| -> Result<String, GhFailure> {
-            match arguments {
-                ["pr", "list", ..] => Ok("[]".to_owned()),
-                _ => Err(GhFailure::network("boom".to_owned())),
-            }
+    fn a_failed_account_leaves_mine_unknown_and_judges_what_it_can() {
+        let mut pull_requests = sample_with_requests();
+        let unread = add_extra_facts(
+            &gh_answering(&[]),
+            Ok("acme/app".to_owned()),
+            None,
+            &mut pull_requests,
+        );
+        assert_eq!(unread, vec![ExtraQuery::Account]);
+        for pull_request in &pull_requests {
+            assert_eq!(pull_request.work.mine, None, "#{}", pull_request.number);
+        }
+        // Without the account a request cannot be told direct from a team's.
+        assert_eq!(
+            pull_requests[0].work.asked_of_me,
+            crate::model::ReviewAsk::Unknown
+        );
+        // The search finds 8 and nothing in its list could name the account.
+        assert_eq!(
+            pull_requests[1].work.asked_of_me,
+            crate::model::ReviewAsk::Unknown
+        );
+        assert_eq!(
+            pull_requests[2].work.asked_of_me,
+            crate::model::ReviewAsk::None
+        );
+        assert_eq!(
+            pull_requests[1].work.queue,
+            crate::model::MergeQueuePlace::At(3)
+        );
+    }
+
+    #[test]
+    fn a_failed_review_search_leaves_team_asks_unknown_and_keeps_the_rest() {
+        let mut pull_requests = sample_with_requests();
+        let unread = add_extra_facts(
+            &gh_answering(&[ExtraQuery::ReviewRequests]),
+            Ok("acme/app".to_owned()),
+            Some("hoyeon"),
+            &mut pull_requests,
+        );
+        assert_eq!(unread, vec![ExtraQuery::ReviewRequests]);
+        assert_eq!(pull_requests[0].work.mine, Some(true));
+        assert_eq!(
+            pull_requests[0].work.asked_of_me,
+            crate::model::ReviewAsk::Direct,
+            "the request list names the account without the search"
+        );
+        assert_eq!(
+            pull_requests[1].work.asked_of_me,
+            crate::model::ReviewAsk::None,
+            "no request that could be the account or a team"
+        );
+        assert_eq!(
+            pull_requests[0].work.queue,
+            crate::model::MergeQueuePlace::NotQueued
+        );
+        assert_eq!(
+            pull_requests[1].work.queue,
+            crate::model::MergeQueuePlace::At(3)
+        );
+    }
+
+    #[test]
+    fn a_failed_queue_query_leaves_the_queue_unknown_and_keeps_the_rest() {
+        let mut pull_requests = sample_with_requests();
+        let unread = add_extra_facts(
+            &gh_answering(&[ExtraQuery::MergeQueue]),
+            Ok("acme/app".to_owned()),
+            Some("hoyeon"),
+            &mut pull_requests,
+        );
+        assert_eq!(unread, vec![ExtraQuery::MergeQueue]);
+        for pull_request in &pull_requests {
+            assert_eq!(
+                pull_request.work.queue,
+                crate::model::MergeQueuePlace::Unknown,
+                "#{}",
+                pull_request.number
+            );
+            assert_eq!(pull_request.work.review_requested_at_unix_ms, None);
+        }
+        assert_eq!(pull_requests[0].work.mine, Some(true));
+        assert_eq!(
+            pull_requests[0].work.asked_of_me,
+            crate::model::ReviewAsk::Direct
+        );
+        assert_eq!(
+            pull_requests[1].work.asked_of_me,
+            crate::model::ReviewAsk::Team
+        );
+    }
+
+    #[test]
+    fn a_repository_name_that_cannot_be_read_fails_only_the_queue_query() {
+        let mut pull_requests = sample_with_requests();
+        let unread = add_extra_facts(
+            &gh_answering(&[]),
+            Err(GhFailure::network("no repository".to_owned())),
+            Some("hoyeon"),
+            &mut pull_requests,
+        );
+        assert_eq!(unread, vec![ExtraQuery::MergeQueue]);
+        assert_eq!(
+            pull_requests[1].work.asked_of_me,
+            crate::model::ReviewAsk::Team
+        );
+    }
+
+    #[test]
+    fn all_three_failing_leave_every_judgment_unknown_and_the_list_whole() {
+        let mut pull_requests = sample_with_requests();
+        let unread = add_extra_facts(
+            &gh_answering(&[ExtraQuery::ReviewRequests, ExtraQuery::MergeQueue]),
+            Ok("acme/app".to_owned()),
+            None,
+            &mut pull_requests,
+        );
+        assert_eq!(
+            unread,
+            vec![
+                ExtraQuery::Account,
+                ExtraQuery::ReviewRequests,
+                ExtraQuery::MergeQueue
+            ]
+        );
+        assert_eq!(pull_requests.len(), 3);
+        for pull_request in &pull_requests {
+            assert_eq!(pull_request.work.mine, None);
+            assert_eq!(
+                pull_request.work.queue,
+                crate::model::MergeQueuePlace::Unknown
+            );
+        }
+        assert_eq!(
+            pull_requests[0].work.asked_of_me,
+            crate::model::ReviewAsk::Unknown
+        );
+        assert_eq!(
+            pull_requests[1].work.asked_of_me,
+            crate::model::ReviewAsk::None,
+            "a pull request nobody was asked to review was asked of nobody"
+        );
+    }
+
+    #[test]
+    fn the_request_list_and_the_search_settle_a_review_ask_in_every_combination() {
+        use crate::model::ReviewAsk::{self, Direct, None as NotAsked, Team, Unknown};
+        // (open, requests, account, found by the search, the answer)
+        type Case = (
+            bool,
+            Vec<ReviewRequest>,
+            Option<&'static str>,
+            Option<bool>,
+            ReviewAsk,
+        );
+        let user = |name: &str| ReviewRequest {
+            kind: ReviewRequestKind::User,
+            name: name.to_owned(),
         };
-        assert!(add_viewer_facts(&run, "acme/app", "hoyeon", &mut pull_requests).is_err());
+        let team = ReviewRequest {
+            kind: ReviewRequestKind::Team,
+            name: "core".to_owned(),
+        };
+        let table: Vec<Case> = vec![
+            (false, vec![user("me")], Some("me"), Some(true), NotAsked),
+            (true, vec![user("me")], Some("me"), Some(true), Direct),
+            (true, vec![user("me")], Some("me"), None, Direct),
+            (true, vec![user("me")], Some("me"), Some(false), Direct),
+            (true, vec![team.clone()], Some("me"), Some(true), Team),
+            (true, vec![team.clone()], Some("me"), Some(false), NotAsked),
+            (true, vec![team.clone()], Some("me"), None, Unknown),
+            (true, vec![user("ann")], Some("me"), None, NotAsked),
+            (true, vec![], Some("me"), Some(true), Team),
+            (true, vec![], Some("me"), None, NotAsked),
+            (true, vec![user("me")], None, Some(true), Unknown),
+            (true, vec![user("me")], None, Some(false), NotAsked),
+            (true, vec![user("me")], None, None, Unknown),
+            (true, vec![], None, None, NotAsked),
+            (true, vec![], None, Some(true), Unknown),
+        ];
+        for (open, requests, account, found, expected) in table {
+            assert_eq!(
+                review_ask(open, &requests, account, found),
+                expected,
+                "open {open}, requests {requests:?}, account {account:?}, found {found:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_merge_queue_answer_hide_cannot_read_is_an_error_not_an_empty_queue() {
         assert!(parse_facts("not json").is_err());
         assert!(parse_facts(r#"{"data":{"repository":null}}"#).is_err());
     }

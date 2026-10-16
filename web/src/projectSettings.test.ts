@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { KitAgent, KitPiece, SnapshotRest, Workspace } from "./snapshot";
 import { guardPartOf } from "./ProjectGuardrails";
-import { DEFAULT_GUARD_PATHS, guardedBase, guardPathRefusal, projectBaseBranch, projectGuardrails, projectIssueSource, projectSettings, readableSettings, settingsTarget, unguardedAgents } from "./projectSettings";
+import { DEFAULT_GUARD_PATHS, guardedBase, guardPathRefusal, projectBaseBranch, projectGuardrails, projectIssueSource, projectRepository, projectSettings, readableSettings, settingsTarget, unguardedAgents } from "./projectSettings";
 
 const project = { id: "display-id", device_id: "local", path: "/project", label: "project", branches: ["main", "develop"], default_branch: "main" } as Workspace;
 const snapshot = () => ({ ui_state: {
@@ -106,5 +106,18 @@ describe("project guardrails", () => {
       agent("pi", "Pi", { availability: "unsupported_system" }),
     ]).map((row) => row.id);
     expect(names).toEqual(["codex", "cursor"]);
+  });
+
+  it("names the GitHub repository a Git project is connected to: the confirmed one, else the detected one, never a folder's", () => {
+    const rest = snapshot();
+    const git = { ...project, is_git: true } as Workspace;
+    expect(projectRepository(rest, git)).toBeNull();
+    expect(projectRepository(rest, { ...git, tasks: { source: { kind: "github", name: "acme/tasks" } } } as Workspace)).toBe("acme/tasks");
+    expect(projectRepository(rest, { ...git, tasks: { source: { kind: "local", name: "memos" } } } as Workspace)).toBeNull();
+    const detected = { ...git, home_issues: { repository: "acme/detected" } } as Workspace;
+    expect(projectRepository(rest, detected)).toBe("acme/detected");
+    rest.ui_state!.project_settings!.original!.repository = { mode: "repository", repository: "acme/chosen" };
+    expect(projectRepository(rest, detected)).toBe("acme/chosen");
+    expect(projectRepository(rest, { ...detected, is_git: false } as Workspace)).toBeNull();
   });
 });

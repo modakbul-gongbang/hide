@@ -98,7 +98,7 @@ test(`${kind} ${kind === "cursor" ? "generated goal" : "native title"} and durab
     }
     await expect(page.locator('[data-menu-item="sleep_agent"]')).toBeEnabled({ timeout: 20_000 });
     await page.locator('[data-menu-item="sleep_agent"]').click();
-    // Every agent of the project sleeps now, so it folds behind its moon (PRD sidebar-titlebar-refresh B4).
+    // Every agent of the project sleeps now, so it folds (PRD sidebar-titlebar-refresh B4).
     await openSleepingProject(page);
     const sleeping = page.locator('[data-sleeping-session]');
     await expect(sleeping).toContainText(title, { timeout: 30_000 });

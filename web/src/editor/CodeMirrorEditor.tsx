@@ -36,11 +36,12 @@ import { viewComments } from "./comments";
 import { fileModel, useLineComments } from "./useLineComments";
 import type { PatchComments } from "./PatchView";
 import { useInterfaceTranslation } from "../i18n/client";
-import type { EditorDocumentSnapshot } from "../snapshot";
+import { explorerContext, localDeviceId, type EditorDocumentSnapshot } from "../snapshot";
+import { useShellStore } from "../store";
 import { splitFrontmatter } from "./frontmatter";
 import { lineOffset, onLineRequest, takeLine } from "./lineRequest";
 import { languageLoader } from "./languages";
-import { markdownLive } from "./markdownLivePlugin";
+import { markdownLive, type LiveFiles } from "./markdownLivePlugin";
 import { editorPhrases } from "./phrases";
 import { echoDecision, joinDocument, minimalChange, peerState, type PeerState } from "./sync";
 import { baseTheme, liveTheme, scaleTheme } from "./theme";
@@ -104,6 +105,7 @@ export function CodeMirrorEditor({
   held = false,
   onDraft,
   onSave,
+  onOpenPath,
   comments,
 }: {
   tabId: string;
@@ -121,6 +123,8 @@ export function CodeMirrorEditor({
   onDraft: (contents: string) => void;
   /** Saves the document: the editor's own Mod-s (docs/UI_BEHAVIOR.md, Keyboard shortcuts per system). */
   onSave: () => void;
+  /** A file a drawn HTML link names inside the checkout, opened in the Workspace. */
+  onOpenPath: (path: string) => void;
   /** The View it draws, which takes the operator's comments (PRD view-opener-feedback B12). */
   comments: PatchComments;
 }) {
@@ -148,6 +152,27 @@ export function CodeMirrorEditor({
   contentsRef.current = contents;
   const pathRef = useRef(document.path);
   pathRef.current = document.path;
+  const onOpenPathRef = useRef(onOpenPath);
+  onOpenPathRef.current = onOpenPath;
+  // Where this document's relative images and links start: its folder, the
+  // checkout in front, and the device that checkout is on, read when a widget
+  // is drawn.
+  const files = useMemo<LiveFiles>(
+    () => ({
+      base: () => {
+        const rest = useShellStore.getState().rest;
+        const { device, checkout } = explorerContext(rest);
+        if (!checkout) return null;
+        const source = device === localDeviceId(rest) ? null : { device, root: checkout.path };
+        return { docPath: pathRef.current, root: checkout.path, source };
+      },
+      openUrl: (url) => {
+        window.open(url, "_blank", "noopener,noreferrer");
+      },
+      openPath: (path) => onOpenPathRef.current(path),
+    }),
+    [],
+  );
   const readonly = held || document.readonly_reason !== null || document.document_kind !== "text" && document.document_kind !== "markdown";
   // The pane belongs to Live mode's markdown only; source mode and every
   // other kind keep one buffer (D-11).
@@ -232,7 +257,7 @@ export function CodeMirrorEditor({
           save,
           keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
           languageConf.of([]),
-          liveConf.of(live ? [markdownLive(), liveTheme] : []),
+          liveConf.of(live ? [markdownLive({ files }), liveTheme] : []),
           listeners("body"),
         ],
       }),
@@ -261,6 +286,7 @@ export function CodeMirrorEditor({
       const limit = bodyEditor.state.doc.length;
       bodyEditor.dispatch({
         selection: { anchor: Math.min(place.anchor, limit), head: Math.min(place.head, limit) },
+        userEvent: "select",
         effects: EditorView.scrollIntoView(Math.min(place.top, limit), { y: "start" }),
       });
     }
@@ -273,7 +299,7 @@ export function CodeMirrorEditor({
       if (!asked) return;
       const target = frontEditor && asked.line <= frontLines ? frontEditor : bodyEditor;
       const offset = lineOffset(target.state.doc, target === bodyEditor ? asked.line - frontLines : asked.line, asked.column);
-      target.dispatch({ selection: { anchor: offset }, effects: EditorView.scrollIntoView(offset, { y: "center" }) });
+      target.dispatch({ selection: { anchor: offset }, userEvent: "select", effects: EditorView.scrollIntoView(offset, { y: "center" }) });
     };
     goToLine();
     const stopLines = onLineRequest(goToLine);
@@ -380,8 +406,8 @@ export function CodeMirrorEditor({
   }, [scale]);
 
   useEffect(() => {
-    bodyView.current?.dispatch({ effects: liveConf.reconfigure(live ? [markdownLive(), liveTheme] : []) });
-  }, [live]);
+    bodyView.current?.dispatch({ effects: liveConf.reconfigure(live ? [markdownLive({ files }), liveTheme] : []) });
+  }, [live, files]);
 
   // A request is an increment: the counter survives a display switch, so only
   // a new ⌘F opens a panel, only in the display it was meant for, and a

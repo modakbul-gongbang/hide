@@ -129,4 +129,28 @@ export const liveTheme = EditorView.theme({
   ".cm-md-code-inline": { fontFamily: "var(--font-mono)", backgroundColor: "var(--secondary)" },
   ".cm-md-bullet": { color: "var(--subtle-foreground)" },
   ".cm-md-checkbox": { verticalAlign: "middle" },
+  // Drawn HTML and images. The page's reset makes an image a block and strips
+  // list and table styling, so each of those is put back to what HTML means.
+  // The editor keeps a text's newlines (`pre-wrap`); HTML collapses them.
+  ".cm-md-html": { fontFamily: "var(--font-sans)", lineHeight: "1.5", whiteSpace: "normal" },
+  ".cm-md-html pre": { whiteSpace: "pre-wrap" },
+  ".cm-md-html-block": { display: "block" },
+  ".cm-md-html img": { display: "inline-block", maxWidth: "100%", height: "auto", verticalAlign: "middle" },
+  ".cm-md-html a[href]": { color: "var(--file-blue)", textDecoration: "underline" },
+  ".cm-md-html p, .cm-md-html ul, .cm-md-html ol, .cm-md-html table, .cm-md-html blockquote, .cm-md-html pre": { margin: "0 0 var(--spacing-sm)" },
+  ".cm-md-html h1": { fontSize: "var(--text-editor-heading-1)", fontWeight: "600", lineHeight: "1.3", margin: "0 0 var(--spacing-sm)" },
+  ".cm-md-html h2": { fontSize: "var(--text-editor-heading-2)", fontWeight: "600", lineHeight: "1.3", margin: "0 0 var(--spacing-sm)" },
+  ".cm-md-html h3": { fontSize: "var(--text-editor-heading-3)", fontWeight: "600", lineHeight: "1.3", margin: "0 0 var(--spacing-sm)" },
+  ".cm-md-html h4, .cm-md-html h5, .cm-md-html h6": { fontSize: "var(--text-editor-heading-4)", fontWeight: "600", lineHeight: "1.4", margin: "0 0 var(--spacing-sm)" },
+  ".cm-md-html ul": { listStyle: "disc", paddingLeft: "1.5em" },
+  ".cm-md-html ol": { listStyle: "decimal", paddingLeft: "1.5em" },
+  ".cm-md-html blockquote": { borderLeft: "var(--size-editor-quote-rule) solid var(--border)", paddingLeft: "var(--spacing-sm)", color: "var(--subtle-foreground)" },
+  ".cm-md-html code, .cm-md-html kbd, .cm-md-html pre": { fontFamily: "var(--font-mono)", backgroundColor: "var(--secondary)" },
+  ".cm-md-html hr": { border: "0", borderTop: "var(--size-hairline) solid var(--border)", margin: "var(--spacing-sm) 0" },
+  ".cm-md-html table": { borderCollapse: "collapse" },
+  ".cm-md-html th, .cm-md-html td": { border: "var(--size-hairline) solid var(--border)", padding: "0 var(--spacing-sm)" },
+  ".cm-md-html summary": { cursor: "pointer" },
+  // An image that did not load: its alt text, muted and small, nothing else.
+  ".cm-md-alt": { color: "var(--muted-foreground)", fontSize: "var(--text-caption)" },
+  ".cm-md-alt[data-state='loading']": { display: "none" },
 });

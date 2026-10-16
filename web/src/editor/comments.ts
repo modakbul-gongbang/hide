@@ -94,14 +94,18 @@ class Plus extends GutterMarker {
     return other.row === this.row && other.label === this.label;
   }
 
+  /** A box one text line tall holding the button, so on a wrapped or taller line it sits beside the line number, on the first visual row. */
   toDOM(): HTMLElement {
+    const slot = document.createElement("span");
+    slot.className = "cm-view-comment-slot";
     const button = document.createElement("button");
     button.type = "button";
     button.className = "cm-view-comment-add";
     button.textContent = "+";
     button.setAttribute("aria-label", this.label);
     button.dataset.viewCommentAdd = String(this.row);
-    return button;
+    slot.append(button);
+    return slot;
   }
 }
 
@@ -279,7 +283,8 @@ export function viewComments(host: { current: CommentHost }): Extension {
 
 const commentTheme = EditorView.theme({
   ".cm-view-comment-gutter": { width: "var(--size-control-sm)" },
-  ".cm-view-comment-gutter .cm-gutterElement": { display: "flex", alignItems: "center", justifyContent: "center", padding: "0" },
+  ".cm-view-comment-gutter .cm-gutterElement": { display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "0" },
+  ".cm-view-comment-slot": { display: "flex", alignItems: "center", justifyContent: "center", height: "1lh" },
   ".cm-view-comment-add": {
     display: "flex",
     alignItems: "center",

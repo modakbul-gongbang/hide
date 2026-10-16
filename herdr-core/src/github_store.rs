@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::latest_file::{LatestFile, read_capped};
 use crate::model::{GithubProjectSnapshot, GithubSnapshot};
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 /// The most a file may hold. The projects (64), their pull requests (200) and
 /// issues (200) are capped, so a file past this is not one this store wrote.
@@ -323,8 +323,8 @@ mod tests {
         })
         .unwrap();
         let other_version = String::from_utf8(good.clone()).unwrap().replacen(
-            "\"schema_version\":1",
             "\"schema_version\":2",
+            "\"schema_version\":1",
             1,
         );
         let torn = &good[..good.len() / 2];
