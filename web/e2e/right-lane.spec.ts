@@ -38,7 +38,7 @@ async function startLane(page: Page, name: string): Promise<Lane> {
 
 async function openFile(lane: Lane, paneId: string, name: string): Promise<void> {
   const hide = path.resolve("..", "target", "debug", fixtureExecutable("hide"));
-  const ran = await runInPane(lane.herdr, paneId, name, { env: { HIDE_STATE_DIR: lane.daemon.stateDir }, argv: [hide, "file", "open", name, "--reveal"] });
+  const ran = await runInPane(lane.herdr, paneId, name, { env: { HIDE_STATE_DIR: lane.daemon.stateDir }, argv: [hide, "file", "open", name] });
   expect(ran.status, ran.stderr).toBe(0);
 }
 

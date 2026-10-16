@@ -2,13 +2,14 @@
 //! lane-files-checkout-views D-03, D-09, D-11, D-16, D-19).
 //!
 //! The checkout owns the Views, their split and their selection, whichever
-//! Agent tab is in front. A tab remembers one View, the one it last put in
-//! front, and gets it back when the tab appears on screen after not being on
-//! it. The bookmark never moves the area in use or the keyboard.
+//! Agent tab is in front. A tab remembers one View, the one the operator last
+//! had in front on it, and gets it back when the tab appears on screen after
+//! not being on it. The bookmark never moves the area in use or the keyboard.
+//! An agent changes what is in front only from the pane the operator is in.
 
 use super::workspace_view::WorkspaceKey;
 use super::*;
-use crate::workspace_control::{Action, Caller};
+use crate::workspace_control::Caller;
 
 /// What the pass saw of a Workspace it has had in front: the Agent tabs that
 /// were on screen and the View in front of the area in use.
@@ -18,9 +19,9 @@ pub(super) struct Seen {
     front: Option<String>,
 }
 
-/// The selection a background caller must leave as it found it (PRD
-/// lane-files-checkout-views B7): the area in use, the View in front of each
-/// area and the editor's active tab.
+/// The selection a caller outside the operator's pane must leave as it found
+/// it (PRD lane-files-checkout-views B7): the area in use, the View in front
+/// of each area and the editor's active tab.
 pub(super) struct Kept {
     key: WorkspaceKey,
     editor_active: Option<String>,
@@ -134,9 +135,21 @@ impl Runtime {
             .and_then(|tab| tab.id.clone())
     }
 
-    /// The tab of a caller who is not looking at the Workspace's front: a
-    /// pane of an Agent tab other than the active one. A checkout caller and
-    /// the active tab's panes are in front (D-04, D-10).
+    /// Whether a Workspace command's caller is the pane the operator is in:
+    /// the selected pane of the Workspace in front. Another pane of the same
+    /// tab, a pane of another tab or checkout and a pane-less checkout caller
+    /// are not, so their opens and selects leave the screen as it was.
+    pub(super) fn operator_caller(&self, key: &WorkspaceKey, caller_id: &str) -> bool {
+        let Caller::Pane(pane_id) = Caller::parse(caller_id) else {
+            return false;
+        };
+        self.snapshot.terminal.pane_id.as_deref() == Some(pane_id)
+            && self.front_workspace_key().as_ref() == Some(key)
+    }
+
+    /// The tab of a GUI open asked in a pane that is not looking at the
+    /// Workspace's front: a pane of an Agent tab other than the active one.
+    /// A checkout and the active tab's panes are in front (D-04, D-10).
     pub(super) fn background_caller_tab(
         &self,
         key: &WorkspaceKey,
@@ -162,8 +175,8 @@ impl Runtime {
         }
     }
 
-    /// Puts the selection back after a background caller's open: the new View
-    /// stays where it landed, in no area's front and never in the keyboard's.
+    /// Puts the selection back after a background open: the new View stays
+    /// where it landed, in no area's front and never in the keyboard's.
     pub(super) fn restore_front(&mut self, kept: Kept) {
         self.snapshot.editor.active_tab_id = kept.editor_active;
         let outcome = self.change_view_layout(&kept.key, |layout, stamp| {
@@ -195,24 +208,6 @@ impl Runtime {
         }
     }
 
-    /// The View a tab's agent opened or selected is the tab's bookmark, in
-    /// front or not (D-16).
-    pub(super) fn note_caller_view(
-        &mut self,
-        key: &WorkspaceKey,
-        caller_id: &str,
-        action: &Action,
-        view_id: &str,
-    ) {
-        if !opens_or_selects(action) {
-            return;
-        }
-        let Some(tab) = self.control_caller_tab(key, caller_id) else {
-            return;
-        };
-        self.record_tab_view(key, &tab, view_id);
-    }
-
     pub(super) fn record_tab_view(&mut self, key: &WorkspaceKey, tab: &str, view_id: &str) {
         let Some(store) = self.workspace_views.as_mut() else {
             return;
@@ -240,24 +235,4 @@ impl Runtime {
         }
         changed | reads_dropped
     }
-}
-
-pub(super) fn opens_or_selects(action: &Action) -> bool {
-    matches!(
-        action,
-        Action::OpenFile { .. }
-            | Action::OpenDiff { .. }
-            | Action::OpenBrowser { .. }
-            | Action::Select { .. }
-    )
-}
-
-pub(super) fn action_reveals(action: &Action) -> bool {
-    matches!(
-        action,
-        Action::OpenFile { reveal: true, .. }
-            | Action::OpenDiff { reveal: true, .. }
-            | Action::OpenBrowser { reveal: true, .. }
-            | Action::Select { reveal: true, .. }
-    )
 }

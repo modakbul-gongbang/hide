@@ -23,19 +23,18 @@ Only checkouts in the current connected catalog contribute to that inventory; a 
 
 ## Opening a page
 
-- `hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]` from a shell the daemon can bind to a checkout: a connected Herdr pane, or a local process whose working directory is inside a registered checkout (`docs/ARCHITECTURE.md`, hided and the WebSocket boundary).
+- `hide browser open <url-or-path> [--wait] [--request-id <id>]` from a shell the daemon can bind to a checkout: a connected Herdr pane, or a local process whose working directory is inside a registered checkout (`docs/ARCHITECTURE.md`, hided and the WebSocket boundary).
   The CLI resolves a relative file on the calling machine, gives loopback hosts `http` and other hosts `https`, and submits one action scoped to the caller's checkout with no Workspace override.
   The core checks an HTML file against that checkout on its own device and reads it outside the core lock before placing its Browser View.
   The action result confirms View placement, while `hide view status <view-id>` returns `pending`, `loading`, `loaded`, `failed`, `disconnected`, or `unsupported` for its native page.
   `disconnected` means a native page existed for that load but was removed or its desktop renderer disconnected; `unsupported` means no desktop renderer was available for a pending page.
-  A background pane open adds its page to the checkout's one list, in the area it lands in and behind the one in front, and the same address opened from two tabs is one page, so the operator's page and load stay unchanged.
+  Only an open from the pane the operator is in, the selected pane of the front Workspace, brings the page to the front of its area and calls the lane.
+  Any other caller, another pane of the same tab, a pane of another tab or checkout, or a caller with no pane, adds its page to the checkout's one list, in the area it lands in and behind the one in front, and moves no tab, checkout or keyboard; the same address opened from two tabs is one page, so the operator's page and load stay unchanged.
   A new page that is not in front can stay pending until it first appears.
   An agent reads the checkout's Views (`hide view list`, `hide view status`, select, close, `--wait`) from any of its tabs, even when its tab is not the Workspace's active tab and the Workspace was never in front: every caller sees the same list, so such a page is listed as `pending` rather than missing.
-  `--reveal` selects the actual caller tab; pane-less callers act for the active tab.
   `--wait` polls that state for at most ten seconds and returns a failure if the page fails, disconnects, or remains pending; it does not reveal a hidden View.
   If a later status query fails, the refusal still carries the applied open request ID and View ID for reconciliation.
   The action receipt and page status carry the load stamp, so a concurrent reopen that supersedes the requested load returns `page_superseded` instead of the newer load's result.
-  `--reveal` explicitly brings the caller's checkout and selected Browser View forward, including a connected SSH device.
   The CLI returns one JSON line, exits nonzero on refusal, and never starts Hide.
   Its successful result includes `cdp_http_url` and `browser_ws_url` when the native gateway can issue a capability for that display.
   If discovery fails after placement, the result retains its applied View receipt and carries `browser_control.state: unavailable` with a retry command; discovery does not undo or repeat the open.
@@ -236,7 +235,7 @@ Same-origin frames and open shadow roots are read and acted on through the top d
 `changed` compares a snapshot of every frame taken before the action with one after it, read again after 0.7 and 1.2 seconds when nothing changed yet; clickable detection is capped in document order so a scroll alone never reads as a change.
 
 Input and screenshots go only to a display on screen, so the operator sees what an action does.
-A display that is not its area's selected View fails them at once with `display_hidden` and names `hide view select <display> --reveal`; hided reads that from the core's view list when it opens the relay.
+A display that is not its area's selected View fails them at once with `display_hidden`, whose next step is to ask the operator to show it, since an agent outside the operator's pane cannot bring it forward; hided reads that from the core's view list when it opens the relay.
 That is hided's own rule, not Chromium's: a View the host hides still answers.
 A selected View of a Workspace that is not in front is not refused: the host hides it, yet the page still reports its document visible and Chromium answers input and screenshots within the step, so no input times out there and none waits to be delivered when the Workspace returns, and the operator does not see the action drawn.
 The page's own visibility is not the test either: a selected View in a window another app covers reads `hidden` and still takes input and screenshots.

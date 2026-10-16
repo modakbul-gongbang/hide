@@ -775,7 +775,6 @@ impl BrowserAction {
                 supported_address(&url)?;
                 Ok(Action::OpenBrowser {
                     url,
-                    reveal: false,
                     area_id: Some(self.area_id.clone()),
                     new_target: true,
                 })
@@ -793,7 +792,6 @@ impl BrowserAction {
                 } else {
                     Action::Select {
                         view_id: id.to_owned(),
-                        reveal: false,
                         expected_browser_area: Some(self.area_id.clone()),
                     }
                 })

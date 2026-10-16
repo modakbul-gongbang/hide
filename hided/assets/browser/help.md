@@ -87,6 +87,7 @@ The display stays on the operator's screen while you work, and an arrow cursor i
 It fades two seconds after the last action, lets clicks through, and never appears in a snapshot.
 No command moves the operator's mouse, changes which View is in front, or takes keyboard focus.
 Input and screenshots need the display to be its area's selected View: one behind another tab of its area fails `display_hidden`, and reading commands still work there.
+A page you open comes to the front only while the operator is in your pane; otherwise it lands behind what they see, and only the operator brings it forward.
 A selected View of a Workspace that is not in front takes input and screenshots like any other, though the operator does not see the action.
 
 ## When something fails
@@ -114,7 +115,7 @@ Follow `next_action`; the reasons you will meet:
 | `screenshot_unwritable` | Choose a path in a writable folder. |
 | `screenshot_failed` | Retry; if it keeps failing, check the display with `hide view status`. |
 | `dialog_open` | A JavaScript dialog, or a script that never yields, holds the page; the operator must answer it in hide. Dialogs are never accepted for you. |
-| `display_hidden` | Ask the operator to show the display, or run `hide view select <display> --reveal`. |
+| `display_hidden` | Ask the operator to show the display. |
 | `display_busy` | Another debugger (agent-browser, Playwright) or another `hide browser` command holds the display; let it finish. |
 | `display_unsupported` | Only http(s) and blank displays can be driven; open the page with `hide browser open <url>`. |
 | `display_missing`, `display_closed` | Run `hide view list` and choose a current browser display. |

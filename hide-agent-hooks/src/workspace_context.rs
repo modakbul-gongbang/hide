@@ -104,13 +104,13 @@ fn format_context(program: &OsString, reference: &Path, answer: &Value) -> Optio
             .push("watch assign <watch-or-target-id> --observer <id> [--expected-generation <n>]");
     }
     if has("file.open") {
-        commands.push("file open <path> [--beside] [--reveal]");
+        commands.push("file open <path> [--beside]");
     }
     if has("diff.open") {
-        commands.push("diff open <path> [--beside] [--reveal]");
+        commands.push("diff open <path> [--beside]");
     }
     if has("browser.open") {
-        commands.push("browser open <url-or-path> [--reveal] [--wait]");
+        commands.push("browser open <url-or-path> [--wait]");
         commands.push(
             "browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ... (read and drive a browser display; `browser help` explains refs, checking with `--diff`, and failures)",
         );
@@ -122,7 +122,7 @@ fn format_context(program: &OsString, reference: &Path, answer: &Value) -> Optio
         commands.push("view status <view-id>");
     }
     if has("view.select") {
-        commands.push("view select <view-id> [--reveal]");
+        commands.push("view select <view-id>");
     }
     if has("view.split") {
         commands.push("view split <view-id> --area <area-id> --edge left|right|up|down");
@@ -149,7 +149,7 @@ fn format_context(program: &OsString, reference: &Path, answer: &Value) -> Optio
         shell_quote(&program.to_string_lossy()),
     );
     Some(format!(
-        "Hide Workspace control is available for this session's checkout `{checkout_path}`. Workspace commands affect only that checkout; there is no Workspace override. Delivery commands use the current agent pane and native session, including on a connected device.{letters} Prefix each command with `{command_prefix}`. Available commands: {}. Run `{} workspace info` to refresh capabilities and `{} --help` for syntax. Omit `--reveal` to leave the current screen and keyboard focus unchanged. A failed command returns a reason and next action; recheck before retrying a timed-out action.",
+        "Hide Workspace control is available for this session's checkout `{checkout_path}`. Workspace commands affect only that checkout; there is no Workspace override. Delivery commands use the current agent pane and native session, including on a connected device.{letters} Prefix each command with `{command_prefix}`. Available commands: {}. Run `{} workspace info` to refresh capabilities and `{} --help` for syntax. An open or select changes the operator's screen only while the operator is in your pane; otherwise it joins the checkout's Files list behind what they see, so tell them what you opened. A failed command returns a reason and next action; recheck before retrying a timed-out action.",
         commands.join(", "),
         command_prefix,
         shell_quote(&program.to_string_lossy()),
@@ -192,7 +192,7 @@ mod tests {
             context
                 .contains("HIDE_CAP_REF='/srv/state/pane-capabilities/ref.json' '/opt/hide/hide'")
         );
-        assert!(context.contains("browser open <url-or-path> [--reveal] [--wait], browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ... (read and drive a browser display; `browser help` explains refs, checking with `--diff`, and failures), view close <view-id>"));
+        assert!(context.contains("browser open <url-or-path> [--wait], browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ... (read and drive a browser display; `browser help` explains refs, checking with `--diff`, and failures), view close <view-id>"));
         assert!(!context.contains("file open"));
         assert!(!context.contains("letter"));
     }

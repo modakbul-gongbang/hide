@@ -4,8 +4,10 @@ use crate::view_layout::{Layout as ViewLayout, MAX_VIEW_DISPLAYS};
 use crate::workspace_control::{Action, Query, checkout_caller_id};
 
 // The checkout owns one View list, split and selection; each Agent tab only
-// remembers the View it last put in front (PRD lane-files-checkout-views).
-// Tests drive public events/actions and inspect the published operator frame.
+// remembers the View the operator last had in front on it, and an agent moves
+// the front only from the pane the operator is in (PRD
+// lane-files-checkout-views). Tests drive public events/actions and inspect
+// the published operator frame.
 
 const TABS: [&str; 3] = ["w-order:t1", "w-order:t2", "w-order:t3"];
 
@@ -36,6 +38,57 @@ fn setup(name: &str) -> (Runtime, String, PathBuf) {
     }
     herdr_focuses(&mut runtime, &directory, "w-order:t1");
     (runtime, checkout_id, directory)
+}
+
+/// The three tabs with the first split in two: `w-order:t1:p`, which holds
+/// the keyboard, and `w-order:t1:q` beside it.
+fn herdr_splits_first_tab(runtime: &mut Runtime, directory: &Path) {
+    let path = directory.to_string_lossy();
+    let tabs: Vec<_> = TABS
+        .iter()
+        .enumerate()
+        .map(|(index, tab)| {
+            serde_json::json!({"workspace_id": "w-order", "tab_id": tab, "label": "", "number": index + 1})
+        })
+        .collect();
+    let mut panes: Vec<_> = TABS
+        .iter()
+        .map(|tab| serde_json::json!({"pane_id": format!("{tab}:p"), "cwd": path}))
+        .collect();
+    panes.push(serde_json::json!({"pane_id": "w-order:t1:q", "cwd": path}));
+    let layouts: Vec<_> = TABS
+        .iter()
+        .map(|tab| {
+            let mut layout = serde_json::json!({
+                "workspace_id": "w-order", "tab_id": tab, "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": format!("{tab}:p"),
+                "panes": [{"pane_id": format!("{tab}:p"), "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                "splits": []
+            });
+            if *tab == TABS[0] {
+                layout["panes"] = serde_json::json!([
+                    {"pane_id": "w-order:t1:p", "rect": {"x": 0, "y": 0, "width": 40, "height": 24}},
+                    {"pane_id": "w-order:t1:q", "rect": {"x": 40, "y": 0, "width": 40, "height": 24}}
+                ]);
+                layout["splits"] = serde_json::json!([
+                    {"direction": "right", "ratio": 0.5, "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}
+                ]);
+            }
+            layout
+        })
+        .collect();
+    runtime.ingest_session(Ok(crate::sidebar::owned_label_fixture(serde_json::json!({
+        "agents": [],
+        "focused_workspace_id": "w-order",
+        "focused_pane_id": "w-order:t1:p",
+        "workspaces": [{"workspace_id": "w-order", "label": "order", "active_tab_id": TABS[0]}],
+        "tabs": tabs,
+        "panes": panes,
+        "layouts": layouts
+    }))
+    .expect("split session payload")));
+    runtime.sync_workspace_view();
 }
 
 /// A session snapshot of the three tabs with Herdr focused on `active`.
@@ -224,13 +277,13 @@ fn control(
     runtime: &mut Runtime,
     caller: &str,
     action: Action,
-    reveal_suffix: &str,
+    suffix: &str,
 ) -> crate::workspace_control::ActionResult {
     let expected = runtime
         .workspace_control_query(crate::node::TEST_NODE, caller, Query::Info)
         .expect("the caller is connected")
         .context;
-    let id = format!("{}-{reveal_suffix}", unix_milliseconds());
+    let id = format!("{}-{suffix}", unix_milliseconds());
     runtime
         .workspace_control_action(
             crate::node::TEST_NODE,
@@ -256,7 +309,6 @@ fn control_file(
     let action = Action::OpenFile {
         path: directory.join(name).to_string_lossy().into_owned(),
         beside,
-        reveal: false,
     };
     let expected = runtime
         .workspace_control_query(crate::node::TEST_NODE, caller, Query::Info)
@@ -282,10 +334,9 @@ fn control_file(
         .unwrap();
 }
 
-fn open_page(url: &str, reveal: bool) -> Action {
+fn open_page(url: &str) -> Action {
     Action::OpenBrowser {
         url: url.to_owned(),
-        reveal,
         area_id: None,
         new_target: false,
     }
@@ -450,7 +501,7 @@ fn focus_between_tabs_on_screen_does_not_change_the_lane() {
 
 /// B7, D-04, D-16: a pane of a tab the operator is not looking at adds its
 /// View to the list without moving the selection, the area in use or the
-/// lane, and its tab remembers it.
+/// lane, and no tab remembers it, so going to that tab moves nothing either.
 #[test]
 fn a_background_agents_open_joins_the_list_and_moves_nothing() {
     for tool in [serde_json::json!("files"), serde_json::Value::Null] {
@@ -486,10 +537,9 @@ fn a_background_agents_open_joins_the_list_and_moves_nothing() {
             lane,
             "no lane call"
         );
-        let c = display_id(&runtime, &directory, "c.md");
-        assert_eq!(bookmark(&runtime, &directory, TABS[1]), Some(c));
+        assert_eq!(bookmark(&runtime, &directory, TABS[1]), None);
         focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
-        assert_eq!(fronts(&runtime, &directory), ["c.md"], "B2 on its tab");
+        assert_eq!(fronts(&runtime, &directory), ["a.md"], "B3 on its tab");
         assert_eq!(
             lane_tool(&runtime),
             tool_of(&tool),
@@ -535,9 +585,9 @@ fn an_agent_closing_the_last_view_leaves_the_lane_open() {
     );
 }
 
-/// B6: from the tab the operator is looking at, `hide file open` and `hide
-/// view select` call the lane as a click does, and a file opened while the
-/// tree showed alone opens beside it.
+/// B6: from the pane the operator is in, `hide file open` and `hide view
+/// select` call the lane as a click does, and a file opened while the tree
+/// showed alone opens beside it.
 #[test]
 fn a_front_tab_open_calls_the_lane_and_keeps_a_lone_tree() {
     let (mut runtime, checkout, directory) = setup("front-open");
@@ -550,7 +600,6 @@ fn a_front_tab_open_calls_the_lane_and_keeps_a_lone_tree() {
         "w-order:t1:p",
         Action::Select {
             view_id: a,
-            reveal: false,
             expected_browser_area: None,
         },
         "front-select",
@@ -584,52 +633,73 @@ fn a_front_tab_open_calls_the_lane_and_keeps_a_lone_tree() {
     );
 }
 
-/// B8: `--reveal` brings the View forward, opens the lane and the calling tab
-/// remembers it; a call from no pane belongs to the operator's tab.
+/// B8: only the agent in the pane the operator is in brings its open forward.
+/// Another pane of the operator's own tab and a caller with no pane add theirs
+/// behind the operator's View, and the tab remembers only what the operator
+/// had in front on it.
 #[test]
-fn reveal_selects_the_actual_caller_and_checkout_calls_use_the_operator() {
-    let (mut runtime, checkout, directory) = setup("caller-reveal");
+fn only_the_operators_pane_brings_its_open_forward() {
+    let (mut runtime, checkout, directory) = setup("operator-pane");
+    herdr_splits_first_tab(&mut runtime, &directory);
     open(&mut runtime, &checkout, &directory, "a.md");
-    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
-    let page = control(
+    let a = display_id(&runtime, &directory, "a.md");
+    let calls = |runtime: &Runtime| runtime.snapshot.workspace_view.as_ref().unwrap().lane_calls;
+    let before = calls(&runtime);
+    control_file(
         &mut runtime,
-        "w-order:t1:p",
-        open_page("https://example.test/reveal", true),
-        "reveal-a",
+        "w-order:t1:q",
+        &directory,
+        "b.md",
+        false,
+        "sibling-pane",
     );
-    runtime.sync_workspace_view();
-    assert_eq!(
-        checkout_active_tab_id(&runtime, &checkout).as_deref(),
-        Some(TABS[0])
-    );
-    assert_eq!(
-        fronts(&runtime, &directory),
-        ["https://example.test/reveal"]
-    );
-    assert_eq!(bookmark(&runtime, &directory, TABS[0]), Some(page.view_id));
-    assert_eq!(
-        lane_tool(&runtime),
-        Some(crate::workspace_views::Tool::Files)
-    );
-    herdr_focuses(&mut runtime, &directory, TABS[0]);
-    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
     let caller = checkout_caller_id("fixture", &directory.to_string_lossy());
     control(
         &mut runtime,
         &caller,
-        open_page("https://example.test/checkout", false),
+        open_page("https://example.test/checkout"),
         "checkout-open",
     );
     runtime.sync_workspace_view();
     assert_eq!(
-        fronts(&runtime, &directory),
-        ["https://example.test/checkout"]
+        strip(&runtime, &directory),
+        ["a.md", "b.md", "https://example.test/checkout"]
     );
+    assert_eq!(fronts(&runtime, &directory), ["a.md"], "the operator's View");
+    assert_eq!(calls(&runtime), before, "no lane call");
+    assert_eq!(bookmark(&runtime, &directory, TABS[0]), Some(a));
+
+    let mine = control(
+        &mut runtime,
+        "w-order:t1:p",
+        open_page("https://example.test/mine"),
+        "operator-open",
+    );
+    runtime.sync_workspace_view();
+    assert_eq!(fronts(&runtime, &directory), ["https://example.test/mine"]);
+    assert!(calls(&runtime) > before, "the operator's pane calls the lane");
     assert_eq!(
-        bookmark(&runtime, &directory, TABS[1])
-            .as_deref()
-            .map(|_| ()),
-        Some(())
+        bookmark(&runtime, &directory, TABS[0]),
+        Some(mine.view_id),
+        "what the operator had in front"
+    );
+
+    // The same pane is another pane once the operator leaves its tab.
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    control_file(
+        &mut runtime,
+        "w-order:t1:p",
+        &directory,
+        "c.md",
+        false,
+        "left-tab",
+    );
+    runtime.sync_workspace_view();
+    assert_eq!(fronts(&runtime, &directory), ["https://example.test/mine"]);
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout).as_deref(),
+        Some(TABS[1]),
+        "the screen stays on the operator's tab"
     );
 }
 
@@ -641,11 +711,11 @@ fn a_background_select_moves_nothing_and_a_repeat_converges() {
     open(&mut runtime, &checkout, &directory, "a.md");
     open(&mut runtime, &checkout, &directory, "b.md");
     let a = display_id(&runtime, &directory, "a.md");
+    let b = display_id(&runtime, &directory, "b.md");
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
     let before = runtime.snapshot.workspace_view.clone();
     let action = Action::Select {
         view_id: a.clone(),
-        reveal: false,
         expected_browser_area: None,
     };
     control(&mut runtime, "w-order:t1:p", action.clone(), "select-a");
@@ -658,7 +728,11 @@ fn a_background_select_moves_nothing_and_a_repeat_converges() {
         "a repeat converges"
     );
     focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
-    assert_eq!(published_front_ids(&runtime), [a]);
+    assert_eq!(
+        published_front_ids(&runtime),
+        [b],
+        "the tab gets back what the operator had in front, not the agent's choice"
+    );
 }
 
 /// B10, D-14: a tab that leaves Herdr takes its bookmark and nothing else:
@@ -668,15 +742,16 @@ fn a_background_select_moves_nothing_and_a_repeat_converges() {
 fn closing_an_agent_tab_keeps_its_views_and_drops_its_bookmark() {
     let (mut runtime, checkout, directory) = setup("tab-close");
     open(&mut runtime, &checkout, &directory, "a.md");
-    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    focus_tab(&mut runtime, &checkout, &directory, TABS[2]);
     control_file(
         &mut runtime,
         "w-order:t3:p",
         &directory,
         "c.md",
         false,
-        "hidden-c",
+        "front-c",
     );
+    runtime.sync_workspace_view();
     assert!(bookmark(&runtime, &directory, TABS[2]).is_some());
     runtime.ingest_session(Ok(tab_order_payload(
         &directory.to_string_lossy(),
@@ -761,8 +836,8 @@ fn an_open_past_the_cap_spares_the_front_of_every_area() {
     );
 }
 
-/// B5: a background agent's open into an empty list is not the operator tab's
-/// own choice, so it is not that tab's bookmark; the opener's tab remembers it.
+/// B5: a background agent's open into an empty list is not the operator's
+/// choice, so it is no tab's bookmark, though it is the list's only View.
 #[test]
 fn a_background_open_into_an_empty_list_is_not_the_active_tabs_bookmark() {
     let (mut runtime, checkout, directory) = setup("background-empty");
@@ -777,8 +852,7 @@ fn a_background_open_into_an_empty_list_is_not_the_active_tabs_bookmark() {
     runtime.sync_workspace_view();
     assert_eq!(strip(&runtime, &directory), ["c.md"]);
     assert_eq!(bookmark(&runtime, &directory, TABS[0]), None);
-    let c = display_id(&runtime, &directory, "c.md");
-    assert_eq!(bookmark(&runtime, &directory, TABS[1]), Some(c));
+    assert_eq!(bookmark(&runtime, &directory, TABS[1]), None);
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
     assert_eq!(fronts(&runtime, &directory), ["c.md"]);
 }
@@ -820,7 +894,6 @@ fn an_open_with_nothing_to_close_is_refused_and_changes_nothing() {
     let action = Action::OpenFile {
         path: directory.join("c.md").to_string_lossy().into_owned(),
         beside: true,
-        reveal: false,
     };
     let id = format!("{}-refused-file", unix_milliseconds());
     let crate::workspace_control::ActionPreparation::Read(source) = runtime
@@ -864,14 +937,14 @@ fn the_same_address_from_two_tabs_is_one_page() {
     let first = control(
         &mut runtime,
         "w-order:t1:p",
-        open_page(url, false),
+        open_page(url),
         "first-browser",
     );
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
     let second = control(
         &mut runtime,
         "w-order:t2:p",
-        open_page(url, false),
+        open_page(url),
         "second-browser",
     );
     runtime.sync_workspace_view();
@@ -919,7 +992,7 @@ fn the_list_and_the_bookmarks_survive_a_restart() {
         );
     }
     focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
-    assert_eq!(fronts(&runtime, &directory), ["c.md"]);
+    assert_eq!(fronts(&runtime, &directory), ["a.md"]);
 }
 
 /// A device Workspace has one visible tab that changes when its Herdr's
@@ -1023,9 +1096,10 @@ fn a_device_workspace_restores_when_its_visible_tab_changes() {
     assert_eq!(front(&runtime), Some(ids[0].clone()));
 }
 
-/// An asynchronous completion belongs to the tab that asked: a read finishing
+/// An asynchronous completion belongs to the pane that asked: a read finishing
 /// after the operator moved to another tab leaves the selection alone and the
-/// asking tab remembers the View; a pane that moved tabs is refused.
+/// asking tab keeps what the operator had in front there; a pane that moved
+/// tabs is refused.
 #[test]
 fn async_completion_is_bound_to_the_original_tab_and_failure_is_atomic() {
     let (mut runtime, checkout, directory) = setup("async-caller");
@@ -1038,7 +1112,6 @@ fn async_completion_is_bound_to_the_original_tab_and_failure_is_atomic() {
     let action = Action::OpenFile {
         path: directory.join("c.md").to_string_lossy().into_owned(),
         beside: false,
-        reveal: false,
     };
     let id = format!("{}-async", unix_milliseconds());
     let crate::workspace_control::ActionPreparation::Read(source) = runtime
@@ -1064,13 +1137,8 @@ fn async_completion_is_bound_to_the_original_tab_and_failure_is_atomic() {
     assert_eq!(strip(&runtime, &directory), ["a.md", "c.md"]);
     assert_eq!(fronts(&runtime, &directory), ["a.md"]);
     assert_eq!(active_area(&runtime, &directory), area);
-    let c = layout(&runtime, &directory)
-        .displays()
-        .find(|display| display.path.ends_with("c.md"))
-        .unwrap()
-        .id
-        .clone();
-    assert_eq!(bookmark(&runtime, &directory, TABS[0]), Some(c));
+    let a = display_id(&runtime, &directory, "a.md");
+    assert_eq!(bookmark(&runtime, &directory, TABS[0]), Some(a));
     // A native pane moved within the same checkout is no longer the caller
     // captured at prepare, even though its checkout capability still matches.
     let id = format!("{}-moved", unix_milliseconds());
@@ -1144,7 +1212,7 @@ fn a_delegated_tabs_pane_manages_views_in_the_checkouts_list() {
     let page = control(
         &mut runtime,
         caller,
-        open_page("https://example.test/delegated", false),
+        open_page("https://example.test/delegated"),
         "delegated-browser",
     );
     control(
@@ -1152,7 +1220,6 @@ fn a_delegated_tabs_pane_manages_views_in_the_checkouts_list() {
         caller,
         Action::Select {
             view_id: page.view_id.clone(),
-            reveal: false,
             expected_browser_area: None,
         },
         "delegated-select",
@@ -1182,7 +1249,7 @@ fn a_view_opened_in_a_workspace_not_in_front_is_listed_to_every_tab() {
     let page = control(
         &mut runtime,
         caller,
-        open_page("http://127.0.0.1:1/", false),
+        open_page("http://127.0.0.1:1/"),
         "page",
     );
     let both = [opened.view_id.clone(), page.view_id.clone()];
@@ -1252,7 +1319,6 @@ fn open_file_result(
     let action = Action::OpenFile {
         path: directory.join(name).to_string_lossy().into_owned(),
         beside: false,
-        reveal: false,
     };
     let expected = runtime
         .workspace_control_query(crate::node::TEST_NODE, caller, Query::Info)

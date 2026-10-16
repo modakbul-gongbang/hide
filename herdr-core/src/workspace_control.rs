@@ -62,16 +62,13 @@ pub enum Action {
     OpenFile {
         path: String,
         beside: bool,
-        reveal: bool,
     },
     OpenDiff {
         path: String,
         beside: bool,
-        reveal: bool,
     },
     OpenBrowser {
         url: String,
-        reveal: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         area_id: Option<String>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -79,7 +76,6 @@ pub enum Action {
     },
     Select {
         view_id: String,
-        reveal: bool,
         /// When supplied by a browser capability, the target must still be
         /// a browser display in this area at commit time.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -337,14 +333,12 @@ mod tests {
         let legacy = serde_json::json!({
             "action": "open_browser",
             "url": "https://example.test/page",
-            "reveal": false,
         });
         let action: Action = serde_json::from_value(legacy.clone()).unwrap();
         assert_eq!(
             action,
             Action::OpenBrowser {
                 url: "https://example.test/page".into(),
-                reveal: false,
                 area_id: None,
                 new_target: false,
             }
@@ -356,7 +350,6 @@ mod tests {
     fn browser_open_target_options_round_trip() {
         let action = Action::OpenBrowser {
             url: "https://example.test/page".into(),
-            reveal: false,
             area_id: Some("a1".into()),
             new_target: true,
         };
@@ -369,7 +362,7 @@ mod tests {
     #[test]
     fn browser_scope_is_additive_to_legacy_select_and_close_wire_actions() {
         for legacy in [
-            serde_json::json!({"action": "select", "view_id": "v2", "reveal": false}),
+            serde_json::json!({"action": "select", "view_id": "v2"}),
             serde_json::json!({"action": "close", "view_id": "v2"}),
         ] {
             let action: Action = serde_json::from_value(legacy.clone()).unwrap();
