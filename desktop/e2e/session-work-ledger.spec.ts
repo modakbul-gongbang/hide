@@ -9,6 +9,24 @@ import { enterWorkspace, openTaskFolds, showTool, taskRow } from "../../web/e2e/
 import { fitWindow, isolate, launchShell, REPO, test } from "./fixture";
 import { captureElectronWindow } from "./electron-window";
 
+/** The record's words beside the split tasks, then the pane's checklist pinned by Show task list through the app menu's chord. */
+async function captureTaskSurfaces(app: ElectronApplication, pane: string, theme: string, facts: Record<string, unknown>) {
+  const page = await app.firstWindow();
+  const record = page.locator("[data-session-record]");
+  // The split request's words show once, under its first task (D-13).
+  await record.locator('[data-record-words="off"]').click();
+  await expect(record.locator("[data-record-words-bubble]").first()).toBeVisible();
+  await captureElectronWindow(app, `record-words-${theme}`, facts);
+  await record.locator('[data-record-words="on"]').click();
+  await page.locator(`[data-pane-view="${pane}"] .xterm-helper-textarea`).focus();
+  await page.keyboard.press(chord("toggle_task_list", "electron"));
+  const list = page.locator(`[data-pane-task-list="${pane}"]`);
+  await expect(list.locator("[data-task-list-name]")).toHaveCount(3);
+  await captureElectronWindow(app, `pane-task-list-${theme}`, facts);
+  await page.keyboard.press(chord("toggle_task_list", "electron"));
+  await expect(list).toHaveCount(0);
+}
+
 test("@platform session work records, missed lines, ended work and search render in both themes in a narrow native lane", async () => {
   test.setTimeout(240_000);
   const herdr = await startHerdr();
@@ -71,6 +89,7 @@ test("@platform session work records, missed lines, ended work and search render
       await page.keyboard.press("Escape");
       const facts = { ...fixtureIdentity, theme, tools: await page.locator("[data-lane-frame]").boundingBox() };
       await captureElectronWindow(app, `record-chapters-children-${theme}`, facts);
+      await captureTaskSurfaces(app, herdr.panes[0], theme, facts);
       const missed = record.locator('[data-missed-work]', { hasText: MISSED });
       await missed.getByRole("button", { name: "무시", exact: true }).click();
       // A closed one is a muted line under its task; Undo shows under the pointer.
@@ -95,6 +114,8 @@ test("@platform session work records, missed lines, ended work and search render
       await page.locator('[data-ai-agent-summary="true"]').click();
       await page.keyboard.press("Escape");
       await expect(record.locator('[data-record-task]')).toHaveCount(0);
+      // Agent summaries off keeps no tasks, so the pane head draws no chip (B9).
+      await expect(page.locator(`[data-pane-task-chip="${herdr.panes[0]}"]`)).toHaveCount(0);
       // The parent's two requests; the child's is in its own record, behind its row.
       await expect(record.locator('[data-record-request]')).toHaveCount(2);
       await expect(record.getByRole('heading', { level: 2 })).toHaveText('Claude');
