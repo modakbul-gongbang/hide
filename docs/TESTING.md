@@ -251,7 +251,7 @@ A piece that another open change is still building is marked as pending with the
 6. **Leave the renderer off; turn WebGL on only in a spec that tests it.**
    Headless Chromium composites in software, so each frame of xterm's WebGL canvas is read back synchronously on the page's main thread, 250 to 500 ms at a time.
    `web/playwright.config.ts` launches every web e2e Chromium with `--disable-webgl`, so the shell uses xterm's DOM renderer, its existing fallback, and a spec needs no setting of its own; [Wait for state, not time](#wait-for-state-not-time) has the measurement.
-   A spec file that tests the WebGL renderer sets `test.use({ launchOptions })` at file top level, which replaces the config's `launchOptions` rather than adding to it, and says why; no web spec does today.
+   A spec file that tests the WebGL renderer sets `test.use({ launchOptions })` at file top level, which replaces the config's `launchOptions` rather than adding to it, and says why: `sleep-wake-click.spec.ts` does, because the layer that once covered Wake agent is a WebGL canvas the DOM renderer never draws, and `terminal-webgl.spec.ts` gives its WebGL cases a separate fixture pool with `test.extend` beside a case that keeps the suite's flag.
    Assert terminal content through the probe, never through DOM text, because the DOM renderer puts terminal text in the page.
    The desktop suite is not covered: Electron has its own GPU path.
    Do not raise a timeout to cover the stall.

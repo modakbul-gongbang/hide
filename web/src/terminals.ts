@@ -651,7 +651,11 @@ function onCopy(instance: Instance, event: ClipboardEvent) {
 
 function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLinkActions, scale: number): Instance {
   const element = document.createElement("div");
-  element.className = "absolute inset-0";
+  // Its own stacking context: xterm gives its layers z-indexes up to 11 (the
+  // WebGL canvases, the helpers, the scrollbar), which would otherwise paint
+  // over, and take the clicks of, whatever a pane draws on top of its terminal
+  // (issue 1279).
+  element.className = "absolute inset-0 isolate";
   element.dataset.terminal = paneId;
   const link: LinkState = { hovered: false };
   const term = new Terminal({
