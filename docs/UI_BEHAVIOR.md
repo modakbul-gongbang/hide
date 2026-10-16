@@ -1203,10 +1203,24 @@ The editor retains only its latest unacknowledged draft while older core snapsho
 In the Live view, the line holding the caret, and every line a selection crosses, shows its source; a fenced code block is one unit, so a caret anywhere inside it shows both fences.
 Markup hides again the moment the caret leaves, with no animation.
 Headings hide their hashes; bold, italic, and strikethrough hide their delimiters; inline code and fenced blocks use the editor's monospaced font; unordered markers draw as a bullet and ordered markers keep their digits, both with a hanging indent; a quote indents behind a bar and hides its `>`; a link shows its text in the accent color with the brackets and URL hidden; a `---` line draws as a rule.
-Tables, images, HTML, footnotes, and task lists are not drawn: they stay monospaced source, editable in place, and a parse the view cannot use leaves the whole document monospaced with the reason in the notice bar while typing continues.
+Tables, footnotes and inline HTML other than `<img>` (`<br>`, `<kbd>`, `<sub>`) are not drawn: they stay monospaced source, editable in place, and a parse the view cannot use leaves the whole document monospaced with the reason in the notice bar while typing continues.
+An HTML block at the top level of the document is drawn as its rendered HTML, a Markdown image `![alt](src "title")` and an inline `<img>` as the image, and the Live text of an issue body (read-only, never revealing source) draws them the same way.
+Like a fenced code block, a block is one unit: a selection anywhere in it, edges included, shows its source, and an image shows its source while the caret is on its line.
+A file opens with the caret at 0, which the operator did not put there, so a block or image there stays drawn until the operator first moves the caret or edits; every other mark follows the caret from the start.
+An HTML block inside a quote or a list item, a comment, and a block with nothing visible left after cleaning stay source.
 An empty Markdown file is an empty Live editor with the caret in it.
-Links open on modifier-click only: HTTP(S) in the external browser, a relative file inside the current checkout as an Explorer reveal, and anything else as a caller-visible notice; a plain click places the caret.
-Raw HTML is inert literal text, never a browser execution surface, and no image resource is read or fetched.
+Links open on modifier-click only, a Markdown `[text](url)` link and a link in drawn HTML alike: HTTP(S) and `mailto:` in the external browser, a relative file inside the current checkout as a tab, and anything else (a path outside the checkout) as a diagnostic-log line; a plain click places the caret, and a drawn link never navigates the page.
+Drawn HTML is cleaned by DOMPurify on an allowlist (paragraph, heading, list, table, `<a>`, `<img>`, `<details>` and the like; `align`, `width`, `height`, `alt`, `title`, `colspan`, `rowspan`): no `script`, `style`, `iframe`, `object`, `form`, event handler, inline style or script URL survives, and a link keeps only an http(s), `mailto:`, `#fragment` or relative address.
+A link in drawn HTML opens as above, on modifier-click only (a relative file inside the checkout opens as a tab), and never navigates the page itself.
+Images load from three places only.
+A relative path (or one starting with `/`, taken from the checkout root) resolves against the document's folder and loads through the same file-bytes path an image View uses, so it works for a checkout on a connected device, and only inside the checkout in front; a path that leaves it, or a file that is not a png, jpg, gif, webp, avif, bmp or svg, is not loaded.
+An `https:` address loads in the browser with no referrer.
+A `data:image/*` address loads because it names its own bytes and opens no connection; it counts against the byte cap.
+`http:`, `file:`, protocol-relative and every other scheme are not loaded, and an issue body, which has no folder, loads `https:` and `data:` images only.
+An image that is not loaded, fails, or has not answered in 8 seconds (the request is cancelled) shows its alt text (its file name when it has none) in the muted caption size, with no banner; until then it takes no room.
+A file that opens at its first line stays there while blocks and images above the fold are drawn and load; the first wheel, key, touch, caret move or edit ends that.
+One Live text loads at most 64 images, 32 MiB of file and data bytes and 8 MiB for one file; past a cap the image shows its alt text and the diagnostic log records the crossing once.
+A drawn block or image keeps its DOM, and its image, while the edit is outside it.
 A document over 256 KB opens in Source with Live disabled and a notice that Live preview is off for files over that size, because Live re-parses the whole document after each edit.
 That re-parse runs off the main thread, one at a time, with a burst of keystrokes coalescing into at most one more; attributes are re-applied only over the region whose plan changed.
 No re-parse lands while an IME composition is marked, so composed input is not interrupted.
