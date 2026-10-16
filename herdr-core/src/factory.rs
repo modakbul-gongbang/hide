@@ -32,7 +32,6 @@ use serde_json::{Value, json};
 use crate::agent_sleep::FactoryWorker;
 use crate::delivery;
 use crate::handle::ChangeNotifier;
-use crate::model::InterfaceLanguage;
 use crate::runtime::{DormantState, FactoryPane, FactoryWake, Runtime};
 
 pub mod screen;
@@ -2463,13 +2462,10 @@ impl Machines for CoreMachines {
 }
 
 /// The machine a Factory's project lives on, as its node reports it, and
-/// the operator's language, as the core and this machine say it.
+/// the operator's language, as the core says it.
 struct MachineEnvironment {
     machines: Arc<dyn Machines>,
     runtime: Weak<Mutex<Runtime>>,
-    /// The system's primary language, read once: it changes with a new
-    /// login, which starts a new daemon.
-    system_language: Option<Language>,
     /// The `hide` each node's workers run, read once a node answers.
     hide_programs: BTreeMap<String, String>,
 }
@@ -2479,50 +2475,36 @@ impl MachineEnvironment {
         Self {
             machines: Arc::new(machines),
             runtime,
-            system_language: None,
             hide_programs: BTreeMap::new(),
         }
     }
+}
 
-    /// The machine's primary language as an interface language; English
-    /// when the system names none or one the interface does not have, as a
-    /// shell resolves it (docs/LOCALIZATION.md).
-    fn system_language(&mut self) -> Language {
-        *self.system_language.get_or_insert_with(|| {
-            let tag = hide_platform::host::primary_language();
-            let language = tag.as_deref().ok().and_then(InterfaceLanguage::from_system);
-            if language.is_none() {
-                crate::diagnostic!(json!({
-                    "component": "factory",
-                    "kind": "language.system_fallback",
-                    "reason": match &tag {
-                        Ok(_) => "unsupported_system_language".to_owned(),
-                        Err(error) => format!("{:?}", error.kind()),
-                    },
-                }));
-            }
-            factory_language(language.unwrap_or(InterfaceLanguage::English))
-        })
+fn factory_language(language: hide_ai::OutputLanguage) -> Language {
+    match language {
+        hide_ai::OutputLanguage::English => Language::English,
+        hide_ai::OutputLanguage::Korean => Language::Korean,
+        hide_ai::OutputLanguage::SimplifiedChinese => Language::SimplifiedChinese,
+        hide_ai::OutputLanguage::Japanese => Language::Japanese,
     }
 }
 
-fn factory_language(language: InterfaceLanguage) -> Language {
+fn output_language(language: Language) -> hide_ai::OutputLanguage {
     match language {
-        InterfaceLanguage::English => Language::English,
-        InterfaceLanguage::Korean => Language::Korean,
-        InterfaceLanguage::SimplifiedChinese => Language::SimplifiedChinese,
-        InterfaceLanguage::Japanese => Language::Japanese,
+        Language::English => hide_ai::OutputLanguage::English,
+        Language::Korean => hide_ai::OutputLanguage::Korean,
+        Language::SimplifiedChinese => hide_ai::OutputLanguage::SimplifiedChinese,
+        Language::Japanese => hide_ai::OutputLanguage::Japanese,
     }
 }
 
 impl Environment for MachineEnvironment {
-    /// The core's explicit choice, else this machine's primary language.
+    /// The core's output language, the one Hide AI writes in. Only while
+    /// the core stops is there none, and nothing written then is read.
     fn language(&mut self) -> Language {
-        let choice = lock(&self.runtime).and_then(|core| guard(&core).factory_interface_language());
-        match choice {
-            Some(language) => factory_language(language),
-            None => self.system_language(),
-        }
+        lock(&self.runtime).map_or(Language::English, |core| {
+            factory_language(guard(&core).output_language())
+        })
     }
 
     fn disk_free(&mut self, node: Option<&str>, project: &str) -> Option<u64> {
@@ -2825,12 +2807,13 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
                 .task
                 .clone()
                 .unwrap_or_else(|| judgment.factory.clone()),
-            system: judgment.system(),
+            system: judgment.system().to_owned(),
             input: judgment.render_input(),
             output_schema: judgment.schema(),
             deadline: JUDGMENT_DEADLINE,
             schema_version: hide_factory::judgment::SCHEMA_VERSION.into(),
             pick,
+            output_language: Some(output_language(judgment.language)),
         };
         let started = Instant::now();
         let outcome = if unknown {

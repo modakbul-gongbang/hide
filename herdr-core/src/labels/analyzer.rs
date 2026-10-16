@@ -228,7 +228,12 @@ fn analyze(
             AnalysisFailure::Provider(error)
         }
     })?;
-    let analysis = context_label::parse(phase, value)
+    // Every label request names its language; one without it is a bug in
+    // the request's maker, not an answer to judge.
+    let language = request
+        .output_language
+        .ok_or_else(|| AnalysisFailure::Worker("label_request_without_language".to_owned()))?;
+    let analysis = context_label::parse(phase, language, value)
         .map_err(|error| AnalysisFailure::Invalid(format!("{error:#}")))?;
     Ok((provider, analysis))
 }
@@ -319,6 +324,7 @@ mod tests {
                 phase: AnalysisPhase::TurnEnd,
                 request: context_label::request(
                     AnalysisPhase::TurnEnd,
+                    hide_ai::OutputLanguage::English,
                     "pane",
                     format!("job-{}", rand_id()),
                     "context",

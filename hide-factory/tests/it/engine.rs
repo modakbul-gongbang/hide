@@ -4184,13 +4184,13 @@ fn every_judgment_and_worker_prompt_is_in_the_operators_language_read_when_asked
         .last()
         .cloned()
         .expect("an intake review");
+    // The judgment carries the language its request names; its own
+    // instructions name none (PRD ai-output-language D-01).
     assert_eq!(review.language, Language::English);
     let system = review.system();
-    assert!(system.contains("in English"), "{system}");
-    assert!(
-        !system.contains("Korean"),
-        "no language but the operator's: {system}"
-    );
+    for name in ["English", "Korean", "Japanese", "Chinese"] {
+        assert!(!system.contains(name), "{name}: {system}");
+    }
     h.world().hold_judgments = false;
 
     // A change in Settings applies to the next judgment and the next start.
@@ -4206,7 +4206,6 @@ fn every_judgment_and_worker_prompt_is_in_the_operators_language_read_when_asked
     assert!(prompt.contains("日本語 (ja)"), "{prompt}");
     let judged = h.world().judged.last().cloned().expect("a review answered");
     assert_eq!(judged.language, Language::Japanese);
-    assert!(judged.system().contains("in Japanese"));
     let _ = f;
 }
 

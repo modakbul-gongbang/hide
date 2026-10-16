@@ -1305,6 +1305,9 @@ fn degraded_of(selected: ProviderId, chosen: &Selection) -> Option<Degraded> {
 fn input_hash(request: &AiRequest) -> u64 {
     let mut hasher = DefaultHasher::new();
     request.system.hash(&mut hasher);
+    // Asked in another language, the same input is another question: a
+    // request made after the language changed never joins one from before.
+    request.output_language.hash(&mut hasher);
     request.input.hash(&mut hasher);
     request.output_schema.to_string().hash(&mut hasher);
     hasher.finish()
@@ -1480,12 +1483,14 @@ mod tests {
         }
     }
 
-    /// A provider that answers `shared` only once the test opens `release`.
+    /// A provider that answers `shared` only once the test opens `release`,
+    /// keeping the system prompt of each call it was given.
     #[derive(Default)]
     struct Held {
         started: Gate,
         release: Gate,
         calls: AtomicUsize,
+        prompts: Mutex<Vec<String>>,
     }
 
     impl AiBackend for Held {
@@ -1498,7 +1503,11 @@ mod tests {
         fn models(&self) -> ModelCatalog {
             ModelCatalog::Offered(Vec::new())
         }
-        fn execute(&self, _: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
+        fn execute(&self, request: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
+            self.prompts
+                .lock()
+                .unwrap()
+                .push(request.system_prompt().into_owned());
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.started.open();
             self.release.wait();
@@ -1524,6 +1533,7 @@ mod tests {
             deadline: Duration::from_secs(5),
             schema_version: "test.v1".into(),
             pick: None,
+            output_language: None,
         }
     }
 
@@ -2308,6 +2318,61 @@ mod tests {
             .execute(&request("same", "other input"), &CancelToken::new())
             .unwrap();
         assert_eq!(held.calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn the_output_language_reaches_the_provider_prompt_and_is_part_of_the_intent() {
+        let sink = Arc::new(Recorder::default());
+        let held = Arc::new(Held::default());
+        let router = Arc::new(make_router(vec![held.clone()], sink.clone()));
+        let asked = |language| AiRequest {
+            output_language: language,
+            ..request("same", "same input")
+        };
+        let korean = {
+            let router = Arc::clone(&router);
+            let request = asked(Some(crate::OutputLanguage::Korean));
+            std::thread::spawn(move || router.execute(&request, &CancelToken::new()).unwrap())
+        };
+        held.started.wait();
+        // The same input asked in English while the Korean one runs is
+        // another intent: it is not handed the Korean answer, and the one
+        // call the router allows at a time refuses it.
+        assert!(matches!(
+            router.execute(&asked(Some(crate::OutputLanguage::English)), &CancelToken::new()),
+            Err(AiError::OverBudget { cap, .. }) if cap == "in_flight"
+        ));
+        assert!(sink.events("ai.request.joined").is_empty());
+        held.release.open();
+        korean.join().unwrap();
+        for language in [Some(crate::OutputLanguage::English), None] {
+            router
+                .execute(&asked(language), &CancelToken::new())
+                .unwrap();
+        }
+        let mut prompts = held.prompts.lock().unwrap().clone();
+        prompts.sort();
+        let rule = |name: &str| {
+            format!(
+                "sys\n\nWrite every text a person reads in {name}, whatever language the input is in; keep code, commands, paths, identifiers, names and quoted text exactly as they are."
+            )
+        };
+        assert_eq!(
+            prompts,
+            vec!["sys".to_owned(), rule("English"), rule("Korean")]
+        );
+    }
+
+    #[test]
+    fn a_request_without_its_output_language_is_refused_on_the_wire() {
+        let mut wire = serde_json::to_value(AiRequest {
+            output_language: Some(crate::OutputLanguage::SimplifiedChinese),
+            ..request("s", "x")
+        })
+        .unwrap();
+        assert_eq!(wire["output_language"], "zh-CN");
+        wire.as_object_mut().unwrap().remove("output_language");
+        assert!(serde_json::from_value::<AiRequest>(wire).is_err());
     }
 
     /// The availability cache is deliberately switched off here, so what

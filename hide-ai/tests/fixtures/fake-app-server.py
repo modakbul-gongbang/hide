@@ -9,7 +9,8 @@ one models the process leak this change exists to cap: it starts a long-lived
 child process on every thread/start and answers the turn normally, and it ends
 all of those children when its stdin reaches EOF (the owner's shutdown signal)
 so a killed owner leaves no survivors. FAKE_ARGS_FILE records the argument
-vector when set, and FAKE_STARTED_FILE is created once a slow turn has
+vector when set, FAKE_INSTRUCTIONS_FILE the base instructions of the last
+thread/start, and FAKE_STARTED_FILE is created once a slow turn has
 started and is waiting.
 interrupted_after_usage, stream_disconnected and stream_disconnected_500 end
 an already-started turn after it reported tokens without a usable answer.
@@ -87,6 +88,9 @@ for raw in sys.stdin:
         if MODE == "exit_at_thread_start":
             sys.exit(2)
         assert params.get("ephemeral") is True and params.get("baseInstructions")
+        if path := os.environ.get("FAKE_INSTRUCTIONS_FILE"):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(params["baseInstructions"])
         if MODE == "child_per_thread":
             spawn_child()
         result(rid, {"thread": {"id": "thread-1"}, "model": params.get("model"), "instructionSources": []})

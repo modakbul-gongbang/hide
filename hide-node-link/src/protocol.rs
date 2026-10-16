@@ -133,7 +133,11 @@ use crate::error::HostError;
 /// index reads (`session_index_read`, `session_stamps`) and the `search`
 /// reader feature left with the Conversation history screen. A helper on 34
 /// does not know the new call and is upgraded.
-pub const PROTOCOL_VERSION: u32 = 35;
+/// 36: a Hide AI request (`AiRequest`) carries the operator's output
+/// language, which has no default (PRD ai-output-language D-02). A helper on
+/// 35 would refuse every request the core sends it, so it is refused at Hello
+/// and upgraded.
+pub const PROTOCOL_VERSION: u32 = 36;
 
 /// How a pane's shell is started so that it marks its first prompt
 /// ([`Call::ShellIntegration`]): the command the pane runs, the shell and

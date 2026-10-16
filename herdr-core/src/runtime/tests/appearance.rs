@@ -558,18 +558,24 @@ fn invalid_stored_languages_publish_english_and_remain_stored() {
 }
 
 #[test]
-fn the_factory_reads_the_explicit_language_or_none_for_the_systems() {
+fn hide_ai_writes_in_the_explicit_language_else_the_systems_else_english() {
     use crate::model::InterfaceLanguage;
-    let (_state, path) = state_path("factory-language");
+    use hide_ai::OutputLanguage;
+    let (_state, path) = state_path("output-language");
     let mut runtime = runtime_at(&path);
-    assert_eq!(runtime.factory_interface_language(), None);
+    // The system names no language Hide has.
+    assert_eq!(runtime.output_language(), OutputLanguage::English);
+    runtime.set_system_language(Some(InterfaceLanguage::Japanese));
+    assert_eq!(runtime.output_language(), OutputLanguage::Japanese);
     runtime.dispatch_json(&language_set(serde_json::json!("ko")));
-    assert_eq!(
-        runtime.factory_interface_language(),
-        Some(InterfaceLanguage::Korean)
-    );
+    assert_eq!(runtime.output_language(), OutputLanguage::Korean);
+    runtime.dispatch_json(&language_set(serde_json::json!("zh-CN")));
+    assert_eq!(runtime.output_language(), OutputLanguage::SimplifiedChinese);
     runtime.dispatch_json(&language_set(serde_json::Value::Null));
-    assert_eq!(runtime.factory_interface_language(), None);
+    assert_eq!(runtime.output_language(), OutputLanguage::Japanese);
+    // A stored value the interface cannot read is English, as on screen.
+    runtime.snapshot.ui_state.interface_language = Some(serde_json::json!("tlh"));
+    assert_eq!(runtime.output_language(), OutputLanguage::English);
 }
 
 #[test]

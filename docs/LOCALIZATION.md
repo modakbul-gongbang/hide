@@ -54,7 +54,9 @@ A push notification is composed on the phone, not by the daemon: the payload car
 The page hands the worker the two words (`mobile.group.needs_you`, `mobile.group.done`) in the language in effect on load, on every language change and after a subscription is made, and the worker keeps them in the Cache API so a closed app still notifies in the right language.
 A subscription made before the words were ever stored shows the place alone rather than an invented English word.
 The sentence a human-delivery notice carries is composed by the core in English and rides along as the place, untranslated, like the other core-sent text below.
-The Software Factory is a closed-window reader in the core: what it writes for a person (its judgments' questions and answers, its notices, the reports its workers are asked for) is in the core's explicit choice, else the language `hide_platform::host::primary_language` names for this machine, resolved by `InterfaceLanguage::from_system` with the shell's rules, else English; [factory.md](factory.md#the-operators-language) owns which texts that covers.
+Hide AI is a closed-window reader in the core: what it writes for a person (agent labels and their missed work, pull request summaries, Memory cards and their re-verification and promotion reasons, the Software Factory's judgments, notices and the reports its workers are asked for) is in the core's explicit choice, else the language `hide_platform::host::primary_language` names for the core's machine, resolved by `InterfaceLanguage::from_system` with the shell's rules, else English (`Runtime::output_language`).
+The request carries that language and the Hide AI system prompt names it; no prompt names a language of its own ([AI_PROVIDERS.md](AI_PROVIDERS.md#the-output-language)), and a text already written keeps its language after the choice changes.
+Git branch and worktree names Hide suggests stay lowercase ASCII in every language; [factory.md](factory.md#the-operators-language) owns which Factory texts the language covers.
 The manifest has no description, since a static file cannot follow the language.
 
 ## Hardcoded text guard
@@ -64,12 +66,13 @@ Product text outside the catalogs is caught by two rules in `web/eslint.config.j
 It lets a keycap name, a product name (Claude, Codex, OpenCode, GitHub, Herdr, Hide, Tailscale, Git), a symbol, a unit and an example path or address through, and does not look inside the `<Kbd>` component or a `t`, `data`, `cn` or label-lookup call; a new allowance is added to that file with the reason, never as an inline disable.
 `no-restricted-syntax` flags any Korean, Chinese or Japanese character in a string or template of product code, so a sentence written in a `.ts` helper is caught too, which is how the shell shipped its Korean text.
 `web/src/i18n/guard.test.ts` runs both rules on sample sources, so a change that makes them stop matching fails a test instead of reading as clean.
+Hide AI prompts have their own guard, `scripts/check-ai-prompt-language.py` in the `policy` lane: production string text in a file that builds a Hide AI request may hold no Korean, Chinese or Japanese character and no fixed instruction about the language to write in, because the request carries the operator's language.
 What the guard cannot see is an English sentence returned by a `.ts` helper or a template; review a change to one for it, and prefer a key table or a function that takes `t`.
 The audit at the time the guard landed read every non-test source under `web/src` for JSX text, read attributes, CJK characters and English phrases in helpers; it found the two device-label fallbacks (`startTargets.ts`, `search.ts`) and the phone's, all now catalog text, and leaves the English `title` of each shortcut in `shortcuts.ts`, which is the search key and the English source `commandTitle` replaces on screen.
 
 ## Verification owners
 
-`runtime::tests::appearance` checks all four choices, reset, invalid events, restart, stale UI saves, and preservation of invalid stored values.
+`runtime::tests::appearance` checks all four choices, reset, invalid events, restart, stale UI saves, and preservation of invalid stored values, and that Hide AI's output language follows the choice, the system language and the invalid-value fallback.
 `web/e2e/interface-language.spec.ts` drives the selector against a private daemon and Herdr, with separate Korean and Japanese browser contexts.
 It checks shared choices, four-language headings, refresh, daemon restart, system reset, unsupported-system fallback and invalid-store diagnostics.
 It also checks Overview scope labels, sidebar tabs, navigation command labels and unchanged shortcut keycaps in all four languages.

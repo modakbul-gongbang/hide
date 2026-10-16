@@ -105,8 +105,8 @@ pub struct Candidate {
     /// The card's one line in the session-start index; the body's first
     /// line is used when it is empty.
     pub title: String,
-    /// Other words a prompt may use for the card's subject, in Korean and
-    /// English (D-05).
+    /// Other words a prompt may use for the card's subject: in the card's
+    /// language, and in English for each one that is not English.
     pub aliases: Vec<String>,
     pub kind: CandidateKind,
     pub confidence: f64,

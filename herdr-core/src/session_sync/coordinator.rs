@@ -1545,10 +1545,10 @@ fn start_label_worker(
     context: &SessionSyncContext,
     sender: &Sender<CoordinatorMessage>,
 ) -> Option<LabelWorker> {
-    let services = {
+    let (services, language) = {
         let runtime = context.runtime.upgrade()?;
         let guard = runtime.lock().ok()?;
-        guard.label_services()?
+        (guard.label_services()?, guard.output_language())
     };
     let wake_sender = sender.clone();
     let wake: crate::labels::worker::Wake = Arc::new(move || {
@@ -1556,11 +1556,11 @@ fn start_label_worker(
     });
     let worker = match &context.target {
         SessionSyncTarget::Local { socket_path } => match context.node() {
-            Some(node) => services.local_worker(socket_path, Arc::clone(node), wake),
+            Some(node) => services.local_worker(socket_path, Arc::clone(node), wake, language),
             None => Ok(None),
         },
         SessionSyncTarget::Remote { target_id, .. } => services
-            .device_worker(target_id, context.runtime.clone(), wake)
+            .device_worker(target_id, context.runtime.clone(), wake, language)
             .map(Some),
     };
     worker.unwrap_or_else(|message| {
@@ -1625,16 +1625,19 @@ fn unix_now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Hands the worker the operator's agent-summary switch, under a brief lock,
-/// on every tick and publish: a turned switch reaches the screen and the
-/// running request within one tick. Returns whether the shown labels
-/// changed.
+/// Hands the worker the operator's agent-summary switch and the core's
+/// output language, under one brief lock, on every tick and publish: a
+/// turned switch reaches the screen and the running request within one
+/// tick, and a changed language the next request. Returns whether the shown
+/// labels changed.
 fn take_label_switch(context: &SessionSyncContext, worker: &mut LabelWorker) -> bool {
-    let on = context
-        .runtime
-        .upgrade()
-        .and_then(|runtime| runtime.lock().ok().map(|guard| guard.labels_asked()));
-    on.is_some_and(|on| worker.set_summaries(on, Instant::now()))
+    let taken = context.runtime.upgrade().and_then(|runtime| {
+        runtime
+            .lock()
+            .ok()
+            .map(|guard| (guard.labels_asked(), guard.output_language()))
+    });
+    taken.is_some_and(|(on, language)| worker.follow_core(on, language, Instant::now()))
 }
 
 /// Hands the worker the agents and the complete pane topology the replica

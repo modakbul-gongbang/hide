@@ -38,6 +38,7 @@ mod memory_promotion;
 mod memory_verify;
 mod op_timing;
 mod operations;
+pub(crate) mod output_language;
 mod pane_prediction;
 mod pane_reopen;
 pub(crate) mod project_memory;
@@ -1133,6 +1134,9 @@ pub struct Runtime {
     state_save_worker: Option<thread::JoinHandle<()>>,
     project_settings_pending: BTreeMap<String, project_settings::Pending>,
     guardrails: guardrails::GuardrailsWork,
+    /// This machine's primary language as an interface language, read once
+    /// at launch (`output_language`); `None` when it names none Hide has.
+    system_language: Option<crate::model::InterfaceLanguage>,
     /// Where the SSH config that names each registered device's host lives;
     /// `None` when the process has no usable HOME, which every connect then
     /// reports rather than guessing a path.
@@ -2158,6 +2162,7 @@ impl Runtime {
             state_save_worker: None,
             project_settings_pending: BTreeMap::new(),
             guardrails: guardrails::GuardrailsWork::default(),
+            system_language: None,
             pet_active_at_unix_ms: unix_milliseconds(),
             agent_worked_at_unix_ms: 0,
             pet_waking_until_unix_ms: 0,

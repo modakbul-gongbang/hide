@@ -430,6 +430,7 @@ impl Runtime {
             .map(|settings| crate::ai::memory_router(&own_node, settings, &gate, &usage));
         let (nodes, unreached) = self.memory_nodes();
         let delegated = self.delegated_sessions();
+        let language = self.output_language();
         let home = self.home_path.clone().map(|home| (self.node.clone(), home));
         let work = &mut self.memory_work;
         work.pass_in_flight = true;
@@ -447,6 +448,7 @@ impl Runtime {
             held,
             home,
             delegated,
+            language,
             cancel,
             failed_reads: work.failed_reads.clone(),
         };
@@ -852,6 +854,8 @@ struct PassInput {
     /// Sessions another agent started: their first human message is that
     /// agent's instruction, not the operator's (D-04).
     delegated: HashSet<String>,
+    /// The core's output language, which every card and reason is asked in.
+    language: hide_ai::OutputLanguage,
     cancel: CancelToken,
     failed_reads: FailedReads,
 }
@@ -1155,6 +1159,7 @@ fn walk_project(
             store,
             sessions_node,
             router,
+            input.language,
             project_id,
             root,
             &session,
@@ -1271,6 +1276,7 @@ fn maintain_cards(
         sessions_node,
         facts,
         router,
+        input.language,
         project_id,
         root,
         &input.cancel,
@@ -1283,6 +1289,7 @@ fn maintain_cards(
             sessions_node,
             facts,
             router,
+            input.language,
             project_id,
             root,
             home,
@@ -1705,6 +1712,7 @@ fn analyze_session(
     store: &mut MemoryStore,
     sessions_node: &dyn NodeLink,
     router: &AiRouter,
+    language: hide_ai::OutputLanguage,
     project_id: &str,
     root: &str,
     session: &ProjectSession,
@@ -1768,6 +1776,7 @@ fn analyze_session(
             store,
             sessions_node,
             router,
+            language,
             &BatchSource {
                 project_id,
                 provider,
@@ -1858,6 +1867,7 @@ pub(crate) fn write_cards(
     store: &mut MemoryStore,
     sessions_node: &dyn NodeLink,
     router: &AiRouter,
+    language: hide_ai::OutputLanguage,
     source: &BatchSource<'_>,
     group: &[Value],
     cancel: &CancelToken,
@@ -1902,6 +1912,7 @@ pub(crate) fn write_cards(
             source.session_id,
             &serialized,
             &similar,
+            language,
         )
         .map_err(|error| local(error.to_string()))?;
     admit(store)?;
@@ -1978,6 +1989,7 @@ pub(crate) fn write_cards(
         source.project_id,
         &matches,
         request.input.chars().count().min(request.input.len()),
+        language,
     ) {
         admit(store)?;
         document_input = check.input.chars().count();
@@ -2628,6 +2640,7 @@ mod tests {
                 held: HashSet::new(),
                 home: Some((crate::node::test_node(), self.home.clone())),
                 delegated: delegated.iter().map(|id| (*id).to_owned()).collect(),
+                language: hide_ai::OutputLanguage::English,
                 cancel: CancelToken::new(),
                 failed_reads: self.failed_reads.borrow().clone(),
             };
