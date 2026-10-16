@@ -200,6 +200,28 @@ fn closing_a_named_tabs_last_agent_keeps_the_tab_its_name_and_its_place() {
     );
 }
 
+/// Herdr's event stream can lag the read that showed the shell: an update
+/// from before it still has the agent pane, focused, and no shell. The
+/// keyboard stays on the shell rather than go back to the pane the close is
+/// taking, where it would stay once that pane is gone.
+#[test]
+fn an_update_older_than_the_shell_keeps_the_keyboard_on_the_shell() {
+    let mut runtime = started("Planning", true);
+    close_pane(&mut runtime, AGENT);
+    let effect = captured(&mut runtime);
+    runtime
+        .ingest_close_replacement(&effect, SHELL, session("Planning", true, &[AGENT, SHELL]))
+        .expect("the shell is this close's own");
+    assert!(runtime.ingest_close_effect_result(&effect, Ok(())));
+
+    runtime.ingest_session(Ok(session("Planning", true, &[AGENT])));
+    assert_eq!(runtime.snapshot().terminal.pane_id.as_deref(), Some(SHELL));
+    assert!(runtime.snapshot().status.last_error.is_none());
+
+    runtime.ingest_session(Ok(session("Planning", false, &[SHELL])));
+    assert_eq!(runtime.snapshot().terminal.pane_id.as_deref(), Some(SHELL));
+}
+
 /// Today's close, for every tab the operator did not name and for every
 /// pane that holds no agent, the leftover shell included.
 #[test]

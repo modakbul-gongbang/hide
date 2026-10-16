@@ -2643,13 +2643,24 @@ impl Runtime {
                     selected_pane_id.as_deref().is_some_and(|pane_id| {
                         focused_checkout.is_some() && !focused_checkout_pane_set.contains(pane_id)
                     });
+                // The shell a running close made in its tab was read from
+                // Herdr directly, and the event stream can still be behind
+                // that read: an update without the shell, or with it before
+                // its folder is known, is not its end. The keyboard stays on
+                // it rather than fall back to the pane the close is taking.
+                let selected_close_shell_pending = (selected_pane_missing
+                    || selected_left_focused_checkout)
+                    && selected_pane_id
+                        .as_deref()
+                        .is_some_and(|pane_id| self.close_shell_in_flight(pane_id));
                 // A rendered pane that leaves the selected checkout has
                 // completed an expected lifecycle transition. Retarget only
                 // inside that checkout, or leave it empty. A pane that was
                 // never rendered is still a pending or invalid selection and
                 // keeps the explicit projection error below.
                 let selected_pane_retired = selected_was_projected
-                    && (selected_pane_missing || selected_left_focused_checkout);
+                    && (selected_pane_missing || selected_left_focused_checkout)
+                    && !selected_close_shell_pending;
                 let replacement_pane_id = {
                     selected_pane_retired
                         .then(|| {
@@ -2726,7 +2737,10 @@ impl Runtime {
                 // commands to Herdr's unrelated globally focused workspace.
                 let target_pane_id = if selected_pane_retired {
                     replacement_pane_id.as_deref()
-                } else if selected_pane_missing || explicit_checkout_missing {
+                } else if selected_pane_missing
+                    || explicit_checkout_missing
+                    || selected_close_shell_pending
+                {
                     None
                 } else if focused_checkout.is_some() {
                     // With no selection, the keyboard lands in the tab the
@@ -2817,6 +2831,7 @@ impl Runtime {
                     self.push_diagnostic("pane.selection_retired", message);
                     selection_changed = true;
                 } else if !selected_creation_pending
+                    && !selected_close_shell_pending
                     && (selected_pane_missing || selected_pane_invalid_for_context)
                 {
                     let pane_id = selected_pane_id.as_deref().unwrap_or("<missing>");

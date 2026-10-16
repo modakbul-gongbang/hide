@@ -137,6 +137,19 @@ impl Runtime {
         }
     }
 
+    /// Whether `pane_id` is the shell a close underway made in its tab, which
+    /// the event stream may not have shown yet.
+    pub(super) fn close_shell_in_flight(&self, pane_id: &str) -> bool {
+        self.close_operations.values().any(|operation| {
+            operation.request.context.replacement_in_tab
+                && operation.replacement_id.as_deref() == Some(pane_id)
+                && matches!(
+                    operation.phase.as_str(),
+                    "transmitting" | "awaiting_topology"
+                )
+        })
+    }
+
     /// The shell a named tab's last agent leaves behind is in the tab now,
     /// and it takes the keyboard from the closing pane.
     fn ingest_shell_in_tab(
