@@ -43,6 +43,8 @@ type Section = "body" | "files" | "links";
  * back as it was left (B49); the page keeps it while it runs, never stored.
  */
 const OPENED = new Map<string, ReadonlySet<Section>>();
+/** As many cards as the slot steps back through (`DETAIL_HISTORY_LIMIT`); past it the least recently changed card forgets its sections. */
+const OPENED_LIMIT = 20;
 
 function useSections(key: string): [ReadonlySet<Section>, (section: Section) => void] {
   const [open, setOpen] = useState<ReadonlySet<Section>>(() => OPENED.get(key) ?? new Set());
@@ -51,7 +53,9 @@ function useSections(key: string): [ReadonlySet<Section>, (section: Section) => 
     const next = new Set(open);
     if (next.has(section)) next.delete(section);
     else next.add(section);
+    OPENED.delete(key);
     OPENED.set(key, next);
+    if (OPENED.size > OPENED_LIMIT) OPENED.delete(OPENED.keys().next().value!);
     setOpen(next);
   };
   return [open, toggle];
