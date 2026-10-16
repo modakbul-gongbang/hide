@@ -262,7 +262,7 @@ The tab strip, sidebar, palette, tab cycle and a confirmed Herdr or device switc
 Moving ordinary focus among tabs already shown in Agent areas keeps the files tool's current presentation.
 An explicit tab choice shows that tab's pending background result even when it is already shown in another Agent area.
 Putting the lane away or closing it preserves its documents, unsaved text and save state.
-Closing a tab's last View leaves the files tool on that tab's tree.
+Closing a tab's last View leaves the files tool on that tab's tree when the tree is on, and closes the lane otherwise.
 
 A pane caller's file, diff or browser open and View actions affect its actual Agent tab.
 Without `--reveal`, a background open or selection keeps the operator's complete View list, layout, selection, lane, widths and keyboard focus.
