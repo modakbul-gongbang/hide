@@ -1,75 +1,31 @@
-//! Each Agent tab's own views in the files tool, projected through the
-//! Workspace snapshot. The shared editor owns documents; each presentation
-//! owns its displays, and the lane stays the Workspace's.
+//! Each Agent tab's bookmark on the checkout's one View list (PRD
+//! lane-files-checkout-views D-03, D-09, D-11, D-16, D-19).
+//!
+//! The checkout owns the Views, their split and their selection, whichever
+//! Agent tab is in front. A tab remembers one View, the one it last put in
+//! front, and gets it back when the tab appears on screen after not being on
+//! it. The bookmark never moves the area in use or the keyboard.
 
 use super::workspace_view::WorkspaceKey;
 use super::*;
 use crate::workspace_control::{Action, Caller};
 
+/// What the pass saw of a Workspace it has had in front: the Agent tabs that
+/// were on screen and the View in front of the area in use.
 #[derive(Default)]
 pub(super) struct Seen {
     shown: Vec<String>,
-    active: Option<String>,
+    front: Option<String>,
 }
 
-pub(super) struct Parked {
-    before: crate::workspace_views::WorkspaceView,
-    tab: String,
-    reveal: bool,
+/// The selection a background caller must leave as it found it (PRD
+/// lane-files-checkout-views B7): the area in use, the View in front of each
+/// area and the editor's active tab.
+pub(super) struct Kept {
+    key: WorkspaceKey,
     editor_active: Option<String>,
-    called: Option<u64>,
-    calls: u64,
-    generation: u64,
-    identities: HashMap<String, String>,
-    documents: HashSet<String>,
-}
-
-impl Parked {
-    pub(super) fn identity(&self, id: &str) -> String {
-        self.identities
-            .get(id)
-            .cloned()
-            .unwrap_or_else(|| id.to_owned())
-    }
-
-    pub(super) fn action(&self, mut action: Action) -> Action {
-        let remap = |id: &mut String| {
-            if let Some(next) = self.identities.get(id) {
-                *id = next.clone();
-            }
-        };
-        match &mut action {
-            Action::Select {
-                view_id,
-                expected_browser_area,
-                ..
-            }
-            | Action::Close {
-                view_id,
-                expected_browser_area,
-            } => {
-                remap(view_id);
-                if let Some(area) = expected_browser_area {
-                    remap(area);
-                }
-            }
-            Action::Split {
-                view_id, area_id, ..
-            }
-            | Action::Move {
-                view_id, area_id, ..
-            } => {
-                remap(view_id);
-                remap(area_id);
-            }
-            Action::OpenBrowser {
-                area_id: Some(area),
-                ..
-            } => remap(area),
-            _ => {}
-        }
-        action
-    }
+    active_area: String,
+    fronts: Vec<String>,
 }
 
 impl Runtime {
@@ -101,106 +57,50 @@ impl Runtime {
         self.agent_view_of(key).1.map(str::to_owned)
     }
 
+    /// The one comparison point for Agent tab bookmarks, after every event.
+    /// A tab that was on no Agent area and now is the active one gets its
+    /// View back in front of its area (D-11); otherwise a change of the View
+    /// in front of the area in use is the active tab's new bookmark (D-16).
     pub(super) fn track_view_bookmarks(&mut self) -> bool {
-        let Some(store) = self.workspace_views.as_ref() else {
-            return false;
-        };
-        let Some(key) = store.front.clone() else {
+        let Some(key) = self
+            .workspace_views
+            .as_ref()
+            .and_then(|store| store.front.clone())
+        else {
             return false;
         };
         let (shown, active) = self.agent_view_of(&key);
-        let newly_shown = active.is_some_and(|tab| {
-            store
-                .bookmark_seen
-                .get(&key)
-                .is_none_or(|seen| !seen.shown.iter().any(|held| held == tab))
-        });
-        let explicit = store
-            .presentation_choice
-            .as_ref()
-            .is_some_and(|(chosen_key, tab)| chosen_key == &key && Some(tab.as_str()) == active);
-        let seen_changed = store.bookmark_seen.get(&key).is_none_or(|seen| {
-            seen.active.as_deref() != active
-                || !seen
-                    .shown
-                    .iter()
-                    .map(String::as_str)
-                    .eq(shown.iter().copied())
-        });
-        let seen = seen_changed.then(|| Seen {
-            shown: shown.into_iter().map(str::to_owned).collect(),
-            active: active.map(str::to_owned),
-        });
-        let pending_result = active.is_some_and(|tab| {
-            store
-                .views
-                .get(&key.0, &key.1)
-                .and_then(|entry| entry.view_presentations.get(tab))
-                .is_some_and(|presentation| presentation.pending_result)
-        });
-        let should_project = active.is_some_and(|tab| {
-            store.views.get(&key.0, &key.1).is_some_and(|entry| {
-                entry.view_owner.is_none()
-                    || newly_shown
-                    || (explicit
-                        && entry
-                            .view_presentations
-                            .get(tab)
-                            .is_some_and(|view| view.pending_result))
-            })
-        });
-        let project = should_project.then(|| active.expect("checked active").to_owned());
-        let store = self.workspace_views.as_mut().expect("checked store");
+        let shown: Vec<String> = shown.into_iter().map(str::to_owned).collect();
+        let active = active.map(str::to_owned);
+        let now = unix_milliseconds();
+        let store = self.workspace_views.as_mut().expect("the front is set");
+        let seen = store.bookmark_seen.get(&key);
         let mut changed = false;
-        let mut refusal = None;
-        if let Some(entry) = store.views.get_mut(&key.0, &key.1)
-            && let Some(active) = project.as_deref()
-        {
-            match entry.project_tab(active) {
-                Ok(swapped) => changed |= swapped,
-                Err(error) => refusal = Some(error),
+        let mut front = None;
+        if let Some(entry) = store.views.get_mut(&key.0, &key.1) {
+            front = entry.layout.active_area().active.clone();
+            if let Some(tab) = active.as_deref() {
+                if seen.is_none_or(|seen| !seen.shown.iter().any(|held| held == tab)) {
+                    let bookmark = entry.view_bookmarks.of(tab).map(str::to_owned);
+                    if let Some(display) = bookmark {
+                        let stamp = entry.layout.next_stamp(now);
+                        // A View that closed since is ignored (D-16).
+                        changed = entry.layout.show(&display, stamp).unwrap_or(false);
+                        front = entry.layout.active_area().active.clone();
+                    }
+                } else if let Some(front) = front.as_deref()
+                    && seen.is_some_and(|seen| seen.front.as_deref() != Some(front))
+                {
+                    changed = entry.view_bookmarks.record(tab, front);
+                }
             }
         }
-        if explicit {
-            store.presentation_choice = None;
-        }
-        if let Some(seen) = seen {
-            store.bookmark_seen.insert(key.clone(), seen);
-        }
+        store.bookmark_seen.insert(key, Seen { shown, front });
         if changed {
             store.generation += 1;
-            if should_project && pending_result {
-                self.apply_area_intent_to(&key, AreaIntent::Files);
-            }
             self.persist_workspace_views();
         }
-        if let Some(error) = refusal {
-            self.push_diagnostic("view_presentation.inheritance_refused", error.message());
-        }
         changed
-    }
-
-    pub(super) fn choose_view_presentation(&mut self, key: WorkspaceKey, tab: String) {
-        if let Some(store) = self.workspace_views.as_mut() {
-            store.presentation_choice = Some((key, tab));
-        }
-    }
-
-    pub(super) fn choose_remote_view_presentation(&mut self, device: &str, tab: &str) {
-        let key = self
-            .catalog_workspaces()
-            .filter(|workspace| workspace.device_id == device)
-            .flat_map(|workspace| &workspace.checkouts)
-            .find(|checkout| {
-                checkout
-                    .tabs
-                    .iter()
-                    .any(|held| held.id.as_deref() == Some(tab))
-            })
-            .map(|checkout| (device.to_owned(), checkout.path.clone()));
-        if let Some(key) = key {
-            self.choose_view_presentation(key, tab.to_owned());
-        }
     }
 
     /// The Herdr tab of a pane caller in the Workspace `key`; a checkout
@@ -219,272 +119,85 @@ impl Runtime {
             .and_then(|tab| tab.id.clone())
     }
 
-    /// Temporarily project the caller under the same owner lock. No frame is
-    /// published until commit puts the operator's presentation back.
-    pub(super) fn parked_caller(
+    /// The tab of a caller who is not looking at the Workspace's front: a
+    /// pane of an Agent tab other than the active one. A checkout caller and
+    /// the active tab's panes are in front (D-04, D-10).
+    pub(super) fn background_caller_tab(
+        &self,
+        key: &WorkspaceKey,
+        caller_id: &str,
+    ) -> Option<String> {
+        let tab = self.control_caller_tab(key, caller_id)?;
+        (self.workspace_active_tab(key).as_deref() != Some(tab.as_str())).then_some(tab)
+    }
+
+    /// What a background caller's open leaves as it was (B7).
+    pub(super) fn keep_front(&self, key: &WorkspaceKey) -> Kept {
+        let empty = crate::view_layout::Layout::default();
+        let layout = self.view_layout_of(key).unwrap_or(&empty);
+        Kept {
+            key: key.clone(),
+            editor_active: self.snapshot.editor.active_tab_id.clone(),
+            active_area: layout.active_area.clone(),
+            fronts: layout
+                .areas()
+                .into_iter()
+                .filter_map(|area| area.active.clone())
+                .collect(),
+        }
+    }
+
+    /// Puts the selection back after a background caller's open: the new View
+    /// stays where it landed, in no area's front and never in the keyboard's.
+    pub(super) fn restore_front(&mut self, kept: Kept) {
+        self.snapshot.editor.active_tab_id = kept.editor_active;
+        let outcome = self.change_view_layout(&kept.key, |layout, stamp| {
+            let mut changed = false;
+            for display in &kept.fronts {
+                changed |= layout.show(display, stamp).unwrap_or(false);
+            }
+            if layout.area(&kept.active_area).is_some() && layout.active_area != kept.active_area {
+                layout.active_area = kept.active_area.clone();
+                changed = true;
+            }
+            Ok(((), changed))
+        });
+        if let Err(error) = outcome {
+            self.push_diagnostic("view_layout.front_not_restored", error.message());
+        }
+    }
+
+    /// The View a tab's agent opened or selected is the tab's bookmark, in
+    /// front or not (D-16).
+    pub(super) fn note_caller_view(
         &mut self,
         key: &WorkspaceKey,
         caller_id: &str,
         action: &Action,
-    ) -> Result<Option<Parked>, crate::workspace_control::Refusal> {
-        let bound_area = match action {
-            Action::Select {
-                expected_browser_area: Some(area),
-                ..
-            }
-            | Action::Close {
-                expected_browser_area: Some(area),
-                ..
-            } => Some(area),
-            Action::OpenBrowser {
-                area_id: Some(area),
-                ..
-            } if matches!(Caller::parse(caller_id), Caller::Checkout { .. }) => Some(area),
-            _ => None,
-        };
-        let bound_owner = bound_area.and_then(|area| {
-            let entry = self.workspace_views.as_ref()?.views.get(&key.0, &key.1)?;
-            entry
-                .view_presentations
-                .iter()
-                .find(|(_, view)| view.layout.area(area).is_some())
-                .map(|(tab, _)| tab.clone())
-                .or_else(|| entry.layout.area(area).and(entry.view_owner.clone()))
-        });
-        let Some(tab) = bound_owner.or_else(|| self.control_caller_tab(key, caller_id)) else {
-            return Ok(None);
-        };
-        self.parked_tab(key, tab, action)
-    }
-
-    /// A worker's GUI read has the same presentation transaction as a
-    /// caller, but its owner was captured before the worker started.
-    pub(super) fn parked_tab(
-        &mut self,
-        key: &WorkspaceKey,
-        tab: String,
-        action: &Action,
-    ) -> Result<Option<Parked>, crate::workspace_control::Refusal> {
-        let active = self.workspace_active_tab(key);
-        let projected_owner = self.projected_view_owner(key);
-        let topology_ready = key.0 != self.node.as_str() || self.live.is_some();
-        if topology_ready
-            && self.arranges_agent_areas(&key.0)
-            && self.agent_tab_waiting_in(key, &tab)
-        {
-            return Err(crate::workspace_control::Refusal {
-                reason: "view_limit",
-                next_action: "Close an unused Agent tab to admit this tab and retry",
-            });
-        }
-        let editor_active = self.snapshot.editor.active_tab_id.clone();
-        let documents = self
-            .snapshot
-            .editor
-            .tabs
-            .iter()
-            .filter(|document| {
-                self.workspace_key(&document.workspace_id, &document.checkout_id)
-                    .as_ref()
-                    == Some(key)
-            })
-            .map(|document| document.id.clone())
-            .collect();
-        let Some(store) = self.workspace_views.as_mut() else {
-            return Ok(None);
-        };
-        let called = store.lane_called.get(key).copied();
-        let calls = store.lane_calls;
-        let generation = store.generation;
-        let entry = store.views.entry(&key.0, &key.1);
-        if entry.view_owner.is_none() && projected_owner.as_deref().is_none_or(|owner| owner == tab)
-        {
-            return Ok(None);
-        }
-        let before = entry.clone();
-        if entry.view_owner.is_none() {
-            entry.view_owner = projected_owner;
-        }
-        if entry.view_owner.as_deref() == Some(&tab)
-            && active.as_deref() == Some(&tab)
-            && !entry.view_presentations.contains_key(&tab)
-        {
-            return Ok(None);
-        }
-        let reserved = if entry.view_owner.as_deref() == Some(&tab) {
-            let next = entry
-                .view_presentations
-                .remove(&tab)
-                .unwrap_or_else(|| entry.owner_copy(&tab));
-            entry.layout = next.layout;
-            Some(before.layout.clone())
-        } else {
-            if entry.project_tab(&tab).is_err() {
-                *entry = before;
-                return Err(crate::workspace_control::Refusal {
-                    reason: "view_limit",
-                    next_action: "Close an unused View or Agent tab and retry",
-                });
-            }
-            None
-        };
-        let mut identities = HashMap::new();
-        if !before.view_presentations.contains_key(&tab) {
-            for (prior, next) in before.layout.areas().into_iter().zip(entry.layout.areas()) {
-                identities.insert(prior.id.clone(), next.id.clone());
-                for (prior, next) in prior.displays.iter().zip(&next.displays) {
-                    identities.insert(prior.id.clone(), next.id.clone());
-                }
-            }
-        }
-        store.view_transaction = Some((key.clone(), reserved));
-        Ok(Some(Parked {
-            before,
-            tab,
-            reveal: action_reveals(action),
-            editor_active,
-            called,
-            calls,
-            generation,
-            identities,
-            documents,
-        }))
-    }
-
-    pub(super) fn note_control_view(
-        &mut self,
-        key: &WorkspaceKey,
-        _caller_id: &str,
-        action: &Action,
-        _view_id: &str,
-        parked: Option<Parked>,
-    ) -> Result<(), crate::workspace_control::Refusal> {
-        let Some(store) = self.workspace_views.as_mut() else {
-            return Ok(());
-        };
-        let entry = store.views.entry(&key.0, &key.1);
-        let opened = opens_or_selects(action);
-        // An open into a tab or Workspace the operator is not looking at
-        // leaves every lane as it was; the files icon counts the new view
-        // (PRD right-lane B17).
-        if let Some(parked) = parked {
-            if !parked.reveal {
-                let result = crate::workspace_views::Presentation {
-                    layout: entry.layout.clone(),
-                    pending_result: opened
-                        || parked
-                            .before
-                            .view_presentations
-                            .get(&parked.tab)
-                            .is_some_and(|view| view.pending_result),
-                };
-                let next_id = entry.next_view_identity();
-                *entry = parked.before.clone();
-                entry.view_presentations.insert(parked.tab, result);
-                entry.view_next_id = next_id.max(entry.next_view_identity());
-                if !entry.within_view_budget() {
-                    *entry = parked.before;
-                    self.snapshot.editor.active_tab_id = parked.editor_active;
-                    store.view_transaction = None;
-                    store.generation = parked.generation;
-                    store.lane_calls = parked.calls;
-                    match parked.called {
-                        Some(called) => {
-                            store.lane_called.insert(key.clone(), called);
-                        }
-                        None => {
-                            store.lane_called.remove(key);
-                        }
-                    }
-                    self.retire_refused_view_documents(key, &parked.documents);
-                    return Err(crate::workspace_control::Refusal {
-                        reason: "view_limit",
-                        next_action: "Close an unused View or Agent tab and retry",
-                    });
-                }
-                self.snapshot.editor.active_tab_id = parked.editor_active;
-                store.lane_calls = parked.calls;
-                match parked.called {
-                    Some(called) => {
-                        store.lane_called.insert(key.clone(), called);
-                    }
-                    None => {
-                        store.lane_called.remove(key);
-                    }
-                }
-            }
-            let changed = entry != &parked.before;
-            store.generation = parked.generation + u64::from(changed);
-            store.view_transaction = None;
-            if changed {
-                self.persist_workspace_views();
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn put_back_parked(&mut self, key: &WorkspaceKey, parked: Option<Parked>) {
-        if let Some(parked) = parked
-            && let Some(store) = self.workspace_views.as_mut()
-        {
-            *store.views.entry(&key.0, &key.1) = parked.before;
-            self.snapshot.editor.active_tab_id = parked.editor_active;
-            store.lane_calls = parked.calls;
-            match parked.called {
-                Some(called) => {
-                    store.lane_called.insert(key.clone(), called);
-                }
-                None => {
-                    store.lane_called.remove(key);
-                }
-            }
-            store.view_transaction = None;
-            store.generation = parked.generation;
-            self.retire_refused_view_documents(key, &parked.documents);
-        }
-    }
-
-    fn retire_refused_view_documents(&mut self, key: &WorkspaceKey, before: &HashSet<String>) {
-        self.retire_unreferenced_view_documents(key, |id| !before.contains(id));
-    }
-
-    fn retire_unreferenced_view_documents(
-        &mut self,
-        key: &WorkspaceKey,
-        eligible: impl Fn(&str) -> bool,
+        view_id: &str,
     ) {
-        let created: Vec<_> = self
-            .snapshot
-            .editor
-            .tabs
-            .iter()
-            .filter(|tab| {
-                eligible(&tab.id)
-                    && self
-                        .workspace_key(&tab.workspace_id, &tab.checkout_id)
-                        .as_ref()
-                        == Some(key)
-                    && !self.document_kept(&tab.id)
-                    && !self
-                        .all_view_layouts(key)
-                        .flat_map(|layout| layout.displays())
-                        .any(|display| display.tab_id.as_deref() == Some(&tab.id))
-            })
-            .map(|tab| tab.id.clone())
-            .collect();
-        for id in created {
-            if let Some(index) = self
-                .snapshot
-                .editor
-                .tabs
-                .iter()
-                .position(|tab| tab.id == id)
-            {
-                self.retire_editor_tab(index);
-            }
+        if !opens_or_selects(action) {
+            return;
+        }
+        let Some(tab) = self.control_caller_tab(key, caller_id) else {
+            return;
+        };
+        self.record_tab_view(key, &tab, view_id);
+    }
+
+    pub(super) fn record_tab_view(&mut self, key: &WorkspaceKey, tab: &str, view_id: &str) {
+        let Some(store) = self.workspace_views.as_mut() else {
+            return;
+        };
+        let entry = store.views.entry(&key.0, &key.1);
+        if entry.view_bookmarks.record(tab, view_id) {
+            store.generation += 1;
+            self.persist_workspace_views();
         }
     }
 
+    /// A tab that left Herdr takes its bookmark with it, and so do the opens
+    /// still being read for it (D-16).
     pub(super) fn prune_view_bookmarks(&mut self, key: &WorkspaceKey, tabs: &[&str]) -> bool {
         let reads_dropped = self.prune_gui_reads(key, tabs);
         let Some(store) = self.workspace_views.as_mut() else {
@@ -493,49 +206,15 @@ impl Runtime {
         let Some(entry) = store.views.get_mut(&key.0, &key.1) else {
             return reads_dropped;
         };
-        let documents: HashSet<String> = entry
-            .layouts()
-            .flat_map(|layout| layout.displays())
-            .filter_map(|display| display.tab_id.clone())
-            .collect();
-        entry.view_next_id = entry.next_view_identity();
-        let before = entry.view_presentations.len();
-        entry
-            .view_presentations
-            .retain(|tab, _| tabs.contains(&tab.as_str()));
-        let owner_gone = entry
-            .view_owner
-            .as_deref()
-            .is_some_and(|tab| !tabs.contains(&tab));
-        if owner_gone {
-            entry.view_owner = None;
-            if let Some(tab) = tabs.first()
-                && let Some(next) = entry.view_presentations.remove(*tab)
-            {
-                entry.layout = next.layout;
-                entry.view_owner = Some((*tab).to_owned());
-            } else {
-                entry.layout = crate::view_layout::Layout::default();
-                entry.layout.active_area = format!("a{}", entry.view_next_id);
-                if let crate::view_layout::Node::Area(area) = &mut entry.layout.root {
-                    area.id = entry.layout.active_area.clone();
-                }
-                entry.view_next_id += 1;
-                entry.layout.next_id = entry.view_next_id;
-            }
-        }
-        let changed = entry.view_bookmarks.retain_tabs(|tab| tabs.contains(&tab))
-            || before != entry.view_presentations.len()
-            || owner_gone;
+        let changed = entry.view_bookmarks.retain_tabs(|tab| tabs.contains(&tab));
         if changed {
             store.generation += 1;
-            self.retire_unreferenced_view_documents(key, |id| documents.contains(id));
         }
         changed | reads_dropped
     }
 }
 
-fn opens_or_selects(action: &Action) -> bool {
+pub(super) fn opens_or_selects(action: &Action) -> bool {
     matches!(
         action,
         Action::OpenFile { .. }
@@ -545,7 +224,7 @@ fn opens_or_selects(action: &Action) -> bool {
     )
 }
 
-fn action_reveals(action: &Action) -> bool {
+pub(super) fn action_reveals(action: &Action) -> bool {
     matches!(
         action,
         Action::OpenFile { reveal: true, .. }

@@ -91,11 +91,11 @@ The desktop app's View menu names the lane commands and `Toggle File Tree`, and 
 Each sends the value the lane should end at, so the same command arriving twice lands where it did once.
 A right-click or the menu key on the Workspace's path offers Show or Hide right lane with the same effect.
 A file read opens the files tool when its document is ready, in the Agent tab that requested it.
-Choosing another Agent tab while it reads keeps that tab's presentation intact, and closing a requesting tab drops only that tab's pending open.
+Choosing another Agent tab while it reads leaves the checkout's Views and selection as they are, and closing a requesting tab drops only that tab's pending open.
 When several tabs request the same file during its read, they share the read and document buffer while each keeps its own display request.
 A buffer opened through another path before the read answers retains its draft and save state, and the pending GUI displays still open in their requesting tabs.
 Closing that buffer's last current display does not cancel another tab's pending GUI open.
-Choosing an agent or a tab from the sidebar, the palette, a tab cycle or the tab strip, or a terminal taking the keyboard, leaves the lane where it is, pinned or not; the lane keeps its tool, pin and tree, and the files tool shows the chosen tab's views (see File Views per Agent tab).
+Choosing an agent or a tab from the sidebar, the palette, a tab cycle or the tab strip, or a terminal taking the keyboard, leaves the lane where it is, pinned or not; the lane keeps its tool, pin and tree, and the files tool keeps showing the checkout's Views (see File Views per checkout).
 
 Sessions follows the project of the checkout in front, with All checkouts and a chip for that checkout alone.
 At Home it shows the selected device's projects together.
@@ -149,9 +149,9 @@ These commands do not move the keyboard target; a close that would lose the last
 An explicit local `--reveal` brings that Workspace and the opened View forward and opens the lane on Files.
 Without it, an open or `hide view select` from the pane of the front Workspace's active tab opens the lane on Files as a click does, the tree staying on when it showed alone; from a background tab or another Workspace the lane stays as it is and the Files icon's badge counts the new view.
 A browser page's own new target, bound to its area, does not open the lane.
-A pane of an Agent tab that is not the Workspace's active tab, calling `hide file open`, `hide diff open`, `hide browser open` or `hide view select` without `--reveal`, updates its own presentation and preserves the operator's lane and presentation (see File Views per Agent tab).
+A pane of an Agent tab that is not the Workspace's active tab, calling `hide file open`, `hide diff open`, `hide browser open` or `hide view select` without `--reveal`, adds its View to the checkout's list and leaves the selection, the active area, the keyboard and the lane as they were (see File Views per checkout).
 Called from the active tab, or with no pane at all (a checkout-bound caller, which has no tab), the View comes to the front in the lane, opened as any open opens it, and the active tab remembers it; with `--reveal` it comes to the front and both the active tab and the calling tab remember it.
-`hide view split`, `move` and `close` apply to the caller's presentation, including while it is hidden.
+`hide view split`, `move` and `close` apply to the checkout's list, from any tab, including a tab that is not on screen.
 
 ### Agent areas
 
@@ -249,42 +249,46 @@ No area gets narrower or shorter than its minimum, a divider stops where either 
 An area whose last view leaves disappears, and its neighbour takes the space.
 When the last view closes, the lane stays on Files with the tree across it if the tree was on, and closes otherwise (see The right lane).
 
-### File Views per Agent tab
+### File Views per checkout
 
-Each Agent tab remembers its own View list, area layout, selected Views and active area.
+The checkout owns the Files View list, its split, its selected Views and its active area, whichever Agent tab is in front.
+Every tab sees the same list.
+Each Agent tab remembers one View, the one it last put in front, as its bookmark.
 The lane, its tool, pin, tree and widths, and document editing and saving remain shared by the Workspace.
-A tab shown for the first time starts with no Views, so the files tool shows its tree alone there; it never copies another tab's list, so Views a tab did not open never fill the Workspace.
-An empty presentation consumes no View area.
-An entry stored by the earlier columns keeps its Views and saved fronts; the File Views visibility it stored per tab is not read.
+A tab with no bookmark changes nothing when it appears, and the files tool shows the list as it stands.
 
-Showing a tab that no Agent area showed a moment before restores its complete presentation in the frame that shows the tab.
+A tab that was on no Agent area and now appears brings its bookmarked View to the front of that View's own area, in the frame that shows the tab.
+The active area and the keyboard are not moved by it.
+A bookmarked View that has closed is ignored, and a tab with no bookmark leaves the front as it is.
 The tab strip, sidebar, palette, tab cycle and a confirmed Herdr or device switch follow this rule.
-Moving ordinary focus among tabs already shown in Agent areas keeps the files tool's current presentation.
-An explicit tab choice shows that tab's pending background result even when it is already shown in another Agent area.
-Putting the lane away or closing it preserves its documents, unsaved text and save state.
-Closing a tab's last View leaves the files tool on that tab's tree when the tree is on, and closes the lane otherwise.
+Moving ordinary focus among tabs already shown in Agent areas changes nothing in the lane.
 
-A pane caller's file, diff or browser open and View actions affect its actual Agent tab.
-Without `--reveal`, a background open or selection keeps the operator's complete View list, layout, selection, lane, widths and keyboard focus.
-`--beside` applies to the caller's presentation, and selecting A later shows A's background result in the files tool.
-Returning to B restores B's previous presentation without A's new Views in its strip.
-`--reveal` selects the caller's actual A tab and requested View together; a caller without a pane and a GUI action use the current checkout presentation.
+A tab's bookmark follows the front View while that tab is on screen, whether the operator selected a View, an agent open brought one forward, or `--reveal` did.
+It also takes the View that tab's own agent opens, even when that View does not come to the front.
+Closing a tab drops its bookmark and keeps its Views in the list.
+Putting the lane away or closing it preserves its documents, unsaved text and save state.
+Closing the last View leaves the files tool on the tree when the tree is on, and closes the lane otherwise.
+
+A pane caller's file, diff or browser open and View actions are made for its actual Agent tab.
+From a pane of the active tab, or from a caller with no pane (a checkout-bound caller, which has no tab), the View comes to the front, its area becomes the active one and the lane is called to Files.
+From a pane of any other tab, without `--reveal`, the View is added at the end of the area it lands in; the selection, the active area, the keyboard and the lane stay as they were, the Files icon's badge counts it, and that tab remembers it.
+Selecting that tab later brings the View to the front.
+`--reveal` brings the View to the front, opens the lane on Files and makes the calling tab the one on screen and the one that remembers it; a caller without a pane and a GUI action act for the active tab.
 A file read remains bound to the original tab and native session: a closed, moved or replaced caller is refused rather than falling back to the operator's tab.
 
-Preview displays belong to their presentation, while matching checkout/path documents use one shared buffer.
-An A open cannot retarget or pin B's preview, and dirty-document close guards count hidden references.
-Browser copies have independent page identities: a same-URL A open leaves B's page, load and internal state intact.
-Hidden browser resources and area authority remain retained; a new hidden page may stay pending until first placement, and `--wait` proves only a real load.
-The desktop hides every retained page absent from the current presentation's placements.
+Matching checkout and path documents use one shared buffer, and the same address opened from two tabs is one page.
+Dirty-document close guards count every reference.
+A page added behind the front may stay pending until it first appears, and `--wait` proves only a real load.
+The desktop hides every retained page absent from the current placements.
 
-Presentations are saved with the Workspace and survive restart and core moves.
-Authoritative topology removes closed-tab records and resources while retaining other tabs' documents.
-An exclusively owned clean document closes with its tab; unsaved content remains recoverable and never enters another tab's strip automatically.
-An unanswered connected-device session or unresolved catalog preserves saved state; a fully answered catalog with no tabs closes its final presentation.
+The list and the bookmarks are saved with the Workspace and survive restart and core moves.
+A first start after the update shows an empty list: Views saved per tab by the earlier build are not read, while the lane's tool, pin, tree, widths, comments and the Agent layout are kept.
+Authoritative topology drops a closed tab's bookmark and pending opens and keeps the Views and documents.
+An unanswered connected-device session or unresolved catalog preserves saved state.
 Local and connected-device callers follow the same rules; the phone keeps its existing flow.
 No additional badge, notice or setting is introduced.
-Each tab keeps at most 16 Views in its own six View areas and depth three, so a tab can always open a View while other tabs hold theirs; the checkout holds at most 256 Views across its tabs.
-An open that would add a tab's 17th View first closes that tab's View looked at longest ago, and one that would add the checkout's 257th closes the View looked at longest ago in any of the checkout's tabs, the way closing its last View closes a file (Reopen Closed brings it back); a View on screen, which is its area's front in the tab shown, and a document with unsaved work never close.
+The checkout keeps at most 32 Views in its six View areas and depth three.
+An open that would add the 33rd View first closes the View looked at longest ago in the checkout, the way closing its last View closes a file (Reopen Closed brings it back); a View in front of any area and a document with unsaved work never close.
 Only when nothing can close is the open refused, with the View notice, and existing content stays as it was.
 Web owner: none, the shell draws the existing snapshot projection.
 Core owner: `herdr-core/src/runtime/{view_bookmarks,view_areas,workspace_control,workspace_view}.rs` and `herdr-core/src/workspace_views.rs`.
@@ -370,7 +374,7 @@ In a plain browser tab the view keeps its address on the toolbar row, level with
 
 ### View openers and comments
 
-A View an agent opened wears that agent's provider logo, 10 pixels, on the lower right corner of the tab's kind mark, which stays readable: a page, a file, a diff, an image or a PDF opened by `hide file open`, `hide diff open` or `hide browser open` from the agent's pane, or by the operator clicking a path or an address in that agent's terminal (PRD view-opener-feedback D-02, D-04, D-24).
+A View an agent opened wears that agent's provider logo, 14 pixels, after the file name, so the tab's kind mark and the name stay readable: a page, a file, a diff, an image or a PDF opened by `hide file open`, `hide diff open` or `hide browser open` from the agent's pane, or by the operator clicking a path or an address in that agent's terminal (PRD view-opener-feedback D-02, D-04, D-24).
 A View the operator opened from the Explorer, ⌘K, the file tree or a new tab's address field, and one a caller Hide could not bind to a pane opened, wears no mark.
 The mark follows the agent that last opened the View; a link inside the page and an agent's `hide browser` command keep it, and an address the operator types takes it off.
 Its hint, above the tab, says the agent's name, `Opened this · <product>` and `Click to go to its pane`, and the mark's accessible name says the same; only the mark's hint opens while the pointer is on it, not the tab's.

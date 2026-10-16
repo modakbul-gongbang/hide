@@ -174,16 +174,6 @@ impl Runtime {
             .count()
     }
 
-    /// Those of them that will add a display to the presentation of the tab
-    /// `owner`, so the tab's own cap counts them too.
-    pub(super) fn pending_tab_placements(&self, key: &WorkspaceKey, owner: Option<&str>) -> usize {
-        self.document_opens
-            .values()
-            .flat_map(|open| &open.placements)
-            .filter(|placement| &placement.key == key && placement.owner.as_deref() == owner)
-            .count()
-    }
-
     /// Authoritative tab removal retires only that owner's GUI destinations.
     /// A shared read still serves every surviving explicit request.
     pub(super) fn prune_gui_reads(&mut self, key: &WorkspaceKey, tabs: &[&str]) -> bool {
@@ -340,16 +330,11 @@ impl Runtime {
                     .iter()
                     .any(|held| held.same_destination(placement))
             });
-            let full = if self.pending_tab_placements(&placement.key, placement.owner.as_deref())
-                >= crate::view_layout::MAX_TAB_VIEWS
+            if !repeated
+                && self.pending_view_placements(&placement.key)
+                    >= crate::view_layout::MAX_VIEW_DISPLAYS
             {
-                Some(crate::view_layout::LayoutError::TabDisplayLimit)
-            } else {
-                (self.pending_view_placements(&placement.key)
-                    >= crate::view_layout::MAX_VIEW_DISPLAYS)
-                    .then_some(crate::view_layout::LayoutError::DisplayLimit)
-            };
-            if !repeated && let Some(error) = full {
+                let error = crate::view_layout::LayoutError::DisplayLimit;
                 self.set_error(error.kind(), error.message(), false);
                 return;
             }
@@ -357,7 +342,7 @@ impl Runtime {
         if !request.reload
             && let Some(running) = self.document_opens.get_mut(&tab_id)
         {
-            // Share only the file read. Each presentation retains its GUI
+            // Share only the file read. Each asking tab retains its GUI
             // destination; repeated clicks at the same destination converge,
             // with a later pin keeping that display open.
             if !request.preview && !running.reload {
