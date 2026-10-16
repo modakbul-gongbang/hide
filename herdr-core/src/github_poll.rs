@@ -233,6 +233,7 @@ pub(crate) fn pass(
             continue;
         }
         let mut changed = false;
+        let mut causes: Vec<&'static str> = Vec::new();
         let mut failure = None;
         for endpoint in endpoints(project) {
             if cancel.load(Ordering::Relaxed) || started.elapsed() >= POLL_PASS_BUDGET {
@@ -268,9 +269,18 @@ pub(crate) fn pass(
                         let before = state.digests.insert(project.path.clone(), digest);
                         if known.is_some() && before != Some(digest) {
                             changed = true;
+                            causes.push("pull_requests");
+                        } else if known.is_some() {
+                            // What a read on every tag move would have asked for.
+                            crate::diagnostic!(serde_json::json!({
+                                "component": "github",
+                                "kind": "poll.list_tag_only",
+                                "project": project.path,
+                            }));
                         }
                     } else if moved && known.is_some() {
                         changed = true;
+                        causes.push("checks");
                     }
                     state.tags.insert(endpoint, tag);
                     if let (Some(limit), Some(remaining), Some(reset)) =
@@ -305,6 +315,7 @@ pub(crate) fn pass(
                 "component": "github",
                 "kind": "poll.changed",
                 "project": project.path,
+                "cause": causes,
             }));
             answer.changed.push(project.path.clone());
         }
