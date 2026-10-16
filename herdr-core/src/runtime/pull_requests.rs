@@ -864,6 +864,13 @@ impl Runtime {
                 }
                 card.checks_completed_at_unix_ms = read.checks_completed_at;
                 card.review_at_unix_ms = read.review_at;
+                if !read.times_unread.is_empty() {
+                    // The card is drawn without the times; only the log says why (B21).
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "pull_requests", "kind": "pr_card.times_unread",
+                        "project": workspace_id, "pr": number, "parts": read.times_unread,
+                    }));
+                }
                 card.failed = read.failed;
             }
             Err(message) => {

@@ -49,6 +49,10 @@ pub(crate) struct CardRead {
     /// When the review that stands (the latest approval or change request)
     /// was submitted; `None` without one.
     pub review_at: Option<u64>,
+    /// The time parts the answer did not carry in a readable shape
+    /// (`checks`, `review`): the card stands without them and the caller
+    /// logs why (B21). A part that is there and empty is not named.
+    pub times_unread: Vec<&'static str>,
 }
 
 /// Reads the card of pull request `number`; `Err` when GitHub could not be
@@ -131,6 +135,12 @@ pub(crate) fn parse(output: &str) -> Result<CardRead, String> {
     let base = pull_request["baseRefName"].as_str();
     read.checks_completed_at = checks_completed_at(pull_request);
     read.review_at = review_at(pull_request);
+    if !pull_request["commits"]["nodes"].is_array() {
+        read.times_unread.push("checks");
+    }
+    if !pull_request["reviews"]["nodes"].is_array() {
+        read.times_unread.push("review");
+    }
     read.merge = Some(PrCardMerge {
         methods: [
             (PrMergeMethod::Merge, "mergeCommitAllowed"),
@@ -485,8 +495,10 @@ mod tests {
         .unwrap();
         assert_eq!(read.failed, vec!["body", "files"]);
         assert_eq!(read.threads, Some(Vec::new()));
-        // An answer without the times leaves them absent; the card stands (B21).
+        // An answer without the times leaves them absent and names the parts
+        // for the log; the card stands (B21).
         assert_eq!((read.checks_completed_at, read.review_at), (None, None));
+        assert_eq!(read.times_unread, vec!["checks", "review"]);
         let merge = read.merge.unwrap();
         assert!(!merge.queue && !merge.can_merge && merge.methods.is_empty());
         assert!(parse(r#"{"data":{"repository":null}}"#).is_err());
