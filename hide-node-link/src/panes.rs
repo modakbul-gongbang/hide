@@ -56,6 +56,12 @@ pub enum HookCommand {
     LetterPull {
         prompt_digest: Option<String>,
         session: Option<String>,
+        /// Asked at a tool event of a working agent (`hide inbox --hook
+        /// --tool`): the letters due mid-turn, for a kind whose adapter
+        /// takes them there. A helper on protocol 37 does not know the
+        /// field and would ask for a prompt's letters instead.
+        #[serde(default)]
+        tool: bool,
     },
     Memory {
         event: String,

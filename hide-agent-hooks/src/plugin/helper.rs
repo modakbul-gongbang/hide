@@ -32,6 +32,8 @@ use crate::workspace_context;
 const PROMPT_BUDGET: Duration = Duration::from_millis(1_650);
 /// Inside the script's 2.5 s tool budget.
 const TOOL_BUDGET: Duration = Duration::from_millis(2_300);
+/// Inside the script's 1.5 s budget for the letters at a tool result.
+const LETTERS_BUDGET: Duration = Duration::from_millis(1_300);
 const CONFIRM_BUDGET: Duration = Duration::from_millis(1_800);
 const INPUT_LIMIT: u64 = 256 * 1024;
 
@@ -152,6 +154,9 @@ pub fn run(agent: &str, operation: Option<&str>, started: Instant) {
         Some("prompt") => prompt(&home, &agent, input, started + PROMPT_BUDGET),
         Some("confirm") => confirm(&home, input, started + CONFIRM_BUDGET),
         Some("tool") => tool(&home, &agent, input, started + TOOL_BUDGET),
+        Some("letters") if agent.adapter.tool_letters.is_some() => {
+            letters(&home, input, started + LETTERS_BUDGET)
+        }
         Some("subagents") if agent.adapter.subagent_counts.is_some() => {
             subagents(&home, &agent, input)
         }
@@ -271,6 +276,25 @@ fn prompt_memory(
     let prompt = memory_context_until(request(HookEvent::UserPromptSubmit), home, deadline);
     context.push_str(prompt.context.as_deref().unwrap_or_default());
     ((!context.is_empty()).then_some(context), start)
+}
+
+/// The letters due while the pane's agent works, asked at one of its tool
+/// results (PRD letters-to-busy-agents D-02): the script writes them with
+/// the result and confirms them, as it does a prompt's, once the host stored
+/// that message. Nothing is due for a resting agent or a letter still
+/// waiting, and the answer then carries no context.
+fn letters(home: &Path, input: Input, deadline: Instant) -> Value {
+    let Some(session) = session(&input) else {
+        return json!({});
+    };
+    match delivery::pull_at_tool(deadline, &session) {
+        Ok(Some(Intake { context, ids })) => json!({ "context": context, "letters": ids }),
+        Ok(None) => json!({ "context": "", "letters": [] }),
+        Err(failure) => {
+            delivery::diagnose_failure(home, &failure);
+            json!({})
+        }
+    }
 }
 
 fn confirm(home: &Path, input: Input, deadline: Instant) -> Value {

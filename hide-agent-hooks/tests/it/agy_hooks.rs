@@ -252,15 +252,33 @@ fn a_prompts_first_model_call_injects_the_panes_letter_and_then_confirms_it() {
         ]
     );
 
-    // The turn's later model calls ask for nothing.
+    // A later model call of the turn is the gap after a tool: it asks for
+    // the letters due while the agent works (`--tool`), injects them the
+    // same way and confirms them once printed (PRD letters-to-busy-agents).
     let later = machine.run(
         "UserPromptSubmit",
         &json!({ "conversationId": CONVERSATION, "invocationNum": 1 }),
         Some(PANE),
     );
-    assert_eq!(later.stdout, "");
+    assert!(injected(&later).contains("LETTER-FOR-THIS-PANE"));
     assert!(later.status_ok);
-    assert_eq!(machine.inbox_calls().len(), 2);
+    assert_eq!(
+        machine.inbox_calls()[2..],
+        [
+            format!("inbox --hook --session {CONVERSATION} --tool"),
+            "inbox --confirm letter-1".to_owned(),
+        ]
+    );
+
+    // Outside a Herdr pane the gap asks nothing and answers nothing.
+    let outside = machine.run(
+        "UserPromptSubmit",
+        &json!({ "conversationId": CONVERSATION, "invocationNum": 2 }),
+        None,
+    );
+    assert_eq!(outside.stdout, "");
+    assert!(outside.status_ok);
+    assert_eq!(machine.inbox_calls().len(), 4);
 }
 
 #[test]

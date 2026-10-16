@@ -307,8 +307,97 @@ fn a_grok_question_tool_stays_native_until_its_tools_are_confirmed_to_reach_the_
         let run = machine.run_event("grok", "PreToolUse", &payload, Some(PANE), GROK);
         assert!(run.status_ok, "{tool}");
         assert_eq!(run.stdout, "", "{tool}");
-        assert!(machine.calls().is_empty(), "{tool}");
+        // The call ran, so the hook asked for the letters due and nothing else.
+        assert_eq!(
+            machine.calls(),
+            ["inbox --hook --session grok-session --tool"],
+            "{tool}"
+        );
     }
+}
+
+/// PRD letters-to-busy-agents D-02, B3: a tool call that runs hands Grok and
+/// Cursor the letters due while they work, as the context each reads with
+/// the tool's result, and confirms them once the answer is printed; outside
+/// a Herdr pane, and for a payload that names no session, nothing is asked.
+#[test]
+fn a_tool_call_that_runs_hands_grok_and_cursor_the_letters_due_and_confirms_them() {
+    let machine = Machine::new("letters");
+    let run = machine.run_event(
+        "grok",
+        "PreToolUse",
+        &grok_shell(&machine, "cargo test"),
+        Some(PANE),
+        GROK,
+    );
+    assert!(run.status_ok, "{run:?}");
+    let answer: Value = serde_json::from_str(run.stdout.trim()).expect(&run.stdout);
+    assert_eq!(answer["hookSpecificOutput"]["hookEventName"], "PreToolUse");
+    assert!(
+        answer["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("BODY-1")
+    );
+    assert!(
+        answer["hookSpecificOutput"]
+            .get("permissionDecision")
+            .is_none()
+    );
+    assert_eq!(
+        machine.calls(),
+        [
+            "inbox --hook --session grok-session --tool",
+            "inbox --confirm letter-1"
+        ]
+    );
+
+    let run = machine.run_event(
+        "cursor",
+        "PreToolUse",
+        &cursor_shell(&machine, "npm test"),
+        Some(PANE),
+        CURSOR,
+    );
+    let answer = cursor_answer(&run);
+    assert_eq!(answer["permission"], "allow");
+    assert!(
+        answer["additional_context"]
+            .as_str()
+            .unwrap()
+            .contains("BODY-1")
+    );
+    assert_eq!(
+        &machine.calls()[2..],
+        [
+            "inbox --hook --session c1 --tool",
+            "inbox --confirm letter-1"
+        ]
+    );
+
+    // A refused call carries no letters: they wait for one that runs.
+    let run = machine.run_event(
+        "grok",
+        "PreToolUse",
+        &grok_shell(&machine, START),
+        Some(PANE),
+        GROK,
+    );
+    assert!(machine.reason(&run).contains("hide agent spawn"));
+    assert_eq!(machine.calls().len(), 5, "{:?}", machine.calls());
+
+    // Outside a pane, and without a session, nothing is asked.
+    let run = machine.run_event(
+        "grok",
+        "PreToolUse",
+        &grok_shell(&machine, "cargo test"),
+        None,
+        GROK,
+    );
+    assert_eq!(run.stdout, "");
+    let run = machine.run_event("cursor", "PreToolUse", "{}", Some(PANE), CURSOR);
+    assert_eq!(cursor_answer(&run)["permission"], "allow");
+    assert_eq!(machine.calls().len(), 5);
 }
 
 /// A stand-in Herdr that answers every `pane.report_metadata` and keeps the

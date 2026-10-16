@@ -242,6 +242,7 @@ pub const COMMANDS: &[Spec] = &[
             required("--intent", Key),
             required("--body", Body),
             optional("--kind", OneOf(&["request", "block", "report", "progress"])),
+            switch("--now"),
         ],
         &["letter"],
     ),
@@ -261,6 +262,12 @@ pub const COMMANDS: &[Spec] = &[
         &[
             optional("--prompt-digest", Sha256),
             optional("--session", Session),
+            Opt {
+                name: "--tool",
+                value: None,
+                required: false,
+                requires: &["--session"],
+            },
         ],
         &["intake"],
     ),

@@ -77,14 +77,14 @@ pub enum CommandKind {
     },
     /// `hide links`: a read of the link record (PRD link-graph D-19).
     Links(herdr_core::links::query::LinksQuery),
-    /// `hide memory show|search|add|forget|undo|placed|building|unbuilt|outdated|skipped` (PRD project-memory-v2 D-03,
-    /// D-11).
+    /// `hide memory show|search|add|forget|undo|placed|building|unbuilt|outdated|skipped|stale|release`
+    /// (PRD project-memory-v2 D-03, D-11; PRD memory-stale-cards).
     Memory(herdr_core::memory_command::MemoryCommand),
 }
 
 const LINKS_USAGE: &str = "usage: hide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]";
 
-const MEMORY_USAGE: &str = "usage: hide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | building <card> <branch> <path> | unbuilt <card> <reason> | outdated <card> <reason> | skipped <card> <reason>";
+const MEMORY_USAGE: &str = "usage: hide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | building <card> <branch> <path> | unbuilt <card> <reason> | outdated <card> <reason> | skipped <card> <reason> | stale <card> <reason> | release <card>";
 
 const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--wait] [--request-id <id>] | connect [--display <id>] | help | <command> <display> ... (see hide browser help)";
 
@@ -242,6 +242,8 @@ fn parse_memory<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Comman
             .map(|number| MemoryCommand::Forget { number }),
         (Some("undo"), [card]) => herdr_core::memory_command::parse_card(card)
             .map(|number| MemoryCommand::Undo { number }),
+        (Some("release"), [card]) => herdr_core::memory_command::parse_card(card)
+            .map(|number| MemoryCommand::Release { number }),
         (Some("placed"), [card, path]) => {
             herdr_core::memory_command::parse_card(card).map(|number| MemoryCommand::Placed {
                 number,
@@ -254,7 +256,7 @@ fn parse_memory<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Comman
                 branch: (*branch).to_owned(),
                 path: (*path).to_owned(),
             }),
-        (Some(verb @ ("outdated" | "skipped" | "unbuilt")), [card, reason @ ..])
+        (Some(verb @ ("outdated" | "skipped" | "unbuilt" | "stale")), [card, reason @ ..])
             if !reason.is_empty() =>
         {
             herdr_core::memory_command::parse_card(card).map(|number| {
@@ -262,6 +264,7 @@ fn parse_memory<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Comman
                 match verb {
                     "skipped" => MemoryCommand::Skipped { number, reason },
                     "unbuilt" => MemoryCommand::Unbuilt { number, reason },
+                    "stale" => MemoryCommand::Stale { number, reason },
                     _ => MemoryCommand::Outdated { number, reason },
                 }
             })
@@ -483,7 +486,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         println!("{}", crate::agent_cli::USAGE);
         println!("{}", hide_factory::command::USAGE);
         println!(
-            "hide workspace info\nhide file open <path> [--beside] [--request-id <id>]\nhide diff open <path> [--beside] [--request-id <id>]\nhide browser open <url-or-path> [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | building <card> <branch> <path> | unbuilt <card> <reason> | outdated <card> <reason> | skipped <card> <reason>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads, adds to and forgets from the caller's Project Memory, which the core keeps in one store for the Projects of its own machine and every registered linked device with a Memory reader."
+            "hide workspace info\nhide file open <path> [--beside] [--request-id <id>]\nhide diff open <path> [--beside] [--request-id <id>]\nhide browser open <url-or-path> [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | building <card> <branch> <path> | unbuilt <card> <reason> | outdated <card> <reason> | skipped <card> <reason> | stale <card> <reason> | release <card>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads, adds to and forgets from the caller's Project Memory, which the core keeps in one store for the Projects of its own machine and every registered linked device with a Memory reader."
         );
         return Ok(());
     }
@@ -635,6 +638,7 @@ fn memory(env: &Env, command: &herdr_core::memory_command::MemoryCommand) -> Res
             MemoryCommand::Outdated { .. }
             | MemoryCommand::Skipped { .. }
             | MemoryCommand::Unbuilt { .. } => "memory_reason_invalid",
+            MemoryCommand::Stale { .. } => "memory_stale_reason_invalid",
             _ => "invalid_request",
         };
         return workspace_refusal(reason, next_action(reason));
@@ -709,6 +713,19 @@ fn memory_text(
             if !evidence.is_empty() {
                 lines.push(format!("Rests on: {}", evidence.join(", ")));
             }
+            let hold = &result["hold"];
+            if hold.is_object() {
+                lines.push(format!(
+                    "Held: an agent reported it stale at {}, so Hide does not give it until that conversation is analyzed or {}. Release: hide memory release {}",
+                    text(&hold["reported_at"]),
+                    text(&hold["expires_at"]),
+                    text(&result["card"]),
+                ));
+                lines.push(format!(
+                    "Reported because (the reporting agent's words, not checked): \"{}\"",
+                    text(&hold["reason"])
+                ));
+            }
             if result["verifying"] == true {
                 lines.push(
                     "Not verified: a file or name this card rests on changed, so check it against the repository before relying on it."
@@ -754,6 +771,16 @@ fn memory_text(
                 Some("removed") => format!("Removed {card}.\n"),
                 _ => format!("Restored {card}.\n"),
             }
+        }
+        MemoryCommand::Stale { .. } => {
+            let card = text(&result["card"]);
+            format!(
+                "Held {card}: Hide stops giving it until this conversation is analyzed, at the latest {}. Release: hide memory release {card}\n",
+                text(&result["expires_at"]),
+            )
+        }
+        MemoryCommand::Release { .. } => {
+            format!("Released {}; Hide gives it again.\n", text(&result["card"]))
         }
         MemoryCommand::Placed { .. } => format!(
             "{} points at {} once its pull request merges.\n",
@@ -2814,6 +2841,19 @@ mod tests {
                 reason: "no branch builds it".into()
             }))
         );
+        assert_eq!(
+            parse(&[
+                "hide", "memory", "stale", "m5", "commits", "are", "English", "now"
+            ]),
+            Ok(CommandKind::Memory(MemoryCommand::Stale {
+                number: 5,
+                reason: "commits are English now".into()
+            }))
+        );
+        assert_eq!(
+            parse(&["hide", "memory", "release", "m5"]),
+            Ok(CommandKind::Memory(MemoryCommand::Release { number: 5 }))
+        );
         for bad in [
             &["hide", "memory", "forget"][..],
             &["hide", "memory", "undo", "5x"],
@@ -2826,6 +2866,9 @@ mod tests {
             &["hide", "memory", "placed", "m1"],
             &["hide", "memory", "building", "m1", "feat/overview"],
             &["hide", "memory", "unbuilt", "m1"],
+            &["hide", "memory", "stale", "m1"],
+            &["hide", "memory", "release"],
+            &["hide", "memory", "release", "m1", "m2"],
         ] {
             assert_eq!(parse(bad), Err(MEMORY_USAGE.to_owned()), "{bad:?}");
         }
@@ -2915,6 +2958,41 @@ mod tests {
                 &serde_json::json!({"card": "m5", "outcome": "removed"})
             ),
             "Removed m5.\n"
+        );
+        assert_eq!(
+            memory_text(
+                &MemoryCommand::Stale {
+                    number: 5,
+                    reason: "x".into()
+                },
+                &serde_json::json!({"card": "m5", "outcome": "held", "expires_at": "2026-10-24 09:00 UTC"})
+            ),
+            "Held m5: Hide stops giving it until this conversation is analyzed, at the latest 2026-10-24 09:00 UTC. Release: hide memory release m5\n"
+        );
+        assert_eq!(
+            memory_text(
+                &MemoryCommand::Release { number: 5 },
+                &serde_json::json!({"card": "m5", "outcome": "released"})
+            ),
+            "Released m5; Hide gives it again.\n"
+        );
+        let shown = memory_text(
+            &MemoryCommand::Show { number: 5 },
+            &serde_json::json!({
+                "card": "m5", "kind": "rule", "state": "active", "sources": 1,
+                "operator_sources": 1, "title": "Commits", "body": "Write commits in Korean",
+                "hold": {"reason": "English now", "reported_at": "2026-10-17 09:00 UTC", "expires_at": "2026-10-24 09:00 UTC"},
+            }),
+        );
+        assert!(
+            shown.contains("Held: an agent reported it stale at 2026-10-17 09:00 UTC"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains(
+                "Reported because (the reporting agent's words, not checked): \"English now\""
+            ),
+            "{shown}"
         );
     }
 

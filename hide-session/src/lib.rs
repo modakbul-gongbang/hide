@@ -1954,12 +1954,17 @@ pub const INJECTED_PREFIXES: &[&str] = &[
     "This session is being continued from a previous conversation",
 ];
 
+/// The tags a Project Memory delivery begins with: a prompt's cards follow
+/// Hide's instruction for reporting a stale one, the index stands alone.
+const MEMORY_TAGS: &[&str] = &["<hide-memory-context", "<hide-memory-instruction"];
+
 fn has_injected_prefix(text: &str) -> bool {
     let text = text.trim_start();
-    let memory_context = text
-        .strip_prefix("<hide-memory-context")
-        .and_then(|suffix| suffix.chars().next())
-        .is_some_and(|boundary| boundary == '>' || boundary.is_ascii_whitespace());
+    let memory_context = MEMORY_TAGS.iter().any(|tag| {
+        text.strip_prefix(tag)
+            .and_then(|suffix| suffix.chars().next())
+            .is_some_and(|boundary| boundary == '>' || boundary.is_ascii_whitespace())
+    });
     memory_context
         || INJECTED_PREFIXES
             .iter()
@@ -2519,6 +2524,18 @@ mod tests {
             "reference data\n",
             "</hide-memory-context>"
         );
+        for context in [
+            context.to_owned(),
+            // A prompt's cards follow the line saying how to report one stale.
+            format!(
+                "<hide-memory-instruction>run hide memory stale</hide-memory-instruction>\n{context}"
+            ),
+        ] {
+            memory_context_is_injected(&context);
+        }
+    }
+
+    fn memory_context_is_injected(context: &str) {
         let codex = serde_json::json!({
             "type": "response_item",
             "timestamp": "2026-09-18T00:00:00Z",

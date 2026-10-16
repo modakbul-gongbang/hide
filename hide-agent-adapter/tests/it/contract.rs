@@ -58,6 +58,19 @@ fn declarations_match_independent_support_samples_and_all_six_factory_facts() {
             "{}: bell requires a verified prompt hook",
             row.id
         );
+        // One letter has one mid-turn path: the input line for a bell
+        // target, a tool event for every other instrumented kind.
+        assert_ne!(
+            row.bell,
+            row.tool_letters.is_some(),
+            "{}: bell and tool letters are each other's exception",
+            row.id
+        );
+        assert!(
+            row.tool_letters.is_none() || !matches!(row.hook, HookInstall::None),
+            "{}: tool letters need a hook to hand them over",
+            row.id
+        );
         for (kind, present) in [
             ("hook", !matches!(row.hook, HookInstall::None)),
             ("session", row.session.is_some()),

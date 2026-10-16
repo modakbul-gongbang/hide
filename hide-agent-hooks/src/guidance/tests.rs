@@ -253,7 +253,9 @@ fn cursor_augment_and_junie_write_the_shapes_their_documentation_gives() {
     let command = entry["command"].as_str().unwrap();
     assert!(command.contains("--runtime cursor"), "{command}");
     assert!(command.contains("--event PreToolUse "), "{command}");
-    assert_eq!(entry["matcher"].as_str(), Some("Shell|Read|Write|Delete"));
+    // Every tool call reaches the hook: the letters due while the agent
+    // works go at any call's gap.
+    assert!(entry.get("matcher").is_none(), "{entry}");
     assert_eq!(entry["timeout"], 8);
 
     let fixture = Fixture::new(GuidanceAgent::Augment);
@@ -661,10 +663,10 @@ fn grok_writes_its_own_file_of_the_events_its_documentation_names() {
             "{command}"
         );
     }
-    assert_eq!(
-        grok["hooks"]["PreToolUse"][0]["matcher"],
-        "Bash|ask_user_question|exit_plan_mode|Read|Edit|Write|read_file|search_replace|write"
-    );
+    // Every tool call reaches the hook: an omitted matcher matches everything
+    // in Grok's guide, and the letters due while the agent works go at any
+    // call's gap.
+    assert!(grok["hooks"]["PreToolUse"][0].get("matcher").is_none());
     assert!(grok["hooks"]["Stop"][0].get("matcher").is_none());
     assert_eq!(
         installed_helper_path(GuidanceAgent::Grok, fixture.home()).as_deref(),
@@ -730,11 +732,11 @@ fn a_missing_event_or_an_edited_entry_is_not_current() {
         fixture.home(),
         &fixture.helper
     ));
+    // A matcher added by hand narrows the tool calls that reach the hook.
     let path = GuidanceAgent::Cursor.config_path(fixture.home());
-    let edited = fs::read_to_string(&path)
-        .unwrap()
-        .replace("\"Shell|Read|Write|Delete\"", "\"Shell|Read\"");
-    fs::write(&path, edited).unwrap();
+    let mut document = fixture.read(GuidanceAgent::Cursor);
+    document["hooks"]["preToolUse"][0]["matcher"] = Value::from("Shell|Read");
+    fs::write(&path, document.to_string()).unwrap();
     assert!(!matches_install(
         GuidanceAgent::Cursor,
         fixture.home(),

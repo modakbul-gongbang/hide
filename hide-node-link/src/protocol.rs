@@ -153,12 +153,16 @@ use crate::error::HostError;
 /// redesign D-04). A helper on 38 allows only the query text it knows, so it
 /// would refuse every card read of a device project; it is refused at Hello
 /// and upgraded.
-/// 40: an agent row names its mark (`mark`: turn, going, waiting, done,
+/// 40: `LetterPull` carries `tool`, a hook's ask at a tool event for the
+/// letters due while the agent works (PRD letters-to-busy-agents D-02). A
+/// helper on 39 would drop the field and answer a prompt's letters, so it is
+/// refused at Hello and upgraded.
+/// 41: an agent row names its mark (`mark`: turn, going, waiting, done,
 /// unread, quiet) instead of a glyph (`symbol`), its mark counts are four, a
 /// row may wait on its pull request's checks (`wait: checks`) and its status
 /// codes add `unfinished` (status-marks-simplify). A screen relayed through a
-/// node on 39 would draw none of it, so it is refused at Hello and upgraded.
-pub const PROTOCOL_VERSION: u32 = 40;
+/// node on 40 would draw none of it, so it is refused at Hello and upgraded.
+pub const PROTOCOL_VERSION: u32 = 41;
 
 /// What agy's index held in a checkout before Hide typed `/fork`
 /// ([`Call::AntigravityForkMark`]).
