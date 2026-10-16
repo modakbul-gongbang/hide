@@ -111,7 +111,7 @@ fn end_prompt(limits: LabelLimits) -> String {
         "When one request asks for several independent deliverables (a numbered list or separate bullets that each have their own result), names holds one name per deliverable, at most 6, bundling any extras into the last name. ",
         "Sub-steps, checks and details of the same deliverable are not separate tasks, and a request for one deliverable has exactly one name. ",
         "A list of things to change, build, investigate or decide gives one name per list item that has its own result, even when the items share a theme or a screen; never merge them under one umbrella name. ",
-        "A list of questions, or replies that only approve or react to earlier proposals, is not a list of deliverables. ",
+        "A list of questions, or replies that only approve or react to earlier proposals, is not a list of deliverables; when a list mixes deliverables with questions, the deliverables still get names and the questions get none. ",
         "Take every name from what the operator wrote in this request, not from the assistant's reply or from other tasks. ",
         "Questions, explanations, progress checks and short follow-ups stay none or continue. ",
         "Never add a name for something the request does not ask for. ",
