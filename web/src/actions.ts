@@ -1972,7 +1972,9 @@ export function createActions(send: DispatchFn) {
         workspace: ui().screen?.kind === "workspace" ? checkout?.id ?? null : null,
         displayId: ui().drawnLane.tool === "files" && ui().drawnLane.mode !== "closed" && ui().drawnLane.mode !== "hidden" ? area?.active ?? null : null,
         paneIds: tab?.panes.map((pane) => pane.id) ?? [],
+        detailShown: ui().screen?.kind === "workspace" && !ui().overviewOpen && laneUpWith("detail"),
       });
+      if (target.kind === "detail") return this.detailClose();
       if (target.kind === "view") return closeView(target.id);
       if (target.kind === "pane") return this.closePane(target.id);
       diagnostic(`close_shortcut: ${target.reason}`);

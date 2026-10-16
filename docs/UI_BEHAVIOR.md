@@ -137,7 +137,8 @@ Closing a view is always called Close view, distinct from moving a file to the T
 The close chord, ⌘W in the desktop app and ⌥W in a browser, closes the smallest unit that holds the keyboard: the focused View area's active display, or the focused terminal pane.
 The page records its last focused region as View area, pane, the lane's tool, or none from focus events, including native browser-page focus; the chord does not walk the active DOM element or choose a region from panel size.
 When the desktop app hands the keyboard back from a native page to deliver a menu command, the focus the shell's last element regains is not a move while that command runs, so ⌘W and ⌘T pressed in a page act on that page's View area; once the command has run, the keyboard's owner is the shell element holding it, so after any other command from a page the next chord acts where the operator now types.
-With the lane's tool or nothing focused, nothing closes and a diagnostic states why.
+While the lane draws the 보기 slot, the chord closes the slot as its `✕` does when the keyboard is in the lane or nowhere (the sidebar row or the rail button that opened it); a pane or a View that holds the keyboard keeps the chord.
+Otherwise, with the lane's tool or nothing focused, nothing closes and a diagnostic states why.
 Tabs close only from their own close control or menu; closing a tab's only pane still removes its tab through Herdr.
 An unavailable or retired keyboard target never falls through to closing a different pane or a whole tab.
 When a connected pane selects, splits, moves, or closes a View through `hide view`, the same View layout rules apply to that pane's Workspace even while another Workspace is in front.
@@ -937,6 +938,7 @@ The lane has one 보기 slot per window, which holds a pull request's card or a 
 Whatever opens a card or a record opens it there, and the Workspace in front, its Agent tab and the keyboard stay (B14, B15, B50); no `PR #N` or record tab appears in Files.
 Its head reads `←`, the item's mark and name (`PR #N · <project>` or `기록 · <title>`), `↗` (GitHub) on a card, and `✕` (B47); a card's mark is its PR mark, in its state's icon and colour, here and on the rail.
 Opening another item puts it in front, and `←` steps back through the ones opened before, at most 20, the oldest leaving first; `✕` empties the slot and the lane goes back to the tool it showed, or closes when it had none.
+The close chord (⌘W) is the slot's `✕` while the keyboard is in the lane or nowhere, as the close chord's rule says ([The right lane](#the-right-lane)).
 While the slot holds something, the rail carries a fifth button above Memory with its mark, pressed while the lane draws the slot; calling a tool turns the lane to that tool and the button stays, so pressing it comes back to the slot (B46).
 A changed file pressed on a card opens its diff in the checkout's Files and the lane turns to Files, the slot staying on the rail (B49).
 At Home, with no Workspace in front, a record opens in the Overview's panel beside the tabs and a PR mark opens the pull request's Workspace with its card in the slot (B17).
