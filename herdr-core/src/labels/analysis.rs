@@ -478,6 +478,37 @@ fn strip_code_fences(text: &str) -> String {
         .join("\n")
 }
 
+/// The ledger's side of an END request: who the request is from, the tasks a
+/// verdict may continue (open ones, and the newest finished ones, which a
+/// request that asks for them again reopens) and the open missed items.
+pub(crate) fn work_context(
+    work_author: bool,
+    ledger: &crate::links::ledger::LedgerContext,
+) -> String {
+    let tasks = |tasks: &[crate::links::ledger::WorkTask]| {
+        serde_json::json!(
+            tasks
+                .iter()
+                .map(|task| serde_json::json!({"id": task.id, "name": task.name}))
+                .collect::<Vec<_>>()
+        )
+        .to_string()
+    };
+    let missed = serde_json::json!(
+        ledger
+            .open_missed
+            .iter()
+            .map(|missed| serde_json::json!({"id": missed.id, "kind": missed.kind, "text": missed.text}))
+            .collect::<Vec<_>>()
+    )
+    .to_string();
+    redact(&format!(
+        "\n<work-author>{work_author}</work-author>\n<open-tasks>{}</open-tasks>\n<finished-tasks>{}</finished-tasks>\n<open-missed>{missed}</open-missed>",
+        tasks(&ledger.open_tasks),
+        tasks(&ledger.finished_tasks),
+    ))
+}
+
 pub(crate) fn redact(text: &str) -> String {
     let masked = SECRET.replace_all(text, "[redacted-secret]");
     let masked = EMAIL.replace_all(&masked, "[redacted-personal]");
