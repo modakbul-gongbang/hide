@@ -83,20 +83,31 @@ const SYSTEMS = {
 };
 
 // The app version comes from the release tag (release.yml passes
-// HIDE_VERSION) or, for a local build, from the nearest tag; a placeholder
-// would ship an app that reports a version nothing was released under.
+// HIDE_VERSION). A local build is named after the newest release tag behind
+// it and its own commit, `0.4.0-main.<commit>`: it never claims a release it
+// is not, even on a tagged commit, and orders with the releases it follows
+// (hided's build_order reads MAJOR.MINOR.PATCH). That shape is no release
+// number, so the app never updates itself from it (src/main/updater.ts).
 function resolveVersion() {
-  let version = process.env.HIDE_VERSION;
-  if (!version) {
-    try {
-      version = run("git", ["describe", "--tags", "--match", "v[0-9]*", "--dirty"]);
-    } catch {
-      version = "";
-    }
+  const requested = process.env.HIDE_VERSION?.replace(/^v/, "");
+  if (requested) {
+    if (!/^[0-9]/.test(requested)) throw new Error(`HIDE_VERSION is not a version: '${requested}'`);
+    return requested;
   }
-  version = version.replace(/^v/, "");
-  if (!/^[0-9]/.test(version)) throw new Error(`HIDE_VERSION is unset and no v<version> tag describes this tree (got '${version || "nothing"}')`);
-  return version;
+  let tag;
+  try {
+    tag = run("git", ["describe", "--tags", "--match", "v[0-9]*", "--abbrev=0"]);
+  } catch {
+    tag = "";
+  }
+  const release = /^v([0-9]+\.[0-9]+\.[0-9]+)/.exec(tag)?.[1];
+  if (!release) throw new Error(`HIDE_VERSION is unset and no v<version> tag is behind this tree (got '${tag || "nothing"}')`);
+  // A semver identifier of digits alone may not start with 0, so a commit
+  // that happens to be all digits keeps git's own `g` mark.
+  const short = run("git", ["rev-parse", "--short=8", "HEAD"]);
+  const commit = /^[0-9]+$/.test(short) ? `g${short}` : short;
+  const dirty = run("git", ["status", "--porcelain", "--untracked-files=no"]) !== "";
+  return `${release}-main.${commit}${dirty ? ".dirty" : ""}`;
 }
 
 const platform = process.platform;

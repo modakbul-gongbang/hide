@@ -1833,7 +1833,7 @@ The core keeps one value of each hint, so with several pages open the last page 
 Web owner: `web/src/components/help-menu.tsx`, `diagnosticsInputOf` in `web/src/settings.ts`, `web/src/updates.ts` (PRD sidebar-titlebar-refresh D-11, D-12; PRD auto-update D-03, D-21).
 
 The footer's `?` opens the Help menu above it: `Keyboard shortcuts` with its chord, which opens the shortcut sheet; `Copy diagnostics`, which puts About's diagnostics text on the clipboard and says `Copied` in place, or the failure when the clipboard refuses, keeping the menu open either way; `Report an issue`, which opens the repository's new-issue page in the default browser; then, under a separator, the `hide <version>` line in mono, which takes no press.
-The version is the release the app was built as, such as `0.4.0`, and a development build's own version, such as `0.1.0-main.<commit>`.
+The version is the release the app was built as, such as `0.4.0`, and a development build's own version, such as `0.4.0-main.<commit>`.
 When the desktop app has an update ready ([INSTALL.md](INSTALL.md#update)), a dot in the primary color sits on the `?`, whose name and tooltip become `Help · Update ready`, and the last line becomes a menu item, `hide <new version> ready` with `Restart` at its end, which installs the update and reopens the app.
 Nothing else of an update reaches the footer or this menu: looking, downloading and a failure show only in Settings > About.
 A browser tab and the phone have no dot and no update line.
