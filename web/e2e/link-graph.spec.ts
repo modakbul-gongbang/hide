@@ -121,9 +121,8 @@ async function openCard(page: Page, number: number, fresh = true): Promise<Locat
   for (const header of await page.locator('[data-pr-group][data-folded="true"] [data-pr-focus="group"]').all()) await header.click();
   await page.locator(`[data-pr-row="${number}"]`).click({ timeout: 30_000 });
   const card = page.locator(`aside[data-lane="detail"] [data-pr-card="${number}"]`);
-  const links = card.locator('[data-pr-card-toggle="links"]');
-  await links.waitFor({ timeout: 30_000 });
-  if ((await links.getAttribute("aria-expanded")) !== "true") await links.click();
+  // The timeline is never folded (PRD pr-card-and-session-record-redesign D-03).
+  await card.locator("[data-pr-card-timeline]").waitFor({ timeout: 30_000 });
   return card;
 }
 
@@ -162,28 +161,30 @@ test("a pull request's panel shows the sessions that made it and worked on it af
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
     await chooseTheme(page, "light");
 
-    // The card: the maker first among the ended lines is the newest-first
-    // order the record keeps, each with its request; the maker's line names
-    // the request just before the address and carries `Created PR` (B6, B7).
+    // The card's timeline: the sessions oldest first by their start, the
+    // maker before `PR 열림`, each keeping the request it was given in its
+    // tooltip; the maker's row carries `Created PR` (B6, B7; PRD
+    // pr-card-and-session-record-redesign B4, B7).
     const panel = await openCard(page, 31);
     await expect(panel).toBeVisible();
     const lines = panel.locator("[data-link-session]");
     await expect(lines).toHaveCount(3, { timeout: 60_000 });
-    expect(await lines.evaluateAll((items) => items.map((item) => item.getAttribute("data-link-session")))).toEqual(["s-gone", "s-review", "s-maker"]);
+    expect(await lines.evaluateAll((items) => items.map((item) => item.getAttribute("data-link-session")))).toEqual(["s-maker", "s-review", "s-gone"]);
     await expect(panel.locator("[data-link-sessions]")).toHaveAttribute("data-link-sessions", "3");
+    const rows = panel.locator("[data-link-session], [data-timeline-milestone]");
+    expect((await rows.evaluateAll((items) => items.map((item) => item.getAttribute("data-link-session") ?? item.getAttribute("data-timeline-milestone")))).slice(0, 2)).toEqual(["s-maker", "opened"]);
     const maker = panel.locator('[data-link-session="s-maker"]');
     await expect(maker).toHaveAttribute("data-link-role", "created");
-    await expect(maker.locator('[data-link-request="s-maker"]')).toHaveText("검증 끝났으면 PR 올려 줘");
+    await expect(maker).toHaveAttribute("data-link-request", "검증 끝났으면 PR 올려 줘");
     await expect(maker.locator('[data-link-chip="created"]')).toBeVisible();
-    await expect(panel.locator('[data-link-session="s-review"] [data-link-chip="worked"]')).toBeVisible();
     await expect(panel.locator(`[data-pr-panel-worktree="${tree}"]`)).not.toHaveAttribute("data-removed", "true");
     await expect(panel.locator("[data-link-loading]")).toHaveCount(0, { timeout: 60_000 });
     await page.mouse.move(2, 998);
     await screenshot(page, "link-graph-panel-light");
 
-    // A line's buttons stand under it on the pointer; View conversation opens
-    // that session's record in the 보기 slot (B10, B11; PRD sidebar-task-lens
-    // B47), and the slot's ← comes back to the card.
+    // An ended row's buttons take the time's place on the pointer; View
+    // conversation opens that session's record in the 보기 slot (B9, B10,
+    // B11; PRD sidebar-task-lens B47), and the slot's ← comes back to the card.
     await maker.hover();
     await expect(maker.locator('[data-link-button="view"]')).toBeVisible();
     await expect(maker.locator('[data-link-button="resume"]')).toBeVisible();

@@ -36,17 +36,30 @@ export function sessionLines(sessions: readonly LinkedSession[], agents: readonl
   return lines.sort((a, b) => (a.live?.agent.state.link_rank ?? 2) - (b.live?.agent.state.link_rank ?? 2));
 }
 
-/** Six lines or more fold to the newest five (B16). */
+/** Six sessions or more fold to the newest five (B16). */
 export const FOLD_AT = 6;
 export const FOLD_SHOWN = 5;
 
-/** The lines drawn and how many the `N earlier sessions` fold holds; zero when there is no fold. */
-export function foldLines<T>(lines: readonly T[], unfolded: boolean): { shown: readonly T[]; earlier: number } {
-  if (lines.length < FOLD_AT) return { shown: lines, earlier: 0 };
-  return { shown: unfolded ? lines : lines.slice(0, FOLD_SHOWN), earlier: lines.length - FOLD_SHOWN };
+/**
+ * The fold of the timeline (PRD link-graph B7; PRD pr-card-and-session-
+ * record-redesign B10): with six or more sessions, the oldest ended ones past
+ * five are folded behind `이전 세션 N개` at the top, a live session never,
+ * and the milestones between them stand where they are.
+ */
+export function foldTimeline<T>(entries: readonly T[], isSession: (entry: T) => boolean, isLive: (entry: T) => boolean, unfolded: boolean): { shown: readonly T[]; earlier: number } {
+  const sessions = entries.filter(isSession);
+  if (unfolded || sessions.length < FOLD_AT) return { shown: entries, earlier: 0 };
+  let toHide = sessions.length - FOLD_SHOWN;
+  const hidden = new Set<T>();
+  for (const entry of sessions) {
+    if (toHide === 0) break;
+    if (isLive(entry)) continue;
+    hidden.add(entry);
+    toHide -= 1;
+  }
+  return { shown: entries.filter((entry) => !hidden.has(entry)), earlier: hidden.size };
 }
 
-/** Why a button is off, as its message; null when it works. */
 export type Blocked = { key: "links.why.worktree" | "links.why.agent" | "links.why.file" } | { key: "links.why.deviceOffline" | "links.why.deviceView"; device: string } | null;
 
 /** A device's name for its chip and its tooltips, or its id when the snapshot no longer lists it. */
@@ -114,15 +127,21 @@ function day(at: Date): string {
   return `${at.getMonth() + 1}/${at.getDate()}`;
 }
 
-/** `10/6 13:10 - 13:52` (B6), the day again on the end when the line ran past midnight. */
+/** `10/6 13:10`: one moment, the way every timeline row writes its time (PRD pr-card-and-session-record-redesign B7). */
+export function timeText(at: number): string {
+  const when = new Date(at);
+  return `${day(when)} ${pad(when.getHours())}:${pad(when.getMinutes())}`;
+}
+
+/** `10/6 13:10 – 13:52` (B6, B7), the day again on the end when the line ran past midnight. */
 export function spanText(start: number | null, end: number | null): string | null {
   if (start === null) return null;
   const from = new Date(start);
-  const head = `${day(from)} ${pad(from.getHours())}:${pad(from.getMinutes())}`;
+  const head = timeText(start);
   if (end === null) return head;
   const to = new Date(end);
   const tail = `${pad(to.getHours())}:${pad(to.getMinutes())}`;
-  return day(to) === day(from) && to.getFullYear() === from.getFullYear() ? `${head} - ${tail}` : `${head} - ${day(to)} ${tail}`;
+  return day(to) === day(from) && to.getFullYear() === from.getFullYear() ? `${head} – ${tail}` : `${head} – ${day(to)} ${tail}`;
 }
 
 /** How a request is compared with a turn: its first words, whitespace folded. */

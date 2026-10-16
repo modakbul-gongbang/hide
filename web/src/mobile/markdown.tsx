@@ -38,8 +38,9 @@ function block(node: SyntaxNode, text: string, key: number): ReactNode {
   const name = node.name;
   if (MARKS.has(name)) return null;
   if (HEADINGS.test(name)) {
+    // The PR card's heading chips find a `##` by this mark (PRD pr-card-and-session-record-redesign B13).
     return (
-      <p key={key} className="whitespace-pre-line font-semibold">
+      <p key={key} className="whitespace-pre-line font-semibold" data-markdown-heading={name.slice(-1)}>
         {trimmed(inline(node, text))}
       </p>
     );

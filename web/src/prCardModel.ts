@@ -1,9 +1,10 @@
 // The rules of a pull request's decision card that are not drawing (PRD
-// work-tab-pr-lens D-06, D-21, D-27; PRD sidebar-task-lens D-35, D-36): the
-// body's outline, which button is primary for a case, why Merge is not
-// available, the decision box's facts, the four steps, and where a changed
-// file opens. The core decided the case (`reason.kind`) and read the card's parts;
-// nothing here re-derives a group.
+// work-tab-pr-lens D-06, D-21, D-27; PRD sidebar-task-lens D-35, D-36; PRD
+// pr-card-and-session-record-redesign D-05, D-06, D-15): the body's outline,
+// which button is primary for a case, why Merge is not available, the
+// decision box's facts, the timeline's milestones and their order among the
+// session rows, and where a changed file opens. The core decided the case
+// (`reason.kind`) and read the card's parts; nothing here re-derives a group.
 
 import type { PrReason } from "./agentScope";
 import type { PrCard, PrMergeMethod, PullRequest, PullRequestWork } from "./snapshot";
@@ -25,16 +26,6 @@ export function bodyOutline(body: string): string[] {
     if (heading?.[1]) headings.push(heading[1]);
   }
   return headings;
-}
-
-/** The first lines of a body for the folded preview: no headings' marks, no blank runs. */
-export function bodyPreview(body: string, lines = 3): string {
-  return body
-    .split("\n")
-    .map((line) => line.replace(/^\s{0,3}#{1,6}\s+/, "").trim())
-    .filter((line) => line !== "")
-    .slice(0, lines)
-    .join("\n");
 }
 
 /** What the primary button of the button row is (D-21). */
@@ -174,68 +165,66 @@ export function prFacts(pr: PullRequest): PrFact[] {
   return facts;
 }
 
-/** How one step of `작업 · PR · 검토 · 머지` is drawn (D-36). */
-export type StepState = "done" | "active" | "failed" | "empty";
+/**
+ * One milestone row of the card's timeline (PRD pr-card-and-session-record-
+ * redesign D-05, B5): only what happened, each with the time GitHub gave it.
+ * A check or review row whose time the card has not read yet carries `null`
+ * and stands right after the row it follows (B4).
+ */
+export type Milestone =
+  | { kind: "opened"; at: number | null }
+  | { kind: "checks_passed"; at: number | null }
+  | { kind: "checks_failed"; at: number | null }
+  | { kind: "review_requested"; at: number | null; who: string[] }
+  | { kind: "approved"; at: number | null }
+  | { kind: "changes"; at: number | null }
+  | { kind: "merged"; at: number | null };
 
-/** The line under a step's label: who worked, the checks, the review, the merge. */
-export type StepNote =
-  | { kind: "agent"; name: string }
-  | { kind: "external" }
-  | { kind: "draft" }
-  | { kind: "checks_passing" }
-  | { kind: "checks_running"; count: number }
-  | { kind: "checks_failed"; count: number }
-  | { kind: "approved" }
-  | { kind: "changes" }
-  | { kind: "review_waiting" }
-  | { kind: "asked_of_me" }
-  | { kind: "no_reviewer" }
-  | { kind: "merged" }
-  | { kind: "queued"; count: number }
-  | { kind: "closed" };
+/** The times the card's own read adds to the list's values (D-15). */
+export type MilestoneTimes = Pick<PrCard, "checks_completed_at_unix_ms" | "review_at_unix_ms">;
 
-export type PrStep = { id: "work" | "pr" | "review" | "merge"; state: StepState; note: StepNote | null };
+export function milestones(pr: PullRequest, times: MilestoneTimes | null): Milestone[] {
+  const rows: Milestone[] = [{ kind: "opened", at: pr.created_at_unix_ms ?? null }];
+  const work = pr.work;
+  const running = pr.checks === "pending" || (work?.pending_checks ?? 0) > 0;
+  // A completed verdict only: a run still going is the 지금 row's (B6).
+  if (!running && pr.checks === "failed") rows.push({ kind: "checks_failed", at: times?.checks_completed_at_unix_ms ?? null });
+  else if (!running && pr.checks === "passing") rows.push({ kind: "checks_passed", at: times?.checks_completed_at_unix_ms ?? null });
+  if (pr.review === "approved") rows.push({ kind: "approved", at: times?.review_at_unix_ms ?? null });
+  else if (pr.review === "changes_requested") rows.push({ kind: "changes", at: times?.review_at_unix_ms ?? null });
+  else if (work && work.review_requests.length > 0 && pr.state !== "merged" && pr.state !== "closed") rows.push({ kind: "review_requested", at: work.review_requested_at_unix_ms, who: work.review_requests.map((request) => request.name) });
+  if (pr.state === "merged") rows.push({ kind: "merged", at: pr.merged_at_unix_ms ?? null });
+  return rows;
+}
+
+/** The order a milestone takes among the others at one time, and where a timeless one stands: after the row of the kind before it. */
+const MILESTONE_RANK: Record<Milestone["kind"], number> = { opened: 0, checks_passed: 1, checks_failed: 1, review_requested: 2, approved: 3, changes: 3, merged: 4 };
+
+/** What the timeline draws: a session row at its start, a milestone at its time, and 지금 last on an open pull request (B4, B6). */
+export type TimelineEntry<S> =
+  | { kind: "session"; session: S; at: number | null }
+  | { kind: "milestone"; milestone: Milestone }
+  | { kind: "now"; running: number };
 
 /**
- * The card's four steps (PRD sidebar-task-lens D-35, D-36): a pull request
- * has done its work; the PR step runs while it is a draft or its checks run,
- * fails when a check failed; review follows once the PR step is done, and is
- * done when it is approved or GitHub would merge it; merge is done once it
- * merged. `worker` is the product of the agent that worked on it, when one
- * is known.
+ * The timeline's rows oldest first (D-06, B4): sessions by their start,
+ * milestones by their time, a milestone with no time right after the one
+ * before it, a session with no start first, and 지금 at the end of an open
+ * pull request, with how many checks still run.
  */
-export function prSteps(pr: PullRequest, worker: string | null, reason: PrReason["kind"] | null): PrStep[] {
-  const work = pr.work;
-  const who: StepNote | null = worker ? { kind: "agent", name: worker } : work?.mine === false ? { kind: "external" } : null;
-  const steps: PrStep[] = [{ id: "work", state: "done", note: who }];
-  if (pr.state === "merged") {
-    return [...steps, { id: "pr", state: "done", note: pr.checks === "passing" ? { kind: "checks_passing" } : null }, { id: "review", state: "done", note: pr.review === "approved" ? { kind: "approved" } : null }, { id: "merge", state: "done", note: { kind: "merged" } }];
+export function timeline<S>(sessions: readonly { session: S; at: number | null }[], rows: readonly Milestone[], pr: Pick<PullRequest, "state" | "checks" | "work">): TimelineEntry<S>[] {
+  const keyed: { entry: TimelineEntry<S>; at: number; rank: number }[] = sessions.map(({ session, at }) => ({ entry: { kind: "session", session, at }, at: at ?? Number.NEGATIVE_INFINITY, rank: -1 }));
+  let last = Number.NEGATIVE_INFINITY;
+  for (const milestone of rows) {
+    // A timeless milestone takes the time of the one before it and sorts after it by rank.
+    if (milestone.at !== null) last = Math.max(last, milestone.at);
+    keyed.push({ entry: { kind: "milestone", milestone }, at: milestone.at ?? last, rank: MILESTONE_RANK[milestone.kind] });
   }
-  const closed = pr.state === "closed";
-  const running = pr.checks === "pending" || (work?.pending_checks ?? 0) > 0;
-  const prStep: PrStep = pr.is_draft
-    ? { id: "pr", state: "active", note: { kind: "draft" } }
-    : running
-      ? { id: "pr", state: "active", note: { kind: "checks_running", count: Math.max(work?.pending_checks ?? 0, 1) } }
-      : pr.checks === "failed"
-        ? { id: "pr", state: "failed", note: { kind: "checks_failed", count: Math.max(work?.failed_checks.length ?? 0, 1) } }
-        : { id: "pr", state: "done", note: pr.checks === "passing" ? { kind: "checks_passing" } : null };
-  steps.push(prStep);
-  let review: PrStep = { id: "review", state: "empty", note: null };
-  if (prStep.state === "done" && !closed) {
-    if (pr.review === "changes_requested") review = { id: "review", state: "failed", note: { kind: "changes" } };
-    else if (pr.review === "approved") review = { id: "review", state: "done", note: { kind: "approved" } };
-    else if (work && MERGEABLE.includes(work.merge_state)) review = { id: "review", state: "done", note: null };
-    else if (reason === "assign_reviewer") review = { id: "review", state: "active", note: { kind: "no_reviewer" } };
-    else if (work && (work.asked_of_me === "direct" || work.asked_of_me === "team")) review = { id: "review", state: "active", note: { kind: "asked_of_me" } };
-    else review = { id: "review", state: "active", note: { kind: "review_waiting" } };
+  keyed.sort((a, b) => a.at - b.at || a.rank - b.rank);
+  const entries = keyed.map(({ entry }) => entry);
+  if (pr.state !== "merged" && pr.state !== "closed") {
+    const running = pr.checks === "pending" || (pr.work?.pending_checks ?? 0) > 0 ? Math.max(pr.work?.pending_checks ?? 0, 1) : 0;
+    entries.push({ kind: "now", running });
   }
-  steps.push(review);
-  const queued = work?.queue.state === "at" ? work.queue.position : null;
-  steps.push(closed
-    ? { id: "merge", state: "empty", note: { kind: "closed" } }
-    : queued !== null && review.state === "done"
-      ? { id: "merge", state: "active", note: { kind: "queued", count: queued } }
-      : { id: "merge", state: "empty", note: null });
-  return steps;
+  return entries;
 }

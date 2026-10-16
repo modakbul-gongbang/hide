@@ -67,6 +67,25 @@ export function openMissedWork(work: readonly SessionWorkSummary[]): { owner: Se
     .sort((a, b) => b.item.at_unix_ms - a.item.at_unix_ms);
 }
 
+/** The outputs this record's own session made that no task of its claims (PRD pr-card-and-session-record-redesign B15): drawn beside the title. */
+export function titleOutputs(record: SessionRecord): WorkOutput[] {
+  const own = workKey(record.session);
+  return record.outputs.filter((output) => workKey(output.source) === own && !record.tasks.some((task) => groupPrs(task, [output]).length > 0));
+}
+/** The outputs a child and its descendants made, as the parent's record lists them and as the child's own does, each once (B15). */
+export function childOutputs(parent: SessionRecord, child: SessionRecord): WorkOutput[] {
+  const below = new Set(recordTree(child).map((record) => workKey(record.session)));
+  const seen = new Set<string>();
+  const rows: WorkOutput[] = [];
+  for (const output of [...parent.outputs.filter((output) => below.has(workKey(output.source))), ...child.outputs]) {
+    const key = `${output.kind}:${output.repository}:${output.number}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push(output);
+  }
+  return rows;
+}
+
 /** The PR mark's state for a recorded output: the record keeps merged, closed, CI failed, and otherwise open for review. */
 export function outputPrState(state: string): PrState {
   return state === "merged" ? "merged" : state === "closed" ? "closed" : state === "ci_failed" ? "failed" : "pending";

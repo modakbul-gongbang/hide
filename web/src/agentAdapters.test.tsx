@@ -8,7 +8,7 @@ import { AgentMark } from "./AgentMark";
 import { AGENT_ADAPTERS, agentAdapter, agentProductName } from "./agentAdapters";
 import { PROVIDER_KINDS } from "./agentPicker";
 import { TooltipProvider } from "./components/ui/tooltip";
-import { LinkSessions } from "./LinkSessions";
+import { LinkTimeline } from "./LinkSessions";
 import { disarmKeyTarget } from "./keyTarget";
 import { resumeProvider } from "./linkPanel";
 import { AgentHead } from "./mobile/parts";
@@ -108,10 +108,10 @@ it.each([[" CLAUDE_CODE ", "claude", "Claude Code"], [" CODEX ", "codex", "Codex
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   try {
     useShellStore.setState({ rest: { navigator: { workspaces: [project], devices: [{ agent_scope: emptyScope(), id: "local", kind: "local", label: "Local", state: "local", message: null, ssh_alias: null, agent_count: 0, test: null }] } } });
-    await act(async () => root.render(<TooltipProvider><LinkSessions panel={panel} project={project} branchOf={() => "task"} onRetry={() => undefined} empty={null} actions={actions} /></TooltipProvider>));
+    await act(async () => root.render(<TooltipProvider><LinkTimeline panel={panel} project={project} pr={null} milestones={[]} branchOf={() => "task"} onRetry={() => undefined} actions={actions} /></TooltipProvider>));
     // The row draws no provider logo and names the product instead (agent-mark-quiet B7, B11).
     expect(container.querySelector("[data-agent-mark]")).toBeNull();
-    expect(container.querySelector("[data-link-agent]")?.textContent).toBe(product);
+    expect(container.querySelector("[data-session-row-line]")?.textContent).toBe(`${product} · Done`);
     const button = container.querySelector<HTMLButtonElement>('[data-link-button="resume"]');
     expect(button).not.toBeNull();
     expect(button?.getAttribute("aria-disabled")).not.toBe("true");

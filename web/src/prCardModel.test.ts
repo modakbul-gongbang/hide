@@ -1,9 +1,11 @@
 // The card's rules that are not drawing (PRD work-tab-pr-lens D-06, D-21,
-// D-27; B27, B28, B30): the outline of a body, which button leads for a
-// case, why Merge cannot be pressed, and where a changed file opens.
+// D-27; B27, B28, B30; PRD pr-card-and-session-record-redesign B4-B6): the
+// outline of a body, which button leads for a case, why Merge cannot be
+// pressed, where a changed file opens, and the timeline's milestones and
+// their order among the sessions.
 
 import { describe, expect, it } from "vitest";
-import { bodyOutline, bodyPreview, confirmHolds, fileOpen, mergeWhy, prFacts, prSteps, primaryAction, splitFiles } from "./prCardModel";
+import { bodyOutline, confirmHolds, fileOpen, mergeWhy, milestones, prFacts, primaryAction, splitFiles, timeline } from "./prCardModel";
 import type { PrCard, PullRequest } from "./snapshot";
 
 const pr = (over: Omit<Partial<PullRequest>, "work"> & { work?: Record<string, unknown> }): PullRequest =>
@@ -15,12 +17,6 @@ describe("bodyOutline", () => {
   it("lists the ## headings in order and ignores headings inside fenced code", () => {
     const body = "# Title\n\n## Summary\ntext\n```md\n## Not a heading\n```\n## Test plan ##\n### Deeper\n~~~\n## Also fenced\n~~~\n";
     expect(bodyOutline(body)).toEqual(["Summary", "Test plan"]);
-  });
-});
-
-describe("bodyPreview", () => {
-  it("keeps the first lines without heading marks or blank runs", () => {
-    expect(bodyPreview("## Summary\n\n\nOne\nTwo\nThree\nFour")).toBe("Summary\nOne\nTwo");
   });
 });
 
@@ -110,30 +106,37 @@ describe("prFacts", () => {
   });
 });
 
-describe("prSteps", () => {
-  const states = (steps: ReturnType<typeof prSteps>) => steps.map((step) => step.state);
-  it("fills a mergeable pull request up to review and names who worked", () => {
-    const steps = prSteps(pr({ state: "mergeable", checks: "passing", review: "approved", work: { mine: true } }), "Claude", "merge");
-    expect(states(steps)).toEqual(["done", "done", "done", "empty"]);
-    expect(steps[0]!.note).toEqual({ kind: "agent", name: "Claude" });
-    expect(steps[2]!.note).toEqual({ kind: "approved" });
+describe("milestones", () => {
+  it("lists only what happened, each with the time GitHub gave it, and leaves a running check to the now row", () => {
+    const merged = pr({ state: "merged", checks: "passing", review: "approved", created_at_unix_ms: 1, merged_at_unix_ms: 9 });
+    expect(milestones(merged, { checks_completed_at_unix_ms: 3, review_at_unix_ms: 5 })).toEqual([
+      { kind: "opened", at: 1 }, { kind: "checks_passed", at: 3 }, { kind: "approved", at: 5 }, { kind: "merged", at: 9 },
+    ]);
+    expect(milestones(pr({ state: "pending", checks: "pending", review: null, work: { pending_checks: 2, review_requests: [{ name: "kim" }], review_requested_at_unix_ms: 4 } }), null)).toEqual([
+      { kind: "opened", at: null }, { kind: "review_requested", at: 4, who: ["kim"] },
+    ]);
+    expect(milestones(pr({ state: "failed", checks: "failed", review: "changes_requested", created_at_unix_ms: 1 }), null)).toEqual([
+      { kind: "opened", at: 1 }, { kind: "checks_failed", at: null }, { kind: "changes", at: null },
+    ]);
+  });
+});
+
+describe("timeline", () => {
+  const rows = milestones(pr({ state: "mergeable", checks: "passing", review: "approved", created_at_unix_ms: 10 }), { checks_completed_at_unix_ms: 30, review_at_unix_ms: 50 });
+  const sessions = [{ session: "late", at: 40 }, { session: "early", at: 5 }, { session: "unknown", at: null }];
+
+  it("orders sessions by start and milestones by time, oldest first, with a timeless session first and now last on an open pull request", () => {
+    const open = pr({ state: "pending", checks: "pending", work: { pending_checks: 3 } });
+    expect(timeline(sessions, rows, open).map((entry) => (entry.kind === "session" ? entry.session : entry.kind === "milestone" ? entry.milestone.kind : `now:${entry.running}`))).toEqual([
+      "unknown", "early", "opened", "checks_passed", "late", "approved", "now:3",
+    ]);
   });
 
-  it("runs the PR step while checks run or it is a draft, and fails it on a failed check", () => {
-    expect(states(prSteps(pr({ state: "pending", checks: "pending", work: { merge_state: "blocked", pending_checks: 8 } }), null, "ci"))).toEqual(["done", "active", "empty", "empty"]);
-    expect(prSteps(pr({ state: "draft", is_draft: true, checks: "passing" }), null, "draft")[1]!.note).toEqual({ kind: "draft" });
-    const failed = prSteps(pr({ state: "failed", checks: "failed", work: { merge_state: "blocked", failed_checks: [{ name: "e2e", url: null }] } }), null, "failed");
-    expect(states(failed)).toEqual(["done", "failed", "empty", "empty"]);
-  });
-
-  it("waits on review once checks pass, says who it waits on, and fails it on changes", () => {
-    expect(prSteps(pr({ checks: "passing", review: "review_required", work: { merge_state: "blocked", asked_of_me: "direct" } }), null, "review")[2]).toEqual({ id: "review", state: "active", note: { kind: "asked_of_me" } });
-    expect(prSteps(pr({ checks: "passing", review: null, work: { merge_state: "blocked", asked_of_me: "none" } }), null, "assign_reviewer")[2]!.note).toEqual({ kind: "no_reviewer" });
-    expect(prSteps(pr({ checks: "passing", review: "changes_requested", work: { merge_state: "blocked" } }), null, "changes")[2]!.state).toBe("failed");
-  });
-
-  it("says an outside author worked on it, and fills every step once merged", () => {
-    expect(prSteps(pr({ checks: "passing", work: { mine: false, author: "kim" } }), null, "review")[0]!.note).toEqual({ kind: "external" });
-    expect(states(prSteps(pr({ state: "merged", checks: "passing" }), null, "merged"))).toEqual(["done", "done", "done", "done"]);
+  it("stands a timeless milestone right after the one before it, and ends a merged pull request without now", () => {
+    const merged = pr({ state: "merged", checks: "passing", review: "approved", created_at_unix_ms: 10, merged_at_unix_ms: 60 });
+    const timeless = milestones(merged, null);
+    expect(timeline([{ session: "s", at: 20 }], timeless, merged).map((entry) => (entry.kind === "session" ? entry.session : entry.kind === "milestone" ? entry.milestone.kind : "now"))).toEqual([
+      "opened", "checks_passed", "approved", "s", "merged",
+    ]);
   });
 });
