@@ -19,7 +19,7 @@ import { RunningServers } from "./RunningServers";
 import { useUiStore } from "./ui";
 import { noteShellLayer } from "./browserViews";
 import { workspaceKey } from "./viewLayout";
-import { laneFrame, workspaceViewOf, type LaneFrame, type LaneSizes, type WorkspaceView } from "./workspace";
+import { laneFrame, laneToolOf, workspaceViewOf, type LaneFrame, type LaneSizes, type LaneTool, type WorkspaceView } from "./workspace";
 import { keyboardOwner, noteKeyboardOwner } from "./viewFocus";
 import { cn } from "./lib/utils";
 import { useInterfaceTranslation } from "./i18n/client";
@@ -28,8 +28,8 @@ import "./laneCalls";
 // A Workspace (PRD S6 D-01..D-05; S7 B12, B13; PRD right-lane D-01..D-07):
 // one checkout's path in the window's top row (PRD sidebar-titlebar-refresh
 // D-15, `WorkspaceTitle`), and in the body Agent Views (its Herdr tabs and
-// their panes), the right lane (one tool: Files, Changes, Sessions or
-// Memory) and, at the right edge, the tool rail. The lane's tool, pin, tree
+// their panes), the right lane (one tool: Memory, PRs, Files or Changes,
+// or the window's 보기 slot) and, at the right edge, the tool rail. The lane's tool, pin, tree
 // and widths are the core's, per Workspace; this draws them and sends one
 // event per operator choice.
 //
@@ -66,7 +66,9 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
   );
   const opening = useShellStore((s) => (s.editor?.opening ?? []).some((row) => row.checkout_id === checkout?.id));
   const hasViews = (view?.layout?.display_count ?? 0) > 0 || opening;
-  const tool = view?.tool ?? null;
+  // The lane draws the window's 보기 slot while it is shown, else the Workspace's tool (PRD sidebar-task-lens D-50).
+  const detail = useShellStore((s) => s.rest?.ui_state?.detail);
+  const tool = laneToolOf(view, detail);
   const frame = laneFrame({
     tool,
     pinned: view?.pinned === true,
@@ -126,7 +128,7 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
       data-lane-mode={frame.mode}
       data-lane-shows={tool ?? "none"}
     >
-      <LaneRow view={view} frame={frame} width={width} body={body} setBody={setBody} sizes={sizes} actions={actions} checkout={checkout} />
+      <LaneRow view={view} tool={tool} frame={frame} width={width} body={body} setBody={setBody} sizes={sizes} actions={actions} checkout={checkout} />
       <div className="contents" onKeyDown={(event) => laneEscape(event, frame, view.pinned)}>
         <ToolRail actions={actions} />
       </div>
@@ -178,7 +180,7 @@ function useWidth(element: HTMLElement | null): number {
  * divider and an empty slot under the lane, so Agent Views keeps the width
  * it has (B8).
  */
-function LaneRow({ view, frame, width, body, setBody, sizes, actions, checkout }: { view: WorkspaceView; frame: LaneFrame; width: number; body: HTMLElement | null; setBody: (element: HTMLElement | null) => void; sizes: LaneSizes; actions: Actions; checkout: Checkout }) {
+function LaneRow({ view, tool, frame, width, body, setBody, sizes, actions, checkout }: { view: WorkspaceView; tool: LaneTool | null; frame: LaneFrame; width: number; body: HTMLElement | null; setBody: (element: HTMLElement | null) => void; sizes: LaneSizes; actions: Actions; checkout: Checkout }) {
   const { t } = useInterfaceTranslation();
   const [guide, setGuide] = useState<number | null>(null);
   // The width Agent Views gives up: a docked lane's, kept while it is expanded.
@@ -203,7 +205,7 @@ function LaneRow({ view, frame, width, body, setBody, sizes, actions, checkout }
           <div className="shrink-0" style={{ width: slot }} aria-hidden="true" data-lane-slot="true" />
         </>
       ) : null}
-      {view.tool !== null ? (
+      {tool !== null ? (
         <div
           className={cn("absolute flex min-h-0 min-w-0 flex-col bg-card", placed, raised, !up && "invisible")}
           style={frame.mode === "expanded" ? undefined : { width: frame.width }}
@@ -216,7 +218,7 @@ function LaneRow({ view, frame, width, body, setBody, sizes, actions, checkout }
           {frame.mode === "overlay" ? (
             <LaneDivider kind="lane" edge label={t("panes.workspace.resize", { name: t("panes.lane.aria") })} workspace={workspaceKey(view)} acknowledged={view.width_request_id ?? null} frame={frame} origin={body} sizes={sizes} setGuide={setGuide} actions={actions} />
           ) : null}
-          <Lane view={view} tool={view.tool} frame={frame} sizes={sizes} checkout={checkout} actions={actions} />
+          <Lane view={view} tool={tool} frame={frame} sizes={sizes} checkout={checkout} actions={actions} />
         </div>
       ) : null}
       {guide !== null ? <DividerGuide left={guide} /> : null}
@@ -277,7 +279,7 @@ function WorkspaceTitleBar({ checkout, view, actions }: { checkout: Checkout; vi
                   type="button"
                   className="min-w-0 max-w-(--size-recent-location-max) shrink truncate rounded-xs px-xs text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent"
                   data-workspace-project={project.id}
-                  onClick={() => actions.openProjectTasks(project.device_id, project.id)}
+                  onClick={() => actions.openProjectPanel(project.device_id, project.id)}
                 >
                   {project.label}
                 </button>

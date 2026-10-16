@@ -460,7 +460,7 @@ The glyph's count describes physical agents in that tab, independently of root o
 Tab names use the core's explicit manual-name and stable-number metadata rather than an automatic task label, and no tab fold is saved.
 Raised Needs You and Done rows remain available, while number shortcuts skip hidden tree rows.
 In the web shell the fold controls of a project, a checkout and a parent agent all sit on the right of their row in slots kept at rest; a folded control is always shown and an unfolded one appears under the pointer, with focus inside the row, while the row's menu is open, or on an input with no hover.
-The body of each row navigates (a project to its most recent usable checkout, or to the Overview's Tasks filtered to it when it has none, a checkout to its Workspace, an agent to its pane); a project or checkout row also unfolds its children, or folds them when its scope is already in front and unfolded, and a fold control never navigates: folding from a chevron changes no screen, pane, tab, read state, group or process.
+The body of each row navigates (a project to its most recent usable checkout, or to its panel on the Overview's Projects when it has none (PRD sidebar-task-lens B41), a checkout to its Workspace, an agent to its pane); a project or checkout row also unfolds its children, or folds them when its scope is already in front and unfolded, and a fold control never navigates: folding from a chevron changes no screen, pane, tab, read state, group or process.
 
 ### Verification ownership
 
@@ -818,7 +818,7 @@ Resolve records `resolved_sessions` in core UI state and publishes the hidden ro
 Failure keeps it visible with the existing actionable save error; input, activity, session replacement or pane closure invalidates a pending acknowledgement.
 New operator input, a received letter or renewed working activity restores the session.
 Automatic resolution requires a stopped agent, no demand and every assigned PR merged or closed; settlements before restored input cannot resolve it again.
-Only resolutions from the last 24 hours (`RESOLVED_WINDOW_MS`) enter Resolved, folded by default; older resolutions stay in tabs and in the Overview's Tasks but leave both lists.
+Only resolutions from the last 24 hours (`RESOLVED_WINDOW_MS`) enter Resolved, folded by default; older resolutions stay in tabs and among the sidebar's resting tasks but leave both lists.
 The existing runtime tick advances that window without adding a timer or per-snapshot clock read.
 Closing a pane prunes its resolution and input record.
 Regression owners: `runtime::tests::session_state`, `request_view::tests`, and `web/e2e/session-panel.spec.ts`.
@@ -929,13 +929,13 @@ The pane id is not printed on the row; only a query holding `:` matches it, by t
 A tab holding exactly one agent pane carries that agent's identity and mark into its Recent Panels row (`StripTabSnapshot.agent_identity`), derived in the core on every status, lineage, or strip rebuild pass; a tab with none or several keeps its Herdr label.
 The core never renames the Herdr tab for this; the Recent Panels label is projection only.
 
-### The Overview's tasks
+### A device's tasks
 
-The Overview's Tasks (PRD overview-device-tasks D-05) groups a root and every descendant on any device into one task, derived by `agent_state/tally/tasks.rs` from the same agent rows and lineage the sidebar draws; the shell draws the cards and adds no state of its own.
-A task's state is its root's, in the order a section draws its cards: blocked when the root's demand is an error, Needs You and Done from the root's group, working from its activity, waiting while it waits on its descendants, and otherwise resting, or cleanup when every pull request merged and a linked worktree is still on disk.
+A device's tasks (PRD overview-device-tasks D-05) group a root and every descendant on any device into one task, derived by `agent_state/tally/tasks.rs` from the same agent rows and lineage the sidebar draws; the sidebar's 태스크 list draws them (PRD sidebar-task-lens D-20), the Overview's Projects counts them, and the shell adds no state of its own.
+A task's state is its root's, in this order: blocked when the root's demand is an error, Needs You and Done from the root's group, working from its activity, waiting while it waits on its descendants, and otherwise resting, or cleanup when every pull request merged and a linked worktree is still on disk.
 A resolved root rests whatever its group was, and a descendant's state moves only its own row, as everywhere else: a child's ask reaches the card through the root's escalation ([Delegated escalation](#delegated-escalation)), never as a second state.
-A section's Needs You counts the cards whose root asks for the operator, blocked ones included, and a dashed card another device's root delegated here is counted on the root's device alone.
-A checkout names its issue or memo by the resolution below, and a started item rides its task's card as a chip instead of standing in the backlog.
+A project's Needs You counts the tasks whose root asks for the operator, blocked ones included and resolved ones not, and work another device's root delegated here is counted on the root's device alone.
+A checkout names its issue or memo by the resolution below, and a started item rides its task instead of standing in the backlog.
 
 `runtime/issues.rs` resolves workspace manual overrides, pane-family issue tokens, branch configuration, PR closing references, then the two supported branch prefixes.
 `wire.rs` extracts metadata, and the core's own node reads the branch setting with the catalog's other path facts (`Call::PathFacts`) off the runtime lock.

@@ -152,10 +152,10 @@ test("Sessions groups, read rules, child navigation and durable resolution share
       await chooseTheme(page, theme);
       await screenshot(page, `sessions-panel-${theme}`);
     }
-    // The Overview is the device's Tasks, backlog, Projects and Usage, with no Conversation history (PRD overview-device-tasks D-01, D-20).
+    // The Overview is the device's backlog, Projects and Usage; its tasks are the sidebar's 태스크 list (PRD sidebar-task-lens B38).
     await page.keyboard.press(chord("overview"));
     const modal = page.getByRole("dialog", { name: "Overview", exact: true });
-    expect(await modal.locator("[data-main-tab]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-main-tab")))).toEqual(["tasks", "backlog", "projects", "usage"]);
+    expect(await modal.locator("[data-main-tab]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-main-tab")))).toEqual(["backlog", "projects", "usage"]);
     await page.keyboard.press("Escape");
     await page.locator(`nav[data-sidebar] [data-agent-open="${stopped}"]`).first().click();
     await showSessions();

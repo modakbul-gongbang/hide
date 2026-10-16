@@ -83,7 +83,7 @@ export async function screenshot(page: Page, name: string): Promise<unknown> {
   return page.screenshot({ path: path.join(dir, `${name}.png`) });
 }
 
-export type LaneTool = "files" | "changes" | "work" | "memory";
+export type LaneTool = "memory" | "prs" | "files" | "changes";
 
 /**
  * Shows one tool in the right lane: its rail icon opens the lane on that

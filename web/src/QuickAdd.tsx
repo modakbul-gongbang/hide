@@ -34,7 +34,7 @@ function QuickAddDialog({ actions }: { actions: Actions }) {
     const named = state.screen?.kind === "main" ? state.screen.deviceId : undefined;
     const device = shown ? overviewDeviceOf(rest, state.overview.deviceId, named) : frontDeviceId(rest);
     const panel = shown ? state.overview.panel : null;
-    const root = panel?.kind === "task" ? (panel.focus ?? panel.root) : panel?.kind === "record" ? ([...everyAgent(rest, agents).values()].find((row) => row.session_id === panel.session.session_id)?.pane_id ?? null) : null;
+    const root = panel?.kind === "record" ? ([...everyAgent(rest, agents).values()].find((row) => row.session_id === panel.session.session_id)?.pane_id ?? null) : null;
     const taskProject = root ? (cardOfPane(boardProjects(rest, agents, device), root)?.project.id ?? null) : null;
     const front = frontCheckout(rest);
     const frontWorkspace = front ? (catalogWorkspaces(rest).find((workspace) => workspace.checkouts.some((checkout) => checkout.id === front.id))?.id ?? null) : null;

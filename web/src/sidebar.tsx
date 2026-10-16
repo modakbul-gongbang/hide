@@ -72,6 +72,7 @@ import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
 import { useUiStore } from "./ui";
 import { useOverviewCount } from "./Overview";
 import { revealSidebarFocus, sidebarFocusPane, sidebarPanes } from "./sidebarFocus";
+import { SidebarLensSwitch, TaskLens } from "./TaskLens";
 
 function herdrRowLabel(state: string | null, t: TFunction<"translation">): string | null {
   if (state === "unconfigured" || state === "socket_missing") return t("sidebar.herdrSocketMissing");
@@ -92,6 +93,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
   // The rail is shown unless the operator hid it (quick device-rail-badges B1, B6).
   const rail = useShellStore((s) => railShown(s.rest));
   const body = useShellStore((s) => sidebarBody(s.rest));
+  const lens = useShellStore((s) => s.rest?.ui_state?.sidebar_lens ?? "projects");
   useSecretaryStart(actions);
   // The switch has no chord of its own until the operator binds one (issue 170).
   const overviewChord = useShellStore((s) => commandLabel("overview", s.rest?.ui_state));
@@ -129,7 +131,9 @@ export function Sidebar({ actions }: { actions: Actions }) {
   };
   // Every device's sidebar lists its Needs You, its Done and its projects (PRD sidebar-titlebar-refresh D-06: no Home row);
   // a device that is not connected shows its name and the way to reconnect, and no stale tree (quick device-rail-badges B3).
-  const list = body === "disconnected" ? <DisconnectedDevice actions={actions} /> : <ProjectList actions={actions} />;
+  // Under the head, the 프로젝트 | 태스크 switch picks the list (PRD sidebar-task-lens B1, D-10). The 태스크
+  // list keeps an unresponsive device's last rows, dimmed, under its reason (B20).
+  const list = lens === "tasks" ? <TaskLens actions={actions} /> : body === "disconnected" ? <DisconnectedDevice actions={actions} /> : <ProjectList actions={actions} />;
 
   return (
     // The width is a CSS variable, set here and on the shell for the top row
@@ -162,6 +166,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
           {status ? (
             <div className="border-b border-border px-md py-sm text-caption text-muted-foreground">{status}</div>
           ) : null}
+          <SidebarLensSwitch actions={actions} />
           <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-sidebar-content="true">
             {list}
             <div data-sidebar-footer="true" className="flex shrink-0 flex-wrap items-center gap-xs border-t border-border px-sm py-xs">
@@ -1665,7 +1670,7 @@ function AgentTreeRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
           popover: hasChildren && depth >= 2 ? {
             agents: context.agents,
             onOpenChild: (id, label) => context.actions.followRelation(agent.pane_id, id, label),
-            onTask: () => context.actions.openPaneTask(agent.pane_id),
+            onTask: () => context.actions.revealTask(agent.pane_id),
           } : null,
         };
         return (

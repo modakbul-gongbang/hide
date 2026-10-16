@@ -14,7 +14,7 @@ import { WorkspaceScreen } from "../WorkspaceScreen";
 import { REFERENCE_FOLDS, sidebarScene } from "./sceneData";
 import { sceneParams, type SceneParams } from "./SidebarScene";
 
-const STATES = ["closed", "overlay", "pinned", "tree-overlay", "tree-only", "expanded", "work", "narrow"] as const;
+const STATES = ["closed", "overlay", "pinned", "tree-overlay", "tree-only", "expanded", "prs", "narrow"] as const;
 type LaneState = (typeof STATES)[number];
 type Lane = { tool: Tool | null; pinned: boolean; tree: boolean; documents: boolean; expanded: boolean };
 
@@ -25,7 +25,7 @@ const LANES: Record<LaneState, Lane> = {
   "tree-overlay": { tool: "files", pinned: false, tree: true, documents: true, expanded: false },
   "tree-only": { tool: "files", pinned: true, tree: false, documents: false, expanded: false },
   expanded: { tool: "files", pinned: false, tree: true, documents: true, expanded: true },
-  work: { tool: "work", pinned: true, tree: false, documents: true, expanded: false },
+  prs: { tool: "prs", pinned: true, tree: false, documents: true, expanded: false },
   narrow: { tool: "files", pinned: true, tree: false, documents: true, expanded: false },
 };
 
@@ -78,7 +78,7 @@ export function RightLaneScene({ theme, scale, content, state }: SceneParams & {
     scene.rest.navigator!.focused_checkout_id = checkout.id;
     scene.rest.ui_state = { ...scene.rest.ui_state!, expanded_paths: Object.keys(listings), selected_path: lane.documents ? tabs[0]!.path : null };
     scene.rest.workspace_view = {
-      device_id: "local", path: root, tool: lane.tool, last_tool: lane.tool, work: { lens: "sessions", only_checkout: false }, pinned: lane.pinned, tree: lane.tree, lane_width: null, tree_width: null, lane_called: 0, lane_calls: 0,
+      device_id: "local", path: root, tool: lane.tool, last_tool: lane.tool, prs: { only_checkout: false }, pinned: lane.pinned, tree: lane.tree, lane_width: null, tree_width: null, lane_called: 0, lane_calls: 0,
       layout: { root: { area: { id: "a1", active: displays[0]?.id ?? null, displays } }, active_area: "a1", limits: { areas: 4, depth: 3, displays: 32 }, display_count: displays.length },
     };
     return { scene, editor: { tabs: lane.documents ? tabs : [], active_tab_id: lane.documents ? "t1" : null }, documents, listings };

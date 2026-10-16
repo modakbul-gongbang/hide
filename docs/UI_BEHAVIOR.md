@@ -12,7 +12,7 @@ The web shell's Workspace screen follows the approved S6 proposal, its View area
 Web owner: `web/src/WorkspaceScreen.tsx`, `web/src/workspace.ts`, `web/src/LaneDivider.tsx`, `web/src/TreeButton.tsx`, `web/src/laneCalls.ts`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, `web/src/viewLayout.ts`, `web/src/viewDrag.ts`, `web/src/viewFocus.ts`.
 
 The Workspace's path and icons sit in the center of the window's top row (see [The window's top row](#the-windows-top-row)); there is no toolbar row under it.
-The path is `project / checkout`, where the project opens the Overview's Tasks filtered to that project, led by the device's colored band when the Workspace is not this Mac's; a tab in Home reads `~/hide`, since Home is no project.
+The path is `project / checkout`, where the project opens that project's panel on the Overview's Projects (PRD sidebar-task-lens B41), led by the device's colored band when the Workspace is not this Mac's; a tab in Home reads `~/hide`, since Home is no project.
 Its right end holds two icons and nothing else, in this order: Overview and `Open server`; the lane's tools are on the rail (see The right lane).
 `Open server` (a globe): one known listener opens directly as a page in the files tool, and multiple listeners open a compact keyboard picker.
 Its accessible name carries how many listeners are known (`Open server, 2 running`), so a screen reader tells a globe that opens a page at once from one that opens the picker; while the count is unknown (a remote Workspace, no connection, a discovery that is still reading or failed) the name is `Open server`, and the tooltip always says `Open server`.
@@ -741,72 +741,57 @@ Reintroducing a shared attachment shelf requires a supported provider contract f
 
 ## Overview
 
-Web owner: `web/src/Overview.tsx` (the modal and the page, the title and the device switch), `web/src/MainScreen.tsx` (the tab row with its counts and controls, the unreachable device, the side panel), `web/src/TasksTab.tsx` and `web/src/overviewTasks.ts` (Tasks), `web/src/OverviewRecord.tsx` (a task's record beside the tabs), `web/src/BacklogTab.tsx` and `web/src/overviewBacklog.ts` (백로그), `web/src/ProjectsTab.tsx` and `web/src/overviewProjects.ts` (Projects), `web/src/QuickAdd.tsx` and `web/src/quickAddChoice.ts` (the quick add), `web/src/issueMarks.tsx` (an issue's glyph and labels), `web/src/IssueDialogs.tsx` and `web/src/issueStart.ts` (Start).
+Web owner: `web/src/Overview.tsx` (the modal and the page, the title and the device switch), `web/src/MainScreen.tsx` (the tab row with its counts and controls, the unreachable device, the Home with no project, the side panel), `web/src/overviewTasks.ts` (a device's tasks as the record and the backlog read them), `web/src/OverviewRecord.tsx` (a session's record beside the tabs at Home), `web/src/BacklogTab.tsx` and `web/src/overviewBacklog.ts` (백로그), `web/src/ProjectsTab.tsx` and `web/src/overviewProjects.ts` (Projects), `web/src/QuickAdd.tsx` and `web/src/quickAddChoice.ts` (the quick add), `web/src/issueMarks.tsx` (an issue's glyph and labels), `web/src/IssueDialogs.tsx` and `web/src/issueStart.ts` (Start).
 Core owner: `herdr-core/src/agent_state/tally/tasks.rs` (the tasks), `herdr-core/src/runtime/backlog.rs` (the backlog's add, retry, undo and origin), `herdr-core/src/runtime/disk_sweep.rs` (the Projects tab's disk), `herdr-core/src/tasks.rs` and `herdr-core/src/local_issues.rs` (issue sources).
-The Overview is laid out by PRD overview-device-tasks: one device at a time, with the tabs `Tasks · 백로그 · Projects` and Usage at the end.
+The Overview is laid out by PRD overview-device-tasks and PRD sidebar-task-lens: one device at a time, with the tabs `백로그 · Projects` and Usage at the end.
+The device's tasks are the sidebar's 태스크 list, not an Overview tab (PRD sidebar-task-lens D-20).
 It replaced the Project Overview, the Agents graph, the Issues board with its List and Dependencies modes, and Conversation history; none of them is in the app, and looking at one project closely is the right lane's work.
 
 ### The page and the device switch
 
 The Overview opens from the sidebar's Overview row, the top row's Overview button or ⌘⇧O, always on the device in front on the rail, and has no choice between all projects and one project (B1).
-It opens on the tab it was last left on, Tasks the first time.
+It opens on the tab it was last left on, 백로그 the first time (PRD sidebar-task-lens B38).
 It opens as a centered modal over a mounted Workspace, as large as the window allows with the window inset (`--size-settings-sheet-window-inset`) clear on every side and at most `--size-overview-sheet-w` by `--size-overview-sheet-h`, preserving terminal geometry and output, and otherwise as a central page.
 Its head is the title `Overview` and the device switch: every connected device as its rail tile and name, the rail's front device marked `rail`, a device that does not answer marked `연결 안 됨`, and every other device's tooltip carrying `Needs You N` (B2).
 With This Mac alone there is no switch, since there is nothing to choose.
 Choosing a device changes only what the Overview shows; the rail, the sidebar and the Workspace in front stay, and a project chip that was set clears.
-The tab row is `Tasks · 백로그 · Projects` and, at its end, `Usage`: Tasks carries its task count, its Needs You count in the warning colour and a thin bar of the share that needs the operator, works, waits and rests; 백로그 carries its open items and Projects its project count (B3).
+The tab row is `백로그 · Projects` and, at its end, `Usage`: 백로그 carries its open items and Projects its project count (B3).
 A device that does not answer dims the tabs, and the body holds only `<device>가 응답하지 않는다 · <언제부터>` and `다시 연결`; the age is the core's `unreachable_since_unix_ms` on that device's status row, set when it first stopped answering, and the reason is the line's tooltip; when it answers again the body fills in place (B4).
-Tasks and 백로그 carry the project chip at the row's right (`모든 프로젝트 ▾`); choosing a project makes that tab show it alone, the chip names it while it filters, and changing the device clears it (B5).
-Each tab's controls sit at the row's right end beside the chip: Tasks' state chips and search, and 백로그's label chips and search.
+백로그 carries the project chip at the row's right (`모든 프로젝트 ▾`); choosing a project makes it show that project alone, the chip names it while it filters, and changing the device clears it (B5).
+백로그's label chips and search sit at the row's right end beside the chip.
 
-A card, a backlog row or a project row opens the side panel at the right of the tab, as wide as the lane's minimum; below a 1280 px window it floats over the tab instead of narrowing it, and a card title stays one line with an ellipsis either way (B65).
+A backlog row, a project row or a session's record at Home opens the side panel at the right of the tab, as wide as the lane's minimum; below a 1280 px window it floats over the tab instead of narrowing it (B65).
 Escape closes the panel first and the Overview after it, background click and ⌘⇧O close the modal, and closing returns the keyboard to where it was before the Overview opened (B16).
 Choosing another tab closes the panel.
 The Overview replaces the search palette in one action and returns to the palette's original keyboard owner; Settings and other dialogs prevent a second Overview modal, and navigation from inside the Overview closes it as part of that action.
 Native browser displays use the existing dialog still rules without reloading.
-Every tab, the device switch, the project chip, a card, a row, a fold line and every button of the panel take the keyboard with a visible focus ring and an accessible name, and a state is written as a word (`묻는 중`, `일하는 중`) as well as drawn in its colour (B64).
+Every tab, the device switch, the project chip, a row, a fold line and every button of the panel take the keyboard with a visible focus ring and an accessible name, and a state is written as a word (`묻는 중`, `일하는 중`) as well as drawn in its colour (B64).
 The Overview draws its first screen from the snapshot without waiting for any disk or GitHub read, and a closed Overview adds nothing to terminal output or key input (B63).
 
-The Home with no agent to draw shows the next step in place of Tasks (PRD first-run-onboarding D-16): with no project, `Add a project to start an agent.` and Add project with its chord (⇧⌘N), which a browser tab, unable to pick a folder, shows as the sentence alone; with projects, `No agents are running.` and Start an agent with ⌘N, which opens the start panel (B27-B29).
+The Home with no project shows the next step in the place of 백로그 and of Projects (PRD first-run-onboarding D-16; PRD sidebar-task-lens B42): `Add a project to start an agent.` and Add project with its chord (⇧⌘N), which a browser tab, unable to pick a folder, shows as the sentence alone.
+With projects and no agent, 백로그 stays as it is, and the sidebar's 태스크 list offers New agent in its empty line.
 Before the first snapshot the shell's own connecting state shows instead.
 
-### Tasks
+### A device's tasks
 
-A task is a root agent and every descendant it has on any device, with the checkouts they work in and every pull request the link record joined to one of their sessions; an issue or a memo the task started from rides it as a chip (B10).
-An agent Hide AI started for a home (PRD hide-ai-work-home) is a task only while it calls the operator, the same rule the sidebar's Needs You follows, so the Tasks counts and the Needs You filter agree with the sidebar.
-The core derives the tasks from facts it already holds, stores none of them, and rebuilds them only when their inputs change, so a new agent, an ended one or a new pull request changes the card in place.
+The sidebar's 태스크 list draws a device's tasks (PRD sidebar-task-lens D-20); the Overview keeps no Tasks tab, and an old Tasks place opens 백로그 (B38).
+A task is a root agent and every descendant it has on any device, with the checkouts they work in and every pull request the link record joined to one of their sessions; an issue or a memo the task started from rides it (B10).
+An agent Hide AI started for a home (PRD hide-ai-work-home) is a task only while it calls the operator, the same rule the sidebar's Needs You follows.
+The core derives the tasks from facts it already holds, stores none of them, and rebuilds them only when their inputs change, so a new agent, an ended one or a new pull request changes the task in place.
 A fork is a root of its own and so a task of its own.
-Tasks has one section per project of the device, the projects with something that needs the operator first (B6).
-A section's head is the project's name, `일감 N` with `일하는 중 N` and, in the warning colour, `Needs You N`, then `백로그 N ›` while the project has open backlog items, which opens 백로그 on that project, and `열기 ↗`.
-`열기 ↗` closes the Overview, opens the project's most recent checkout and puts the lane on Work's Sessions list (B12).
-A section's cards stand in the order Needs You, blocked, working, waiting and done but not yet seen; resting tasks fold into `쉬는 일감 N ›`, and tasks whose pull requests all merged with a worktree still on disk into `정리할 것 N ›`, each opening in place and closing with `접기` (B7); the Overview opened on a card in either (from a pane's tree or a started item) opens that fold too.
-A section with no task reads `진행 중인 일감 없음 · New agent`, and New agent opens the start panel.
-
-A card's first line is the root's status mark (and Hide AI's mark on a task Hide AI started), the task's title (the root session's label) and its age; while it asks, the question follows in at most two lines in the warning colour (B8).
-Its second line is the descendants' status marks with `자식 N`, the PR mark, the chip of the issue or memo it started from (`#N` or `L-N`), `→ <project>` when it delegated into another project, and `→ <device>` when it delegated to another device.
-A card leads with the status mark alone and draws no provider logo in either agent logo view mode (PRD agent-mark-quiet).
-A card whose root needs the operator is outlined in the warning colour.
-Its third line is the four-step bar `작업 → PR → 검토 → 머지` and one line of state (B9).
-The bar fills one step with no pull request, two while the open pull request is a draft, running checks or failing them, three when it can merge and four when every pull request merged; a task that is only a conversation, with no worktree and no pull request, has no bar.
-The line is the reason in the warning colour on Needs You (`답변 · Claude가 기다림`), the reason in the danger colour when blocked, `머지됨` once merged (`머지됨 · 정리 남음` while a worktree stays), the open pull request's own line, `일하는 중 · 에이전트 N` while it works, `끝남 · 아직 안 봄` for an unseen finish, and `쉬는 중` otherwise.
-A card is one button that opens its record in the panel, and its chips are buttons of their own: the PR mark opens the pull request's card, the issue chip that item in 백로그, `→ <project>` filters Tasks to that project, and `→ <device>` switches the Overview to that device with the dashed card selected (B13).
-
 A task belongs to the device its root agent runs on.
-On the device a child was started on, the project the child works in shows a dashed card `← <device>에서 맡긴 일` with the child's logo and title; it is not counted in that device's tasks or Needs You, and pressing it opens the root task's record with the line `<device>에서 도는 자식은 <root device>의 이 일감에 속한다` above it (B14).
-A child whose root's device the core cannot resolve (`parent_machine_unresolved`) is an ordinary card of its own device with no arrow chip, and becomes a dashed card in place once it resolves (B15).
+The Overview reads the same tasks for the Projects tab's `지금` counts and the order of 백로그's sections.
 
-The head of Tasks carries `전체 · Needs You N · 일하는 중` and the search `일감, 브랜치, #PR, 이슈 검색`; both filter cards only and keep the sections' order, and with no card left the tab reads `맞는 일감 없음` with `거르기 풀기` (B11).
+### A record beside the tabs
 
-### A task's record beside the tabs
-
-Pressing a card opens the task's record in the panel and marks the card selected; another card replaces it (B16).
-The record is the same one the lane draws, in the same order and with the same reading, failed, retry and disconnected states (B17, B21); [The session record](#the-session-record) owns its parts.
+At Home, where no Workspace is in front to draw the lane's 보기 slot, a session's record opens in the panel instead (PRD sidebar-task-lens B17, B40); another record replaces it (B16).
+The record is the same one the 보기 slot draws, in the same order and with the same reading, failed, retry and disconnected states (B17, B21); [The session record](#the-session-record) owns its parts.
 The panel's head is ✕ and `Workspace 열기 · lane에서 보기` (B18).
-`Workspace 열기` closes the Overview and brings the session's pane forward; `lane에서 보기` closes the Overview, opens the checkout and shows the same record in the lane.
-A task on another device reads `<device>로 가서 열기`, which brings that device forward.
+`Workspace 열기` closes the Overview and brings the session's pane forward; `lane에서 보기` closes the Overview, opens the checkout and shows the same record in the lane's 보기 slot.
+A task on another device reads `<device>로 가서 열기`, which brings that device forward, and a record of a task whose root runs on another device than the one the Overview shows carries `<device>에서 도는 자식은 <root device>의 이 일감에 속한다` above it (B14).
 A task whose checkout is gone has neither button and shows its record alone.
 A record whose session ended reads `이 세션은 끝나서 기록이 없다` in the record's place, and the panel stays open (B21).
-Closing the panel reads the lane's own record again when the lane shows one, so the two places never fight over the one record a window opens.
+Closing the panel reads the 보기 slot's own record again when the slot holds one, so the two places never fight over the one record a window opens.
 
 ### 백로그
 
@@ -816,8 +801,8 @@ A project's source defaults to GitHub when its repository reads as a GitHub repo
 The core hands the web a source-neutral task (the id the source shows, URL, title, open or closed, labels, when it was made and last changed), so no view reads a GitHub shape, and a new source is one more adapter in `herdr-core/src/tasks.rs`.
 A GitHub project keeps only GitHub issues and no memos.
 
-백로그 has one section per project, in Tasks' order (B25).
-A section's head is the project's name, the source chip (`GitHub 이슈` or `메모`), which opens the same Issue source menu as the sidebar, `열림 N`, and, while some of its items are started, `진행 중 N → Tasks`, which opens Tasks on that project (B25, B34).
+백로그 has one section per project, the projects with a task that needs the operator first, then the most recently active (B25).
+A section's head is the project's name, the source chip (`GitHub 이슈` or `메모`), which opens the same Issue source menu as the sidebar, `열림 N`, and, while some of its items are started, `· 진행 중 N` as a number alone, with no way to Tasks (B25, B34; PRD sidebar-task-lens B41).
 Under the head is the input `<project>에 이슈 적기` (GitHub) or `<project>에 메모 적기`, with `Enter · GitHub에 바로 만듦` (`· 공개` for a public repository, `· 공개일 수 있음` while its visibility could not be read) or `Enter · 이 기기에만 저장` always beside it (B26).
 Enter makes the item at once with no form: a memo stands as an `L-N` row at the top right away, and a GitHub project shows a dimmed `만드는 중` row at the top that becomes the `#N` row once the issue exists (B29).
 The input empties and keeps the keyboard for the next title; an empty or blank Enter does nothing, a title stops at 256 characters, and the characters left show at the input's end as it nears the limit.
@@ -827,7 +812,7 @@ A failure no retry can change (an add the core refused, or a repository that mov
 `다시 시도` names the same add, so an issue the first try made is joined rather than made again, even after a restart; past eight waiting creates a new add fails at once with `만들 것이 너무 많이 밀려 있음`.
 A GitHub create is made only in the repository the project was connected to when it was asked; when Connections changes meanwhile, the create stops before the issue exists, fails with `프로젝트 저장소가 바뀜`, and its `다시 시도` makes nothing in the new repository.
 
-Only unstarted items are listed: an item a checkout works on leaves the list, adds one to `진행 중 N`, and shows as its chip on the Tasks card (B28).
+Only unstarted items are listed: an item a checkout works on leaves the list and adds one to `진행 중 N` (B28).
 A GitHub row is `#N`, the title, a flag when it came from missed work, its labels, its age, `↗` (GitHub) and `▷ 시작`; a memo row is `L-N`, the title, the flag, its age and `▷ 시작` (B27).
 The newest eight rows show and the rest fold under `나머지 이슈 N ›` (`나머지 메모 N ›`); the label chips and `이슈, 메모 검색` at the tab's head filter the rows.
 When the source cannot be read the section keeps the last rows it read, and its head carries ⚠ with one line of why and where to fix it; a source never read has the line alone in the rows' place, and the input still works (B35).
@@ -848,7 +833,7 @@ Starting creates the worktree, writes the link into it, starts the agent with th
 
 `백로그에 추가` (⇧⌘M; Alt+Shift+M on Windows and Linux; ⌥⇧M in a browser tab, where Chrome keeps ⇧⌘M) opens one input at the top center of any screen, even while a terminal holds the keyboard, and takes the keyboard; ⌘K or the find bar closes first (B37).
 A second press closes it.
-Above the input stand the project it will go to and why it was chosen: `고른 일감의 프로젝트` (the Overview's selected card, item or project), `걸러 보는 프로젝트` (the Overview's project chip), `앞에 있는 체크아웃`, or `백로그가 있는 첫 프로젝트` when none of them keeps a backlog (B38).
+Above the input stand the project it will go to and why it was chosen: `고른 일감의 프로젝트` (the project of the record, item or project the Overview's panel shows), `걸러 보는 프로젝트` (the Overview's project chip), `앞에 있는 체크아웃`, or `백로그가 있는 첫 프로젝트` when none of them keeps a backlog (B38).
 Tab and Shift+Tab walk the projects of that device that keep a backlog; a project of a device the core dials has none and is never offered, and with no project to offer the input reads `백로그를 둘 프로젝트가 없음` and Enter does nothing.
 Under the input the destination always shows and follows the project: `GitHub 이슈로 바로 만듦 · 공개`, `GitHub 이슈로 바로 만듦` for a private repository, `GitHub 이슈로 바로 만듦 · 공개일 수 있음` when whether it is public could not be read, and `메모 · 이 기기에만` (B39).
 Enter makes the item; the input locks as `만드는 중` until it exists, and a failure keeps the typed title with one line of why and `Enter로 다시 시도`, which names the same add, so the issue is made once (B41).
@@ -862,7 +847,7 @@ Pasted text with line breaks joins into one line and stops at 256 characters (B4
 Projects is one row per project of the device (B48).
 Its top line is `<device> 디스크 여유 X / 전체 Y · 프로젝트 합계 Z · 정리하면 W`, the free space in the warning colour below 10 GB (`LOW_FREE_BYTES`, the cleanup sheet's own threshold), and a small `재는 중` while the sweep runs, the sizes in mono and the words in the body font; a device the core dials has no top line (B47).
 A row reads the project's name with its GitHub mark (a Git project whose issues are not on GitHub has the folder-with-branch mark) or `폴더`, `지금` (a colour bar and the counts that are not zero among `Needs You N · 일하는 중 N · 기다림 N · 끝남 N`, `쉬는 중 N` when all four are zero, `일감 없음` with no task), the backlog's `N ›`, the disk, `챙길 것`, the last activity and `열기 ↗` (B48).
-The backlog's `N ›` opens 백로그 on that project.
+The backlog's `N ›` opens 백로그 on that project, and `열기 ↗` closes the Overview and opens the project's most recent checkout.
 `챙길 것` is `N merged → 정리` while the project holds merged checkouts and empty otherwise; pressing it opens the disk cleanup sheet on that project's finished checkouts (B49); a project of a device the core dials says `N merged` with nothing to press, since its cleanup is that device's.
 Projects that rest with nothing to clean fold at the bottom into `조용한 프로젝트 N · X GB ›`, which opens in place (B50).
 The disk cell is a bar and a number: the bar's length is measured against the device's largest project, its purple share is what a cleanup frees (the build cache and dependencies of finished checkouts), its tooltip lists build cache, dependencies, Git, worktrees and the rest with `정리하면 N GB`, and the number opens the disk cleanup sheet on that project (B51).
@@ -874,16 +859,16 @@ Leaving the tab starts nothing more, and a measurement stays fresh for ten minut
 A project whose measurement fails or runs out of time keeps its last value (or `-`) with ⚠ and one line of why in its tooltip, and the next project's measurement goes on (B55).
 A project of a device the core dials is not measured: its cell is empty and nothing spins (B56).
 
-A row opens the project in the panel: its name and ✕, the path with `폴더` and the last activity, `열기 ↗` and `＋ New agent`, `지금` with `Tasks에서 이 프로젝트만 보기 →`, the backlog's source and open count with `보기 →`, the storage bar with its legend, the worktree count with `정리`, how far main is behind origin, the Issue source choice under `프로젝트 설정`, and `등록 해제` (B57).
+A row opens the project in the panel: its name and ✕, the path with `폴더` and the last activity, `열기 ↗` and `＋ New agent`, one line of `지금` as words alone (`지금 Needs You 1 · 일하는 중 3 · 끝남 2`, Needs You in the warning colour) with no way to Tasks (PRD sidebar-task-lens B41), one line of the backlog's source and open count with `보기 →`, the storage bar with its legend, the worktree count with `정리`, how far main is behind origin, the Issue source choice under `프로젝트 설정`, and `등록 해제` (B57).
 
 ### Ways in, and the views it replaced
 
-The breadcrumb's project name and a cross-project chip open the Overview on that project's device with Tasks filtered to it (B60).
-An issue or a memo from ⌘K, a Factory card or a session record opens the item in 백로그 while it is not started, and the Tasks card it rides once it is; a pull request opens the Work tool's PR card.
-A pane head's agent tree button opens the Overview on that agent's device with its task's card selected and that agent's own record in the panel (B59).
-A link panel's `대화 보기` and parent line open that session's record, in the lane when a Workspace is in front and otherwise in the Overview's panel (B58).
+The breadcrumb's project name, a cross-project chip and a Recent Panels project open the Overview's Projects on that project's device with the project's panel beside it (PRD sidebar-task-lens B41).
+An issue or a memo from ⌘K, a Factory card, a session record or a missed line's `· 백로그 #N` opens the item in 백로그 while it is not started, and once it is shows its task's row in the sidebar's 태스크 list with the root's record in the lane's 보기 slot, or in the Overview's panel at Home (PRD sidebar-task-lens B40); a pull request opens its card in the 보기 slot.
+A pane head's agent tree button shows that agent's row in the sidebar's 태스크 list, unfolded and selected, with its record in the 보기 slot, and no Overview opens (B40).
+A link panel's `대화 보기` and parent line open that session's record, in the 보기 slot when a Workspace is in front and otherwise in the Overview's panel (B58).
 `⇧⌘A` and the `Agents overview` command are gone, and no menu or shortcut list names them (B59).
-The Overview starts on Tasks when the window loads and keeps the tab chosen while the window runs; neither the tab nor a Recent Panels visit outlives the window, so a Home view chosen before the update (Agents, the Tasks board, 요청) or a visit to a Project Overview cannot come back as an empty screen or an error (B61).
+The Overview starts on 백로그 when the window loads and keeps the tab chosen while the window runs; neither the tab nor a Recent Panels visit outlives the window, so a Home view chosen before the update (Agents, the Tasks board or tab, 요청) or a visit to a Project Overview cannot come back as an empty screen or an error (B61; PRD sidebar-task-lens B38).
 Nothing of Conversation history remains: the screen, its search and copying are removed, the session reads the labels, the phone's conversation and Memory use stay, and the per-project choice it kept is read only as how long session records are kept (B58; ARCHITECTURE.md, Project sessions and Memory).
 
 ## The Work tool
@@ -948,7 +933,7 @@ An unavailable device keeps current connection reasoning and disables actions.
 
 Each Sessions row adds a record button, shown under the pointer or focus, and no missed-work flag: missed work lives in the record and in the group above the list.
 An agent pane head's status mark, logo and title open the same record ([Pane header lineage and ownership](#pane-header-lineage-and-ownership)).
-The record replaces the list inside the Work tool under `← Sessions로 돌아가기`, which goes back to the list (B19), and the Overview's panel draws the same record under its own head ([A task's record beside the tabs](#a-tasks-record-beside-the-tabs)); the two differ only in that frame, and a window reads one record at a time (PRD overview-device-tasks D-07, B17).
+The record replaces the list inside the Work tool under `← Sessions로 돌아가기`, which goes back to the list (B19), and the Overview's panel draws the same record under its own head ([A record beside the tabs](#a-record-beside-the-tabs)); the two differ only in that frame, and a window reads one record at a time (PRD overview-device-tasks D-07, B17).
 From the top it reads the logo and title; the place line `<device> · <project> · ⌂ <checkout> · <state> <age> · 자식 N`; what to do now (`지금 할 일`: the question, why it is blocked, `#N 머지 차례`) or, with nothing to do, the stage bar `작업 → PR → 검토 → 머지`; the PRs; the assigned work with each task's missed work under it; `지금` while it works, the last words otherwise; the children; and `워크트리`, the task's checkouts, a removed one as `<name> (없어짐)`.
 What to do now and the stage bar are the task's, its root's, so a child's record shows the place line alone.
 Pressing a child opens its record in the same place with `← <parent title>` as its head; a grandchild does the same, and each press of ← goes up one level (B20).
@@ -1016,15 +1001,23 @@ The lens, the Sessions lens and a card each hold that one demand, and it is rele
 
 #### The PR card
 
-A card opens as a `PR #N` tab in the lane's files tool, under the same rule as any View (an unpinned lane that was away comes up over the agents, a pinned one stays docked); the lane shows one tool at a time, so opening a card turns it from Work to the files tool and the rail's Work icon brings the list back; the same pull request brings its tab forward, and card tabs survive a restart. A card opens from a row, the sidebar's PR card, ⌘K, a session's PR chip, Memory's PR button, Recent Panels and `이슈 없는 PR N` (which opens the PRs lens instead); one event does it: the Workspace is chosen (the PR's agent's checkout, else the branch's checkout, else the project's primary), the pull request's live agent is brought to the front of Agent Views (asking, then stopped, then working, then most recent; none leaves Agent Views as it was and the pane being looked at goes behind, never closed), and the tab opens or comes forward.
-The tab is saved with the other Views and returns after a restart; a pull request on a device this core does not read opens on GitHub.
+A card opens in the lane's 보기 slot (PRD sidebar-task-lens D-43, D-50): the Workspace in front, its Agent tab and the keyboard stay where they were, and the slot's head reads `←`, `PR #N · <project>`, `↗` (GitHub) and `✕`.
+A card opens from a row, a 태스크 row's PR mark, the sidebar's PR card, ⌘K, a session's PR chip, Memory's PR button, a session record's PR and Recent Panels, and `이슈 없는 PR N` opens the PRs tool instead; at Home the pull request's Workspace opens with the card in its lane.
+A stored `PR #N` tab from an older build is dropped when the app starts, and the rest of that tab's Views stay; a pull request on a device this core does not read opens on GitHub.
 
-From the top the card reads: the head (PR mark and number, the author on a teammate's pull request, Workspace and GitHub buttons, the title, then branch, checks, the review only when there is one, and files with +/-); the reason box, in the row's words and colour, with the AI summary under it when Hide AI makes one; what is blocking (the conflict, each failed check with its log link, each unresolved review thread as reviewer, file:line and first sentence), absent when nothing blocks; what the pull request's agent last said, and its question in the warning colour while it asks; the body, folded to a preview and `##` heading chips and opened as Markdown; the changed files, with files `.gitattributes` marks `linguist-generated` and the common lock files gathered into `생성 파일 N개 접음`; the sessions that made or worked on it and the issue link and worktrees (the link record, below); and the button row.
+From the top the card reads (B32-B36):
+
+- the head, one line of the PR mark and number, the title, the author on a teammate's pull request and `Workspace` (the pull request's checkout), then a mono meta line `branch → base · 파일 N · +a −d`, with ⚠ while GitHub cannot be read;
+- the decision box, edged green to merge, red when blocked and amber while it waits on the operator: the case's word and reason in the row's words and colour with the case's button at the right, one line of facts (`검사 통과`, `검사 N개 도는 중` or `검사 N개 실패`; the review; `<base>와 충돌 없음`, `<base>와 충돌` or `<base>보다 뒤`), what blocks it (the conflict, each failed check with `로그 ↗`, each unresolved review thread as reviewer, file:line and first sentence), and `AI 요약` when Hide AI made one;
+- the steps `작업 · PR · 검토 · 머지`, a display and not a button, filled by the task rule (D-35): the PR step runs amber while it is a draft or its checks run and turns red on a failed check, review follows once the checks pass and is done when it is approved or GitHub would merge it, red on changes requested, and merge is done once it merged; under each label who worked (the agent's product, or `외부` on a teammate's pull request), the checks, the review state (`리뷰 대기`, `나에게 요청`, `리뷰어 없음`, `승인됨`) and the merge (`큐 N번째`, `머지됨`); GitHub gives no count of all checks, so a step never reads `n/m`;
+- the session that made it, while its agent lives: its mark, `만든 세션 · <agent> · <when>`, its last words or its question in the warning colour, and `pane으로`;
+- three folded lines that open in place and stay as they were left while the app runs: `본문` with its `##` headings at the right, opening to a preview and `모두 보기` for the Markdown; `바뀐 파일 N` with +/- at the right, opening to the files with files `.gitattributes` marks `linguist-generated` and the common lock files gathered into `생성 파일 N개 접음`; and `연결` with `이슈 #N · 워크트리 N · 세션 N` at the right, opening to the link record (below).
+
 No part of the body is lifted out as the card's own judgment.
-A changed file opens as the Hide diff when the Workspace in front is a checkout of the pull request's branch and its committed changes already hold the file, and as the pull request's files page on GitHub otherwise.
-A part that could not be read keeps the head and the reason box from the list, and says `읽지 못함 · 다시 시도` on that part, which reads again only that part.
+A changed file opens as the Hide diff in this Agent tab's Files when the Workspace in front is a checkout of the pull request's branch and its committed changes already hold the file, and the lane turns to Files while the 보기 slot stays on the rail and brings the card back as it was (B49); otherwise it opens the pull request's files page on GitHub.
+A part that could not be read keeps the head, the decision box and the steps from the list, and says `읽지 못함 · 다시 시도` on that part (its folded line says `읽지 못함`), which reads again only that part.
 
-The button row leads with the button of the case: `Merge` when the pull request can merge, in a method the repository allows (a choice when it allows several) or `머지 큐에 넣기` in a repository with a merge queue; `브랜치 업데이트` when it is behind; `GitHub에서 리뷰` and `에이전트에게 리뷰 맡기기` for a review asked of the operator; `맡기기` for a blocked pull request with no agent; `pane에서 답하기` for an asking agent; `pane 보기` for a stopped one; `리뷰어 지정` opens the pull request on GitHub.
+The decision box's button is the case's: `Merge` when the pull request can merge, in a method the repository allows (a choice when it allows several) or `머지 큐에 넣기` in a repository with a merge queue; `브랜치 업데이트` when it is behind; `GitHub에서 리뷰` and `에이전트에게 리뷰 맡기기` for a review asked of the operator; `맡기기` for a blocked pull request with no agent; `pane에서 답하기` for an asking agent; `pane 보기` for a stopped one; `리뷰어 지정` opens the pull request on GitHub; with no button of its own the case leaves GitHub to the slot's `↗`.
 Merge and `브랜치 업데이트` are the app's only GitHub writes besides a pull request's body, a new issue and the close `되돌리기` makes, and appear for the operator's own pull requests.
 A Merge that cannot run is disabled with its reason beside it (`검사 13개 도는 중`, `에이전트가 일하는 중`, `main과 충돌`, `필수 리뷰 없음`).
 Pressing it asks once, `#N을 <base>에 머지 · <방식> · <짧은 커밋>` with `#N 머지` and `취소` (focus starts on `취소`), and the write goes out only for the head commit the card showed and the list judged: the confirmation closes by itself when the card's head, method or queue moved, or Merge became unavailable, and the core refuses a write whose head differs from the head the list was read at, so a push between the two reads is never merged unseen.
@@ -1036,10 +1029,10 @@ A branch update asks the same way and takes the same head condition; a conflict 
 A failure leaves one line beside the button that says what the operator can do (`권한 없음 · GitHub에서 확인`, `GitHub 응답 없음 · 다시 시도`), the same button tries again, and the detail goes to the diagnostic log.
 `에이전트에게 리뷰 맡기기` starts an agent on the branch's checkout (a new worktree when there is none) with a review instruction; it reports to the operator and neither reviews on GitHub nor merges.
 
-Hide AI's `PR 요약` (Settings › Hide AI › Features, under the same usage limit as the other background features) adds one summary marked `AI 요약` under the reason box, made from the title, the first 4,000 characters of the body, up to 100 file names with +/- and the checks, once per head commit.
+Hide AI's `PR 요약` (Settings › Hide AI › Features, under the same usage limit as the other background features) adds one summary marked `AI 요약` in the decision box, made from the title, the first 4,000 characters of the body, up to 100 file names with +/- and the checks, once per head commit.
 Off, paused by the limit or failed, the part is absent and the rest of the card and list stand; the reason goes to the log.
 
-The card's `연결` and sessions sections are the link record (PRD link-graph), unchanged:
+The card's opened `연결` line is the link record (PRD link-graph), unchanged:
 `연결` lists each issue with its glyph, `#N 제목` and where the link came from, `Closes` (the body's closing reference) or `Hide 링크` (the branch's issue link), then each worktree the branch had, a removed one dim with `정리됨`; with no issue it reads `연결된 이슈 없음` with `이슈 잇기`.
 An issue line opens that item in the Overview's 백로그, or its Tasks card once it is started, or GitHub for one the project does not list.
 What is true now (the pull request, CI, the review, whether a worktree is still here, whether a pane is live) is the snapshot's; the links and the sessions are the link record's, read when the card opens.
@@ -2347,12 +2340,13 @@ The sheet carries no row or explanation for a command the removed native app alo
 | Add to backlog | `⇧⌘M` | `Alt+Shift+M` | `⌥⇧M` | `Alt+Shift+M` |
 | Focus sidebar | `⇧⌘P` | `Alt+Shift+P` | `⇧⌘P` | `Alt+Shift+P` |
 | Toggle left sidebar | `⌘B` | `Ctrl+Shift+B` | `⌘B` | `Ctrl+Shift+B` |
+| Switch Projects and Tasks | `⇧⌘B` | `Alt+Shift+B` | `⌥⇧B` | `Alt+Shift+B` |
 | Toggle device rail | none | none | none | none |
 | Toggle right lane | `⌘E` | `Ctrl+Shift+E` | `⌘E` | `Ctrl+Shift+E` |
-| Toggle Work tool | `⌥⌘1` | `Alt+Shift+1` | `⌥⌘1` | `Alt+Shift+1` |
-| Toggle Memory tool | `⌥⌘2` | `Alt+Shift+2` | `⌥⌘2` | `Alt+Shift+2` |
-| Toggle Files tool | `⌥⌘3` | `Alt+Shift+3` | `⌥⌘3` | `Alt+Shift+3` |
-| Toggle Changes tool | `⌥⌘4` | `Alt+Shift+4` | `⌥⌘4` | `Alt+Shift+4` |
+| Toggle Memory tool | `⇧⌘L` | `Alt+Shift+L` | `⇧⌘L` | `Alt+Shift+L` |
+| Toggle PRs tool | `⇧⌘R` | `Alt+Shift+R` | `⌥⇧R` | `Alt+Shift+R` |
+| Toggle Files tool | none | none | none | none |
+| Toggle Changes tool | `⇧⌘G` | `Alt+Shift+G` | `⇧⌘G` | `Alt+Shift+G` |
 | Toggle File Tree | `⇧⌘E` | `Alt+Shift+E` | `⇧⌘E` | `Alt+Shift+E` |
 | Find in pane | `⌘F` | `Ctrl+Shift+F` | `⌘F` | `Ctrl+Shift+F` |
 | Save file | `⌘S` | `Ctrl+Shift+S` | `⌘S` | `Ctrl+Shift+S` |

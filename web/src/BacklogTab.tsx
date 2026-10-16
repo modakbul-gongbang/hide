@@ -14,7 +14,7 @@ import { cn } from "./lib/utils";
 import { ageWords } from "./overviewLens";
 import { originOf, useBacklogOrigin } from "./backlogOrigin";
 import { backlogLabels, backlogOf, BACKLOG_SHOWN, backlogTitle, destinationOf, filterRows, pendingItems, startedKeys, titleLeft, undoRetryable, type BacklogRow } from "./overviewBacklog";
-import { isMemoKey, itemToken, taskSections } from "./overviewTasks";
+import { isMemoKey, itemToken, projectOrder } from "./overviewTasks";
 import { issueDate, type BoardProject } from "./projectBoard";
 import { issueSourceChoices } from "./settings";
 import { projectIssueSource, settingsTarget } from "./projectSettings";
@@ -24,18 +24,18 @@ import { IssueLabelDot, IssueLabelView } from "./issueMarks";
 import { toggledFold, useUiStore, type OverviewPanel } from "./ui";
 
 // The 백로그 tab (PRD overview-device-tasks D-09, D-10, D-21..D-23, B25-B36):
-// one section per project in Tasks' order, each with its source chip, an
+// one section per project, the ones waiting on the operator first, each with its source chip, an
 // input that makes an item at once, the items the core is making or failed
 // to make, and the unstarted items newest first. A device the core dials
 // keeps no backlog, so each of its sections says so in one line (B36).
 
 const LINK = "inline-flex items-center gap-xxs rounded-xs px-xxs text-caption outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring";
 
-export function OverviewBacklog({ projects, rows, actions }: { projects: readonly BoardProject[]; rows: ReadonlyMap<string, import("./snapshot").AgentRow>; deviceId: string; actions: Actions }) {
+export function OverviewBacklog({ projects, actions }: { projects: readonly BoardProject[]; deviceId: string; actions: Actions }) {
   const only = useUiStore((s) => s.overview.projectId);
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
-  // The sections stand in Tasks' order (B25).
-  const order = useMemo(() => taskSections(projects, rows, "all", "", only).map((section) => section.project), [projects, rows, only]);
+  // A project with a task waiting on the operator first, then the most recently active (B25).
+  const order = useMemo(() => projectOrder(projects, only), [projects, only]);
   return (
     // One grid for every project: each input row takes the shared hint
     // column, so the inputs end at the same x whatever their hint says.
@@ -100,6 +100,8 @@ function BacklogSection({ project, actions }: { project: Workspace; actions: Act
         <span className="min-w-0 truncate text-subhead font-semibold text-foreground">{project.label}</span>
         <SourceChip project={project} actions={actions} />
         <span className="text-caption text-muted-foreground" data-backlog-open={backlog.rows.length}>{t("backlog.openCount", { count: backlog.rows.length })}</span>
+        {/* The started items' number alone: their tasks are the sidebar's 태스크 list (PRD sidebar-task-lens B41). */}
+        {backlog.started > 0 ? <span className="text-caption text-muted-foreground" data-backlog-started={backlog.started}>· {t("backlog.started", { count: backlog.started })}</span> : null}
         {source?.failure ? (
           <Hint label={source.failure}>
             <span className="inline-flex items-center gap-xxs text-caption text-warning" data-backlog-read-failed="true">
@@ -108,12 +110,6 @@ function BacklogSection({ project, actions }: { project: Workspace; actions: Act
               <button type="button" className={cn(LINK, "text-warning underline")} onClick={() => actions.openSettings("github")}>{t("backlog.readFix")}</button>
             </span>
           </Hint>
-        ) : null}
-        <span className="flex-1" />
-        {backlog.started > 0 ? (
-          <button type="button" className={cn(LINK, "text-subtle-foreground")} data-backlog-started={backlog.started} onClick={() => { useUiStore.getState().setMainView("tasks"); useUiStore.getState().setOverview({ projectId: project.id, panel: null }); }}>
-            {t("backlog.started", { count: backlog.started })}
-          </button>
         ) : null}
       </h2>
       <BacklogInput project={project} actions={actions} />

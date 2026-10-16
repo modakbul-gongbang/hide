@@ -110,15 +110,31 @@ function useMarkLabel(parts: PrMarkParts | null, stale: PrStaleness | undefined)
 export const PR_MARK_PRESS = "flex shrink-0 items-center rounded-xs px-xxs outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-secondary disabled:opacity-(--opacity-disabled)";
 
 /**
- * An agent row's own PRs, or a Sessions root's complete family, as one mark:
- * pressing it lists each PR, worst first; choosing one opens the PR panel.
+ * An agent row's own PRs, or a task root's complete family, as one mark
+ * (PRD sidebar-task-lens B14): one PR opens on a press, several list each PR,
+ * worst first, and choosing one opens it; ⌘-press opens one PR on GitHub.
  */
-export function AgentPrMark({ agent, family, staleness, disabled = false, onOpen }: { agent: AgentRow; family?: SessionPull[]; staleness?: PrStaleness; disabled?: boolean; onOpen: (pull: AgentPullRequest) => void }) {
+export function AgentPrMark({ agent, family, staleness, disabled = false, onOpen, onExternal }: { agent: AgentRow; family?: SessionPull[]; staleness?: PrStaleness; disabled?: boolean; onOpen: (pull: AgentPullRequest) => void; onExternal?: (pull: AgentPullRequest) => void }) {
   const { t } = useInterfaceTranslation();
   const entries: { pull: AgentPullRequest; state: PrState; owners?: AgentRow[] }[] = family ?? ownPulls(agent);
   const parts = prMarkParts(entries);
   const label = useMarkLabel(parts, staleness);
   if (!parts) return null;
+  const only = entries.length === 1 ? entries[0]!.pull : null;
+  if (only) {
+    return (
+      <Hint label={label}>
+        <button type="button" disabled={disabled} aria-label={label} data-agent-pr={agent.pane_id} className={PR_MARK_PRESS}
+          onClick={(event) => {
+            event.stopPropagation();
+            if ((event.metaKey || event.ctrlKey) && onExternal) onExternal(only);
+            else onOpen(only);
+          }}>
+          <PartsMark parts={parts} stale={staleness?.stale} />
+        </button>
+      </Hint>
+    );
+  }
   return (
     <DropdownMenu>
       <Hint label={label}>

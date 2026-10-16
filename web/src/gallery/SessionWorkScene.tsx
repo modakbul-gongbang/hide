@@ -2,9 +2,9 @@
 // These examples prove layout; the isolated daemon tests own runtime policy.
 import { useLayoutEffect, useMemo } from "react";
 import { createActions } from "../actions";
-import { AgentSessions } from "../AgentSessions";
+import { TaskLens } from "../TaskLens";
 import { Palette } from "../Palette";
-import { LaneSessionRecord } from "../SessionRecord";
+import { SlotSessionRecord } from "../SessionRecord";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { useFollowInterfaceLanguage } from "../i18n/translator";
 import type { MissedWork, SessionRecord as RecordValue, WorkOutput, WorkRequest, WorkSession, WorkTask } from "../snapshot";
@@ -88,7 +88,7 @@ export function SessionWorkScene({ params }: { params: URLSearchParams }) {
     document.documentElement.style.setProperty("--interface-scale", String(scale));
   }, [fixture, state, theme, scale, params]);
   return <TooltipProvider><div className="flex h-full min-w-0 flex-col bg-background text-foreground" data-gallery-scene="session-record">
-    {state === "ended" ? <AgentSessions actions={actions} /> : <LaneSessionRecord actions={actions} target={SESSION} />}
+    {state === "ended" ? <TaskLens actions={actions} /> : <SlotSessionRecord actions={actions} target={SESSION} />}
     {state === "search" ? <Palette actions={actions} /> : null}
   </div></TooltipProvider>;
 }

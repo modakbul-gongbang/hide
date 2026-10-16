@@ -17,7 +17,6 @@ import { cardLine, cardOfPane, cardQuestion, everyAgent, itemToken } from "./ove
 import { destinationOf } from "./overviewBacklog";
 import { ageWords } from "./overviewLens";
 import { machineName } from "./screenMachine";
-import { StageBar } from "./TasksTab";
 import { catalogWorkspaces } from "./snapshot";
 import type { AgentStatusCode, MissedWork, SessionRecord as RecordValue, WorkOutput, WorkRequest, WorkSession } from "./snapshot";
 import { statusText } from "./agentStatus";
@@ -33,15 +32,25 @@ const LANE = "pl-[calc(var(--size-icon-sm)+var(--spacing-xs))]";
 const GLYPH: Record<TaskState, string> = { done: "text-success", working: "text-agent-working", review: "text-success", ci_failed: "text-success", unfinished: "text-warning", blocked: "text-warning", question: "text-warning" };
 const FIRST_OPEN_REQUESTS = 5;
 
+/** `작업 → PR → 검토 → 머지` filled up to the task's stage (PRD overview-device-tasks B9). */
+function StageBar({ stage, tone }: { stage: 1 | 2 | 3 | 4; tone: string }) {
+  const { t } = useInterfaceTranslation();
+  return (
+    <span role="img" aria-label={t("overviewTasks.stage", { stage })} className="flex w-(--size-control-lg) shrink-0 gap-px" data-stage-bar={stage}>
+      {[1, 2, 3, 4].map((step) => <span key={step} className={cn("h-(--size-hairline) flex-1 rounded-full", step <= stage ? tone : "bg-muted")} />)}
+    </span>
+  );
+}
+
 /**
- * Where a record is drawn (PRD overview-device-tasks D-07, B17-B21): the lane,
- * whose head goes back to Sessions, or the Overview's panel, whose head the
+ * Where a record is drawn (PRD overview-device-tasks D-07, B17-B21): the
+ * lane's 보기 slot, under the slot's head, or the Overview's panel, whose head the
  * panel gives (✕ and the ways to the work). Both draw the same record in the
  * same order and the same loading, failed and disconnected states.
  */
 export type RecordFrame = {
   kind: "lane" | "overview";
-  /** The Overview panel's head; the lane draws its own. */
+  /** The Overview panel's head; the 보기 slot draws its own. */
   head?: ReactNode;
   /** A line above the record (the dashed card's B14 note). */
   note?: string | null;
@@ -54,25 +63,23 @@ export type RecordFrame = {
   onLeave: () => void;
 };
 
-/** The lane's record: its trail lives with the lane's target, and leaving it closes the read. */
-export function LaneSessionRecord({ actions, target }: { actions: Actions; target: WorkSession }) {
-  const trail = useUiStore((state) => state.sessionWorkTrail);
+/**
+ * The 보기 slot's record (PRD sidebar-task-lens D-44, B16): the slot's head
+ * is the panel's, a child opens as the slot's next item so ← comes back to
+ * its parent, and the core reads what the slot shows.
+ */
+export function SlotSessionRecord({ actions, target }: { actions: Actions; target: WorkSession }) {
   const frame = useMemo<RecordFrame>(() => ({
     kind: "lane",
-    trail,
-    onTrail: (next) => useUiStore.getState().setSessionWorkTarget(target, next),
-    onRead: () => actions.openSessionRecord(target),
-    onLeave: () => actions.closeSessionRecord(),
-  }), [actions, target, trail]);
-  // The pane head's button reads what is drawn here, so a press decides on
-  // the record the operator sees, not on a lens the core has yet to echo.
-  useLayoutEffect(() => {
-    const ui = useUiStore.getState();
-    ui.setDrawnRecord(target);
-    return () => {
-      if (useUiStore.getState().drawnRecord === target) ui.setDrawnRecord(null);
-    };
-  }, [target]);
+    trail: [],
+    onTrail: (next) => {
+      const child = next.at(-1);
+      if (child) actions.openChildRecord(child);
+    },
+    onRead: () => actions.openChildRecord(target),
+    // The core starts and stops the slot's read with the slot itself.
+    onLeave: () => undefined,
+  }), [actions, target]);
   return <SessionRecord actions={actions} target={target} frame={frame} />;
 }
 
@@ -106,10 +113,7 @@ export function SessionRecord({ actions, target, frame }: { actions: Actions; ta
   }, [frame, connected]);
   const up = () => frame.onTrail(frame.trail.slice(0, -1));
   return <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-session-record={frame.kind}>
-    {frame.kind === "lane" ? (
-      parent ? <Button size="sm" variant="ghost" className="min-w-0 self-start px-md" onClick={up} data-record-up="true"><ArrowLeftIcon /><span className="truncate">{t("record.backTo", { parent: recordTitle(parent, summaries) })}</span></Button>
-        : <Button size="sm" variant="ghost" className="self-start px-md" onClick={() => actions.closeSessionRecord()} data-record-back="true"><ArrowLeftIcon />{t("sessionWork.back")}</Button>
-    ) : <>
+    {frame.kind === "lane" ? null : <>
       {frame.head}
       {parent ? <Button size="sm" variant="ghost" className="min-w-0 self-start px-md" onClick={up} data-record-up="true"><ArrowLeftIcon /><span className="truncate">{t("record.backTo", { parent: recordTitle(parent, summaries) })}</span></Button> : null}
     </>}

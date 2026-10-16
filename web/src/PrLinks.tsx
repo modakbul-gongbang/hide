@@ -64,7 +64,6 @@ export function PrLinks({ number, issue: boardIssue, checkout: boardCheckout, li
   const checkouts = project.checkouts;
   return (
     <section className="flex flex-col gap-xs" aria-label={t("links.connections")} data-pr-panel-links="true">
-      <h3 className="text-caption text-muted-foreground">{t("links.connections")}</h3>
       {issues.length === 0 ? (
         <span className="flex min-h-(--size-control) items-center gap-sm text-body text-muted-foreground" data-pr-panel-issue="none">
           <CircleDashedIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />

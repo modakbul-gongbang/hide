@@ -1092,6 +1092,17 @@ export type DocumentsSection = {
   changed: { tab_id: string; document: EditorDocumentSnapshot }[];
 };
 
+export type SidebarLens = "projects" | "tasks";
+export type TaskView = "status" | "project";
+
+/** One thing the lane's 보기 slot shows (`DetailItem`, PRD sidebar-task-lens D-50). */
+export type DetailItem =
+  | { kind: "pull_request"; workspace_id: string; number: number }
+  | { kind: "record"; session: WorkSession };
+
+/** The 보기 slot: what it opened, oldest first and the one it shows last, and whether the lane draws it. */
+export type DetailSlot = { items: DetailItem[]; shown: boolean };
+
 /** What a display shows now (S7 contract 3): its document, a read in flight, a root not readable yet, or a read that failed. */
 export type ViewDisplayState = "open" | "opening" | "waiting" | "unavailable";
 
@@ -1104,9 +1115,7 @@ export type ViewDisplaySnapshot = {
   path: string;
   /** The document's name, or a browser page's title (its host until it has one). */
   label: string;
-  kind: "file" | "diff" | "browser" | "pull_request";
-  /** The pull request a `pull_request` display is the card of. */
-  pr?: number | null;
+  kind: "file" | "diff" | "browser";
   /** Which History group a diff shows; null for a file. */
   committed: boolean | null;
   preview: boolean;
@@ -1908,8 +1917,14 @@ export type SnapshotRest = {
     session_collapsed_checkout_ids?: string[];
     /** Agents whose children the sidebar tree opened; absence is folded. */
     expanded_agent_pane_ids?: string[];
-    /** Agents whose children Sessions opened, kept apart from the sidebar's. */
+    /** Agents whose children the sidebar's 태스크 list opened, kept apart from the 프로젝트 tree's (PRD sidebar-task-lens D-48). */
     sessions_expanded_agent_pane_ids?: string[];
+    /** Which list the sidebar shows (`contracts/snapshot-wire-enums.json`: `sidebar_lens`, D-10); absent reads as projects. */
+    sidebar_lens?: SidebarLens;
+    /** How the 태스크 list groups (`task_view`, D-11); absent reads as status. */
+    task_view?: TaskView;
+    /** The lane's 보기 slot (D-50), one per window. */
+    detail?: DetailSlot;
     selected_path?: string | null;
     selected_pane_id?: string | null;
     accent_hex?: string;

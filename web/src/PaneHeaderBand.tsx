@@ -148,7 +148,7 @@ function AskBand({ paneId, band, navigation, unreachable, failed, actions, hasTr
     agents={agents}
     raised
     onOpenChild={(id, label) => actions.followRelation(paneId, id, label)}
-    onTask={() => actions.openPaneTask(paneId)}
+    onTask={() => actions.revealTask(paneId)}
     returnFocus={() => document.querySelector<HTMLButtonElement>(`[data-pane-band-more="${paneId}"]`)?.focus()}
     triggerLabel={t("agentSessions.moreAsks", { count: band.more })}
     trigger={<button type="button" data-pane-band-more={paneId} className="shrink-0 rounded-xs px-xs py-xxs text-micro text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring">{t("agentSessions.moreAsks", { count: band.more })}</button>}
@@ -244,7 +244,7 @@ export function PanePrChip({ paneId, actions }: { paneId: string; actions: Actio
 function PaneAgentPrMark({ agent, family, actions }: { agent: AgentRow; family?: SessionPull[]; actions: Actions }) {
   const staleness = useAgentStaleness(agent, family);
   // The pane names no project; the PR's URL finds the one that lists it.
-  return <AgentPrMark agent={agent} family={family} staleness={staleness} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: null, url: pull.url, number: pull.number })} />;
+  return <AgentPrMark agent={agent} family={family} staleness={staleness} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: null, url: pull.url, number: pull.number })} onExternal={(pull) => actions.openLink(pull.url, true)} />;
 }
 
 /** The second row's child trigger: core state counts, with the total in its hint. */
@@ -258,7 +258,7 @@ function PaneTreeButton({ paneId, children, agents, actions, compact = false, co
     agents={agents}
     raised={children.raised > 0}
     onOpenChild={(id, name) => actions.followRelation(paneId, id, name)}
-    onTask={() => actions.openPaneTask(paneId)}
+    onTask={() => actions.revealTask(paneId)}
     returnFocus={() => document.querySelector<HTMLButtonElement>(`[data-pane-tree="${paneId}"]`)?.focus()}
     triggerLabel={label}
     trigger={<button type="button" aria-label={label} data-pane-tree={paneId} className="flex h-(--size-sidebar-line-detail) shrink-0 items-center gap-xxs rounded-xs border border-border bg-background px-xs outline-none hover:bg-popover focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-secondary">

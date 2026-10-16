@@ -13,7 +13,7 @@ export type QuickAddChoice = { projects: Workspace[]; index: number; reason: Qui
 /**
  * `device` is the one the Overview shows while it is on screen, else the one
  * in front; `overview` is the Overview's place while it is on screen, null
- * otherwise; `taskProject` is the project of the task card its panel shows,
+ * otherwise; `taskProject` is the project of the task whose record its panel shows,
  * which only the snapshot's agents can tell. A project the core dials has no
  * issue source, so it is never offered (D-33).
  */
@@ -22,7 +22,7 @@ export function quickAddChoice(rest: SnapshotRest | null, workspaces: readonly W
   const projects = workspaces.filter((workspace) => workspace.device_id === device && readsHere(workspace, devices) && workspace.tasks?.source != null);
   const panel = overview?.panel;
   const picked: [string | null | undefined, QuickAddReason][] = [
-    [panel?.kind === "item" ? panel.workspaceId : panel?.kind === "task" || panel?.kind === "record" ? taskProject : null, "task"],
+    [panel?.kind === "item" ? panel.workspaceId : panel?.kind === "record" ? taskProject : null, "task"],
     [overview?.projectId, "filter"],
     [frontWorkspace, "front"],
   ];

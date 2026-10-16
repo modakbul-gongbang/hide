@@ -13,7 +13,7 @@ import { declareParent, herdrHasFocus, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { chooseLane, countSent, screenshot, showExplorer } from "./wire";
 import { chord } from "./chords";
-import { openOverview, projectRow } from "./overview-entry";
+import { projectRow } from "./overview-entry";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { quietFor, unchangedForFrames } from "./wait";
 
@@ -77,20 +77,17 @@ test("Main, Overview and a Workspace with its lane, tools and delegated child", 
     await expect(await projectRow(page, "fixture")).toBeVisible();
     await screenshot(page, "s6-main");
 
-    // Tasks folds the two resting agents under `Resting 2` (B7) until one
-    // is opened; a card opens its record beside the tabs, whose head enters
-    // the Workspace at the root's pane (B16, B17).
-    await openOverview(page, "tasks");
-    await page.locator('[data-task-fold][aria-expanded="false"]').click({ timeout: 20_000 });
-    await expect(page.locator("[data-task-card]")).toHaveCount(2, { timeout: 20_000 });
-    await page.locator(`[data-task-card-open="${parent}"]`).click();
-    await expect(page.locator("[data-overview-panel]")).toBeVisible();
-    // The head's Open link is set in the head's caption, not the heading's inherited size.
-    expect(await page.locator("[data-task-section] h2").first().evaluate((h2) => new Set([h2.querySelector("span + span"), h2.querySelector("[data-section-open]")].map((node) => node && getComputedStyle(node).fontSize)).size)).toBe(1);
+    // A project's row opens its panel beside the tabs, with what its tasks
+    // are doing as words alone, and its Open enters the project's latest
+    // checkout (PRD overview-device-tasks B57; PRD sidebar-task-lens B41).
+    await (await projectRow(page, "fixture")).getByRole("button", { name: "fixture", exact: true }).click();
+    const panel = page.locator("[data-overview-panel=project]");
+    await expect(panel).toBeVisible();
+    await expect(panel.locator('[data-project-panel-now="2"]')).toBeVisible({ timeout: 20_000 });
     await screenshot(page, "s6-overview");
-    await page.locator("[data-record-open-workspace]").click();
+    await panel.locator("[data-project-panel-open]").click();
     await expect(workspace).toBeVisible();
-    await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true");
+    await expect(page.locator(`[data-pane-view="${parent}"]`)).toBeVisible();
     // A new Workspace shows Agent Views alone with its lane closed (PRD
     // right-lane B1). The top row ends with Overview and Open server (its
     // server count, once known) as icons only; the tools are on the rail.

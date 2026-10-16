@@ -257,8 +257,10 @@ export function installKeyboard(actions: Actions): () => void {
         return actions.toggleDeviceRail();
       case "toggle_lane":
         return actions.toggleLane();
-      case "toggle_lane_work":
-        return actions.toggleTool("work");
+      case "toggle_sidebar_lens":
+        return actions.toggleSidebarLens();
+      case "toggle_lane_prs":
+        return actions.toggleTool("prs");
       case "toggle_lane_files":
         return actions.toggleTool("files");
       case "toggle_lane_changes":

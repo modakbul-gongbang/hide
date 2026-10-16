@@ -124,6 +124,7 @@ export type CommandId =
   | "add_backlog"
   | "toggle_device_rail"
   | "toggle_lane"
+  | "toggle_sidebar_lens"
   | LaneToolCommandId
   | "toggle_file_tree"
   | "keep_open"
@@ -160,17 +161,26 @@ export const AREA_COMMANDS = [
 export type AreaCommandId = (typeof AREA_COMMANDS)[number];
 
 /**
- * One command per rail icon (PRD lane-last-tool-chords): the lane opens on
- * that tool, or closes when it already shows it, as pressing the icon does.
- * The chords are ⌥⌘1-4 in the rail's order (`TOOLS`), which is Alt+Shift+1-4 elsewhere.
+ * One command per rail icon (PRD lane-last-tool-chords; PRD sidebar-task-lens
+ * D-19, D-29): the lane opens on that tool, or closes when it already shows
+ * it, as pressing the icon does. Each tool's chord is a letter of its name
+ * (⇧⌘L Memory, ⇧⌘R PRs, ⇧⌘G Changes), Alt+Shift with the same letter
+ * elsewhere; Files has none of its own because ⇧⌘E opens it with its tree.
+ * In a browser tab Chrome keeps ⇧⌘R (reload), so PRs moves to ⌥⇧R.
  */
 export type LaneToolCommandId = `toggle_lane_${Tool}`;
 export const LANE_TOOL_COMMANDS: readonly LaneToolCommandId[] = TOOLS.map((tool): LaneToolCommandId => `toggle_lane_${tool}`);
 const LANE_TOOL_TITLES: Record<LaneToolCommandId, string> = {
-  toggle_lane_work: "Toggle Work tool",
+  toggle_lane_memory: "Toggle Memory tool",
+  toggle_lane_prs: "Toggle PRs tool",
   toggle_lane_files: "Toggle Files tool",
   toggle_lane_changes: "Toggle Changes tool",
-  toggle_lane_memory: "Toggle Memory tool",
+};
+const LANE_TOOL_CHORDS: Record<LaneToolCommandId, { browser: Chord | null; electron: Chord | null; moved: boolean }> = {
+  toggle_lane_memory: { browser: { code: "KeyL", meta: true, shift: true }, electron: { code: "KeyL", meta: true, shift: true }, moved: false },
+  toggle_lane_prs: { browser: { code: "KeyR", alt: true, shift: true }, electron: { code: "KeyR", meta: true, shift: true }, moved: true },
+  toggle_lane_files: { browser: null, electron: null, moved: false },
+  toggle_lane_changes: { browser: { code: "KeyG", meta: true, shift: true }, electron: { code: "KeyG", meta: true, shift: true }, moved: false },
 };
 
 export type Digit = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
@@ -250,6 +260,8 @@ export const REGISTRY: readonly Command[] = [
   { id: "search", title: "Search", group: "Navigate", browser: { code: "KeyK", meta: true }, electron: { code: "KeyK", meta: true }, moved: false },
   { id: "open_file", title: "Open file", group: "Navigate", browser: { code: "KeyP", meta: true }, electron: { code: "KeyP", meta: true }, moved: false },
   { id: "toggle_left_sidebar", title: "Toggle left sidebar", group: "Panels", browser: { code: "KeyB", meta: true }, electron: { code: "KeyB", meta: true }, moved: false },
+  // Chrome keeps ⇧⌘B (bookmarks bar), so a browser tab turns the lens with ⌥⇧B (PRD sidebar-task-lens D-32).
+  { id: "toggle_sidebar_lens", title: "Switch Projects and Tasks", group: "Panels", browser: { code: "KeyB", alt: true, shift: true }, electron: { code: "KeyB", meta: true, shift: true }, moved: true },
   { id: "overview", title: "Overview", group: "Navigate", browser: { code: "KeyO", meta: true, shift: true }, electron: { code: "KeyO", meta: true, shift: true }, moved: false },
   // Chrome keeps ⌘⇧M for the profile menu, so the browser form is ⌥⇧M (PRD overview-device-tasks B37).
   { id: "add_backlog", title: "Add to backlog", group: "Navigate", browser: { code: "KeyM", alt: true, shift: true }, electron: { code: "KeyM", meta: true, shift: true }, moved: true },
@@ -258,7 +270,7 @@ export const REGISTRY: readonly Command[] = [
   { id: "sidebar_projects", title: "Focus sidebar", group: "Panels", browser: { code: "KeyP", meta: true, shift: true }, electron: { code: "KeyP", meta: true, shift: true }, moved: false },
   { id: "toggle_device_rail", title: "Toggle device rail", group: "Panels", browser: null, electron: null, moved: false },
   { id: "toggle_lane", title: "Toggle right lane", group: "Panels", browser: { code: "KeyE", meta: true }, electron: { code: "KeyE", meta: true }, moved: false },
-  ...LANE_TOOL_COMMANDS.map((id, index): Command => ({ id, title: LANE_TOOL_TITLES[id], group: "Panels", browser: { code: `Digit${index + 1}`, meta: true, alt: true }, electron: { code: `Digit${index + 1}`, meta: true, alt: true }, moved: false })),
+  ...LANE_TOOL_COMMANDS.map((id): Command => ({ id, title: LANE_TOOL_TITLES[id], group: "Panels", ...LANE_TOOL_CHORDS[id] })),
   { id: "toggle_file_tree", title: "Toggle File Tree", group: "Panels", browser: { code: "KeyE", meta: true, shift: true }, electron: { code: "KeyE", meta: true, shift: true }, moved: false },
   { id: "find_in_pane", title: "Find in pane", group: "Panes", browser: { code: "KeyF", meta: true }, electron: { code: "KeyF", meta: true }, moved: false },
   { id: "save_file", title: "Save file", group: "Panes", browser: { code: "KeyS", meta: true }, electron: { code: "KeyS", meta: true }, moved: false },
@@ -330,6 +342,9 @@ const CHROME_RESERVED: Readonly<Record<KeySystem, readonly Chord[]>> = {
     // Chrome's profile switcher.
     { code: "KeyM", meta: true, shift: true },
     { code: "Comma", meta: true },
+    // Hard reload and the bookmarks bar.
+    { code: "KeyR", meta: true, shift: true },
+    { code: "KeyB", meta: true, shift: true },
   ],
   // Chrome's reserved commands on Windows and Linux (new and closed tabs and
   // windows, tab switching, quit), its Alt+Shift keys (focus the toolbar,
@@ -428,6 +443,7 @@ export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
   "recent_area_tab", "previous_recent_area_tab", "recent_panel", "previous_recent_panel",
   "overview", "sidebar_projects",
   "toggle_device_rail",
+  "toggle_sidebar_lens",
   ...LANE_TOOL_COMMANDS,
   "split_right",
   "split_down",
@@ -638,13 +654,13 @@ export type EffectiveRegistry = { registry: readonly Command[]; diagnostic: stri
  * trade chords are one valid set.
  */
 /** Stored commands that no longer exist: ignored with a diagnostic, never a reason to drop the rest of the set (`sidebar_agents`, PRD overview-device-tasks D-16). */
-const RETIRED_KEYS: readonly string[] = ["toggle_sidebar_view", "project_home", "sidebar_agents"];
+const RETIRED_KEYS: readonly string[] = ["toggle_sidebar_view", "project_home", "sidebar_agents", "toggle_lane_work"];
 
 export function effectiveRegistry(stored: Record<string, string> | null | undefined, host: HostKind, system: KeySystem): EffectiveRegistry {
   const which = host === "electron" ? "pane" : "browser";
   const defaults = systemRegistry(system);
   const retired = Object.keys(stored ?? {}).some((key) => RETIRED_KEYS.includes(key));
-  const diagnostic = retired ? "Stored project_home, toggle_sidebar_view or sidebar_agents shortcut is retired and was ignored." : null;
+  const diagnostic = retired ? "Stored project_home, toggle_sidebar_view, sidebar_agents or toggle_lane_work shortcut is retired and was ignored." : null;
   const entries = Object.entries(stored ?? {}).filter(([key]) => !RETIRED_KEYS.includes(key) && !(host === "electron" && MACOS_ONLY_KEYS.includes(key)));
   if (entries.length === 0) return { registry: defaults, diagnostic };
   let registry: Command[] = [...defaults];
