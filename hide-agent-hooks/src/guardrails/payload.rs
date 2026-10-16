@@ -39,6 +39,11 @@ const SHELL_TOOLS: [&str; 5] = [
     "run_command",
 ];
 
+/// The keys agy's file writes carry their new text under, ahead of the
+/// call's name in agy's sorted payload.
+const AGY_WRITE_CONTENT_KEYS: [&str; 3] =
+    ["CodeContent", "ReplacementContent", "ReplacementChunks"];
+
 /// The keys a shell tool's input carries its command under.
 const COMMAND_KEYS: [&str; 2] = ["command", "CommandLine"];
 
@@ -188,11 +193,23 @@ fn read_cut(payload: &[u8], dialect: HookDialect) -> Option<ToolCall> {
         HookDialect::Grok => "toolName",
         // agy sorts its keys, so the call's `name` follows its arguments: a
         // payload cut inside a long `CodeContent` has lost the name and the
-        // `TargetFile` after it, and is not judged.
+        // `TargetFile` after it, and is judged as a write Hide cannot read.
         HookDialect::Antigravity => "name",
         _ => "tool_name",
     };
-    let tool = string_after(payload, tool_key)?;
+    let Some(tool) = string_after(payload, tool_key) else {
+        let writes = dialect == HookDialect::Antigravity
+            && AGY_WRITE_CONTENT_KEYS.iter().any(|key| {
+                let needle = format!("\"{key}\"");
+                payload
+                    .windows(needle.len())
+                    .any(|window| window == needle.as_bytes())
+            });
+        return writes.then_some(ToolCall {
+            action: Action::UnreadWrite,
+            cwd: None,
+        });
+    };
     if SHELL_TOOLS.contains(&tool.as_str()) {
         return None;
     }
