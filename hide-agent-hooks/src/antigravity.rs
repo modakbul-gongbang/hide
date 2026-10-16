@@ -23,7 +23,7 @@
 //! with its own `SessionStart` and `Stop` and no parent field. Its transcript
 //! opens with the message its parent sent it (`[Message] ... sender=<parent
 //! conversation id> ...`), which is how a start or a stop is told from the
-//! pane's own conversation ([`parent_of`]).
+//! pane's own conversation ([`root_of`]).
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -123,14 +123,38 @@ pub fn transcript(home: &Path, conversation: &str) -> PathBuf {
 /// opens it and its first few hundred bytes hold the sender.
 const FIRST_LINE_LIMIT: usize = 64 * 1024;
 
-/// The parent conversation of a subagent `conversation`, read from its
-/// transcript's first step, or `None` for a conversation of its own. A
-/// subagent's `SessionStart` runs as agy writes that step (both stamped the
-/// same second), so a start waits until `deadline` for the line to appear.
+/// The most subagent levels followed up to the pane's own conversation; agy
+/// nests far fewer, and a longer chain is cut rather than walked.
+const NESTING_LIMIT: usize = 8;
+
+/// The pane's own conversation above a subagent `conversation`: its parent,
+/// or for a subagent a subagent started, the first conversation up the chain
+/// that no other started. `None` for a conversation of its own. Each parent
+/// is read from its transcript's first step. A subagent's `SessionStart`
+/// runs as agy writes that step (both stamped the same second), so a start
+/// waits until `deadline` for the line to appear; the parents above it are
+/// already written.
+pub fn root_of(home: &Path, conversation: &str, deadline: Instant) -> Option<String> {
+    let mut root = parent_of(home, conversation, deadline)?;
+    let mut seen = vec![conversation.to_owned(), root.clone()];
+    while seen.len() <= NESTING_LIMIT {
+        match parent_of(home, &root, Instant::now()) {
+            Some(parent) if !seen.contains(&parent) => {
+                seen.push(parent.clone());
+                root = parent;
+            }
+            _ => break,
+        }
+    }
+    Some(root)
+}
+
+/// The conversation that started subagent `conversation`, read from its
+/// transcript's first step, waiting until `deadline` for that line.
 // A production wait, not test code: agy gives the hook no event for the
 // line it is about to write, and the deadline bounds the wait.
 #[allow(clippy::disallowed_methods)]
-pub fn parent_of(home: &Path, conversation: &str, deadline: Instant) -> Option<String> {
+fn parent_of(home: &Path, conversation: &str, deadline: Instant) -> Option<String> {
     let path = transcript(home, conversation);
     loop {
         match first_line(&path) {
@@ -270,17 +294,18 @@ mod tests {
         assert_eq!(Event::read(whole.as_bytes(), true), Event::default());
     }
 
+    /// The first step agy writes for a subagent `parent` started.
+    fn started_by(parent: &str) -> Value {
+        json!({
+            "step_index": 0, "source": "SYSTEM", "type": "SYSTEM_MESSAGE", "status": "DONE",
+            "content": format!("The following is a <SYSTEM_MESSAGE> not actually sent by the user.\n\n<SYSTEM_MESSAGE>\n[Message] timestamp=2026-10-16T04:53:25Z sender={parent} priority=MESSAGE_PRIORITY_HIGH content=Run it.\n</SYSTEM_MESSAGE>"),
+        })
+    }
+
     #[test]
     fn a_subagent_is_told_by_the_message_its_parent_sent() {
         let home = tempfile::tempdir().unwrap();
-        write_transcript(
-            home.path(),
-            CHILD,
-            &[json!({
-                "step_index": 0, "source": "SYSTEM", "type": "SYSTEM_MESSAGE", "status": "DONE",
-                "content": format!("The following is a <SYSTEM_MESSAGE> not actually sent by the user.\n\n<SYSTEM_MESSAGE>\n[Message] timestamp=2026-10-16T04:53:25Z sender={PARENT} priority=MESSAGE_PRIORITY_HIGH content=Run it.\n</SYSTEM_MESSAGE>"),
-            })],
-        );
+        write_transcript(home.path(), CHILD, &[started_by(PARENT)]);
         write_transcript(
             home.path(),
             PARENT,
@@ -288,14 +313,22 @@ mod tests {
                 json!({"step_index": 0, "type": "USER_INPUT", "content": "<USER_REQUEST>\nhi\n</USER_REQUEST>"}),
             ],
         );
+        // A subagent the subagent started counts under the pane's own
+        // conversation, the one Herdr reports for the pane.
+        let grandchild = "c0c0c0c0-0000-4000-8000-000000000003";
+        write_transcript(home.path(), grandchild, &[started_by(CHILD)]);
         let now = Instant::now();
-        assert_eq!(parent_of(home.path(), CHILD, now).as_deref(), Some(PARENT));
-        assert_eq!(parent_of(home.path(), PARENT, now), None);
+        assert_eq!(root_of(home.path(), CHILD, now).as_deref(), Some(PARENT));
+        assert_eq!(
+            root_of(home.path(), grandchild, now).as_deref(),
+            Some(PARENT)
+        );
+        assert_eq!(root_of(home.path(), PARENT, now), None);
         // No transcript before the deadline: a conversation of its own.
         let missing = "00000000-0000-4000-8000-000000000000";
         let waited = Instant::now();
         assert_eq!(
-            parent_of(home.path(), missing, waited + Duration::from_millis(60)),
+            root_of(home.path(), missing, waited + Duration::from_millis(60)),
             None
         );
         assert!(waited.elapsed() >= Duration::from_millis(60));

@@ -298,16 +298,16 @@ fn antigravity_event(event: HookEvent, started: Instant) {
     } else {
         Duration::ZERO
     };
-    let parent = antigravity::parent_of(&home, &conversation, Instant::now() + parent_wait);
+    let parent = antigravity::root_of(&home, &conversation, Instant::now() + parent_wait);
     let reporter = |session| Reporter {
         agent: Some(runtime),
         session: Some(session),
     };
     match (event, parent.as_deref()) {
         // A subagent gets nothing of the pane's: no guidance, no Memory and
-        // no letter, which are the pane's own session's. Its start and end
-        // are counted under its parent, the session Herdr reports for the
-        // pane.
+        // no letter, which are the pane's own session's. Its start and end,
+        // a nested subagent's too, are counted under the pane's own
+        // conversation, the session Herdr reports for the pane.
         (HookEvent::SessionStart, Some(parent)) => report_count(
             &home,
             event,
