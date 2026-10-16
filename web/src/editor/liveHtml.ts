@@ -28,7 +28,7 @@ const ATTRIBUTES = ["href", "src", "alt", "title", "width", "height", "align", "
 
 // Anything else with a scheme (`javascript:`, `vbscript:`, `file:`, `ftp:`) is
 // dropped; a path with no scheme and a `#fragment` stay.
-const LINK_URI = /^(?:(?:https?|mailto):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i;
+const LINK_URI = /^(?:(?:https?|mailto):|[^a-z]|[a-z+.-]+(?:[^a-z+.:-]|$))/i;
 
 let purifier: ReturnType<typeof DOMPurify> | null = null;
 

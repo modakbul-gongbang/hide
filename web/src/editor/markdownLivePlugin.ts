@@ -155,7 +155,7 @@ class HtmlWidget extends WidgetType {
     return other.html === this.html && other.block === this.block && other.key === this.key;
   }
   toDOM(view: EditorView): HTMLElement {
-    const root = document.createElement(this.block ? "div" : "span");
+    const root: HTMLElement = document.createElement(this.block ? "div" : "span");
     root.className = this.block ? "cm-md-html cm-md-html-block" : "cm-md-html";
     const clean = sanitizeHtml(this.html);
     if (!clean) {
@@ -168,7 +168,7 @@ class HtmlWidget extends WidgetType {
     // The modifier-click opens the link before the editor sees the press, so
     // the caret stays and the source does not open; every other press is the
     // editor's, which places the caret and shows the source.
-    root.addEventListener("mousedown", (event: MouseEvent) => {
+    root.addEventListener("mousedown", (event) => {
       const anchor = anchorOf(event);
       if (!anchor || !(event.metaKey || event.ctrlKey)) return;
       event.preventDefault();

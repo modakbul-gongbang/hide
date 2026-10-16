@@ -144,9 +144,9 @@ export const liveTheme = EditorView.theme({
   ".cm-md-html ol": { listStyle: "decimal", paddingLeft: "1.5em" },
   ".cm-md-html blockquote": { borderLeft: "var(--size-editor-quote-rule) solid var(--border)", paddingLeft: "var(--spacing-sm)", color: "var(--subtle-foreground)" },
   ".cm-md-html code, .cm-md-html kbd, .cm-md-html pre": { fontFamily: "var(--font-mono)", backgroundColor: "var(--secondary)" },
-  ".cm-md-html hr": { border: "0", borderTop: "1px solid var(--border)", margin: "var(--spacing-sm) 0" },
+  ".cm-md-html hr": { border: "0", borderTop: "var(--size-hairline) solid var(--border)", margin: "var(--spacing-sm) 0" },
   ".cm-md-html table": { borderCollapse: "collapse" },
-  ".cm-md-html th, .cm-md-html td": { border: "1px solid var(--border)", padding: "2px var(--spacing-sm)" },
+  ".cm-md-html th, .cm-md-html td": { border: "var(--size-hairline) solid var(--border)", padding: "0 var(--spacing-sm)" },
   ".cm-md-html summary": { cursor: "pointer" },
   // An image that did not load: its alt text, muted and small, nothing else.
   ".cm-md-alt": { color: "var(--muted-foreground)", fontSize: "var(--text-caption)" },
