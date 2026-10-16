@@ -24,20 +24,22 @@ describe("which pages the keyboard follows", () => {
     return { actions, requestIds };
   };
 
-  it("names a page a terminal's link opens and waits for the display the core answers with", () => {
+  it("names a page the operator opens and waits for the display the core answers with", () => {
     const { actions, requestIds } = opened();
     actions.openBrowser("https://a.test/", workspace, undefined, undefined, "pane-1");
-    const [id] = requestIds();
-    expect(id).toMatch(/^follow:/);
-    expect(useUiStore.getState().viewFocusRequest).toEqual({ workspace: workspaceKey(workspace), browserOpen: id });
+    actions.openBrowser("https://pr.test/", workspace);
+    const [fromLink, fromRow] = requestIds();
+    expect(fromLink).toMatch(/^follow:/);
+    expect(fromRow).toMatch(/^follow:/);
+    expect(fromRow).not.toBe(fromLink);
+    expect(useUiStore.getState().viewFocusRequest).toEqual({ workspace: workspaceKey(workspace), browserOpen: fromRow });
   });
 
-  it("leaves the keyboard alone for a row's, a card's or the palette's page, a New tab and a page's own new tab", () => {
+  it("leaves the keyboard alone for a New tab and a page's own new tab", () => {
     const { actions, requestIds } = opened();
-    actions.openBrowser("https://pr.test/", workspace);
     actions.openBrowser("", workspace, "a1");
     actions.openBrowser("https://b.test/", workspace, undefined, "page-1");
-    expect(requestIds()).toEqual([undefined, undefined, undefined]);
+    expect(requestIds()).toEqual([undefined, undefined]);
     expect(useUiStore.getState().viewFocusRequest).toBeNull();
   });
 });
