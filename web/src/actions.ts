@@ -2346,6 +2346,15 @@ export function createActions(send: DispatchFn) {
      * when the lane already draws it, the lane goes back to its tool. The
      * keyboard stays in the pane's terminal.
      */
+    /**
+     * ⇧⌘L: pins the focused pane's task checklist open, or closes it when it
+     * is pinned there. A pane without tasks draws no chip, so nothing opens.
+     */
+    toggleTaskList(target?: string) {
+      const paneId = target ?? useShellStore.getState().focusedPaneId;
+      if (!paneId) return;
+      ui().setTaskListPane(ui().taskListPane === paneId ? null : paneId);
+    },
     togglePaneRecord(session: import("./snapshot").WorkSession) {
       const top = rest()?.ui_state?.detail?.items.at(-1);
       if (top?.kind === "record" && workKey(top.session) === workKey(session) && laneUpWith("detail")) return this.toggleDetail();

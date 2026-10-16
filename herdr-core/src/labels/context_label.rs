@@ -19,7 +19,7 @@ use std::time::Duration;
 pub(crate) const FEATURE_ID: &str = "context_label";
 /// Bumped whenever a prompt or a schema changes, so a log line can be read
 /// against the pair that produced it.
-pub(crate) const SCHEMA_VERSION: &str = "context_label.v13";
+pub(crate) const SCHEMA_VERSION: &str = "context_label.v14";
 /// Long enough for a provider that has to start a child process, short
 /// enough that a stuck turn does not hold the pane's slot for a whole event
 /// cycle series.
@@ -355,4 +355,68 @@ pub(crate) fn parse_text(phase: AnalysisPhase, raw: &str) -> Result<Analysis> {
             json!({"task":{"kind":"none"},"missed":[],"resolved":[],"output_task_id":null});
     }
     parse(phase, OutputLanguage::Korean, value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn end_with(task: Value) -> Result<Analysis> {
+        parse_text(
+            AnalysisPhase::TurnEnd,
+            &json!({
+                "goal": "출시 전 버그 수정 묶음", "goal_changed": true, "line": "네 가지 수정 중", "end": "waiting",
+                "work": {"task": task, "missed": [], "resolved": [], "output_task_id": null},
+            })
+            .to_string(),
+        )
+    }
+
+    fn names(analysis: Analysis) -> Vec<String> {
+        match analysis.work.unwrap().task {
+            TaskDecision::New { names } => names,
+            other => panic!("not new: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_split_answer_keeps_its_names_in_order_trimmed() {
+        let analysis =
+            end_with(json!({"kind": "new", "names": [" README 태그 ", "댓글 위치", "HTML 댓글"]})).unwrap();
+        assert_eq!(names(analysis), ["README 태그", "댓글 위치", "HTML 댓글"]);
+    }
+
+    #[test]
+    fn an_answer_with_no_names_too_many_a_blank_a_long_or_a_repeated_one_is_refused() {
+        let long = "가".repeat(MISSED_CHARS + 1);
+        for task in [
+            json!({"kind": "new", "names": []}),
+            json!({"kind": "new", "names": ["1", "2", "3", "4", "5", "6", "7"]}),
+            json!({"kind": "new", "names": ["가", "  "]}),
+            json!({"kind": "new", "names": ["가", long]}),
+            json!({"kind": "new", "names": ["가", " 가"]}),
+            json!({"kind": "new", "names": ["가\n나"]}),
+        ] {
+            let failure = end_with(task.clone()).unwrap_err().to_string();
+            assert_eq!(failure, "provider_invalid_task", "{task}");
+        }
+        // The answer of an earlier schema names one task and is not read.
+        assert!(end_with(json!({"kind": "new", "name": "가"})).is_err());
+    }
+
+    #[test]
+    fn the_end_schema_asks_for_one_to_six_names_and_the_prompt_for_one_per_deliverable() {
+        let request = request(
+            AnalysisPhase::TurnEnd,
+            OutputLanguage::Korean,
+            "w1:p1",
+            "r".into(),
+            "",
+        );
+        let new = &request.output_schema["properties"]["work"]["properties"]["task"]["oneOf"][0];
+        assert_eq!(new["properties"]["names"]["minItems"], 1);
+        assert_eq!(new["properties"]["names"]["maxItems"], NEW_TASK_LIMIT);
+        assert!(request.system.contains("one name per deliverable"));
+        assert!(request.system.contains("not from the assistant's reply"));
+    }
 }
