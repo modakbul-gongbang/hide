@@ -38,6 +38,13 @@ case "$1 $2" in
 esac
 "#;
 
+/// A `hide` that is there and never answers: the daemon is stuck.
+const SILENT_HIDE: &str = r#"#!/bin/sh
+[ "$1" = --help ] && exit 0
+echo "$@" >> "${HOME%/*}/hide-calls"
+exec /bin/sleep 60
+"#;
+
 struct Machine {
     _dir: tempfile::TempDir,
     root: PathBuf,
@@ -54,6 +61,10 @@ struct Run {
 
 impl Machine {
     fn new() -> Self {
+        Self::with_hide(FAKE_HIDE)
+    }
+
+    fn with_hide(hide: &str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         let home = root.join("home");
@@ -65,7 +76,7 @@ impl Machine {
         std::fs::write(checkout.join(".git/HEAD"), "ref: refs/heads/topic\n").unwrap();
         let hook = bin.join("hide-agent-hooks");
         stand_ins::place(programs::hook(), &hook);
-        stand_ins::program(&bin.join("hide"), FAKE_HIDE);
+        stand_ins::program(&bin.join("hide"), hide);
         // The guardrails policy the core writes at its start: no protection on.
         let policy = home.join(".hide/agent-hooks/guardrails.json");
         std::fs::create_dir_all(policy.parent().unwrap()).unwrap();
@@ -362,4 +373,43 @@ fn a_factory_workers_question_is_refused_toward_hide_factory_ask() {
             .unwrap()
             .contains("hide factory ask")
     );
+}
+
+#[test]
+fn a_hide_that_never_answers_lets_the_call_run_well_inside_the_blocks_timeout() {
+    let machine = Machine::with_hide(SILENT_HIDE);
+    // The timeout agy is told, from the block Hide writes.
+    std::fs::create_dir_all(machine.home.join(".gemini/config")).unwrap();
+    hide_agent_hooks::guidance::install(
+        hide_agent_hooks::guidance::GuidanceAgent::Antigravity,
+        &machine.home,
+        &machine.hook,
+    )
+    .unwrap();
+    let block: Value = serde_json::from_str(
+        &std::fs::read_to_string(machine.home.join(".gemini/config/hooks.json")).unwrap(),
+    )
+    .unwrap();
+    let timeout = Duration::from_secs(
+        block["hide"]["PreToolUse"][0]["hooks"][0]["timeout"]
+            .as_u64()
+            .unwrap(),
+    );
+
+    // The two calls that ask the daemon: a direct start and a question.
+    for payload in [
+        machine.shell(START),
+        call(&machine, "ask_question", json!({ "Question": "q" })),
+    ] {
+        let started = Instant::now();
+        let run = machine.run("PreToolUse", &payload, Some(PANE));
+        let took = started.elapsed();
+        assert!(run.status_ok);
+        assert_eq!(answer(&run), json!({ "decision": "allow" }), "{payload}");
+        assert!(took * 2 < timeout, "{took:?} of {timeout:?} for {payload}");
+    }
+    let asked = std::fs::read_to_string(machine.root.join("hide-calls")).unwrap();
+    for call in ["workspace bootstrap", "workspace factory-question-guard"] {
+        assert!(asked.contains(call), "{call} was not asked: {asked}");
+    }
 }

@@ -543,17 +543,29 @@ fn cursor_powershell_command(helper: &Path, event: HookEvent) -> String {
     }
 }
 
+/// agy's tool command on macOS and Linux. agy refuses a tool call whose hook
+/// fails in any way, so the allow answer is printed by the command itself
+/// when the helper is gone and when it ends without answering (a binary that
+/// cannot run, a crash): the helper prints its one line last and exits 0 on
+/// every path it reaches, so a failed run has printed nothing.
+fn antigravity_tool_command(helper: &Path) -> String {
+    let quoted = Quoting::Posix.quote(&helper.display().to_string());
+    let arguments = arguments(GuidanceAgent::Antigravity, HookEvent::PreToolUse);
+    let allow = Quoting::Posix.quote(crate::antigravity::ALLOW);
+    format!(
+        "if [ -x {quoted} ]; then {quoted} {arguments} || printf '%s\\n' {allow}; else printf '%s\\n' {allow}; fi"
+    )
+}
+
 /// agy's command on Windows, which agy hands to `cmd /c`: it runs the helper
 /// while it is there and, for a tool call, answers allow itself when it is
-/// gone, since agy refuses a tool call whose hook fails.
+/// gone or fails, as [`antigravity_tool_command`] does.
 fn cmd_command(helper: &Path, agent: GuidanceAgent, event: HookEvent) -> String {
     let quoted = Quoting::Cmd.quote(&helper.display().to_string());
     let run = format!("{quoted} {}", arguments(agent, event));
     if event == HookEvent::PreToolUse {
-        format!(
-            "if exist {quoted} ({run}) else (echo {})",
-            crate::antigravity::ALLOW
-        )
+        let allow = crate::antigravity::ALLOW;
+        format!("if exist {quoted} ({run} || echo {allow}) else (echo {allow})")
     } else {
         format!("if exist {quoted} ({run})")
     }
@@ -564,15 +576,8 @@ fn entry(agent: GuidanceAgent, helper: &Path, slot: &Slot) -> Value {
     let event = slot.event;
     let command = if cfg!(windows) && agent == GuidanceAgent::Antigravity {
         cmd_command(helper, agent, event)
-    } else if agent == GuidanceAgent::Antigravity {
-        // agy refuses a tool call whose hook fails, a missing program
-        // included, so the guard prints the allow answer itself.
-        posix_command(
-            helper,
-            agent,
-            event,
-            (event == HookEvent::PreToolUse).then_some(crate::antigravity::ALLOW),
-        )
+    } else if agent == GuidanceAgent::Antigravity && event == HookEvent::PreToolUse {
+        antigravity_tool_command(helper)
     } else if cfg!(windows) && agent == GuidanceAgent::Cursor {
         cursor_powershell_command(helper, event)
     } else if cfg!(windows) {
