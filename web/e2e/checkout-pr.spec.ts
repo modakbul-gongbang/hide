@@ -203,7 +203,8 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveCount(1);
 
     // B10: the row's menu names the pull request; choosing it opens the same
-    // address, which the Workspace already shows, so no second display appears.
+    // address, which the Workspace already shows, so no second display appears,
+    // and the keyboard goes to that page (B20) rather than back to the row.
     // The menu is opened on the focused row with the pointer away from the
     // sidebar and the item chosen by keyboard, so the card that shows on
     // focus, closed by the press, has only the menu's returned focus to
@@ -243,8 +244,10 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await expect(menu).toHaveCount(0);
     await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveCount(1);
     await expect(address).toHaveText(url.replace(/^https?:\/\//, ""));
-    await expect(feature.locator("[data-checkout]")).toBeFocused();
-    await quietFor(page, 300, "focus stays on the checkout after the address is read");
+    // A browser tab has no page to hand the keyboard to, so the page's tab takes it.
+    await expect(page.locator('[data-view-tab-bar] [role="tab"][aria-selected="true"]')).toBeFocused();
+    await quietFor(page, 300, "the page keeps the keyboard after the menu gives it back");
+    await expect(page.locator('[data-view-tab-bar] [role="tab"][aria-selected="true"]')).toBeFocused();
     await expect(page.locator("[data-checkout-card]")).toHaveCount(0);
     await primary.locator("[data-checkout]").click({ button: "right" });
     const primaryMenu = page.getByRole("menu", { name: "main actions" });

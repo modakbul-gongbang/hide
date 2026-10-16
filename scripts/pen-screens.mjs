@@ -179,7 +179,7 @@ function screenSheet(id, name, spec, lightBuild, darkBuild) {
 }
 
 function sessionDesign(tokens) {
-  return sessionScreens(tokens, {frame, text, icon, themedXref, screenButton, screenBadge, screenIconButton});
+  return sessionScreens(tokens, {frame, text, icon, themedXref, screenButton});
 }
 
 // -- simple, frequently-reused controls: themedXref restates every default color --
@@ -194,11 +194,6 @@ function screenButton(id, label, {variant = 'default', height, width, icon: glyp
 
 function screenIconButton(id, glyph, {size} = {}) {
   return themedXref(id, 'Nyvom', 'Icon', size ? {width: size, height: size} : {}, {ZIZFR: {icon: glyph, fill: '$--muted-foreground'}});
-}
-
-function screenBadge(id, label, {variant = 'secondary'} = {}) {
-  const v = BADGE_VARIANTS[variant];
-  return themedXref(id, 'eHAjc', label, v.overrides, {xXuNa: {enabled: false}, n8L5dm: {content: label, fill: v.fg}});
 }
 
 function screenInput(id, {content, placeholder, mono, width} = {}) {
@@ -222,17 +217,6 @@ function tabRefs(id, items, activeIndex) {
 
 function screenTabs(id, items, activeIndex) {
   return frame(id, 'Tabs', {layout: 'horizontal', gap: '$--spacing-xxs', padding: '$--spacing-xxs', fill: '$--card', cornerRadius: '$--radius-sm'}, tabRefs(id, items, activeIndex));
-}
-
-// The same segmented idiom as screenTabs, over System / Toggle Group's master.
-// `activeIndex` is the one lit item, or an array of the lit ones for a
-// multiple group (the graph's status chips), empty when none is lit.
-function screenToggleGroup(id, items, activeIndex) {
-  const lit = Array.isArray(activeIndex) ? activeIndex : [activeIndex];
-  return frame(id, 'Toggle Group', {layout: 'horizontal', gap: '$--spacing-xxs', padding: '$--spacing-xxs', fill: '$--card', cornerRadius: '$--radius-sm'},
-    items.map((label, index) => themedXref(`${id}-${index}`, 'tog-m', label,
-      lit.includes(index) ? {fill: '$--secondary'} : {},
-      {'tog-t': {content: label, fill: lit.includes(index) ? '$--foreground' : '$--subtle-foreground'}})));
 }
 
 // A radio-styled swatch: System / Radio Group's master with its indicator dot
@@ -383,12 +367,6 @@ function screenSidebarAgentRow(id, {title, symbol = '●', color = '$--agent-wor
 // a child on another machine adds its device line. `rails` says, per level
 // above the elbow, whether an ancestor's later sibling keeps a rail running.
 const PR_TREE = Object.fromEntries(PR_STATES.map(([state, glyph, fill]) => [state, [glyph, fill]]));
-// The one PR mark (web/src/components/pr-mark.tsx), a ref of the library's
-// Agent tree parts master: the state's icon and colour, the number unless compact.
-function screenPrMark(id, {state, number, compact = false}) {
-  const [glyph, fill] = PR_TREE[state];
-  return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': compact ? {enabled: false} : {content: `${number}`}});
-}
 function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', age, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, statusAxis = false, inset = 0, width = 268}) {
   const descendants = {
     ...markOverrides({dot: 'ath-row-dot', ring: 'ath-row-ring', glyph: 'ath-row-glyph'}, symbol, color),
@@ -487,17 +465,17 @@ function screenSidebar(tokens, id, suffix, agents, {overview = false} = {}) {
 // -- Screen / Overview and Screen / Main --------------------------------------------
 
 function overviewDesign(tokens) {
-  return overviewScreens(tokens, {frame, text, icon, screenButton, screenIconButton, screenInput, screenToggleGroup, screenPrMark, screenStatusMark});
+  return overviewScreens(tokens, {frame, text, icon, screenButton, screenIconButton, screenInput});
 }
 
-const OVERVIEW_SPEC = 'web/src/Overview.tsx, MainScreen.tsx, TasksTab.tsx, BacklogTab.tsx, ProjectsTab.tsx, OverviewRecord.tsx and QuickAdd.tsx (PRD overview-device-tasks D-01..D-38, B1-B66): the Overview of one device, as the layer over a Workspace (1440 × 960 at most) or the page a device\'s Home row opens. The head is the title, the device switch (each device as its rail tile and name, the rail\'s front device marked rail, a Needs You dot on a tile, a device that does not answer dimmed with 연결 안 됨) and Esc. The tabs are 태스크 (its count, its Needs You count and a thin bar of where the tasks stand), 백로그 and 프로젝트 with their counts, then 사용량; the chips, the project chip and the search follow on the right. 태스크 is one section per project (its counts, 백로그 N and 열기) with a card per task: the root\'s mark, title and age, the question it waits on, the children\'s marks, its PRs and items, a hand-off to another project or device, the four-step stage bar and one line; work another device delegated here is a muted-edged card that is never counted (Pen has no dash), and finished and resting tasks fold behind 정리할 것 N and 쉬는 일감 N. A card opens its record beside the tabs under ✕, Workspace 열기 and lane에서 보기. 백로그 is one section per project with its source chip, the input that says where Enter sends the title, a row being made, a row that failed with its reason, 다시 시도 and 지우기, and the open items with the missed-work flag, labels and age; an item opens its panel with ▷ 시작, GitHub, 어디서 왔나 and 되돌리기. 프로젝트 is the device\'s disk line (free and total, the projects\' sum, what a cleanup frees) over one row per project: what its tasks are doing now, its backlog, its disk bar with the share a cleanup frees, N merged → 정리 and the last activity, a row being measured dimmed, and the quiet projects folded. The device that does not answer says why with 다시 연결. ⌘⇧M is one input over any screen: the project and why it was picked, the title, and where it goes, then 만드는 중, a failure that keeps the text, and the made line with 보기. Names and numbers are invented example content.';
+const OVERVIEW_SPEC = 'web/src/Overview.tsx, MainScreen.tsx, BacklogTab.tsx, ProjectsTab.tsx, OverviewRecord.tsx and QuickAdd.tsx (PRD overview-device-tasks D-01..D-38, B1-B66; sidebar-task-lens D-20, B38, B41): the Overview of one device, as the layer over a Workspace (1440 × 960 at most) or the page beside the sidebar with no Workspace in front. The head is the title, the device switch (each device as its rail tile and name, the rail\'s front device marked rail, a Needs You dot on a tile, a device that does not answer dimmed with 연결 안 됨) and Esc. The tabs are 백로그 and 프로젝트 with their counts, then 사용량; there is no 태스크 tab, since a device\'s tasks are the sidebar\'s 태스크 list. The chips, the project chip and the search follow on the right. 백로그 is one section per project with its source chip, its open and started counts (진행 중 N is a count, not a link), the input that says where Enter sends the title, a row being made, a row that failed with its reason, 다시 시도 and 지우기, and the open items with the missed-work flag, labels and age; an item opens its panel with ▷ 시작, GitHub, 어디서 왔나 and 되돌리기, and at Home a session\'s record opens in the same panel with Workspace 열기 and lane에서 보기. 프로젝트 is the device\'s disk line (free and total, the projects\' sum, what a cleanup frees) over one row per project: what its tasks are doing now, its backlog, its disk bar with the share a cleanup frees, N merged → 정리 and the last activity, a row being measured dimmed, and the quiet projects folded. The device that does not answer says why with 다시 연결. ⌘⇧M is one input over any screen: the project and why it was picked, the title, and where it goes, then 만드는 중, a failure that keeps the text, and the made line with 보기. Names and numbers are invented example content.';
 
 function buildOverview(tokens) {
   const design = overviewDesign(tokens);
   return screenSheet('screen-overview', 'Screen / Overview', OVERVIEW_SPEC, design.boards, design.boards);
 }
 
-const MAIN_SPEC = 'web/src/MainScreen.tsx, Overview.tsx and AgentSessions.tsx: with no Workspace in front the Overview is the page beside the sidebar, whose Overview row is marked (PRD overview-device-tasks D-02, D-30); Screen / Overview draws its tabs and states. The Sessions panel is first in Tools, scoped to the selected project or Home, and groups core-projected rows into My Turn, Review/Merge, Progress, Resting and Today Resolved (session-first-ui B11-B19).';
+const MAIN_SPEC = 'web/src/MainScreen.tsx and Overview.tsx: with no Workspace in front the Overview is the page beside the sidebar, whose Overview row is marked, opened on 백로그 (PRD overview-device-tasks D-02, D-30; sidebar-task-lens D-20); Screen / Overview draws its tabs and states, and the Task lens sheets draw the sidebar\'s 태스크 list that replaced the Sessions panel.';
 
 function buildMain(tokens) {
   const design = overviewDesign(tokens);
@@ -506,7 +484,7 @@ function buildMain(tokens) {
       {title: '카드 상태 시트 설계', symbol: '?', statusColor: '$--warning', place: 'hide › main'},
       {title: '조용한 순찰 기능 개발', symbol: '○', statusColor: '$--muted-foreground', place: 'sasu › mailbox-decouple', device: 'mini'},
     ], {overview: true}),
-    frame(`main-views-${suffix}`, 'Views', {layout: 'vertical', gap: '$--spacing-xl'}, [design.page(suffix), sessionDesign(tokens).panel(suffix)]),
+    frame(`main-views-${suffix}`, 'Views', {layout: 'vertical', gap: '$--spacing-xl'}, [design.page(suffix)]),
   ];
   return screenSheet('screen-main', 'Screen / Main', MAIN_SPEC, build, build);
 }
@@ -965,7 +943,7 @@ function buildWorkspace(tokens) {
         "fill": "$--muted-foreground",
         "textGrowth": "fixed-width",
         "width": 1940,
-        "content": "PRD right-lane: Agent Views fill the body and one right lane holds the four tools, Files, Changes, Sessions and Memory, chosen on the 48 px rail at the window's right edge. Unpinned, the lane opens over the agents and the terminals keep their width; a press on a terminal or Escape puts it away. Pinned, it docks beside the agents behind an 8 px divider, and a window that cannot leave the agents 480 px opens it over them instead (D-07). The lane is 520 px by default; the file tree is 240 px, stays on until it is turned off and widens the lane rather than the document; with no document open the tree fills the lane. Expand gives the lane the whole body until it is pressed again or Escape. The window's top row carries the path, Overview and Open server beside the traffic lights (PRD sidebar-titlebar-refresh D-15, D-16). Rail, lane header, pin, tree button, document header and dividers are refs of Component / Workspace columns.",
+        "content": "PRD right-lane: Agent Views fill the body and one right lane holds the four tools, Memory, PRs, Files and Changes, chosen on the 48 px rail at the window's right edge. Unpinned, the lane opens over the agents and the terminals keep their width; a press on a terminal or Escape puts it away. Pinned, it docks beside the agents behind an 8 px divider, and a window that cannot leave the agents 480 px opens it over them instead (D-07). The lane is 520 px by default; the file tree is 240 px, stays on until it is turned off and widens the lane rather than the document; with no document open the tree fills the lane. Expand gives the lane the whole body until it is pressed again or Escape. The window's top row carries the path, Overview and Open server beside the traffic lights (PRD sidebar-titlebar-refresh D-15, D-16). Rail, lane header, pin, tree button, document header and dividers are refs of Component / Workspace columns.",
         "fontFamily": "$--font-ui",
         "fontSize": "$--text-body",
         "fontWeight": "normal"
@@ -1126,10 +1104,6 @@ function buildWorkspaceSupplemental() {
   ];
 }
 
-// -- Screen / Project Sessions --------------------------------------------------
-
-// The Overview on its Conversation history tab: the same header as the Issues board, then
-// the Project's session list and the read-only detail beside it.
 // -- Screen / Settings ----------------------------------------------------------
 
 const SETTINGS_SPEC = 'web/src/SettingsSheet.tsx (a Dialog), settings.ts SETTINGS_GROUPS, settings-rows.tsx Group/Row and the pages under web/src/settings/ (PRD settings-left-nav B1-B15): the ⌘, sheet, 880 wide, with a 200 list on its left in place of the tab strip, App (General, Notifications, Usage, Devices, Shortcuts) and This Mac (Agents, Hide AI, Mobile, GitHub), About at the list\u2019s foot, and the chosen page on its right under its title alone, without a description line. General holds Appearance alone; Notifications holds This Mac\u2019s desktop notifications and the Phone push; GitHub and About are pages of their own; Agents keeps its machine switch inside the page. Copy is the shipped catalog; values are invented.';
@@ -2783,9 +2757,14 @@ function buildOnboarding(tokens, root) {
   return screenSheet('screen-onboarding', 'Screen / Onboarding', ONBOARDING_SPEC, build, build);
 }
 
-// Sheets of screens the product no longer has (PRD overview-device-tasks D-16, D-20):
-// gen-screens removes them from design/hide-screens.pen.
-export const RETIRED_SHEETS = ['Screen / Project Overview', 'Screen / Project Sessions'];
+// Sheets of screens the product no longer has (PRD overview-device-tasks D-16,
+// D-20; the Work tool, sidebar-task-lens D-16, D-17): gen-screens removes them
+// from design/hide-screens.pen.
+export const RETIRED_SHEETS = [
+  'Screen / Project Overview', 'Screen / Project Sessions',
+  'Screen / Work A. Window', 'Screen / Work B. PR card states', 'Screen / Work C. Tools column', 'Screen / Work D. Group rules',
+  'Screen / Work E. Merge and update', 'Screen / Work F. Lens and card states', 'Screen / Work G. Elsewhere',
+];
 
 export function screenSheets(tokens, root) {
   setLibraryRoot(root, tokens);
@@ -2799,7 +2778,7 @@ export function screenSheets(tokens, root) {
       const build = suffix => [themedXref(`screen-usage-popover-${suffix}`, 'usage-popover-light', 'Usage popover'),
         themedXref(`screen-usage-week-${suffix}`, 'usage-history-popover-week-light', 'Seven-day chart'),
         frame(`screen-usage-overview-${suffix}`, 'Overview Usage', {width: 1160, layout: 'vertical', padding: '$--spacing-lg', gap: '$--spacing-lg', fill: '$--background'}, [
-          text(`screen-usage-title-${suffix}`, '개요 · 태스크   백로그   프로젝트   사용량', {size: '$--text-subhead', weight: '600'}),
+          text(`screen-usage-title-${suffix}`, '개요 · 백로그   프로젝트   사용량', {size: '$--text-subhead', weight: '600'}),
           themedXref(`screen-usage-year-${suffix}`, 'usage-history-year-light', 'Date and agent records'),
           text(`screen-usage-limits-${suffix}`, '› 계정 사용 한도', {size: '$--text-caption', fill: '$--muted-foreground'}),
         ])];
@@ -2816,7 +2795,7 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Core move', build: () => buildCoreMove(tokens, root)},
     {name: 'Screen / Session record', build: () => {
       const build = sessionWorkScreens({frame,text,icon,screenButton,themedXref});
-      return screenSheet('screen-session-record','Screen / Session record','Sessions work record (PRD session-record-redesign): every PR the session and its descendants made, assigned work as a checklist with missed work under its task, the operator\'s words behind 내 말, summaries off, and states. Production SessionRecord and NewIssueDialog.',build,build);
+      return screenSheet('screen-session-record','Screen / Session record','Session work record (PRD session-record-redesign; opens in the lane\'s 보기 slot, PRD sidebar-task-lens D-44): every PR the session and its descendants made, assigned work as a checklist with missed work under its task, the operator\'s words behind 내 말, summaries off, and states. Production SessionRecord and NewIssueDialog.',build,build);
     }},
   ];
 }

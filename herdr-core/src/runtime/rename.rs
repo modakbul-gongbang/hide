@@ -54,6 +54,52 @@ impl Runtime {
             }
             pending.apply(tab);
         }
+        tab.naming.by_operator = tab.naming.named_by(
+            tab.id.as_deref(),
+            &self.snapshot.ui_state.operator_tab_names,
+        );
+    }
+
+    /// Remembers the name the operator gave a tab of this machine, through
+    /// Rename or a reopen of a tab they had named, or forgets it when
+    /// `name` is none (a Rename that cleared it). Past the limit, the names
+    /// of tabs that are gone leave first; with no room left the name is not
+    /// remembered and the tab behaves as unnamed, which the log records.
+    pub(super) fn remember_operator_tab_name(&mut self, tab_id: &str, name: Option<&str>) {
+        let names = &self.snapshot.ui_state.operator_tab_names;
+        if names.get(tab_id).map(String::as_str) == name {
+            return;
+        }
+        if let Some(name) = name {
+            if !names.contains_key(tab_id) && names.len() >= crate::model::OPERATOR_TAB_NAME_LIMIT {
+                let live = self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .filter(|workspace| workspace.remote_target_id.is_none())
+                    .flat_map(|workspace| &workspace.checkouts)
+                    .flat_map(|checkout| &checkout.tabs)
+                    .filter_map(|tab| tab.id.clone())
+                    .collect::<HashSet<_>>();
+                self.snapshot
+                    .ui_state
+                    .operator_tab_names
+                    .retain(|id, _| live.contains(id));
+            }
+            let names = &mut self.snapshot.ui_state.operator_tab_names;
+            if !names.contains_key(tab_id) && names.len() >= crate::model::OPERATOR_TAB_NAME_LIMIT {
+                self.push_diagnostic(
+                    "tab.operator_name.capacity",
+                    format!("Tab {tab_id}: no room to remember the name the operator gave it"),
+                );
+                return;
+            }
+            names.insert(tab_id.to_owned(), name.to_owned());
+        } else {
+            self.snapshot.ui_state.operator_tab_names.remove(tab_id);
+        }
+        self.persist_ui_state();
     }
 
     pub(super) fn rename_tab(&mut self, payload: RenameTabPayload) -> bool {
@@ -194,11 +240,21 @@ impl Runtime {
             "failed"
         }
         .into();
-        if let Err(message) = result {
-            self.push_diagnostic(
+        match result {
+            Err(message) => self.push_diagnostic(
                 "tab.rename.failed",
                 format!("Tab {}: {message}", pending.receipt.tab_id),
-            );
+            ),
+            // A device's tab never outlives its agents, so only this
+            // machine's names are remembered.
+            Ok(()) if pending.target.is_none() => {
+                let given = crate::model::TabNaming {
+                    raw: pending.receipt.label.clone(),
+                    ..Default::default()
+                };
+                self.remember_operator_tab_name(&pending.receipt.tab_id, given.manual_name());
+            }
+            Ok(()) => {}
         }
         if self
             .snapshot
@@ -209,10 +265,12 @@ impl Runtime {
         {
             self.snapshot.status.tab_rename = Some(pending.receipt.clone());
         }
+        let names = &self.snapshot.ui_state.operator_tab_names;
         for workspace in &mut self.snapshot.navigator.workspaces {
             for checkout in &mut workspace.checkouts {
                 for tab in &mut checkout.tabs {
                     pending.apply(tab);
+                    tab.naming.by_operator = tab.naming.named_by(tab.id.as_deref(), names);
                 }
                 refresh_strip_labels(checkout);
             }

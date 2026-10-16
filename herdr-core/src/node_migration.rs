@@ -221,6 +221,18 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
     ),
     (
         CORE_STATE,
+        "/detail/items/*/workspace_id",
+        Mechanism::Owned,
+        Moves::Registration,
+    ),
+    (
+        CORE_STATE,
+        "/detail/items/*/session/device_id",
+        Mechanism::Rewritten,
+        Moves::Device,
+    ),
+    (
+        CORE_STATE,
         "/recent_pane_ids/*",
         Mechanism::Owned,
         Moves::Pane,
@@ -1072,6 +1084,19 @@ fn convert_core_state(value: &mut Value, node: &str, _projects: &BTreeMap<String
     for row in each(value, "recent_checkouts") {
         changed |= rewrite(row.get_mut("device_id"), node);
     }
+    if let Some(items) = value
+        .get_mut("detail")
+        .and_then(|detail| detail.get_mut("items"))
+        .and_then(Value::as_array_mut)
+    {
+        for item in items {
+            changed |= rewrite(
+                item.get_mut("session")
+                    .and_then(|session| session.get_mut("device_id")),
+                node,
+            );
+        }
+    }
     changed |= rename_key(value.get_mut("device_expanded_paths"), node);
     for fold in each(value, "session_open_folds") {
         for prefix in ["cleanup", "no_agents"] {
@@ -1358,6 +1383,10 @@ mod tests {
                 "selected_pane_id": "w1:p1",
                 "expanded_agent_pane_ids": ["w1:p1"],
                 "sessions_expanded_agent_pane_ids": ["w1:p1"],
+                "detail": {"items": [
+                    {"kind": "pull_request", "workspace_id": "workspace:a", "number": 7},
+                    {"kind": "record", "session": {"device_id": "local", "agent": "claude", "session_id": "s"}},
+                ], "shown": true},
                 "recent_pane_ids": ["w1:p1", "remote:mini:pane:w2:p1"],
                 "pane_text_scales": {"w1:p1": 1.2},
                 "pane_read_records": {"w1:p1": {"seen_at_unix_ms": 1, "descendant_signals": [{"pane_id": "w1:p4"}]}},

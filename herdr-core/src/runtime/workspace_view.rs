@@ -139,9 +139,10 @@ impl AreaIntent {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct WorkspaceViewPayload {
-    /// `files`, `changes`, `work` or `memory` opens the lane on
-    /// that tool, a call the page shows even when the tool was already the
-    /// lane's; `null` closes the lane.
+    /// `memory`, `prs`, `files` or `changes` opens the lane on that tool, a
+    /// call the page shows even when the tool was already the lane's;
+    /// `null` closes the lane. Either way the lane stops drawing its 보기
+    /// slot, which stays on the rail (PRD sidebar-task-lens B46).
     #[serde(default, deserialize_with = "present")]
     pub(super) tool: Option<Option<String>>,
     /// Whether the lane is pinned beside Agent Views (D-03).
@@ -150,12 +151,9 @@ pub(super) struct WorkspaceViewPayload {
     /// Whether the files tool shows the file tree column (D-05).
     #[serde(default)]
     pub(super) tree: Option<bool>,
-    /// `sessions` or `prs`: the basis the Work tool draws.
+    /// Whether the PRs tool's scope is `<checkout> only`.
     #[serde(default)]
-    pub(super) work_lens: Option<String>,
-    /// Whether the Work tool's scope is `<checkout> only`.
-    #[serde(default)]
-    pub(super) work_only_checkout: Option<bool>,
+    pub(super) prs_only_checkout: Option<bool>,
     /// The lane's width, in CSS pixels.
     #[serde(default)]
     pub(super) lane_width: Option<u32>,
@@ -464,6 +462,9 @@ impl Runtime {
                 self.persist_workspace_views();
             }
         }
+        if self.front_workspace_key().as_ref() == Some(key) {
+            self.leave_detail();
+        }
         self.open_project_memory(Some(workspace));
     }
 
@@ -502,6 +503,13 @@ impl Runtime {
         if changed {
             self.persist_workspace_views();
         }
+        // A file or diff opened from the card shows in Files; the card keeps
+        // its rail slot to come back to (PRD sidebar-task-lens B49). The slot
+        // is the window's, so only the lane in front gives way: an open in a
+        // Workspace behind it leaves the card or record the operator reads.
+        if self.front_workspace_key().as_ref() == Some(key) {
+            self.leave_detail();
+        }
     }
 
     pub(super) fn apply_workspace_view(&mut self, payload: WorkspaceViewPayload) -> bool {
@@ -525,20 +533,6 @@ impl Runtime {
             );
             return true;
         }
-        let lens = match payload.work_lens.as_deref() {
-            None => None,
-            Some(value) => match workspace_views::WorkLens::parse(value) {
-                Some(lens) => Some(lens),
-                None => {
-                    self.set_error(
-                        "workspace_view.unknown_work_lens",
-                        format!("{value} is not a Work basis; expected sessions or prs"),
-                        false,
-                    );
-                    return true;
-                }
-            },
-        };
         let tool = match payload.tool.as_ref() {
             None => None,
             Some(None) => Some(None),
@@ -548,7 +542,7 @@ impl Runtime {
                     self.set_error(
                         "workspace_view.unknown_tool",
                         format!(
-                            "{value} is not a lane tool; expected files, changes, work or memory"
+                            "{value} is not a lane tool; expected memory, prs, files or changes"
                         ),
                         false,
                     );
@@ -581,11 +575,8 @@ impl Runtime {
         if let Some(tool) = tool {
             entry.set_tool(tool);
         }
-        if let Some(lens) = lens {
-            entry.work.lens = lens;
-        }
-        if let Some(only) = payload.work_only_checkout {
-            entry.work.only_checkout = only;
+        if let Some(only) = payload.prs_only_checkout {
+            entry.prs.only_checkout = only;
         }
         if let Some(pinned) = payload.pinned {
             entry.pinned = pinned;
@@ -611,6 +602,7 @@ impl Runtime {
         if called {
             store.call_lane(&key);
         }
+        let leaves_detail = tool.is_some() || payload.reveal.is_some();
         let width_request_changed = if payload.lane_width.is_some() || payload.tree_width.is_some()
         {
             let next = payload.width_request_id.map(|id| (key.clone(), id));
@@ -623,7 +615,8 @@ impl Runtime {
         let revealed = payload
             .reveal
             .is_some_and(|path| self.unfold_to(&key, &path));
-        if !entry_changed && !called && !revealed && !width_request_changed {
+        let detail_left = leaves_detail && self.leave_detail();
+        if !entry_changed && !called && !revealed && !width_request_changed && !detail_left {
             return false;
         }
         if entry_changed {
@@ -934,7 +927,7 @@ impl Runtime {
                 path: view.path.clone(),
                 tool: view.tool,
                 last_tool: view.last_tool,
-                work: view.work,
+                prs: view.prs,
                 pinned: view.pinned,
                 tree: view.tree,
                 lane_width: view.lane_width,
@@ -962,7 +955,9 @@ impl Runtime {
             let (visible, section) = match view.tool {
                 Some(Tool::Files) => (view.shows_tree(), RightPanelSection::Explorer),
                 Some(Tool::Changes) => (true, RightPanelSection::Changes),
-                Some(Tool::Work) => (true, RightPanelSection::AgentSessions),
+                // The section name is the Sessions tool's; it gates the
+                // running-check re-read the PRs tool needs too.
+                Some(Tool::Prs) => (true, RightPanelSection::AgentSessions),
                 Some(Tool::Memory) => (true, RightPanelSection::Memory),
                 None => (false, self.snapshot.ui_state.right_panel_section),
             };

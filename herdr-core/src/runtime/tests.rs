@@ -23,6 +23,8 @@ mod backlog;
 mod birth_cwd;
 #[path = "tests/control_order.rs"]
 mod control_order;
+#[path = "tests/detail.rs"]
+mod detail;
 #[path = "tests/device_catalog.rs"]
 mod device_catalog;
 #[path = "tests/device_kit.rs"]
@@ -62,6 +64,8 @@ mod lineage;
 mod links;
 #[path = "tests/memory.rs"]
 mod memory;
+#[path = "tests/named_tab.rs"]
+mod named_tab;
 #[path = "tests/node_agent_areas.rs"]
 mod node_agent_areas;
 #[path = "tests/node_issues.rs"]
@@ -1521,6 +1525,8 @@ fn close_capture_request(key: &str) -> live::CloseCaptureRequest {
             tab_index: 0,
             agent_area: None,
             replacement_shell: false,
+            replacement_in_tab: false,
+            tab_name: Default::default(),
         },
         panes: vec![],
         target: live::CloseCaptureTarget::Tab {

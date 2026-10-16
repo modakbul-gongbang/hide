@@ -1,4 +1,4 @@
-// The pull requests a fake `gh` answers for the Work tool specs (PRD
+// The pull requests a fake `gh` answers for the PRs tool specs (PRD
 // work-tab-pr-lens): the web spec (`work-prs.spec.ts`) and the desktop host's
 // native captures share them, so nothing reaches GitHub in either.
 import { execFileSync } from "node:child_process";
@@ -7,7 +7,7 @@ import path from "node:path";
 import { fixtureProgram } from "./platform-fixture";
 
 export function git(cwd: string, args: string[]): string {
-  return execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf8" });
+  return execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" });
 }
 
 const HOUR = 3_600_000;
@@ -25,6 +25,8 @@ type Listed = {
   checks: unknown[];
   draft?: boolean;
   asked?: boolean;
+  /** A review was asked of the team `core` the account is in, and of nobody by name. */
+  team?: boolean;
   hoursAgo: number;
 };
 
@@ -38,6 +40,12 @@ const PULLS: Listed[] = [
   { number: 37, title: "머지된 작업", branch: "feat/merged", author: "example-user", state: "MERGED", merge: "UNKNOWN", review: null, checks: passing, hoursAgo: 40 },
 ];
 
+/** A teammate's pull request asked of the operator's team, for the specs that need a review ask only the search can place. */
+const TEAM_ASKED: Listed = { number: 38, title: "팀이 리뷰를 요청받은 PR", branch: "feat/team", author: "bo", state: "OPEN", merge: "BLOCKED", review: "REVIEW_REQUIRED", checks: passing, team: true, hoursAgo: 10 };
+
+/** The questions beside the pull request list that the fake `gh` can be told to fail. */
+export type ExtraQuery = "account" | "review_requests" | "merge_queue";
+
 /**
  * A `gh` that is signed in as `example-user` for `acme/repo` and keeps its
  * state in files: each pull request's head commit and merge state, and a log
@@ -45,23 +53,25 @@ const PULLS: Listed[] = [
  * condition does not match the state's head is refused the way GitHub
  * refuses it. Anything it is not taught is refused.
  */
-export function fakeGh(root: string): { bin: string; state: string } {
+export function fakeGh(root: string, options: { failing?: ExtraQuery[]; teamAsk?: boolean } = {}): { bin: string; state: string } {
   const bin = path.join(root, "gh-bin");
   const state = path.join(root, "gh-state");
   fs.mkdirSync(bin, { recursive: true });
   fs.mkdirSync(state, { recursive: true });
   const now = Date.now();
   const sha = (number: number, generation: number) => `${number.toString(16)}${generation.toString(16)}`.padStart(40, "0");
+  const listed = options.teamAsk ? [...PULLS, TEAM_ASKED] : PULLS;
   const heads: Record<number, string> = {};
   const merges: Record<number, string> = {};
-  for (const pr of PULLS) {
+  for (const pr of listed) {
     heads[pr.number] = sha(pr.number, 0);
     merges[pr.number] = pr.merge;
   }
   fs.writeFileSync(path.join(state, "heads.json"), JSON.stringify(heads));
   fs.writeFileSync(path.join(state, "first-heads.json"), JSON.stringify(heads));
   fs.writeFileSync(path.join(state, "merges.json"), JSON.stringify(merges));
-  const pulls = PULLS.map((pr) => ({
+  fs.writeFileSync(path.join(state, "failing.json"), JSON.stringify(options.failing ?? []));
+  const pulls = listed.map((pr) => ({
     number: pr.number,
     title: pr.title,
     headRefName: pr.branch,
@@ -77,10 +87,10 @@ export function fakeGh(root: string): { bin: string; state: string } {
     closedAt: null,
     closingIssuesReferences: [],
     author: { login: pr.author, is_bot: pr.author.startsWith("app/") },
-    reviewRequests: pr.asked ? [{ __typename: "User", login: "example-user" }] : [],
+    reviewRequests: pr.asked ? [{ __typename: "User", login: "example-user" }] : pr.team ? [{ __typename: "Team", name: "Core", slug: "core" }] : [],
   }));
-  const checks = PULLS.filter((pr) => pr.state === "OPEN").map((pr) => ({ number: pr.number, statusCheckRollup: pr.checks }));
-  const asked = PULLS.filter((pr) => pr.asked).map((pr) => ({ number: pr.number }));
+  const checks = listed.filter((pr) => pr.state === "OPEN").map((pr) => ({ number: pr.number, statusCheckRollup: pr.checks }));
+  const asked = listed.filter((pr) => pr.asked || pr.team).map((pr) => ({ number: pr.number }));
   const script = `const fs = require("fs");
 const path = require("path");
 const state = ${JSON.stringify(state)};
@@ -94,12 +104,13 @@ const checks = ${JSON.stringify(checks)};
 const asked = ${JSON.stringify(asked)};
 const [a, b] = args;
 const log = () => fs.appendFileSync(file("writes.log"), JSON.stringify(args) + "\\n");
+const failing = (query) => read("failing.json").includes(query);
 if (a === "auth" && b === "status") process.exit(0);
-if (a === "api" && b === "user") { out("example-user"); process.exit(0); }
+if (a === "api" && b === "user") { if (failing("account")) fail("HTTP 502: Bad Gateway (https://api.github.com/user)"); out("example-user"); process.exit(0); }
 if (a === "repo" && b === "view") { out({ nameWithOwner: "acme/repo" }); process.exit(0); }
 if (a === "pr" && b === "list") {
   if (args.includes("merged")) { out([]); process.exit(0); }
-  if (args.includes("review-requested:@me")) { out(asked); process.exit(0); }
+  if (args.includes("review-requested:@me")) { if (failing("review_requests")) fail("GraphQL: API rate limit already exceeded for user ID 1"); out(asked); process.exit(0); }
   const heads = read("heads.json");
   const merges = read("merges.json");
   if (args.includes("number,statusCheckRollup")) { out(checks); process.exit(0); }
@@ -135,7 +146,7 @@ if (a === "api" && args[1] === "--method" && args[2] === "PUT") {
 }
 if (a === "api" && b === "graphql") {
   const query = args.join(" ");
-  if (query.includes("HidePrFacts")) { out({ data: { repository: { pullRequests: { nodes: [] } } } }); process.exit(0); }
+  if (query.includes("HidePrFacts")) { if (failing("merge_queue")) fail("GraphQL: Field 'mergeQueueEntry' doesn't exist on type 'PullRequest'"); out({ data: { repository: { pullRequests: { nodes: [] } } } }); process.exit(0); }
   const match = /pullRequest\\(number:(\\d+)\\)/.exec(query);
   if (query.includes("HidePrCard") && match) {
     const number = match[1];

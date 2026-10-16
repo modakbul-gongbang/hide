@@ -182,7 +182,7 @@ pub fn trash(root: &Root, relative: &Path, expected_inode: Option<u64>) -> HostR
     Err(refusal)
 }
 
-fn open_folder(dir: &Dir, relative: &Path) -> HostResult<Dir> {
+pub(crate) fn open_folder(dir: &Dir, relative: &Path) -> HostResult<Dir> {
     let opened = if relative.as_os_str().is_empty() {
         dir.try_clone()
     } else {
@@ -202,7 +202,7 @@ fn open_folder(dir: &Dir, relative: &Path) -> HostResult<Dir> {
 
 /// The item a rename, move or trash starts from, as it is now. One that is
 /// already gone is named as such rather than reported as a failed write.
-fn require_item(parent: &Dir, name: &OsStr) -> HostResult<cap_std::fs::Metadata> {
+pub(crate) fn require_item(parent: &Dir, name: &OsStr) -> HostResult<cap_std::fs::Metadata> {
     parent.symlink_metadata(Path::new(name)).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
             HostError::new(

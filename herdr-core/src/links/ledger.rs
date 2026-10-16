@@ -10,6 +10,9 @@ pub const MISSED_LIMIT: usize = 200;
 pub const NEW_MISSED_LIMIT: usize = 3;
 pub const MISSED_CHARS: usize = 80;
 pub const CONTINUED_TASK_LIMIT: usize = 2;
+/// How many finished tasks the END judgment is shown beside the open ones, newest first, so
+/// a request that asks for one of them again can continue it.
+pub const FINISHED_TASKS_IN_CONTEXT: usize = 3;
 pub const LEDGER_QUEUE_LIMIT: usize = 512;
 pub const SEARCH_LIMIT: usize = 50;
 pub const LEDGER_RPC_LIMIT: usize = 16;
@@ -328,6 +331,8 @@ pub enum LedgerUpdate {
 pub struct LedgerContext {
     pub parent_name: Option<String>,
     pub open_tasks: Vec<WorkTask>,
+    /// The newest [`FINISHED_TASKS_IN_CONTEXT`] done tasks, last worked first.
+    pub finished_tasks: Vec<WorkTask>,
     pub open_missed: Vec<MissedWork>,
 }
 

@@ -68,6 +68,7 @@ export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pa
     "recent_project", "previous_recent_project",
     null,
     "toggle_left_sidebar",
+    "toggle_sidebar_lens",
     "overview",
     "add_backlog",
     ...(FACTORY_OPEN ? (["factory_open"] as const) : []),
@@ -87,6 +88,11 @@ export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pa
 
 export const KEYBOARD_ONLY: readonly CommandId[] = [
   "move_to_trash",
+  "copy_path",
+  "copy_relative_path",
+  "explorer_cut",
+  "explorer_copy",
+  "explorer_paste",
   ...REGISTRY.map((command) => command.id).filter(isNumberedCommand),
 ];
 

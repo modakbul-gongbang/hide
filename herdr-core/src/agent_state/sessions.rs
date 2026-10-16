@@ -1,5 +1,7 @@
-//! The Sessions tool's groups, lines and order, from the row's own state
-//! (docs/status-model.md, The Sessions tool), and each row's own PR summary.
+//! Each agent row's own session facts: its group, the line its task row
+//! draws under the title (docs/status-model.md, The sidebar's 태스크 list),
+//! whether a resolve holds it, and its own PR summary. Which task a row
+//! belongs to and in what order the tasks stand is `tally/tasks.rs`'s.
 //! Memory and conversation history are separate readers, not session state.
 use crate::model::{PrState, SidebarAgentSnapshot};
 use serde::{Deserialize, Serialize};
@@ -156,87 +158,4 @@ pub(crate) fn own_prs(agent: &SidebarAgentSnapshot) -> Option<PrSummary> {
         worst,
         pulls,
     })
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct Section {
-    pub group: Group,
-    /// Member indices, in the order the panel draws them.
-    pub members: Vec<usize>,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
-pub struct Scope {
-    /// Nonempty groups only, in `GROUPS` order.
-    pub groups: Vec<Section>,
-}
-
-pub(crate) fn scope<'a>(members: impl Iterator<Item = (usize, &'a SidebarAgentSnapshot)>) -> Scope {
-    let members: Vec<_> = members
-        .filter(|(_, row)| {
-            if row.resolved.is_some() {
-                row.resolved_recent
-            } else {
-                !row.delegated
-            }
-        })
-        .collect();
-    let mut result = Scope::default();
-    for group in GROUPS {
-        let mut rows: Vec<_> = members
-            .iter()
-            .filter(|(_, row)| row.state.session.group == group)
-            .copied()
-            .collect();
-        let failed = |row: &SidebarAgentSnapshot| {
-            row.state
-                .pr
-                .as_ref()
-                .is_some_and(|pr| pr.worst == PrState::Failed)
-        };
-        let idle_rank = |row: &SidebarAgentSnapshot| {
-            if row.state.session.unfinished {
-                0
-            } else {
-                match row.state.pr.as_ref().map(|pr| pr.worst) {
-                    Some(PrState::Failed) => 1,
-                    Some(PrState::Mergeable) => 2,
-                    Some(PrState::Pending) => 3,
-                    Some(PrState::Draft) => 4,
-                    Some(PrState::Merged | PrState::Closed) => 5,
-                    None => 6,
-                }
-            }
-        };
-        rows.sort_by(|(a_index, a), (b_index, b)| {
-            let recent = || {
-                b.last_activity
-                    .cmp(&a.last_activity)
-                    .then_with(|| a_index.cmp(b_index))
-            };
-            match group {
-                Group::NeedsYou => a
-                    .state
-                    .request_since
-                    .cmp(&b.state.request_since)
-                    .then_with(|| a_index.cmp(b_index)),
-                Group::Working => failed(b).cmp(&failed(a)).then_with(recent),
-                Group::Done => recent(),
-                Group::Idle => idle_rank(a).cmp(&idle_rank(b)).then_with(recent),
-                Group::Resolved => {
-                    let at =
-                        |row: &SidebarAgentSnapshot| row.resolved.as_ref().map(|r| r.at_unix_ms);
-                    at(b).cmp(&at(a)).then_with(|| a_index.cmp(b_index))
-                }
-            }
-        });
-        if rows.is_empty() {
-            continue;
-        }
-        result.groups.push(Section {
-            group,
-            members: rows.into_iter().map(|(member, _)| member).collect(),
-        });
-    }
-    result
 }

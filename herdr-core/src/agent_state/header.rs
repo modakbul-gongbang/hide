@@ -26,12 +26,11 @@ pub struct Band {
     pub facts: Option<ReasonFacts>,
 }
 
-/// Facts already read by the core. Missing commands/check names are explicit;
-/// a generated progress sentence cannot stand in for either source.
+/// Facts already read by the core; a generated progress sentence cannot stand
+/// in for them.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ReasonFacts {
-    ApprovalCommandUnavailable,
     PullRequest {
         checks: crate::model::PullRequestChecks,
         review: Option<crate::model::ReviewDecision>,
@@ -226,14 +225,15 @@ pub(crate) fn of(
             tone,
             // An Answer says what the row's ask says (`detail`), so a native
             // question reads as itself here too, not as the label's line
-            // about the work around it.
-            if tag == Some(Tag::Answer) {
-                agent.detail.clone()
-            } else {
-                agent
+            // about the work around it. An Approval has no command the core
+            // read, and that line is not one, so it carries no reason.
+            match tag {
+                Some(Tag::Answer) => agent.detail.clone(),
+                Some(Tag::Approval) => None,
+                _ => agent
                     .request
                     .as_ref()
-                    .and_then(|request| request.line.clone())
+                    .and_then(|request| request.line.clone()),
             },
             agent.state.request_since,
             action,
@@ -242,7 +242,6 @@ pub(crate) fn of(
         )
         .map(|mut band| {
             band.facts = match tag {
-                Some(Tag::Approval) => Some(ReasonFacts::ApprovalCommandUnavailable),
                 Some(Tag::Fix | Tag::Review | Tag::Merge) => {
                     duty.map(|pull| ReasonFacts::PullRequest {
                         checks: pull.checks,

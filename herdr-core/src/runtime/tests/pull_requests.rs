@@ -659,14 +659,16 @@ fn a_merged_pull_requests_card_reads_but_cannot_be_written() {
 }
 
 /// B44: checks running on a listed pull request nobody's agent works on are
-/// read again each minute while the Work tool's lens or a card is shown.
+/// read again each minute while the PRs tool or a card is shown.
 #[test]
 fn pending_checks_on_a_pull_request_without_an_agent_are_read_again_each_minute() {
     let mut pending = pull_request(2, "open-work", PullRequestBadge::Open, None);
     pending.checks = PullRequestChecks::Pending;
-    pending.work.mine = true;
+    pending.work.mine = Some(true);
     let mut teammates = pull_request(3, "theirs", PullRequestBadge::Open, None);
     teammates.checks = PullRequestChecks::Pending;
+    teammates.work.mine = Some(false);
+    teammates.work.asked_of_me = crate::model::ReviewAsk::None;
     let mut runtime = pr_runtime(vec![pending, teammates]);
     let start = std::time::Instant::now();
     let generation = |runtime: &Runtime| runtime.github_generations.get("/repo").copied();
@@ -992,6 +994,8 @@ fn a_merged_pull_request_attaches_to_its_worktree_after_a_restart_from_the_saved
 fn a_teammates_pending_checks_the_list_does_not_show_are_not_read_for() {
     let mut theirs = pull_request(3, "theirs", PullRequestBadge::Open, None);
     theirs.checks = PullRequestChecks::Pending;
+    theirs.work.mine = Some(false);
+    theirs.work.asked_of_me = crate::model::ReviewAsk::None;
     let mut runtime = pr_runtime(vec![theirs]);
     let start = std::time::Instant::now();
     let before = runtime.github_generations.get("/repo").copied();

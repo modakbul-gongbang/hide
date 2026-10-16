@@ -252,8 +252,8 @@ pub struct WorkspaceViewSnapshot {
     /// The tool the lane last showed, null for a lane that never showed
     /// one; the tool the next open returns to.
     pub last_tool: Option<crate::workspace_views::Tool>,
-    /// The Work tool's basis and scope, kept for this Workspace.
-    pub work: crate::workspace_views::WorkView,
+    /// The PRs tool's scope chip, kept for this Workspace.
+    pub prs: crate::workspace_views::PrsView,
     /// Whether the lane is pinned beside Agent Views (D-03).
     pub pinned: bool,
     /// Whether the files tool shows the file tree column (D-05).
@@ -378,10 +378,6 @@ pub struct ViewDisplaySnapshot {
     pub url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// The pull request a card display shows, by number; absent for every
-    /// other kind.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pr: Option<u32>,
     /// A browser display's load stamp: a larger one than the host last
     /// loaded asks it to load `url` again. Zero for a file or a diff.
     #[serde(skip_serializing_if = "load_unset")]
@@ -1912,12 +1908,12 @@ fn sidebar_tab_naming<S: serde::Serializer>(
     struct SidebarName<'a> {
         manual_name: Option<&'a str>,
         number: u32,
+        named_by_operator: bool,
     }
-    let raw = naming.raw.trim();
-    let numeric = automatic_tab_number(raw).is_some();
     SidebarName {
-        manual_name: (!raw.is_empty() && !numeric).then_some(raw),
+        manual_name: naming.manual_name(),
         number: naming.number,
+        named_by_operator: naming.operator_name().is_some(),
     }
     .serialize(serializer)
 }
@@ -2076,6 +2072,33 @@ pub struct TabNaming {
     pub processes: BTreeMap<String, String>,
     pub raw: String,
     pub automatic: String,
+    /// The manual name is one the operator gave through Rename, recorded in
+    /// `UiStateSnapshot::operator_tab_names`; a spawn's name, or one given
+    /// before Hide recorded them, is not. Always false on a device's tab.
+    pub by_operator: bool,
+}
+
+impl TabNaming {
+    /// The name the tab was given, never an automatic `Tab N`: the sidebar's
+    /// tab line shows it whoever gave it.
+    pub fn manual_name(&self) -> Option<&str> {
+        let raw = self.raw.trim();
+        (!raw.is_empty() && automatic_tab_number(raw).is_none()).then_some(raw)
+    }
+
+    /// The name the operator gave the tab: what makes it a named tab, which
+    /// outlives its agents (docs/UI_BEHAVIOR.md, Agent areas).
+    pub fn operator_name(&self) -> Option<&str> {
+        self.manual_name().filter(|_| self.by_operator)
+    }
+
+    /// Whether `names` records this tab's current manual name as the
+    /// operator's.
+    pub fn named_by(&self, tab_id: Option<&str>, names: &BTreeMap<String, String>) -> bool {
+        tab_id
+            .and_then(|id| names.get(id))
+            .is_some_and(|name| Some(name.as_str()) == self.manual_name())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -3289,6 +3312,118 @@ fn serialize_interface_language<S: serde::Serializer>(
         .serialize(serializer)
 }
 
+/// Which list the sidebar shows under its head (PRD sidebar-task-lens
+/// D-10): the projects tree, or every task of the rail's device.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarLens {
+    #[default]
+    Projects,
+    Tasks,
+}
+
+impl SidebarLens {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "projects" => Some(Self::Projects),
+            "tasks" => Some(Self::Tasks),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Projects => "projects",
+            Self::Tasks => "tasks",
+        }
+    }
+}
+
+/// How the 태스크 list groups (PRD sidebar-task-lens D-11): by state across
+/// every project, or one group per project.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskView {
+    #[default]
+    Status,
+    Project,
+}
+
+impl TaskView {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "status" => Some(Self::Status),
+            "project" => Some(Self::Project),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Status => "status",
+            Self::Project => "project",
+        }
+    }
+}
+
+/// The most items the 보기 slot's ← steps back through; past it the oldest
+/// goes first (PRD sidebar-task-lens B47).
+pub const DETAIL_HISTORY_LIMIT: usize = 20;
+
+/// One thing the lane's 보기 slot shows (PRD sidebar-task-lens D-50).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DetailItem {
+    /// A pull request's card, by catalog project and number.
+    PullRequest { workspace_id: String, number: u32 },
+    /// A session's record (D-44).
+    Record {
+        session: crate::links::ledger::SessionIdentity,
+    },
+}
+
+/// The lane's 보기 slot (PRD sidebar-task-lens D-50): what it opened, oldest
+/// first with the one it shows last, and whether the lane draws it rather
+/// than its Workspace's tool. The rail keeps a slot for it while anything is
+/// open; a stored value this build cannot read loads empty.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DetailSlot {
+    #[serde(default)]
+    pub items: Vec<DetailItem>,
+    #[serde(default)]
+    pub shown: bool,
+}
+
+impl DetailSlot {
+    pub fn top(&self) -> Option<&DetailItem> {
+        self.items.last()
+    }
+
+    /// Opens `item` in front: the same item again only shows it, another one
+    /// is stepped back to by ←, and past the cap the oldest goes.
+    pub fn open(&mut self, item: DetailItem) {
+        if self.top() != Some(&item) {
+            self.items.retain(|held| held != &item);
+            self.items.push(item);
+            if self.items.len() > DETAIL_HISTORY_LIMIT {
+                self.items.remove(0);
+            }
+        }
+        self.shown = true;
+    }
+
+    /// ←: the item before the one shown; with none left the slot closes.
+    pub fn back(&mut self) {
+        self.items.pop();
+        self.shown = !self.items.is_empty();
+    }
+
+    pub fn close(&mut self) {
+        self.items.clear();
+        self.shown = false;
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UiStateSnapshot {
     #[serde(default)]
@@ -3358,11 +3493,25 @@ pub struct UiStateSnapshot {
     /// D-11).
     #[serde(default)]
     pub expanded_agent_pane_ids: Vec<String>,
-    /// Agent panes whose children the operator opened in Sessions, kept
-    /// apart from the sidebar's (PRD D-21, D-25); folded by default and
-    /// pruned when the pane closes.
+    /// Agent panes whose children the operator opened in the sidebar's
+    /// 태스크 list, kept apart from the 프로젝트 tree's (PRD
+    /// sidebar-task-lens D-48; the name is the Sessions list's, which held
+    /// it before, so a store and a core move read it as they did); folded by
+    /// default and pruned when the pane closes.
     #[serde(default)]
     pub sessions_expanded_agent_pane_ids: Vec<String>,
+    /// Which list the sidebar shows under its head (PRD sidebar-task-lens
+    /// D-10, D-25): the projects at first, then the last one chosen.
+    #[serde(default)]
+    pub sidebar_lens: SidebarLens,
+    /// How the 태스크 list groups its tasks (D-11), kept like the lens.
+    #[serde(default)]
+    pub task_view: TaskView,
+    /// The lane's 보기 slot (D-50): a pull request's card or a session's
+    /// record, one per window and no checkout's or Agent tab's, so it stays
+    /// when either changes.
+    #[serde(default)]
+    pub detail: DetailSlot,
     pub selected_path: Option<String>,
     pub selected_pane_id: Option<String>,
     /// Set by a core move's rekey (`node_migration::reown`): the machine the
@@ -3540,6 +3689,13 @@ pub struct UiStateSnapshot {
     /// pane ids, so the next press starts a new secretary.
     #[serde(default)]
     pub factory_secretary_pane: Option<String>,
+    /// The names the operator gave tabs through Rename, by tab id, at most
+    /// `OPERATOR_TAB_NAME_LIMIT`: a tab is named, and outlives its agents,
+    /// only while its label is still the name recorded here (Herdr keeps tab
+    /// ids through a restore). A spawn's name, or one given before this was
+    /// recorded, is not the operator's. Persisted and never on the wire.
+    #[serde(default, skip_serializing)]
+    pub operator_tab_names: BTreeMap<String, String>,
 }
 
 /// The most checkouts the recent list keeps; the oldest leave first.
@@ -3547,6 +3703,11 @@ pub const RECENT_CHECKOUT_LIMIT: usize = 10;
 
 /// The most panes the recent pane order keeps; the oldest leave first.
 pub const RECENT_PANE_LIMIT: usize = 50;
+
+/// The most tab names the operator's Rename is remembered for; past it, the
+/// names of tabs that are gone leave first, and a rename with no room left
+/// is not remembered.
+pub const OPERATOR_TAB_NAME_LIMIT: usize = 256;
 
 /// One entry of the recent list: the ids that open the checkout and the
 /// facts that draw its row while its device has no catalog to read them from.
@@ -4121,6 +4282,9 @@ impl Default for UiStateSnapshot {
             project_settings_writes: BTreeMap::new(),
             expanded_agent_pane_ids: Vec::new(),
             sessions_expanded_agent_pane_ids: Vec::new(),
+            sidebar_lens: SidebarLens::default(),
+            task_view: TaskView::default(),
+            detail: DetailSlot::default(),
             selected_path: None,
             selected_pane_id: None,
             focus_from_herdr: false,
@@ -4164,6 +4328,7 @@ impl Default for UiStateSnapshot {
             recent_checkouts: Vec::new(),
             recent_pane_ids: Vec::new(),
             factory_secretary_pane: None,
+            operator_tab_names: BTreeMap::new(),
         }
     }
 }
@@ -4623,7 +4788,7 @@ pub struct PullRequestSnapshot {
     /// nothing about this repository's branch of the same name.
     #[serde(default)]
     pub cross_repository: bool,
-    /// What the Work tab's PRs list groups by (PRD work-tab-pr-lens D-08):
+    /// What the PRs tool's list groups by (PRD work-tab-pr-lens D-08):
     /// the GitHub values the 5-minute read adds, none of them parsed from a
     /// body or a repository's own script (D-05).
     #[serde(default)]
@@ -4681,7 +4846,12 @@ pub struct ReviewRequest {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewAsk {
+    /// The question that tells was not answered, so the pull request may or
+    /// may not have been asked of the account or its team. A pull request
+    /// starts here and leaves it only when an answer places it.
     #[default]
+    Unknown,
+    /// Asked of neither the account nor a team of it.
     None,
     /// Asked of the account itself.
     Direct,
@@ -4689,14 +4859,42 @@ pub enum ReviewAsk {
     Team,
 }
 
-/// The GitHub values the Work tab's PRs list and the card read beyond the
+/// A pull request's place in its base branch's merge queue, as far as GitHub
+/// has said.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "state", content = "position")]
+pub enum MergeQueuePlace {
+    /// The queue question was not answered. A pull request starts here.
+    #[default]
+    Unknown,
+    NotQueued,
+    /// From 1.
+    At(u32),
+}
+
+/// The questions a project's pull request read asks beside the list itself
+/// (issue #1189). The list alone decides whether the read succeeds; one of
+/// these failing leaves the judgments derived from it unknown.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtraQuery {
+    /// The signed-in account (`gh api user`): which pull requests are mine.
+    Account,
+    /// The review requests made to the account (`gh pr list --search
+    /// review-requested:@me`): which are asked of me or my team.
+    ReviewRequests,
+    /// The merge queue place and review request time (`gh api graphql`).
+    MergeQueue,
+}
+
+/// The GitHub values the PRs tool's list and the card read beyond the
 /// badge, checks and review: see [`PullRequestSnapshot::work`].
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct PullRequestWork {
     pub author: Option<String>,
     pub author_is_bot: bool,
-    /// The signed-in account wrote it.
-    pub mine: bool,
+    /// The signed-in account wrote it; `None` while the account is unknown.
+    pub mine: Option<bool>,
     pub merge_state: MergeState,
     pub review_requests: Vec<ReviewRequest>,
     pub asked_of_me: ReviewAsk,
@@ -4704,9 +4902,8 @@ pub struct PullRequestWork {
     /// are still running: the second line's `✗ <name>` and `CI · N`.
     pub failed_checks: Vec<PrFailedCheck>,
     pub pending_checks: u32,
-    /// Its place in the base branch's merge queue, from 1; absent when it is
-    /// not queued.
-    pub queue_position: Option<u32>,
+    /// Its place in the base branch's merge queue.
+    pub queue: MergeQueuePlace,
     /// When the latest review request on it was made, which `리뷰 · N시간째`
     /// counts from.
     pub review_requested_at_unix_ms: Option<u64>,
@@ -4770,6 +4967,11 @@ pub struct GithubStatusSnapshot {
     /// The card's one allowed sentence: gh missing, logged out, or the exact
     /// failure. Absent when the lookup is healthy.
     pub unavailable_reason: Option<String>,
+    /// The extra questions of the last read that failed while the pull request
+    /// list was read: the list is current and the judgments derived from these
+    /// are unknown (issue #1189).
+    #[serde(default)]
+    pub unread_queries: Vec<ExtraQuery>,
 }
 
 /// One repository's pull requests as `gh` reported them.
@@ -6365,6 +6567,23 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "session_group", &session_groups);
         checked.insert("session_group");
+        let lenses = [SidebarLens::Projects, SidebarLens::Tasks];
+        for variant in lenses {
+            match variant {
+                SidebarLens::Projects | SidebarLens::Tasks => {}
+            }
+        }
+        assert_wire(&contract, "sidebar_lens", &lenses);
+        checked.insert("sidebar_lens");
+
+        let views = [TaskView::Status, TaskView::Project];
+        for variant in views {
+            match variant {
+                TaskView::Status | TaskView::Project => {}
+            }
+        }
+        assert_wire(&contract, "task_view", &views);
+        checked.insert("task_view");
         let verbs = [Verb::Approval, Verb::Answer, Verb::Confirm, Verb::Draft];
         for verb in verbs {
             match verb {

@@ -78,9 +78,10 @@ CDP target creation uses authenticated `/browser-control/action` and the existin
 The core inserts a distinct browser display into the capability's named area even when another area is active or the same address is already open.
 An unknown area refuses before placement.
 CDP exposes only HTTP(S) and blank pages; native `file:` displays, filesystem paths and other schemes return `browser_address_unsupported` for attachment or creation.
+The one exception is the operator's Comment mode, whose comment-only capability hided alone holds ([Comment mode](#comment-mode)); an agent's `/connect` and `hide browser` commands never reach a `file:` page.
 Every HTTP(S) or blank native page generation blocks `file:` requests before its first load, independently of debugger attachment, and retains that restriction until the generation ends.
 The native guard cancels file main-frame and child-frame navigation, redirects, resources and popup requests, including addresses assembled by `Runtime.evaluate`; it never attempts to recognize JavaScript source text.
-Manual local-file displays retain the file policy below and are never CDP targets.
+Manual local-file displays retain the file policy below and are never CDP targets of an agent or an external client; only Comment mode's own lease reaches one.
 An explicit manual navigation to a validated local file replaces the restricted WebContents with the existing separate file partition instead of relaxing an in-flight generation.
 Downloads and filesystem writes are disabled once a generation has held a debugger lease, including after disconnect.
 Chromium still opens an unnamed intermediate file in the download folder, and may write a download's first bytes into it, before `will-download` refuses it; the cancellation deletes that file on Chromium's download thread, so no download is left behind.
@@ -281,6 +282,15 @@ hided answers each end with a `browser_comment` frame whose `reason` is null for
 At most four sessions run at once (`comment_limit`), a display another debugger holds cannot start one (`display_busy`), and while a session holds the lease an agent's `hide browser` command on that page fails `display_busy`, the known cost of drawing inside the page.
 A screen whose daemon relays a linked node's pages cannot reach their gateway, so Comment there answers `comment_unavailable_here` ([INSTALL.md](INSTALL.md#what-each-system-supports)).
 
+A local HTML page, a `file:` display inside a checkout, takes Comment as a web page does, through a lease that exists for Comment alone.
+hided asks the gateway's `/connect` with `purpose: "comment"` for one display (`BrowserControl::comment_capability`); no other caller names a purpose, a pane's scope is built without one (`scope_of`), a linked node's daemon refuses a scope that carries one (`scope_valid`), and the capability goes to the comment session and nowhere else, never into a result for a pane or a `hide browser` path.
+For that purpose the gateway lists the display's page even when it is a `file:` page of the file partition (`Browser.cdpPages` marks it `local`), and for no other capability does such a page exist: an agent's `/connect` on it keeps the 409 `Display has no eligible HTTP(S) browser target`, its area listing, `Target.getTargets` and attach never name it, and `hide browser` on it answers `display_unsupported`.
+A comment capability carries only the methods the session sends, `Target.getTargets`, `Target.attachToTarget`, `Page.enable`, `Page.getFrameTree`, `Page.createIsolatedWorld`, `Runtime.enable`, `Runtime.addBinding`, `Runtime.evaluate` (only in a world the same lease made with `Page.createIsolatedWorld`) and `Page.captureScreenshot`, each with only the parameters the session sends (no `grantUniveralAccess`, `userGesture` or `includeCommandLineAPI`), and passes only the events it reads, `Runtime.bindingCalled`, `Page.frameNavigated`, `Page.navigatedWithinDocument` and `Inspector.detached`.
+Navigation, `Fetch`, `Network`, `Input`, `DOM`, new or child targets, `Page.close`, downloads and every other command are refused for it before they reach the page, and it has no discovery listing.
+The lease ends as any does: when the page stops being a `file:` page (or a web page, for a web display) it is revoked, so a document that replaced the page ends the session, and the session answers its reason.
+The same capability is what the session asks for on a web page, so Comment holds a web page to the same list.
+A session that cannot start, or ends on its own, answers a reason the window turns into a hint on the Comment button: `browser_control_unavailable` (the desktop window's gateway did not answer or no longer authorizes the area), `display_missing` and `display_closed` (the page closed or was replaced), `page_unresponsive` and `dialog_open`, beside `display_busy`, `comment_limit` and `comment_unavailable_here`; another reason shows as `Comment stopped · <reason>`.
+
 ## The file boundary
 
 A client names a local file through a `file:` URL, so hided checks it like any path a client sends, on `browser_open`, `browser_state` and the `view_layout` `navigate` action.
@@ -289,6 +299,23 @@ It decodes the path, refuses one that names another host or does not decode (`in
 A refusal is a `path_refused` frame to that client and never reaches the core.
 For a native `browser_state` report, a registered checkout's pinned physical root can be mapped back to its registered spelling before that same boundary checks the file.
 This preserves a completed load's stamp when the checkout was registered through an alias, while a replaced root, a symlink escape or an unrelated file is still refused; it does not extend file-open authority.
+
+A local HTML page is held to what a browser allows a local page, and no more.
+It loads the display's own address, and its stylesheets, scripts, images, fonts, media and frames only from its own checkout, symbolic links resolved, so a link out of the checkout carries nothing out.
+A script reads no file: a `fetch`, XHR, WebSocket or beacon of a `file:` address is refused, and because the app turns off Electron's `GrantFileProtocolExtraPrivileges` fuse (`desktop/scripts/fuses.mjs`, flipped at packaging before the bundle is signed and read back from the built app), a local page is an origin of its own, so no page of the checkout reads another's frame, nor the pixels of an image it drew.
+It reaches no address of this machine or a private network: loopback, link-local, private and shared ranges, the names a resolver answers from the local network (`localhost`, `.local`, a name with no dot), and a public name that resolves to one of those, so Hide's daemon and the operator's dev servers stay out of reach.
+Public internet addresses stay open for the page's resources, since a page of generated HTML often loads a font or a script from a CDN; what makes that safe is that no file of this machine can be read to send there.
+A name is resolved once per page generation and the answer kept, so a name that changes its answer afterwards is not seen; the page's own address, a navigation or a popup it opens keep their rules above.
+`localPageRequest` and `isLocalNetworkHost` in `desktop/src/main/browserSync.ts` decide, and `BrowserViews.localPageRequest` applies the decision to a request of every local file page, whoever opened it.
+Each kind of refusal (a file, the network) is logged once per page generation as `browser.request_refused` with `reason: local_page_boundary` and the kind, and shows nothing on screen.
+A page of a connected device's checkout is served through its own route, which refuses every request that is not that route's.
+What the fuse changes beyond these pages: any `file:` page the app itself loads (the status page) is an origin of its own and loads only its own script and style, which it does; the shell, the preload and the main process load over loopback or from the asar and are unchanged.
+`desktop/e2e` runs on a copy of Electron flipped the same way (`fused-electron.ts`), so what its tests prove is what ships; an unpackaged run of the app (`pnpm --dir desktop dev`) is stock Electron, where the request rules hold and the fuse does not.
+What Comment's world can read on a local page is what the page itself can read, and no more.
+The comment session evaluates in an isolated world of the page's own document: the same origin, session and request rules as the page's scripts, the file partition's `webSecurity`, and the `onBeforeRequest` rules of `desktop/src/main/browser.ts`.
+It holds no `Network`, `Fetch`, `Page.navigate` or `Page.setBypassCSP`, which are the commands that could widen a world, and `hided` evaluates only the shipped `comment.js` and fixed expressions; the gateway refuses an evaluation that does not name a world.
+`desktop/e2e/view-comment-file.spec.ts` measures it on a local page: a `fetch`, an XHR, an `<img>` drawn to a canvas, an `<iframe>` document and a request to a loopback server, started from the page's world, from an isolated world made through the debugger, and from `executeJavaScript`, answer the same in all three.
+Those answers are the local page rules above, so the comment world adds nothing to what the page can reach, and the lease adds nothing for an agent.
 
 A device file keeps its remote path through the UI boundary.
 The core confirms that the current View belongs to the connected device and checkout, and hided reads the HTML and its declared relative assets through that device's consented `hide-host` channel.
@@ -388,6 +415,8 @@ Another page taking the keyboard, a new hold, leaving the page's Workspace, or t
 The host logs the window's blur, focus and visibility (macOS reports it hidden while nothing of it is drawn, and the shell then sends no sync), each page's focus, blur and shown state with its display id and whether it is the owed page, and the shell's focus beside `browser.window_return`, so a failed return shows whether the keyboard was never paid or was taken after it, and by what.
 None of these carries an address or page content, and each fires at the rate the operator focuses, covers or switches a window or page.
 After the core confirms a selected display, the existing keyboard-follow request focuses its document or diff, or schedules one trusted native-page focus command after visible-slot sync.
+A page the operator opens (a terminal link's URL or HTML file, Open in Browser, Open server, or a row's, a card's or ⌘K's link) follows the same way: its `browser_open` names itself (`request_id`, `follow:` and a fresh id), and the keyboard goes to the display the core's receipt in `status.browser_opens` names once it is the active area's view; a refused open (`browser.open_refused`) ends the wait.
+A View area's New tab sends no name, since its address field takes the keyboard as it mounts, and neither does a page's own new tab, which leaves the keyboard with the page that asked.
 The host focuses only a visible page in its already-focused candidate window; it never brings a window forward for this command.
 Cycle menu items are immediate command clicks without accelerators, so one physical key cannot also dispatch a menu selection.
 The keyboard area has a strong tab accent and a content boundary outside the native slot; other selected tabs remain readable, with no page blur or recurring capture for focus styling.
@@ -459,6 +488,10 @@ It opens a page with `hide browser open`, checks the native view sits on its slo
 The test window never activates the app or takes the keyboard, because the e2e fixture launches every app with `--hide-show-inactive` and `--disable-backgrounding-occluded-windows` (see [BUILD.md](BUILD.md#the-desktop-app)); it is shown behind the operator's windows, keeps painting there, and captures of it are taken by window id.
 The zoom test needs the key window: it is tagged `@needs-focus` and brings its window to the front itself.
 Keep screenshots and logs under local-only `agents/runs/`.
+`desktop/e2e/local-page-rules.spec.ts` opens a local page from an isolated pane on the fused Electron and checks that its folder's image and script load, that reads of files and requests to a loopback server and this machine's own network address fail, that an image drawn from its own folder cannot be read back, and that each refusal is logged once.
+`desktop/src/main/browserSync.test.ts` tests the request decision and the address ranges.
+`desktop/e2e/view-comment-file.spec.ts` turns Comment on for a local HTML page, picks an element and drags an area, Sends both with their screenshots, sees an agent's page command on that page still answer `display_unsupported`, and measures what the comment world reads against the page's own.
+`desktop/src/main/browserCdp.test.ts` proves the comment capability's allowlist (every method outside it refused before the page, an evaluation in the page's own world refused, only the four events passed, no discovery), that a capability without the purpose never sees a local file page, and that the purpose is accepted only as `comment` for one display; `hided/src/browser_control.rs` proves that only the comment path names a purpose to the gateway.
 `desktop/e2e/browser-cdp.spec.ts` exercises the scoped native gateway against its own candidate, including pre-attachment native file-request cancellation and persistent download cancellation after client disconnect.
 Its iframe proof obtains the cross-site iframe's frame-owner ID directly from the candidate WebContents' native DOM, independently of the scoped gateway, and requires both the scoped child frame ID and attached target ID to equal it.
 Chromium's `Page.getFrameTree` includes local children only, so an out-of-process child's identity cannot be inferred from the parent session's frame tree.

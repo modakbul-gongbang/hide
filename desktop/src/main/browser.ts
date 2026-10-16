@@ -17,13 +17,14 @@
 // link to another app leaves only after the operator agrees.
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, screen, session, shell, WebContentsView, type BrowserWindowConstructorOptions, type Input, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type Session, type WebContents, type WindowOpenHandlerResponse } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import type { TFunction } from "i18next";
 import { pathToFileURL } from "node:url";
 import type { BrowserHostEvent, BrowserPageState, BrowserPlacement } from "../../../web/src/host";
 import { hostChord, isCycleCommand, keySystemOf, matchHost, releaseModifier, systemRegistry, type Command, type CommandId } from "../../../web/src/shortcuts";
 import { BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_CYCLE_END_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL } from "../channel";
-import { appScheme, browserPartition, isPopup, loadable, MAX_AUTHORIZED_SCOPES, MAX_LIVE_VIEWS, MAX_POPUPS, overCap, parseCommand, parseSync, parseTarget, popupBounds, remoteRequest, toBounds, viewKey } from "./browserSync";
+import { appScheme, browserPartition, isLocalNetworkHost, isPopup, loadable, localPageRequest, MAX_AUTHORIZED_SCOPES, MAX_LIVE_VIEWS, MAX_POPUPS, overCap, parseCommand, parseSync, parseTarget, popupBounds, remoteRequest, toBounds, viewKey } from "./browserSync";
 import { nextZoomFactor, type PageZoom } from "../../../web/src/zoomSteps";
 import type { HostLog } from "./log";
 import type { CdpPage, CdpRetirement, CdpScope } from "./browserCdp";
@@ -41,7 +42,10 @@ const ZOOM_IN_ALIAS = accelerator({ code: "Equal", meta: true, shift: true });
 /** Pinch zoom on a page, as visual zoom levels; Electron turns it off by default. */
 const PINCH_ZOOM_LIMITS = [1, 3] as const;
 /** One first-refusal witness per native generation and guard category. */
-const FILE_REFUSAL_EVENTS = { request: "browser.request_refused", navigation: "browser.navigation_refused", popup: "browser.window_open_refused" } as const;
+const FILE_REFUSAL_EVENTS = {
+  request: "browser.request_refused", navigation: "browser.navigation_refused", popup: "browser.window_open_refused",
+  local_file: "browser.request_refused", local_network: "browser.request_refused",
+} as const;
 type FileRefusal = keyof typeof FILE_REFUSAL_EVENTS;
 
 type Page = {
@@ -71,7 +75,13 @@ type Page = {
   /** Three finite guard categories bound diagnostic state and output even
    * when a renderer repeatedly attempts file requests or opens windows. */
   readonly fileRefusals: Set<FileRefusal>;
+  /** A local file page's checkout, resolved once: what its files may load from. */
+  checkoutRoot?: string | null;
+  /** What each public name a local file page asked for resolved to, bounded. */
+  readonly hostVerdicts: Map<string, boolean>;
 };
+/** Names a local file page may have resolved at once; past it a name is resolved on every request. */
+const MAX_HOST_VERDICTS = 64;
 
 export type ResolvedPage = { url: string; source_url: string; load: number };
 
@@ -127,14 +137,19 @@ export class BrowserViews {
 
   cdpIncarnation(scope: CdpScope): number | null { return this.cdpScopes.get(JSON.stringify([scope.workspace, scope.area_id])) ?? null; }
 
-  /** Only display pages enter CDP. The shell and popup windows are absent. */
+  /**
+   * Only display pages enter CDP. The shell and popup windows are absent. A
+   * page of the file partition is listed as `local`, which the gateway shows
+   * to the comment capability alone (BROWSER_DISPLAYS.md, Comment mode).
+   */
   cdpPages(): CdpPage[] {
     const result: CdpPage[] = [];
     for (const page of this.pages.values()) {
       const area_id = this.cdpAreas.get(page.key);
       const contents = page.view.webContents;
-      if (area_id && page.fileRestricted && !contents.isDestroyed() && !isFileAddress(page.state.url)
-        && !isFileAddress(page.route?.source_url ?? "") && !isFileAddress(contents.getURL())
+      if (!area_id || contents.isDestroyed()) continue;
+      if (!page.fileRestricted) result.push({ workspace: page.workspace, area_id, id: page.id, local: true, contents });
+      else if (!isFileAddress(page.state.url) && !isFileAddress(page.route?.source_url ?? "") && !isFileAddress(contents.getURL())
         && !page.cdpFileFrame) {
         result.push({ workspace: page.workspace, area_id, id: page.id, contents });
       }
@@ -417,6 +432,7 @@ export class BrowserViews {
       cdpDownloadRefused: false,
       cdpFileFrame: false,
       fileRefusals: new Set(),
+      hostVerdicts: new Map(),
     };
     view.setVisible(false);
     window.contentView.addChildView(view);
@@ -460,6 +476,10 @@ export class BrowserViews {
         callback({ cancel: true });
         return;
       }
+      if (page?.route && isFileAddress(page.route.url) && isFileAddress(page.route.source_url)) {
+        this.localPageRequest(pageSession, page, details, callback);
+        return;
+      }
       const outcome = !page
         ? partition === "persist:hide-browser-web" ? remoteRequest({ source_url: details.url, url: details.url }, details.url) : { cancel: true }
         : !page.route ? { cancel: true }
@@ -470,11 +490,47 @@ export class BrowserViews {
     return pageSession;
   }
 
+  /**
+   * A local HTML page's request, held to what a browser allows a local page
+   * (`localPageRequest`). A public name is resolved before it is allowed, and
+   * one that answers with a private address is refused; the answer is kept
+   * for the generation, so a name that changes its answer later is not seen.
+   */
+  private localPageRequest(pageSession: Session, page: Page, details: Electron.OnBeforeRequestListenerDetails, callback: (response: { cancel: boolean }) => void): void {
+    const refuse = (category: "local_file" | "local_network") => { this.fileRefused(page, category, details.resourceType); callback({ cancel: true }); };
+    const verdict = localPageRequest(details.url, details.resourceType, (file) => this.insideCheckout(page, file));
+    if ("cancel" in verdict) {
+      if (verdict.cancel) refuse(verdict.boundary === "file" ? "local_file" : "local_network"); else callback({ cancel: false });
+      return;
+    }
+    const known = page.hostVerdicts.get(verdict.resolve);
+    if (known !== undefined) { if (known) callback({ cancel: false }); else refuse("local_network"); return; }
+    pageSession.resolveHost(verdict.resolve).then((answer) => {
+      const publicOnly = answer.endpoints.length > 0 && answer.endpoints.every((endpoint) => !isLocalNetworkHost(endpoint.address.includes(":") ? `[${endpoint.address}]` : endpoint.address));
+      if (page.hostVerdicts.size < MAX_HOST_VERDICTS) page.hostVerdicts.set(verdict.resolve, publicOnly);
+      if (publicOnly) callback({ cancel: false }); else refuse("local_network");
+    }, () => refuse("local_network"));
+  }
+
+  /** Whether `file` is in the page's checkout, symbolic links resolved, so a link out of it does not carry a read out. */
+  private insideCheckout(page: Page, file: string): boolean {
+    if (page.checkoutRoot === undefined) {
+      const root = page.workspace.split("\u0000")[1];
+      try { page.checkoutRoot = root ? fs.realpathSync.native(root) : null; } catch { page.checkoutRoot = null; }
+    }
+    if (!page.checkoutRoot) return false;
+    let real = file;
+    try { real = fs.realpathSync.native(file); } catch { /* a file that is not there answers 404 inside the folder it names */ }
+    const relative = path.relative(page.checkoutRoot, real);
+    return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  }
+
   private fileRefused(page: Page, category: FileRefusal, resourceType?: Electron.OnBeforeRequestListenerDetails["resourceType"]): void {
     if (page.fileRefusals.has(category)) return;
     page.fileRefusals.add(category);
     this.log.event(FILE_REFUSAL_EVENTS[category], {
-      reason: "cdp_file_boundary", display_id: page.id,
+      reason: category.startsWith("local_") ? "local_page_boundary" : "cdp_file_boundary", display_id: page.id,
+      ...(category.startsWith("local_") ? { boundary: category.slice("local_".length) } : {}),
       ...(resourceType ? { resource_type: resourceType } : {}),
     });
   }

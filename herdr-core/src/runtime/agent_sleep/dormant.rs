@@ -916,6 +916,13 @@ impl Runtime {
         }
         match result {
             agent_sleep_herdr::DormantTabOutcome::Created(tab, pane, snapshot) => {
+                let name = self.snapshot.ui_state.agent_sleep.dormant[&work.id]
+                    .context
+                    .operator_tab_name()
+                    .map(str::to_owned);
+                if let Some(name) = name {
+                    self.remember_operator_tab_name(&tab, Some(&name));
+                }
                 self.ingest_session(Ok(*snapshot));
                 let current = self
                     .snapshot

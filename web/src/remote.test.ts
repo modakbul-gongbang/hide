@@ -147,7 +147,7 @@ function deviceViews(views: boolean): WorkspaceView {
     path: "/home/remote/app",
     tool: views ? "files" : null,
     last_tool: views ? "files" : null,
-    work: { lens: "sessions", only_checkout: false },
+    prs: { only_checkout: false },
     pinned: true,
     tree: false,
     lane_width: null,

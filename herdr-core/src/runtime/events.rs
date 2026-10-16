@@ -102,6 +102,11 @@ pub(super) struct GithubRequestPayload {
     pub(super) workspace_id: String,
     #[serde(default)]
     pub(super) refresh: bool,
+    /// The operator is looking at this project (its window came forward, or
+    /// the project did): read it again if its answer is old
+    /// (`Runtime::read_when_looked_at`). A refresh outranks it.
+    #[serde(default)]
+    pub(super) look: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -581,6 +586,44 @@ pub(super) struct PathMovePayload {
     pub(super) destination: String,
 }
 
+/// An item copied into a folder of the same checkout. The host names the
+/// copy; the destination is the folder.
+#[derive(Debug, Deserialize)]
+pub(super) struct PathCopyPayload {
+    /// The device whose tree asked; absent for this machine.
+    #[serde(default)]
+    pub(super) device_id: Option<String>,
+    pub(super) root: String,
+    pub(super) path: String,
+    /// The folder the copy lands in.
+    pub(super) destination: String,
+}
+
+/// The files and folders of a drop from the operator's file manager. Only
+/// hided makes this event: a window sends `path_import` with the ids of the
+/// files it uploaded, and hided turns each id into the staged path named
+/// here and never forwards the window's own event.
+#[derive(Debug, Deserialize)]
+pub(super) struct PathImportPayload {
+    /// The device whose tree asked; absent for this machine.
+    #[serde(default)]
+    pub(super) device_id: Option<String>,
+    pub(super) root: String,
+    /// The folder the items land in.
+    pub(super) destination: String,
+    pub(super) items: Vec<PathImportItem>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct PathImportItem {
+    /// Below the destination folder, `/` between names.
+    pub(super) path: String,
+    pub(super) directory: bool,
+    /// Where hided staged a file's bytes on this machine; absent for a folder.
+    #[serde(default)]
+    pub(super) staged: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct PathTrashPayload {
     /// The device whose tree asked; absent for this machine.
@@ -987,6 +1030,11 @@ pub(super) struct PrOpenPayload {
     pub(super) pr_number: u32,
     #[serde(default)]
     pub(super) checkout_id: Option<String>,
+    /// Asked with no Workspace in front (Home): the pull request's
+    /// Workspace opens too, with the card in its lane (PRD
+    /// sidebar-task-lens B17). Otherwise the screen stays where it is.
+    #[serde(default)]
+    pub(super) open_workspace: bool,
 }
 
 /// `pr_delegate`: an agent started on a pull request's branch with the
@@ -1397,6 +1445,13 @@ pub(super) enum Event {
     PaneReopen(PaneTargetPayload),
     AgentTreeToggle(PaneTargetPayload),
     SessionTreeToggle(PaneTargetPayload),
+    SidebarLensSet(super::detail::SidebarLensPayload),
+    TaskViewSet(super::detail::TaskViewPayload),
+    TaskReveal(super::detail::TaskRevealPayload),
+    DetailOpen(super::detail::DetailOpenPayload),
+    DetailBack,
+    DetailClose,
+    DetailShow(super::detail::DetailShowPayload),
     RemoteControl(RemoteControlPayload),
     RemoteFileList(RemoteFileListPayload),
     FileOpen(FileOpenPayload),
@@ -1415,6 +1470,8 @@ pub(super) enum Event {
     DirCreate(ExplorerCreatePayload),
     PathRename(PathRenamePayload),
     PathMove(PathMovePayload),
+    PathCopy(PathCopyPayload),
+    PathImport(PathImportPayload),
     PathTrash(PathTrashPayload),
     UiStateUpdate(Box<UiStateUpdatePayload>),
     SessionsRefresh,
@@ -1638,6 +1695,13 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pane_reopen" => decode!(PaneTargetPayload, PaneReopen),
         "agent_tree_toggle" => decode!(PaneTargetPayload, AgentTreeToggle),
         "session_tree_toggle" => decode!(PaneTargetPayload, SessionTreeToggle),
+        "sidebar_lens_set" => decode!(super::detail::SidebarLensPayload, SidebarLensSet),
+        "task_view_set" => decode!(super::detail::TaskViewPayload, TaskViewSet),
+        "task_reveal" => decode!(super::detail::TaskRevealPayload, TaskReveal),
+        "detail_open" => decode!(super::detail::DetailOpenPayload, DetailOpen),
+        "detail_back" => Ok(Event::DetailBack),
+        "detail_close" => Ok(Event::DetailClose),
+        "detail_show" => decode!(super::detail::DetailShowPayload, DetailShow),
         "remote_control" => decode!(RemoteControlPayload, RemoteControl),
         "remote_file_list" => decode!(RemoteFileListPayload, RemoteFileList),
         "file_open" => decode!(FileOpenPayload, FileOpen),
@@ -1653,6 +1717,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "dir_create" => decode!(ExplorerCreatePayload, DirCreate),
         "path_rename" => decode!(PathRenamePayload, PathRename),
         "path_move" => decode!(PathMovePayload, PathMove),
+        "path_copy" => decode!(PathCopyPayload, PathCopy),
+        "path_import" => decode!(PathImportPayload, PathImport),
         "path_trash" => decode!(PathTrashPayload, PathTrash),
         "ui_state_update" => serde_json::from_value::<Box<UiStateUpdatePayload>>(payload)
             .map(Event::UiStateUpdate)
@@ -3368,6 +3434,31 @@ impl Runtime {
                     destination: payload.destination,
                 },
             }),
+            Event::PathCopy(payload) => self.request_explorer_change(ExplorerRequest {
+                root: payload.root,
+                device: payload.device_id,
+                change: ExplorerChange::Copy {
+                    path: payload.path,
+                    destination: payload.destination,
+                },
+            }),
+            Event::PathImport(payload) => self.request_explorer_change(ExplorerRequest {
+                root: payload.root,
+                device: payload.device_id,
+                change: ExplorerChange::Import {
+                    destination: payload.destination,
+                    items: payload
+                        .items
+                        .into_iter()
+                        .map(|item| files::ImportItem {
+                            path: item.path,
+                            directory: item.directory,
+                            staged: item.staged,
+                            data: String::new(),
+                        })
+                        .collect(),
+                },
+            }),
             Event::PathTrash(payload) => self.request_explorer_change(ExplorerRequest {
                 root: payload.root,
                 device: payload.device_id,
@@ -3572,17 +3663,26 @@ impl Runtime {
                 changed
             }
             Event::GithubRequest(payload) => {
-                let project = self
-                    .snapshot
-                    .navigator
-                    .workspaces
-                    .iter()
-                    .find(|workspace| {
-                        workspace.id == payload.workspace_id
-                            && workspace.is_git
-                            && workspace.remote_target_id.is_none()
-                    })
-                    .map(|workspace| workspace.path.clone());
+                if payload.look && !payload.refresh {
+                    // A look changes nothing the operator sees, and a look at
+                    // a project that is not the one in front, or not read,
+                    // is not an error.
+                    if let Some(project) = self.local_git_project_path(&payload.workspace_id)
+                        && self
+                            .focused_local_checkout()
+                            .is_some_and(|(workspace, _)| workspace.path == project)
+                        && self.read_when_looked_at(&project, std::time::Instant::now())
+                            == super::projects::LookRead::Asked
+                    {
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "github",
+                            "kind": "read.looked_at",
+                            "project": project,
+                        }));
+                    }
+                    return false;
+                }
+                let project = self.local_git_project_path(&payload.workspace_id);
                 if project.is_none()
                     && let Some((Some(node), workspace)) = self.issue_project(&payload.workspace_id)
                     && workspace.is_git
@@ -3891,6 +3991,13 @@ impl Runtime {
             }
             Event::AgentTreeToggle(payload) => self.toggle_agent_tree(payload.pane_id, false),
             Event::SessionTreeToggle(payload) => self.toggle_agent_tree(payload.pane_id, true),
+            Event::SidebarLensSet(payload) => self.set_sidebar_lens(payload),
+            Event::TaskViewSet(payload) => self.set_task_view(payload),
+            Event::TaskReveal(payload) => self.reveal_task(payload),
+            Event::DetailOpen(payload) => self.open_detail(payload.item),
+            Event::DetailBack => self.detail_back(),
+            Event::DetailClose => self.close_detail(),
+            Event::DetailShow(payload) => self.show_detail(payload.shown),
             Event::UiStateUpdate(payload) => {
                 let payload = *payload;
                 if let Some(visible) = payload.usage_window_visible {
@@ -3937,6 +4044,8 @@ impl Runtime {
                     session_open_folds: current.session_open_folds,
                     // The secretary belongs to `factory_secretary_set`.
                     factory_secretary_pane: current.factory_secretary_pane,
+                    // Recorded by the core when a Rename lands.
+                    operator_tab_names: current.operator_tab_names,
                     expanded_paths: payload.expanded_paths,
                     device_expanded_paths: payload
                         .device_expanded_paths
@@ -3955,6 +4064,11 @@ impl Runtime {
                     project_settings_writes: current.project_settings_writes,
                     expanded_agent_pane_ids: current.expanded_agent_pane_ids,
                     sessions_expanded_agent_pane_ids: current.sessions_expanded_agent_pane_ids,
+                    // Each has its own event (`sidebar_lens_set`,
+                    // `task_view_set`, `detail_*`).
+                    sidebar_lens: current.sidebar_lens,
+                    task_view: current.task_view,
+                    detail: current.detail,
                     selected_path: payload.selected_path,
                     // The keyboard's pane, checkout and device are the
                     // core's: it moves them on the event that asks for the

@@ -5,7 +5,7 @@ import { labelAgent, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { openOverview } from "./overview-entry";
 import { FIRST_GOAL } from "./session-work-fixture";
-import { enterWorkspace } from "./wire";
+import { enterWorkspace, showTool } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -37,23 +37,27 @@ test("@platform a folder's memo goes into its backlog from the input, opens in t
   } finally { daemon?.stop(); herdr.stop(); }
 });
 
-test("a record shown in the lane stays through pin, unpin and a window too narrow to dock the lane", async ({ page }) => {
+test("a record shown in the lane's 보기 slot stays through pin, unpin and a window too narrow to dock the lane", async ({ page }) => {
   const herdr = await startHerdr();
   let daemon: Daemon | undefined;
   try {
     daemon = await startHided(herdr, "record-remount");
+    await page.setViewportSize({ width: 1600, height: 900 });
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     const pane = herdr.panes[0]!;
     labelAgent(herdr, pane, { task: FIRST_GOAL, at: Date.now(), end: "done" });
+    // The lane has a tool to pin, then the record takes its slot (PRD sidebar-task-lens B15).
+    await showTool(page, "files");
     await page.locator(`[data-pane-view="${pane}"] [data-pane-record]`).click({ timeout: 45_000 });
-    const record = page.locator('[data-session-record="lane"]');
+    const record = page.locator('aside[data-lane="detail"] [data-session-record="lane"]');
     await expect(record).toBeVisible({ timeout: 30_000 });
     // Each change redraws the lane in another frame; the record it shows is not left by that.
-    const pin = page.locator("[data-lane-pin]");
-    for (const state of ["on", "off"]) {
-      await pin.click();
-      await expect(pin).toHaveAttribute("data-lane-pin", new RegExp(state === "on" ? "on|narrow" : "off"));
+    const mode = page.locator("[data-workspace-screen]");
+    for (const state of ["docked", "overlay"]) {
+      await page.locator("[data-lane-more]").click();
+      await page.locator('[data-lane-menu-item="pin"]').click();
+      await expect(mode).toHaveAttribute("data-lane-mode", state);
       await expect(record).toBeVisible();
     }
     const size = page.viewportSize()!;
@@ -82,11 +86,11 @@ test("@platform an agent pane's head opens its session record in the lane and le
     await expect(button).toBeVisible({ timeout: 45_000 });
     const terminal = page.locator(`[data-pane-view="${pane}"] .xterm-helper-textarea`);
     await terminal.focus();
-    // B22: the lane opens on the record and the terminal keeps the keyboard.
+    // B22: the lane opens on the record in its 보기 slot and the terminal keeps the keyboard.
     await button.click();
-    await expect(page.locator('[data-session-record="lane"]')).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('aside[data-lane="detail"] [data-session-record="lane"]')).toBeVisible({ timeout: 30_000 });
     await expect(terminal).toBeFocused();
-    // B23: the same button again goes back to the Sessions list.
+    // B23: the same button again puts the slot away (PRD sidebar-task-lens B15).
     await button.click();
     await expect(page.locator('[data-session-record="lane"]')).toHaveCount(0);
     await expect(terminal).toBeFocused();

@@ -813,3 +813,135 @@ describe("scoped desktop CDP public boundary", () => {
     expect(await exhausted).toBe(1013);
   });
 });
+
+describe("comment capability on a local file page", () => {
+  /** The fixture's page area plus one page of the file partition, as `Browser.cdpPages` lists it. */
+  async function withLocalPage() {
+    const set = await fixture();
+    const local: CdpPage & { contents: { debugger: ElectronDebugger } } = { ...electronPage(21, "d9"), local: true };
+    local.contents.getURL = () => "file:///checkout/index.html";
+    set.pages.push(local);
+    const connect = async (body: Json) => {
+      const response = await fetch(`${set.address.endpoint}/connect`, { method: "POST", headers: { authorization: `Bearer ${set.address.token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+      return { status: response.status, body: await response.json() as { browser_ws_url?: string; cdp_http_url?: string } };
+    };
+    const scope = { workspace: local.workspace, area_id: "a1", display_id: "d9" };
+    return { ...set, local, connect, scope };
+  }
+  const reached = (debug: ElectronDebugger) => vi.spyOn(debug, "sendCommand");
+
+  it("serves the comment session's own commands on a file page and nothing past them", async () => {
+    const { local, connect, scope, client } = await withLocalPage();
+    const answer = await connect({ ...scope, purpose: "comment" });
+    expect(answer.status).toBe(200);
+    const sent = reached(local.contents.debugger);
+    const comment = await client(answer.body.browser_ws_url!);
+    const targets = await comment.call("Target.getTargets");
+    expect((targets.result as { targetInfos: Json[] }).targetInfos.map((info) => info.targetId)).toContain("page-21");
+    const session = await attach(comment, "page-21");
+    const allowed: [string, Json][] = [
+      ["Page.enable", {}], ["Runtime.enable", {}], ["Runtime.addBinding", { name: "__hideCommentSend", executionContextName: "hide-comment" }],
+      ["Page.getFrameTree", {}], ["Page.createIsolatedWorld", { frameId: "page-21", worldName: "hide-comment" }],
+      ["Runtime.evaluate", { expression: "1", contextId: 42 }], ["Page.captureScreenshot", { format: "png" }],
+    ];
+    for (const [method, params] of allowed) expect((await comment.call(method, params, session)).error, method).toBeUndefined();
+    expect(sent.mock.calls.map(([method]) => method)).toEqual(expect.arrayContaining(["Page.enable", "Runtime.evaluate", "Page.captureScreenshot"]));
+  });
+
+  it("refuses every other command for the comment purpose before it reaches the page", async () => {
+    const { local, connect, scope, client } = await withLocalPage();
+    const comment = await client((await connect({ ...scope, purpose: "comment" })).body.browser_ws_url!);
+    const session = await attach(comment, "page-21");
+    const sent = reached(local.contents.debugger);
+    const refused: [string, Json][] = [
+      ["Page.navigate", { url: "file:///outside/private.txt" }], ["Page.navigate", { url: "https://example.test/" }], ["Page.reload", {}],
+      ["Fetch.enable", {}], ["Network.enable", {}], ["Network.loadNetworkResource", { url: "file:///outside/private.txt" }],
+      ["Input.dispatchMouseEvent", { type: "mousePressed", x: 1, y: 1 }], ["Input.dispatchKeyEvent", { type: "keyDown" }],
+      ["DOM.getDocument", {}], ["DOM.setFileInputFiles", { files: ["/etc/hosts"] }], ["Page.setBypassCSP", { enabled: true }],
+      ["Page.setDownloadBehavior", { behavior: "allow" }], ["Page.close", {}], ["Page.bringToFront", {}],
+      ["Emulation.setScriptExecutionDisabled", { value: true }], ["Debugger.enable", {}],
+      ["Target.createTarget", { url: "about:blank" }], ["Target.closeTarget", { targetId: "page-21" }], ["Target.setAutoAttach", { autoAttach: true, flatten: true }],
+      ["Target.sendMessageToTarget", { sessionId: session, message: JSON.stringify({ id: 1, method: "Page.navigate", params: { url: "file:///x" } }) }],
+      ["Browser.getVersion", {}],
+      // The page's own world is never the comment's: an evaluation names its isolated one.
+      ["Runtime.evaluate", { expression: "document.title" }],
+      ["Runtime.evaluate", { expression: "document.title", contextId: 1 }],
+      // Nor may a command of the allowlist carry more than the session sends.
+      ["Page.createIsolatedWorld", { frameId: "page-21", worldName: "x", grantUniveralAccess: true }],
+      ["Runtime.evaluate", { expression: "1", contextId: 42, userGesture: true }], ["Runtime.evaluate", { expression: "1", contextId: 42, includeCommandLineAPI: true }],
+      ["Runtime.addBinding", { name: "__hideCommentSend" }],
+    ];
+    for (const [method, params] of refused) {
+      const reply = await comment.call(method, params, method.startsWith("Target.") || method.startsWith("Browser.") ? undefined : session);
+      expect(reply.error, `${method} ${JSON.stringify(params)}`).toBeDefined();
+    }
+    expect(sent).not.toHaveBeenCalled();
+  });
+
+  it("passes the page events the comment session reads and holds back the rest", async () => {
+    const { local, connect, scope, client } = await withLocalPage();
+    const comment = await client((await connect({ ...scope, purpose: "comment" })).body.browser_ws_url!);
+    const session = await attach(comment, "page-21");
+    for (const method of ["Runtime.consoleAPICalled", "Network.requestWillBeSent", "Page.frameNavigated", "Runtime.bindingCalled", "Page.navigatedWithinDocument", "Inspector.detached"]) {
+      local.contents.debugger.emit("message", {}, method, { frame: { id: "x" } }, "");
+    }
+    await vi.waitFor(() => expect(comment.events.map((event) => event.method)).toContain("Inspector.detached"));
+    // The gateway's own attach notice is not a page event.
+    const page = comment.events.filter((event) => event.method !== "Target.attachedToTarget");
+    expect(page.map((event) => event.method)).toEqual(["Page.frameNavigated", "Runtime.bindingCalled", "Page.navigatedWithinDocument", "Inspector.detached"]);
+    expect(page.every((event) => event.sessionId === session)).toBe(true);
+  });
+
+  it("keeps a file page away from an agent: no capability, no listing, no attach", async () => {
+    const { local, address, connect, scope, capability, client } = await withLocalPage();
+    // An agent's connect on the display keeps today's refusal, with or without a purpose it does not hold.
+    expect((await connect(scope)).status).toBe(409);
+    const cap = await capability();
+    const inventory = await (await fetch(`${cap.cdp_http_url}/json/list`)).json() as Json[];
+    expect(inventory.map((page) => page.id)).not.toContain("page-21");
+    const agent = await client(cap.browser_ws_url);
+    const targets = await agent.call("Target.getTargets");
+    expect(JSON.stringify(targets.result)).not.toContain("page-21");
+    expect((await agent.call("Target.attachToTarget", { targetId: "page-21" })).error).toBeDefined();
+    expect(local.contents.debugger.isAttached()).toBe(false);
+    expect(address.token).toBeTruthy();
+  });
+
+  it("grants the comment purpose only for one display and only by the name comment", async () => {
+    const { connect, scope, capability } = await withLocalPage();
+    expect((await connect({ workspace: scope.workspace, area_id: "a1", purpose: "comment" })).status).toBe(400);
+    expect((await connect({ ...scope, purpose: "agent" })).status).toBe(400);
+    expect((await connect({ ...scope, purpose: ["comment"] })).status).toBe(400);
+    // A comment capability is its own: an agent's capability for the same display on a web page is another path.
+    const web = { workspace: scope.workspace, area_id: "a1", display_id: "d1" };
+    const comment = await connect({ ...web, purpose: "comment" });
+    const agent = await capability(web);
+    expect(comment.status).toBe(200);
+    expect(comment.body.browser_ws_url).not.toBe(agent.browser_ws_url);
+  });
+
+  it("has no discovery, and a web page held for a comment is bounded the same way", async () => {
+    const { connect, scope, client, first } = await withLocalPage();
+    const answer = await connect({ ...scope, purpose: "comment" });
+    expect((await fetch(`${answer.body.cdp_http_url}/json/list`)).status).toBe(404);
+    expect((await fetch(`${answer.body.cdp_http_url}/json/version`)).status).toBe(404);
+    const web = await connect({ workspace: scope.workspace, area_id: "a1", display_id: first.id, purpose: "comment" });
+    const comment = await client(web.body.browser_ws_url!);
+    const session = await attach(comment, "page-11");
+    expect((await comment.call("Page.navigate", { url: "https://example.test/" }, session)).error).toBeDefined();
+    expect((await comment.call("Page.enable", {}, session)).error).toBeUndefined();
+  });
+
+  it("ends a comment lease when the page stops being a file page, and when its authority goes", async () => {
+    const { local, connect, scope, client, changed, attached, authority } = await withLocalPage();
+    const comment = await client((await connect({ ...scope, purpose: "comment" })).body.browser_ws_url!);
+    await attach(comment, "page-21");
+    const closed = new Promise<void>((resolve) => comment.socket.once("close", () => resolve()));
+    local.contents.getURL = () => "https://elsewhere.example/";
+    changed();
+    await closed;
+    expect(attached.get("d9")).toBe(false);
+    authority(false);
+    expect((await connect({ ...scope, purpose: "comment" })).status).toBe(409);
+  });
+});

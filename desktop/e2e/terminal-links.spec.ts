@@ -355,7 +355,8 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
 
 // Its own spec because the links journey is at its size ceiling: the keyboard
 // goes with the file a link opens, so ⌘W closes that file and never the pane
-// that printed the link.
+// that printed the link; a folder a link reveals opens nothing to type in,
+// so the keyboard stays in the pane.
 test("a file a terminal link opens takes the keyboard, so Command W closes the file and the pane stays", async () => {
   const checkout = path.join(fs.realpathSync(herdr.root), "fixture");
   fs.mkdirSync(path.join(checkout, "src"), { recursive: true });
@@ -368,7 +369,15 @@ test("a file a terminal link opens takes the keyboard, so Command W closes the f
   await enterWorkspace(page, "fixture");
   const paneId = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneId()!);
   await dockFiles(page, paneId);
-  await print(page, paneId, ["file src/focus.ts", "FOCUS-END"], "FOCUS-END");
+  await print(page, paneId, ["folder ./src", "file src/focus.ts", "FOCUS-END"], "FOCUS-END");
+
+  const folder = await pointOf(page, paneId, "./src", { offset: 1 });
+  await hoverLink(page, paneId, folder);
+  await page.mouse.click(folder.x, folder.y);
+  await expect(page.locator(`[data-explorer-row="${path.join(checkout, "src")}"][data-selected="true"]`)).toBeVisible({ timeout: 20_000 });
+  // Two frames, so a keyboard move the reveal set off would have run before the pane is read.
+  await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+  await expect(page.locator(`[data-pane-view="${paneId}"] .xterm-helper-textarea`)).toBeFocused();
 
   const point = await pointOf(page, paneId, "src/focus.ts", { offset: 2 });
   await hoverLink(page, paneId, point);
@@ -380,6 +389,47 @@ test("a file a terminal link opens takes the keyboard, so Command W closes the f
   await page.keyboard.press("Meta+KeyW");
   await expect(viewTab(page, "focus.ts")).toHaveCount(0);
   await expect(page.locator(`[data-pane-view="${paneId}"]`)).toBeVisible();
+});
+
+/** Records each page the shell asks the desktop host to give the keyboard to, by display id. */
+async function recordPageFocus(): Promise<() => Promise<string[]>> {
+  await app!.evaluate(({ ipcMain }) => {
+    const asked: string[] = [];
+    (globalThis as { pageFocus?: string[] }).pageFocus = asked;
+    ipcMain.on("hide:browser-command", (_event, target: unknown, name: unknown) => {
+      if (name === "focus") asked.push(String((target as { id?: unknown } | null)?.id));
+    });
+  });
+  return () => app!.evaluate(() => (globalThis as { pageFocus?: string[] }).pageFocus ?? []);
+}
+
+// The keyboard goes with a page a link opens, a URL's or an HTML file's, as it
+// does with a file: the shell asks the desktop host to focus the page the core
+// answered with. Whether macOS then hands that page the keys is the host's,
+// which needs the window in front (close-policy.spec.ts, @needs-focus).
+test("a page a terminal link opens, a URL's or an HTML file's, is the one the keyboard is handed to", async () => {
+  const checkout = path.join(fs.realpathSync(herdr.root), "fixture");
+  fs.mkdirSync(path.join(checkout, "src"), { recursive: true });
+  fs.writeFileSync(path.join(checkout, "src", "page.html"), "<!doctype html><title>Linked HTML</title><h1>Linked HTML</h1>\n");
+  ({ app } = await launch(run.env));
+  await fitWindow(app, { width: 1024, height: 681 });
+  const page = await shellPage(app);
+  await withProbe(page);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.4));
+  await enterWorkspace(page, "fixture");
+  const focused = await recordPageFocus();
+  const paneId = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneId()!);
+  await dockFiles(page, paneId);
+  await print(page, paneId, [`url ${origin}/a.html`, "html src/page.html", "PAGES-END"], "PAGES-END");
+
+  for (const [text, title] of [[`${origin}/a.html`, "Page A"], ["src/page.html", "Linked HTML"]] as const) {
+    const point = await pointOf(page, paneId, text, { offset: 2 });
+    await hoverLink(page, paneId, point);
+    await page.mouse.click(point.x, point.y);
+    await expect(viewTab(page, title)).toBeVisible({ timeout: 20_000 });
+    const display = await viewTab(page, title).evaluate((tab) => (tab as HTMLElement).dataset.display ?? "");
+    await expect.poll(focused, { message: `the keyboard is handed to ${title}` }).toContain(display);
+  }
 });
 
 // Its own spec because the links journey is at its size ceiling: a file of
@@ -412,6 +462,8 @@ test("an image of another checkout opens in the Workspace in front and its check
     await page.mouse.click(point.x, point.y);
     await expect(viewTab(page, "shot.png")).toBeVisible({ timeout: 20_000 });
     await expect(page.locator('[data-viewer="image"] img')).toBeVisible();
+    // The keyboard goes with the image into the Workspace in front.
+    await expect(viewTab(page, "shot.png")).toBeFocused();
     // The pane that printed the link is still the one on screen.
     await expect(page.locator(`[data-pane-view="${paneId}"]`)).toBeVisible();
     expect(sent.get("file_open")).toBe(1);

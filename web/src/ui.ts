@@ -12,12 +12,12 @@ import type { CycleItem } from "./recent";
 import type { NumberedFamily } from "./shortcuts";
 import type { ViewFocusRequest, ViewWorkspace } from "./viewLayout";
 import type { KeyboardOwner } from "./viewFocus";
-import { NO_CALLS_SEEN, type CallsSeen, type LaneMode, type Tool } from "./workspace";
+import { NO_CALLS_SEEN, type CallsSeen, type LaneMode, type LaneTool } from "./workspace";
 
 export type { ViewFocusRequest } from "./viewLayout";
 
 /** What the Workspace screen draws of the lane now, which the rail, the chords and the close shortcut read. */
-export type DrawnLane = { mode: LaneMode; tool: Tool | null };
+export type DrawnLane = { mode: LaneMode; tool: LaneTool | null };
 
 /**
  * A close the operator is being asked about. The sheet holds only what is
@@ -77,19 +77,16 @@ export type FactoryPlace = {
 export const FACTORY_ENTRY: FactoryPlace = { tab: "line", factory: null, column: null, cancelled: false, task: null, focus: null, create: false };
 
 /**
- * The Overview's tabs, left to right (PRD overview-device-tasks D-03, D-29):
- * the device's tasks, its backlog, its projects, and Usage at the end.
+ * The Overview's tabs, left to right (PRD overview-device-tasks D-03, D-29;
+ * PRD sidebar-task-lens D-20): the device's backlog, its projects, and Usage
+ * at the end. The tasks are the sidebar's 태스크 list.
  */
-export type MainView = "tasks" | "backlog" | "projects" | "usage";
+export type MainView = "backlog" | "projects" | "usage";
 
-export const MAIN_VIEWS: readonly MainView[] = ["tasks", "backlog", "projects", "usage"];
+export const MAIN_VIEWS: readonly MainView[] = ["backlog", "projects", "usage"];
 
-/** The Tasks chips (B11). */
-export type TaskFilter = "all" | "needs_you" | "working";
-
-/** The panel open beside an Overview tab: a task's record (B16), a backlog item (B31) or a project (B57). */
+/** The panel open beside an Overview tab: a session's record at Home (B16; PRD sidebar-task-lens B17), a backlog item (B31) or a project (B57). */
 export type OverviewPanel =
-  | { kind: "task"; root: string; /** The root's device, when the card came from another device's dashed entry (B14). */ from?: string; /** A member whose record opens in place of the root's (B59). */ focus?: string }
   | { kind: "record"; session: import("./snapshot").WorkSession }
   | { kind: "item"; workspaceId: string; taskKey: string }
   | { kind: "project"; workspaceId: string };
@@ -102,20 +99,18 @@ export type OverviewPanel =
 export type OverviewPlace = {
   /** The device the Overview shows; null follows the rail's front device (D-02, D-17). */
   deviceId: string | null;
-  /** Tasks and backlog show this project alone (B5); cleared when the device changes. */
+  /** The backlog shows this project alone (B5); cleared when the device changes. */
   projectId: string | null;
   panel: OverviewPanel | null;
-  taskFilter: TaskFilter;
-  taskQuery: string;
   backlogQuery: string;
   backlogLabels: readonly string[];
   /** The Projects rows stand by disk size (B52). */
   bySize: boolean;
-  /** Folds the operator opened, by key (`rest:<project>`, `cleanup:<project>`, `more:<project>`, `quiet`). */
+  /** Folds the operator opened, by key (`more:<project>`, `quiet`). */
   open: readonly string[];
 };
 
-export const OVERVIEW_ENTRY: OverviewPlace = { deviceId: null, projectId: null, panel: null, taskFilter: "all", taskQuery: "", backlogQuery: "", backlogLabels: [], bySize: false, open: [] };
+export const OVERVIEW_ENTRY: OverviewPlace = { deviceId: null, projectId: null, panel: null, backlogQuery: "", backlogLabels: [], bySize: false, open: [] };
 
 /** `folds` with `fold` opened, or closed again when it was open. */
 export function toggledFold(folds: readonly string[], fold: string): string[] {
@@ -174,6 +169,18 @@ export type ExplorerDraft = {
   path: string;
   initial: string;
 };
+
+/** What ⌘X or ⌘C took in the Explorer, until a paste (a cut) or the next cut or copy replaces it. It names the checkout it came from, because a paste works inside one checkout only. */
+export type ExplorerClipboard = {
+  mode: "copy" | "cut";
+  path: string;
+  isDirectory: boolean;
+  root: string;
+  device: string;
+};
+
+/** A failure the page itself found - a paste across checkouts, a drop past a cap or one hided refused - drawn in the Explorer's failure line under `path`, a folder. The core's own failures arrive in `explorer_operation`. */
+export type ExplorerNotice = { path: string; message: string };
 
 /** The trash confirmation: what is about to move, and the row the tree selects
  * once it is gone. */
@@ -237,12 +244,14 @@ type UiStore = {
   laneCallsSeen: CallsSeen;
   /** What the Workspace screen draws of the lane now. */
   drawnLane: DrawnLane;
-  /** The session record the lane's Work tool draws now, set by that record itself; null when it draws none. */
-  drawnRecord: import("./snapshot").WorkSession | null;
   /** The Explorer's inline name field, or null. */
   explorerDraft: ExplorerDraft | null;
   /** The trash confirmation the Explorer is showing, or null. */
   pendingTrash: PendingTrash | null;
+  /** The item the Explorer cut or copied, or null. */
+  explorerClipboard: ExplorerClipboard | null;
+  /** The failure line the page itself drew for the Explorer, or null. */
+  explorerNotice: ExplorerNotice | null;
   overlay: Overlay;
   projectSettingsTarget: ProjectSettingsTarget | null;
   projectSettingsReturnFocus: HTMLElement | null;
@@ -258,9 +267,6 @@ type UiStore = {
   notice: Notice | null;
   /** The management dialog a sidebar menu opened, or null. */
   workspaceDialog: WorkspaceDialog | null;
-  sessionWorkTarget: import("./snapshot").WorkSession | null;
-  /** The records a child was opened from, nearest last: `← <parent>` goes back one (B20). */
-  sessionWorkTrail: readonly import("./snapshot").WorkSession[];
   /** The record's `내 말 보기` button is pressed: the operator's own words show under their tasks. Kept while the app runs, never stored. */
   sessionRecordWords: boolean;
   /**
@@ -317,9 +323,10 @@ type UiStore = {
   putLaneAway: () => void;
   setLaneExpanded: (expanded: boolean) => void;
   setDrawnLane: (drawn: DrawnLane) => void;
-  setDrawnRecord: (record: import("./snapshot").WorkSession | null) => void;
   setExplorerDraft: (draft: ExplorerDraft | null) => void;
   setPendingTrash: (trash: PendingTrash | null) => void;
+  setExplorerClipboard: (clipboard: ExplorerClipboard | null) => void;
+  setExplorerNotice: (notice: ExplorerNotice | null) => void;
   openOverlay: (overlay: Overlay) => void;
   /** The overlay ⌘K replaced when it opened, so Settings in front reads as a screen with nothing to relate to (PRD cmdk-navigation B7). */
   searchOver: Overlay;
@@ -336,7 +343,6 @@ type UiStore = {
   setCycle: (cycle: Cycle | null) => void;
   setNotice: (notice: Notice | null) => void;
   setWorkspaceDialog: (dialog: WorkspaceDialog | null) => void;
-  setSessionWorkTarget: (target: import("./snapshot").WorkSession | null, trail?: readonly import("./snapshot").WorkSession[]) => void;
   setSessionRecordWords: (on: boolean) => void;
   setWatchedTask: (id: number | null) => void;
   setFocusWhenListed: (paneId: string | null) => void;
@@ -363,7 +369,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
     const moved = patch.deviceId !== undefined && patch.deviceId !== current.deviceId;
     set({ overview: { ...current, ...(moved ? { projectId: null, panel: null, open: [] } : {}), ...patch } });
   },
-  mainView: "tasks",
+  mainView: "backlog",
   relation: null,
   sidebarFocus: 0,
   raisedOpen: [],
@@ -377,9 +383,10 @@ export const useUiStore = create<UiStore>((set, get) => ({
   laneExpanded: false,
   laneCallsSeen: NO_CALLS_SEEN,
   drawnLane: { mode: "closed", tool: null },
-  drawnRecord: null,
   explorerDraft: null,
   pendingTrash: null,
+  explorerClipboard: null,
+  explorerNotice: null,
   overlay: "none",
   projectSettingsTarget: null,
   projectSettingsReturnFocus: null,
@@ -390,8 +397,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
   cycle: null,
   notice: null,
   workspaceDialog: null,
-  sessionWorkTarget: null,
-  sessionWorkTrail: [],
   sessionRecordWords: false,
   watchedTask: null,
   focusWhenListed: null,
@@ -430,11 +435,10 @@ export const useUiStore = create<UiStore>((set, get) => ({
     const current = get().drawnLane;
     if (current.mode !== drawn.mode || current.tool !== drawn.tool) set({ drawnLane: drawn });
   },
-  setDrawnRecord: (drawnRecord) => {
-    if (get().drawnRecord !== drawnRecord) set({ drawnRecord });
-  },
   setExplorerDraft: (explorerDraft) => set({ explorerDraft }),
   setPendingTrash: (pendingTrash) => set({ pendingTrash }),
+  setExplorerClipboard: (explorerClipboard) => set({ explorerClipboard }),
+  setExplorerNotice: (explorerNotice) => set({ explorerNotice }),
   searchOver: "none",
   openOverlay: (overlay) => set((state) => (overlay === "search" ? { overlay, searchOver: state.overlay, searchReturnFocus: document.activeElement instanceof HTMLElement ? document.activeElement : null } : { overlay })),
   closeOverlay: (overlay) => {
@@ -450,7 +454,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setCycle: (cycle) => set({ cycle }),
   setNotice: (notice) => set({ notice }),
   setWorkspaceDialog: (workspaceDialog) => set({ workspaceDialog }),
-  setSessionWorkTarget: (sessionWorkTarget, trail = []) => set({ sessionWorkTarget, sessionWorkTrail: sessionWorkTarget ? trail : [] }),
   setSessionRecordWords: (sessionRecordWords) => set({ sessionRecordWords }),
   setWatchedTask: (watchedTask) => set({ watchedTask }),
   setFocusWhenListed: (focusWhenListed) => set({ focusWhenListed }),

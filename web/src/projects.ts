@@ -145,15 +145,6 @@ export function folderCheckout(workspace: Workspace): Checkout | null {
 }
 
 /**
- * A project's status badge: every checkout's marks added up, so the project
- * row says what its checkouts' rows would show (docs/status-model.md, The
- * status badge).
- */
-export function projectMarks(workspace: Workspace): MarkCounts {
-  return workspace.agent_scope.marks;
-}
-
-/**
  * The pull request a checkout's row speaks for: a stale refresh keeps the
  * last known one (its glyph muted), an unavailable answer that is not stale
  * shows none, so the row falls back to its branch.
@@ -291,7 +282,7 @@ export function checkoutCard(workspace: Workspace, checkout: Checkout, nowMs: nu
 }
 
 /**
- * The PR card of a pull request on its own, for a PRs lens row whose branch
+ * The PR card of a pull request on its own, for a PRs tool row whose branch
  * has no checkout here (PRD overview-lenses-prs B7): the same header and
  * Review and Checks rows the checkout card draws, and the branch.
  */

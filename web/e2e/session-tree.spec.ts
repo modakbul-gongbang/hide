@@ -1,7 +1,7 @@
-// The Sessions tree past one level on a real isolated Herdr and daemon: every
-// opened row opens its children, the indent stops at the third level, a child
-// in another checkout than its parent names that branch, and the row of the
-// focused pane is selected (docs/UI_BEHAVIOR.md, Sessions: the task list).
+// The sidebar 태스크 list's tree past one level on a real isolated Herdr and
+// daemon: every opened row opens its children, the indent stops at the third
+// level, a child in another checkout than its parent names that branch, and
+// the row of the focused pane is selected (PRD sidebar-task-lens B10, B11, B13).
 import { expect, test } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -9,7 +9,7 @@ import path from "node:path";
 import { declareParent, labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { measure } from "./session-panel-geometry.mjs";
-import { chooseTheme, screenshot, showTool } from "./wire";
+import { chooseTheme, screenshot, showTasks } from "./wire";
 
 test.describe.configure({ timeout: 240_000 });
 test.use({ actionTimeout: 15_000 });
@@ -39,7 +39,7 @@ async function agentAt(herdr: HerdrFixture, cwd: string, name: string): Promise<
   return pane;
 }
 
-test("Sessions opens a five-level tree, stops the indent at three and names a child's other checkout", async ({ page }) => {
+test("the 태스크 list opens a five-level tree, stops the indent at three and names a child's other checkout", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -66,13 +66,12 @@ test("Sessions opens a five-level tree, stops the indent at three and names a ch
     daemon = await startHided(herdr, "session-tree");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator(`nav[data-sidebar] [data-agent-open="${root}"]`).first().click();
-    await showTool(page, "work");
-    const panel = page.locator("[data-session-panel]");
-    const childRow = (pane: string) => panel.locator(`[data-session-child="${pane}"]`);
-    const open = (pane: string) => panel.locator(`[data-session-chevron="${pane}"]`).click();
+    const panel = await showTasks(page);
+    const childRow = (pane: string) => panel.locator(`[data-task-child="${pane}"]`);
+    const open = (pane: string) => panel.locator(`[data-task-chevron="${pane}"]`).click();
     // Four working descendants draw no `● N`: the root's row stands alone until it is opened.
-    await expect(panel.locator(`[data-session-row="${root}"]`)).toBeVisible({ timeout: 30_000 });
-    await expect(panel.locator(`[data-session-row="${root}"] [data-descendant-mark]`)).toHaveCount(0);
+    await expect(panel.locator(`[data-task-row="${root}"]`)).toBeVisible({ timeout: 30_000 });
+    await expect(panel.locator(`[data-task-row="${root}"] [data-descendant-mark]`)).toHaveCount(0);
 
     // Each chevron opens one more level; nothing below a closed row is drawn.
     await open(root);
@@ -81,7 +80,7 @@ test("Sessions opens a five-level tree, stops the indent at three and names a ch
     await expect(childRow(grandchild)).toHaveCount(0);
     for (const pane of [child, grandchild, deep]) await open(pane);
     await expect(childRow(deeper)).toContainText("넷째 단계 로그 확인", { timeout: 30_000 });
-    expect(await panel.locator("[data-session-child]").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-depth")))).toEqual(["1", "2", "3", "4"]);
+    expect(await panel.locator("[data-task-child]").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-depth")))).toEqual(["1", "2", "3", "4"]);
 
     // The fourth level keeps the third level's column: as many rail columns, and it hangs from the rail above.
     const columns = (pane: string) => childRow(pane).locator("[data-tree-rails] > span").count();
@@ -89,25 +88,23 @@ test("Sessions opens a five-level tree, stops the indent at three and names a ch
     await expect(childRow(deeper).locator("[data-tree-pass]")).toHaveCount(1);
     await expect(childRow(deep).locator("[data-tree-elbow]")).toHaveCount(1);
 
-    // A shows the full branch only where the checkout differs from the parent's.
-    await expect(childRow(child).locator(`[data-session-branch="${child}"]`)).toHaveText("prd/child");
-    await expect(childRow(child).locator(`[data-session-branch="${child}"]`)).toHaveAttribute("title", new RegExp(`^prd/child\\n.*repo-child$`));
-    await expect(childRow(grandchild).locator("[data-session-branch]")).toHaveCount(0);
-    await expect(childRow(deep).locator(`[data-session-branch="${deep}"]`)).toHaveText("fix/deep-fixture");
-    await expect(childRow(deeper).locator("[data-session-branch]")).toHaveCount(0);
+    // A child shows the full branch only where the checkout differs from the parent's.
+    await expect(childRow(child).locator(`[data-task-branch="${child}"]`)).toHaveText("prd/child");
+    await expect(childRow(child).locator(`[data-task-branch="${child}"]`)).toHaveAttribute("title", new RegExp(`^prd/child\\n.*repo-child$`));
+    await expect(childRow(grandchild).locator("[data-task-branch]")).toHaveCount(0);
+    await expect(childRow(deep).locator(`[data-task-branch="${deep}"]`)).toHaveText("fix/deep-fixture");
+    await expect(childRow(deeper).locator("[data-task-branch]")).toHaveCount(0);
     // Branch, label and facts stay inside each row, with no part over another.
     expect(await measure(page)).toEqual({ partProblems: [], rowsFit: [], overflow: [] });
     for (const theme of ["light", "dark"] as const) {
       await chooseTheme(page, theme);
-      await screenshot(page, `session-tree-${theme}`);
+      await screenshot(page, `task-tree-${theme}`);
     }
 
     // The focused pane's row is selected; folded away, its nearest drawn ancestor takes the selection.
-    await childRow(deeper).locator('[data-session-focus="row"]').click();
+    await childRow(deeper).locator('[data-task-focus="row"]').click();
     await expect(page.locator(`[data-pane-view="${deeper}"]`)).toHaveAttribute("data-focused", "true");
-    // The child's checkout is a Workspace seen for the first time, with its lane closed.
-    await showTool(page, "work");
-    await expect(childRow(deeper).locator('[data-session-focus="row"]')).toHaveAttribute("aria-current", "true");
+    await expect(childRow(deeper).locator('[data-task-focus="row"]')).toHaveAttribute("aria-current", "true");
     await open(grandchild);
     await expect(childRow(deeper)).toHaveCount(0);
     await expect(childRow(grandchild)).toHaveAttribute("data-selected", "true");

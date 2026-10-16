@@ -4,6 +4,7 @@
 // that fails is dropped whole (issue 155).
 
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import type { BrowserCommand, BrowserPlacement, BrowserRect, BrowserSync } from "../../../web/src/host";
 
 /** A Workspace holds at most this many displays (`MAX_VIEW_DISPLAYS` is 32);
@@ -237,6 +238,85 @@ export function remoteRequest(route: { url: string; source_url: string }, raw: s
     return { redirectURL: address.href };
   } catch {
     return { cancel: true };
+  }
+}
+
+/**
+ * Whether `hostname` (as a URL spells it, an IPv6 literal in brackets) names
+ * this machine or a private network: loopback, link-local, private and
+ * shared ranges, and the names a resolver answers from the local network
+ * rather than the internet (`localhost`, `.local`, and a name with no dot).
+ */
+export function isLocalNetworkHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  if (host === "" || host === "localhost" || /\.(localhost|local|localdomain|internal|lan|home\.arpa|intranet)$/.test(host)) return true;
+  const v4 = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host);
+  if (v4) return privateV4(v4.slice(1).map(Number) as [number, number, number, number]);
+  if (host.startsWith("[")) return privateV6(host.slice(1, -1));
+  // A name with no dot is the local network's (a router, a NAS, a build host).
+  return !host.includes(".");
+}
+
+function privateV4([a, b, c]: [number, number, number, number]): boolean {
+  return a === 0 || a === 10 || a === 127 || a >= 224
+    || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168) || (a === 192 && b === 0 && c === 0) || (a === 198 && (b === 18 || b === 19));
+}
+
+function privateV6(address: string): boolean {
+  const groups = expandV6(address);
+  if (!groups) return true;
+  const [g0, g1, , , , g5, g6, g7] = groups as [number, number, number, number, number, number, number, number];
+  if (groups.every((group) => group === 0) || (groups.slice(0, 7).every((group) => group === 0) && g7 === 1)) return true;
+  if ((g0 & 0xffc0) === 0xfe80 || (g0 & 0xfe00) === 0xfc00 || (g0 & 0xffc0) === 0xfec0 || (g0 & 0xff00) === 0xff00) return true;
+  // IPv4-mapped (::ffff:a.b.c.d) and the NAT64 prefix carry an IPv4 address in their last 32 bits.
+  const embedded = groups.slice(0, 5).every((group) => group === 0) && g5 === 0xffff || (g0 === 0x64 && g1 === 0xff9b);
+  return embedded && privateV4([g6 >> 8, g6 & 255, g7 >> 8, g7 & 255]);
+}
+
+/** Eight 16-bit groups of an IPv6 literal, or null when it does not parse. */
+function expandV6(address: string): number[] | null {
+  const [head, tail, extra] = address.split("::");
+  if (extra !== undefined) return null;
+  const read = (part: string) => part === "" ? [] : part.split(":").map((group) => (/^[0-9a-f]{1,4}$/.test(group) ? Number.parseInt(group, 16) : Number.NaN));
+  const first = read(head ?? "");
+  const last = tail === undefined ? [] : read(tail);
+  const missing = 8 - first.length - last.length;
+  if (tail === undefined ? missing !== 0 : missing < 1) return null;
+  const groups = [...first, ...Array<number>(Math.max(0, missing)).fill(0), ...last];
+  return groups.length === 8 && groups.every(Number.isInteger) ? groups : null;
+}
+
+export type LocalPageVerdict = { cancel: false } | { cancel: true; boundary: "file" | "network" } | { resolve: string };
+
+/**
+ * What a local HTML page (a `file:` page the operator or an agent opened) may
+ * load: what a browser allows a local page, and no more. Its own load is the
+ * display's address; its files, scripts, styles, images and frames load from
+ * its checkout only; a script reads no file (no `fetch` or XHR of one); and it
+ * reaches no address of this machine or a private network, so Hide's daemon
+ * and the operator's dev servers stay out of reach. A public name is
+ * `resolve`d by the caller before it is allowed, since a name can answer with
+ * a private address.
+ */
+export function localPageRequest(raw: string, resourceType: string, insideCheckout: (path: string) => boolean): LocalPageVerdict {
+  let url: URL;
+  try { url = new URL(raw); } catch { return { cancel: true, boundary: "network" }; }
+  switch (url.protocol) {
+    case "file:": {
+      if (resourceType === "mainFrame") return { cancel: false };
+      if (resourceType === "xhr" || resourceType === "webSocket" || resourceType === "ping" || resourceType === "cspReport" || resourceType === "other") return { cancel: true, boundary: "file" };
+      let file: string;
+      try { file = fileURLToPath(url); } catch { return { cancel: true, boundary: "file" }; }
+      return insideCheckout(file) ? { cancel: false } : { cancel: true, boundary: "file" };
+    }
+    case "http:": case "https:": case "ws:": case "wss:":
+      if (isLocalNetworkHost(url.hostname)) return { cancel: true, boundary: "network" };
+      return /^[\d.]+$|^\[/.test(url.hostname) ? { cancel: false } : { resolve: url.hostname };
+    case "data:": case "blob:": case "about:":
+      return { cancel: false };
+    default:
+      return { cancel: true, boundary: "network" };
   }
 }
 

@@ -15,6 +15,7 @@ mod clone;
 mod control_lane;
 pub(crate) mod core_move;
 pub(crate) mod delivery;
+mod detail;
 mod device_catalog;
 mod devices;
 mod disk_sweep;
@@ -104,7 +105,9 @@ use crate::model::{
     SessionRowSnapshot, SidebarAgentSnapshot, Snapshot, StripTabKind, StripTabSnapshot, Surface,
     TabSnapshot, TerminalPaneSnapshot, UiStateSnapshot, WorkspaceSnapshot, clamp_pane_text_scale,
 };
-use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
+use crate::recent_closed::{
+    ClosedAgent, ClosedContext, ClosedItem, ClosedPane, ClosedTabName, push_bounded,
+};
 use crate::remote::DeviceConnector;
 use crate::sidebar::{SessionSnapshotPayload, project_agents};
 use crate::{environment, files, live, persistence, pet, session_sync, workspace};
@@ -379,6 +382,16 @@ pub(crate) enum ExplorerChange {
         path: String,
         destination: String,
     },
+    /// `path` copied into the folder `destination`.
+    Copy {
+        path: String,
+        destination: String,
+    },
+    /// A drop's items written into the folder `destination`.
+    Import {
+        destination: String,
+        items: Vec<files::ImportItem>,
+    },
     Trash {
         path: String,
         select_after: String,
@@ -392,14 +405,19 @@ impl ExplorerChange {
             Self::Create { kind, .. } => *kind,
             Self::Rename { .. } => files::ExplorerOperationKind::PathRename,
             Self::Move { .. } => files::ExplorerOperationKind::PathMove,
+            Self::Copy { .. } => files::ExplorerOperationKind::PathCopy,
+            Self::Import { .. } => files::ExplorerOperationKind::PathImport,
             Self::Trash { .. } => files::ExplorerOperationKind::PathTrash,
         }
     }
 
-    /// The row the change started from, where a refusal is shown.
+    /// The row the change started from, where a refusal is shown: the folder
+    /// a copy or a drop was meant to land in, since that is where the
+    /// operator pasted or dropped.
     fn started_from(&self) -> &str {
         match self {
             Self::Create { parent, .. } => parent,
+            Self::Copy { destination, .. } | Self::Import { destination, .. } => destination,
             Self::Rename { path, .. } | Self::Move { path, .. } | Self::Trash { path, .. } => path,
         }
     }
@@ -412,6 +430,12 @@ impl ExplorerChange {
             Self::Rename { path, name } => files::ExplorerOperation::rename(root, path, name),
             Self::Move { path, destination } => {
                 files::ExplorerOperation::move_into(root, path, destination)
+            }
+            Self::Copy { path, destination } => {
+                files::ExplorerOperation::copy_into(root, path, destination)
+            }
+            Self::Import { destination, items } => {
+                files::ExplorerOperation::import_into(root, destination, items.clone())
             }
             Self::Trash {
                 path,
@@ -1450,7 +1474,7 @@ pub struct Runtime {
     /// What the link worker was last handed, and its panel reads.
     links_work: links::LinksWork,
     backlog_work: backlog::BacklogWork,
-    /// The minute the Work tab's PRs list was last judged against the clock
+    /// The minute the PRs tool's list was last judged against the clock
     /// (`runtime/request_view.rs`, `tick_work_clock`).
     work_clock_minute: u64,
     /// Project Memory's background pass, receipts and analysis state
@@ -1909,6 +1933,14 @@ impl Runtime {
                     persistence::UnrecognizedField::AgentLogoMode => (
                         "ui_state.agent_logo_mode_unknown",
                         "The stored agent logo mode was not recognized; hidden was used",
+                    ),
+                    persistence::UnrecognizedField::SidebarLens => (
+                        "ui_state.sidebar_lens_unknown",
+                        "The stored sidebar lens or task view was not recognized; the projects, by state, were used",
+                    ),
+                    persistence::UnrecognizedField::Detail => (
+                        "ui_state.detail_unknown",
+                        "The stored 보기 slot was not recognized; it loaded empty",
                     ),
                 })
                 .collect(),

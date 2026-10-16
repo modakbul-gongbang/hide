@@ -100,10 +100,11 @@ fn card_checkout<'a>(
 }
 
 impl Runtime {
-    /// `pr_open`: the card tab in the chosen Workspace's File Views, brought
-    /// forward when it is already there, and the pull request's live agent
-    /// in front of its Agent Views (D-02, D-03). One event, so a refusal
-    /// partway cannot leave the screen half moved.
+    /// `pr_open`: the pull request's card in the lane's 보기 slot, read
+    /// again, with the Workspace, its Agent tab and the keyboard where they
+    /// are (PRD sidebar-task-lens D-43, D-50). Asked from Home, the pull
+    /// request's Workspace opens too and its live agent comes forward (B17).
+    /// One event, so a refusal partway cannot leave the screen half moved.
     pub(super) fn open_pull_request_card(&mut self, payload: PrOpenPayload) -> bool {
         if !self.separate_view_areas() {
             self.set_error(
@@ -136,70 +137,47 @@ impl Runtime {
             );
             return true;
         };
-        let lead = project
-            .agent_scope
-            .prs
-            .rows
-            .iter()
-            .find(|row| row.number == payload.pr_number)
-            .and_then(|row| row.agents.first())
-            .map(|agent| agent.pane_id.clone());
-        let Some(target) = card_checkout(
-            &project,
-            pull_request,
-            lead.as_deref(),
-            payload.checkout_id.as_deref(),
-        ) else {
-            self.set_error(
-                "pr_open.no_checkout",
-                "이 프로젝트에는 카드를 열 Workspace가 없습니다",
-                false,
-            );
-            return true;
-        };
-        let key = (project.device_id.clone(), target.path.clone());
-        let (workspace_id, checkout_id) = (project.id.clone(), target.id.clone());
         let number = payload.pr_number;
-        if let Err(error) = self.change_view_layout(&key, |layout, stamp| {
-            let shown = layout
-                .displays()
-                .find(|display| {
-                    display.kind == crate::view_layout::DisplayKind::PullRequest
-                        && display.pr == Some(number)
-                })
-                .map(|display| display.id.clone());
-            if let Some(id) = shown {
-                layout.focus(&id, stamp)?;
-                return Ok(((), true));
-            }
-            let display = layout.new_pull_request_display(number);
-            let area = layout.active_area().id.clone();
-            layout.insert(&area, display, stamp)?;
-            Ok(((), true))
-        }) {
-            self.set_error(error.kind(), error.message(), false);
-            return true;
-        }
-        self.apply_area_intent_to(&key, AreaIntent::Files);
-        crate::diagnostic!(serde_json::json!({
-            "component": "pull_requests", "kind": "pr_open",
-            "project": workspace_id, "pr": number, "checkout": checkout_id,
-            "agent": lead,
-        }));
-        match lead {
-            Some(pane) => self.focus_pane(pane, PaneFocusOrigin::Operator, None),
-            None => {
-                if self.front_workspace_key().as_ref() != Some(&key) {
+        let workspace_id = project.id.clone();
+        if payload.open_workspace {
+            let lead = project
+                .agent_scope
+                .prs
+                .rows
+                .iter()
+                .find(|row| row.number == number)
+                .and_then(|row| row.agents.first())
+                .map(|agent| agent.pane_id.clone());
+            let Some(target) = card_checkout(
+                &project,
+                pull_request,
+                lead.as_deref(),
+                payload.checkout_id.as_deref(),
+            ) else {
+                self.set_error(
+                    "pr_open.no_checkout",
+                    "이 프로젝트에는 카드를 열 Workspace가 없습니다",
+                    false,
+                );
+                return true;
+            };
+            let checkout_id = target.id.clone();
+            match lead {
+                Some(pane) => self.focus_pane(pane, PaneFocusOrigin::Operator, None),
+                None => {
                     self.focus_checkout(&workspace_id, &checkout_id);
                 }
             }
         }
-        self.read_pr_card(PrCardReadPayload {
+        crate::diagnostic!(serde_json::json!({
+            "component": "pull_requests", "kind": "pr_open",
+            "project": workspace_id, "pr": number,
+            "open_workspace": payload.open_workspace,
+        }));
+        self.open_detail(crate::model::DetailItem::PullRequest {
             workspace_id: payload.workspace_id,
-            pr_number: number,
-            look_again: false,
-        });
-        true
+            number,
+        })
     }
 
     /// A Git project of this machine or of a node that dials this core,

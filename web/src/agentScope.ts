@@ -1,21 +1,17 @@
-import type { AgentRow, DescendantCounts, MarkCounts, RequestVerb, SessionGroup, SnapshotRest } from "./snapshot";
+import type { AgentRow, DescendantCounts, MarkCounts, RequestVerb, SnapshotRest } from "./snapshot";
 
 /** Core-owned membership, status counts and display order for one scope. */
 export type AgentRef = { pane_id: string; occurrence: number };
 
 
 export type AgentScope = {
-  sessions: {
-    /** Nonempty groups in order, each with its members in drawing order. */
-    groups: { group: SessionGroup; members: number[] }[];
-  };
   overview_needs_you: number;
   has_working: boolean;
   relations: Record<string, { issues: string[]; project_id: string; checkout_id: string; rows: { pane_id: string; occurrence: number; depth: number; tag: "here" | "parent" | null; caption_parent: string | null }[] }[]>;
   listed: { pane_id: string; device_id: string; device_label: string | null; remote: boolean; index: number }[];
   places: Record<string, { project_id: string; checkout_id: string; kind: "home" | "folder" | "checkout" }>;
   places_live: boolean;
-  /** The project's tasks (`agent_scope.tasks`, PRD overview-device-tasks D-05); absent while it has none. */
+  /** A project's or, on a device's scope, every project's tasks (`agent_scope.tasks`, PRD overview-device-tasks D-05, sidebar-task-lens D-40); absent while there are none. */
   tasks?: ProjectTasksScope;
   closes: Record<string, CloseScope>;
   raised: { group: "needs_you" | "done"; shown: AgentRef[]; more: AgentRef[] }[];
@@ -137,13 +133,13 @@ export type ProjectTasksScope = {
 };
 
 /** Why a pull request stands where it does, as a kind the web words (`Reason`, PRD work-tab-pr-lens D-16). */
-export type PrReasonKind = "merge" | "update" | "assign_reviewer" | "review" | "team_review" | "reply" | "check" | "working" | "conflict" | "failed" | "changes" | "ci" | "waiting_review" | "draft" | "queued" | "merged" | "checking";
+export type PrReasonKind = "merge" | "update" | "assign_reviewer" | "review" | "team_review" | "reply" | "check" | "working" | "conflict" | "failed" | "changes" | "ci" | "waiting_review" | "draft" | "queued" | "merged" | "checking" | "unjudged";
 
 export type PrReason = {
   kind: PrReasonKind;
   /** A person, team, agent or check the reason is about. */
   name?: string;
-  /** A question's first line. */
+  /** A question's first line; for `unjudged`, the question that went unanswered (`ExtraQuery`). */
   text?: string;
   count?: number;
   /** The instant the reason began; durations are drawn from it. */

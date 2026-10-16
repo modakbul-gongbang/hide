@@ -463,18 +463,21 @@ fn an_opencode_transaction_keeps_proof_and_caps_its_pending_reread() {
         shown_facts(&worker, &observed).unwrap().native_session_id,
         proven
     );
-    worker.tick(Instant::now() + Duration::from_secs(60));
-    settle(&mut worker, &woken);
-    assert_eq!(
-        source.reads.load(Ordering::SeqCst),
-        3,
-        "one pending reread, then a real state change must wake it"
-    );
+    // The rest of the backoff list, then no more.
+    for (step, reads) in [(31, 4), (61, 5), (121, 6), (10_000, 6)] {
+        worker.tick(Instant::now() + Duration::from_secs(step));
+        settle(&mut worker, &woken);
+        assert_eq!(
+            source.reads.load(Ordering::SeqCst),
+            reads,
+            "pending rereads follow the backoff list, then a real state change must wake it"
+        );
+    }
     std::fs::remove_file(journal).unwrap();
     observed.state_change_seq += 1;
     observe(&mut worker, &observed);
     settle(&mut worker, &woken);
-    assert_eq!(source.reads.load(Ordering::SeqCst), 4);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 7);
     assert_eq!(
         shown_facts(&worker, &observed).unwrap().native_session_id,
         proven
@@ -658,6 +661,63 @@ fn an_end_waits_for_parent_authority_after_a_cold_context() {
         store.target(LOCAL_TARGET)["w1:p1"]
             .analysis_turn_end
             .is_some()
+    );
+}
+
+#[test]
+fn the_end_request_names_the_finished_tasks_a_re_request_may_continue() {
+    use crate::links::ledger::{LedgerContext, SessionIdentity};
+    let harness = Harness::new();
+    let store = harness.store();
+    let client = crate::links::worker::LinkClient::full_mailbox_for_test();
+    let node: Arc<dyn crate::node_access::NodeLink> = Arc::new(hide_node::Local::new(Some(
+        harness.home.path().to_path_buf(),
+    )));
+    let (mut worker, woken) = harness.spawn_with_ledger(
+        Arc::clone(&store),
+        LOCAL_TARGET,
+        "local.sock",
+        Arc::new(NodeTranscripts::new(Box::new(move || {
+            Ok(Arc::clone(&node))
+        }))),
+        Arc::new(Mutex::new(Some(client.clone()))),
+    );
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[
+            ("user", "설치하고 재측정해줘"),
+            ("assistant", "다시 재측정했습니다"),
+        ],
+    );
+    client.prime_context_for_test(
+        SessionIdentity {
+            device_id: LOCAL_TARGET.into(),
+            agent: "claude".into(),
+            session_id: "native-a".into(),
+        },
+        LedgerContext {
+            finished_tasks: vec![crate::links::ledger::WorkTask {
+                id: "task-1".into(),
+                chapter_id: "chapter-1".into(),
+                name: "설치 빌드 실측".into(),
+                at_unix_ms: 1,
+                last_at_unix_ms: 2,
+                end: super::analysis::LabelEnd::Done,
+                done: true,
+            }],
+            ..Default::default()
+        },
+    );
+    harness.backend.answer("설치 빌드 실측 작업", "done", "");
+    observe(&mut worker, &agent(&path, "idle", 3));
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 1);
+    assert!(
+        harness.backend.inputs.lock().unwrap()[0].contains(
+            r#"<finished-tasks>[{"id":"task-1","name":"설치 빌드 실측"}]</finished-tasks>"#
+        ),
+        "the judgment sees the finished task and its ID"
     );
 }
 
@@ -3153,6 +3213,99 @@ fn a_codex_session_not_found_is_not_known_until_a_later_state_reads_it() {
         waits(&worker, &by_id(3)),
         (Some(Waiting::PlanApproval), Some(true))
     );
+}
+
+/// A pane Herdr lists before its agent has written the session file (Claude
+/// writes it with the first message) is read again on its own, so a child
+/// started by another agent is not left on the provider name until its first
+/// turn ends.
+#[test]
+fn a_session_file_written_after_the_first_read_is_read_without_a_state_change() {
+    let harness = Harness::new();
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    let path = harness
+        .home
+        .path()
+        .join(".claude/projects/-project/late.jsonl");
+    let starting = agent(&path, "working", 1);
+    observe(&mut worker, &starting);
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 1);
+    assert_eq!(task(shown(&worker, &starting)), None);
+
+    harness.input.record("w1:p1", turn_at(0) - 300, false);
+    harness.backend.begin("늦게 생긴 세션 작업");
+    harness.session("late", "native-late", &[("user", "버그를 고쳐줘")]);
+    worker.tick(Instant::now() + Duration::from_secs(16));
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        task(shown(&worker, &starting)).as_deref(),
+        Some("늦게 생긴 세션 작업")
+    );
+}
+
+/// The retries of a file that never appears are the backoff list and no more;
+/// the pane's next state change starts the list again.
+#[test]
+fn a_session_file_that_never_appears_is_retried_a_bounded_number_of_times() {
+    let harness = Harness::new();
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    let path = harness
+        .home
+        .path()
+        .join(".claude/projects/-project/never.jsonl");
+    observe(&mut worker, &agent(&path, "working", 1));
+    settle(&mut worker, &woken);
+    let first_read = source.reads.load(Ordering::SeqCst);
+    assert_eq!(first_read, 1);
+
+    // Each tick lands just past the wait due, whatever the list holds.
+    for wait in super::worker::READ_RETRY_BACKOFF {
+        worker.tick(Instant::now() + wait + Duration::from_secs(1));
+        settle(&mut worker, &woken);
+    }
+    let spent = source.reads.load(Ordering::SeqCst);
+    assert_eq!(spent, 1 + super::worker::READ_RETRY_BACKOFF.len());
+
+    worker.tick(Instant::now() + Duration::from_secs(10_000));
+    settle(&mut worker, &woken);
+    assert_eq!(
+        source.reads.load(Ordering::SeqCst),
+        spent,
+        "past the list the pane waits for its next state change"
+    );
+
+    harness.input.record("w1:p1", turn_at(0) - 300, false);
+    harness.backend.begin("뒤늦게 시작된 작업");
+    harness.session("never", "native-never", &[("user", "작업을 시작해줘")]);
+    let moved = agent(&path, "working", 2);
+    observe(&mut worker, &moved);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        task(shown(&worker, &moved)).as_deref(),
+        Some("뒤늦게 시작된 작업")
+    );
+}
+
+/// Only a file that is not there yet clears by itself: a refusal that waiting
+/// cannot change (a session outside the agent's own folder) is read again on
+/// the pane's next state change and on no timer.
+#[test]
+fn a_refusal_that_waiting_cannot_change_is_not_retried() {
+    let harness = Harness::new();
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    let outside = harness.home.path().join("elsewhere.jsonl");
+    std::fs::write(&outside, "{}\n").unwrap();
+    observe(&mut worker, &agent(&outside, "working", 1));
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 1);
+
+    for step in [16, 31, 61, 121, 10_000] {
+        worker.tick(Instant::now() + Duration::from_secs(step));
+        settle(&mut worker, &woken);
+    }
+    assert_eq!(source.reads.load(Ordering::SeqCst), 1);
 }
 
 /// A Claude Code session whose process started and whose turn launched a

@@ -1,7 +1,7 @@
 // The one visible-board demand the core re-reads pending checks for (PRD
-// work-tab-pr-lens B44): the Sessions lens, the PRs lens and an open PR card
-// each hold it while shown, and the core is told it is gone only when the last
-// holder lets go, so closing a card does not stop the lens still on screen.
+// work-tab-pr-lens B44): the PRs tool and an open PR card each hold it while
+// shown, and the core is told it is gone only when the last holder lets go, so
+// closing a card does not stop the tool still on screen.
 
 import { useEffect } from "react";
 import type { Actions } from "./actions";

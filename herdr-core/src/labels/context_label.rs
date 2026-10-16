@@ -18,7 +18,7 @@ use std::time::Duration;
 pub(crate) const FEATURE_ID: &str = "context_label";
 /// Bumped whenever a prompt or a schema changes, so a log line can be read
 /// against the pair that produced it.
-pub(crate) const SCHEMA_VERSION: &str = "context_label.v11";
+pub(crate) const SCHEMA_VERSION: &str = "context_label.v13";
 /// Long enough for a provider that has to start a child process, short
 /// enough that a stuck turn does not hold the pane's slot for a whole event
 /// cycle series.
@@ -91,6 +91,8 @@ fn end_prompt(limits: LabelLimits) -> String {
         "A question or problem the agent put to the user to answer directly (a quiz included) is question even without an explicit request phrase, and is question even while other work is running. ",
         "An open greeting waiting for new work such as \"What can I help you with?\", a completion report, and optional offers such as \"if you want, I can also ...\" are not question. ",
         "If the requested action cannot be written as one sentence in line, it is not question. ",
+        "A request to look at or check the output of work that is still running (a render, a build, a draft, a list of corrections) is not question while that work runs, because the agent does not need the answer to go on and reports the result when it finishes: it is waiting (3). ",
+        "It stays question when the running work cannot go on without the answer, such as a choice, an approval or a missing piece of information. ",
         "2. blocked: the requested work is not finished, and the last assistant message states its cause (a full disk, an authentication or permission error, a network outage, a failing tool or CI: something the agent cannot resolve alone). ",
         "It is blocked only when the cause can be written as one sentence in line. If it only looks stuck or the cause is unclear, it is not blocked. ",
         "3. waiting: it stopped to wait for the result of something other than a PR that is still running, such as tests, a build, CI or another agent. ",
@@ -102,7 +104,9 @@ fn end_prompt(limits: LabelLimits) -> String {
         "work is {\"task\":{\"kind\":\"new\",\"name\":\"task name\"}|{\"kind\":\"continue\",\"ids\":[\"task-id\"]}|{\"kind\":\"none\"},\"missed\":[],\"resolved\":[],\"output_task_id\":null}. ",
         "Judge this human request as a task only when <work-author>true</work-author>: it is the request of the operator or of the parent that delegated the session, and letters from other agents are excluded. ",
         "If a concrete new deliverable was asked for, new with a task name of at most 80 characters; if it continues existing work in <open-tasks>, continue with at most 2 real IDs; questions, explanations and progress checks are none. ",
-        "If work-author is false, task is none. Verifying, fixing bugs in, merging or installing the same work continues the existing task. ",
+        "<finished-tasks> are the newest finished tasks. A request that orders the agent to carry out the work of one of them again (run it again, redo, measure again, reinstall) is a task, never none: continue with that task's real ID, which reopens it. ",
+        "A remark, a complaint, a doubt (\"this is confusing\", \"still slow\"), a question, an opinion, a proposal to discuss, an approval or a progress check is none even when it is about a finished task, and a different deliverable is new. ",
+        "If work-author is false, task is none. Verifying, fixing bugs in, merging or installing the same work continues the existing task, open or finished. ",
         "Put in missed only work outside the assigned work that nobody will take on once this session is closed. ",
         "problem is a breakage the agent reported finding somewhere unrelated to the assigned work; follow_up is a separate task or issue the agent proposed, making a deliverable other than the assigned one (another feature, fix or document), that nobody has taken yet. ",
         "Even when the agent calls it a follow-up, remaining work or a limitation, measuring, checking or verifying the assigned work's result again in the real app, in another environment or before release, the remaining part of the assigned work itself, and merging, installing, deploying or replacing the app are not missed, because the task judgment and PR and CI already own them. ",
@@ -110,7 +114,7 @@ fn end_prompt(limits: LabelLimits) -> String {
         "Each item is {\"kind\":\"problem|follow_up\",\"text\":\"one line of at most 80 characters\"}, at most 3 per turn. An optional offer to do something if wanted is not missed work. ",
         "If the turn reported actually handling an item of <open-missed>, put it in resolved as {\"id\":\"real ID\",\"issue_number\":null or a number}, and do not repeat in missed an item not handled yet. ",
         "output_task_id is the one real task ID the deliverable belongs to when this turn continued two tasks, and null without grounds. ",
-        "Decide end from the whole last answer, and use open-tasks and open-missed only for the IDs in work. ",
+        "Decide end from the whole last answer, and use open-tasks, finished-tasks and open-missed only for the IDs in work. ",
         "A sentence asking the user for a specific approval, choice or information is question (1) even when it concerns a separate later decision rather than the progress of the main work. ",
         "Copying that request into missed and setting end to waiting is wrong. If it also reported waiting on CI or a build, question comes first and line states the decision the user is to make. ",
         DATA,
