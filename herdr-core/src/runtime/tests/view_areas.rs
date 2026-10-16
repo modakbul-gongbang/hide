@@ -2022,7 +2022,8 @@ fn last_error_kind(runtime: &Runtime) -> Option<&str> {
 /// the rail, ✕ empties it, and an unknown pull request is refused.
 #[test]
 fn a_pull_request_card_opens_in_the_detail_slot_and_never_as_a_view() {
-    let (mut runtime, _, _directory) = views_runtime("pr-card");
+    let (mut runtime, checkout_id, directory) = views_runtime("pr-card");
+    files(&directory, &["changed.rs"]);
     layout(&mut runtime, serde_json::json!({"tool": null}));
     let pull = |number: u32| -> crate::model::PullRequestSnapshot {
         serde_json::from_value(serde_json::json!({
@@ -2079,6 +2080,21 @@ fn a_pull_request_card_opens_in_the_detail_slot_and_never_as_a_view() {
         serde_json::json!({"shown": true})
     )));
     assert!(runtime.dispatch_json(&explorer_event("detail_back", serde_json::json!({}))));
+    assert_eq!(runtime.snapshot.ui_state.detail.items, vec![item(42)]);
+    // A changed file opened from the card shows in this tab's Files, and the
+    // card keeps its rail slot to come back to (B49).
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("changed.rs"),
+        false,
+        false,
+    );
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        Some(crate::workspace_views::Tool::Files)
+    );
+    assert!(!runtime.snapshot.ui_state.detail.shown);
     assert_eq!(runtime.snapshot.ui_state.detail.items, vec![item(42)]);
     assert!(runtime.dispatch_json(&explorer_event("detail_close", serde_json::json!({}))));
     assert_eq!(

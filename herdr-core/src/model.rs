@@ -4748,7 +4748,7 @@ pub struct PullRequestSnapshot {
     /// nothing about this repository's branch of the same name.
     #[serde(default)]
     pub cross_repository: bool,
-    /// What the Work tab's PRs list groups by (PRD work-tab-pr-lens D-08):
+    /// What the PRs tool's list groups by (PRD work-tab-pr-lens D-08):
     /// the GitHub values the 5-minute read adds, none of them parsed from a
     /// body or a repository's own script (D-05).
     #[serde(default)]
@@ -4814,7 +4814,7 @@ pub enum ReviewAsk {
     Team,
 }
 
-/// The GitHub values the Work tab's PRs list and the card read beyond the
+/// The GitHub values the PRs tool's list and the card read beyond the
 /// badge, checks and review: see [`PullRequestSnapshot::work`].
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct PullRequestWork {

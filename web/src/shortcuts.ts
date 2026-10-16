@@ -314,6 +314,10 @@ export const PC_KEYS: Readonly<Partial<Record<CommandId, { chord?: Chord; browse
   // macOS browser chord ⌥⇧T is those same keys there, so a browser tab
   // reopens with the one free chord on that key.
   reopen_closed_tab: { browser: { code: "KeyT", ctrl: true, alt: true, shift: true } },
+  // Chrome keeps Alt+Shift+B (focus the bookmarks bar) on Windows and Linux,
+  // and the macOS browser chord ⌥⇧B is those same keys there, so a browser
+  // tab turns the sidebar's list with the one free chord on that key.
+  toggle_sidebar_lens: { browser: { code: "KeyB", ctrl: true, alt: true, shift: true } },
   // Windows Terminal, GNOME Terminal, WezTerm, VS Code and every browser size
   // text with Ctrl and =, - or 0.
   text_larger: { chord: { code: "Equal", ctrl: true } },
@@ -348,7 +352,8 @@ const CHROME_RESERVED: Readonly<Record<KeySystem, readonly Chord[]>> = {
   ],
   // Chrome's reserved commands on Windows and Linux (new and closed tabs and
   // windows, tab switching, quit), its Alt+Shift keys (focus the toolbar,
-  // focus inactive dialogs, the feedback form, split view), which a page
+  // focus inactive dialogs, the feedback form, split view, the bookmarks
+  // bar), which a page
   // could take but a keyboard user relies on, and the system's window
   // switcher.
   pc: [
@@ -365,6 +370,7 @@ const CHROME_RESERVED: Readonly<Record<KeySystem, readonly Chord[]>> = {
     { code: "KeyA", alt: true, shift: true },
     { code: "KeyI", alt: true, shift: true },
     { code: "KeyN", alt: true, shift: true },
+    { code: "KeyB", alt: true, shift: true },
     { code: "Tab", alt: true },
     { code: "Tab", alt: true, shift: true },
   ],

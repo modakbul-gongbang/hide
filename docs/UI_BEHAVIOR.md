@@ -876,7 +876,7 @@ The core owns the lens, the view option and the slot (`herdr-core/src/runtime/de
 ### The sidebar's 태스크 list
 
 Under the sidebar's head (search ⌘K, Overview ⇧⌘O, Factory), right above the list, a `프로젝트 | 태스크` switch picks the list (PRD sidebar-task-lens D-10, B1, B39): 프로젝트 is the projects tree as before, with its raised Needs You and Done, and 태스크 the device's tasks.
-⌘B shows and hides the sidebar, and ⇧⌘B (`Switch Projects and Tasks`; Alt+Shift+B on Windows and Linux, ⌥⇧B in a browser tab, where Chrome keeps ⇧⌘B) turns the switch; with the sidebar hidden it shows the sidebar on the other list (B2).
+⌘B shows and hides the sidebar, and ⇧⌘B (`Switch Projects and Tasks`; Alt+Shift+B on Windows and Linux; in a browser tab ⌥⇧B on macOS, where Chrome keeps ⇧⌘B, and Ctrl+Alt+Shift+B on Windows and Linux, where it keeps Alt+Shift+B) turns the switch; with the sidebar hidden it shows the sidebar on the other list (B2).
 A window starts on 프로젝트, and then the last list and view option chosen stay, through a restart too (B3).
 
 The list follows the rail's front device, every project of it at once, and turns with the rail (B19).
@@ -1351,7 +1351,7 @@ Search continues to index the complete project tree; choosing a folded result br
 ### Tools and Overview
 
 The rail's tools are Memory, PRs, Files (the View areas and the Explorer) and Changes (History), with the 보기 slot above them while it holds something; the device's task list is the sidebar's, described in [The sidebar's 태스크 list](#the-sidebars-태스크-list).
-The top row's Overview button opens the device's [Overview](#overview), `Tasks · 백로그 · Projects` and Usage; there is no Overview of one project, since looking at one project closely is the lane's work.
+The top row's Overview button opens the device's [Overview](#overview), `백로그 · Projects · Usage`; there is no Overview of one project, since looking at one project closely is the lane's work.
 
 
 ### Disk allocation and cleanup
@@ -2261,6 +2261,7 @@ Each exception has a dominant convention on Windows and Linux, or a chord the sy
 - The recent project cycle is Ctrl+Shift+` (previous Ctrl+Alt+Shift+`): Alt+Tab is the system's window switcher on Windows and Linux and never reaches an app, so the cycle moves to ` under the rule, the key macOS keeps for its own window cycle.
   Going back adds Alt to the Ctrl+Shift the cycle already holds, the one four-key desktop chord: a held cycle commits when its Ctrl is released, so the rule's Alt+Shift+` could not step back inside it, and GNOME keeps Alt+Shift+` for switching between an app's windows.
 - In a browser tab, Reopen closed tab is Ctrl+Alt+Shift+T: Chrome keeps Alt+Shift+T to focus its toolbar, which keyboard users rely on, and the macOS browser chord ⌥⇧T is those same keys there.
+- In a browser tab, Switch Projects and Tasks is Ctrl+Alt+Shift+B for the same reason: Chrome keeps Alt+Shift+B to focus its bookmarks bar.
 - Not yet handled: a browser tab's area cycle is Alt+` and Alt+Shift+` on Windows and Linux (Chrome keeps Ctrl+Tab, as it keeps ⌃Tab on macOS), and stock GNOME and KDE take both to switch between an app's windows, so on those desktops the cycle reaches the page only once the desktop's keys are changed or the cycle is bound to another chord in Settings, Shortcuts.
 - Move to Trash in the Explorer is Delete, as in Windows Explorer and the Linux file managers.
 - Inside a text field, a palette, a board or a document, no terminal holds the keyboard, so the system's own command key applies: ⌘↵ is Ctrl+Enter (send a form, open a ⌘P result to the side, open a pull request on GitHub), ⌘-click is Ctrl-click (a link, a pull request, an issue), and Ctrl+S saves the document in front as well as Ctrl+Shift+S.
@@ -2319,7 +2320,7 @@ The sheet carries no row or explanation for a command the removed native app alo
 | Add to backlog | `⇧⌘M` | `Alt+Shift+M` | `⌥⇧M` | `Alt+Shift+M` |
 | Focus sidebar | `⇧⌘P` | `Alt+Shift+P` | `⇧⌘P` | `Alt+Shift+P` |
 | Toggle left sidebar | `⌘B` | `Ctrl+Shift+B` | `⌘B` | `Ctrl+Shift+B` |
-| Switch Projects and Tasks | `⇧⌘B` | `Alt+Shift+B` | `⌥⇧B` | `Alt+Shift+B` |
+| Switch Projects and Tasks (exception) | `⇧⌘B` | `Alt+Shift+B` | `⌥⇧B` | `Ctrl+Alt+Shift+B` |
 | Toggle device rail | none | none | none | none |
 | Toggle right lane | `⌘E` | `Ctrl+Shift+E` | `⌘E` | `Ctrl+Shift+E` |
 | Toggle Memory tool | `⇧⌘L` | `Alt+Shift+L` | `⇧⌘L` | `Alt+Shift+L` |

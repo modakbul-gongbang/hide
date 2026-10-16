@@ -1,4 +1,4 @@
-// The PRs basis of the Work tool (PRD work-tab-pr-lens): which pull requests
+// The PRs tool's list (PRD work-tab-pr-lens, sidebar-task-lens D-17): which pull requests
 // a scope lists, in the groups and with the reasons the core decided
 // (`herdr-core/src/agent_state/work/board.rs`). This module only joins the
 // core's rows with the pull requests and agents they name, and counts what is

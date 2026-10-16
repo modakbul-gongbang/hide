@@ -291,7 +291,7 @@ export function checkoutCard(workspace: Workspace, checkout: Checkout, nowMs: nu
 }
 
 /**
- * The PR card of a pull request on its own, for a PRs lens row whose branch
+ * The PR card of a pull request on its own, for a PRs tool row whose branch
  * has no checkout here (PRD overview-lenses-prs B7): the same header and
  * Review and Checks rows the checkout card draws, and the branch.
  */

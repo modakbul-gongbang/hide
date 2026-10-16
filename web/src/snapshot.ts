@@ -316,7 +316,7 @@ export type PullRequest = {
   state: PrState;
   /** The branch it merges into. */
   base_branch?: string;
-  /** The GitHub values the Work tab's PRs list and the card read (`PullRequestWork`). */
+  /** The GitHub values the PRs tool's list and the card read (`PullRequestWork`). */
   work?: PullRequestWork;
 };
 
@@ -783,10 +783,10 @@ export type Workspace = {
   agent_presence?: ProjectAgentPresence;
   /** The repository's open issues, in the shape older readers read. */
   home_issues?: ProjectIssues;
-  /** The project's tasks, which the device Overview's Tasks and backlog read. */
+  /** The project's tasks, which the sidebar's 태스크 list and the Overview's backlog read. */
   tasks?: ProjectTasks;
   /**
-   * The project's pull requests for the Work tool's PRs lens, one per branch:
+   * The project's pull requests for the PRs tool and the PR card, one per branch:
    * every open one, and a merged one while its worktree is recorded here or
    * for 14 days after it merged (PRD overview-lenses-prs D-52). A local Git
    * project's only; absent while it has none.

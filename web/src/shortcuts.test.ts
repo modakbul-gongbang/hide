@@ -458,13 +458,13 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
     expect(pc.some((command) => command.electron?.meta || command.browser?.meta)).toBe(false);
   });
 
-  it("presses no chord with more than three keys but the two that Chrome or a held cycle forces (operator decision 2026-10-03)", () => {
+  it("presses no chord with more than three keys but the ones that Chrome or a held cycle forces (operator decision 2026-10-03)", () => {
     const heavy = pc.flatMap((command) =>
       (["browser", "electron"] as const)
         .filter((host) => { const chord = host === "electron" ? command.electron : command.browser; return chord && [chord.ctrl, chord.alt, chord.shift].filter(Boolean).length === 3; })
         .map((host) => `${command.id} ${host}`),
     );
-    expect(heavy.sort()).toEqual(["previous_recent_project browser", "previous_recent_project electron", "reopen_closed_tab browser"]);
+    expect(heavy.sort()).toEqual(["previous_recent_project browser", "previous_recent_project electron", "reopen_closed_tab browser", "toggle_sidebar_lens browser"]);
   });
 
   it("binds every chord once on each host, and claims none that Chrome or the system keeps", () => {
@@ -479,10 +479,15 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
   });
 
   it("notes a browser chord as moved only where Chrome keeps the desktop chord on this system", () => {
-    expect(pc.filter((command) => command.moved).map((command) => command.id).sort()).toEqual(["close_tab", "new_tab", "previous_recent_area_tab", "recent_area_tab", "reopen_closed_tab"]);
+    expect(pc.filter((command) => command.moved).map((command) => command.id).sort()).toEqual(["close_tab", "new_tab", "previous_recent_area_tab", "recent_area_tab", "reopen_closed_tab", "toggle_sidebar_lens"]);
     expect(sheetRows("Tabs", pc, "browser", "pc").find((row) => row.id === "new_tab")).toMatchObject({ chord: "Alt+T", moved: true, movedFrom: "Ctrl+Shift+T" });
     // Chrome keeps Alt+Shift+T for its toolbar, and the macOS ⌥⇧T is those keys.
     expect(sheetRows("Tabs", pc, "browser", "pc").find((row) => row.id === "reopen_closed_tab")).toMatchObject({ chord: "Ctrl+Alt+Shift+T", moved: true, movedFrom: "Alt+Shift+T" });
+    // Chrome keeps Alt+Shift+B for its bookmarks bar, and the macOS ⌥⇧B is those keys (PRD sidebar-task-lens B25).
+    expect(sheetRows("Panels", pc, "browser", "pc").find((row) => row.id === "toggle_sidebar_lens")).toMatchObject({ chord: "Ctrl+Alt+Shift+B", moved: true, movedFrom: "Alt+Shift+B" });
+    expect(matchHost(pcPress("KeyB", { alt: true, shift: true }), pc, "browser")).toBeNull();
+    expect(matchHost(pcPress("KeyB", { ctrl: true, alt: true, shift: true }), pc, "browser")?.id).toBe("toggle_sidebar_lens");
+    expect(matchHost(pcPress("KeyB", { alt: true, shift: true }), pc, "electron")?.id).toBe("toggle_sidebar_lens");
     // Every other browser chord is the desktop chord.
     const differs = pc.filter((command) => command.browser && command.electron && !command.moved && displayChord(command.browser, "pc") !== displayChord(command.electron, "pc"));
     expect(differs.map((command) => command.id)).toEqual([]);
@@ -507,7 +512,11 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
     const letters = { toggle_lane_memory: "KeyL", toggle_lane_prs: "KeyR", toggle_lane_changes: "KeyG", toggle_sidebar_lens: "KeyB" } as const;
     for (const [id, code] of Object.entries(letters)) {
       expect(matchHost({ code, metaKey: true, altKey: false, shiftKey: true, ctrlKey: false }, REGISTRY, "electron")?.id, `electron mac ${id}`).toBe(id);
-      for (const host of ["electron", "browser"] as const) expect(matchHost(pcPress(code, { alt: true, shift: true }), pc, host)?.id, `${host} pc ${id}`).toBe(id);
+      for (const host of ["electron", "browser"] as const) {
+        // Chrome keeps Alt+Shift+B in a Windows or Linux browser tab; that one is Ctrl+Alt+Shift+B (below).
+        if (host === "browser" && id === "toggle_sidebar_lens") continue;
+        expect(matchHost(pcPress(code, { alt: true, shift: true }), pc, host)?.id, `${host} pc ${id}`).toBe(id);
+      }
     }
     expect(matchHost({ code: "KeyR", metaKey: false, altKey: true, shiftKey: true, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("toggle_lane_prs");
     expect(matchHost({ code: "KeyB", metaKey: false, altKey: true, shiftKey: true, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("toggle_sidebar_lens");

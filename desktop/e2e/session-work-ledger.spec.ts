@@ -38,6 +38,15 @@ test("@platform session work records, missed lines, ended work and search render
     const record = page.locator('aside[data-lane="detail"][data-detail="record"] [data-session-record="lane"]');
     await expect(record.locator('[data-record-work]').first().locator('[data-record-task]')).toHaveCount(1, { timeout: 45_000 });
     await expect(record.locator('[data-record-output="pr"]')).toHaveCount(2, { timeout: 45_000 });
+    // The rail keeps a fifth button for the slot: pressed while the lane draws it, kept when a tool is called, and pressing it comes back (B46).
+    const slotButton = page.locator('[data-lane-tool="detail"][data-detail-slot="record"]');
+    await expect(slotButton).toHaveAttribute("aria-pressed", "true");
+    await page.locator('[data-lane-tool="files"]').click();
+    await expect(record).toHaveCount(0);
+    await expect(slotButton).toHaveAttribute("aria-pressed", "false");
+    await slotButton.click();
+    await expect(record).toBeVisible();
+    await expect(slotButton).toHaveAttribute("aria-pressed", "true");
     await page.locator(`[data-pane-view="${herdr.panes[0]}"] .xterm-helper-textarea`).focus();
     await page.keyboard.type(NEXT_GOAL);
     await page.keyboard.press("Enter");

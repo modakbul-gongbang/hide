@@ -82,3 +82,38 @@ fn a_revealed_task_unfolds_its_ancestors_and_opens_the_agent_s_record() {
     assert_eq!(state.detail.items, [DetailItem::Record { session }]);
     assert!(state.detail.shown);
 }
+
+/// The slot steps back through at most 20 items, the oldest leaving first,
+/// and opening one it already holds moves it to the front rather than adding
+/// a second entry (B47).
+#[test]
+fn the_detail_slot_keeps_the_newest_twenty_items_and_reopening_one_moves_it_forward() {
+    let mut runtime = runtime();
+    let record = |index: usize| DetailItem::Record {
+        session: crate::links::ledger::SessionIdentity {
+            device_id: "local".into(),
+            agent: "claude".into(),
+            session_id: format!("s-{index}"),
+        },
+    };
+    for index in 0..22 {
+        assert!(event(
+            &mut runtime,
+            "detail_open",
+            serde_json::json!({"item": record(index)})
+        ));
+    }
+    let items = &runtime.snapshot.ui_state.detail.items;
+    assert_eq!(items.len(), crate::model::DETAIL_HISTORY_LIMIT);
+    assert_eq!(items.first(), Some(&record(2)), "the two oldest left first");
+    assert_eq!(items.last(), Some(&record(21)));
+    event(
+        &mut runtime,
+        "detail_open",
+        serde_json::json!({"item": record(5)}),
+    );
+    let items = &runtime.snapshot.ui_state.detail.items;
+    assert_eq!(items.len(), crate::model::DETAIL_HISTORY_LIMIT);
+    assert_eq!(items.last(), Some(&record(5)));
+    assert_eq!(items.iter().filter(|item| **item == record(5)).count(), 1);
+}

@@ -1451,7 +1451,7 @@ pub struct Runtime {
     /// What the link worker was last handed, and its panel reads.
     links_work: links::LinksWork,
     backlog_work: backlog::BacklogWork,
-    /// The minute the Work tab's PRs list was last judged against the clock
+    /// The minute the PRs tool's list was last judged against the clock
     /// (`runtime/request_view.rs`, `tick_work_clock`).
     work_clock_minute: u64,
     /// Project Memory's background pass, receipts and analysis state

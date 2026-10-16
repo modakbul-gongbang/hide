@@ -1,7 +1,7 @@
 import type { Catalog, Catalogs } from "../schema";
 
-// The Work tool (PRD work-tab-pr-lens): its basis switch, the PRs list's
-// groups and second-line reasons, and the PR decision card.
+// The PRs tool (PRD work-tab-pr-lens, sidebar-task-lens): its list's groups
+// and second-line reasons, and the PR card.
 
 export const workEnglish = {
   "work.title": "Work",
