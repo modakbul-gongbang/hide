@@ -80,7 +80,8 @@ The tree button or ⌘⇧E (`Toggle File Tree`) turns the file tree, the Explore
 On, the tree is a column left of the documents and the lane widens by its width, so the documents keep theirs: over Agent Views it covers more of them, and docked, Agent Views give up the tree's width as well.
 The tree stays on when a file is picked, when the lane is put away or closed and comes back, and when another tool shows and Files comes back; only the tree button and ⌘⇧E turn it off.
 With no document open, the files tool shows the tree across the lane, its head saying `No open document · tree only`; a file picked there, or anything opened meanwhile (⌘P, a terminal link, a page, `hide` from the front tab), opens beside the tree, which goes back to its own width and stays on, and ⌘⇧E there changes nothing.
-Closing the last view leaves the lane on Files in that state, and ⌘E on a Workspace with no view opens to it; nothing opens a blank page in its place and the lane is never empty, while a View area's New tab still opens a browser display (see Browser displays).
+Closing the last view leaves the lane on Files in that state when the operator turned the tree on; with the tree off, the lane closes with that view and the keyboard goes to the focused pane, so a tree nobody asked for never appears.
+⌘E on a Workspace with no view opens Files in that state; nothing opens a blank page in its place and the lane is never empty, while a View area's New tab still opens a browser display (see Browser displays).
 
 Opening a file, a diff or a page from the tree, Changes, ⌘P, a terminal link, Open in Browser or Open server opens the lane on Files, over the agents or docked as its pin says, with the opened tab in its active View area; another tool showing gives way to Files.
 Select in File Tree, a reveal, or a terminal link that names a folder opens Files with the tree on and the row unfolded and selected.
@@ -246,7 +247,7 @@ The divider between two areas turns accent-colored on hover and keyboard focus, 
 A focused divider moves with the arrow keys along its axis, one step and one change per press.
 No area gets narrower or shorter than its minimum, a divider stops where either neighbour would, and each side of a split keeps between 15 and 85 percent of it.
 An area whose last view leaves disappears, and its neighbour takes the space.
-When the last view closes, the lane stays on Files with the tree across it (see The right lane).
+When the last view closes, the lane stays on Files with the tree across it if the tree was on, and closes otherwise (see The right lane).
 
 ### File Views per Agent tab
 

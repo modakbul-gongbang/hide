@@ -195,6 +195,29 @@ test("the pin docks the lane once, keeps it through a terminal click, a tool and
   }
 });
 
+test("closing the last view with the tree off closes the lane, hands the keyboard to the pane, and the lane chord brings Files back (B12)", async ({ page }) => {
+  test.setTimeout(120_000);
+  const lane = await startLane(page, "lane-last-view");
+  try {
+    await openFile(lane, lane.herdr.panes[0]!, "a.md");
+    await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
+    await expect(page.locator("[data-lane-tree-toggle]")).toHaveAttribute("aria-pressed", "false");
+
+    await documentArea(page).locator(".cm-content").click();
+    await page.keyboard.press(chord("close_tab"));
+    await expect(screen(page)).toHaveAttribute("data-lane-mode", "closed");
+    await expect(page.locator("[data-lane-tree]")).toHaveCount(0);
+    await expect(pane(page, lane.herdr.panes[0]!).locator(".xterm-helper-textarea")).toBeFocused();
+
+    await page.keyboard.press(chord("toggle_lane"));
+    await expect(screen(page)).toHaveAttribute("data-lane-shows", "files");
+    await expect(page.locator('[data-lane-tree="only"]')).toBeVisible();
+  } finally {
+    lane.daemon.stop();
+    lane.herdr.stop();
+  }
+});
+
 test("the tree opens beside the document without narrowing it, stays through a tool switch, and fills the lane once the last view closes (B9-B12) @platform", async ({ page }) => {
   test.setTimeout(120_000);
   const lane = await startLane(page, "lane-tree");
