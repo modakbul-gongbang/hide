@@ -66,7 +66,7 @@ test("clipboard: the native copy and paste roles copy a file under a copy name, 
 
   // A real key press, through the window's own handler.
   await expect(row("notes copy.md")).toHaveAttribute("data-selected", "true");
-  await page.keyboard.press("Meta+v");
+  await page.keyboard.press("ControlOrMeta+v");
   await expect(row("notes copy 2.md")).toBeVisible({ timeout: 20_000 });
 
   // A file dropped from the file manager into the folder under the pointer.
