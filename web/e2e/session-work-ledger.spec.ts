@@ -104,7 +104,8 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     // First asked first: the finished task, then the split request's two, which share the failed CI of its PR.
     expect(await tasks.evaluateAll((rows) => rows.map((row) => row.querySelector("[data-task-state]")?.getAttribute("data-task-state")))).toEqual(["done", "ci_failed", "ci_failed"]);
     await expect(chip).toHaveText("1/3");
-    await pinAndClose(page, herdr.panes[0], ["기록 화면 구현", "이슈와 검색 검증", "좁은 열 줄바꿈 확인"]);
+    // The split request's PR mark hangs on its first task; the second says the PR's state in a small word (status-marks B34).
+    await pinAndClose(page, herdr.panes[0], ["기록 화면 구현", "이슈와 검색 검증", "좁은 열 줄바꿈 확인CI failed"]);
     // A child is a row that opens its own record in the slot, and the head's ← comes back (PRD sidebar-task-lens B16).
     await record.locator(`[data-record-child="${child}"]`).click();
     // The slot swaps the parent's three tasks for the child's one, so wait for that whole list.
