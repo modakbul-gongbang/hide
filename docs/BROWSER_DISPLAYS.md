@@ -290,6 +290,18 @@ A refusal is a `path_refused` frame to that client and never reaches the core.
 For a native `browser_state` report, a registered checkout's pinned physical root can be mapped back to its registered spelling before that same boundary checks the file.
 This preserves a completed load's stamp when the checkout was registered through an alias, while a replaced root, a symlink escape or an unrelated file is still refused; it does not extend file-open authority.
 
+A local HTML page is held to what a browser allows a local page, and no more.
+It loads the display's own address, and its stylesheets, scripts, images, fonts, media and frames only from its own checkout, symbolic links resolved, so a link out of the checkout carries nothing out.
+A script reads no file: a `fetch`, XHR, WebSocket or beacon of a `file:` address is refused, and because the app turns off Electron's `GrantFileProtocolExtraPrivileges` fuse (`desktop/scripts/fuses.mjs`, flipped at packaging before the bundle is signed and read back from the built app), a local page is an origin of its own, so no page of the checkout reads another's frame, nor the pixels of an image it drew.
+It reaches no address of this machine or a private network: loopback, link-local, private and shared ranges, the names a resolver answers from the local network (`localhost`, `.local`, a name with no dot), and a public name that resolves to one of those, so Hide's daemon and the operator's dev servers stay out of reach.
+Public internet addresses stay open for the page's resources, since a page of generated HTML often loads a font or a script from a CDN; what makes that safe is that no file of this machine can be read to send there.
+A name is resolved once per page generation and the answer kept, so a name that changes its answer afterwards is not seen; the page's own address, a navigation or a popup it opens keep their rules above.
+`localPageRequest` and `isLocalNetworkHost` in `desktop/src/main/browserSync.ts` decide, and `BrowserViews.localPageRequest` applies the decision to a request of every local file page, whoever opened it.
+Each kind of refusal (a file, the network) is logged once per page generation as `browser.request_refused` with `reason: local_page_boundary` and the kind, and shows nothing on screen.
+A page of a connected device's checkout is served through its own route, which refuses every request that is not that route's.
+What the fuse changes beyond these pages: any `file:` page the app itself loads (the status page) is an origin of its own and loads only its own script and style, which it does; the shell, the preload and the main process load over loopback or from the asar and are unchanged.
+`desktop/e2e` runs on a copy of Electron flipped the same way (`fused-electron.ts`), so what its tests prove is what ships; an unpackaged run of the app (`pnpm --dir desktop dev`) is stock Electron, where the request rules hold and the fuse does not.
+
 A device file keeps its remote path through the UI boundary.
 The core confirms that the current View belongs to the connected device and checkout, and hided reads the HTML and its declared relative assets through that device's consented `hide-host` channel.
 The channel pins the checkout root, refuses traversal and links outside that root, and caps each response at 16 MiB.
@@ -459,6 +471,8 @@ It opens a page with `hide browser open`, checks the native view sits on its slo
 The test window never activates the app or takes the keyboard, because the e2e fixture launches every app with `--hide-show-inactive` and `--disable-backgrounding-occluded-windows` (see [BUILD.md](BUILD.md#the-desktop-app)); it is shown behind the operator's windows, keeps painting there, and captures of it are taken by window id.
 The zoom test needs the key window: it is tagged `@needs-focus` and brings its window to the front itself.
 Keep screenshots and logs under local-only `agents/runs/`.
+`desktop/e2e/local-page-rules.spec.ts` opens a local page from an isolated pane on the fused Electron and checks that its folder's image and script load, that reads of files and requests to a loopback server and this machine's own network address fail, that an image drawn from its own folder cannot be read back, and that each refusal is logged once.
+`desktop/src/main/browserSync.test.ts` tests the request decision and the address ranges.
 `desktop/e2e/browser-cdp.spec.ts` exercises the scoped native gateway against its own candidate, including pre-attachment native file-request cancellation and persistent download cancellation after client disconnect.
 Its iframe proof obtains the cross-site iframe's frame-owner ID directly from the candidate WebContents' native DOM, independently of the scoped gateway, and requires both the scoped child frame ID and attached target ID to equal it.
 Chromium's `Page.getFrameTree` includes local children only, so an out-of-process child's identity cannot be inferred from the parent session's frame tree.
