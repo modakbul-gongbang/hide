@@ -52,10 +52,10 @@ it("keeps the lead and the tail whole and cuts only the sentence, with one separ
   }
 });
 
-it("names a waiting ring by its whole line and draws a sleeping row's moon with no line, undimmed", async () => {
+it("draws a waiting ring dashed and names it by its whole line, and draws a sleeping row's moon with no line, undimmed", async () => {
   await clientI18n.changeLanguage("ko");
   const menu: AgentRowMenu = { items: () => [], onSelect: () => {} };
-  const waiting: AgentRow = legacyAgentRow({ id: "w", pane_id: "w", identity_label: "CI 확인", agent_kind: "claude", mark: "going", group: "working", status_code: "waiting", wait: "checks", activity: "stopped", changed_at_unix_ms: null, emphasized: false, unread: false });
+  const waiting: AgentRow = legacyAgentRow({ id: "w", pane_id: "w", identity_label: "CI 확인", agent_kind: "claude", mark: "waiting", group: "working", status_code: "waiting", wait: "checks", activity: "stopped", changed_at_unix_ms: null, emphasized: false, unread: false });
   waiting.state = { ...waiting.state, line: { text: "", mode: "waiting", tone: { kind: "subtle", read: false }, pull_request: 58 } };
   const sleeping: AgentRow = legacyAgentRow({ id: "s", pane_id: "s", identity_label: "파서 리팩터링", agent_kind: "claude", mark: "asleep", group: "seen", status_code: "sleeping", activity: "stopped", detail: "파서를 나눴어요", changed_at_unix_ms: null, emphasized: false, unread: false });
   const row = (agent: AgentRow) => <SidebarAgentRow agent={agent} device={null} place={null} depth={0} selected={false} onOpen={() => {}} onOpenPullRequest={() => {}} inset="0" menu={menu} />;
@@ -63,7 +63,11 @@ it("names a waiting ring by its whole line and draws a sleeping row's moon with 
   try {
     const item = (pane: string) => container.querySelector(`[data-pane="${pane}"]`)!;
     expect(item("w").querySelector("[data-agent-line]")!.textContent).toBe("대기 · CI · PR #58");
-    expect(item("w").querySelector("[data-agent-open]")!.getAttribute("aria-label")).toContain("진행 중, 대기 · CI · PR #58");
+    // A waiting ring is dashed and says so (status-marks D-25, B36).
+    expect(item("w").querySelector("[data-mark]")?.getAttribute("data-mark")).toBe("waiting");
+    expect(item("w").querySelector('[data-mark] path')?.getAttribute("stroke-dasharray")).toBe("2.2 2");
+    expect(item("w").querySelector("[data-agent-open]")!.getAttribute("aria-label")).toContain("진행 중 · 대기");
+    expect(item("w").querySelector("[data-agent-open]")!.getAttribute("aria-label")).toContain("대기 · CI · PR #58");
     expect(item("s").querySelector('[data-mark="asleep"]')).not.toBeNull();
     expect(item("s").querySelector("[data-agent-line]")).toBeNull();
     expect(item("s").className).not.toContain("opacity-(--opacity-dimmed)");

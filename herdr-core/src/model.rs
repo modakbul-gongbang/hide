@@ -6504,6 +6504,7 @@ mod wire_enum_tests {
         let marks = [
             RowMark::Turn,
             RowMark::Going,
+            RowMark::Waiting,
             RowMark::Done,
             RowMark::Unread,
             RowMark::Quiet,
@@ -6513,6 +6514,7 @@ mod wire_enum_tests {
             match variant {
                 RowMark::Turn
                 | RowMark::Going
+                | RowMark::Waiting
                 | RowMark::Done
                 | RowMark::Unread
                 | RowMark::Quiet

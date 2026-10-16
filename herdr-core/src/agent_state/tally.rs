@@ -25,10 +25,14 @@ pub enum RowMark {
     /// The operator's move: a question, an approval or a block, drawn as a
     /// `!` in a warning badge. Read and still unresolved, it stays dimmed.
     Turn,
-    /// In progress and proven: the agent works, or a background task, a
-    /// working child, an answer being made or a pull request's checks will
-    /// wake it. A static three-quarter ring.
+    /// In progress: the agent itself works. A static three-quarter ring.
     Going,
+    /// In progress while the agent waits on what is proven to wake it: a
+    /// background task, a working child, an answer being made or a pull
+    /// request's checks. The same ring dashed, so a surface with no second
+    /// line still tells it from work (status-marks D-25); every count and
+    /// precedence takes it as in progress, like `Going`.
+    Waiting,
     /// To read, and the label read the turn as finished: a green dot.
     Done,
     /// To read, with no finished verdict: work left, a wait nothing proves,
@@ -69,8 +73,11 @@ impl RowMark {
         if demand != AgentDemand::None && !matches!(ownership, Ownership::Delegated) {
             return Self::Turn;
         }
-        if activity == AgentActivity::Working || agent.wait.is_some() {
+        if activity == AgentActivity::Working {
             return Self::Going;
+        }
+        if agent.wait.is_some() {
+            return Self::Waiting;
         }
         if agent.group == "done" {
             return if finished_verdict(agent) {
@@ -85,7 +92,7 @@ impl RowMark {
     pub(crate) fn count_into(self, counts: &mut crate::model::MarkCountsSnapshot) {
         match self {
             Self::Turn => counts.turn += 1,
-            Self::Going => counts.going += 1,
+            Self::Going | Self::Waiting => counts.going += 1,
             Self::Done => counts.done += 1,
             Self::Unread => counts.unread += 1,
             Self::Quiet | Self::Asleep => {}

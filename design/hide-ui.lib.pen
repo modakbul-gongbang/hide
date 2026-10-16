@@ -12230,6 +12230,23 @@
                   "sweepAngle": -270
                 },
                 {
+                  "type": "path",
+                  "id": "L87E9-arc-wait",
+                  "name": "Waiting",
+                  "enabled": false,
+                  "width": 10,
+                  "height": 10,
+                  "viewBox": [
+                    0,
+                    0,
+                    10,
+                    10
+                  ],
+                  "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                  "stroke": "$--agent-working",
+                  "strokeWidth": 1.9
+                },
+                {
                   "type": "ellipse",
                   "id": "L87E9-dot",
                   "name": "Unread",
@@ -12368,6 +12385,10 @@
             "L87E9-dot": {
               "enabled": false,
               "fill": "$--success"
+            },
+            "L87E9-arc-wait": {
+              "enabled": false,
+              "stroke": "$--agent-working"
             }
           }
         },
@@ -12416,6 +12437,10 @@
             "L87E9-dot": {
               "enabled": false,
               "fill": "$--success"
+            },
+            "L87E9-arc-wait": {
+              "enabled": false,
+              "stroke": "$--agent-working"
             }
           }
         },
@@ -12465,6 +12490,10 @@
             "L87E9-dot": {
               "enabled": false,
               "fill": "$--success"
+            },
+            "L87E9-arc-wait": {
+              "enabled": false,
+              "stroke": "$--agent-working"
             }
           }
         },
@@ -12512,6 +12541,10 @@
             "L87E9-dot": {
               "enabled": false,
               "fill": "$--success"
+            },
+            "L87E9-arc-wait": {
+              "enabled": false,
+              "stroke": "$--agent-working"
             }
           }
         },
@@ -12559,6 +12592,10 @@
             "L87E9-dot": {
               "enabled": false,
               "fill": "$--success"
+            },
+            "L87E9-arc-wait": {
+              "enabled": false,
+              "stroke": "$--agent-working"
             }
           }
         },
@@ -12608,6 +12645,10 @@
             "L87E9-dot": {
               "enabled": false,
               "fill": "$--success"
+            },
+            "L87E9-arc-wait": {
+              "enabled": false,
+              "stroke": "$--agent-working"
             }
           }
         },
@@ -12655,6 +12696,10 @@
             "L87E9-dot": {
               "enabled": true,
               "fill": "$--foreground"
+            },
+            "L87E9-arc-wait": {
+              "enabled": false,
+              "stroke": "$--agent-working"
             }
           }
         },
@@ -12702,6 +12747,10 @@
             "L87E9-dot": {
               "enabled": false,
               "fill": "$--success"
+            },
+            "L87E9-arc-wait": {
+              "enabled": false,
+              "stroke": "$--agent-working"
             }
           }
         },
@@ -12749,6 +12798,10 @@
             "L87E9-dot": {
               "enabled": false,
               "fill": "$--success"
+            },
+            "L87E9-arc-wait": {
+              "enabled": false,
+              "stroke": "$--agent-working"
             }
           }
         },
@@ -12796,6 +12849,10 @@
             "L87E9-dot": {
               "enabled": false,
               "fill": "$--success"
+            },
+            "L87E9-arc-wait": {
+              "enabled": false,
+              "stroke": "$--agent-working"
             }
           }
         },
@@ -12940,6 +12997,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -13007,6 +13068,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -13066,6 +13131,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -13125,6 +13194,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -13184,6 +13257,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -13237,6 +13314,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -13451,6 +13532,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -13518,6 +13603,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -13577,6 +13666,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -13636,6 +13729,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -13695,6 +13792,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -13748,6 +13849,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -13962,6 +14067,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -14029,6 +14138,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -14088,6 +14201,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -14147,6 +14264,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -14206,6 +14327,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -14259,6 +14384,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -14473,6 +14602,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -14540,6 +14673,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -14599,6 +14736,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -14658,6 +14799,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -14717,6 +14862,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -14770,6 +14919,10 @@
                             "o2Df2F/L87E9-dot": {
                               "enabled": false,
                               "fill": "$--success"
+                            },
+                            "o2Df2F/L87E9-arc-wait": {
+                              "enabled": false,
+                              "stroke": "$--agent-working"
                             }
                           }
                         }
@@ -15879,6 +16032,10 @@
             "L87E9-dot": {
               "enabled": false,
               "fill": "$--success"
+            },
+            "L87E9-arc-wait": {
+              "enabled": false,
+              "stroke": "$--agent-working"
             }
           }
         },
@@ -15927,6 +16084,10 @@
             "L87E9-dot": {
               "enabled": false,
               "fill": "$--success"
+            },
+            "L87E9-arc-wait": {
+              "enabled": false,
+              "stroke": "$--agent-working"
             }
           }
         },
@@ -16212,6 +16373,10 @@
             "o2Df2F/L87E9-dot": {
               "enabled": true,
               "fill": "$--success"
+            },
+            "o2Df2F/L87E9-arc-wait": {
+              "enabled": false,
+              "stroke": "$--agent-working"
             }
           }
         },
@@ -16353,6 +16518,23 @@
                       "innerRadius": 0.62,
                       "startAngle": 90,
                       "sweepAngle": -270
+                    },
+                    {
+                      "type": "path",
+                      "id": "F2cOz-arc-wait",
+                      "name": "Waiting",
+                      "enabled": false,
+                      "width": 10,
+                      "height": 10,
+                      "viewBox": [
+                        0,
+                        0,
+                        10,
+                        10
+                      ],
+                      "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                      "stroke": "$--agent-working",
+                      "strokeWidth": 1.9
                     },
                     {
                       "type": "ellipse",
@@ -17711,6 +17893,10 @@
                 "F2cOz-dot": {
                   "enabled": false,
                   "fill": "$--success"
+                },
+                "F2cOz-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             },
@@ -17782,6 +17968,10 @@
                 "F2cOz-dot": {
                   "enabled": false,
                   "fill": "$--success"
+                },
+                "F2cOz-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             },
@@ -17852,6 +18042,10 @@
                 "F2cOz-dot": {
                   "enabled": false,
                   "fill": "$--success"
+                },
+                "F2cOz-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             },
@@ -18098,6 +18292,10 @@
             "F2cOz-dot": {
               "enabled": false,
               "fill": "$--success"
+            },
+            "F2cOz-arc-wait": {
+              "enabled": false,
+              "stroke": "$--agent-working"
             }
           }
         },
@@ -18501,6 +18699,23 @@
                               "sweepAngle": -270
                             },
                             {
+                              "type": "path",
+                              "id": "project-turn-arc-wait",
+                              "name": "Waiting",
+                              "enabled": false,
+                              "width": 10,
+                              "height": 10,
+                              "viewBox": [
+                                0,
+                                0,
+                                10,
+                                10
+                              ],
+                              "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                              "stroke": "$--agent-working",
+                              "strokeWidth": 1.9
+                            },
+                            {
                               "type": "ellipse",
                               "id": "project-turn-dot",
                               "name": "Unread",
@@ -18576,6 +18791,23 @@
                               "innerRadius": 0.62,
                               "startAngle": 90,
                               "sweepAngle": -270
+                            },
+                            {
+                              "type": "path",
+                              "id": "project-going-arc-wait",
+                              "name": "Waiting",
+                              "enabled": false,
+                              "width": 10,
+                              "height": 10,
+                              "viewBox": [
+                                0,
+                                0,
+                                10,
+                                10
+                              ],
+                              "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                              "stroke": "$--agent-working",
+                              "strokeWidth": 1.9
                             },
                             {
                               "type": "ellipse",
@@ -18655,6 +18887,23 @@
                               "sweepAngle": -270
                             },
                             {
+                              "type": "path",
+                              "id": "project-done-arc-wait",
+                              "name": "Waiting",
+                              "enabled": false,
+                              "width": 10,
+                              "height": 10,
+                              "viewBox": [
+                                0,
+                                0,
+                                10,
+                                10
+                              ],
+                              "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                              "stroke": "$--agent-working",
+                              "strokeWidth": 1.9
+                            },
+                            {
                               "type": "ellipse",
                               "id": "project-done-dot",
                               "name": "Unread",
@@ -18730,6 +18979,23 @@
                               "innerRadius": 0.62,
                               "startAngle": 90,
                               "sweepAngle": -270
+                            },
+                            {
+                              "type": "path",
+                              "id": "project-unread-arc-wait",
+                              "name": "Waiting",
+                              "enabled": false,
+                              "width": 10,
+                              "height": 10,
+                              "viewBox": [
+                                0,
+                                0,
+                                10,
+                                10
+                              ],
+                              "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                              "stroke": "$--agent-working",
+                              "strokeWidth": 1.9
                             },
                             {
                               "type": "ellipse",
@@ -20685,6 +20951,23 @@
                                       "sweepAngle": -270
                                     },
                                     {
+                                      "type": "path",
+                                      "id": "checkout-turn-arc-wait",
+                                      "name": "Waiting",
+                                      "enabled": false,
+                                      "width": 10,
+                                      "height": 10,
+                                      "viewBox": [
+                                        0,
+                                        0,
+                                        10,
+                                        10
+                                      ],
+                                      "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                                      "stroke": "$--agent-working",
+                                      "strokeWidth": 1.9
+                                    },
+                                    {
                                       "type": "ellipse",
                                       "id": "checkout-turn-dot",
                                       "name": "Unread",
@@ -20760,6 +21043,23 @@
                                       "innerRadius": 0.62,
                                       "startAngle": 90,
                                       "sweepAngle": -270
+                                    },
+                                    {
+                                      "type": "path",
+                                      "id": "checkout-going-arc-wait",
+                                      "name": "Waiting",
+                                      "enabled": false,
+                                      "width": 10,
+                                      "height": 10,
+                                      "viewBox": [
+                                        0,
+                                        0,
+                                        10,
+                                        10
+                                      ],
+                                      "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                                      "stroke": "$--agent-working",
+                                      "strokeWidth": 1.9
                                     },
                                     {
                                       "type": "ellipse",
@@ -20839,6 +21139,23 @@
                                       "sweepAngle": -270
                                     },
                                     {
+                                      "type": "path",
+                                      "id": "checkout-done-arc-wait",
+                                      "name": "Waiting",
+                                      "enabled": false,
+                                      "width": 10,
+                                      "height": 10,
+                                      "viewBox": [
+                                        0,
+                                        0,
+                                        10,
+                                        10
+                                      ],
+                                      "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                                      "stroke": "$--agent-working",
+                                      "strokeWidth": 1.9
+                                    },
+                                    {
                                       "type": "ellipse",
                                       "id": "checkout-done-dot",
                                       "name": "Unread",
@@ -20914,6 +21231,23 @@
                                       "innerRadius": 0.62,
                                       "startAngle": 90,
                                       "sweepAngle": -270
+                                    },
+                                    {
+                                      "type": "path",
+                                      "id": "checkout-unread-arc-wait",
+                                      "name": "Waiting",
+                                      "enabled": false,
+                                      "width": 10,
+                                      "height": 10,
+                                      "viewBox": [
+                                        0,
+                                        0,
+                                        10,
+                                        10
+                                      ],
+                                      "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                                      "stroke": "$--agent-working",
+                                      "strokeWidth": 1.9
                                     },
                                     {
                                       "type": "ellipse",
@@ -21625,6 +21959,23 @@
                       "sweepAngle": -270
                     },
                     {
+                      "type": "path",
+                      "id": "sar-arc-wait",
+                      "name": "Waiting",
+                      "enabled": false,
+                      "width": 10,
+                      "height": 10,
+                      "viewBox": [
+                        0,
+                        0,
+                        10,
+                        10
+                      ],
+                      "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                      "stroke": "$--agent-working",
+                      "strokeWidth": 1.9
+                    },
+                    {
                       "type": "ellipse",
                       "id": "sar-dot",
                       "name": "Unread",
@@ -22045,6 +22396,10 @@
                 "sar-dot": {
                   "enabled": false,
                   "fill": "$--success"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -22101,6 +22456,10 @@
                 "sar-dot": {
                   "enabled": true,
                   "fill": "$--success"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -22160,6 +22519,10 @@
                 "sar-dot": {
                   "enabled": true,
                   "fill": "$--success"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -22220,6 +22583,10 @@
                   "enabled": true,
                   "content": "끝남 · 배포 시작했고 결과는 알림으로 옴 · 백그라운드 2",
                   "fill": "$--foreground"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -22274,6 +22641,10 @@
                 "sar-dot": {
                   "enabled": false,
                   "fill": "$--success"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -22327,6 +22698,10 @@
                 "sar-dot": {
                   "enabled": false,
                   "fill": "$--success"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -22383,6 +22758,10 @@
                 "sar-dot": {
                   "enabled": false,
                   "fill": "$--success"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -22440,6 +22819,10 @@
                 "sar-dot": {
                   "enabled": false,
                   "fill": "$--success"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -22496,6 +22879,10 @@
                 "sar-dot": {
                   "enabled": true,
                   "fill": "$--foreground"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -22555,12 +22942,16 @@
                   "fill": "$--status-foreground"
                 },
                 "sar-arc": {
-                  "enabled": true,
+                  "enabled": false,
                   "fill": "$--agent-working"
                 },
                 "sar-dot": {
                   "enabled": false,
                   "fill": "$--success"
+                },
+                "sar-arc-wait": {
+                  "enabled": true,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -22618,6 +23009,10 @@
                 "sar-dot": {
                   "enabled": false,
                   "fill": "$--success"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -22677,6 +23072,10 @@
                 "sar-dot": {
                   "enabled": false,
                   "fill": "$--success"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -22729,6 +23128,10 @@
                   "enabled": true,
                   "content": "상태 모름",
                   "fill": "$--subtle-foreground"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               },
               "opacity": 0.5
@@ -22784,6 +23187,10 @@
                 },
                 "sar-elapsed": {
                   "content": "2h"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -22843,6 +23250,10 @@
                   "enabled": true,
                   "content": "깨우는 중",
                   "fill": "$--subtle-foreground"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -22902,6 +23313,10 @@
                   "enabled": true,
                   "content": "재움 · 다시 열지 못함",
                   "fill": "$--subtle-foreground"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -22961,6 +23376,10 @@
                   "enabled": true,
                   "content": "Mac mini 연결 끊김",
                   "fill": "$--subtle-foreground"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               },
               "opacity": 0.5
@@ -23015,6 +23434,10 @@
                 "sar-dot": {
                   "enabled": true,
                   "fill": "$--success"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -23073,6 +23496,10 @@
                 "sar-dot": {
                   "enabled": false,
                   "fill": "$--success"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -23130,6 +23557,10 @@
                 "sar-dot": {
                   "enabled": false,
                   "fill": "$--success"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -23180,6 +23611,10 @@
                 "sar-dot": {
                   "enabled": false,
                   "fill": "$--success"
+                },
+                "sar-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -23670,6 +24105,23 @@
                       "sweepAngle": -270
                     },
                     {
+                      "type": "path",
+                      "id": "awt-status-mark-arc-wait",
+                      "name": "Waiting",
+                      "enabled": false,
+                      "width": 10,
+                      "height": 10,
+                      "viewBox": [
+                        0,
+                        0,
+                        10,
+                        10
+                      ],
+                      "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                      "stroke": "$--agent-working",
+                      "strokeWidth": 1.9
+                    },
+                    {
                       "type": "ellipse",
                       "id": "awt-status-mark-dot",
                       "name": "Unread",
@@ -23761,6 +24213,23 @@
                       "innerRadius": 0.62,
                       "startAngle": 90,
                       "sweepAngle": -270
+                    },
+                    {
+                      "type": "path",
+                      "id": "awt-icon-status-arc-wait",
+                      "name": "Waiting",
+                      "enabled": false,
+                      "width": 10,
+                      "height": 10,
+                      "viewBox": [
+                        0,
+                        0,
+                        10,
+                        10
+                      ],
+                      "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                      "stroke": "$--agent-working",
+                      "strokeWidth": 1.9
                     },
                     {
                       "type": "ellipse",
@@ -24399,6 +24868,23 @@
                       "sweepAngle": -270
                     },
                     {
+                      "type": "path",
+                      "id": "pane-child-chip-mark-arc-wait",
+                      "name": "Waiting",
+                      "enabled": false,
+                      "width": 10,
+                      "height": 10,
+                      "viewBox": [
+                        0,
+                        0,
+                        10,
+                        10
+                      ],
+                      "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                      "stroke": "$--agent-working",
+                      "strokeWidth": 1.9
+                    },
+                    {
                       "type": "ellipse",
                       "id": "pane-child-chip-mark-dot",
                       "name": "Unread",
@@ -24479,6 +24965,10 @@
                     "pane-child-chip-mark-dot": {
                       "enabled": false,
                       "fill": "$--success"
+                    },
+                    "pane-child-chip-mark-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     }
                   }
                 },
@@ -24505,6 +24995,10 @@
                     "pane-child-chip-mark-dot": {
                       "enabled": true,
                       "fill": "$--success"
+                    },
+                    "pane-child-chip-mark-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     }
                   }
                 }
@@ -24604,6 +25098,10 @@
                 "pane-child-chip-mark-dot": {
                   "enabled": false,
                   "fill": "$--success"
+                },
+                "pane-child-chip-mark-arc-wait": {
+                  "enabled": false,
+                  "stroke": "$--agent-working"
                 }
               }
             }
@@ -42109,6 +42607,23 @@
                                       "sweepAngle": -270
                                     },
                                     {
+                                      "type": "path",
+                                      "id": "pr-card-agents-turn-arc-wait",
+                                      "name": "Waiting",
+                                      "enabled": false,
+                                      "width": 10,
+                                      "height": 10,
+                                      "viewBox": [
+                                        0,
+                                        0,
+                                        10,
+                                        10
+                                      ],
+                                      "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                                      "stroke": "$--agent-working",
+                                      "strokeWidth": 1.9
+                                    },
+                                    {
                                       "type": "ellipse",
                                       "id": "pr-card-agents-turn-dot",
                                       "name": "Unread",
@@ -42184,6 +42699,23 @@
                                       "innerRadius": 0.62,
                                       "startAngle": 90,
                                       "sweepAngle": -270
+                                    },
+                                    {
+                                      "type": "path",
+                                      "id": "pr-card-agents-going-arc-wait",
+                                      "name": "Waiting",
+                                      "enabled": false,
+                                      "width": 10,
+                                      "height": 10,
+                                      "viewBox": [
+                                        0,
+                                        0,
+                                        10,
+                                        10
+                                      ],
+                                      "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                                      "stroke": "$--agent-working",
+                                      "strokeWidth": 1.9
                                     },
                                     {
                                       "type": "ellipse",
@@ -42263,6 +42795,23 @@
                                       "sweepAngle": -270
                                     },
                                     {
+                                      "type": "path",
+                                      "id": "pr-card-agents-done-arc-wait",
+                                      "name": "Waiting",
+                                      "enabled": false,
+                                      "width": 10,
+                                      "height": 10,
+                                      "viewBox": [
+                                        0,
+                                        0,
+                                        10,
+                                        10
+                                      ],
+                                      "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                                      "stroke": "$--agent-working",
+                                      "strokeWidth": 1.9
+                                    },
+                                    {
                                       "type": "ellipse",
                                       "id": "pr-card-agents-done-dot",
                                       "name": "Unread",
@@ -42338,6 +42887,23 @@
                                       "innerRadius": 0.62,
                                       "startAngle": 90,
                                       "sweepAngle": -270
+                                    },
+                                    {
+                                      "type": "path",
+                                      "id": "pr-card-agents-unread-arc-wait",
+                                      "name": "Waiting",
+                                      "enabled": false,
+                                      "width": 10,
+                                      "height": 10,
+                                      "viewBox": [
+                                        0,
+                                        0,
+                                        10,
+                                        10
+                                      ],
+                                      "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                                      "stroke": "$--agent-working",
+                                      "strokeWidth": 1.9
                                     },
                                     {
                                       "type": "ellipse",
@@ -43275,6 +43841,23 @@
                               "sweepAngle": -270
                             },
                             {
+                              "type": "path",
+                              "id": "agb-row1-arc-wait",
+                              "name": "Waiting",
+                              "enabled": false,
+                              "width": 10,
+                              "height": 10,
+                              "viewBox": [
+                                0,
+                                0,
+                                10,
+                                10
+                              ],
+                              "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                              "stroke": "$--agent-working",
+                              "strokeWidth": 1.9
+                            },
+                            {
                               "type": "ellipse",
                               "id": "agb-row1-dot",
                               "name": "Unread",
@@ -43533,6 +44116,23 @@
                               "innerRadius": 0.62,
                               "startAngle": 90,
                               "sweepAngle": -270
+                            },
+                            {
+                              "type": "path",
+                              "id": "agb-row2-arc-wait",
+                              "name": "Waiting",
+                              "enabled": false,
+                              "width": 10,
+                              "height": 10,
+                              "viewBox": [
+                                0,
+                                0,
+                                10,
+                                10
+                              ],
+                              "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                              "stroke": "$--agent-working",
+                              "strokeWidth": 1.9
                             },
                             {
                               "type": "ellipse",
@@ -43794,6 +44394,23 @@
                               "innerRadius": 0.62,
                               "startAngle": 90,
                               "sweepAngle": -270
+                            },
+                            {
+                              "type": "path",
+                              "id": "agb-row3-arc-wait",
+                              "name": "Waiting",
+                              "enabled": false,
+                              "width": 10,
+                              "height": 10,
+                              "viewBox": [
+                                0,
+                                0,
+                                10,
+                                10
+                              ],
+                              "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                              "stroke": "$--agent-working",
+                              "strokeWidth": 1.9
                             },
                             {
                               "type": "ellipse",
@@ -44084,6 +44701,10 @@
                       "enabled": false,
                       "fill": "$--agent-working"
                     },
+                    "agb-row1-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
+                    },
                     "agb-row1-dot": {
                       "enabled": false,
                       "fill": "$--success"
@@ -44139,6 +44760,10 @@
                     "agb-row2-arc": {
                       "enabled": true,
                       "fill": "$--agent-working"
+                    },
+                    "agb-row2-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     },
                     "agb-row2-dot": {
                       "enabled": false,
@@ -44275,6 +44900,10 @@
                       "enabled": false,
                       "fill": "$--agent-working"
                     },
+                    "agb-row1-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
+                    },
                     "agb-row1-dot": {
                       "enabled": false,
                       "fill": "$--success"
@@ -44336,6 +44965,10 @@
                     "agb-row2-arc": {
                       "enabled": true,
                       "fill": "$--agent-working"
+                    },
+                    "agb-row2-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     },
                     "agb-row2-dot": {
                       "enabled": false,
@@ -44462,6 +45095,10 @@
                       "enabled": false,
                       "fill": "$--agent-working"
                     },
+                    "agb-row1-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
+                    },
                     "agb-row1-dot": {
                       "enabled": false,
                       "fill": "$--success"
@@ -44523,6 +45160,10 @@
                     "agb-row2-arc": {
                       "enabled": false,
                       "fill": "$--agent-working"
+                    },
+                    "agb-row2-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     },
                     "agb-row2-dot": {
                       "enabled": true,
@@ -44666,6 +45307,10 @@
                       "enabled": false,
                       "fill": "$--agent-working"
                     },
+                    "agb-row1-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
+                    },
                     "agb-row1-dot": {
                       "enabled": false,
                       "fill": "$--success"
@@ -44793,6 +45438,10 @@
                     "agb-row1-arc": {
                       "enabled": true,
                       "fill": "$--agent-working"
+                    },
+                    "agb-row1-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     },
                     "agb-row1-dot": {
                       "enabled": false,
@@ -44922,6 +45571,10 @@
                       "enabled": true,
                       "fill": "$--agent-working"
                     },
+                    "agb-row1-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
+                    },
                     "agb-row1-dot": {
                       "enabled": false,
                       "fill": "$--success"
@@ -44977,6 +45630,10 @@
                     "agb-row2-arc": {
                       "enabled": false,
                       "fill": "$--agent-working"
+                    },
+                    "agb-row2-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     },
                     "agb-row2-dot": {
                       "enabled": false,
@@ -45103,6 +45760,10 @@
                     "agb-row1-arc": {
                       "enabled": false,
                       "fill": "$--agent-working"
+                    },
+                    "agb-row1-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     },
                     "agb-row1-dot": {
                       "enabled": false,
@@ -45249,6 +45910,10 @@
                       "enabled": false,
                       "fill": "$--agent-working"
                     },
+                    "agb-row1-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
+                    },
                     "agb-row1-dot": {
                       "enabled": false,
                       "fill": "$--success"
@@ -45304,6 +45969,10 @@
                     "agb-row2-arc": {
                       "enabled": true,
                       "fill": "$--agent-working"
+                    },
+                    "agb-row2-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     },
                     "agb-row2-dot": {
                       "enabled": false,
@@ -45440,6 +46109,10 @@
                       "enabled": false,
                       "fill": "$--agent-working"
                     },
+                    "agb-row1-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
+                    },
                     "agb-row1-dot": {
                       "enabled": false,
                       "fill": "$--success"
@@ -45501,6 +46174,10 @@
                     "agb-row2-arc": {
                       "enabled": true,
                       "fill": "$--agent-working"
+                    },
+                    "agb-row2-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     },
                     "agb-row2-dot": {
                       "enabled": false,
@@ -45627,6 +46304,10 @@
                       "enabled": false,
                       "fill": "$--agent-working"
                     },
+                    "agb-row1-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
+                    },
                     "agb-row1-dot": {
                       "enabled": false,
                       "fill": "$--success"
@@ -45688,6 +46369,10 @@
                     "agb-row2-arc": {
                       "enabled": false,
                       "fill": "$--agent-working"
+                    },
+                    "agb-row2-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     },
                     "agb-row2-dot": {
                       "enabled": true,
@@ -45831,6 +46516,10 @@
                       "enabled": false,
                       "fill": "$--agent-working"
                     },
+                    "agb-row1-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
+                    },
                     "agb-row1-dot": {
                       "enabled": false,
                       "fill": "$--success"
@@ -45958,6 +46647,10 @@
                     "agb-row1-arc": {
                       "enabled": true,
                       "fill": "$--agent-working"
+                    },
+                    "agb-row1-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     },
                     "agb-row1-dot": {
                       "enabled": false,
@@ -46087,6 +46780,10 @@
                       "enabled": true,
                       "fill": "$--agent-working"
                     },
+                    "agb-row1-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
+                    },
                     "agb-row1-dot": {
                       "enabled": false,
                       "fill": "$--success"
@@ -46142,6 +46839,10 @@
                     "agb-row2-arc": {
                       "enabled": false,
                       "fill": "$--agent-working"
+                    },
+                    "agb-row2-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     },
                     "agb-row2-dot": {
                       "enabled": false,
@@ -46268,6 +46969,10 @@
                     "agb-row1-arc": {
                       "enabled": false,
                       "fill": "$--agent-working"
+                    },
+                    "agb-row1-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     },
                     "agb-row1-dot": {
                       "enabled": false,
@@ -46851,6 +47556,23 @@
                               "innerRadius": 0.62,
                               "startAngle": 90,
                               "sweepAngle": -270
+                            },
+                            {
+                              "type": "path",
+                              "id": "ath-row-arc-wait",
+                              "name": "Waiting",
+                              "enabled": false,
+                              "width": 10,
+                              "height": 10,
+                              "viewBox": [
+                                0,
+                                0,
+                                10,
+                                10
+                              ],
+                              "geometry": "M 9.050 5.000 A 4.05 4.05 0 0 1 8.462 7.102 M 7.044 8.496 A 4.05 4.05 0 0 1 4.933 9.049 M 3.014 8.530 A 4.05 4.05 0 0 1 1.470 6.986 M 0.951 5.067 A 4.05 4.05 0 0 1 1.504 2.956 M 2.898 1.538 A 4.05 4.05 0 0 1 5.000 0.950",
+                              "stroke": "$--agent-working",
+                              "strokeWidth": 1.9
                             },
                             {
                               "type": "ellipse",
@@ -47751,6 +48473,10 @@
                       "enabled": true,
                       "fill": "$--agent-working"
                     },
+                    "ath-row-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
+                    },
                     "ath-row-dot": {
                       "enabled": false,
                       "fill": "$--success"
@@ -47804,6 +48530,10 @@
                     "ath-row-arc": {
                       "enabled": true,
                       "fill": "$--agent-working"
+                    },
+                    "ath-row-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     },
                     "ath-row-dot": {
                       "enabled": false,
@@ -47867,6 +48597,10 @@
                       "enabled": false,
                       "fill": "$--agent-working"
                     },
+                    "ath-row-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
+                    },
                     "ath-row-dot": {
                       "enabled": false,
                       "fill": "$--success"
@@ -47891,13 +48625,13 @@
             {
               "type": "frame",
               "id": "ath-l-row-waiting-cell",
-              "name": "Waiting ring: its line led by 대기",
+              "name": "Waiting ring: dashed, its line led by 대기",
               "children": [
                 {
                   "type": "text",
                   "id": "ath-l-row-waiting-cap",
-                  "name": "Waiting ring: its line led b",
-                  "content": "Waiting ring: its line led by 대기",
+                  "name": "Waiting ring: dashed, its li",
+                  "content": "Waiting ring: dashed, its line led by 대기",
                   "fill": "$--muted-foreground",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-micro",
@@ -47923,8 +48657,12 @@
                       "fill": "$--status-foreground"
                     },
                     "ath-row-arc": {
-                      "enabled": true,
+                      "enabled": false,
                       "fill": "$--agent-working"
+                    },
+                    "ath-row-arc-wait": {
+                      "enabled": true,
+                      "stroke": "$--agent-working"
                     },
                     "ath-row-dot": {
                       "enabled": false,
@@ -47989,6 +48727,10 @@
                     "ath-row-arc": {
                       "enabled": false,
                       "fill": "$--agent-working"
+                    },
+                    "ath-row-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     },
                     "ath-row-dot": {
                       "enabled": false,
@@ -48792,6 +49534,10 @@
                       "enabled": true,
                       "fill": "$--agent-working"
                     },
+                    "ath-row-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
+                    },
                     "ath-row-dot": {
                       "enabled": false,
                       "fill": "$--success"
@@ -48845,6 +49591,10 @@
                     "ath-row-arc": {
                       "enabled": true,
                       "fill": "$--agent-working"
+                    },
+                    "ath-row-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     },
                     "ath-row-dot": {
                       "enabled": false,
@@ -48908,6 +49658,10 @@
                       "enabled": false,
                       "fill": "$--agent-working"
                     },
+                    "ath-row-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
+                    },
                     "ath-row-dot": {
                       "enabled": false,
                       "fill": "$--success"
@@ -48932,13 +49686,13 @@
             {
               "type": "frame",
               "id": "ath-d-row-waiting-cell",
-              "name": "Waiting ring: its line led by 대기",
+              "name": "Waiting ring: dashed, its line led by 대기",
               "children": [
                 {
                   "type": "text",
                   "id": "ath-d-row-waiting-cap",
-                  "name": "Waiting ring: its line led b",
-                  "content": "Waiting ring: its line led by 대기",
+                  "name": "Waiting ring: dashed, its li",
+                  "content": "Waiting ring: dashed, its line led by 대기",
                   "fill": "$--muted-foreground",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-micro",
@@ -48964,8 +49718,12 @@
                       "fill": "$--status-foreground"
                     },
                     "ath-row-arc": {
-                      "enabled": true,
+                      "enabled": false,
                       "fill": "$--agent-working"
+                    },
+                    "ath-row-arc-wait": {
+                      "enabled": true,
+                      "stroke": "$--agent-working"
                     },
                     "ath-row-dot": {
                       "enabled": false,
@@ -49030,6 +49788,10 @@
                     "ath-row-arc": {
                       "enabled": false,
                       "fill": "$--agent-working"
+                    },
+                    "ath-row-arc-wait": {
+                      "enabled": false,
+                      "stroke": "$--agent-working"
                     },
                     "ath-row-dot": {
                       "enabled": false,

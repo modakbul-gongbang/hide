@@ -178,7 +178,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
     // dimmed like a read one.
     let chip_kind = match agent.mark {
         RowMark::Turn => "warning",
-        RowMark::Going => "working",
+        RowMark::Going | RowMark::Waiting => "working",
         RowMark::Done => "success",
         RowMark::Unread => "news",
         RowMark::Quiet if asking => "warning",
@@ -1170,7 +1170,7 @@ mod row_tests {
         agent.unread = false;
         agent.wait = Some(crate::model::AgentWait::Children);
         agent.mark = RowMark::of(&agent);
-        assert_eq!(agent.mark, RowMark::Going);
+        assert_eq!(agent.mark, RowMark::Waiting);
         let state = row_state(&agent);
         assert_eq!(state.mark_tone.kind, "working");
         assert_eq!(state.chip_tone.kind, "working");
@@ -1244,7 +1244,7 @@ mod row_tests {
         derive_from_axes(&mut agent);
         assert_eq!(
             (agent.group.as_str(), agent.mark),
-            ("working", RowMark::Going)
+            ("working", RowMark::Waiting)
         );
         assert_eq!(agent.status_code, AgentStatusCode::Waiting);
 
@@ -1357,7 +1357,7 @@ mod row_tests {
                 ),
                 (
                     "working",
-                    RowMark::Going,
+                    RowMark::Waiting,
                     AgentStatusCode::Waiting,
                     Some(crate::model::AgentWait::Background),
                     0
@@ -1367,6 +1367,29 @@ mod row_tests {
             let line = agent.state.line.as_ref().expect("a waiting line");
             assert_eq!(line.mode, "waiting", "{end:?}");
         }
+    }
+
+    /// status-marks D-25, B36: a row that waits on proven work draws the
+    /// dashed ring and the agent working again draws the solid one; both
+    /// count as one in-progress mark.
+    #[test]
+    fn a_waiting_row_draws_the_dashed_ring_and_counts_as_in_progress() {
+        let mut agent = row();
+        agent.activity = "stopped".into();
+        agent.completed = true;
+        agent.wait = Some(crate::model::AgentWait::Background);
+        derive_from_axes(&mut agent);
+        assert_eq!(agent.mark, RowMark::Waiting);
+        assert_eq!(serde_json::to_value(agent.mark).unwrap(), "waiting");
+        let mut counts = crate::model::MarkCountsSnapshot::default();
+        agent.mark.count_into(&mut counts);
+        assert_eq!(counts.going, 1);
+        assert_eq!(row_state(&agent).mark_tone.kind, "working");
+
+        agent.activity = "working".into();
+        agent.completed = false;
+        derive_from_axes(&mut agent);
+        assert_eq!(agent.mark, RowMark::Going);
     }
 
     /// status-marks D-21, B31: a sleeping agent keeps a moon and is counted on
@@ -1456,7 +1479,7 @@ mod row_tests {
         derive_from_axes(&mut agent);
         assert_eq!(
             (agent.group.as_str(), agent.mark),
-            ("working", RowMark::Going)
+            ("working", RowMark::Waiting)
         );
         let line = agent.state.line.clone().expect("a cause line");
         assert_eq!(

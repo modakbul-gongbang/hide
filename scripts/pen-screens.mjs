@@ -291,9 +291,11 @@ function screenField(id, label, control) {
 // The mark). A board names a mark (`turn`, `going`, `done`, `unread`, `quiet`);
 // an older board's glyph and colour still name the mark that replaced it, so a
 // sheet drawn before the four marks keeps meaning the same row.
-// The overrides that turn on a master's mark (Sidebar agent row, tree row).
-function markOverrides(prefix, symbol, fill) {
-  return markSwitch(prefix, legacyMark(symbol, fill), '', {moon: prefix === 'sar'});
+// The overrides that turn on a master's mark (Sidebar agent row, tree row);
+// a ring whose line leads with 대기 waits, so it is drawn dashed (D-25).
+function markOverrides(prefix, symbol, fill, line) {
+  const mark = legacyMark(symbol, fill);
+  return markSwitch(prefix, mark === 'going' && line?.startsWith('대기') ? 'waiting' : mark, '', {moon: prefix === 'sar'});
 }
 
 // The same mark for a row this document draws itself rather than from a master.
@@ -335,7 +337,7 @@ function screenLineRow(id, {label, meta, status, width = 260}) {
 // `none`, and the row has no fold slot at all.
 function screenSidebarAgentRow(id, {title, symbol = '●', color = '$--agent-working', age, line, lineFill = '$--warning', place, device, branch, badge, fold = null, bright = false, selected = false, selectedFill = '$--color-selected', inset = 4, width = 268}) {
   return themedXref(id, 'sidebar-agent-row', title, {width, padding: ['$--spacing-xs', '$--spacing-xs', '$--spacing-xs', inset], ...(selected ? {fill: selectedFill} : {})}, {
-    ...markOverrides('sar', symbol, color),
+    ...markOverrides('sar', symbol, color, line),
     // 12/400 in every state: attention and selection brighten the title, never thicken it.
     'sar-title': {content: title, ...(bright || selected ? {fill: '$--foreground'} : {})},
     'sar-elapsed': {content: age},
@@ -361,7 +363,7 @@ function screenSidebarAgentRow(id, {title, symbol = '●', color = '$--agent-wor
 const PR_TREE = Object.fromEntries(PR_STATES.map(([state, glyph, fill]) => [state, [glyph, fill]]));
 function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', age, line, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, statusAxis = false, inset = 0, width = 268}) {
   const descendants = {
-    ...markOverrides('ath-row', symbol, color),
+    ...markOverrides('ath-row', symbol, color, line),
     'ath-row-title': {content: title, ...(bright || selected ? {fill: '$--foreground'} : {})},
     'ath-row-age': {content: age},
     'ath-row-line': line ? {enabled: true, content: line, fill: '$--subtle-foreground'} : {enabled: false},

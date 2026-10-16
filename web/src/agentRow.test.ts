@@ -86,6 +86,9 @@ describe("the mark and the badge (status-marks D-01, D-02, B19)", () => {
     // A finished turn names the tasks it left (B27); a sleeping row says only its own words (B31).
     expect(markWords(t, { mark: "done", status_code: "done", background_left: 2 })).toBe("읽을 것 · 끝남 · 백그라운드 2개 남음");
     expect(markWords(t, { mark: "asleep", status_code: "sleeping" })).toBe("재움 · 열면 깨어남");
+    // In progress names nothing more while the agent works, and its wait while it waits (D-25, B36).
+    expect(markWords(t, { mark: "going", status_code: "working" })).toBe("진행 중");
+    expect(markWords(t, { mark: "waiting", status_code: "waiting" })).toBe("진행 중 · 대기");
   });
 });
 

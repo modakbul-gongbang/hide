@@ -279,20 +279,23 @@ Done is deliberately separate from Needs You: a stop to read is "look when you h
 
 ## The mark
 
-Every row draws one of six marks, decided once in the core (`RowMark::of` in `agent_state/tally.rs`) and carried on the wire as `mark` (`turn`, `going`, `done`, `unread`, `quiet`, `asleep`); no surface derives a mark of its own (status-marks D-01, D-12).
+Every row draws one of seven marks, decided once in the core (`RowMark::of` in `agent_state/tally.rs`) and carried on the wire as `mark` (`turn`, `going`, `waiting`, `done`, `unread`, `quiet`, `asleep`); no surface derives a mark of its own (status-marks D-01, D-12).
+`going` and `waiting` are the one in-progress mark in two shapes (D-25): every count and precedence takes them as one, and only the ring is drawn apart.
 Four say whose move is next, and their shapes alone tell them apart; `asleep` is the one exception, an agent Hide stopped that wakes when opened (D-21):
 
 | Mark | Shape | When |
 | --- | --- | --- |
 | `turn` | A `!` in a 12 px warning badge | The operator's turn: the row is in Needs You or carries an escalation, or it is an own question, approval or block the operator has read (drawn at `--opacity-read-status`) |
-| `going` | A static three-quarter ring in the working colour | In progress: the agent works, or it waits (`wait`) on children, a background task, its pull request's checks or a reply |
+| `going` | A static three-quarter ring in the working colour | In progress: the agent works |
+| `waiting` | The same ring dashed, also static (`2.2 2` over a path length of 19) | In progress while the agent waits (`wait`) on children, a background task, its pull request's checks or a reply; its hover and name read `진행 중 · 대기` |
 | `done` | A 7 px green dot | Unread, and the label read the turn as finished |
 | `unread` | A 7 px dot in the foreground colour | Unread, with work left (a wait nothing proves is work left), or no verdict |
 | `quiet` | Nothing; the slot is kept so titles line up | Everything else: read, idle, unknown, a disconnected device's row, a delegated child's own request |
 | `asleep` | A grey moon (`☾`), not dimmed | An agent Hide put to sleep, waking, or one that could not be reopened; counted on no badge |
 
-The ring does not turn (D-02): motion is not how the operator tells in progress from waiting.
-A delegated row draws only `going` or `quiet` (B24): its question is its parent's to answer; one of the six escalation causes still makes it `turn`.
+The ring does not turn (D-02): its dashes, not motion, tell waiting from work, on every surface, the ones with no second line (tabs, pane headers, the ⌃Tab switcher, ⌘K, the child tree popover) included (D-25, B36).
+When the agent starts working again the dashes close, and when a turn ends with a wait left they open.
+A delegated row draws only `going`, `waiting` or `quiet` (B24): its question is its parent's to answer; one of the six escalation causes still makes it `turn`.
 Colour never carries the distinction alone: the mark's name and the word that leads its line are its hover text and part of the row's accessible name (`markWords` in `web/src/agentRow.ts`), as in `내 차례 · 질문` or `읽을 것 · 일 남음`.
 
 How a stop ended is the label's verdict (`axes.rs::stop_verdict`): finished, or unfinished (work left); a label `waiting` that nothing proves is running is work left too, since nothing will wake the agent (status-marks D-17).
@@ -467,11 +470,12 @@ A read block in Seen cannot outrank an unread question in Needs You.
 The Workspace draws the representative agent's exact mark, color, and emphasis through the shared presentation.
 
 The web shell draws no representative chip; it draws a status badge in its place.
-The same pass counts each agent under the mark its own row draws (`RowMark`): `turn`, `going`, `done` and `unread`.
+The same pass counts each agent under the mark its own row draws (`RowMark`): `turn`, `going` (a `waiting` row counted here too, D-25), `done` and `unread`.
 A quiet row is counted in none of them, so the badge claims nothing but whose move is next.
 The counts ride the summary as `marks`; the web sidebar draws them on a checkout's row only, and a project or folder row draws none.
 The badge draws one mark and count per mark, in the order whose move is next (turn, in progress, finished to read, to read), zero ones left out, in the shapes and colors the rows use, so it says what opening the rows would show (B19).
 A checkout's badge stands for its folded agent rows and leaves while they are open (docs/UI_BEHAVIOR.md, Sidebar hierarchy).
+It is the only count badge: a folded parent row, in the 프로젝트 tree or the 태스크 list, counts no children and draws only `! N` when a hidden descendant asks the operator (status-marks D-24, B35).
 Regression owners: `workspace_summary_uses_physical_ownership_priority_and_unique_panes` for the counts, and `projects-sidebar.spec.ts` for where the badges are drawn.
 
 The tooltip lists positive counts in group order: Needs You, Done, Working, Seen.
