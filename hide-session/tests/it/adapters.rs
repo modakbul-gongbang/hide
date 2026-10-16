@@ -4345,8 +4345,8 @@ mod antigravity {
             let folder = self.home.path().join(".gemini/antigravity-cli");
             fs::create_dir_all(folder.join("conversations")).unwrap();
             fs::write(folder.join("conversations").join(format!("{id}.db")), b"").unwrap();
-            // agy's spelling: `file:///Users/me/repo`, or on Windows
-            // `file:///C:/Users/me/repo`.
+            // agy's spelling: `file:///work/repo`, or on Windows
+            // `file:///C:/work/repo`.
             let wire = hide_platform::path::to_wire(&self.cwd).unwrap();
             let slash = if wire.starts_with('/') { "" } else { "/" };
             let uri = format!("file://{slash}{}", wire.replace(' ', "%20"));
