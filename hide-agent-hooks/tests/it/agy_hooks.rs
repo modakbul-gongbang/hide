@@ -187,7 +187,7 @@ fn injected(run: &Run) -> String {
 }
 
 #[test]
-fn a_direct_agent_start_is_denied_in_agys_shape_and_every_other_call_is_allowed() {
+fn a_direct_agent_start_is_denied_in_agys_shape_and_every_other_call_is_left_to_agy() {
     let machine = Machine::new();
 
     let denied = answer(&machine.run("PreToolUse", &machine.shell(START), Some(PANE)));
@@ -199,7 +199,7 @@ fn a_direct_agent_start_is_denied_in_agys_shape_and_every_other_call_is_allowed(
     );
     assert!(reason.contains("--branch topic"), "{reason}");
 
-    let allow = json!({ "decision": "ask" });
+    let ask = json!({ "decision": "ask" });
     let view = json!({
         "conversationId": CONVERSATION,
         "toolCall": { "name": "view_file", "args": { "AbsolutePath": machine.checkout.join("README.md") } },
@@ -211,7 +211,7 @@ fn a_direct_agent_start_is_denied_in_agys_shape_and_every_other_call_is_allowed(
         (json!("not agy's payload"), Some(PANE)),
     ] {
         let run = machine.run("PreToolUse", &payload, pane);
-        assert_eq!(answer(&run), allow, "{payload}");
+        assert_eq!(answer(&run), ask, "{payload}");
     }
 }
 

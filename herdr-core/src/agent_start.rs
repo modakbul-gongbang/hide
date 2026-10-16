@@ -1288,7 +1288,7 @@ mod tests {
         std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
         let node = hide_node::Local::new(Some(home.path().to_path_buf()));
         // The core names the worktree in its wire spelling; agy's list holds
-        // the native one.
+        // the native one, resolved.
         let tree = |name: &str| home.path().join(name);
         let wire = |name: &str| hide_platform::path::to_wire(&tree(name)).unwrap();
         for name in ["tree-1", "tree-2"] {
@@ -1302,7 +1302,10 @@ mod tests {
             serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
         assert_eq!(
             written["trustedWorkspaces"],
-            serde_json::json!([tree("tree-1").to_str().unwrap()])
+            serde_json::json!([hide_platform::fs::identity::canonical(&tree("tree-1"))
+                .unwrap()
+                .to_str()
+                .unwrap()])
         );
         // A folder that is not a worktree is never trusted.
         assert!(

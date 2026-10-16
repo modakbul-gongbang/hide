@@ -192,7 +192,7 @@ pub(crate) fn row(home: &Path, id: &str) -> Result<Option<Row>> {
         )
         .optional()
     })?
-    .map_err(|_| anyhow!("antigravity_db_unreadable"))?;
+    .map_err(|error| anyhow!(crate::sqlite::refusal(&REASONS, &error)))?;
     match found {
         None => Ok(None),
         Some(columns) => to_row(columns)
@@ -251,7 +251,8 @@ pub(crate) fn checkout(home: &Path, id: &str) -> std::result::Result<Option<Path
 /// The newest conversation the operator started in `cwd` (canonical),
 /// among the newest rows the index holds.
 fn newest_root(home: &Path, cwd: &Path) -> Result<Option<Row>> {
-    let rows = with_index(home, roots)?.map_err(|_| anyhow!("antigravity_db_unreadable"))?;
+    let rows = with_index(home, roots)?
+        .map_err(|error| anyhow!(crate::sqlite::refusal(&REASONS, &error)))?;
     Ok(in_checkout(rows, cwd).next())
 }
 
@@ -283,7 +284,7 @@ pub fn fork_mark(home: &Path, source: &str, cwd: &Path) -> Result<ForkMark> {
             .optional()?;
         Ok((steps, roots(db)?))
     })?
-    .map_err(|_| anyhow!("antigravity_db_unreadable"))?;
+    .map_err(|error| anyhow!(crate::sqlite::refusal(&REASONS, &error)))?;
     let steps = steps.ok_or_else(|| anyhow!("session_route_missing"))?;
     Ok(ForkMark {
         known: in_checkout(rows, cwd).map(|row| row.id).collect(),
@@ -319,7 +320,7 @@ pub fn forked(home: &Path, source: &str, cwd: &Path, mark: &ForkMark) -> Result<
             )?
             .collect::<rusqlite::Result<Vec<_>>>()
     })?
-    .map_err(|_| anyhow!("antigravity_db_unreadable"))?;
+    .map_err(|error| anyhow!(crate::sqlite::refusal(&REASONS, &error)))?;
     let mut forks = in_checkout(rows, cwd).filter(|row| !mark.known.contains(&row.id));
     let fork = forks.next();
     if forks.next().is_some() {

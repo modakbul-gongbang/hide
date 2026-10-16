@@ -1822,7 +1822,7 @@ The core owns account windows and shared preferences (`usage`, `ui_state.usage`)
 The declaration lists all eight agents; only agents with a declared limit source appear in the footer and popover.
 
 The footer draws up to three pinned account windows at its left edge, and the View menu, Help and Settings at its right edge.
-Defaults pin each supported agent's weekly window.
+Defaults pin the weekly window of each agent that is on by default and reports one (Claude Code and Codex), leaving a slot for the operator's own pin.
 Each chip shows the agent mark and its rounded percent, naming the window when the agent has multiple visible chips.
 A numberless not-started or expired chip always names its window.
 Each chip has its own accessible name with agent, window and value.

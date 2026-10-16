@@ -4,7 +4,7 @@
 // AI's read-only folder with its trust, and takes out only Hide's; the operator's own skills under
 // `~/.gemini/antigravity-cli/skills` are never touched. The INSTALLED tool command, read from the file the kit wrote
 // and run the way agy runs it (agy's payload on stdin), refuses a direct `herdr agent start` in agy's shape and
-// allows every other call.
+// leaves every other call to agy's own question.
 // The real agy is never run here: it signs in through the operator's browser whenever its home changes (D-18).
 
 import { expect, test, type Page } from "@playwright/test";
@@ -150,7 +150,7 @@ test("the agy switch writes Hide's block, skill and Hide AI folder beside the op
   }
 });
 
-test("the installed agy tool command refuses a direct agent start in agy's shape and allows every other call", async ({ page }) => {
+test("the installed agy tool command refuses a direct agent start in agy's shape and leaves every other call to agy", async ({ page }) => {
   // No recorded choice: agy is on by default, and its block goes in on the first pass.
   const stack = await start("agy-guard");
   const { herdr, home } = stack;

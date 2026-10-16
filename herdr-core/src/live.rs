@@ -3603,6 +3603,14 @@ fn fork_antigravity(
         Instant::now() + ANTIGRAVITY_FORK_WAIT,
     )
     .map_err(|error| format!("agy's conversation to fork could not be read: {error}"))?;
+    // The mark's read may have waited on agy writing its index: `/fork` is
+    // typed only into a pane still idle, never into a turn that began since.
+    if control_request(connector, "pane.get", wire::pane_target_params(pane_id)?)
+        .and_then(wire::pane_agent_status)?
+        != "idle"
+    {
+        return Err("agy started working before /fork could be typed".into());
+    }
     control_request(
         connector,
         "pane.send_input",
@@ -4761,7 +4769,16 @@ mod tests {
         // would open on agy's trust question, which `/fork` must not answer.
         // `in-motion`: the first index reads meet agy writing its index
         // (1 fork in 3 failed on a live agy 1.4.0) and are read again.
-        for case in ["success", "ambiguous", "moved", "untrusted", "in-motion"] {
+        // `unreadable`: a refusal that is not agy writing ends the fork at
+        // its first read, with no second one.
+        for case in [
+            "success",
+            "ambiguous",
+            "moved",
+            "untrusted",
+            "in-motion",
+            "unreadable",
+        ] {
             let home = tempfile::tempdir().unwrap();
             let cwd = hide_platform::fs::identity::canonical(home.path()).unwrap();
             if case != "untrusted" {
@@ -4782,7 +4799,16 @@ mod tests {
             );
             let node = IndexInMotion {
                 inner: hide_node::Local::new(Some(home.path().to_path_buf())),
-                left: std::sync::atomic::AtomicUsize::new(if case == "in-motion" { 3 } else { 0 }),
+                left: std::sync::atomic::AtomicUsize::new(match case {
+                    "in-motion" => 3,
+                    "unreadable" => 1,
+                    _ => 0,
+                }),
+                reason: if case == "unreadable" {
+                    "antigravity_db_unreadable"
+                } else {
+                    "antigravity_db_changed"
+                },
             };
             let index_home = home.path().to_path_buf();
             let index_cwd = cwd.clone();
@@ -4861,9 +4887,20 @@ mod tests {
                     &[
                         "pane.get",
                         "pane.get",
+                        "pane.get",
                         "pane.send_input",
                         "pane.report_agent_session",
                     ]
+                }
+                "unreadable" => {
+                    assert!(
+                        result
+                            .as_ref()
+                            .unwrap_err()
+                            .contains("antigravity_db_unreadable"),
+                        "{result:?}"
+                    );
+                    &["pane.get", "pane.get"]
                 }
                 "untrusted" => {
                     assert!(
@@ -4883,7 +4920,7 @@ mod tests {
                             .contains("antigravity_fork_ambiguous"),
                         "{result:?}"
                     );
-                    &["pane.get", "pane.get", "pane.send_input"]
+                    &["pane.get", "pane.get", "pane.get", "pane.send_input"]
                 }
             };
             assert_eq!(herdr.methods(), expected, "{case}");
@@ -4895,10 +4932,11 @@ mod tests {
         }
     }
 
-    /// A node whose next `left` agy index reads meet agy writing its index.
+    /// A node whose next `left` agy index reads are refused for `reason`.
     struct IndexInMotion {
         inner: hide_node::Local,
         left: std::sync::atomic::AtomicUsize,
+        reason: &'static str,
     }
 
     impl crate::node_access::NodeLink for IndexInMotion {
@@ -4921,10 +4959,7 @@ mod tests {
                 .is_ok()
             {
                 return Err(crate::node_access::LinkError::Refused(
-                    hide_node_link::HostError::new(
-                        hide_node_link::ErrorCode::Io,
-                        "antigravity_db_changed",
-                    ),
+                    hide_node_link::HostError::new(hide_node_link::ErrorCode::Io, self.reason),
                 ));
             }
             self.inner.call(call, timeout)

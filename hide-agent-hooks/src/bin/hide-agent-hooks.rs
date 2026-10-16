@@ -251,7 +251,8 @@ fn run_basic_hook(agent: GuidanceAgent, arguments: &[String], started: Instant) 
 /// the guidance and the Memory index when a conversation starts, the prompt's
 /// Memory cards and the pane's letters on a prompt's first model call, the
 /// guards on a tool call and the subagent count. A tool call is answered on
-/// every path, since agy refuses one whose hook says nothing it reads, and
+/// every path, since agy refuses one whose hook exits nonzero, prints what it
+/// cannot read, times out or is missing, and
 /// nothing here ends the hook with another code.
 fn run_antigravity_hook(arguments: &[String], started: Instant) {
     let Some(event) =

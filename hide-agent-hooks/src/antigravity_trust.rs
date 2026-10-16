@@ -200,7 +200,10 @@ pub fn trust_worktree(home: &Path, folder: &Path) -> Result<(), InstallFailure> 
             "an agy worktree trust never names the root, the home folder or a folder above it",
         ));
     }
-    trust(home, folder)
+    // The entry is the folder's resolved path, so a link along the way cannot
+    // be pointed elsewhere after it is trusted, and `//` or a trailing
+    // separator never reaches it; [`forget`] takes it out by either spelling.
+    trust(home, &canonical)
 }
 
 /// Makes Hide AI's tool-free folder for agy (`hide_ai::read_only_workspace`)
@@ -264,8 +267,13 @@ pub fn remove_read_only(home: &Path) -> Result<bool, InstallFailure> {
 /// worktree; a folder Hide did not add is left alone. Answers how many
 /// entries left agy's settings.
 pub fn forget(home: &Path, folder: &Path) -> Result<usize, InstallFailure> {
+    let resolved = hide_platform::fs::identity::canonical(folder)
+        .ok()
+        .and_then(|path| spelling(&path).ok());
     let folder = spelling(folder)?;
-    forget_where(home, |entry| entry == folder)
+    forget_where(home, |entry| {
+        entry == folder || resolved.as_deref() == Some(entry)
+    })
 }
 
 /// Takes out every trust Hide added, as when agy is switched off.
@@ -430,7 +438,31 @@ mod tests {
         assert!(!settings_path(home.path()).exists());
 
         trust_worktree(home.path(), &tree).unwrap();
-        assert_eq!(read_record(home.path()).unwrap(), [tree.to_str().unwrap()]);
+        let resolved = hide_platform::fs::identity::canonical(&tree).unwrap();
+        assert_eq!(
+            read_record(home.path()).unwrap(),
+            [resolved.to_str().unwrap()],
+            "the entry is the folder's resolved path"
+        );
+        assert_eq!(
+            forget(home.path(), &tree).unwrap(),
+            1,
+            "undone by its own spelling"
+        );
+
+        // Named through a link, the entry is still the worktree itself, so
+        // pointing the link elsewhere afterwards trusts nothing new.
+        #[cfg(unix)]
+        {
+            let link = home.path().join("tree-link");
+            std::os::unix::fs::symlink(&tree, &link).unwrap();
+            trust_worktree(home.path(), &link).unwrap();
+            assert_eq!(
+                read_record(home.path()).unwrap(),
+                [resolved.to_str().unwrap()]
+            );
+            assert_eq!(forget(home.path(), &link).unwrap(), 1);
+        }
     }
 
     #[cfg(unix)]
