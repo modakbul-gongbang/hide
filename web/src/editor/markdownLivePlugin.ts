@@ -215,13 +215,26 @@ class ImageWidget extends WidgetType {
   }
 }
 
+/**
+ * Whether the operator has moved the caret or edited in this view. A file
+ * opens with the caret at 0, which the operator did not put there, so a drawn
+ * block or image waits for the first move before a selection shows its source.
+ */
+const engaged = StateField.define<boolean>({
+  create: () => false,
+  update(value, tr) {
+    if (value) return true;
+    return ["select", "input", "delete", "move", "undo", "redo"].some((event) => tr.isUserEvent(event));
+  },
+});
+
 /** No selection anywhere in the document, so no mark is revealed. */
 const NOWHERE = { from: -1, to: -1 };
 
 function build(state: EditorState, reveal: boolean, drawing: Drawing): DecorationSet {
   const doc = state.doc;
   if (doc.length > MARKDOWN_LIVE_BYTE_LIMIT) return Decoration.none;
-  const plan = markdownLivePlan(syntaxTree(state), doc, reveal ? state.selection.main : NOWHERE);
+  const plan = markdownLivePlan(syntaxTree(state), doc, reveal ? state.selection.main : NOWHERE, state.field(engaged, false) === true);
   const ranges: Range<Decoration>[] = [];
   const base = drawing.files.base();
   // The widgets of a different document or checkout are not the same drawing.
@@ -294,12 +307,14 @@ export function markdownLive({ reveal = true, files = OUTSIDE }: { reveal?: bool
   const field = StateField.define<DecorationSet>({
     create: (state) => build(state, reveal, drawing),
     update(value, tr) {
-      if (tr.docChanged || tr.selection || syntaxTree(tr.state) !== syntaxTree(tr.startState)) return build(tr.state, reveal, drawing);
+      if (tr.docChanged || tr.selection || tr.state.field(engaged, false) !== tr.startState.field(engaged, false) || syntaxTree(tr.state) !== syntaxTree(tr.startState)) {
+        return build(tr.state, reveal, drawing);
+      }
       return value;
     },
     provide: (f) => EditorView.decorations.from(f),
   });
   // The image cache lives as long as the view that draws with it.
   const owner = ViewPlugin.define(() => ({ destroy: () => drawing.images.dispose() }));
-  return [field, owner];
+  return [engaged, field, owner];
 }

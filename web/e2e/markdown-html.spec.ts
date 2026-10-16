@@ -11,6 +11,7 @@ import path from "node:path";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { chord } from "./chords";
 import { countSent, screenshot, showExplorer, showProjectRow } from "./wire";
 
 /** A 1x1 PNG, so an image has real bytes to decode. */
@@ -71,7 +72,7 @@ function close({ daemon, herdr }: Stack): void {
 
 test.describe.configure({ timeout: 90_000 });
 
-test("the repository README opens as drawn HTML and shows a block's source under the caret", async ({ page }) => {
+test("the repository README opens as drawn HTML and shows a block source under the caret", async ({ page }) => {
   const root = path.resolve("..");
   const stack = await openStack(page, {
     "README.md": fs.readFileSync(path.join(root, "README.md")),
@@ -86,8 +87,9 @@ test("the repository README opens as drawn HTML and shows a block's source under
     await page.locator(`[data-explorer-row="${stack.repo}/README.md"]`).click();
     const blocks = page.locator(".cm-md-html-block");
     await expect(blocks.first()).toBeVisible({ timeout: 20_000 });
-    const drawn = await blocks.count();
-    expect(drawn).toBeGreaterThanOrEqual(6);
+    expect(await blocks.count()).toBeGreaterThanOrEqual(6);
+    const hero = page.locator('.cm-md-html img[alt^="The hide window"]');
+    await expect(hero).toHaveAttribute("src", /^blob:/);
     // The logo and the hero screenshot come through the file-bytes path as blobs and decode.
     const logo = page.locator('.cm-md-html img[alt="hide owl app icon"]');
     await expect(logo).toBeVisible();
@@ -99,9 +101,19 @@ test("the repository README opens as drawn HTML and shows a block's source under
     expect(appRequests.filter((pathname) => pathname.includes("/design/") || pathname.includes("/site/"))).toEqual([]);
     await screenshot(page, "markdown-html-readme-live");
 
+    // The same page in the light theme: tokens only, so nothing is left dark.
+    await page.keyboard.press(chord("settings"));
+    await page.locator('[data-settings-tab="general"]').click();
+    await page.locator('[data-theme-option="light"]').click();
+    await expect(page.locator("html")).toHaveClass(/(^|\s)light(\s|$)/);
+    await page.keyboard.press("Escape");
+    expect(await blocks.count()).toBeGreaterThanOrEqual(6);
+    await screenshot(page, "markdown-html-readme-live-light");
+
     // A caret in the hero block shows that block's source and no other.
-    await blocks.nth(5).click();
-    await expect(blocks).toHaveCount(drawn - 1);
+    await blocks.filter({ has: page.locator('img[alt^="The hide window"]') }).click();
+    await expect(hero).toHaveCount(0);
+    await expect(logo).toBeVisible();
     await expect(page.locator(".cm-content")).toContainText('<img src="site/assets/hide-workspace.webp"');
     await screenshot(page, "markdown-html-hero-source");
   } finally {
@@ -117,8 +129,10 @@ test("a document's script, outside path and http image never load, and a broken 
   });
   try {
     await page.locator(`[data-explorer-row="${stack.repo}/unsafe.md"]`).click();
-    await expect(page.locator("#unsafe")).toBeVisible({ timeout: 20_000 });
-    await expect(page.locator("#unsafe")).toContainText("kept text");
+    // The id is not on the allowlist, so the block is found by its text.
+    const block = page.locator(".cm-md-html-block", { hasText: "kept text" });
+    await expect(block).toBeVisible({ timeout: 20_000 });
+    await expect(block).not.toContainText("window.pwned");
     await expect(page.locator(".cm-md-html iframe, .cm-md-html script, .cm-md-html a[href^='javascript']")).toHaveCount(0);
     // The inside image loaded; the three others show their alt text and nothing else.
     await expect(page.locator('.cm-md-html img[alt="inside"]')).toHaveAttribute("src", /^blob:/);

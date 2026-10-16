@@ -131,10 +131,12 @@ export const liveTheme = EditorView.theme({
   ".cm-md-checkbox": { verticalAlign: "middle" },
   // Drawn HTML and images. The page's reset makes an image a block and strips
   // list and table styling, so each of those is put back to what HTML means.
-  ".cm-md-html": { fontFamily: "var(--font-sans)", lineHeight: "1.5" },
+  // The editor keeps a text's newlines (`pre-wrap`); HTML collapses them.
+  ".cm-md-html": { fontFamily: "var(--font-sans)", lineHeight: "1.5", whiteSpace: "normal" },
+  ".cm-md-html pre": { whiteSpace: "pre-wrap" },
   ".cm-md-html-block": { display: "block" },
   ".cm-md-html img": { display: "inline-block", maxWidth: "100%", height: "auto", verticalAlign: "middle" },
-  ".cm-md-html a": { color: "var(--file-blue)", textDecoration: "underline" },
+  ".cm-md-html a[href]": { color: "var(--file-blue)", textDecoration: "underline" },
   ".cm-md-html p, .cm-md-html ul, .cm-md-html ol, .cm-md-html table, .cm-md-html blockquote, .cm-md-html pre": { margin: "0 0 var(--spacing-sm)" },
   ".cm-md-html h1": { fontSize: "var(--text-editor-heading-1)", fontWeight: "600", lineHeight: "1.3", margin: "0 0 var(--spacing-sm)" },
   ".cm-md-html h2": { fontSize: "var(--text-editor-heading-2)", fontWeight: "600", lineHeight: "1.3", margin: "0 0 var(--spacing-sm)" },

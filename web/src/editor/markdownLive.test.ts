@@ -136,4 +136,13 @@ describe("markdown live plan: HTML and images", () => {
     const nowhere = markdownLivePlan(markdown.parse(source), doc, { from: -1, to: -1 });
     expect(nowhere.map((range) => range.kind)).toEqual(["image", "html"]);
   });
+
+  it("keeps a block and an image drawn under the caret until the operator has moved the caret, and still hides other markup there", () => {
+    const source = "![a](b.png)\n\n<p>x</p>\n\n# Head";
+    const doc = Text.of(source.split("\n"));
+    const unfocused = markdownLivePlan(markdown.parse(source), doc, { from: 0, to: 0 }, false);
+    expect(unfocused.map((range) => range.kind)).toEqual(["image", "html", "hide", "heading"]);
+    const focused = markdownLivePlan(markdown.parse(source), doc, { from: 0, to: 0 }, true);
+    expect(focused.map((range) => range.kind)).toEqual(["html", "hide", "heading"]);
+  });
 });

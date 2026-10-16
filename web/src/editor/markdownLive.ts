@@ -51,14 +51,19 @@ const HEADINGS: Record<string, number> = {
   SetextHeading2: 2,
 };
 
-export function markdownLivePlan(tree: Tree, doc: Text, selection: { from: number; to: number }): LiveRange[] {
+/**
+ * `embedsRevealed` says whether the selection reveals an HTML block or an
+ * image's source: a file opens with the caret at 0, which the operator did not
+ * put there, so they stay drawn until the operator has moved it.
+ */
+export function markdownLivePlan(tree: Tree, doc: Text, selection: { from: number; to: number }, embedsRevealed = true): LiveRange[] {
   const ranges: LiveRange[] = [];
   const overlaps = (from: number, to: number) => selection.from <= to && selection.to >= from;
   const lineTouched = (pos: number) => {
     const line = doc.lineAt(pos);
     return overlaps(line.from, line.to);
   };
-  const lineSpanTouched = (from: number, to: number) => overlaps(doc.lineAt(from).from, doc.lineAt(to).to);
+  const lineSpanTouched = (from: number, to: number) => embedsRevealed && overlaps(doc.lineAt(from).from, doc.lineAt(to).to);
 
   tree.iterate({
     enter: (ref) => {
@@ -161,7 +166,7 @@ export function markdownLivePlan(tree: Tree, doc: Text, selection: { from: numbe
         if (parent === "Document") {
           const first = doc.lineAt(node.from);
           const last = doc.lineAt(node.to);
-          if (doc.sliceString(first.from, node.from).trim() === "" && !overlaps(first.from, last.to)) {
+          if (doc.sliceString(first.from, node.from).trim() === "" && !(embedsRevealed && overlaps(first.from, last.to))) {
             ranges.push({ from: first.from, to: last.to, kind: "html", block: true, html: doc.sliceString(node.from, node.to) });
           }
         }
