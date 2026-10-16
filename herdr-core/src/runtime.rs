@@ -15,6 +15,7 @@ mod clone;
 mod control_lane;
 pub(crate) mod core_move;
 pub(crate) mod delivery;
+mod detail;
 mod device_catalog;
 mod devices;
 mod disk_sweep;
@@ -1909,6 +1910,14 @@ impl Runtime {
                     persistence::UnrecognizedField::AgentLogoMode => (
                         "ui_state.agent_logo_mode_unknown",
                         "The stored agent logo mode was not recognized; hidden was used",
+                    ),
+                    persistence::UnrecognizedField::SidebarLens => (
+                        "ui_state.sidebar_lens_unknown",
+                        "The stored sidebar lens or task view was not recognized; the projects, by state, were used",
+                    ),
+                    persistence::UnrecognizedField::Detail => (
+                        "ui_state.detail_unknown",
+                        "The stored 보기 slot was not recognized; it loaded empty",
                     ),
                 })
                 .collect(),

@@ -58,11 +58,10 @@ pub enum DisplayKind {
     File,
     Diff,
     /// A page the desktop host draws; `path` is empty and `url` names it.
+    /// A pull request's card was a kind of View once; it opens in the
+    /// lane's 보기 slot now, and a stored card is dropped as the file loads
+    /// (PRD sidebar-task-lens D-50, `workspace_views::drop_retired_cards`).
     Browser,
-    /// A pull request's decision card (PRD work-tab-pr-lens D-02): the web
-    /// draws it from the Work tab's PR facts, `path` is empty and `pr`
-    /// names it. It has no document and no tab.
-    PullRequest,
 }
 
 impl DisplayKind {
@@ -136,10 +135,6 @@ pub struct Display {
     /// The title its page last reported; absent until it reports one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// The pull request a card display shows, by number in the Workspace's
-    /// project. Absent for every other kind.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pr: Option<u32>,
     /// Raised each time the operator asks a browser display to load `url`,
     /// which is how the host tells a request from the page's own
     /// navigation. Never stored: a restart loads every page once anyway.
@@ -190,10 +185,7 @@ impl AreaItem for Display {
         self.preview = false;
     }
     fn same_content(&self, other: &Self) -> bool {
-        match (self.kind, other.kind) {
-            (DisplayKind::PullRequest, DisplayKind::PullRequest) => self.pr == other.pr,
-            _ => self.shows(&other.path, other.kind, other.committed),
-        }
+        self.shows(&other.path, other.kind, other.committed)
     }
     fn repair_area(items: &mut [Self], active: Option<&str>, notes: &mut Vec<String>) {
         let mut groups = 0;
@@ -204,7 +196,7 @@ impl AreaItem for Display {
             // without its group would never find its tab again.
             let group = match display.kind {
                 DisplayKind::Diff => Some(display.committed.unwrap_or(false)),
-                DisplayKind::File | DisplayKind::Browser | DisplayKind::PullRequest => None,
+                DisplayKind::File | DisplayKind::Browser => None,
             };
             if display.committed != group {
                 display.committed = group;
@@ -231,21 +223,6 @@ impl AreaItem for Display {
             } else if display.url.is_some() || display.title.is_some() {
                 display.url = None;
                 display.title = None;
-                addresses += 1;
-            }
-            // A card names a pull request and nothing else; a card stored
-            // with none has nothing to show and becomes the new tab page.
-            if display.kind == DisplayKind::PullRequest {
-                if display.pr.is_none() || !display.path.is_empty() || display.preview {
-                    if display.pr.is_none() {
-                        display.kind = DisplayKind::Browser;
-                    }
-                    display.path.clear();
-                    display.preview = false;
-                    addresses += 1;
-                }
-            } else if display.pr.is_some() {
-                display.pr = None;
                 addresses += 1;
             }
         }
@@ -336,18 +313,8 @@ impl Layout {
             tab_id: None,
             url: None,
             title: None,
-            pr: None,
             load: 0,
             opener: None,
-        }
-    }
-
-    /// A new card display for pull request `number`, not yet in any area.
-    /// It is never a preview: a card is opened on purpose.
-    pub fn new_pull_request_display(&mut self, number: u32) -> Display {
-        Display {
-            pr: Some(number),
-            ..self.new_display("", DisplayKind::PullRequest, None, false)
         }
     }
 

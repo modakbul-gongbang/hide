@@ -23,6 +23,8 @@ mod backlog;
 mod birth_cwd;
 #[path = "tests/control_order.rs"]
 mod control_order;
+#[path = "tests/detail.rs"]
+mod detail;
 #[path = "tests/device_catalog.rs"]
 mod device_catalog;
 #[path = "tests/device_kit.rs"]

@@ -252,8 +252,8 @@ pub struct WorkspaceViewSnapshot {
     /// The tool the lane last showed, null for a lane that never showed
     /// one; the tool the next open returns to.
     pub last_tool: Option<crate::workspace_views::Tool>,
-    /// The Work tool's basis and scope, kept for this Workspace.
-    pub work: crate::workspace_views::WorkView,
+    /// The PRs tool's scope chip, kept for this Workspace.
+    pub prs: crate::workspace_views::PrsView,
     /// Whether the lane is pinned beside Agent Views (D-03).
     pub pinned: bool,
     /// Whether the files tool shows the file tree column (D-05).
@@ -378,10 +378,6 @@ pub struct ViewDisplaySnapshot {
     pub url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// The pull request a card display shows, by number; absent for every
-    /// other kind.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pr: Option<u32>,
     /// A browser display's load stamp: a larger one than the host last
     /// loaded asks it to load `url` again. Zero for a file or a diff.
     #[serde(skip_serializing_if = "load_unset")]
@@ -3289,6 +3285,118 @@ fn serialize_interface_language<S: serde::Serializer>(
         .serialize(serializer)
 }
 
+/// Which list the sidebar shows under its head (PRD sidebar-task-lens
+/// D-10): the projects tree, or every task of the rail's device.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarLens {
+    #[default]
+    Projects,
+    Tasks,
+}
+
+impl SidebarLens {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "projects" => Some(Self::Projects),
+            "tasks" => Some(Self::Tasks),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Projects => "projects",
+            Self::Tasks => "tasks",
+        }
+    }
+}
+
+/// How the 태스크 list groups (PRD sidebar-task-lens D-11): by state across
+/// every project, or one group per project.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskView {
+    #[default]
+    Status,
+    Project,
+}
+
+impl TaskView {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "status" => Some(Self::Status),
+            "project" => Some(Self::Project),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Status => "status",
+            Self::Project => "project",
+        }
+    }
+}
+
+/// The most items the 보기 slot's ← steps back through; past it the oldest
+/// goes first (PRD sidebar-task-lens B47).
+pub const DETAIL_HISTORY_LIMIT: usize = 20;
+
+/// One thing the lane's 보기 slot shows (PRD sidebar-task-lens D-50).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DetailItem {
+    /// A pull request's card, by catalog project and number.
+    PullRequest { workspace_id: String, number: u32 },
+    /// A session's record (D-44).
+    Record {
+        session: crate::links::ledger::SessionIdentity,
+    },
+}
+
+/// The lane's 보기 slot (PRD sidebar-task-lens D-50): what it opened, oldest
+/// first with the one it shows last, and whether the lane draws it rather
+/// than its Workspace's tool. The rail keeps a slot for it while anything is
+/// open; a stored value this build cannot read loads empty.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DetailSlot {
+    #[serde(default)]
+    pub items: Vec<DetailItem>,
+    #[serde(default)]
+    pub shown: bool,
+}
+
+impl DetailSlot {
+    pub fn top(&self) -> Option<&DetailItem> {
+        self.items.last()
+    }
+
+    /// Opens `item` in front: the same item again only shows it, another one
+    /// is stepped back to by ←, and past the cap the oldest goes.
+    pub fn open(&mut self, item: DetailItem) {
+        if self.top() != Some(&item) {
+            self.items.retain(|held| held != &item);
+            self.items.push(item);
+            if self.items.len() > DETAIL_HISTORY_LIMIT {
+                self.items.remove(0);
+            }
+        }
+        self.shown = true;
+    }
+
+    /// ←: the item before the one shown; with none left the slot closes.
+    pub fn back(&mut self) {
+        self.items.pop();
+        self.shown = !self.items.is_empty();
+    }
+
+    pub fn close(&mut self) {
+        self.items.clear();
+        self.shown = false;
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UiStateSnapshot {
     #[serde(default)]
@@ -3358,11 +3466,25 @@ pub struct UiStateSnapshot {
     /// D-11).
     #[serde(default)]
     pub expanded_agent_pane_ids: Vec<String>,
-    /// Agent panes whose children the operator opened in Sessions, kept
-    /// apart from the sidebar's (PRD D-21, D-25); folded by default and
-    /// pruned when the pane closes.
+    /// Agent panes whose children the operator opened in the sidebar's
+    /// 태스크 list, kept apart from the 프로젝트 tree's (PRD
+    /// sidebar-task-lens D-48; the name is the Sessions list's, which held
+    /// it before, so a store and a core move read it as they did); folded by
+    /// default and pruned when the pane closes.
     #[serde(default)]
     pub sessions_expanded_agent_pane_ids: Vec<String>,
+    /// Which list the sidebar shows under its head (PRD sidebar-task-lens
+    /// D-10, D-25): the projects at first, then the last one chosen.
+    #[serde(default)]
+    pub sidebar_lens: SidebarLens,
+    /// How the 태스크 list groups its tasks (D-11), kept like the lens.
+    #[serde(default)]
+    pub task_view: TaskView,
+    /// The lane's 보기 slot (D-50): a pull request's card or a session's
+    /// record, one per window and no checkout's or Agent tab's, so it stays
+    /// when either changes.
+    #[serde(default)]
+    pub detail: DetailSlot,
     pub selected_path: Option<String>,
     pub selected_pane_id: Option<String>,
     /// Set by a core move's rekey (`node_migration::reown`): the machine the
@@ -4121,6 +4243,9 @@ impl Default for UiStateSnapshot {
             project_settings_writes: BTreeMap::new(),
             expanded_agent_pane_ids: Vec::new(),
             sessions_expanded_agent_pane_ids: Vec::new(),
+            sidebar_lens: SidebarLens::default(),
+            task_view: TaskView::default(),
+            detail: DetailSlot::default(),
             selected_path: None,
             selected_pane_id: None,
             focus_from_herdr: false,
@@ -6365,6 +6490,23 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "session_group", &session_groups);
         checked.insert("session_group");
+        let lenses = [SidebarLens::Projects, SidebarLens::Tasks];
+        for variant in lenses {
+            match variant {
+                SidebarLens::Projects | SidebarLens::Tasks => {}
+            }
+        }
+        assert_wire(&contract, "sidebar_lens", &lenses);
+        checked.insert("sidebar_lens");
+
+        let views = [TaskView::Status, TaskView::Project];
+        for variant in views {
+            match variant {
+                TaskView::Status | TaskView::Project => {}
+            }
+        }
+        assert_wire(&contract, "task_view", &views);
+        checked.insert("task_view");
         let verbs = [Verb::Approval, Verb::Answer, Verb::Confirm, Verb::Draft];
         for verb in verbs {
             match verb {

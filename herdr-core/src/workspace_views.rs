@@ -42,10 +42,10 @@ pub const MAX_WORKSPACES: usize = 256;
 /// draws; the core only keeps a crafted value from being absurd.
 pub const MAX_WIDTH: u32 = 8192;
 
-/// The one tool the right lane shows (PRD right-lane D-01): the files (the
-/// View areas, with the file tree as a column of its own), History, Work
-/// (the project's sessions or pull requests, PRD work-tab-pr-lens D-34) and
-/// the Project's Memory, in the rail's order.
+/// The one tool the right lane shows (PRD right-lane D-01,
+/// sidebar-task-lens D-17): the Project's Memory and its pull requests, then
+/// the checkout's files (the View areas, with the file tree as a column of
+/// its own) and History, in the rail's order.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Tool {
@@ -53,10 +53,12 @@ pub enum Tool {
     Files,
     /// History, the checkout's changes.
     Changes,
-    /// Work: the project's sessions or its pull requests. Stored as
-    /// `agent_sessions` by builds before it, which is still read.
-    #[serde(alias = "agent_sessions")]
-    Work,
+    /// The Project's pull requests. A lane left on the Work tool (`work`, or
+    /// `agent_sessions` before it) opens here once (PRD sidebar-task-lens
+    /// D-34), and the file keeps writing `work` ([`stored_tool`]): a build
+    /// before PRs refuses the whole file over a tool it does not know.
+    #[serde(alias = "work", alias = "agent_sessions")]
+    Prs,
     /// The Project's Memory.
     Memory,
 }
@@ -66,44 +68,41 @@ impl Tool {
         match value {
             "files" => Some(Self::Files),
             "changes" => Some(Self::Changes),
-            "work" => Some(Self::Work),
+            "prs" => Some(Self::Prs),
             "memory" => Some(Self::Memory),
             _ => None,
         }
     }
-}
 
-/// Which basis the Work tool draws (PRD work-tab-pr-lens D-01).
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkLens {
-    #[default]
-    Sessions,
-    Prs,
-}
-
-impl WorkLens {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "sessions" => Some(Self::Sessions),
-            "prs" => Some(Self::Prs),
-            _ => None,
+    /// The name `workspace-views.json` keeps the tool under, one every
+    /// build since the Work tool reads.
+    fn stored_name(self) -> &'static str {
+        match self {
+            Self::Files => "files",
+            Self::Changes => "changes",
+            Self::Prs => "work",
+            Self::Memory => "memory",
         }
     }
 }
 
-/// A Workspace's Work tool: the basis it was left on and whether its scope
-/// chip is `<checkout> only`, both shared by Sessions and PRs and kept across
-/// a restart (B2).
+fn stored_tool<S: serde::Serializer>(
+    tool: &Option<Tool>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    tool.map(Tool::stored_name).serialize(serializer)
+}
+
+/// A Workspace's PRs tool scope: whether its chip is `<checkout> only`,
+/// kept across a restart (PRD sidebar-task-lens B26). The file keeps it
+/// under the Work tool's `work` key, beside the basis older builds read.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub struct WorkView {
-    #[serde(default)]
-    pub lens: WorkLens,
+pub struct PrsView {
     #[serde(default)]
     pub only_checkout: bool,
 }
 
-impl WorkView {
+impl PrsView {
     pub fn is_default(&self) -> bool {
         *self == Self::default()
     }
@@ -146,16 +145,20 @@ pub struct WorkspaceView {
     /// The tool the right lane shows, or `None` while the lane is closed.
     /// An unpinned lane the operator hid by going back to a terminal keeps
     /// its tool: hiding it is the shell's moment, not a close.
+    #[serde(serialize_with = "stored_tool")]
     pub tool: Option<Tool>,
     /// The tool the lane last showed, kept while it is closed so the next
     /// open comes back on it; `None` for a lane that never showed one. Set
     /// only through `set_tool`, so it follows `tool` and a close leaves it.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "stored_tool"
+    )]
     pub last_tool: Option<Tool>,
-    /// The Work tool's basis and scope; left out of the file while default,
-    /// so a Workspace that never used it reads as before.
-    #[serde(skip_serializing_if = "WorkView::is_default")]
-    pub work: WorkView,
+    /// The PRs tool's scope; left out of the file while default, so a
+    /// Workspace that never used it reads as before.
+    #[serde(rename = "work", skip_serializing_if = "PrsView::is_default")]
+    pub prs: PrsView,
     /// Whether the lane is pinned: docked beside Agent Views, taking its
     /// width from them, rather than floating over them (D-03).
     pub pinned: bool,
@@ -213,8 +216,9 @@ struct StoredLane {
     tool: Option<Tool>,
     #[serde(default)]
     last_tool: Option<Tool>,
+    /// The Work tool's `lens` beside the scope is ignored (D-34).
     #[serde(default)]
-    work: WorkView,
+    work: PrsView,
     #[serde(default)]
     pinned: bool,
     #[serde(default)]
@@ -250,7 +254,7 @@ impl StoredLane {
             // A file written before the last tool was kept has only the
             // tool an open lane shows.
             last_tool: self.last_tool.or(self.tool),
-            work: self.work,
+            prs: self.work,
             pinned: self.pinned,
             tree: self.tree,
             lane_width: self.lane_width,
@@ -331,7 +335,7 @@ impl StoredColumns {
             path: self.path,
             tool,
             last_tool: tool,
-            work: WorkView::default(),
+            prs: PrsView::default(),
             pinned: false,
             tree,
             // Widths stored before the columns were shares of a panel that
@@ -362,7 +366,7 @@ fn lane_of(views: bool, shown_tool: Option<LegacyTool>) -> (Option<Tool>, bool) 
         shown_tool.map(|tool| match tool {
             LegacyTool::Explorer => Tool::Files,
             LegacyTool::Changes => Tool::Changes,
-            LegacyTool::AgentSessions => Tool::Work,
+            LegacyTool::AgentSessions => Tool::Prs,
             LegacyTool::Memory => Tool::Memory,
         })
     };
@@ -576,7 +580,7 @@ impl WorkspaceView {
             path: path.to_owned(),
             tool: None,
             last_tool: None,
-            work: WorkView::default(),
+            prs: PrsView::default(),
             pinned: false,
             tree: false,
             lane_width: None,
@@ -799,14 +803,25 @@ pub fn load(path: &Path, now_unix_ms: u64) -> (WorkspaceViews, LoadOutcome) {
     };
     let reason = match serde_json::from_slice::<StoredVersion>(&bytes) {
         Ok(StoredVersion { schema_version: 3 }) => {
-            match serde_json::from_slice::<StoredV3>(&bytes) {
-                Ok(stored) => {
+            match serde_json::from_slice::<serde_json::Value>(&bytes).and_then(|mut value| {
+                let dropped = drop_retired_cards(&mut value);
+                serde_json::from_value::<StoredV3>(value).map(|stored| (stored, dropped))
+            }) {
+                Ok((stored, dropped)) => {
                     let views = stored
                         .workspaces
                         .into_iter()
                         .map(StoredLane::into_view)
                         .collect();
-                    return settle(views, None);
+                    let (views, mut outcome) = settle(views, None);
+                    if dropped > 0
+                        && let LoadOutcome::Loaded { repairs, .. } = &mut outcome
+                    {
+                        repairs.push(format!(
+                            "{dropped} pull request cards stored as views were dropped; a card opens in the lane's 보기 slot"
+                        ));
+                    }
+                    return (views, outcome);
                 }
                 Err(error) => format!("the file is not valid: {error}"),
             }
@@ -848,6 +863,29 @@ pub fn load(path: &Path, now_unix_ms: u64) -> (WorkspaceViews, LoadOutcome) {
             preserved_as,
         },
     )
+}
+
+/// Takes out every display an older build stored as a pull request's card
+/// (PRD sidebar-task-lens B51, D-50): a card opens in the lane's 보기 slot
+/// now and is no kind of View. The other displays of the same area, and
+/// their arrangement, stay; an area left empty is collapsed by `settle`'s
+/// repair like any other. Returns how many it took out.
+fn drop_retired_cards(value: &mut serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::Object(object) => {
+            let mut dropped = 0;
+            if let Some(serde_json::Value::Array(displays)) = object.get_mut("displays") {
+                let before = displays.len();
+                displays.retain(|display| {
+                    display.get("kind").and_then(|kind| kind.as_str()) != Some("pull_request")
+                });
+                dropped += before - displays.len();
+            }
+            dropped + object.values_mut().map(drop_retired_cards).sum::<usize>()
+        }
+        serde_json::Value::Array(items) => items.iter_mut().map(drop_retired_cards).sum(),
+        _ => 0,
+    }
 }
 
 /// Brings loaded entries inside the bounds every operation keeps; excess is
@@ -1249,6 +1287,75 @@ mod tests {
         }
     }
 
+    /// PRD sidebar-task-lens B51: a pull request card an older build stored
+    /// as a View is dropped as the file loads, without an error, and the
+    /// other Views of its area, the parked tab's and the arrangement stay.
+    #[test]
+    fn a_stored_pull_request_card_is_dropped_and_the_other_views_stay() {
+        let folder = scratch("retired-card");
+        let path = folder.path().join("workspace-views.json");
+        let with_card = |files: &[&str], number: u32| {
+            let mut layout = Layout::default();
+            for file in files {
+                let display = layout.new_display(file, DisplayKind::File, None, false);
+                layout.insert("a1", display, 1).unwrap();
+            }
+            let mut value = serde_json::to_value(&layout).unwrap();
+            fn displays(value: &mut serde_json::Value) -> Option<&mut Vec<serde_json::Value>> {
+                match value {
+                    serde_json::Value::Object(object) => {
+                        if object.contains_key("displays") {
+                            return object.get_mut("displays")?.as_array_mut();
+                        }
+                        object.values_mut().find_map(displays)
+                    }
+                    _ => None,
+                }
+            }
+            displays(&mut value).unwrap().push(serde_json::json!(
+                {"id": "d90", "path": "", "kind": "pull_request", "pr": number, "last_focused_unix_ms": 5}
+            ));
+            value
+        };
+        fs::write(
+            &path,
+            serde_json::json!({
+                "schema_version": 3,
+                "workspaces": [{
+                    "device_id": "local", "path": "/r", "tool": "files",
+                    "layout": with_card(&["/r/a.rs"], 7),
+                    "view_owner": "w:t1",
+                    "view_presentations": {"w:t2": {"layout": with_card(&[], 8)}},
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let (loaded, outcome) = load(&path, 1);
+        let LoadOutcome::Loaded { repairs, .. } = outcome else {
+            panic!("the file loads, got {outcome:?}");
+        };
+        assert!(
+            repairs
+                .iter()
+                .any(|note| note.starts_with("2 pull request cards")),
+            "{repairs:?}"
+        );
+        let view = loaded.get("local", "/r").unwrap();
+        let shown: Vec<_> = view
+            .layout
+            .displays()
+            .map(|display| display.path.as_str())
+            .collect();
+        assert_eq!(shown, ["/r/a.rs"]);
+        let active = view.layout.active_area().active.clone();
+        assert_eq!(
+            active.as_deref(),
+            view.layout.displays().next().map(|d| d.id.as_str())
+        );
+        assert_eq!(view.view_presentations["w:t2"].layout.display_count(), 0);
+    }
+
     #[test]
     fn the_least_recently_used_workspace_is_forgotten_past_the_cap() {
         let mut views = WorkspaceViews::default();
@@ -1282,12 +1389,13 @@ mod tests {
         entry
     }
 
-    /// PRD work-tab-pr-lens B1, B2, D-34: a lane stored on the sessions tool
-    /// (`agent_sessions`, in schema 2 or 3) restarts on Work with its other
-    /// choices unchanged, the next save writes `work`, and the basis and scope
-    /// chosen in Work come back after a restart.
+    /// PRD sidebar-task-lens B30, D-34: a lane stored on the Work tool
+    /// (`work`, or `agent_sessions` before it) restarts on PRs with its other
+    /// choices and its scope chip unchanged, the Work basis is dropped, and
+    /// the next save writes the tool as `work` again, which every build since
+    /// Work reads (a build before PRs refuses a file naming `prs`).
     #[test]
-    fn a_lane_stored_on_sessions_restarts_on_work_and_keeps_its_basis() {
+    fn a_lane_stored_on_work_restarts_on_prs_and_keeps_its_scope() {
         let folder = scratch("work-tool");
         let path = folder.path().join("workspace-views.json");
         fs::write(
@@ -1297,8 +1405,8 @@ mod tests {
                 "workspaces": [
                     {"device_id": "local", "path": "/old", "tool": "agent_sessions",
                      "pinned": true, "lane_width": 500},
-                    {"device_id": "local", "path": "/new", "tool": "work",
-                     "work": {"lens": "prs", "only_checkout": true}},
+                    {"device_id": "local", "path": "/new", "tool": "work", "last_tool": "work",
+                     "work": {"lens": "sessions", "only_checkout": true}},
                 ]
             })
             .to_string(),
@@ -1306,29 +1414,34 @@ mod tests {
         .unwrap();
         let (loaded, outcome) = load(&path, 1);
         assert!(matches!(outcome, LoadOutcome::Loaded { ref repairs, .. } if repairs.is_empty()));
-        assert_eq!(loaded.workspaces[0].tool, Some(Tool::Work));
-        assert_eq!(loaded.workspaces[0].work, WorkView::default());
+        assert_eq!(loaded.workspaces[0].tool, Some(Tool::Prs));
+        assert_eq!(loaded.workspaces[0].prs, PrsView::default());
         assert!(loaded.workspaces[0].pinned);
         assert_eq!(loaded.workspaces[0].lane_width, Some(500));
+        assert_eq!(loaded.workspaces[1].tool, Some(Tool::Prs));
         assert_eq!(
-            loaded.workspaces[1].work,
-            WorkView {
-                lens: WorkLens::Prs,
+            loaded.workspaces[1].prs,
+            PrsView {
                 only_checkout: true
             }
         );
         save(&path, &loaded).unwrap();
         let written = fs::read_to_string(&path).unwrap();
         assert!(
-            !written.contains("agent_sessions"),
-            "the old name is not written again"
+            !written.contains("agent_sessions") && !written.contains("\"prs\""),
+            "the tool is written under the name older builds read"
         );
         let (again, _) = load(&path, 2);
         assert_eq!(again, loaded);
         let stored: serde_json::Value = serde_json::from_str(&written).unwrap();
+        assert_eq!(stored["workspaces"][1]["tool"], "work");
+        assert_eq!(
+            stored["workspaces"][1]["work"],
+            serde_json::json!({"only_checkout": true})
+        );
         assert!(
             stored["workspaces"][0].get("work").is_none(),
-            "a default basis leaves the file as it was"
+            "a default scope leaves the file as it was"
         );
     }
 
@@ -1437,7 +1550,7 @@ mod tests {
             lanes,
             vec![
                 ("/views", Some(Tool::Files), false, false, Some(700), None),
-                ("/sessions", Some(Tool::Work), false, false, None, None),
+                ("/sessions", Some(Tool::Prs), false, false, None, None),
                 ("/explorer", Some(Tool::Files), true, false, None, None),
                 ("/both", Some(Tool::Files), true, false, None, None),
                 ("/closed", None, false, false, None, None),

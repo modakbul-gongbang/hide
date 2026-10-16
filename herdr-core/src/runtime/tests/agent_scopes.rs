@@ -270,6 +270,90 @@ fn tasks_stand_by_state_and_fold_a_merged_worktree_as_cleanup() {
 }
 
 #[test]
+fn a_device_publishes_every_project_s_tasks_in_one_order() {
+    // PRD sidebar-task-lens B4, B5, B9, D-40: the 태스크 list's 상태별 view is
+    // the device's every task across its projects, in the same groups and
+    // order as one project's; a resolved task rests whatever its own state.
+    let mut runtime = runtime();
+    let local_id = runtime.snapshot.navigator.devices[0].id.clone();
+    let mut base = rows().remove(1);
+    base.lineage_parent_pane_id = None;
+    let agent = |id: &str, group: &str, activity: &str, at: &str| {
+        let mut agent = base.clone();
+        agent.pane_id = id.into();
+        agent.group = group.into();
+        agent.activity = activity.into();
+        agent.last_activity = at.into();
+        agent
+    };
+    let mut resolved = agent("resolved", "needs_you", "stopped", "5");
+    resolved.demand = "question".into();
+    resolved.resolved = Some(crate::agent_state::sessions::Resolution {
+        at_unix_ms: 1,
+        source: crate::agent_state::sessions::ResolveSource::Operator,
+        session: None,
+        activity: "stopped".into(),
+    });
+    runtime.snapshot.navigator.agents = vec![
+        agent("old", "working", "working", "1"),
+        agent("asks", "needs_you", "stopped", "2"),
+        agent("new", "working", "working", "3"),
+        resolved,
+    ];
+    let project = |id: &str, names: &[&str]| {
+        let mut project = workspace(
+            id,
+            id,
+            &format!("/{id}"),
+            names
+                .iter()
+                .map(|name| {
+                    checkout(
+                        id,
+                        name,
+                        &format!("/{id}/{name}"),
+                        Some(pane(name, &format!("/{id}/{name}"))),
+                    )
+                })
+                .collect(),
+        );
+        project.device_id.clone_from(&local_id);
+        project
+    };
+    runtime.snapshot.navigator.workspaces = vec![
+        project("ide", &["old", "asks"]),
+        project("site", &["new", "resolved"]),
+    ];
+    runtime.snapshot.navigator.agents[1].demand = "question".into();
+    assert!(runtime.refresh_agent_scopes());
+    let device = &runtime.snapshot.navigator.devices[0].agent_scope.tasks;
+    assert_eq!(
+        device
+            .cards
+            .iter()
+            .map(|c| (c.root.as_str(), c.state))
+            .collect::<Vec<_>>(),
+        [
+            ("asks", TaskState::NeedsYou),
+            ("new", TaskState::Working),
+            ("old", TaskState::Working),
+            ("resolved", TaskState::Resting),
+        ],
+        "every project's tasks, by state, the most recent first"
+    );
+    assert_eq!(device.needs_you, 1);
+    let site = &runtime.snapshot.navigator.workspaces[1].agent_scope.tasks;
+    assert_eq!(
+        site.cards
+            .iter()
+            .map(|c| c.root.as_str())
+            .collect::<Vec<_>>(),
+        ["new", "resolved"],
+        "a project's own list keeps only its tasks"
+    );
+}
+
+#[test]
 fn close_consequences_keep_unknown_priority_and_outside_descendant_counts() {
     let mut runtime = runtime();
     let mut agents = rows();
@@ -876,6 +960,15 @@ fn factory_workers_leave_requests_and_overview_count_without_leaving_physical_li
     );
     assert_eq!(scope.overview_needs_you, 0);
     assert!(
+        scope.tasks.cards.is_empty()
+            && runtime.snapshot.navigator.workspaces[0]
+                .agent_scope
+                .tasks
+                .cards
+                .is_empty(),
+        "a Factory worker is not a task of the 태스크 list (PRD sidebar-task-lens B7)"
+    );
+    assert!(
         runtime.snapshot.navigator.workspaces[0]
             .agent_scope
             .requests
@@ -1037,17 +1130,7 @@ fn a_home_owned_row_is_listed_only_while_the_operator_has_something_to_do() {
         assert_eq!(
             scope.tasks.cards.iter().any(|card| card.root == "child"),
             group == "needs_you",
-            "{case}: the Overview's Tasks hold it only while it calls the operator"
-        );
-        assert_eq!(
-            scope
-                .sessions
-                .groups
-                .iter()
-                .map(|section| section.members.len())
-                .sum::<usize>(),
-            1 + usize::from(group == "needs_you"),
-            "{case}: Sessions lists the operator's own row, and this one only when called out"
+            "{case}: the 태스크 list holds it only while it calls the operator"
         );
         assert!(
             runtime.snapshot.navigator.workspaces[0].checkouts[1]
