@@ -7,6 +7,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { applyFuses, assertFuses, SHIPPED_FUSES } from "../scripts/fuses.mjs";
+import { FUSED_ELECTRON_ENV } from "./fused-env";
 
 const requireFrom = createRequire(__filename);
 const DESKTOP_DIR = path.resolve(__dirname, "..");
@@ -26,8 +27,9 @@ export function fusedElectron(): string {
   return path.join(FUSED, path.relative(folder, executable));
 }
 
-/** Builds the copy unless one of this Electron version and fuse list is already there. */
+/** Builds the copy unless one of this Electron version and fuse list is already there, and names it for the workers. */
 export async function makeFusedElectron(): Promise<void> {
+  process.env[FUSED_ELECTRON_ENV] = fusedElectron();
   const { folder, version } = stock();
   const stamp = JSON.stringify({ version, fuses: SHIPPED_FUSES });
   if (fs.existsSync(STAMP) && fs.readFileSync(STAMP, "utf8") === stamp && fs.existsSync(fusedElectron())) return;
