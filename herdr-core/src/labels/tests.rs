@@ -160,6 +160,9 @@ struct Harness {
     backend: Arc<Scripted>,
     analyzer: Arc<LabelAnalyzer>,
     input: Arc<OperatorInput>,
+    /// How long a turn works before its start is asked: none, so a test
+    /// sees the request at once, unless it is about the delay.
+    start_delay: Duration,
 }
 
 impl Harness {
@@ -192,6 +195,7 @@ impl Harness {
             backend,
             analyzer: Arc::new(analyzer),
             input: Arc::new(super::input::OperatorInput::new(LOCAL_TARGET)),
+            start_delay: Duration::ZERO,
         }
     }
 
@@ -262,6 +266,7 @@ impl Harness {
                 input: Arc::clone(&self.input),
                 ledger,
                 language: hide_ai::OutputLanguage::Korean,
+                start_delay: self.start_delay,
             },
             store,
             Arc::clone(&self.analyzer),
@@ -987,6 +992,210 @@ fn a_restart_restores_the_label_with_no_read_and_no_request() {
     assert_eq!(harness.backend.calls(), 1);
 }
 
+/// A device's conversation and labels stay in memory, so a restart used to
+/// forget which of its turns were analyzed and asked the model about the same
+/// turns again (75 of 375 label requests in one log window). What reaches
+/// disk is the session proof and the analyzed turns' hashes, which spares the
+/// request; the label is made again at the pane's next turn.
+#[test]
+fn a_restart_does_not_ask_again_about_a_device_turn_it_already_analyzed() {
+    let harness = Harness::new();
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[("user", "재시작 전 기기 요청"), ("assistant", "완료")],
+    );
+    harness.backend.answer("기기에서 붙은 작업", "done", "");
+    let idle = agent(&path, "idle", 5);
+    let source = || {
+        let node: Arc<dyn crate::node_access::NodeLink> = Arc::new(hide_node::Local::new(Some(
+            harness.home.path().to_path_buf(),
+        )));
+        Arc::new(super::NodeTranscripts::new(Box::new(move || {
+            Ok(Arc::clone(&node))
+        })))
+    };
+    {
+        let store = harness.store();
+        let (mut worker, woken) =
+            harness.spawn(Arc::clone(&store), "device:mini", "d.sock", source());
+        observe(&mut worker, &idle);
+        settle(&mut worker, &woken);
+        assert!(shown(&worker, &idle).is_some());
+        store.flush();
+    }
+    assert_eq!(harness.backend.calls(), 1);
+    let disk = std::fs::read_to_string(harness.state.path().join("labels.json")).unwrap();
+    // The label the model wrote is kept; the conversation it came from is not.
+    assert!(disk.contains("기기에서 붙은 작업"), "{disk}");
+    assert!(!disk.contains("재시작 전 기기 요청"), "{disk}");
+
+    let (mut worker, woken) = harness.spawn(harness.store(), "device:mini", "d.sock", source());
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        task(shown(&worker, &idle)).as_deref(),
+        Some("기기에서 붙은 작업"),
+        "the label did not come back with the restart"
+    );
+    assert_eq!(
+        harness.backend.calls(),
+        1,
+        "the analyzed turn was asked again"
+    );
+}
+
+/// A restored mark proves one session. Another session in the same pane
+/// after the restart is a new conversation, and its first turn is asked.
+#[test]
+fn a_restored_device_mark_does_not_spare_another_session_in_the_same_pane() {
+    let harness = Harness::new();
+    let first = harness.session(
+        "a",
+        "native-a",
+        &[("user", "첫 세션 요청"), ("assistant", "완료")],
+    );
+    let other = harness.session(
+        "b",
+        "native-b",
+        &[("user", "다른 세션 요청"), ("assistant", "완료")],
+    );
+    harness.backend.answer("기기의 첫 작업", "done", "");
+    harness.backend.answer("기기의 다른 작업", "done", "");
+    let source = || {
+        let node: Arc<dyn crate::node_access::NodeLink> = Arc::new(hide_node::Local::new(Some(
+            harness.home.path().to_path_buf(),
+        )));
+        Arc::new(super::NodeTranscripts::new(Box::new(move || {
+            Ok(Arc::clone(&node))
+        })))
+    };
+    {
+        let store = harness.store();
+        let (mut worker, woken) =
+            harness.spawn(Arc::clone(&store), "device:mini", "d.sock", source());
+        observe(&mut worker, &agent(&first, "idle", 5));
+        settle(&mut worker, &woken);
+        store.flush();
+    }
+    assert_eq!(harness.backend.calls(), 1);
+    let (mut worker, woken) = harness.spawn(harness.store(), "device:mini", "d.sock", source());
+    observe(&mut worker, &agent(&other, "idle", 5));
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 2, "another session was spared");
+}
+
+/// Most short turns end before anyone reads their start, and the end call
+/// names the goal too, so a start is asked only once the turn has worked a
+/// while.
+#[test]
+fn a_turn_that_ends_within_the_start_delay_costs_one_request_not_two() {
+    let mut harness = Harness::new();
+    harness.start_delay = Duration::from_secs(15);
+    let (mut worker, woken, path) = harness_with_named_pane(&harness);
+    let named = harness.backend.calls();
+    // A second turn begins: its start is held, not asked.
+    harness.session(
+        "a",
+        "native-a",
+        &[
+            ("user", "첫 요청"),
+            ("assistant", "완료"),
+            ("user", "짧은 요청"),
+            ("assistant", "완료"),
+        ],
+    );
+    harness.backend.answer("짧은 턴의 작업", "done", "");
+    observe(&mut worker, &agent(&path, "working", 7));
+    settle(&mut worker, &woken);
+    assert_eq!(
+        harness.backend.calls(),
+        named,
+        "the start was asked at once"
+    );
+    // The turn ends inside the delay: only its end is asked, and it names
+    // the goal.
+    observe(&mut worker, &agent(&path, "idle", 8));
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), named + 1);
+    worker.tick(Instant::now() + Duration::from_secs(60));
+    settle(&mut worker, &woken);
+    assert_eq!(
+        harness.backend.calls(),
+        named + 1,
+        "the held start was asked after the end"
+    );
+}
+
+#[test]
+fn a_turn_that_keeps_working_past_the_start_delay_is_asked_its_start() {
+    let mut harness = Harness::new();
+    harness.start_delay = Duration::from_secs(15);
+    let (mut worker, woken, path) = harness_with_named_pane(&harness);
+    let named = harness.backend.calls();
+    harness.session(
+        "a",
+        "native-a",
+        &[
+            ("user", "첫 요청"),
+            ("assistant", "완료"),
+            ("user", "긴 요청"),
+            ("assistant", "하는 중"),
+        ],
+    );
+    harness.backend.begin("오래 걸리는 턴의 작업 이름");
+    observe(&mut worker, &agent(&path, "working", 7));
+    assert_eq!(harness.backend.calls(), named);
+    worker.tick(Instant::now() + Duration::from_secs(8));
+    settle(&mut worker, &woken);
+    assert_eq!(
+        harness.backend.calls(),
+        named,
+        "asked before the delay was over"
+    );
+    worker.tick(Instant::now() + Duration::from_secs(20));
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), named + 1);
+}
+
+/// A pane with no goal is named at once, whatever the delay: nothing on
+/// screen says what it works on until the first answer lands.
+#[test]
+fn a_pane_with_no_goal_is_asked_its_first_turn_at_once() {
+    let mut harness = Harness::new();
+    harness.start_delay = Duration::from_secs(15);
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[("user", "첫 요청"), ("assistant", "하는 중")],
+    );
+    harness.backend.begin("첫 요청에 붙은 작업 이름");
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    observe(&mut worker, &agent(&path, "working", 5));
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 1);
+}
+
+/// A pane whose first turn was answered: the state a later turn starts from.
+fn harness_with_named_pane(harness: &Harness) -> (LabelWorker, Receiver<()>, PathBuf) {
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[("user", "첫 요청"), ("assistant", "완료")],
+    );
+    harness.backend.begin("첫 요청에 붙은 작업 이름");
+    harness
+        .backend
+        .answer("첫 요청에 붙은 작업 이름", "done", "");
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    observe(&mut worker, &agent(&path, "working", 5));
+    settle(&mut worker, &woken);
+    observe(&mut worker, &agent(&path, "idle", 6));
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 2, "the first turn was not named");
+    (worker, woken, path)
+}
+
 #[test]
 fn an_imported_label_shows_only_for_the_session_it_was_proven_for() {
     let harness = Harness::new();
@@ -1388,6 +1597,8 @@ fn a_label_request_carries_its_language_and_that_languages_lengths() {
         for phase in [AnalysisPhase::TurnStart, AnalysisPhase::TurnEnd] {
             let asked = request(phase, language, "pane", "r".to_owned(), "context");
             assert_eq!(asked.output_language, Some(language));
+            // A short answer: one model turn, the router checks its shape.
+            assert_eq!(asked.answer, hide_ai::AnswerMode::PlainJson);
             assert_eq!(asked.output_schema["properties"]["goal"]["maxLength"], goal);
             assert!(asked.system.contains(&format!("8 to {goal} characters")));
             assert!(

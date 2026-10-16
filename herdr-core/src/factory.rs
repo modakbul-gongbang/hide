@@ -2814,6 +2814,7 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
             schema_version: hide_factory::judgment::SCHEMA_VERSION.into(),
             pick,
             output_language: Some(output_language(judgment.language)),
+            answer: hide_ai::AnswerMode::Schema,
         };
         let started = Instant::now();
         let outcome = if unknown {

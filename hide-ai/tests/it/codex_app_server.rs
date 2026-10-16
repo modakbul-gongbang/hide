@@ -41,6 +41,7 @@ fn request(deadline: Duration) -> AiRequest {
         schema_version: "fixture.v1".into(),
         pick: None,
         output_language: None,
+        answer: hide_ai::AnswerMode::default(),
     }
 }
 
@@ -121,6 +122,7 @@ fn the_thread_instructions_name_the_requests_language() {
         unsafe { std::env::set_var("FAKE_INSTRUCTIONS_FILE", &record) };
         let request = AiRequest {
             output_language: Some(OutputLanguage::Japanese),
+            answer: hide_ai::AnswerMode::default(),
             ..request(Duration::from_secs(10))
         };
         let outcome = backend().execute(&request, &CancelToken::new());

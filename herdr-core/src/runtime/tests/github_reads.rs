@@ -1490,3 +1490,200 @@ fn a_request_that_is_a_refresh_and_a_look_is_a_refresh() {
     assert_eq!(generation_of(&runtime, "/tmp/a"), 1);
     assert!(row_loading(&runtime, 0), "a refresh keeps its spinner");
 }
+
+fn open_pull_request(number: u32, checks: PullRequestChecks) -> PullRequestSnapshot {
+    let mut pull_request = pull_request(number, &format!("b{number}"), PullRequestBadge::Open);
+    pull_request.url = format!("https://github.com/acme/app/pull/{number}");
+    pull_request.checks = checks;
+    pull_request
+}
+
+fn polled_paths(runtime: &mut Runtime) -> Vec<String> {
+    runtime
+        .github_poll_request()
+        .projects
+        .into_iter()
+        .map(|project| project.path)
+        .collect()
+}
+
+#[test]
+fn the_poll_watches_only_projects_whose_last_read_worked_and_holds_an_open_pull_request() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![
+        git_project("a", "/tmp/a", "main"),
+        git_project("b", "/tmp/b", "main"),
+        git_project("c", "/tmp/c", "main"),
+        git_project("d", "/tmp/d", "main"),
+    ];
+    let mut merged = pull_request(9, "old", PullRequestBadge::Merged);
+    merged.url = "https://github.com/acme/app/pull/9".to_owned();
+    first_read(
+        &mut runtime,
+        vec![
+            read_ok(
+                "/tmp/a",
+                vec![open_pull_request(1, PullRequestChecks::Pending)],
+                10,
+            ),
+            read_failed("/tmp/b"),
+            read_ok("/tmp/c", vec![merged], 10),
+            read_ok(
+                "/tmp/d",
+                vec![open_pull_request(2, PullRequestChecks::Passing)],
+                10,
+            ),
+        ],
+        Instant::now(),
+    );
+    runtime.snapshot.navigator.focused_checkout_id = Some("d-checkout".to_owned());
+
+    let request = runtime.github_poll_request();
+    let watched: Vec<_> = request
+        .projects
+        .iter()
+        .map(|project| project.path.as_str())
+        .collect();
+    assert_eq!(
+        watched,
+        ["/tmp/d", "/tmp/a"],
+        "the project in front first; a failed read and a project with nothing open are left out"
+    );
+    assert_eq!(request.projects[1].repository, "acme/app");
+    assert_eq!(
+        request.projects[1].heads,
+        vec![format!("{:040x}", 1)],
+        "the checks of a pull request still pending are watched through its head commit"
+    );
+    assert!(
+        request.projects[0].heads.is_empty(),
+        "settled checks are not watched"
+    );
+}
+
+#[test]
+fn the_poll_reads_at_most_eight_projects_the_one_in_front_first() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = (0..12)
+        .map(|index| git_project(&format!("w{index}"), &format!("/tmp/p{index:02}"), "main"))
+        .collect();
+    first_read(
+        &mut runtime,
+        (0..12)
+            .map(|index| {
+                read_ok(
+                    &format!("/tmp/p{index:02}"),
+                    vec![open_pull_request(1, PullRequestChecks::Passing)],
+                    10,
+                )
+            })
+            .collect(),
+        Instant::now(),
+    );
+    runtime.snapshot.navigator.focused_checkout_id = Some("w11-checkout".to_owned());
+    let paths = polled_paths(&mut runtime);
+    assert_eq!(paths.len(), 8);
+    assert_eq!(paths[0], "/tmp/p11");
+    assert_eq!(
+        runtime.github_poll_over_limit, 4,
+        "the shortfall is counted for the log"
+    );
+}
+
+#[test]
+fn a_polled_change_asks_the_read_by_the_look_rule_and_sets_no_spinner() {
+    let mut runtime = runtime();
+    let answered = Instant::now();
+    answered_project(&mut runtime, "/tmp/a", answered);
+    runtime.note_polled_changes(vec!["/tmp/a".to_owned()]);
+
+    runtime.ask_polled_changes(answered + Duration::from_secs(29));
+    assert_eq!(
+        generation_of(&runtime, "/tmp/a"),
+        0,
+        "within 30 s nothing is asked"
+    );
+    assert!(
+        runtime.github_polled.contains("/tmp/a"),
+        "the change is kept"
+    );
+
+    runtime.ask_polled_changes(answered + Duration::from_secs(30));
+    assert_eq!(generation_of(&runtime, "/tmp/a"), 1, "after 30 s one ask");
+    assert!(runtime.github_polled.is_empty());
+    assert!(
+        !row_loading(&runtime, 0),
+        "an ask from the poll shows no spinner"
+    );
+
+    runtime.ask_polled_changes(answered + Duration::from_secs(90));
+    assert_eq!(
+        generation_of(&runtime, "/tmp/a"),
+        1,
+        "one change is one ask"
+    );
+}
+
+#[test]
+fn a_polled_change_is_not_asked_while_a_read_is_out_and_is_let_go_when_it_cannot_be_asked() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![
+        git_project("a", "/tmp/a", "main"),
+        git_project("b", "/tmp/b", "main"),
+        git_project("c", "/tmp/c", "main"),
+    ];
+    let start = Instant::now();
+    runtime.reread_stale_github(start);
+    answer_with(&mut runtime, &["/tmp/a"]);
+    runtime.reread_stale_github(start + Duration::from_secs(1));
+    runtime
+        .github_clock
+        .insert("/tmp/c".to_owned(), GithubClock::NoRemote);
+    runtime
+        .github_clock
+        .insert("/tmp/b".to_owned(), GithubClock::Waiting { failures: 0 });
+    let before = generations(&runtime);
+    runtime.note_polled_changes(vec![
+        "/tmp/a".to_owned(),
+        "/tmp/b".to_owned(),
+        "/tmp/c".to_owned(),
+        "/tmp/not-read".to_owned(),
+    ]);
+    assert_eq!(
+        runtime.github_polled.len(),
+        3,
+        "a path nothing reads is not kept"
+    );
+
+    runtime.ask_polled_changes(start + Duration::from_secs(10_000));
+    assert_eq!(
+        generations(&runtime)
+            .iter()
+            .find(|(path, _)| path == "/tmp/b"),
+        before.iter().find(|(path, _)| path == "/tmp/b"),
+        "the project whose first read is still out is not asked again"
+    );
+    assert_eq!(generations(&runtime).len(), before.len());
+    assert_eq!(
+        runtime.github_polled.iter().collect::<Vec<_>>(),
+        ["/tmp/b"],
+        "a failed project and one with no remote are let go; the one waiting stays marked"
+    );
+}
+
+#[test]
+fn a_polled_change_leaves_the_five_minute_clock_where_it_was() {
+    let mut runtime = runtime();
+    let answered = Instant::now();
+    answered_project(&mut runtime, "/tmp/a", answered);
+    let clock = runtime.github_clock.get("/tmp/a").copied();
+    runtime.note_polled_changes(Vec::new());
+    runtime.note_polled_changes(vec!["/tmp/a".to_owned()]);
+    runtime.ask_polled_changes(answered + Duration::from_secs(5));
+    assert_eq!(
+        runtime.github_clock.get("/tmp/a").copied(),
+        clock,
+        "marking a change and an ask that has to wait do not move the clock"
+    );
+    assert_eq!(generation_of(&runtime, "/tmp/a"), 0);
+}

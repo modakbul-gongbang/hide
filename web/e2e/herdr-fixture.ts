@@ -14,7 +14,7 @@
 //
 // The same binary is the daemon's Claude provider, because hided finds
 // `claude` on the same PATH: `claude auth status` answers logged in, and a
-// print-mode request (`--json-schema`) answers with the label written after
+// print-mode request (`--json-schema`, or a plain-JSON one carrying its schema in `--system-prompt`) answers with the label written after
 // the last `HIDE_E2E_LABEL ` in its prompt, after the delay a
 // `HIDE_E2E_DELAY_MS ` line before it asks for, and appends the answered
 // task to `HIDE_E2E_PROVIDER_LOG` when that is set. `labelAgent` writes that marker

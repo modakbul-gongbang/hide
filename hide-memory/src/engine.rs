@@ -154,6 +154,7 @@ impl HideNativeAnalyzer {
             schema_version: SCHEMA_VERSION.into(),
             pick: None,
             output_language: Some(language),
+            answer: hide_ai::AnswerMode::Schema,
         })
     }
 

@@ -193,6 +193,7 @@ pub(crate) fn request(
         schema_version: SCHEMA_VERSION.into(),
         pick: None,
         output_language: Some(language),
+        answer: hide_ai::AnswerMode::PlainJson,
     }
 }
 

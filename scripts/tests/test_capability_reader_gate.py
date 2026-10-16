@@ -20,10 +20,10 @@ class CapabilityReaderGate(unittest.TestCase):
             session_sync_modules = sources / 'session_sync'
             session_sync_modules.mkdir()
             shutil.copy2(ROOT / 'scripts/check-capability-readers-off-lock.sh', root / 'scripts')
-            for reader in ('changes', 'ports', 'worktrees', 'github', 'disk', 'ai', 'usage'):
+            for reader in ('changes', 'ports', 'worktrees', 'github', 'github_poll', 'disk', 'ai', 'usage'):
                 (sources / f'{reader}.rs').write_text('fn read_if_due() {}\n// BackgroundRead\n')
             (sources / 'handle.rs').write_text('let changes = changes::ChangesPump::spawn();\n')
-            requests = ('worktrees', 'github', 'disk', 'ai')
+            requests = ('worktrees', 'github', 'github_poll', 'disk', 'ai')
             (sources / 'session_sync.rs').write_text('mod coordinator;\n')
             (session_sync_modules / 'coordinator.rs').write_text(
                 '\n'.join(f'let {r}_reader = {r}::Reader::new();' for r in (*requests, 'ports', 'usage'))
@@ -56,14 +56,14 @@ class CapabilityReaderGate(unittest.TestCase):
             (sources / 'runtime').mkdir(parents=True)
             (sources / 'session_sync').mkdir()
             shutil.copy2(ROOT / 'scripts/check-capability-readers-off-lock.sh', root / 'scripts')
-            for reader in ('changes', 'ports', 'worktrees', 'github', 'disk', 'ai', 'usage'):
+            for reader in ('changes', 'ports', 'worktrees', 'github', 'github_poll', 'disk', 'ai', 'usage'):
                 (sources / f'{reader}.rs').write_text('fn read_if_due() {}\n// BackgroundRead\n')
             (sources / 'handle.rs').write_text('let changes = changes::ChangesPump::spawn();\n')
             (sources / 'session_sync' / 'coordinator.rs').write_text(
                 '\n'.join(f'let {r}_reader = {r}::Reader::new();'
-                          for r in ('changes', 'worktrees', 'github', 'disk', 'ai', 'ports', 'usage'))
+                          for r in ('changes', 'worktrees', 'github', 'github_poll', 'disk', 'ai', 'ports', 'usage'))
                 + '\n' + '\n'.join(f'let Some(request) = read_{r}_request();'
-                                    for r in ('worktrees', 'github', 'disk', 'ai'))
+                                    for r in ('worktrees', 'github', 'github_poll', 'disk', 'ai'))
             )
             (sources / 'runtime.rs').write_text('#[cfg(test)]\nmod tests {}\n')
             (sources / 'files.rs').write_text('#[cfg(test)]\nmod tests {}\n')
@@ -82,10 +82,10 @@ class CapabilityReaderGate(unittest.TestCase):
             (sources / 'runtime').mkdir()
             (sources / 'session_sync').mkdir()
             shutil.copy2(runtime_module, root / 'scripts')
-            for reader in ('changes', 'ports', 'worktrees', 'github', 'disk', 'ai', 'usage'):
+            for reader in ('changes', 'ports', 'worktrees', 'github', 'github_poll', 'disk', 'ai', 'usage'):
                 (sources / f'{reader}.rs').write_text('fn read_if_due() {}\n// BackgroundRead\n')
             (sources / 'handle.rs').write_text('let changes = changes::ChangesPump::spawn();\n')
-            requests = ('worktrees', 'github', 'disk', 'ai')
+            requests = ('worktrees', 'github', 'github_poll', 'disk', 'ai')
             (sources / 'session_sync.rs').write_text('mod coordinator;\n')
             (sources / 'session_sync' / 'coordinator.rs').write_text(
                 '\n'.join(f'let {r}_reader = {r}::Reader::new();' for r in (*requests, 'ports', 'usage'))
