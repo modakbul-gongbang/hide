@@ -24,7 +24,7 @@ function checkoutWith(tabs: string[], extra: { id: string; kind: "file" | "diff"
 }
 
 function agent(paneId: string, extra: Partial<AgentRow> = {}): AgentRow {
-  return legacyAgentRow({ id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false, ...extra });
+  return legacyAgentRow({ id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", mark: "going", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false, ...extra });
 }
 
 it("numbers grouped roots in physical tab order, skipping children and duplicate raised occurrences", () => {

@@ -9,10 +9,16 @@ import type { ProjectSettings, ProjectSettingsWrite } from "./projectSettings";
 import type { AgentLogoMode, UsagePreferences } from "./generated/hided-ws";
 
 /** The status codes the core sends in `status_code`; the catalogs name one word for each (agents.status.*). */
-export type AgentStatusCode = "error" | "question" | "approval" | "working" | "done" | "idle" | "unknown" | "waiting" | "stopped" | "attached" | "sleeping" | "waking" | "sleep_failed";
+export type AgentStatusCode = "error" | "question" | "approval" | "working" | "done" | "idle" | "unknown" | "waiting" | "unfinished" | "stopped" | "attached" | "sleeping" | "waking" | "sleep_failed";
 
-/** What a quiet row waits on (`AgentWait`): its descendants, a background job its session proves is running, or the reply to a Hide request it sent. */
-export type AgentWait = "children" | "background" | "reply";
+/** Whose move is next (`RowMark`): the operator's, in progress (the agent works, or `waiting` on proven work, D-25), unread as finished, unread otherwise, nothing, or asleep (status-marks D-21). */
+export type RowMark = "turn" | "going" | "waiting" | "done" | "unread" | "quiet" | "asleep";
+
+/** What a quiet row waits on (`AgentWait`): its descendants, a background job its session proves is running, the reply to a Hide request it sent, or its pull request's checks. */
+export type AgentWait = "children" | "background" | "reply" | "checks";
+
+/** Why a row's second line is on screen (`RowLine::mode`); see agentRow.ts. */
+export type LineMode = "request" | "news" | "waiting" | "kept" | "quiet" | "vanished" | "checks_passed" | "checks_failed";
 
 export type StatusTone = { kind: "warning" | "working" | "success" | "subtle" | "news"; read: boolean };
 
@@ -23,7 +29,7 @@ export type AgentState = {
   title_emphasized: boolean; selection_emphasizes_title: boolean;
   asking: boolean; working: boolean; waits_on_children: boolean;
   chip_tone: StatusTone; mark_tone: StatusTone;
-  line: { text: string; mode: "request" | "news" | "waiting" | "quiet" | "vanished"; tone: StatusTone } | null;
+  line: { text: string; mode: LineMode; tone: StatusTone; pull_request?: number } | null;
   branch_badge: string | null;
   bucket: "turn" | "working" | "delegating" | "resting";
   attention_rank: number;
@@ -106,7 +112,7 @@ export type AgentRow = {
   /** Presentation-only device facts attached by `allAgents`. */
   device_id?: string;
   device_label?: string;
-  symbol: string;
+  mark: RowMark;
   group: string;
   status_code: AgentStatusCode;
   detail?: string | null;
@@ -140,6 +146,8 @@ export type AgentRow = {
   direct_child_counts?: DescendantCounts;
   /** Why a quiet row waits instead of being done or stopped: drawn as a ring in Working (docs/status-model.md); absent when it does not. */
   wait?: AgentWait;
+  /** The background tasks a finished turn left running, which its line ends with (status-marks D-19); absent when none. */
+  background_left?: number;
   /** How deep under its lineage root; a root is 0. */
   lineage_depth?: number;
   /** Whether the operator has this row's descendants folded away; folded is the default. */
@@ -256,7 +264,7 @@ export type AgentChip = {
   demand: string;
   activity: string;
   emphasized: boolean;
-  symbol: string;
+  mark: RowMark;
   status_code: AgentStatusCode;
   delegated: boolean;
 };
@@ -627,8 +635,8 @@ export type CheckoutAgentSummary = {
   marks: MarkCounts;
 };
 
-/** How many rows draw each status mark (`MarkCountsSnapshot`); a row Herdr cannot classify is in none. */
-export type MarkCounts = { error: number; approval: number; question: number; working: number; stopped: number; done: number; idle: number };
+/** How many rows draw each status mark (`MarkCountsSnapshot`); a quiet row draws none and is in none. */
+export type MarkCounts = { turn: number; going: number; done: number; unread: number };
 
 export type PaneRow = {
   failed_terminal_id?: string;
@@ -649,7 +657,7 @@ export type PaneRow = {
   fork?: PaneFork;
 };
 
-export type TabAgent = Pick<AgentRow, "agent_kind" | "symbol" | "demand" | "activity" | "emphasized" | "wait" | "status_code"> & { state: Pick<AgentState, "mark_tone"> };
+export type TabAgent = Pick<AgentRow, "agent_kind" | "mark" | "demand" | "activity" | "emphasized" | "wait" | "status_code"> & { state: Pick<AgentState, "mark_tone"> };
 
 export type Tab = {
   /** `named_by_operator`: the manual name is one the operator gave through Rename, which keeps the tab when its agents leave. */
@@ -912,7 +920,7 @@ export type ProjectDiskLayers = { build_cache: number; dependencies: number; sou
 export type InactiveProjectGroup = { device_id: string; expanded: boolean; project_ids: string[] };
 
 /**
- * `working` while an awake agent shows ▲ ! ? ● ◐ or ✓ (the row's name is
+ * `working` while an awake agent draws a mark, not quiet (the row's name is
  * heavy); `asleep` while every agent sleeps, with the newest sleep's time and
  * whether the operator opened the fold since (D-02, D-03, D-19).
  */

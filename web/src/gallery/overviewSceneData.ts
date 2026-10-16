@@ -4,7 +4,7 @@
 // volume, and one session's record. Every value is made up; the core's
 // projections are fixed here as data, never recomputed.
 import type { AgentScope, TaskCardScope } from "../agentScope";
-import type { AgentPullRequest, AgentRow, AgentState, BacklogItem, Checkout, IssueWork, ProjectDisk, SessionRecord, SnapshotRest, Task, TaskSource, WorkSession, Workspace, WorktreeDisk } from "../snapshot";
+import type { AgentPullRequest, AgentRow, AgentState, BacklogItem, RowMark, Checkout, IssueWork, ProjectDisk, SessionRecord, SnapshotRest, Task, TaskSource, WorkSession, Workspace, WorktreeDisk } from "../snapshot";
 import { EMPTY_GALLERY_SCOPE } from "./agentScopes";
 import states from "./agentStates.json";
 import { checkout, REFERENCE_FOLDS, workspace } from "./sceneData";
@@ -18,7 +18,7 @@ const MB = 1024 ** 2;
 
 type Look = "idle" | "working" | "asking" | "done";
 const PRESET: Record<Look, number> = { idle: 0, working: 9, asking: 7, done: 8 };
-const SYMBOL: Record<Look, string> = { idle: "○", working: "●", asking: "?", done: "✓" };
+const MARK: Record<Look, RowMark> = { idle: "quiet", working: "going", asking: "turn", done: "done" };
 const GROUP: Record<Look, string> = { idle: "seen", working: "working", asking: "needs_you", done: "done" };
 
 type PullState = "failed" | "pending" | "mergeable" | "merged";
@@ -61,7 +61,7 @@ function agent(spec: AgentSpec, now: number): AgentRow {
     identity_label: spec.title,
     agent_kind: spec.kind ?? "claude",
     session_id: `session-${spec.pane}`,
-    symbol: spec.approval ? "!" : SYMBOL[spec.look],
+    mark: MARK[spec.look],
     group: GROUP[spec.look],
     status_code: spec.look === "asking" ? (spec.approval ? "approval" : "question") : spec.look === "working" ? "working" : spec.look === "done" ? "done" : "idle",
     demand: spec.look === "asking" ? (spec.approval ? "approval" : "question") : "none",
@@ -144,11 +144,11 @@ export function overviewWorld(now: number): OverviewWorld {
   ];
 
   const hideCheckouts: Checkout[] = [
-    checkout({ id: "hide:main", workspace: "hide", branch: "main", primary: true, age: 600, panes: ["h-r1", "h-r2"], marks: { idle: 2 } }, s),
-    { ...checkout({ id: "hide:sidebar", workspace: "hide", branch: "feat/sidebar-readable", age: 120, panes: ["h-a1", "h-a1c1", "h-a1c2"], marks: { working: 2, done: 1 } }, s), task_key: hideKey(151) },
-    checkout({ id: "hide:release", workspace: "hide", branch: "release/checklist", age: 900, panes: ["h-a3"], marks: { question: 1 }, pr: { number: 149, title: "Release checklist before deploy", badge: "open", is_draft: false, state: "mergeable" } }, s),
-    { ...checkout({ id: "hide:shortcuts", workspace: "hide", branch: "feat/shortcut-settings", age: 300, panes: ["h-e1"], marks: { working: 1 } }, s), task_key: hideKey(158) },
-    merged(checkout({ id: "hide:search", workspace: "hide", branch: "feat/search-palette", age: 3 * 3600, panes: ["h-q2"], marks: { idle: 1 } }, s), 154, "Search palette", now, 1.6 * GB, 640 * MB),
+    checkout({ id: "hide:main", workspace: "hide", branch: "main", primary: true, age: 600, panes: ["h-r1", "h-r2"], marks: { quiet: 2 } }, s),
+    { ...checkout({ id: "hide:sidebar", workspace: "hide", branch: "feat/sidebar-readable", age: 120, panes: ["h-a1", "h-a1c1", "h-a1c2"], marks: { going: 2, done: 1 } }, s), task_key: hideKey(151) },
+    checkout({ id: "hide:release", workspace: "hide", branch: "release/checklist", age: 900, panes: ["h-a3"], marks: { turn: 1 }, pr: { number: 149, title: "Release checklist before deploy", badge: "open", is_draft: false, state: "mergeable" } }, s),
+    { ...checkout({ id: "hide:shortcuts", workspace: "hide", branch: "feat/shortcut-settings", age: 300, panes: ["h-e1"], marks: { going: 1 } }, s), task_key: hideKey(158) },
+    merged(checkout({ id: "hide:search", workspace: "hide", branch: "feat/search-palette", age: 3 * 3600, panes: ["h-q2"], marks: { quiet: 1 } }, s), 154, "Search palette", now, 1.6 * GB, 640 * MB),
     merged(checkout({ id: "hide:docs", workspace: "hide", branch: "docs/install-guide", age: 2 * 86400 }, s), 147, "Install guide", now, 380 * MB, 210 * MB),
   ];
   const hideTasks = [
@@ -188,8 +188,8 @@ export function overviewWorld(now: number): OverviewWorld {
   }, REFERENCE_FOLDS);
   const billing = workspace("billing-api", {
     checkouts: [
-      checkout({ id: "billing-api:main", workspace: "billing-api", branch: "main", primary: true, age: 1200, panes: ["b-1"], marks: { approval: 1 } }, s),
-      checkout({ id: "billing-api:webhook", workspace: "billing-api", branch: "feat/webhook-signature", age: 200, panes: ["b-2"], marks: { working: 1 } }, s),
+      checkout({ id: "billing-api:main", workspace: "billing-api", branch: "main", primary: true, age: 1200, panes: ["b-1"], marks: { turn: 1 } }, s),
+      checkout({ id: "billing-api:webhook", workspace: "billing-api", branch: "feat/webhook-signature", age: 200, panes: ["b-2"], marks: { going: 1 } }, s),
     ],
     agent_scope: scopeWith([
       card("b-1", "needs_you", ["b-1"], ["billing-api:main"], recency(9 * MINUTE)),

@@ -327,10 +327,10 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     const oneRow = phone.locator(`[data-phone-agent$="|${one}"]`);
     const twoRow = phone.locator(`[data-phone-agent$="|${two}"]`);
     await expect(phone.locator('[data-phone-group="needs_you"]').locator(`[data-phone-agent$="|${one}"]`)).toBeVisible({ timeout: 20_000 });
-    await expect(oneRow.locator("[data-phone-line]")).toHaveText("배포 전에 테스트를 다시 돌릴까요?");
+    await expect(oneRow.locator("[data-phone-line]")).toHaveText("Question · 배포 전에 테스트를 다시 돌릴까요?");
     await expect(phone.locator('[data-phone-group="working"]').locator(`[data-phone-agent$="|${two}"]`)).toBeVisible();
-    await expect(phone.locator("[data-phone-group] h2").first()).toContainText("Needs your attention");
-    // B21: live; two asks and joins one under Needs your attention without a reload.
+    await expect(phone.locator("[data-phone-group] h2").first()).toContainText("Needs You");
+    // B21: live; two asks and joins one under Needs You without a reload.
     await ask(herdr, two, "어느 브랜치에 올릴까요?");
     await expect(phone.locator('[data-phone-group="needs_you"] [data-phone-group-count]')).toHaveText("2", { timeout: 20_000 });
     // B41: an idle list sends nothing; the phone hears only changes.
@@ -586,19 +586,20 @@ test("the phone caches group and row status words in the desktop language", asyn
         }),
       )
       .toEqual({
-        needs_you: "내 확인 대기",
-        done: "끝",
+        needs_you: "내 차례",
+        done: "읽을 것",
         observer_unconfirmed: "관찰자가 경고를 확인하지 않았어요",
         letter_undelivered: "편지가 전달되지 않았어요",
         status_question: "질문",
-        status_approval: "승인 대기",
+        status_approval: "승인",
         status_error: "막힘",
         status_working: "작업 중",
-        status_done: "완료",
+        status_done: "끝남",
         status_idle: "쉬는 중",
-        status_unknown: "알 수 없음",
+        status_unknown: "상태 모름",
         status_waiting: "대기",
         status_stopped: "멈춤",
+        status_unfinished: "일 남음",
       });
     await page.locator("[data-interface-language]").click();
     await page.locator('[data-language-option="system"]').click();

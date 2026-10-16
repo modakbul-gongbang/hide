@@ -6,9 +6,10 @@ import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import { SlotSessionRecord } from "./SessionRecord";
-import type { MissedWork, SessionRecord as RecordValue, SnapshotRest, WorkOutput, WorkRequest, WorkSession, WorkTask } from "./snapshot";
+import type { AgentRow, MissedWork, SessionRecord as RecordValue, SnapshotRest, WorkOutput, WorkRequest, WorkSession, WorkTask } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
+import { legacyAgentRow } from "../test/legacyAgentRow";
 
 const savedShell = useShellStore.getState();
 const savedUi = useUiStore.getState();
@@ -75,9 +76,10 @@ it("draws no PR list: a task's PR stands on its line, a child's on the child's r
     expect(text(container.querySelector("[data-record-work] h3"))).toBe("Assigned work 1/2");
     const tasks = Array.from(container.querySelectorAll("[data-record-task]"));
     expect(tasks.map((row) => row.getAttribute("data-record-task"))).toEqual(["t1", "t2"]);
-    expect(tasks.map((row) => row.querySelector("[data-task-state]")?.getAttribute("aria-label"))).toEqual(["Done", "Review pending"]);
+    expect(tasks.map((row) => row.querySelector("[data-task-state]")?.getAttribute("aria-label"))).toEqual(["Done", null]);
     expect(text(tasks[1]!.querySelector("[data-record-task-pr]"))).toBe("#" + "1100");
-    // The state is an icon and its name, never a word on the line.
+    // A PR-bound task's slot is empty and its PR mark says the state, never a word on the line.
+    expect(tasks[1]!.querySelector("[data-record-task-pr] [aria-label]")?.getAttribute("aria-label")).toMatch(new RegExp("^#" + "1100 "));
     expect(text(tasks[1]!)).not.toContain("Review pending");
     expect(container.querySelector("[data-record-verdict]")).toBeNull();
   } finally { await unmount(); }
@@ -247,4 +249,24 @@ it("shows a split request's words once, under its first task, with the button on
     expect(rows.map((row) => Array.from(row.querySelectorAll("[data-record-words-bubble]")).map((node) => node.getAttribute("data-record-words-bubble")))).toEqual([["3", "5"], []]);
     expect(rows.map((row) => row.querySelectorAll("[data-missed-work]").length)).toEqual([1, 0]);
   } finally { await unmount(); }
+});
+
+// A task the label left in progress draws its live row's ring, dashed while the row waits,
+// and reads as work left once no row of this session on this device draws one (status-marks B34).
+it("draws a task in progress with its live row's ring and as work left without one", async () => {
+  const record: RecordValue = { ...BASE, tasks: [task("t1", "Write the record", AT + 1, true), task("t3", "Ship the change", AT + 3, false, "waiting")], outputs: [] };
+  const row = (mark: "going" | "waiting", device_id?: string) => legacyAgentRow({ pane_id: "p1", agent_kind: "claude", session_id: "root", device_id, mark, group: "working", activity: mark === "going" ? "working" : "stopped", status_code: mark === "going" ? "working" : "waiting" });
+  const slot = async (agents: AgentRow[]) => {
+    useShellStore.setState({ agents });
+    const view = await mount(record);
+    try {
+      const item = view.container.querySelector('[data-record-task="t3"]')!;
+      return [item.querySelector("[data-task-state]")?.getAttribute("data-task-state"), item.querySelector("[data-mark]")?.getAttribute("data-mark") ?? null, item.querySelector("[data-task-word]")?.getAttribute("data-task-word") ?? null];
+    } finally { await view.unmount(); }
+  };
+  expect(await slot([row("going")])).toEqual(["working", "going", null]);
+  expect(await slot([row("waiting")])).toEqual(["working", "waiting", null]);
+  expect(await slot([])).toEqual(["unfinished", null, "unfinished"]);
+  // The same session id on another device is another session.
+  expect(await slot([row("going", "mini")])).toEqual(["unfinished", null, "unfinished"]);
 });

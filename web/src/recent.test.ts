@@ -47,9 +47,9 @@ const workspaces = (): Workspace[] =>
   ] as unknown as Workspace[];
 
 const agents = [
-  { pane_id: "p1", identity_label: "Fix the build", symbol: "●", status_code: "working" },
-  { pane_id: "p2", identity_label: "Reviewer", symbol: "?", status_code: "needs input" },
-  { pane_id: "p3", identity_label: "Writer", symbol: "●", status_code: "working" },
+  { pane_id: "p1", identity_label: "Fix the build", mark: "going", status_code: "working" },
+  { pane_id: "p2", identity_label: "Reviewer", mark: "turn", status_code: "needs input" },
+  { pane_id: "p3", identity_label: "Writer", mark: "going", status_code: "working" },
 ] as AgentRow[];
 
 /** The session with `checkoutId` in front on `tabId`, its Workspace showing `displays`. */
@@ -151,7 +151,7 @@ describe("Recent Panels rows", () => {
     const rest = session("c-main", "t1");
     use(rest);
     const [one, two] = ["t1", "t2"].map((id) => panelItem(rest, recentEntries().find((entry) => !isScreenVisit(entry) && entry.id === id)!)!);
-    expect(one).toMatchObject({ title: "Fix the build", detail: { kind: "surface", place: "hide · main", surface: "herdr" }, agent: { symbol: "●" } });
+    expect(one).toMatchObject({ title: "Fix the build", detail: { kind: "surface", place: "hide · main", surface: "herdr" }, agent: { mark: "going" } });
     expect(two).toMatchObject({ title: "t2 label", agent: null });
   });
 

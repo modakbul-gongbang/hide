@@ -3,6 +3,7 @@ import type { TFunction } from "i18next";
 import { useInterfaceTranslation } from "../i18n/client";
 import { cn } from "../lib/utils";
 import type { AgentRow, RaiseVerb } from "../snapshot";
+import type { LineParts } from "../agentRow";
 
 // The parts every agent tree draws the same way (PRD agent-hierarchy-screens
 // D-37 to D-43): the verb a Needs You row starts with, the one descendant
@@ -10,7 +11,7 @@ import type { AgentRow, RaiseVerb } from "../snapshot";
 // elbow rails and the chevron lane of a tree row, and the tree button. The
 // core decides every value; these only draw it.
 
-/** 승인 · 답변 · 확인 · 초안: colored text, no box (D-37). */
+/** 승인 · 질문 · 확인 · 초안: colored text, no box (D-37); a row's turn word (status-marks B5). */
 export function VerbText({ verb }: { verb: RaiseVerb }) {
   const { t } = useInterfaceTranslation();
   return (
@@ -25,6 +26,11 @@ export function askWhat(t: TFunction<"translation">, verb: RaiseVerb, what: stri
   return what ?? t(`agentSessions.ask.${verb}`);
 }
 
+/** An ask as a line's parts, the verb leading, so a list cuts only what to do (status-marks B5, B33). */
+export function askParts(t: TFunction<"translation">, ask: NonNullable<AgentRow["state"]["ask"]>): LineParts {
+  return { lead: t(`agentSessions.verb.${ask.verb}`), text: askWhat(t, ask.verb, ask.what), tail: null };
+}
+
 /** A Needs You row's second line: the verb and what to do, nothing else (B2). */
 export function AskLine({ ask, className }: { ask: NonNullable<AgentRow["state"]["ask"]>; className?: string }) {
   const { t } = useInterfaceTranslation();
@@ -32,6 +38,7 @@ export function AskLine({ ask, className }: { ask: NonNullable<AgentRow["state"]
   return (
     <span className={cn("flex min-w-0 items-baseline gap-xs text-caption", className)} data-ask-line={ask.verb}>
       <VerbText verb={ask.verb} />
+      <span aria-hidden="true" className="shrink-0 text-warning">·</span>
       <span className="min-w-0 truncate text-warning" title={what}>
         {what}
       </span>
@@ -42,7 +49,7 @@ export function AskLine({ ask, className }: { ask: NonNullable<AgentRow["state"]
 /**
  * The one mark a folded parent wears for its descendants (B17): `! N` while
  * they raise something. A descendant that is only working draws nothing: the
- * operator did not read `● N`, and a waiting parent already shows its blue ring
+ * operator did not read a ring count, and a waiting parent already shows its ring
  * and the working child's line. The core still computes the working mark.
  */
 export function DescendantMark({ agent }: { agent: AgentRow }) {

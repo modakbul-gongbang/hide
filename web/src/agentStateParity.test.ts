@@ -15,7 +15,7 @@ import type { AgentRow, RequestVerb, Workspace } from "./snapshot";
 it("preserves physical counts, root headings and scope-dependent request exclusion independently", () => {
   const row = (pane: string, group: string, verb: RequestVerb, extra = {}) => (legacyAgentRow({
     id: pane, pane_id: pane, identity_label: pane, agent_kind: "claude",
-    symbol: "○", group, demand: "none", activity: "stopped", unread: false,
+    mark: "quiet", group, demand: "none", activity: "stopped", unread: false,
     emphasized: false, status_code: "idle", changed_at_unix_ms: 10,
     request: { verb, verb_since_unix_ms: 10, request: null, later_by: null, reply: null, pull_requests: [] }, ...extra,
   })) as AgentRow;

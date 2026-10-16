@@ -402,7 +402,7 @@ pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapsh
         demand: agent.demand.clone(),
         activity: agent.activity.clone(),
         emphasized: agent.emphasized,
-        symbol: agent.symbol.clone(),
+        mark: agent.mark,
         status_code: agent.status_code,
         delegated: agent.delegated,
     }
@@ -668,7 +668,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         unread: true,
         blocked,
         group: String::new(),
-        symbol: String::new(),
+        mark: Default::default(),
         emphasized: false,
         status_code: AgentStatusCode::Unknown,
         requires_close_confirmation: false,
@@ -717,6 +717,9 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         descendant_counts: crate::model::DescendantCountsSnapshot::default(),
         direct_child_counts: crate::model::DescendantCountsSnapshot::default(),
         wait: None,
+        checks_wait: None,
+        checks_ended: None,
+        background_left: 0,
         descendant_signals: BTreeSet::new(),
         lineage_parent_pane_id: None,
         lineage_path_pane_ids: Vec::new(),
@@ -886,6 +889,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::agent_state::tally::RowMark;
 
     #[test]
     fn an_agent_carries_its_state_change_time_only_when_the_worker_measured_one() {
@@ -1126,15 +1130,15 @@ mod tests {
             ),
             (1, 1, 1, 2, 1)
         );
-        // Each row counts under the mark it draws: the read error keeps its
-        // ×, and the unknown row draws `~`, which no badge claims.
+        // Each row counts under the mark it draws: the read error is still
+        // the operator's turn, the done row no label judged is to read, and
+        // the unknown row is quiet, which no badge claims.
         assert_eq!(
             summaries[0].agent_summary.marks,
             crate::model::MarkCountsSnapshot {
-                error: 1,
-                question: 1,
-                working: 1,
-                done: 1,
+                turn: 2,
+                going: 1,
+                unread: 1,
                 ..Default::default()
             }
         );
@@ -1216,19 +1220,15 @@ mod tests {
             .map(|agent| {
                 (
                     agent.pane_id.as_str(),
-                    (
-                        agent.demand.as_str(),
-                        agent.activity.as_str(),
-                        agent.symbol.as_str(),
-                    ),
+                    (agent.demand.as_str(), agent.activity.as_str(), agent.mark),
                 )
             })
             .collect::<BTreeMap<_, _>>();
-        assert_eq!(axes["asks"], ("question", "stopped", "?"));
-        assert_eq!(axes["asks-done"], ("question", "stopped", "?"));
-        assert_eq!(axes["asks-blocked"], ("question", "unknown", "?"));
-        assert_eq!(axes["quiet"], ("none", "stopped", "\u{25cb}"));
-        assert_eq!(axes["blocked"], ("approval", "unknown", "!"));
+        assert_eq!(axes["asks"], ("question", "stopped", RowMark::Turn));
+        assert_eq!(axes["asks-done"], ("question", "stopped", RowMark::Turn));
+        assert_eq!(axes["asks-blocked"], ("question", "unknown", RowMark::Turn));
+        assert_eq!(axes["quiet"], ("none", "stopped", RowMark::Quiet));
+        assert_eq!(axes["blocked"], ("approval", "unknown", RowMark::Turn));
     }
 
     /// AC1. Herdr's own lifecycle words, with no plugin token at all. Blocked
@@ -1281,15 +1281,16 @@ mod tests {
             .expect("idle agent");
         assert_eq!(idle.group, "seen");
         assert_eq!(idle.status_code, AgentStatusCode::Idle);
-        assert_eq!(idle.symbol, "○");
+        assert_eq!(idle.mark, RowMark::Quiet);
         let done = projection
             .agents
             .iter()
             .find(|agent| agent.pane_id == "done")
             .expect("completed agent");
+        // Herdr's `done` with no label read: a stop to read, not a finish.
         assert_eq!(done.group, "done");
-        assert_eq!(done.status_code, AgentStatusCode::Done);
-        assert_eq!(done.symbol, "✓");
+        assert_eq!(done.status_code, AgentStatusCode::Stopped);
+        assert_eq!(done.mark, RowMark::Unread);
         assert_eq!(
             projection.agents.len(),
             5,
@@ -1507,7 +1508,7 @@ mod tests {
                 AgentActivity::Stopped,
                 true,
                 true,
-                AgentStatusCode::Done,
+                AgentStatusCode::Stopped,
             ),
             (
                 AgentDemand::None,
@@ -1533,10 +1534,15 @@ mod tests {
         ];
         for (demand, activity, completed, unread, expected) in labels {
             assert_eq!(
-                agent_status_code(demand, activity, completed, unread),
+                agent_status_code(demand, activity, completed, unread, false),
                 expected
             );
         }
+        // Done is only a finish the label read (D-03).
+        assert_eq!(
+            agent_status_code(AgentDemand::None, AgentActivity::Stopped, true, true, true),
+            AgentStatusCode::Done
+        );
     }
 
     /// AC5, R3, R4. Group membership follows the definitions, the order is
@@ -1572,6 +1578,7 @@ mod tests {
                 descendant_signals: BTreeSet::new(),
                 server: Some(SERVER.to_owned()),
                 unread: false,
+                checks_ended: None,
             },
         );
         apply_read_state(&mut agents, &mut records, &mut connection(), None);
@@ -1874,7 +1881,7 @@ mod tests {
         ];
         for (group, demand, reply, question, progress, expected) in cases {
             assert_eq!(
-                agent_second_line(group, demand, reply, question, progress),
+                agent_second_line(group, demand, false, reply, question, progress),
                 expected,
                 "{group:?} {demand:?} reply={reply:?} question={question:?} progress={progress:?}"
             );
@@ -2451,6 +2458,7 @@ mod tests {
             descendant_signals: BTreeSet::new(),
             server: None,
             unread: false,
+            checks_ended: None,
         };
         for (saved, unread, what) in [
             (40, false, "the same sequence is still read"),

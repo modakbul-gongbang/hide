@@ -8,7 +8,7 @@ import { Badge } from "./ui/badge";
 export function BadgeMarks({ parts }: { parts: BadgePart[] }) {
   return parts.map((part) => (
     <span key={part.state} className="inline-flex items-center gap-xxs" data-badge-part={part.state}>
-      <StatusMark symbol={part.symbol} className={part.tone} />
+      <StatusMark mark={part.mark} />
       {part.count}
     </span>
   ));

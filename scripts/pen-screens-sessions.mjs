@@ -5,6 +5,7 @@
 // of the existing System masters supplied by pen-screens, and the verb, descendant
 // mark, tree button and PR mark are refs of Component / Agent tree parts.
 import {AGENT_TREE_MASTERS, PR_STATES} from './pen-agent-tree.mjs';
+import {legacyMark, markSlot} from './pen-system.mjs';
 export function sessionScreens(tokens, {frame, text, icon, themedXref, screenButton}) {
   const caption = (id, value, fill = '$--muted-foreground', extra = {}) => text(id, value, {size:'$--text-caption', fill, ...extra});
   const verb = (id, word) => themedXref(id, 'ath-verb', word, {}, {'ath-verb-t': {content: word}});
@@ -31,15 +32,15 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
     text(`${id}-n`, tasks, {size:'$--text-micro',fill:open ? '$--foreground' : '$--muted-foreground',mono:true}),
   ]);
   function pane(id, {path = [], mark = '○', tone = '$--agent-working', provider: kind = 'codex', title, forked, tasks, pr, children, counts = {}, disconnected = false, summary = '작업 상태 칩과 팝업을 연결하는 중', band, terminal}) {
-    const parts = band ? ['raised'].filter(key=>counts[key]) : Object.keys(counts).filter(key=>counts[key]);
+    // Only the counts a row mark stands for are drawn; a disconnected device's children draw none (status-marks B16, B21).
+    const parts = disconnected ? [] : (band ? ['raised'] : ['raised', 'working', 'result']).filter(key=>counts[key]);
     const tree = children ? [themedXref(`${id}-tree`, 'ath-tree-button', 'Child states', {fill:'$--background'}, {
-      'ath-tb-tree':{enabled:!disconnected && parts.length===0},'ath-tb-counts':{enabled:parts.length>0},
-      'ath-tb-disconnected':{enabled:disconnected},
+      'ath-tb-tree':{enabled:parts.length===0},'ath-tb-counts':{enabled:parts.length>0},
       ...Object.fromEntries(parts.flatMap(key=>[[`ath-tb-${key}`,{enabled:true}],[`ath-tb-${key}-n`,{content:String(counts[key])}]])),
     })] : [];
     const header = frame(`${id}-header`, 'Header', {width:'fill_container',height:28,layout:'horizontal',gap:6,alignItems:'center',padding:[0,8],fill:'$--card'}, [
       ...path.flatMap((name, index) => [caption(`${id}-path-${index}`, name, '$--muted-foreground'), caption(`${id}-sep-${index}`, '›', '$--muted-foreground')]),
-      caption(`${id}-mark`, mark, tone, {mono:true,weight:'600'}),
+      markSlot(`${id}-mark`, legacyMark(mark, tone)),
       provider(`${id}-provider`, kind),
       caption(`${id}-title`, title, '$--foreground'),
       ...(forked ? [icon(`${id}-fork`, 'git-fork', {size:12,fill:'$--subtle-foreground'})] : []),
@@ -72,7 +73,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
     const root='hide 에이전트 지원 PR 묶…';
     const bands=[
       ['approval',{verb:'승인',what:'권한 요청에서 멈춤',who:['codex','테스트 작성'],age:'12m'}],
-      ['answer',{verb:'답변',what:'PR을 하나로 합칠까요, 나눌까요?',who:['claude','P7 Pi·omp 재우기'],unreceived:'hide 에이전트 지원 PR… 60분째 못 받음'}],
+      ['answer',{verb:'질문',what:'PR을 하나로 합칠까요, 나눌까요?',who:['claude','P7 Pi·omp 재우기'],unreceived:'hide 에이전트 지원 PR… 60분째 못 받음'}],
       ['confirm',{verb:'확인',what:'리뷰 지적 3건 반영하고 멈춤',who:['claude','사전 리뷰'],age:'1h'}],
       ['draft',{verb:'초안',what:'내 입력 초안 때문에 질문이 못 감',who:['codex','P8 읽기 전용 준비'],age:'8m'}],
     ];
@@ -97,9 +98,9 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
     const id=`tsc-ph-board-${suffix}`;
     const labeled = (key, label, children) => frame(`${id}-sec-${key}`, label, {width:'fill_container',layout:'vertical',gap:8}, [caption(`${id}-sec-${key}-label`, label, '$--subtle-foreground', {weight:'600'}), ...children]);
     // One request's tasks share one state (B5): four in review behind its PR.
-    const GLYPH = {review:['◐','$--success']};
+    // A task a pull request holds draws an empty slot; its PR mark says the state (status-marks D-23, B34).
     const item = (key, state, name, pr) => frame(`${id}-pop-${key}`, name, {width:'fill_container',layout:'horizontal',gap:'$--spacing-xs',alignItems:'start',padding:[2,0]}, [
-      caption(`${id}-pop-${key}-g`, GLYPH[state][0], GLYPH[state][1], {weight:'600'}),
+      frame(`${id}-pop-${key}-g`, 'Empty slot', {width:12,height:12}, []),
       caption(`${id}-pop-${key}-n`, name, state === 'done' ? '$--subtle-foreground' : '$--foreground', {width:'fill_container'}),
       ...(pr ? [prChip(`${id}-pop-${key}-pr`, pr)] : []),
     ]);
@@ -113,7 +114,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
         item('t2', 'review', 'HTML 페이지에서 댓글이 동작하게 하기'),
         item('t3', 'review', '드래그한 영역 남겨두기'),
         frame(`${id}-pop-kids`, 'Children progress', {width:'fill_container',layout:'horizontal',gap:'$--spacing-xs',alignItems:'center',padding:[6,0,0,0]}, [caption(`${id}-pop-kids-t`, '자식 일', '$--subtle-foreground'), text(`${id}-pop-kids-n`, '4/5', {size:'$--text-micro',fill:'$--muted-foreground',mono:true}), segments(['done','done','working','done','done'])]),
-        frame(`${id}-pop-line`, 'Current line', {width:'fill_container',layout:'horizontal',gap:'$--spacing-xs',alignItems:'center',padding:[6,0,0,0]}, [icon(`${id}-pop-line-g`, 'loader-circle', {size:12,fill:'$--agent-working'}), caption(`${id}-pop-line-t`, '파일 페이지 댓글 PR 검증 중', '$--muted-foreground', {width:'fill_container'})]),
+        frame(`${id}-pop-line`, 'Current line', {width:'fill_container',layout:'horizontal',gap:'$--spacing-xs',alignItems:'center',padding:[6,0,0,0]}, [caption(`${id}-pop-line-t`, '파일 페이지 댓글 PR 검증 중', '$--muted-foreground', {width:'fill_container'})]),
       ]),
       frame(`${id}-pop-foot`, 'Open record', {width:'fill_container',layout:'horizontal',alignItems:'center',padding:['$--spacing-xs','$--spacing-sm'],stroke:'$--border',strokeWidth:{top:1},strokeAlignment:'inner'}, [
         caption(`${id}-pop-open`, '기록 열기', '$--foreground', {width:'fill_container'}),

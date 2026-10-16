@@ -72,7 +72,7 @@ export function LandingScene({ shot, theme, narrow }: LandingSceneParams) {
           {shot === "agents" && fixture.pane && !narrow ? (
             <main className="min-w-0 flex-1 p-lg">
               <div className="h-full min-w-0 overflow-hidden border border-border" data-landing-pane>
-                <PaneView pane={fixture.pane} transport={undefined} focused={false} scale={1} actions={actions} agentKind="claude" markSymbol="●" markTone="text-muted-foreground" paneCount={1} zoomed={false} />
+                <PaneView pane={fixture.pane} transport={undefined} focused={false} scale={1} actions={actions} agentKind="claude" markSymbol="going" markTone="" paneCount={1} zoomed={false} />
               </div>
             </main>
           ) : null}

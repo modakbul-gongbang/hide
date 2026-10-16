@@ -100,7 +100,7 @@ test("cold restoration failure retains a sleeping row and visiting it does not w
     const failed = page.locator(`[data-pane-restore-failed="${sleeper}"]`);
     await expect(failed).toBeVisible();
     await expect(row).toContainText("Agent two");
-    await expect(row.locator('[data-mark="☾"]')).toBeVisible();
+    await expect(row.locator('[data-agent-status="sleeping"]')).toBeVisible();
     await expect(page.locator("[data-agent-wake]")).toHaveCount(0);
     expect(sent.get("agent_wake") ?? 0).toBe(0);
     const agents = (herdr.run(["agent", "list"]) as { result: { agents: { pane_id: string }[] } }).result.agents;

@@ -92,7 +92,7 @@ mod tests {
 
     fn agent(pane: &str, group: &str, extra: Value) -> Value {
         let mut value = json!({
-            "pane_id": pane, "group": group, "symbol": "●", "identity_label": format!("task {pane}"),
+            "pane_id": pane, "group": group, "mark": "going", "identity_label": format!("task {pane}"),
             "agent_kind": "claude", "changed_at_unix_ms": 1_790_000_000_000_u64, "status_code": "idle", "demand": "none",
         });
         for (key, field) in extra.as_object().unwrap() {
@@ -101,14 +101,18 @@ mod tests {
         value
     }
 
+    fn line(text: &str, mode: &str, tone: &str) -> Value {
+        json!({"text": text, "mode": mode, "tone": {"kind": tone, "read": false}})
+    }
+
     fn rest() -> Value {
         json!({
             "navigator": {
                 "agents": [
                     agent("w1:p1", "working", json!({"activity": "working"})),
-                    agent("w1:p2", "needs_you", json!({"demand": "approval", "detail": "Bash(cargo test) 실행을 허용할까요?", "symbol": "!"})),
+                    agent("w1:p2", "needs_you", json!({"demand": "approval", "mark": "turn", "state": {"line": line("Bash(cargo test) 실행을 허용할까요?", "request", "warning")}})),
                     agent("w1:p3", "working", json!({"lineage_parent_pane_id": "w1:p1", "delegated": true, "demand": "question"})),
-                    agent("w1:p4", "seen", json!({"detail": "quiet sentence"})),
+                    agent("w1:p4", "seen", json!({"mark": "quiet", "state": {"line": line("quiet sentence", "quiet", "subtle")}})),
                 ],
                 "workspaces": [
                     {"label": "hide", "is_git": true, "checkouts": [
@@ -122,7 +126,7 @@ mod tests {
             },
             "status": {"remote": [
                 {"target_id": "mini", "state": "connected", "session": {
-                    "agents": [agent("remote:mini:pane:w2:p1", "done", json!({"activity": "stopped", "emphasized": true, "unread": true, "detail": "PR #186"}))],
+                    "agents": [agent("remote:mini:pane:w2:p1", "done", json!({"activity": "stopped", "mark": "done", "unread": true, "state": {"line": line("PR #186", "news", "news")}}))],
                     "workspaces": [{"label": "contong", "is_git": true, "checkouts": [{"label": "main", "branch": "main", "tabs": [{"panes": [{"id": "remote:mini:pane:w2:p1"}]}]}]}],
                 }},
                 {"target_id": "gone", "state": "unreachable", "session": {"agents": [agent("remote:gone:pane:w1:p1", "needs_you", json!({}))]}},
@@ -184,12 +188,14 @@ mod tests {
         assert_eq!(done.device_id, "mini");
         assert_eq!(done.device_label.as_deref(), Some("mini"));
         assert_eq!(done.place.as_deref(), Some("contong · main"));
-        assert_eq!(done.tone, "success");
+        assert_eq!(done.mark, "done");
         assert_eq!(
             done.line,
             Some(Line {
                 text: "PR #186".into(),
-                tone: "news"
+                mode: "news".into(),
+                tone: "news",
+                pull_request: None,
             })
         );
         assert_eq!(done.key().herdr_pane_id(), "w2:p1");
@@ -197,18 +203,26 @@ mod tests {
         assert!(projection.agents().all(|agent| agent.device_id != "gone"));
     }
 
+    /// The phone draws the desktop's mark and line as the core decided them:
+    /// a waiting root's cause line, a read question's dimmed request, a
+    /// delegated child's quiet mark beside its request, work left kept.
     #[test]
-    fn read_questions_waiting_roots_and_blocks_keep_their_phone_presentation() {
+    fn phone_rows_take_the_core_mark_and_line() {
         let input = json!({"navigator": {"agents": [
-            agent("root", "working", json!({"wait": "children",
-                "activity": "stopped", "emphasized": true, "unread": true, "detail": "waiting"})),
-            agent("read-question", "seen", json!({"activity": "stopped", "demand": "question",
-                "emphasized": false, "unread": false, "detail": "  answer me  "})),
+            agent("root", "working", json!({"wait": "children", "mark": "waiting",
+                "descendant_counts": {"working": 2},
+                "state": {"line": line("", "waiting", "subtle")}})),
+            agent("read-question", "seen", json!({"demand": "question", "mark": "turn",
+                "state": {"line": line("  answer me  ", "request", "warning")}})),
             agent("child", "seen", json!({"lineage_parent_pane_id": "root", "delegated": true,
-                "activity": "stopped", "demand": "error", "emphasized": false, "detail": "failed"})),
-            agent("stopped", "done", json!({"activity": "stopped", "status_code": "stopped",
-                "emphasized": true, "unread": true, "detail": "deploy left"})),
-            agent("unknown", "seen", json!({"activity": "unknown", "detail": "quiet"})),
+                "demand": "error", "mark": "quiet",
+                "state": {"line": line("failed", "request", "warning")}})),
+            agent("stopped", "done", json!({"mark": "unread", "unread": true,
+                "state": {"line": line("deploy left", "news", "news")}})),
+            agent("kept", "seen", json!({"mark": "quiet",
+                "state": {"line": line("tests left", "kept", "subtle")}})),
+            agent("unknown", "seen", json!({"mark": "quiet",
+                "state": {"line": line("quiet", "quiet", "subtle")}})),
         ]}});
         let projection = project(&input, "local");
         let rows: Vec<_> = projection
@@ -216,50 +230,52 @@ mod tests {
             .map(|row| {
                 (
                     row.pane_id.as_str(),
-                    row.group.as_str(),
                     row.root_pane_id.as_str(),
-                    row.tone,
+                    row.mark.as_str(),
                     row.line
                         .as_ref()
-                        .map(|line| (line.text.as_str(), line.tone)),
+                        .map(|line| (line.text.as_str(), line.mode.as_str(), line.tone)),
                 )
             })
             .collect();
         assert_eq!(
             rows,
             [
-                // A stopped turn stays neutral in Done: only a block asks for attention.
                 (
                     "stopped",
-                    "done",
                     "stopped",
-                    "subtle",
-                    Some(("deploy left", "news"))
+                    "unread",
+                    Some(("deploy left", "news", "news"))
                 ),
-                (
-                    "root",
-                    "working",
-                    "root",
-                    "working",
-                    Some(("waiting", "news"))
-                ),
+                ("root", "root", "waiting", Some(("", "waiting", "subtle"))),
                 (
                     "read-question",
-                    "seen",
                     "read-question",
-                    "warning",
-                    Some(("answer me", "warning"))
+                    "turn",
+                    Some(("answer me", "request", "warning"))
                 ),
-                // A block is amber like a question; its shape tells them apart.
                 (
                     "child",
-                    "seen",
                     "root",
-                    "warning",
-                    Some(("failed", "warning"))
+                    "quiet",
+                    Some(("failed", "request", "warning"))
                 ),
-                ("unknown", "seen", "unknown", "subtle", None),
+                (
+                    "kept",
+                    "kept",
+                    "quiet",
+                    Some(("tests left", "kept", "subtle"))
+                ),
+                ("unknown", "unknown", "quiet", None),
             ]
+        );
+        let root = projection
+            .agents()
+            .find(|row| row.pane_id == "root")
+            .unwrap();
+        assert_eq!(
+            (root.wait.as_deref(), root.descendants_working),
+            (Some("children"), 2)
         );
     }
 
@@ -285,7 +301,7 @@ mod tests {
         let projection = project(&rest(), "local");
         let asking = &projection.groups[0].agents[0];
         assert_eq!(asking.place.as_deref(), Some("hide · prd/mobile-companion"));
-        assert_eq!(asking.tone, "warning");
+        assert_eq!(asking.mark, "turn");
         assert_eq!(asking.line.as_ref().unwrap().tone, "warning");
         assert_eq!(asking.key().herdr_pane_id(), "w1:p2");
         let child = projection

@@ -2,11 +2,12 @@
 // B30, B38): pairing, the refused and unpaired guidance, and the list; the
 // detail is `Detail.tsx`. Every value comes from the store the socket writes.
 
-import { BellIcon, ChevronRightIcon, LaptopIcon, Loader2Icon, MoonIcon, PlusIcon, XIcon } from "lucide-react";
+import { BellIcon, ChevronRightIcon, LaptopIcon, Loader2Icon, PlusIcon, XIcon } from "lucide-react";
+import { StatusMark } from "../components/status-mark";
 import { useEffect, useState } from "react";
 import { useElapsed } from "../components/elapsed";
 import { useInterfaceTranslation } from "../i18n/translator";
-import { statusText } from "../agentStatus";
+import { lineText, markWords, rowDimmed } from "../agentRow";
 import { Button } from "../components/ui/button";
 import { agentProductName } from "../agentAdapters";
 import { sleepingCaption } from "../sleeping-session";
@@ -187,15 +188,17 @@ function SleepingRow({ session }: { session: PhoneSleepingSession }) {
   const uncertain = session.phase === "close_unknown" || session.phase === "wake_unknown";
   const failed = (action?.sleepId === session.sleep_id && action.error) || session.attention;
   const caption = t(sleepingCaption(session));
+  const lineShown = failed || session.phase !== "sleeping" || session.checking;
   return (
     <li className="flex min-h-(--size-touch-target) flex-col gap-xs py-md" data-phone-sleeping={session.sleep_id}>
       <div className="flex min-w-0 items-center gap-sm">
-        <span className="flex size-(--size-agent-mark) shrink-0 items-center justify-center"><MoonIcon aria-label={caption} className="size-(--size-status-mark) text-muted-foreground" /></span>
-        <span className="min-w-0 flex-1 truncate text-title text-subtle-foreground">{session.title}<span className="sr-only">, {agentProductName(session.agent_kind)}</span></span>
+        {/* A grey moon at full strength; sleeping says itself there, waking or failing on the line below (status-marks D-21, B31). */}
+        <span className="flex size-(--size-agent-mark) shrink-0 items-center justify-center"><StatusMark mark="asleep" data-phone-mark="asleep" /></span>
+        <span className="min-w-0 flex-1 truncate text-title text-subtle-foreground">{session.title}<span className="sr-only">, {agentProductName(session.agent_kind)}{lineShown ? null : `, ${caption}`}</span></span>
       </div>
       <div className={`flex min-w-0 items-center justify-between gap-sm ${LIST_INSET}`}>
         <span className="min-w-0 break-words text-subhead text-muted-foreground" role={failed ? "status" : undefined}>
-          {failed ? t("panes.sleep.requestFailed") : caption}
+          {failed ? t("panes.sleep.requestFailed") : lineShown ? caption : null}
         </span>
         {session.wake_available || uncertain ? (
           <Button
@@ -213,14 +216,14 @@ function SleepingRow({ session }: { session: PhoneSleepingSession }) {
   );
 }
 
-const LINE_TONE = { error: "text-destructive", warning: "text-warning", news: "text-foreground" } as const;
+const LINE_TONE = { warning: "text-warning", news: "text-foreground", subtle: "text-subtle-foreground" } as const;
 
 function AgentRow({ agent }: { agent: PhoneAgent }) {
   const { t } = useInterfaceTranslation();
   const elapsed = useElapsed(agent.changed_at_unix_ms);
-  const label = [statusText(t, agent.status_code), agent.title, agentProductName(agent.agent_kind), agent.place, agent.device_label, elapsed].filter(Boolean).join(", ");
+  const label = [markWords(t, agent), agent.title, agentProductName(agent.agent_kind), agent.place, agent.device_label, elapsed].filter(Boolean).join(", ");
   return (
-    <li>
+    <li className={rowDimmed(agent) ? "opacity-(--opacity-dimmed)" : undefined}>
       <button
         type="button"
         aria-label={label}
@@ -237,8 +240,8 @@ function AgentRow({ agent }: { agent: PhoneAgent }) {
         </span>
         <Place agent={agent} inset={LIST_INSET} />
         {agent.line ? (
-          <span className={`line-clamp-2 ${LIST_INSET} text-body ${LINE_TONE[agent.line.tone]}`} data-phone-line={agent.line.tone}>
-            {agent.line.text}
+          <span className={`line-clamp-2 ${LIST_INSET} text-body ${LINE_TONE[agent.line.tone]}`} data-phone-line={agent.line.mode}>
+            {lineText(t, { wait: agent.wait, status_code: agent.status_code, descendant_counts: { working: agent.descendants_working }, background_left: agent.background_left }, agent.line)}
           </span>
         ) : null}
       </button>

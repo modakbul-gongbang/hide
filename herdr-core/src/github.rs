@@ -669,6 +669,7 @@ fn list_pull_requests(
                     pull_request.checks = open.rollup;
                     pull_request.work.failed_checks = open.failed;
                     pull_request.work.pending_checks = open.pending;
+                    pull_request.work.running_checks = open.running;
                 }
                 None => pull_request.checks = PullRequestChecks::Unknown,
             }
@@ -2009,6 +2010,15 @@ impl GhCheck {
         }
     }
 
+    /// A pending check that has reported: a required check GitHub only
+    /// expects (`EXPECTED`) may never run, so it is not running.
+    fn is_running(&self) -> bool {
+        match self {
+            GhCheck::StatusContext { state, .. } => state == "PENDING",
+            check => check.is_pending(),
+        }
+    }
+
     /// The check by the name GitHub shows and the page that says why, when
     /// it failed; `None` for any other check.
     fn failure(&self) -> Option<crate::model::PrFailedCheck> {
@@ -2119,6 +2129,11 @@ fn parse_open_checks(output: &str) -> Result<HashMap<u32, OpenChecks>, String> {
                         .flatten()
                         .filter(|check| check.is_pending())
                         .count() as u32,
+                    running: rollup
+                        .into_iter()
+                        .flatten()
+                        .filter(|check| check.is_running())
+                        .count() as u32,
                 },
             )
         })
@@ -2131,6 +2146,8 @@ struct OpenChecks {
     rollup: PullRequestChecks,
     failed: Vec<PrFailedCheck>,
     pending: u32,
+    /// The pending checks that reported: all but `EXPECTED`.
+    running: u32,
 }
 
 fn project(listed: GhPullRequest) -> Result<PullRequestSnapshot, String> {

@@ -10,7 +10,7 @@ import { contextAllWorkspaces, contextWorkspaces, projectsOf } from "./remote";
 import type { AgentRow, SnapshotRest, Workspace } from "./snapshot";
 
 function agent(paneId: string, group: string): AgentRow {
-  return legacyAgentRow({ id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "?", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "idle" }) as AgentRow;
+  return legacyAgentRow({ id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", mark: "turn", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "idle" }) as AgentRow;
 }
 
 function workspace(id: string, deviceId: string, extra: Partial<Workspace> = {}, panes: string[] = []): Workspace {

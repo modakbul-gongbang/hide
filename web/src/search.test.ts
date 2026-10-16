@@ -24,8 +24,8 @@ describe("fuzzy score", () => {
 const REST = {
   navigator: {
     agents: [
-      legacyAgentRow({ id: "a1", pane_id: "p1", identity_label: "Agent one", agent_kind: "claude", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false }),
-      legacyAgentRow({ id: "a2", pane_id: "p9", identity_label: "Agent elsewhere", agent_kind: "codex", symbol: "○", group: "seen", status_code: "idle", detail: "Waiting for review", changed_at_unix_ms: null, emphasized: false, unread: false }),
+      legacyAgentRow({ id: "a1", pane_id: "p1", identity_label: "Agent one", agent_kind: "claude", mark: "going", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false }),
+      legacyAgentRow({ id: "a2", pane_id: "p9", identity_label: "Agent elsewhere", agent_kind: "codex", mark: "quiet", group: "seen", status_code: "idle", detail: "Waiting for review", changed_at_unix_ms: null, emphasized: false, unread: false }),
     ],
     workspaces: [
       { agent_scope: emptyScope(),
@@ -106,7 +106,7 @@ const TWO_DEVICES = {
         target_id: "mini",
         state: "connected",
         session: {
-          agents: [legacyAgentRow({ id: "m1", pane_id: "remote:mini:pane:1", identity_label: "배치 감시", agent_kind: "codex", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false })],
+          agents: [legacyAgentRow({ id: "m1", pane_id: "remote:mini:pane:1", identity_label: "배치 감시", agent_kind: "codex", mark: "going", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false })],
           workspaces: [
             { agent_scope: emptyScope(),
               id: "remote:mini:workspace:web",

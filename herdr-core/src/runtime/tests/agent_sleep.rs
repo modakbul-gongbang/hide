@@ -1484,7 +1484,8 @@ fn the_sleep_setting_survives_a_restart_and_a_ui_state_update() {
     assert_eq!(restarted.snapshot().ui_state.agent_sleep_after_hours, None);
 }
 
-/// B10, B20: a sleeping agent keeps its row, name and place with the moon;
+/// B10, B20: a sleeping agent keeps its row, name and place, with its moon
+/// (status-marks D-21, B31);
 /// an awake row carries no `sleep` key, so an older reader's decode holds.
 #[test]
 fn a_slept_agent_keeps_its_row_after_herdr_forgets_it() {
@@ -1496,7 +1497,7 @@ fn a_slept_agent_keeps_its_row_after_herdr_forgets_it() {
             &slept["id"],
             &slept["agent_kind"],
             &slept["identity_label"],
-            &slept["symbol"],
+            &slept["mark"],
             &slept["status_code"],
             &slept["group"],
             &slept["sleep"]["state"],
@@ -1505,7 +1506,7 @@ fn a_slept_agent_keeps_its_row_after_herdr_forgets_it() {
             &serde_json::json!("reviewer"),
             &serde_json::json!("claude"),
             &serde_json::json!("Review the parser"),
-            &serde_json::json!("\u{263e}"),
+            &serde_json::json!("asleep"),
             &serde_json::json!("sleeping"),
             &serde_json::json!("seen"),
             &serde_json::json!("sleeping"),
@@ -1745,7 +1746,7 @@ fn a_new_agent_clears_the_sleep_and_a_closed_pane_drops_it() {
     );
     runtime.ingest_session(Ok(session(Some(9))));
     assert!(row(&runtime).get("sleep").is_none());
-    assert_ne!(row(&runtime)["symbol"], "\u{263e}");
+    assert_ne!(row(&runtime)["status_code"], "sleeping");
 
     let (mut runtime, _) = asleep();
     let mut closed = tab_order_payload(CHECKOUT, &TABS[..1], &TABS[..1], "w-order:t1");
@@ -1766,7 +1767,7 @@ fn an_end_that_fails_leaves_the_agent_awake() {
     runtime.ingest_agent_sleep_end(SLEEPER, Err("did not hand the terminal back".into()));
     assert!(runtime.snapshot().ui_state.agent_sleep.records.is_empty());
     assert!(row(&runtime).get("sleep").is_none());
-    assert_ne!(row(&runtime)["symbol"], "\u{263e}");
+    assert_ne!(row(&runtime)["status_code"], "sleeping");
 }
 
 /// B4-B6: the minute decision ends an agent that sat seen and off screen

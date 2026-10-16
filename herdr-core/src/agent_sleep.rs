@@ -37,8 +37,6 @@ pub const DECISION_INTERVAL_MS: u64 = 60_000;
 /// A pane whose agent would not end is not tried again for this long,
 /// unless its state changes first (B8).
 pub const SLEEP_RETRY_BACKOFF_MS: u64 = 60 * 60 * 1000;
-/// The row mark a sleeping agent carries on every surface that lists agents.
-pub const SLEEPING_SYMBOL: &str = "\u{263e}";
 
 const REMOTE_PANE_ID_PREFIX: &str = "remote:";
 
@@ -680,7 +678,7 @@ mod tests {
             unread: false,
             blocked: false,
             group: "seen".to_owned(),
-            symbol: "\u{25cb}".to_owned(),
+            mark: Default::default(),
             emphasized: false,
             status_code: AgentStatusCode::Idle,
             requires_close_confirmation: false,
@@ -706,6 +704,9 @@ mod tests {
             descendant_counts: crate::model::DescendantCountsSnapshot::default(),
             direct_child_counts: crate::model::DescendantCountsSnapshot::default(),
             wait: None,
+            checks_wait: None,
+            background_left: 0,
+            checks_ended: None,
             descendant_signals: std::collections::BTreeSet::new(),
             lineage_parent_pane_id: None,
             lineage_path_pane_ids: Vec::new(),
@@ -922,7 +923,7 @@ mod tests {
                 row.identity_label.as_str(),
                 row.session_id.as_deref(),
                 row.spawned_from_pane_id.as_deref(),
-                row.symbol.as_str(),
+                row.mark,
                 row.status_code,
             ),
             (
@@ -932,7 +933,7 @@ mod tests {
                 "Refactor the parser",
                 Some("session-a"),
                 Some("w1:p1"),
-                SLEEPING_SYMBOL,
+                crate::agent_state::RowMark::Asleep,
                 AgentStatusCode::Sleeping,
             )
         );

@@ -43,7 +43,7 @@ function agent(pane: string, verb: RequestVerb | null, extra: Partial<AgentRow> 
     pane_id: pane,
     identity_label: pane,
     agent_kind: "claude",
-    symbol: "●",
+    mark: "going",
     group: verb === "working" ? "working" : "idle",
     status_code: "unknown",
     changed_at_unix_ms: NOW,

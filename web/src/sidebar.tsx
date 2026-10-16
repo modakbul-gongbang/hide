@@ -285,7 +285,7 @@ function useSecretaryRow(actions: Actions) {
   const agent = useShellStore((s) => (pane ? (s.rest?.navigator?.agents ?? []).find((row) => row.pane_id === pane) ?? null : null));
   return useMemo(() => {
     if (!exists) return null;
-    return { status: agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-secretary-status={agent.status_code} /> : null, onOpen: () => actions.openSecretary() };
+    return { status: agent ? <StatusMark mark={agent.mark} className={markTone(agent)} data-secretary-status={agent.status_code} /> : null, onOpen: () => actions.openSecretary() };
   }, [exists, agent, actions]);
 }
 
@@ -934,7 +934,7 @@ function FoldToggle({ open, label, onToggle, disabled, ...data }: { open: boolea
 }
 
 /**
- * A project's name, at 600 while one of its agents shows ▲ ! ? ● ◐ or ✓ and
+ * A project's name, at 600 while one of its awake agents draws a mark and
  * at 400 in the plain foreground otherwise, as the core decided (PRD
  * sidebar-titlebar-refresh D-02, B3). `hidden` keeps it from a screen reader
  * where the row button already names the project.

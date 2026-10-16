@@ -33,7 +33,7 @@
 // full instance path, so separate instances never share an override by accident.
 
 import {read as readTokenPlan, loadCanvas, CANVAS} from './pen-tokens.mjs';
-import {BUTTON_VARIANTS, BADGE_VARIANTS, frame, icon, num, text} from './pen-system.mjs';
+import {BUTTON_VARIANTS, BADGE_VARIANTS, frame, icon, legacyMark, markSlot, markSwitch, num, text} from './pen-system.mjs';
 import {coreMoveRows} from './pen-screens-core-move.mjs';
 import {diskCleanupRows} from './pen-screens-disk.mjs';
 import {factoryRows} from './pen-screens-factory.mjs';
@@ -287,26 +287,21 @@ function screenField(id, label, control) {
 }
 
 // -- the status mark --------------------------------------------------------------
-// status-mark.tsx: `●` and `○` are a dot and a ring of one diameter, and every other
-// mark is its glyph in the same box, so no mark renders larger than another. The
-// master that carries a mark (Sidebar agent row) holds the three as siblings in
-// one box, and a row's mark enables the one it draws.
-function markOverrides(nodes, symbol, fill) {
-  if (symbol === '●') return {[nodes.dot]: {enabled: true, fill}, [nodes.ring]: {enabled: false}, [nodes.glyph]: {enabled: false}};
-  if (symbol === '○') return {[nodes.dot]: {enabled: false}, [nodes.ring]: {enabled: true, stroke: fill}, [nodes.glyph]: {enabled: false}};
-  return {[nodes.dot]: {enabled: false}, [nodes.ring]: {enabled: false}, [nodes.glyph]: {enabled: true, content: symbol, fill}};
+// status-mark.tsx draws one of four marks in one 12 px slot, the in-progress ring
+// solid or dashed (docs/status-model.md, The mark). A board names a mark (`turn`,
+// `going`, `waiting`, `done`, `unread`, `quiet`);
+// an older board's glyph and colour still name the mark that replaced it, so a
+// sheet drawn before the four marks keeps meaning the same row.
+// The overrides that turn on a master's mark (Sidebar agent row, tree row);
+// a ring whose line leads with 대기 waits, so it is drawn dashed (D-25).
+function markOverrides(prefix, symbol, fill, line) {
+  const mark = legacyMark(symbol, fill);
+  return markSwitch(prefix, mark === 'going' && line?.startsWith('대기') ? 'waiting' : mark, '', {moon: prefix === 'sar'});
 }
 
 // The same mark for a row this document draws itself rather than from a master.
 function screenStatusMark(tokens, id, symbol, fill) {
-  const box = num(tokens, '--size-agent-mark');
-  const size = num(tokens, '--size-status-mark');
-  const shape = symbol === '●'
-    ? {type: 'ellipse', id: `${id}-dot`, name: 'Dot', width: size, height: size, fill}
-    : symbol === '○'
-      ? {type: 'ellipse', id: `${id}-ring`, name: 'Ring', width: size, height: size, stroke: fill, strokeWidth: num(tokens, '--size-hairline'), strokeAlignment: 'inner'}
-      : text(`${id}-glyph`, symbol, {fill, mono: true, size: '$--text-caption'});
-  return frame(id, 'Status mark', {width: box, height: box, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [shape]);
+  return markSlot(id, legacyMark(symbol, fill));
 }
 
 // -- composite Component masters: themedXref restates every internal default color,
@@ -343,7 +338,7 @@ function screenLineRow(id, {label, meta, status, width = 260}) {
 // `none`, and the row has no fold slot at all.
 function screenSidebarAgentRow(id, {title, symbol = '●', color = '$--agent-working', age, line, lineFill = '$--warning', place, device, branch, badge, fold = null, bright = false, selected = false, selectedFill = '$--color-selected', inset = 4, width = 268}) {
   return themedXref(id, 'sidebar-agent-row', title, {width, padding: ['$--spacing-xs', '$--spacing-xs', '$--spacing-xs', inset], ...(selected ? {fill: selectedFill} : {})}, {
-    ...markOverrides({dot: 'sar-dot', ring: 'sar-ring', glyph: 'sar-glyph'}, symbol, color),
+    ...markOverrides('sar', symbol, color, line),
     // 12/400 in every state: attention and selection brighten the title, never thicken it.
     'sar-title': {content: title, ...(bright || selected ? {fill: '$--foreground'} : {})},
     'sar-elapsed': {content: age},
@@ -367,23 +362,23 @@ function screenSidebarAgentRow(id, {title, symbol = '●', color = '$--agent-wor
 // a child on another machine adds its device line. `rails` says, per level
 // above the elbow, whether an ancestor's later sibling keeps a rail running.
 const PR_TREE = Object.fromEntries(PR_STATES.map(([state, glyph, fill]) => [state, [glyph, fill]]));
-function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', age, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, statusAxis = false, inset = 0, width = 268}) {
+function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', age, line, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, statusAxis = false, inset = 0, width = 268}) {
   const descendants = {
-    ...markOverrides({dot: 'ath-row-dot', ring: 'ath-row-ring', glyph: 'ath-row-glyph'}, symbol, color),
+    ...markOverrides('ath-row', symbol, color, line),
     'ath-row-title': {content: title, ...(bright || selected ? {fill: '$--foreground'} : {})},
     'ath-row-age': {content: age},
-    'ath-row-rail': {enabled: depth > 1},
-    'ath-row-rail-v': {enabled: rail},
-    'ath-row-elbow': {enabled: depth > 0},
-    'ath-row-elbow-v': {height: last ? 13 : 28},
+    'ath-row-line': line ? {enabled: true, content: line, fill: '$--subtle-foreground'} : {enabled: false},
+    // A second line makes the row 16 taller, and the rails that pass it with it.
+    'ath-row-rail': {enabled: depth > 1, ...(line ? {height: 44} : {})},
+    'ath-row-rail-v': {enabled: rail, ...(line ? {height: 44} : {})},
+    'ath-row-elbow': {enabled: depth > 0, ...(line ? {height: 44} : {})},
+    'ath-row-elbow-v': {height: last ? 13 : line ? 44 : 28},
     'ath-row-chev': chevron ? {enabled: true, icon: chevron === 'open' ? 'chevron-down' : 'chevron-right'} : {enabled: false},
     'ath-row-pr': pr ? {enabled: true} : {enabled: false},
     ...(pr ? {'ath-row-pr/ath-pr-g': {icon: PR_TREE[pr.state][0], fill: PR_TREE[pr.state][1]}, 'ath-row-pr/ath-pr-n': {content: `${pr.number}`}} : {}),
     'ath-row-desc': mark ? {enabled: true} : {enabled: false},
     ...(mark ? {
-      'ath-row-desc/ath-mark-bang': {enabled: mark.kind === 'raised'},
-      'ath-row-desc/ath-mark-dot': {enabled: mark.kind === 'working'},
-      'ath-row-desc/ath-mark-n': {content: String(mark.count), fill: mark.kind === 'raised' ? '$--warning' : '$--agent-working'},
+      'ath-row-desc/ath-mark-n': {content: String(mark.count), fill: '$--warning'},
     } : {}),
     'ath-row-device': device ? {enabled: true} : {enabled: false},
     'ath-row-device-t': {content: device ? `${device}${offline ? ' · 연결 안 됨' : ''}` : ''},
@@ -440,7 +435,7 @@ function screenSidebar(tokens, id, suffix, agents, {overview = false} = {}) {
       icon(`${id}-overviewi-${suffix}`, 'layout-dashboard', {size: num(tokens, '--size-checkout-icon'), fill: '$--subtle-foreground'}),
       text(`${id}-overviewt-${suffix}`, 'Overview', {size: '$--text-subhead', weight: '600'}),
       frame(`${id}-overviewgap-${suffix}`, 'Spacer', {width: 'fill_container', height: 1}, []),
-      text(`${id}-overviewn-${suffix}`, '2 asking · ⌘⇧O', {fill: '$--muted-foreground'}),
+      text(`${id}-overviewn-${suffix}`, '내 차례 2 · ⌘⇧O', {fill: '$--muted-foreground'}),
     ]),
     text(`${id}-seen-${suffix}`, 'Projects · Recent activity', {size: '$--text-micro', fill: '$--muted-foreground', weight: '500'}),
     // Root rows keep direct children behind their shared badge.
@@ -1642,26 +1637,33 @@ function buildProjectsSidebar(tokens) {
   };
 
   // The status badge (status-badge.tsx): one part per mark the agents' rows
-  // draw, worst first, zero parts left out; no agents, no badge.
+  // draw, in the order whose move is next, zero parts left out; a quiet agent
+  // counts in none, and no counted agent, no badge (status-marks B19). A board
+  // may still count by the older states, which add up into the marks they became.
+  function fourMarks(marks) {
+    const of = key => marks?.[key] ?? 0;
+    return {turn: of('turn') + of('error') + of('approval') + of('question'), going: of('going') + of('working'), done: of('done'), unread: of('unread') + of('stopped')};
+  }
   function status(prefix, marks) {
-    const parts = ['error', 'approval', 'question', 'working', 'done', 'idle'];
-    const counted = parts.filter(part => (marks?.[part] ?? 0) > 0);
+    const counts = fourMarks(marks);
+    const parts = ['turn', 'going', 'done', 'unread'];
+    const counted = parts.filter(part => counts[part] > 0);
     if (!counted.length) return {[`${prefix}-status`]: {enabled: false}};
     return Object.fromEntries([
       [`${prefix}-status`, {enabled: true}],
       ...parts.map(part => [`${prefix}-${part}`, {enabled: counted.includes(part)}]),
-      ...counted.map(part => [`${prefix}-${part}-count`, {content: String(marks[part])}]),
+      ...counted.map(part => [`${prefix}-${part}-count`, {content: String(counts[part])}]),
     ]);
   }
 
   // A project's badge is its checkouts' added up, and it stays while they are open.
-  // The name is 600 while an agent there works (a mark of ▲ ! ? ● ◐ ✓) and 400 when
+  // The name is 600 while an awake agent there draws a mark and 400 when
   // its agents only rest or sleep or it has none (PRD sidebar-titlebar-refresh D-02);
   // a project or one-line folder whose agents all sleep is folded behind one moon
   // cell (D-03), and under the pointer + and ⋯ stand over the badge slot (D-04).
-  const WORKING = ['error', 'approval', 'question', 'working', 'stopped', 'done'];
+  const marked = marks => Object.values(fourMarks(marks)).some(count => count > 0);
   function projectRow(id, {name, marks, expanded, selected = false, glyph = 'folder-git-2', asleep, hover = false, menu = false}) {
-    const working = WORKING.some(part => (marks?.[part] ?? 0) > 0);
+    const working = marked(marks);
     const actions = hover || menu;
     return themedXref(id, 'qdhY0', name, {width: row, height: num(tokens, '--size-project-row'), ...(selected ? {fill: '$--color-selected'} : actions ? {fill: '$--accent'} : {})}, {
       iBYjj: {icon: expanded ? 'chevron-down' : 'chevron-right'},
@@ -1703,7 +1705,7 @@ function buildProjectsSidebar(tokens) {
       VtSRn: {icon: k.icon, fill: k.fill},
       'checkout-name-prefix': prefix ? {content: prefix, enabled: true} : {enabled: false},
       // A plain folder's name is the project's: 600 while an agent there works, else 400 (D-02).
-      q91d7: project ? {content: name, fontSize: '$--text-subhead', fontWeight: WORKING.some(part => (marks?.[part] ?? 0) > 0) ? '600' : '400'} : {content: rest, fontWeight: selected ? '500' : 'normal'},
+      q91d7: project ? {content: name, fontSize: '$--text-subhead', fontWeight: marked(marks) ? '600' : '400'} : {content: rest, fontWeight: selected ? '500' : 'normal'},
       TS5x9: {enabled: kind === 'missing'},
       ...status('checkout', project || !expanded ? marks : null),
       TuosT: !secondLine && age ? {content: age, enabled: true} : {enabled: false},
@@ -1738,7 +1740,7 @@ function buildProjectsSidebar(tokens) {
   function tree(id, {status, ...options}) {
     const [symbol, color] = status ? TREE_STATUS[status] : ['', '$--muted-foreground'];
     const node = screenTreeRow(id, {symbol, color, inset: nameColumn, width: row, statusAxis: true, ...options});
-    treeHeights.set(node, num(tokens, '--size-sidebar-line') + 2 * xs + (options.device ? 16 : 0));
+    treeHeights.set(node, num(tokens, '--size-sidebar-line') + 2 * xs + (options.device ? 16 : 0) + (options.line ? 16 : 0));
     return node;
   }
 
@@ -1892,7 +1894,7 @@ function buildProjectsSidebar(tokens) {
     return frame(`${p}-overview`, 'Overview', {width, height: num(tokens, '--size-tab-strip'), layout: 'horizontal', gap: sm, padding: [0, '$--spacing-md'], alignItems: 'center'}, [
       icon(`${p}-overview-g`, 'layout-dashboard', {size: 16, fill: SUBTLE}),
       text(`${p}-overview-t`, 'Overview', {size: '$--text-body'}), spacer(`${p}-overview-space`),
-      ...(count ? [text(`${p}-overview-n`, `${count} asking`, {size: '$--text-caption', fill: '$--warning'})] : []),
+      ...(count ? [text(`${p}-overview-n`, `내 차례 ${count}`, {size: '$--text-caption', fill: '$--warning'})] : []),
       text(`${p}-overview-k`, '⌘⇧O', {size: '$--text-micro', fill: MUTED, mono: true}),
     ]);
   }
@@ -1917,7 +1919,7 @@ function buildProjectsSidebar(tokens) {
   // Needs You and Agents lists carry; a remote row wears the device chip.
   const AGENTS = {
     deploy: {title: '배포 전 확인', status: 'asking', age: '30s', line: '승인  e2e 테스트 돌리던 중', place: 'hide › main', bright: true},
-    blog: {title: '블로그 초안 정리', status: 'asking', age: '2m', line: '답변  톤을 이대로 갈까요?', place: 'Home', bright: true},
+    blog: {title: '블로그 초안 정리', status: 'asking', age: '2m', line: '질문 · 톤을 이대로 갈까요?', place: 'Home', bright: true},
     research: {title: '두 프로젝트 비교 조사', status: 'seen', age: '14m', place: 'Home'},
     ci: {title: 'CI 러너 샤드 정리', status: 'done', age: '6m', place: 'hide › ci-shards', bright: true},
     readable: {title: '사이드바 가독성 개선', status: 'working', age: '1m', place: 'hide › main'},
@@ -1971,13 +1973,13 @@ function buildProjectsSidebar(tokens) {
           checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, expanded: true}),
           segment(`psb-seg-main-${s}`, {name: 'Tab 1', rows: [
             tree(`psb-t0-${s}`, {title: '사이드바 가독성 개선', status: 'approval', age: '12m', chevron: 'open', pr: {state: 'mergeable', number: 180}, bright: true}),
-            tree(`psb-t1-${s}`, {title: 'P8 읽기 전용 준비', status: 'waiting', age: '19h', depth: 1, chevron: 'open', pr: {state: 'failed', number: 214}}),
+            tree(`psb-t1-${s}`, {title: 'P8 읽기 전용 준비', status: 'waiting', age: '19h', line: '대기 · 자식 1명 작업 중', depth: 1, chevron: 'open', pr: {state: 'failed', number: 214}}),
             tree(`psb-t2-${s}`, {title: '테스트 작성', status: 'approval', age: '12m', depth: 2, rail: true}),
             tree(`psb-t3-${s}`, {title: '문서 정리', status: 'done', age: '40m', depth: 2, rail: true, last: true}),
             tree(`psb-t4-${s}`, {title: 'P7 Pi·omp 재우기', status: 'asking', age: '1h', depth: 1, pr: {state: 'pending', number: 838}}),
             tree(`psb-t5-${s}`, {title: '미전달 편지 승격 해제', status: 'seen', age: '5h', depth: 1, device: 'Mac mini'}),
             tree(`psb-t6-${s}`, {title: '3개 더', status: null, age: '', depth: 1, last: true, chevron: 'closed', more: true}),
-            tree(`psb-t7-${s}`, {title: 'Mac mini 연동 5단계', status: 'waiting', age: '2m', chevron: 'closed', mark: {kind: 'working', count: 1}}),
+            tree(`psb-t7-${s}`, {title: 'Mac mini 연동 5단계', status: 'waiting', age: '2m', line: '대기 · 자식 1명 작업 중', chevron: 'closed'}),
           ]}),
           segment(`psb-seg-solo-${s}`, {rows: [tree(`psb-t8-${s}`, {title: '에이전트 패널 표시 규칙', status: 'working', age: '38s'})]}),
         ]),
@@ -2235,9 +2237,8 @@ function buildProjectsSidebar(tokens) {
       'pr-card-row-review': {enabled: false},
       'pr-card-checks': {content: 'Passing'},
       'pr-card-branch': {content: 'electron-shortcut-bindings'},
-      'pr-card-agents-question': {enabled: false},
-      'pr-card-agents-idle': {enabled: false},
-      'pr-card-agents-working-count': {content: '1'},
+      'pr-card-agents-turn': {enabled: false},
+      'pr-card-agents-going-count': {content: '1'},
       'pr-card-commit': {content: '2h ago'},
       'pr-card-path': {content: '~/projects/hide.worktrees/electron-shortcut-bindings'},
     });
@@ -2316,13 +2317,10 @@ function buildMobile(tokens, root) {
   const spacer = id => frame(id, 'Spacer', {width: 'fill_container', height: 1}, []);
   const rule = (id, width) => ({type: 'line', id, name: 'Rule', width, height: 0, stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'center'});
   const STATUS = {working: ['●', WORK], done: ['✓', OK], seen: ['○', SUBTLE], question: ['?', WARN], approval: ['!', WARN], error: ['×', BAD]};
-  function mark(id, status, size = 14) {
+  // The phone draws the desktop row's mark (status-marks B22).
+  function mark(id, status) {
     const [glyph, fill] = STATUS[status];
-    const box = size + 2;
-    const shell = children => frame(id, 'Mark', {width: box, height: box, alignItems: 'center', justifyContent: 'center'}, children);
-    if (glyph === '●') return shell([frame(`${id}-d`, 'Dot', {width: 8, height: 8, cornerRadius: PILL, fill}, [])]);
-    if (glyph === '○') return shell([frame(`${id}-r`, 'Ring', {width: 8, height: 8, cornerRadius: PILL, stroke: fill, strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [])]);
-    return shell([text(`${id}-g`, glyph, {size, fill, weight: '600', mono: true})]);
+    return markSlot(id, legacyMark(glyph, fill));
   }
   function provider(id, kind, size = 14) {
     return frame(id, 'Provider', {width: size, height: size, cornerRadius: 3, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${kind}.png`, mode: 'fit'}}, []);
@@ -2428,9 +2426,9 @@ function buildMobile(tokens, root) {
   };
   function listBody(id, {unreachable = false, empty = false} = {}) {
     const groups = empty ? [] : [
-      sectionLabel(`${id}-g1`, '내 확인 대기', AGENTS.needs.length), ...AGENTS.needs.map((a, i) => agentRow(`${id}-n${i}`, a)),
-      sectionLabel(`${id}-g2`, '끝', AGENTS.done.length), ...AGENTS.done.map((a, i) => agentRow(`${id}-d${i}`, a)),
-      sectionLabel(`${id}-g3`, '진행 중', AGENTS.working.length), ...AGENTS.working.map((a, i) => agentRow(`${id}-w${i}`, a)),
+      sectionLabel(`${id}-g1`, '내 차례', AGENTS.needs.length), ...AGENTS.needs.map((a, i) => agentRow(`${id}-n${i}`, a)),
+      sectionLabel(`${id}-g2`, '읽을 것', AGENTS.done.length), ...AGENTS.done.map((a, i) => agentRow(`${id}-d${i}`, a)),
+      sectionLabel(`${id}-g3`, '작업 중', AGENTS.working.length), ...AGENTS.working.map((a, i) => agentRow(`${id}-w${i}`, a)),
       sectionLabel(`${id}-g4`, '확인함', AGENTS.seen.length), ...AGENTS.seen.map((a, i) => agentRow(`${id}-s${i}`, a)),
     ];
     const banner = unreachable ? [frame(`${id}-un`, 'Unreachable', {layout: 'horizontal', gap: SP.sm, alignItems: 'center', width: PHONE_W, padding: [SP.sm, SP.lg, SP.sm, SP.lg], fill: '$--muted'}, [
@@ -2570,7 +2568,7 @@ function buildMobile(tokens, root) {
       frame(`${id}-tx`, 'Text', {layout: 'vertical', gap: 1, width: W - 2 * LG - 38 - MD}, [
         frame(`${id}-r1`, 'Row', {layout: 'horizontal', width: 'fill_container', alignItems: 'center'}, [text(`${id}-app`, 'hide', {size: '$--text-subhead', weight: '600', fill: FG}), spacer(`${id}-s`), text(`${id}-when`, '지금', {size: '$--text-body', fill: MUTED})]),
         text(`${id}-ti`, '솔루션 6 구현', {size: '$--text-title', weight: '600', fill: FG}),
-        text(`${id}-bo`, '내 확인 대기 · hide', {size: '$--text-subhead', fill: SUBTLE}),
+        text(`${id}-bo`, '내 차례 · hide', {size: '$--text-subhead', fill: SUBTLE}),
       ]),
     ]);
   }
@@ -2684,7 +2682,7 @@ function buildMobile(tokens, root) {
       ]),
       rowFrame('row-phone', 'Phone', [
         labeled(p('cap-pair'), '① 페어링 확인', 'QR을 찍으면 Safari에 열리는 첫 화면. 연결을 누르면 코드가 교환되고 목록으로.', phone(p('pair'), 'Phone · Pairing', pairBody(p('pair-b')))),
-        labeled(p('cap-list'), '② 목록', '내 확인 대기 / 끝 / 진행 중 / 확인함. 요청은 warning, 소식은 bright, 확인한 건 dim. SSH 머신은 칩.', phone(p('list'), 'Phone · List', listBody(p('list-b')))),
+        labeled(p('cap-list'), '② 목록', '내 차례 / 읽을 것 / 작업 중 / 확인함, 사이드바와 같은 이름과 네 표시. 요청은 warning, 소식은 bright, 확인한 건 dim. SSH 머신은 칩.', phone(p('list'), 'Phone · List', listBody(p('list-b')))),
         labeled(p('cap-detail'), '③ 상세', '읽기 전용 스크롤백(위로 당기면 더), 퀵키 5개, 한 줄 답장. 권한 프롬프트는 ↑↓⏎로 답합니다.', phone(p('detail'), 'Phone · Detail', detailBody(p('detail-b'), needs0))),
       ]),
       rowFrame('row-states', 'Phone states', [

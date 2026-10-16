@@ -2,8 +2,8 @@ import type { Catalog, Catalogs } from "../schema";
 
 // Names, tasks, transcripts, terminal output and places are caller data.
 export const mobileEnglish = {
-  "mobile.group.needs_you": "Needs your attention",
-  "mobile.group.done": "Done",
+  "mobile.group.needs_you": "Needs You",
+  "mobile.group.done": "Unread",
   "mobile.group.working": "Working",
   "mobile.group.seen": "Seen",
   "mobile.pair.title": "Connect to {{name}}",
@@ -86,9 +86,9 @@ export const mobileEnglish = {
 } as const;
 
 const ko = {
-  "mobile.group.needs_you": "내 확인 대기",
-  "mobile.group.done": "끝",
-  "mobile.group.working": "진행 중",
+  "mobile.group.needs_you": "내 차례",
+  "mobile.group.done": "읽을 것",
+  "mobile.group.working": "작업 중",
   "mobile.group.seen": "확인함",
   "mobile.pair.title": "{{name}}에 연결",
   "mobile.pair.description": "이 폰에서 hide의 에이전트를 보고, 기다리는 에이전트에 답할 수 있어요.",
@@ -170,9 +170,9 @@ const ko = {
 } satisfies Catalog<typeof mobileEnglish>;
 
 const zhCN = {
-  "mobile.group.needs_you": "待你确认",
-  "mobile.group.done": "已完成",
-  "mobile.group.working": "进行中",
+  "mobile.group.needs_you": "轮到你",
+  "mobile.group.done": "待读",
+  "mobile.group.working": "工作中",
   "mobile.group.seen": "已查看",
   "mobile.pair.title": "连接到 {{name}}",
   "mobile.pair.description": "在这部手机上查看 hide 智能体，并回复正在等待你的智能体。",
@@ -254,8 +254,8 @@ const zhCN = {
 } satisfies Catalog<typeof mobileEnglish>;
 
 const ja = {
-  "mobile.group.needs_you": "確認待ち",
-  "mobile.group.done": "完了",
+  "mobile.group.needs_you": "自分の番",
+  "mobile.group.done": "未読",
   "mobile.group.working": "作業中",
   "mobile.group.seen": "確認済み",
   "mobile.pair.title": "{{name}}に接続",

@@ -13,6 +13,7 @@ pub(crate) use axes::*;
 pub(crate) use tally::*;
 pub(crate) use turn::*;
 
+pub use tally::RowMark;
 pub use tally::phone;
 pub use turn::push;
 pub use turn::{RowState, TabState, Tone};

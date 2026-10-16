@@ -204,7 +204,7 @@ function AgentMarks({ entry, actions }: { entry: PrEntry; actions: Actions }) {
         return (
           <AgentMessagePopover key={agent.pane_id} agent={agent} place={entry.pr.head_branch ?? ""} fallback={said?.text ?? agent.identity_label} tone={said ? lineTone(said, agent) : "text-muted-foreground"} onOpen={() => actions.openAgent(agent.pane_id)}>
             <button type="button" aria-label={t("work.row.agent", { name: agent.identity_label })} className="inline-flex rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={own(() => actions.openAgent(agent.pane_id))} data-pr-agent={agent.pane_id}>
-              <StatusMark symbol={agent.symbol} className={markTone(agent)} />
+              <StatusMark mark={agent.mark} className={markTone(agent)} />
             </button>
           </AgentMessagePopover>
         );

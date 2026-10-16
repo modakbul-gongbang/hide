@@ -13,20 +13,20 @@ import { PrMark } from "./components/pr-mark";
 import { SessionRow } from "./components/session-row";
 import { StateBox, type StateBoxTone } from "./components/state-box";
 import { StatusMark } from "./components/status-mark";
-import { ChildProgressHead, TaskMark } from "./components/task-progress";
+import { ChildProgressHead, shownTaskState, TaskMark, TaskName } from "./components/task-progress";
 import { Hint } from "./components/ui/tooltip";
 import { formatDateTime } from "./i18n/format";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { useInterfaceTranslation } from "./i18n/client";
 import { cn } from "./lib/utils";
-import { checklist, childOutputs, orderedOutputs, outputPrState, recordTitle, recordTree, sessionPlace, titleOutputs, workKey, type Checklist, type ChecklistTask } from "./sessionWork";
+import { checklist, childOutputs, orderedOutputs, outputPrState, recordTitle, recordTree, sessionOfAgentOn, sessionPlace, titleOutputs, workKey, type Checklist, type ChecklistTask } from "./sessionWork";
 import { boardProjects } from "./navigation";
 import { cardLine, cardOfPane, cardQuestion, everyAgent, itemToken } from "./overviewTasks";
 import { destinationOf } from "./overviewBacklog";
 import { folderName } from "./linkPanel";
 import { machineName } from "./screenMachine";
-import { catalogWorkspaces } from "./snapshot";
-import type { AgentRow, AgentStatusCode, MissedWork, SessionRecord as RecordValue, WorkEnd, WorkOutput, WorkRequest, WorkSession } from "./snapshot";
+import { catalogWorkspaces, localDeviceId } from "./snapshot";
+import type { AgentRow, AgentStatusCode, MissedWork, RowMark, SessionRecord as RecordValue, WorkEnd, WorkOutput, WorkRequest, WorkSession } from "./snapshot";
 import { statusText } from "./agentStatus";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -235,13 +235,24 @@ function Work({ record, descendants = NO_RECORDS, words, actions, head = false }
   const list = useMemo(() => checklist(head ? record : { ...record, missed: [] }, descendants), [head, record, descendants]);
   const received = record.requests.some((request) => request.author === "parent");
   const label = t(received ? "sessionWork.received" : "sessionWork.words");
+  // The ring a task in progress draws is its live row's (B34); an ended session has none.
+  // A primitive, so a snapshot that moves nothing of this mark leaves the checklist alone.
+  const mark = useShellStore((state) => {
+    const key = workKey(record.session);
+    const localId = localDeviceId(state.rest);
+    for (const row of everyAgent(state.rest, state.agents).values()) {
+      const session = sessionOfAgentOn(row, localId);
+      if (session && workKey(session) === key) return row.mark;
+    }
+    return null;
+  });
   const nothing = !list.groups.length && !(words && list.otherWords.length) && !list.otherMissed.length && !list.now;
   return <section className={head ? "mt-md" : "mt-xs"} data-record-work="true">
     {head ? <SectionHead aside={<WordsButton label={label} />}>{t("sessionWork.tasks")} {list.total ? <Count>{list.done}/{list.total}</Count> : null}</SectionHead> : list.total ? <div className="flex items-center gap-xs px-xs pt-xs"><span className="font-medium text-subtle-foreground">{t("sessionWork.tasks")}</span><Count>{list.done}/{list.total}</Count></div> : null}
     {nothing ? <p className="text-micro text-muted-foreground">{t("sessionWork.empty")}</p> : null}
     {list.groups.map((group) => <div key={group.id ?? "outside"}>
       {group.goal ? <GoalLine goal={group.goal} at={group.at} /> : null}
-      {group.tasks.map((item) => <TaskRow key={item.task.id} item={item} session={record.session} cwd={record.cwd} words={words} actions={actions} />)}
+      {group.tasks.map((item) => <TaskRow key={item.task.id} item={item} session={record.session} cwd={record.cwd} words={words} mark={mark} actions={actions} />)}
     </div>)}
     {list.otherMissed.length || (words && list.otherWords.length) || list.now ? <OtherWork list={list} words={words} actions={actions} /> : null}
   </section>;
@@ -259,12 +270,13 @@ function GoalLine({ goal, at }: { goal: string; at: number }) {
   return <h4 className="mt-sm mb-xs min-w-0 whitespace-normal text-micro font-medium text-subtle-foreground [overflow-wrap:anywhere]" title={goal}>{goal} · <time dateTime={new Date(at).toISOString()}>{time}</time></h4>;
 }
 
-function TaskRow({ item, session, cwd, words, actions }: { item: ChecklistTask; session: WorkSession; cwd: string | null; words: boolean; actions: Actions }) {
-  const { task, state } = item;
+function TaskRow({ item, session, cwd, words, mark, actions }: { item: ChecklistTask; session: WorkSession; cwd: string | null; words: boolean; mark: RowMark | null; actions: Actions }) {
+  const { task } = item;
+  const state = shownTaskState(item.state, mark);
   return <div className="py-xxs" data-record-task={task.id}>
     <div className="flex min-w-0 items-start gap-xs">
-      <TaskMark state={state} />
-      <span className={cn("min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]", state === "done" ? "text-subtle-foreground" : "font-medium")}>{task.name}</span>
+      <TaskMark state={state} mark={mark} />
+      <TaskName state={state} name={task.name} prShown={item.prs.length > 0} className={state === "done" ? "text-subtle-foreground" : "font-medium"} />
       {item.prs.map((output) => <span key={output.url} data-record-task-pr={output.number}><OutputMark output={output} actions={actions} /></span>)}
     </div>
     {words ? item.words.map((request) => <Bubble key={request.offset} request={request} />) : null}
@@ -276,7 +288,7 @@ function TaskRow({ item, session, cwd, words, actions }: { item: ChecklistTask; 
 function OtherWork({ list, words, actions }: { list: Checklist; words: boolean; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   return <div data-record-other="true">
-    {list.now ? <div className="flex min-w-0 items-start gap-xs py-xs" data-record-now-request={list.now.offset}><LoaderCircleIcon aria-hidden="true" className="mt-xxs size-(--size-icon-sm) shrink-0 animate-spin text-agent-working" /><span className="shrink-0 font-medium text-agent-working">{t("sessionWork.now")}</span><span className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]" title={list.now.text}>{list.now.text.split(/\r?\n/)[0]}</span></div> : null}
+    {list.now ? <div className="flex min-w-0 items-start gap-xs py-xs" data-record-now-request={list.now.offset}><span className="shrink-0 font-medium text-agent-working">{t("sessionWork.now")}</span><span className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]" title={list.now.text}>{list.now.text.split(/\r?\n/)[0]}</span></div> : null}
     {words && list.otherWords.length ? <div className="mt-xs"><h4 className="mb-xxs text-micro font-medium text-muted-foreground">{t("sessionWork.otherWords")}</h4>{list.otherWords.map((request) => <Bubble key={request.offset} request={request} quiet />)}</div> : null}
     {list.otherMissed.map(({ owner, missed, named }) => <MissedLine key={`${workKey(owner.session)}:${missed.id}`} missed={missed} session={owner.session} cwd={owner.cwd} owner={named ? owner.title : null} actions={actions} />)}
   </div>;
@@ -405,16 +417,8 @@ function RequestRow({ request }: { request: WorkRequest }) {
   return <div className="flex min-w-0 items-start gap-sm py-xxs" data-record-request="true"><time className="shrink-0 font-mono text-micro text-muted-foreground" dateTime={new Date(request.at_unix_ms).toISOString()}>{time}</time><span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]" title={request.text}>{request.text.split(/\r?\n/)[0]}</span></div>;
 }
 
-/** A child's mark when its pane is gone: by its last END, in the colour the sidebar gives that state. */
-const END_MARK: Record<WorkEnd, { symbol: string; tone: string }> = {
-  done: { symbol: "✓", tone: "text-success" },
-  working: { symbol: "●", tone: "text-agent-working" },
-  waiting: { symbol: "○", tone: "text-agent-working" },
-  question: { symbol: "?", tone: "text-warning" },
-  blocked: { symbol: "▲", tone: "text-warning" },
-  unfinished: { symbol: "◐", tone: "text-warning" },
-};
-const END_WORD: Record<WorkEnd, "sessionWork.done" | "sessionWork.working" | "sessionWork.question" | "sessionWork.blocked" | "sessionWork.unfinished"> = { done: "sessionWork.done", working: "sessionWork.working", waiting: "sessionWork.working", question: "sessionWork.question", blocked: "sessionWork.blocked", unfinished: "sessionWork.unfinished" };
+/** A child's words when its pane is gone, by its last END; its mark is quiet, since no pane is left to work, answer or read (status-marks D-06, B24). */
+const END_STATUS: Record<WorkEnd, AgentStatusCode> = { done: "done", working: "working", waiting: "waiting", question: "question", blocked: "error", unfinished: "unfinished" };
 
 /**
  * The record's children (B20; PRD pr-card-and-session-record-redesign B15,
@@ -436,8 +440,8 @@ function Children({ record, summaries, onOpen, actions }: { record: RecordValue;
       const live = [...rows.values()].find((row) => row.session_id === child.session.session_id) ?? null;
       const title = recordTitle(child, summaries);
       const agent = agentProductName(child.session.agent);
-      const state = live ? statusText(t, live.status_code) : child.state ? statusText(t, child.state as AgentStatusCode) : child.last_end ? t(END_WORD[child.last_end]) : null;
-      const mark = live ? <StatusMark symbol={live.symbol} className={markTone(live)} data-agent-status-mark={live.status_code} /> : <StatusMark symbol={child.last_end ? END_MARK[child.last_end].symbol : "●"} className={child.last_end ? END_MARK[child.last_end].tone : "text-muted-foreground"} data-agent-status-mark={child.last_end ?? "unknown"} />;
+      const state = live ? statusText(t, live.status_code) : child.state ? statusText(t, child.state as AgentStatusCode) : child.last_end ? statusText(t, END_STATUS[child.last_end]) : null;
+      const mark = live ? <StatusMark mark={live.mark} className={markTone(live)} data-agent-status-mark={live.mark} /> : <StatusMark mark="quiet" data-agent-status-mark="quiet" />;
       const branch = live ? branchChip(live) : child.cwd && child.cwd !== record.cwd ? folderName(child.cwd) : null;
       const device = child.session.device_id !== record.session.device_id ? machineName(rest?.navigator?.devices, child.session.device_id, t) : null;
       const below = recordTree(child).length - 1;

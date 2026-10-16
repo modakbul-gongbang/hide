@@ -6,11 +6,12 @@ export function sleepingCaption(session: Pick<SleepingSession, "phase" | "checki
   switch (session.phase) {
     case "close_unknown":
     case "wake_unknown": return "common.unknown";
-    case "sleeping": return "panes.sleep.sleeping";
-    case "failed": return "panes.sleep.captionFailed";
+    // The words a sleeping row says on its line (status-marks B16).
+    case "sleeping": return "agents.status.sleeping";
+    case "failed": return "agents.status.sleep_failed";
     case "saving_close":
     case "saving_close_ready":
     case "closing": return "panes.transport.closing";
-    default: return "panes.sleep.waking";
+    default: return "agents.status.waking";
   }
 }

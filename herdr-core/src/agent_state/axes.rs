@@ -382,13 +382,26 @@ fn quiet_itself(agent: &SidebarAgentSnapshot) -> bool {
 }
 
 /// A quiet row whose session proves a background task it started is still
-/// running in the process that started it.
+/// running in the process that started it, on a turn the label did not read
+/// as finished: a finished turn is not hidden by tasks it left behind
+/// (status-marks D-16, B27, B28).
 fn background_wait(agent: &SidebarAgentSnapshot) -> bool {
-    quiet_itself(agent)
-        && agent
-            .row_facts
-            .as_ref()
-            .is_some_and(|facts| facts.wake_devices > 0)
+    quiet_itself(agent) && background_left(agent) > 0 && !turn_read_finished(agent)
+}
+
+/// How many background tasks the row's session proves still run.
+pub(crate) fn background_left(agent: &SidebarAgentSnapshot) -> u32 {
+    agent
+        .row_facts
+        .as_ref()
+        .map_or(0, |facts| facts.wake_devices)
+}
+
+/// Whether the label read the turn's end as finished, before any wait is
+/// laid: the same reading `stop_verdict` makes once the row is known to wait
+/// on nothing.
+fn turn_read_finished(agent: &SidebarAgentSnapshot) -> bool {
+    agent.row_facts.as_ref().and_then(verdict_of) == Some(StopVerdict::Finished)
 }
 
 /// Whether the row moves its own work on: running with nothing asked of
@@ -425,6 +438,8 @@ fn answer_in_progress(
 fn own_wait(agent: &SidebarAgentSnapshot, answering: bool) -> Option<AgentWait> {
     if background_wait(agent) {
         Some(AgentWait::Background)
+    } else if agent.checks_wait.is_some() && quiet_itself(agent) {
+        Some(AgentWait::Checks)
     } else if answering && quiet_itself(agent) {
         Some(AgentWait::Reply)
     } else {
@@ -432,21 +447,49 @@ fn own_wait(agent: &SidebarAgentSnapshot, answering: bool) -> Option<AgentWait> 
     }
 }
 
-/// Whether the label read this stopped turn as not finished and nothing is
-/// left to wake the agent: it ended `unfinished`, or it said it waits (`waiting`)
-/// for something the session cannot prove is running (B15). The row stays
-/// where Herdr put it, in Done while unread, but draws no check: Done's check
-/// is for a turn the agent reported finished. Without a label the row has no
-/// such verdict and Herdr's `done` is drawn as it always was (D-16).
-pub(crate) fn stopped_unfinished(agent: &SidebarAgentSnapshot) -> bool {
+/// How the label read a stopped turn that nothing proven will wake: finished,
+/// or with work left, which a wait the session cannot prove is running is too
+/// (status-marks D-17). A turn whose awaited work died with its process has
+/// work left whatever the label said (B16). `None` without a label (summaries
+/// off, a failed or pending analysis), and for a row with a demand, running
+/// work or a proven wait.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StopVerdict {
+    Finished,
+    Unfinished,
+}
+
+pub(crate) fn stop_verdict(agent: &SidebarAgentSnapshot) -> Option<StopVerdict> {
     let (demand, activity, _) = axes_of(agent);
-    demand == AgentDemand::None
-        && activity == AgentActivity::Stopped
-        && agent.wait.is_none()
-        && agent.row_facts.as_ref().is_some_and(|facts| {
-            matches!(facts.end, Some(LabelEnd::Unfinished | LabelEnd::Waiting))
-                || (facts.wake_vanished && facts.end.is_some())
-        })
+    if demand != AgentDemand::None || activity != AgentActivity::Stopped || agent.wait.is_some() {
+        return None;
+    }
+    verdict_of(agent.row_facts.as_ref()?)
+}
+
+/// How the label read a turn's end, whatever the row now waits on.
+fn verdict_of(facts: &crate::request_view::RowFacts) -> Option<StopVerdict> {
+    let end = facts.end?;
+    if facts.wake_vanished {
+        return Some(StopVerdict::Unfinished);
+    }
+    match end {
+        LabelEnd::Done => Some(StopVerdict::Finished),
+        LabelEnd::Unfinished | LabelEnd::Waiting => Some(StopVerdict::Unfinished),
+        _ => None,
+    }
+}
+
+/// Whether the label read this stopped turn as not finished and nothing is
+/// left to wake the agent: work left, or a wait nothing proves.
+pub(crate) fn stopped_unfinished(agent: &SidebarAgentSnapshot) -> bool {
+    stop_verdict(agent) == Some(StopVerdict::Unfinished)
+}
+
+/// Whether the label read this stopped turn as finished: the one case a dot
+/// to read is green (D-03). Without a label nothing is confirmed.
+pub(crate) fn finished_verdict(agent: &SidebarAgentSnapshot) -> bool {
+    stop_verdict(agent) == Some(StopVerdict::Finished)
 }
 
 /// A stopped row whose awaited work died with its process (B16).
@@ -711,6 +754,7 @@ fn read_fingerprint(agent: &SidebarAgentSnapshot) -> PaneReadRecord {
         descendant_signals: agent.descendant_signals.clone(),
         server: None,
         unread: false,
+        checks_ended: agent.checks_ended,
     }
 }
 
@@ -730,7 +774,9 @@ fn completion_is_news(record_completed: bool, current_completed: bool) -> bool {
 /// going away is not news (`completion_is_news`). A descendant signal is news
 /// only when it is missing from the record: a signal the record holds and
 /// the row no longer shows is a question answered or a finished child back
-/// at work, neither of which calls the operator (PRD B5, B6).
+/// at work, neither of which calls the operator (PRD B5, B6). How the checks
+/// it waited on ended is news when the record has not seen that end
+/// (status-marks D-08).
 fn record_covers(record: &PaneReadRecord, current: &PaneReadRecord) -> bool {
     record.state_change_seq == current.state_change_seq
         && record.session_id == current.session_id
@@ -740,6 +786,7 @@ fn record_covers(record: &PaneReadRecord, current: &PaneReadRecord) -> bool {
         && current
             .descendant_signals
             .is_subset(&record.descendant_signals)
+        && (current.checks_ended.is_none() || current.checks_ended == record.checks_ended)
 }
 
 /// Whether a pane first settled on a new server shows something the

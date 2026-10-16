@@ -47,7 +47,8 @@ test("the 태스크 list and raised-child pane bands preserve native terminal ge
       const tasks = await showTasks(page);
       await expect(tasks.locator(`[data-task-group="needs_you"] [data-task-row="${parent}"] [data-task-line="needs_you"]`)).toContainText("검증 명령 실행 권한이 필요합니다");
       await expect(tasks.locator(`[data-task-row="${child}"], [data-task-child="${child}"]`)).toHaveCount(0);
-      await expect(tasks.locator(`[data-task-row="${parent}"] [data-task-children]`)).toHaveAttribute("data-task-children", "1");
+      // A folded parent counts no children (status-marks B35).
+      await expect(tasks.locator(`[data-task-row="${parent}"] [data-task-children]`)).toHaveCount(0);
       await captureNativeWindow(app, `tasks-${theme}`, facts);
       await page.locator('[data-sidebar-lens-option="projects"]').click();
       await expect(page.locator('[data-sidebar-lens="projects"]')).toBeVisible();

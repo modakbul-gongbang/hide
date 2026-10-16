@@ -509,7 +509,7 @@ function AgentLine({ agent, logos }: { agent: AgentRow; logos: boolean }) {
   const mark = agentMarkOf(agent.agent_kind);
   return (
     <>
-      <StatusMark symbol={agent.symbol} className={markTone(agent)} />
+      <StatusMark mark={agent.mark} className={markTone(agent)} />
       {logos && mark?.logo ? <img src={mark.logo} alt="" aria-hidden="true" className="size-(--size-icon-sm) shrink-0 rounded-xs object-contain" /> : null}
       <span className="min-w-0 flex-1 truncate">{agent.identity_label}</span>
     </>
@@ -611,7 +611,7 @@ function SendButton({ group, display, workspace, actions, again = false }: { gro
           <>
             <DropdownMenuLabel>{t("feedback.menu.openedBy")}</DropdownMenuLabel>
             <DropdownMenuItem disabled data-view-feedback-to="closed">
-              <StatusMark symbol="○" className="text-muted-foreground" />
+              <StatusMark mark="quiet" />
               <span className="min-w-0 flex-1 truncate text-muted-foreground">{t("feedback.mark.closed", { name: recipient.name })}</span>
             </DropdownMenuItem>
             {recipient.resumable ? (

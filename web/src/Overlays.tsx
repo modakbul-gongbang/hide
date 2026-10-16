@@ -14,7 +14,7 @@ import { useShellStore } from "./store";
 import { focusTerminal } from "./terminals";
 import { keyboardOwner } from "./viewFocus";
 import { useUiStore, type Cycle } from "./ui";
-import { markTone } from "./agentRow";
+import { markTone, markWords } from "./agentRow";
 import { DeviceChip } from "./components/device-chip";
 import { StatusMark } from "./components/status-mark";
 import { Kbd } from "./components/ui/kbd";
@@ -86,7 +86,7 @@ export function CycleOverlay() {
               data-cycle-kind={item.kind}
               aria-selected={selected}
               title={item.agent ? agentProductName(item.agent.agent_kind) : undefined}
-              aria-label={[itemTitle, item.agent && t("agents.kindAgent", { kind: agentProductName(item.agent.agent_kind) }), item.agent && statusText(t, item.agent.status_code), itemDetail, item.chip?.label].filter(Boolean).join(", ")}
+              aria-label={[itemTitle, item.agent && t("agents.kindAgent", { kind: agentProductName(item.agent.agent_kind) }), item.agent && markWords(t, item.agent), itemDetail, item.chip?.label].filter(Boolean).join(", ")}
               className={`flex items-center gap-sm px-md py-xxs ${selected ? "bg-secondary text-foreground" : "text-subtle-foreground"}`}
             >
               <CycleMarks item={item} title={itemTitle} />
@@ -115,7 +115,7 @@ export function CycleOverlay() {
 function CycleMarks({ item, title }: { item: CycleItem; title: string }) {
   return (
     <span className="flex w-(--size-agent-badge-compact) shrink-0 items-center justify-center" data-cycle-marks={item.agent ? "status" : item.kind}>
-      {item.agent ? <StatusMark symbol={item.agent.symbol} className={markTone(item.agent)} data-cycle-status={item.agent.status_code} /> : <KindMark item={item} title={title} />}
+      {item.agent ? <StatusMark mark={item.agent.mark} className={markTone(item.agent)} data-cycle-status={item.agent.mark} /> : <KindMark item={item} title={title} />}
     </span>
   );
 }
@@ -205,7 +205,7 @@ function StopWorkClose({ actions, kind, stopWork, footer }: { actions: Actions; 
             className={`flex min-w-0 items-start gap-xs ${row.state === "quiet" ? "opacity-(--opacity-read-status)" : ""}`}
           >
             <span className="flex w-(--size-agent-mark) shrink-0 justify-center">
-              {row.agent ? <RowMark symbol={row.agent.symbol} tone={markTone(row.agent)} status={row.state === "quiet" ? statusText(t, row.agent.status_code) : null} /> : null}
+              {row.agent ? <RowMark mark={row.agent.mark} tone={markTone(row.agent)} status={row.state === "quiet" ? markWords(t, row.agent) : null} /> : null}
             </span>
             <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-xs" aria-hidden="true">
               <span className="min-w-0 break-words text-foreground">{row.label}</span>

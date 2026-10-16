@@ -159,10 +159,10 @@ pub(crate) fn asleep_fold_key(project_id: &str) -> String {
 
 /// What a project's agents are doing, read from its checkouts' panes and
 /// the sleeping conversations kept for its checkouts' folders (PRD
-/// sidebar-titlebar-refresh D-02, D-03). An awake agent whose row mark is
-/// one the project badge counts, or `◐`, makes the project working; a
-/// resting agent (`○`) does not. A live row Hide holds asleep counts as
-/// sleeping, not as awake, because its badge counts it as resting.
+/// sidebar-titlebar-refresh D-02, D-03). An awake agent that draws any mark
+/// (`RowMark::of` is not quiet) makes the project working; a quiet agent
+/// does not. A live row Hide holds asleep counts as sleeping, not as awake,
+/// because its badge does not count it.
 pub(crate) fn agent_presence(
     workspace: &WorkspaceSnapshot,
     by_pane: &HashMap<&str, &SidebarAgentSnapshot>,
@@ -184,7 +184,7 @@ pub(crate) fn agent_presence(
             continue;
         }
         awake += 1;
-        working |= !matches!(RowMark::of(agent), RowMark::Idle | RowMark::Unknown);
+        working |= RowMark::of(agent) != RowMark::Quiet;
     }
     for session in sleeping.iter().filter(|session| {
         session.node_id == workspace.device_id

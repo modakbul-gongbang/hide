@@ -8,7 +8,7 @@
 import type { TaskCardScope } from "./agentScope";
 import { frontDeviceId } from "./devices";
 import type { BoardProject } from "./projectBoard";
-import type { AgentRow, PrState, RaiseVerb, SnapshotRest, Workspace } from "./snapshot";
+import type { AgentRow, AgentStatusCode, PrState, RaiseVerb, SnapshotRest, Workspace } from "./snapshot";
 
 /**
  * The device the Overview shows (PRD overview-device-tasks D-02): the one its
@@ -122,7 +122,7 @@ export type CardLine =
   | { kind: "merged"; cleanup: boolean }
   | { kind: "pr"; number: number; state: PrState }
   | { kind: "working"; agents: number }
-  | { kind: "done" }
+  | { kind: "done"; status: AgentStatusCode | null }
   | { kind: "resting" };
 
 export function cardLine(card: TaskCardScope, rows: ReadonlyMap<string, AgentRow>): CardLine {
@@ -133,7 +133,7 @@ export function cardLine(card: TaskCardScope, rows: ReadonlyMap<string, AgentRow
   const open = cardPulls(card, rows).find((pull) => pull.state !== "merged" && pull.state !== "closed");
   if (open) return { kind: "pr", number: open.number, state: open.state };
   if (card.state === "working") return { kind: "working", agents: card.members.filter((pane) => rows.get(pane)?.activity === "working").length };
-  if (card.state === "done") return { kind: "done" };
+  if (card.state === "done") return { kind: "done", status: root?.status_code ?? null };
   return { kind: "resting" };
 }
 

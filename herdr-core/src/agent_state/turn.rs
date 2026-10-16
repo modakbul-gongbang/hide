@@ -42,11 +42,33 @@ pub struct TabState {
     pub mark_tone: Tone,
 }
 
+/// A row's second line. `mode` says why it is on screen and how the shell
+/// words it: `request` (an ask or a block's cause, until it is resolved),
+/// `news` (unread), `waiting` (an in-progress row's sentence, or, with no
+/// text, its proven cause the shell words), `kept` (the work left or the
+/// unproven wait of a read stop, at rest and subdued), `quiet` (shown only on
+/// the selected or hovered row), `vanished` (the awaited work died with its
+/// process), and `checks_passed` or `checks_failed` (the checks the row waited
+/// on ended). The shell words the empty-text modes in the operator's language.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RowLine {
     pub text: String,
     pub mode: &'static str,
     pub tone: Tone,
+    /// The pull request a `checks` wait or a checks end names.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pull_request: Option<u32>,
+}
+
+impl RowLine {
+    fn new(text: &str, mode: &'static str, tone: Tone) -> Self {
+        Self {
+            text: text.to_owned(),
+            mode,
+            tone,
+            pull_request: None,
+        }
+    }
 }
 
 /// The decisions formerly repeated by each row, search, graph and board.
@@ -150,27 +172,38 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
     let attention = needs_you || agent.unread;
     // A raised root waits on its children too, but the raise is the news.
     let waiting = agent.wait.is_some() && agent.raised.is_empty();
-    // A block draws in the warning colour with the question and the approval;
-    // its own shape, not a red, is what tells the three apart.
-    let chip_kind = match demand {
-        "error" | "question" | "approval" => "warning",
-        _ if agent.escalation.is_some() || !agent.raised.is_empty() => "warning",
-        _ if activity == "working" => "working",
-        _ if stopped_unfinished(agent) => "subtle",
-        _ if activity == "stopped" && agent.emphasized => "success",
-        _ => "subtle",
+    // The mark's colour is the mark's own; a chip, a search hit and a
+    // request line take the same one. A delegated child's request draws no
+    // mark of the operator's (B24) but its line keeps the warning colour,
+    // dimmed like a read one.
+    let chip_kind = match agent.mark {
+        RowMark::Turn => "warning",
+        RowMark::Going | RowMark::Waiting => "working",
+        RowMark::Done => "success",
+        RowMark::Unread => "news",
+        RowMark::Quiet if asking => "warning",
+        RowMark::Quiet | RowMark::Asleep => "subtle",
     };
+    let bright = needs_you || agent.escalation.is_some();
     let chip_tone = Tone {
         kind: chip_kind,
-        read: asking && !agent.emphasized,
+        read: asking && !bright && !agent.emphasized,
     };
-    let mark_tone = if waiting {
-        Tone {
-            kind: "working",
-            read: false,
-        }
-    } else {
-        chip_tone
+    let mark_tone = Tone {
+        kind: if matches!(agent.mark, RowMark::Quiet | RowMark::Asleep) {
+            "subtle"
+        } else {
+            chip_kind
+        },
+        read: agent.mark == RowMark::Turn && chip_tone.read,
+    };
+    let subtle = Tone {
+        kind: "subtle",
+        read: false,
+    };
+    let news = Tone {
+        kind: "news",
+        read: false,
     };
     let mut line = agent
         .detail
@@ -178,47 +211,54 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
         .map(str::trim)
         .filter(|text| !text.is_empty())
         .map(|text| {
-            let mode = if asking {
-                "request"
+            if asking {
+                RowLine::new(text, "request", chip_tone)
             } else if waiting {
                 // What a waiting row waits for stays on its second line while
                 // it waits, read or not (B12).
-                "waiting"
+                RowLine::new(text, "waiting", subtle)
             } else if agent.unread {
-                "news"
+                RowLine::new(text, "news", news)
+            } else if stopped_unfinished(agent) {
+                // Work left, or a wait nothing proves, stays said once read (B7).
+                RowLine::new(text, "kept", subtle)
             } else {
-                "quiet"
-            };
-            RowLine {
-                text: text.to_owned(),
-                mode,
-                tone: match mode {
-                    "request" => chip_tone,
-                    "news" => Tone {
-                        kind: "news",
-                        read: false,
-                    },
-                    "waiting" => Tone {
-                        kind: "subtle",
-                        read: false,
-                    },
-                    _ => Tone {
-                        kind: "subtle",
-                        read: false,
-                    },
-                },
+                RowLine::new(text, "quiet", subtle)
             }
         });
+    if line.is_none() && waiting {
+        // No sentence: the shell words the proven cause (B10).
+        line = Some(RowLine::new("", "waiting", subtle));
+    }
+    if let Some(line) = line.as_mut().filter(|line| line.mode == "waiting") {
+        line.pull_request = agent
+            .checks_wait
+            .filter(|_| agent.wait == Some(crate::model::AgentWait::Checks));
+    }
     if super::axes::wake_vanished(agent) {
         // The sentence is the web's, in the operator's language: the core
         // says only that the work it waited for is gone.
+        line = Some(RowLine::new("", "vanished", subtle));
+    }
+    if let Some(ended) = agent
+        .checks_ended
+        .filter(|_| agent.unread && !asking && !waiting)
+    {
+        // The checks it waited on ended: that is the news (D-08, B13).
         line = Some(RowLine {
-            text: String::new(),
-            mode: "vanished",
-            tone: Tone {
-                kind: "subtle",
-                read: false,
-            },
+            pull_request: Some(ended.number),
+            ..if ended.passed {
+                RowLine::new("", "checks_passed", news)
+            } else {
+                RowLine::new(
+                    "",
+                    "checks_failed",
+                    Tone {
+                        kind: "warning",
+                        read: false,
+                    },
+                )
+            }
         });
     }
     let bucket = if needs_you || group == "done" {
@@ -292,7 +332,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
             "waiting"
         } else if activity == "working" {
             "working"
-        } else if agent.unread && (agent.symbol == "✓" || agent.symbol == "\u{25d0}") {
+        } else if matches!(RowMark::awake(agent), RowMark::Done | RowMark::Unread) {
             "unread"
         } else {
             "quiet"
@@ -338,7 +378,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
             0
         } else if activity == "working" || waiting {
             1
-        } else if agent.symbol == "✓" || agent.symbol == "\u{25d0}" {
+        } else if matches!(RowMark::awake(agent), RowMark::Done | RowMark::Unread) {
             2
         } else {
             3
@@ -494,15 +534,18 @@ pub(crate) fn dormant_group() -> AgentGroup {
 }
 
 /// The one short word a row shows. A reported completion the operator has not
-/// read is `Done`; an ordinary stopped pane and a read completion are `Idle`.
-/// No view ever shows an axis value, so nothing underscored can reach the
-/// screen. A waiting row (`Waiting`) and one the label read as not finished
-/// (`Stopped`) are decided by the caller, which knows the rest of the row.
+/// read is `Done` when the label read the turn as finished and `Stopped` when
+/// nothing judged it, so no word claims a finish nobody confirmed (D-03,
+/// D-13); an ordinary stopped pane and a read completion are `Idle`. No view
+/// ever shows an axis value, so nothing underscored can reach the screen. A
+/// waiting row (`Waiting`) and one the label read as not finished
+/// (`Unfinished`) are decided by the caller, which knows the rest of the row.
 pub(crate) fn agent_status_code(
     demand: AgentDemand,
     activity: AgentActivity,
     completed: bool,
     unread: bool,
+    finished: bool,
 ) -> AgentStatusCode {
     match demand {
         AgentDemand::Error => AgentStatusCode::Error,
@@ -510,7 +553,8 @@ pub(crate) fn agent_status_code(
         AgentDemand::Approval => AgentStatusCode::Approval,
         AgentDemand::None => match activity {
             AgentActivity::Working => AgentStatusCode::Working,
-            AgentActivity::Stopped if completed && unread => AgentStatusCode::Done,
+            AgentActivity::Stopped if completed && unread && finished => AgentStatusCode::Done,
+            AgentActivity::Stopped if completed && unread => AgentStatusCode::Stopped,
             AgentActivity::Stopped => AgentStatusCode::Idle,
             AgentActivity::Unknown => AgentStatusCode::Unknown,
         },
@@ -557,10 +601,14 @@ pub(crate) fn agent_requires_close_status_check(
 /// do"; the worker clears it whenever the agent runs again, so one present
 /// beside a waiting question was made for this turn.
 ///
+/// A read stop the label found unfinished, or waiting on what nothing
+/// proves (`kept`), keeps its progress in Seen: the work is still left (B7).
+///
 /// Returns whether the status word is drawn and the sentence beside it.
 pub(crate) fn agent_second_line(
     group: AgentGroup,
     demand: AgentDemand,
+    kept: bool,
     expected_reply: Option<&str>,
     question: Option<&str>,
     progress: Option<&str>,
@@ -577,7 +625,12 @@ pub(crate) fn agent_second_line(
     let sentence = match group {
         AgentGroup::NeedsYou | AgentGroup::Done => expected_reply.or(progress),
         AgentGroup::Working => request.or(progress),
-        AgentGroup::Seen => return (false, request.map(str::to_owned)),
+        AgentGroup::Seen => {
+            return (
+                false,
+                request.or(progress.filter(|_| kept)).map(str::to_owned),
+            );
+        }
     };
     // The word is the sentence's stand-in, never its prefix: the mark and the
     // group heading already say Question or Done, and the word beside a
@@ -670,27 +723,46 @@ pub(crate) fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
         group
     };
     agent.group = group.name().to_owned();
-    agent.symbol = RowMark::of(agent).symbol().to_owned();
+    agent.mark = RowMark::of(agent);
     // A row the operator still has to deal with is drawn bright; everything
     // already read or merely running is subdued.
     agent.emphasized = matches!(group, AgentGroup::NeedsYou | AgentGroup::Done);
     agent.status_code = if waiting && agent.raised.is_empty() {
         AgentStatusCode::Waiting
-    } else if stopped_unfinished(agent) {
-        AgentStatusCode::Stopped
     } else {
-        agent_status_code(demand, activity, agent.completed, unread)
+        match stop_verdict(agent) {
+            // The work it waited for died with its process: the row keeps
+            // today's word for that, Stopped (status-marks B6).
+            Some(StopVerdict::Unfinished) if super::axes::wake_vanished(agent) => {
+                AgentStatusCode::Stopped
+            }
+            Some(StopVerdict::Unfinished) => AgentStatusCode::Unfinished,
+            verdict => agent_status_code(
+                demand,
+                activity,
+                agent.completed,
+                unread,
+                verdict == Some(StopVerdict::Finished),
+            ),
+        }
     };
     let question = native_question_line(agent.user_turn.as_ref());
     let (status_word_visible, detail) = agent_second_line(
         group,
         demand,
+        stopped_unfinished(agent),
         agent.expected_reply.as_deref(),
         question.as_deref(),
         agent.progress.as_deref(),
     );
     agent.status_word_visible = status_word_visible;
     agent.detail = detail;
+    // A finished turn's leftover tasks are said on its line (status-marks D-19).
+    agent.background_left = if finished_verdict(agent) {
+        super::axes::background_left(agent)
+    } else {
+        0
+    };
     agent.requires_close_confirmation =
         agent_requires_close_confirmation(activity, demand, agent.blocked);
     agent.requires_close_status_check =
@@ -698,7 +770,6 @@ pub(crate) fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
     // A sleeping agent keeps its group, order and read axis; only its mark
     // and word say that its process is gone until it is opened (PRD B10).
     if let Some(sleep) = &agent.sleep {
-        agent.symbol = crate::agent_sleep::SLEEPING_SYMBOL.to_owned();
         agent.status_code = crate::agent_sleep::status_code(sleep);
     }
     agent.state = row_state(agent);
@@ -1048,6 +1119,7 @@ mod row_tests {
         agent.emphasized = false;
         agent.unread = false;
         agent.detail = Some("  진행할까요?  ".into());
+        agent.mark = RowMark::Turn;
         let state = row_state(&agent);
         assert!(!state.attention);
         assert_eq!(state.bucket, "resting");
@@ -1062,6 +1134,7 @@ mod row_tests {
                     kind: "warning",
                     read: true
                 },
+                pull_request: None,
             })
         );
         assert_eq!(
@@ -1071,28 +1144,37 @@ mod row_tests {
                 read: true
             }
         );
-        // Delegation changes title treatment, not the question's hue.
+        // A delegated child's question is its parent's to answer: no mark of
+        // the operator's, but its request keeps the warning hue, dimmed (B24).
         agent.delegated = true;
+        agent.lineage_depth = 1;
         agent.lineage_worktree_badge = Some("  feature  ".into());
+        derive_from_axes(&mut agent);
+        assert_eq!(agent.mark, RowMark::Quiet);
         let child = row_state(&agent);
         assert!(!child.root);
         assert!(!child.selection_emphasizes_title);
         assert_eq!(child.branch_badge.as_deref(), Some("feature"));
-        assert_eq!(child.mark_tone, state.mark_tone);
+        assert_eq!(child.mark_tone.kind, "subtle");
+        assert_eq!(child.chip_tone, state.chip_tone);
     }
 
+    /// One meaning across surfaces (D-12): a waiting root is in progress on
+    /// its mark, its chip and its search hit alike.
     #[test]
-    fn waiting_root_keeps_distinct_row_and_chip_decisions() {
+    fn a_waiting_root_is_in_progress_on_every_surface() {
         let mut agent = row();
         agent.group = "working".into();
         agent.activity = "stopped".into();
         agent.emphasized = false;
         agent.unread = false;
         agent.wait = Some(crate::model::AgentWait::Children);
+        agent.mark = RowMark::of(&agent);
+        assert_eq!(agent.mark, RowMark::Waiting);
         let state = row_state(&agent);
         assert_eq!(state.mark_tone.kind, "working");
-        assert_eq!(state.chip_tone.kind, "subtle");
-        assert_eq!(state.search_tone, "muted");
+        assert_eq!(state.chip_tone.kind, "working");
+        assert_eq!(state.search_tone, "working");
         assert_eq!(state.bucket, "delegating");
         assert_eq!(state.link, "working");
         assert!(state.working);
@@ -1100,8 +1182,8 @@ mod row_tests {
         assert!(state.selection_emphasizes_title);
     }
 
-    /// B2, B6, B7, D-06: a block the operator has read leaves Needs You and
-    /// keeps its mark and cause dimmed; it counts under its own mark.
+    /// B8: a block the operator has read leaves Needs You and keeps its turn
+    /// mark and cause dimmed; it still counts as the operator's turn.
     #[test]
     fn a_read_block_keeps_its_mark_and_cause_dimmed_in_seen() {
         let mut agent = row();
@@ -1111,14 +1193,16 @@ mod row_tests {
         agent.unread = true;
         derive_from_axes(&mut agent);
         assert_eq!(agent.group, "needs_you");
-        assert_eq!(agent.symbol, "\u{25b2}");
+        assert_eq!(agent.mark, RowMark::Turn);
+        assert!(!agent.state.mark_tone.read);
         assert_eq!(agent.state.attention_rank, 0);
         assert!(!agent.state.chip_tone.read);
 
         agent.unread = false;
         derive_from_axes(&mut agent);
         assert_eq!(agent.group, "seen");
-        assert_eq!(agent.symbol, "\u{25b2}");
+        assert_eq!(agent.mark, RowMark::Turn);
+        assert!(agent.state.mark_tone.read);
         assert_eq!(agent.status_code, AgentStatusCode::Error);
         assert_eq!(
             agent.detail.as_deref(),
@@ -1133,12 +1217,13 @@ mod row_tests {
         );
         let mut counts = crate::model::MarkCountsSnapshot::default();
         RowMark::of(&agent).count_into(&mut counts);
-        assert_eq!((counts.error, counts.stopped), (1, 0));
+        assert_eq!((counts.turn, counts.unread), (1, 0));
     }
 
-    /// B24, D-25: waiting outranks a stop, and a block outranks waiting.
+    /// D-10, B15: the operator's turn outranks progress, progress outranks a
+    /// stop to read, and a stop's dot is green only on a finished verdict.
     #[test]
-    fn precedence_is_a_block_then_waiting_then_a_stop_then_done() {
+    fn precedence_is_the_turn_then_progress_then_a_stop_to_read() {
         use crate::labels::analysis::LabelEnd;
         let mut agent = row();
         agent.activity = "stopped".into();
@@ -1150,15 +1235,16 @@ mod row_tests {
         });
         derive_from_axes(&mut agent);
         assert_eq!(
-            (agent.group.as_str(), agent.symbol.as_str()),
-            ("done", "\u{25d0}")
+            (agent.group.as_str(), agent.mark),
+            ("done", RowMark::Unread)
         );
+        assert_eq!(agent.status_code, AgentStatusCode::Unfinished);
 
         agent.wait = Some(crate::model::AgentWait::Children);
         derive_from_axes(&mut agent);
         assert_eq!(
-            (agent.group.as_str(), agent.symbol.as_str()),
-            ("working", "\u{25cb}")
+            (agent.group.as_str(), agent.mark),
+            ("working", RowMark::Waiting)
         );
         assert_eq!(agent.status_code, AgentStatusCode::Waiting);
 
@@ -1166,8 +1252,253 @@ mod row_tests {
         agent.wait = None;
         derive_from_axes(&mut agent);
         assert_eq!(
-            (agent.group.as_str(), agent.symbol.as_str()),
-            ("needs_you", "\u{25b2}")
+            (agent.group.as_str(), agent.mark),
+            ("needs_you", RowMark::Turn)
+        );
+    }
+
+    /// D-03, D-13, B4, B18: the dot to read is green only when the label read
+    /// the turn as finished; work left, a wait nothing proves and a stop no
+    /// label judged are plain, and none of them says Done.
+    #[test]
+    fn a_dot_to_read_is_green_only_on_a_finished_verdict() {
+        use crate::labels::analysis::LabelEnd;
+        let mut agent = row();
+        agent.activity = "stopped".into();
+        agent.completed = true;
+        agent.unread = true;
+        let cases = [
+            (Some(LabelEnd::Done), RowMark::Done, AgentStatusCode::Done),
+            (
+                Some(LabelEnd::Unfinished),
+                RowMark::Unread,
+                AgentStatusCode::Unfinished,
+            ),
+            // A wait nothing proves reads as work left (status-marks D-17).
+            (
+                Some(LabelEnd::Waiting),
+                RowMark::Unread,
+                AgentStatusCode::Unfinished,
+            ),
+            (None, RowMark::Unread, AgentStatusCode::Stopped),
+        ];
+        for (end, mark, code) in cases {
+            agent.row_facts = end.map(|end| crate::request_view::RowFacts {
+                end: Some(end),
+                ..Default::default()
+            });
+            derive_from_axes(&mut agent);
+            assert_eq!(
+                (agent.group.as_str(), agent.mark, agent.status_code),
+                ("done", mark, code),
+                "{end:?}"
+            );
+        }
+        // Read, the dot goes; work left keeps its word and its line (B7).
+        agent.unread = false;
+        agent.progress = Some("테스트 2개 남음".into());
+        agent.row_facts = Some(crate::request_view::RowFacts {
+            end: Some(LabelEnd::Unfinished),
+            ..Default::default()
+        });
+        derive_from_axes(&mut agent);
+        assert_eq!(
+            (agent.mark, agent.status_code),
+            (RowMark::Quiet, AgentStatusCode::Unfinished)
+        );
+        assert_eq!(
+            agent.state.line.as_ref().map(|line| line.mode),
+            Some("kept")
+        );
+    }
+
+    /// status-marks D-16, B27, B28: a turn the label read as finished is to
+    /// read as done, the tasks it left counted on its line; any other verdict,
+    /// or none, keeps the row in progress on them.
+    #[test]
+    fn a_finished_turn_is_not_hidden_by_the_background_tasks_it_left() {
+        use crate::labels::analysis::LabelEnd;
+        let facts = |end| {
+            Some(crate::request_view::RowFacts {
+                end,
+                wake_devices: 2,
+                ..Default::default()
+            })
+        };
+        let mut rows = vec![row()];
+        rows[0].activity = "stopped".into();
+        rows[0].completed = true;
+        rows[0].unread = true;
+        rows[0].row_facts = facts(Some(LabelEnd::Done));
+        crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+        let agent = &rows[0];
+        assert_eq!(
+            (
+                agent.group.as_str(),
+                agent.mark,
+                agent.status_code,
+                agent.wait,
+                agent.background_left
+            ),
+            ("done", RowMark::Done, AgentStatusCode::Done, None, 2)
+        );
+
+        for end in [Some(LabelEnd::Waiting), Some(LabelEnd::Unfinished), None] {
+            rows[0].row_facts = facts(end);
+            crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+            let agent = &rows[0];
+            assert_eq!(
+                (
+                    agent.group.as_str(),
+                    agent.mark,
+                    agent.status_code,
+                    agent.wait,
+                    agent.background_left
+                ),
+                (
+                    "working",
+                    RowMark::Waiting,
+                    AgentStatusCode::Waiting,
+                    Some(crate::model::AgentWait::Background),
+                    0
+                ),
+                "{end:?}"
+            );
+            let line = agent.state.line.as_ref().expect("a waiting line");
+            assert_eq!(line.mode, "waiting", "{end:?}");
+        }
+    }
+
+    /// status-marks D-25, B36: a row that waits on proven work draws the
+    /// dashed ring and the agent working again draws the solid one; both
+    /// count as one in-progress mark.
+    #[test]
+    fn a_waiting_row_draws_the_dashed_ring_and_counts_as_in_progress() {
+        let mut agent = row();
+        agent.activity = "stopped".into();
+        agent.completed = true;
+        agent.wait = Some(crate::model::AgentWait::Background);
+        derive_from_axes(&mut agent);
+        assert_eq!(agent.mark, RowMark::Waiting);
+        assert_eq!(serde_json::to_value(agent.mark).unwrap(), "waiting");
+        let mut counts = crate::model::MarkCountsSnapshot::default();
+        agent.mark.count_into(&mut counts);
+        assert_eq!(counts.going, 1);
+        assert_eq!(row_state(&agent).mark_tone.kind, "working");
+
+        agent.activity = "working".into();
+        agent.completed = false;
+        derive_from_axes(&mut agent);
+        assert_eq!(agent.mark, RowMark::Going);
+    }
+
+    /// status-marks D-21, B31: a sleeping agent keeps a moon and is counted on
+    /// no badge, whatever its turn was.
+    #[test]
+    fn a_sleeping_row_draws_asleep_and_counts_on_no_badge() {
+        let mut agent = row();
+        agent.activity = "stopped".into();
+        agent.completed = true;
+        agent.unread = true;
+        agent.sleep = Some(crate::model::AgentSleepSnapshot {
+            state: "sleeping".into(),
+            reason: None,
+            since_unix_ms: 1,
+            progress: None,
+        });
+        agent.progress = Some("파서를 나눴어요".into());
+        derive_from_axes(&mut agent);
+        assert_eq!(agent.mark, RowMark::Asleep);
+        let mut counts = crate::model::MarkCountsSnapshot::default();
+        agent.mark.count_into(&mut counts);
+        assert_eq!(counts, crate::model::MarkCountsSnapshot::default());
+        // It keeps its place in a tree and its class in a close list.
+        assert_eq!((agent.state.tree_rank, agent.state.subtree), (2, "unread"));
+        // The phone draws no line under it, as the sidebar does not.
+        let rest = json!({"navigator": {"agents": [&agent], "workspaces": []}});
+        let phone = super::super::phone::project(&rest, "local");
+        let listed = phone
+            .agents()
+            .next()
+            .expect("the sleeping row on the phone");
+        assert_eq!(listed.line, None);
+
+        // The operator's turn outranks the moon (D-10), and the phone draws
+        // its ask as it would on any other row.
+        agent.demand = "question".into();
+        derive_from_axes(&mut agent);
+        assert_eq!(agent.mark, RowMark::Turn);
+        let rest = json!({"navigator": {"agents": [&agent], "workspaces": []}});
+        let phone = super::super::phone::project(&rest, "local");
+        let line = phone
+            .agents()
+            .next()
+            .and_then(|listed| listed.line.clone())
+            .expect("the ask's line on the phone");
+        assert_eq!((line.mode.as_str(), line.tone), ("request", "warning"));
+    }
+
+    /// status-marks B16, B31: a waking, a failed and an unknown row keep a
+    /// line on the phone that says their state, as the sidebar's does.
+    #[test]
+    fn a_waking_failed_or_unknown_row_keeps_a_state_line_on_the_phone() {
+        for code in [
+            AgentStatusCode::Waking,
+            AgentStatusCode::SleepFailed,
+            AgentStatusCode::Unknown,
+        ] {
+            let mut agent = row();
+            agent.progress = Some("파서를 나눴어요".into());
+            derive_from_axes(&mut agent);
+            agent.status_code = code;
+            let rest = json!({"navigator": {"agents": [&agent], "workspaces": []}});
+            let phone = super::super::phone::project(&rest, "local");
+            let line = phone
+                .agents()
+                .next()
+                .and_then(|listed| listed.line.clone())
+                .unwrap_or_else(|| panic!("{code:?} keeps a line"));
+            assert_eq!(
+                (line.mode.as_str(), line.text.as_str(), line.tone),
+                ("kept", "", "subtle"),
+                "{code:?}"
+            );
+        }
+    }
+
+    /// D-07, D-08: a quiet row waiting on its pull request's checks is in
+    /// progress and names it; the end of those checks is the news its line says.
+    #[test]
+    fn a_checks_wait_is_in_progress_and_its_end_is_news() {
+        let mut agent = row();
+        agent.activity = "stopped".into();
+        agent.completed = true;
+        agent.unread = true;
+        agent.checks_wait = Some(12);
+        agent.wait = Some(crate::model::AgentWait::Checks);
+        derive_from_axes(&mut agent);
+        assert_eq!(
+            (agent.group.as_str(), agent.mark),
+            ("working", RowMark::Waiting)
+        );
+        let line = agent.state.line.clone().expect("a cause line");
+        assert_eq!(
+            (line.mode, line.text.as_str(), line.pull_request),
+            ("waiting", "", Some(12))
+        );
+
+        agent.wait = None;
+        agent.checks_wait = None;
+        agent.checks_ended = Some(crate::model::ChecksEnded {
+            number: 12,
+            passed: false,
+        });
+        derive_from_axes(&mut agent);
+        assert_eq!(agent.group, "done");
+        let line = agent.state.line.clone().expect("the checks' end");
+        assert_eq!(
+            (line.mode, line.pull_request, line.tone.kind),
+            ("checks_failed", Some(12), "warning")
         );
     }
 }

@@ -82,6 +82,79 @@ export function frame(id, name, props, children) {
   return {type: 'frame', id, name, children, ...props};
 }
 
+// The status mark (web/src/components/status-mark.tsx, docs/status-model.md,
+// The mark): one 12 px slot that draws one of four shapes, the operator's turn
+// as a `!` in a warning badge, in progress as a static three-quarter ring,
+// to read as a 7 px dot (green only for a finished verdict), and quiet as
+// nothing. A row in progress that waits on proven work draws the same ring
+// dashed (status-marks D-25). A master holds the shapes as siblings, all off;
+// an instance turns on the one its mark draws (`markSwitch`).
+export const MARKS = ['turn', 'going', 'waiting', 'done', 'unread', 'quiet'];
+
+// The waiting ring: the in-progress ring's centre line (r 4.05 in its 10 px
+// box, 1.9 thick) cut into five dashes and four gaps along its three quarters,
+// as web/src/components/status-mark.tsx dashes it (2.2 on, 2 off over 19).
+function dashedArc() {
+  const r = 4.05, dash = 270 * 2.2 / 19, gap = 270 * 2 / 19;
+  const at = deg => {
+    const a = deg * Math.PI / 180;
+    return `${(5 + r * Math.cos(a)).toFixed(3)} ${(5 + r * Math.sin(a)).toFixed(3)}`;
+  };
+  const parts = [];
+  for (let k = 0; k < 5; k++) {
+    const from = k * (dash + gap);
+    parts.push(`M ${at(from)} A ${r} ${r} 0 0 1 ${at(from + dash)}`);
+  }
+  return parts.join(' ');
+}
+
+export function markShapes(p) {
+  return [
+    frame(`${p}-turn`, 'Turn', {enabled: false, width: 12, height: 12, fill: '$--warning', cornerRadius: 6, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [
+      {...text(`${p}-turn-bang`, '!', {fill: '$--status-foreground', size: '$--text-micro', weight: '700', mono: true})},
+    ]),
+    {type: 'ellipse', id: `${p}-arc`, name: 'In progress', enabled: false, width: 10, height: 10, fill: '$--agent-working', innerRadius: 0.62, startAngle: 90, sweepAngle: -270},
+    {type: 'path', id: `${p}-arc-wait`, name: 'Waiting', enabled: false, width: 10, height: 10, viewBox: [0, 0, 10, 10], geometry: dashedArc(), stroke: '$--agent-working', strokeWidth: 1.9},
+    {type: 'ellipse', id: `${p}-dot`, name: 'Unread', enabled: false, width: 7, height: 7, fill: '$--success'},
+  ];
+}
+
+// The overrides that draw `mark` with the shapes `markShapes(p)` made, each
+// color restated so an importing document resolves it per theme; `alias` is
+// the import prefix (`hideui:`) and may be a path. A master that also holds
+// the sleeping moon (`moon`, the sidebar row's `sar-moon`) has it restated
+// too, on only for an agent asleep (status-marks D-21).
+export function markSwitch(p, mark, alias = '', {moon = false} = {}) {
+  if (!MARKS.includes(mark) && !(moon && mark === 'asleep')) throw new Error(`unknown status mark ${mark}`);
+  return {
+    ...(moon ? {[`${alias}${p}-moon`]: {enabled: mark === 'asleep', fill: '$--muted-foreground'}} : {}),
+    [`${alias}${p}-turn`]: {enabled: mark === 'turn', fill: '$--warning'},
+    [`${alias}${p}-turn-bang`]: {fill: '$--status-foreground'},
+    [`${alias}${p}-arc`]: {enabled: mark === 'going', fill: '$--agent-working'},
+    [`${alias}${p}-arc-wait`]: {enabled: mark === 'waiting', stroke: '$--agent-working'},
+    [`${alias}${p}-dot`]: {enabled: mark === 'done' || mark === 'unread', fill: mark === 'unread' ? '$--foreground' : '$--success'},
+  };
+}
+
+// A board names a mark; an older board's glyph and colour still name the mark
+// that replaced it, so a sheet drawn before the four marks means the same row.
+export function legacyMark(symbol, fill) {
+  if (MARKS.includes(symbol)) return symbol;
+  if (['?', '!', '▲', '×', '✕'].includes(symbol)) return 'turn';
+  if (symbol === '●') return 'going';
+  if (symbol === '○') return fill === '$--agent-working' ? 'going' : 'quiet';
+  if (symbol === '✓') return 'done';
+  if (symbol === '◐') return 'unread';
+  return 'quiet';
+}
+
+// A mark slot drawn in place, with only its own shape.
+export function markSlot(id, mark, {height = 12} = {}) {
+  const on = {turn: `${id}-turn`, going: `${id}-arc`, waiting: `${id}-arc-wait`, done: `${id}-dot`, unread: `${id}-dot`}[mark];
+  return frame(id, 'Status mark', {width: 12, height, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'},
+    markShapes(id).filter(shape => shape.id === on).map(shape => ({...shape, enabled: true, ...(mark === 'unread' ? {fill: '$--foreground'} : {})})));
+}
+
 function ref(id, masterId, name, overrides = {}, descendants) {
   return {id, type: 'ref', ref: masterId, name, ...overrides, ...(descendants ? {descendants} : {})};
 }
@@ -797,20 +870,7 @@ function buildAgentGraphBox(tokens) {
       frame(`${p}-l1`, 'Line', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: 'fill_container', height: ROW, padding: [0, '$--spacing-sm']}, [
         frame(`${p}-ind`, 'Indent', {width: INDENT, height: 1, enabled: false}, []),
         icon(`${p}-arrow`, 'corner-down-right', {size: ICON, fill: '$--muted-foreground', enabled: false}),
-        frame(`${p}-mark`, 'Status mark', {width: MARK, height: MARK, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [
-          {type: 'ellipse', id: `${p}-dot`, name: 'Dot', enabled: false, width: DOT, height: DOT, fill: '$--agent-working'},
-          {type: 'ellipse', id: `${p}-ring`, name: 'Ring', width: DOT, height: DOT, stroke: '$--muted-foreground', strokeWidth: HAIR, strokeAlignment: 'inner'},
-          disabled(text(`${p}-glyph`, '?', {fill: '$--warning', mono: true, size: '$--text-caption'})),
-          // Blocked is a filled triangle with its notch cut out, stopped a ring with its left half filled; both are shapes, as the web draws them.
-          frame(`${p}-blocked`, 'Blocked', {width: MARK, height: MARK, layout: 'none', enabled: false}, [
-            // The exclamation is a hole in the path (opposite winding), as the web cuts it out with evenodd.
-            {type: 'path', id: `${p}-blocked-shape`, name: 'Triangle with notch', x: 0, y: 0, width: MARK, height: MARK, viewBox: [0, 0, 12, 12], geometry: 'M6 1.2 L11.4 10.6 L0.6 10.6 Z M5.4 4.8 L5.4 7.6 L6.6 7.6 L6.6 4.8 Z M5.4 8.4 L5.4 9.4 L6.6 9.4 L6.6 8.4 Z', fill: '$--warning'},
-          ]),
-          frame(`${p}-stopped`, 'Stopped', {width: MARK, height: MARK, layout: 'none', enabled: false}, [
-            {type: 'ellipse', id: `${p}-stopped-ring`, x: 3.5, y: 3.5, name: 'Ring', width: DOT, height: DOT, stroke: '$--subtle-foreground', strokeWidth: HAIR, strokeAlignment: 'inner'},
-            {type: 'ellipse', id: `${p}-stopped-half`, x: 3.5, y: 3.5, name: 'Half', startAngle: 90, sweepAngle: 180, width: DOT, height: DOT, fill: '$--subtle-foreground'},
-          ]),
-        ]),
+        frame(`${p}-mark`, 'Status mark', {width: MARK, height: MARK, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, markShapes(p)),
         text(`${p}-title`, 'agent title'),
         grow(`${p}-sp`),
         frame(`${p}-cross`, 'Cross-project chip', {
@@ -820,7 +880,7 @@ function buildAgentGraphBox(tokens) {
           icon(`${p}-cross-g`, 'arrow-right', {size: ICON, fill: '$--muted-foreground'}), caption(`${p}-cross-p`, 'project', '$--muted-foreground'), caption(`${p}-cross-n`, '2', '$--muted-foreground', true),
         ]),
         frame(`${p}-tucked`, 'Tucked badge', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-xs'], height: ROW_LINE, cornerRadius: '$--radius-sm', fill: '$--secondary', enabled: false}, [
-          caption(`${p}-tk-g`, '✓', '$--success', true), caption(`${p}-tk-n`, '2', '$--foreground', true),
+          markSlot(`${p}-tk-g`, 'done'), caption(`${p}-tk-n`, '2', '$--foreground', true),
         ]),
         caption(`${p}-age`, '3m', '$--muted-foreground', true),
       ]),
@@ -835,19 +895,10 @@ function buildAgentGraphBox(tokens) {
     stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner', padding: [0, 0, PAD_BOTTOM, 0],
   }, [head, rowMaster(1), ...BOX_ROWS.slice(1).map(n => ({...rowMaster(n), enabled: false}))]);
 
-  // What a state names about one row; every other part keeps the master's own.
-  const shapes = (p, on) => ({[`${p}-blocked`]: {enabled: on === '▲'}, [`${p}-stopped`]: {enabled: on === '◐'}});
-  const mark = (p, symbol, fill) => symbol === '●'
-    ? {[`${p}-dot`]: {enabled: true, fill}, [`${p}-ring`]: {enabled: false}, [`${p}-glyph`]: {enabled: false}, ...shapes(p)}
-    : symbol === '○'
-      ? {[`${p}-dot`]: {enabled: false}, [`${p}-ring`]: {enabled: true, stroke: fill}, [`${p}-glyph`]: {enabled: false}, ...shapes(p)}
-      : symbol === '▲' || symbol === '◐'
-        ? {[`${p}-dot`]: {enabled: false}, [`${p}-ring`]: {enabled: false}, [`${p}-glyph`]: {enabled: false}, ...shapes(p, symbol)}
-        : {[`${p}-dot`]: {enabled: false}, [`${p}-ring`]: {enabled: false}, [`${p}-glyph`]: {enabled: true, content: symbol, fill}, ...shapes(p)};
-  const row = (n, {symbol, fill, title, age, line, depth = 0, tucked, cross, asking = false}) => {
+  const row = (n, {mark, title, age, line, depth = 0, tucked, cross, asking = false}) => {
     const p = `agb-row${n}`;
     return {
-      ...mark(p, symbol, fill),
+      ...markSwitch(p, mark),
       [`${p}-title`]: {content: title, ...(asking ? {fontWeight: '600'} : {})},
       [`${p}-age`]: {content: age},
       [`${p}-ind`]: {enabled: depth > 0},
@@ -859,7 +910,7 @@ function buildAgentGraphBox(tokens) {
       [`${p}-cross-p`]: {content: cross?.project ?? ''},
       [`${p}-cross-n`]: {enabled: (cross?.count ?? 0) > 1, content: String(cross?.count ?? 0)},
       [`${p}-q`]: line ? {enabled: true, padding: [0, '$--spacing-sm', 0, SM + MARK + depth * INDENT]} : {enabled: false},
-      [`${p}-q-t`]: {content: line ?? '', ...(symbol === '◐' ? {fill: '$--subtle-foreground'} : {})},
+      [`${p}-q-t`]: {content: line ?? '', ...(mark === 'turn' ? {} : {fill: '$--subtle-foreground'})},
     };
   };
   const rowsOn = (...specs) => Object.assign({}, ...BOX_ROWS.map((n, index) => specs[index] ? {[`agb-row${n}`]: {enabled: true}, ...row(n, specs[index])} : {[`agb-row${n}`]: {enabled: false}}));
@@ -893,41 +944,41 @@ function buildAgentGraphBox(tokens) {
     return [
       state('primary', 'Primary', {}, {
         ...headOf({glyph: 'house', tone: '$--muted-foreground', branch: 'main', purpose: 'Observer · 계획과 위임', agents: 2}),
-        ...rowsOn({symbol: '○', fill: '$--muted-foreground', title: 'SIGTERM 정리 오케스트레이션', age: '20m'}, {symbol: '●', fill: '$--agent-working', title: 'Overview 진입 흐름', age: '1m'}),
+        ...rowsOn({mark: 'quiet', title: 'SIGTERM 정리 오케스트레이션', age: '20m'}, {mark: 'going', title: 'Overview 진입 흐름', age: '1m'}),
       }),
       state('asking', 'Worktree with asking row', {}, {
         ...headOf({glyph: 'git-pull-request', tone: '$--pr-failed', branch: '192-hided-sigterm-handler', purpose: '#192 SIGTERM 정리', issue: '#192', pr: {number: 221, state: 'failed', changes: true}, distance: '↑3', files: 4}),
         ...rowsOn(
-          {symbol: '?', fill: '$--warning', title: 'SIGTERM 처리와 자식 정리', age: '4m', line: '기존 stdin 종료 경로도 남길까요?', asking: true},
-          {symbol: '●', fill: '$--agent-working', title: '리뷰: 종료 경로 회귀', age: '2m', depth: 1},
+          {mark: 'turn', title: 'SIGTERM 처리와 자식 정리', age: '4m', line: '기존 stdin 종료 경로도 남길까요?', asking: true},
+          {mark: 'going', title: '리뷰: 종료 경로 회귀', age: '2m', depth: 1},
         ),
       }),
       state('blocked', 'Worktree with a blocked and a stopped row', {}, {
         ...headOf({glyph: 'git-branch', tone: '$--muted-foreground', branch: 'fix/ci-recovery', purpose: 'CI 복구', distance: '↑2'}),
         ...rowsOn(
-          {symbol: '▲', fill: '$--warning', title: 'CI 복구 시도', age: '2m', line: '디스크 여유가 부족해 검증을 못 함', asking: true},
-          {symbol: '◐', fill: '$--subtle-foreground', title: '어댑터 정리', age: '14m', line: '멈춤 · 테스트 3개 남음'},
+          {mark: 'turn', title: 'CI 복구 시도', age: '2m', line: '디스크 여유가 부족해 검증을 못 함', asking: true},
+          {mark: 'unread', title: '어댑터 정리', age: '14m', line: '일 남음 · 테스트 3개 남음'},
         ),
       }),
       state('resting', 'Resting (merged, dimmed)', {opacity: DIMMED}, {
         ...headOf({glyph: 'git-merge', tone: '$--pr-merged', branch: 'fix/checkout-capability-follow-up', purpose: '체크아웃 권한 후속', pr: {number: 216, state: 'merged'}, cleanup: true}),
-        ...rowsOn({symbol: '○', fill: '$--muted-foreground', title: '체크아웃 기능 구현 및 정리', age: '2h'}),
+        ...rowsOn({mark: 'quiet', title: '체크아웃 기능 구현 및 정리', age: '2h'}),
       }),
       state('tucked', 'Row with tucked badge', {}, {
         ...headOf({glyph: 'house', tone: '$--muted-foreground', branch: 'main', purpose: 'Observer · 계획과 위임', agents: 1}),
-        ...rowsOn({symbol: '●', fill: '$--agent-working', title: 'agent-tab-groups', age: '8m', tucked: 2}),
+        ...rowsOn({mark: 'going', title: 'agent-tab-groups', age: '8m', tucked: 2}),
       }),
       // A delegation into another project (issue 718): `→ sasu 2` on the parent's row, `← hide` on a child's.
       state('cross', 'Rows with cross-project chips', {}, {
         ...headOf({glyph: 'house', tone: '$--muted-foreground', branch: 'main', purpose: 'Observer · 계획과 위임', agents: 2}),
         ...rowsOn(
-          {symbol: '●', fill: '$--agent-working', title: 'Lead', age: '1m', cross: {direction: 'out', project: 'sasu', count: 2}},
-          {symbol: '○', fill: '$--muted-foreground', title: '명세 정리', age: '3m', cross: {direction: 'in', project: 'hide', count: 1}},
+          {mark: 'going', title: 'Lead', age: '1m', cross: {direction: 'out', project: 'sasu', count: 2}},
+          {mark: 'quiet', title: '명세 정리', age: '3m', cross: {direction: 'in', project: 'hide', count: 1}},
         ),
       }),
       state('selected', 'Selected', {stroke: '$--primary'}, {
         ...headOf({glyph: 'git-branch', tone: '$--muted-foreground', branch: 'prd/agent-tab-groups', purpose: 'Agent tab groups', distance: '↑39 ↓17'}),
-        ...rowsOn({symbol: '○', fill: '$--muted-foreground', title: 'Agent tab groups 구현', age: '8m'}),
+        ...rowsOn({mark: 'quiet', title: 'Agent tab groups 구현', age: '8m'}),
       }),
     ];
   }

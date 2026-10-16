@@ -129,8 +129,14 @@ test("the close sheet counts and brightens what needs the operator, stays live w
     // The root's chevron opens its children in place (agent-hierarchy-screens B10), each with its own mark.
     const chevron = page.locator(`nav[data-sidebar] [data-pane="${target}"] [data-tree-chevron="${target}"]`).first();
     await chevron.click();
-    for (const [pane, status] of [[working, "working"], [asking, "question"], [finished, "done"], [quiet, "idle"]]) {
-      await expect(page.locator(`nav[data-sidebar] [data-pane="${pane}"] [data-mark]`).first()).toHaveAttribute("data-mark", { working: "●", question: "?", done: "✓", idle: "○" }[status]!, { timeout: 30_000 });
+    // A delegated child draws only in progress or quiet (status-marks B24); its state word is on the mark.
+    for (const [pane, status] of [[working, "working"], [asking, "question"]]) {
+      await expect(page.locator(`nav[data-sidebar] [data-pane="${pane}"] [data-agent-status]`).first()).toHaveAttribute("data-agent-status", status, { timeout: 30_000 });
+    }
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${working}"] [data-mark]`).first()).toHaveAttribute("data-mark", "going");
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${asking}"] [data-mark]`).first()).toHaveAttribute("data-mark", "quiet");
+    for (const pane of [finished, quiet]) {
+      await expect(page.locator(`nav[data-sidebar] [data-pane="${pane}"] [data-agent-status]`).first()).not.toHaveAttribute("data-agent-status", "unknown", { timeout: 30_000 });
     }
     await expect(page.locator(`[data-agent-open="${target}"]`).first()).not.toHaveAccessibleName(/\bUnknown\b/);
     await chevron.click();
@@ -139,22 +145,24 @@ test("the close sheet counts and brightens what needs the operator, stays live w
     const summary = sheet.locator("[data-subtree-summary]");
     await page.locator(`[data-terminal-host="${target}"]`).click();
     await page.keyboard.press(chord("close_tab"));
-    await expect(summary).toHaveAttribute("data-subtree-summary", "working 1 · waiting for you 1 · unread result 1");
+    await expect(summary).toHaveAttribute("data-subtree-summary", "waiting for you 1 · working 1");
     await expect(sheet.getByRole("heading")).toHaveText("Close this agent and 4 children?");
     await expect(sheet.locator(`[data-subtree-row="${working}"]`)).toHaveAttribute("data-subtree-state", "working");
     await expect(sheet.locator(`[data-subtree-row="${asking}"]`)).toHaveAttribute("data-subtree-state", "waiting");
-    await expect(sheet.locator(`[data-subtree-row="${finished}"]`)).toHaveAttribute("data-subtree-state", "unread");
-    await expect(sheet.locator(`[data-subtree-row="${quiet}"]`)).toHaveAttribute("data-subtree-state", "quiet");
-    // Bright rows keep full opacity; the quiet one is dimmed.
+    // A delegated child's finished turn is its parent's news, not a dot of its own (status-marks B24).
+    for (const pane of [finished, quiet]) await expect(sheet.locator(`[data-subtree-row="${pane}"]`)).toHaveAttribute("data-subtree-state", "quiet");
+    // Bright rows keep full opacity; the quiet ones are dimmed.
     const opacity = (pane: string) => sheet.locator(`[data-subtree-row="${pane}"]`).evaluate((row) => Number(getComputedStyle(row).opacity));
-    for (const pane of [working, asking, finished]) expect(await opacity(pane)).toBe(1);
-    expect(await opacity(quiet)).toBeLessThan(1);
+    for (const pane of [working, asking]) expect(await opacity(pane)).toBe(1);
+    for (const pane of [finished, quiet]) expect(await opacity(pane)).toBeLessThan(1);
     // Each row's accessible name says its state; only the rows that need the
     // operator show the word, and a quiet row's mark says it on hover.
     await expect(sheet.locator(`[data-subtree-row="${asking}"]`)).toHaveAttribute("aria-label", /병합 전 검증/);
-    for (const pane of [working, asking, finished]) await expect(sheet.locator(`[data-subtree-row="${pane}"] [data-subtree-status]`)).toHaveCount(1);
-    await expect(sheet.locator(`[data-subtree-row="${quiet}"] [data-subtree-status]`)).toHaveCount(0);
-    await expect(sheet.locator(`[data-subtree-row="${quiet}"] [data-row-mark-hint]`)).toHaveCount(1);
+    for (const pane of [working, asking]) await expect(sheet.locator(`[data-subtree-row="${pane}"] [data-subtree-status]`)).toHaveCount(1);
+    for (const pane of [finished, quiet]) {
+      await expect(sheet.locator(`[data-subtree-row="${pane}"] [data-subtree-status]`)).toHaveCount(0);
+      await expect(sheet.locator(`[data-subtree-row="${pane}"] [data-row-mark-hint]`)).toHaveCount(1);
+    }
     await screenshot(page, "close-subtree-states");
 
     // The list is live (D-20, B13): a child spawned while the sheet is open
@@ -274,7 +282,7 @@ test("an open close sheet follows the snapshot: Stop-work tracks its pane, and a
     const row = confirm.locator(`[data-stop-work-row="${target}"]`);
     const opacity = () => row.evaluate((node) => Number(getComputedStyle(node).opacity));
     // The working state has to be in before the close asks: a quiet pane would close at once.
-    await expect(page.locator(`[data-pane="${target}"] [data-agent-status-mark="working"]`)).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(`[data-pane="${target}"] [data-agent-status="working"]`)).toBeVisible({ timeout: 30_000 });
     await page.locator(`[data-terminal-host="${target}"]`).click();
     await page.keyboard.press(chord("close_tab"));
     await expect(row).toHaveAttribute("data-stop-work-state", "active");

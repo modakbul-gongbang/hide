@@ -1,13 +1,12 @@
-import { ListChecksIcon, LoaderCircleIcon } from "lucide-react";
+import { ListChecksIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { lineText } from "./agentRow";
-import { ChildProgressHead, TaskMark } from "./components/task-progress";
+import { ChildProgressHead, shownTaskState, TaskMark, TaskName } from "./components/task-progress";
 import { PrMark } from "./components/pr-mark";
 import { Kbd } from "./components/ui/kbd";
 import { Popover, PopoverAnchor, PopoverContent } from "./components/ui/popover";
 import { useInterfaceTranslation } from "./i18n/client";
-import { cn } from "./lib/utils";
 import { agentsByPane } from "./paneAgents";
 import { usePaneAgents } from "./PaneHeaderBand";
 import { PR_LOOK } from "./prMark";
@@ -134,7 +133,6 @@ export function PaneTaskChip({ paneId, actions }: { paneId: string; actions: Act
 function TaskList({ agent, progress, onRecord }: { agent: AgentRow; progress: WorkProgress; onRecord: () => void }) {
   const { t } = useInterfaceTranslation();
   const line = agent.state.line;
-  const working = agent.status_code === "working";
   // A request's pull requests show once, on its first task, as in the record.
   const shownGroups = new Set<string>();
   return (
@@ -149,11 +147,11 @@ function TaskList({ agent, progress, onRecord }: { agent: AgentRow; progress: Wo
             const group = taskGroup(task.id);
             const prs = shownGroups.has(group) ? [] : orderedOutputs(groupPrs(task, progress.outputs));
             shownGroups.add(group);
-            const state = taskState(task, progress.outputs);
+            const state = shownTaskState(taskState(task, progress.outputs), agent.mark);
             return (
               <li key={task.id} className="flex min-w-0 items-start gap-xs py-xxs" data-task-list-item={task.id}>
-                <span className="mt-xxs flex"><TaskMark state={state} /></span>
-                <span className={cn("min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]", state === "done" ? "text-subtle-foreground" : "text-foreground")} data-task-list-name="true">{task.name}</span>
+                <span className="mt-xxs flex"><TaskMark state={state} mark={agent.mark} /></span>
+                <TaskName state={state} name={task.name} prShown={prs.length > 0} className={state === "done" ? "text-subtle-foreground" : "text-foreground"} data-task-list-name="true" />
                 {prs.map((output) => {
                   const look = outputPrState(output.state);
                   return <span key={output.url} role="img" aria-label={`#${output.number} ${t(PR_LOOK[look].word)}`} title={output.title} className="shrink-0"><PrMark state={look} number={output.number} stale={output.stale} /></span>;
@@ -165,7 +163,6 @@ function TaskList({ agent, progress, onRecord }: { agent: AgentRow; progress: Wo
         {progress.children ? <div className="mt-xs text-subtle-foreground" data-task-list-children="true"><ChildProgressHead progress={progress.children} /></div> : null}
         {line && line.text ? (
           <p className="mt-xs flex min-w-0 items-start gap-xs text-muted-foreground" data-task-list-line="true">
-            {working ? <LoaderCircleIcon aria-hidden="true" className="mt-xxs size-(--size-icon-sm) shrink-0 animate-spin text-agent-working" /> : null}
             <span className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]">{lineText(t, agent, line)}</span>
           </p>
         ) : null}

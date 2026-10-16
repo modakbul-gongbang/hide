@@ -832,6 +832,7 @@ mod tests {
                 .collect(),
                 server: Some("server-7".to_owned()),
                 unread: true,
+                checks_ended: None,
             },
         );
         state.pane_completions.insert(

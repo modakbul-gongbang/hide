@@ -81,7 +81,7 @@ it("keeps pending, correlated refusal, retry and retired-target feedback in the 
 // Approved B2 fixture: five direct children, one of each state; the question
 // belongs to the parent until the core explicitly raises it to the operator.
 function childrenFixture(): AgentRow[] {
-  const seed = legacyAgentRow({ id: "parent", pane_id: "parent", identity_label: "Parent", agent_kind: "claude", symbol: "●", group: "working", status_code: "working", detail: null, changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "working" });
+  const seed = legacyAgentRow({ id: "parent", pane_id: "parent", identity_label: "Parent", agent_kind: "claude", mark: "going", group: "working", status_code: "working", detail: null, changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "working" });
   const children = ["working", "result", "idle", "unknown", "question"].map((id, index) => ({
     ...seed, id, pane_id: id, identity_label: `Child ${id}`,
     status_code: id === "unknown" ? "unknown" as const : id === "question" ? "question" as const : id === "result" ? "done" as const : id === "idle" ? "idle" as const : seed.status_code,
@@ -96,8 +96,8 @@ it("shows direct child counts and the core-ranked child line without raising an 
   const { container, unmount } = await mount({ working: true, band: null }, childrenFixture());
   try {
     const trigger = container.querySelector<HTMLButtonElement>("[data-pane-tree]")!;
-    expect(trigger.getAttribute("aria-label")).toBe("Child agents 5 · Working: 1 · Reported results: 1 · Child requests: 1 · Unknown state: 1 · Resting: 1");
-    expect(trigger.textContent).not.toContain("!");
+    expect(trigger.getAttribute("aria-label")).toBe("Child agents 5 · Child requests: 1 · Working: 1 · Reported results: 1 · Unknown state: 1 · Resting: 1");
+    expect(trigger.querySelector('[data-mark="turn"]')).toBeNull();
     expect(container.textContent).toContain("Should these changes share a PR?");
     expect(container.querySelector("[data-pane-working-line]")).not.toBeNull();
   } finally { await unmount(); }
@@ -109,7 +109,8 @@ it("keeps an own approval in the same band and shows only raised subtree asks in
   const { container, unmount } = await mount({ working: false, band: { ...header.band!, kind: "approval", reason: "Run the verification command", raised: undefined, action: null, more: 1 } }, agents);
   try {
     const trigger = container.querySelector<HTMLButtonElement>("[data-pane-tree]")!;
-    expect(trigger.textContent).toBe("!2");
+    expect(trigger.querySelector('[data-mark="turn"]')).not.toBeNull();
+    expect(trigger.textContent).toBe("2");
     expect(trigger.getAttribute("aria-label")).toContain("Descendant requests needing you: 2");
     expect(container.textContent).toContain("Run the verification command");
     expect(container.querySelector("[data-pane-child-summary]")).toBeNull();
@@ -169,14 +170,16 @@ it.each(["parent", "child", "descendant"] as const)("preserves topology but repl
   try {
     const trigger = container.querySelector<HTMLButtonElement>("[data-pane-tree]")!;
     expect(trigger.getAttribute("aria-label")).toBe("Child agents 5 · Mac mini is not connected");
-    expect(trigger.textContent).toContain("⊘");
+    // A disconnected device's children draw no mark (status-marks B16).
+    expect(trigger.querySelector("[data-mark]")).toBeNull();
     expect(container.querySelector("[data-pane-child-count]")).toBeNull();
     expect(container.querySelector("[data-pane-child-summary]")?.textContent).toBe("Mac mini is not connected");
     await act(async () => trigger.click());
     expect(document.querySelector('[data-agent-tree="parent"]')).not.toBeNull();
     if (scope === "child") {
       const child = document.querySelector('[data-agent-child="working"]')!;
-      expect(child.getAttribute("aria-label")).toContain("Mac mini is not connected");
+      // Its line names the device and says it is disconnected (status-marks B16).
+      expect(child.getAttribute("aria-label")).toContain("mini disconnected");
       expect(child.getAttribute("aria-label")).not.toContain("Working");
     }
   } finally { await unmount(); }
@@ -204,6 +207,39 @@ it("keeps online raised requests accessible when another descendant's device is 
   } finally { await unmount(); }
 });
 
+// The tree draws a waiting child's 대기 line and dims an unknown child (status-marks B16, B29).
+it("draws a waiting child's line in the child tree and its name, and dims an unknown child", async () => {
+  const agents = childrenFixture();
+  const working = agents.find((row) => row.pane_id === "working")!;
+  Object.assign(working, { status_code: "waiting", wait: "checks", activity: "stopped", state: { ...working.state, line: { text: "", mode: "waiting", tone: { kind: "subtle", read: false }, pull_request: 58 } } });
+  const { container, unmount } = await mount({ working: false, band: null }, agents);
+  try {
+    await act(async () => container.querySelector<HTMLButtonElement>("[data-pane-tree]")!.click());
+    const popup = document.querySelector('[data-agent-tree="parent"]')!;
+    const waiting = popup.querySelector('[data-agent-child="working"]')!;
+    expect(waiting.querySelector('[data-tree-line="waiting"]')?.textContent).toBe("Waiting · CI · PR #58");
+    // The line stands in for the status word, so the name says it once.
+    expect(waiting.getAttribute("aria-label")).toBe("Child working, Claude Code, Waiting · CI · PR #58");
+    const unknown = popup.querySelector('[data-agent-child="unknown"]')!;
+    expect(unknown.querySelector('[data-tree-line="kept"]')?.textContent).toBe("Status unknown");
+    expect(unknown.className).toContain("opacity-(--opacity-dimmed)");
+    expect(waiting.className).not.toContain("opacity-(--opacity-dimmed)");
+  } finally { await unmount(); }
+});
+
+// A sleeping child has no line; the band's hover still says what its moon means (status-marks B31).
+it("names a sleeping lead child's moon in the band's hover with no line of its own", async () => {
+  const [parent, ...all] = childrenFixture();
+  const child = all.find((row) => row.pane_id === "idle")!;
+  const sleeping = { ...child, mark: "asleep" as const, status_code: "sleeping" as const, state: { ...child.state, line: { text: "Split the parser", mode: "kept" as const, tone: { kind: "subtle" as const, read: true } } } };
+  const { container, unmount } = await mount({ working: false, band: null }, [{ ...parent!, lineage_child_pane_ids: [sleeping.pane_id], direct_child_counts: { error: 0, approval: 0, question: 0, working: 0, done: 0 } }, sleeping]);
+  try {
+    const summary = container.querySelector("[data-pane-child-summary]")!;
+    expect(summary.textContent).toBe("Child idle");
+    expect(summary.getAttribute("aria-label")).toBe("Child idle · Claude Code · Sleeping · wakes when opened");
+  } finally { await unmount(); }
+});
+
 it("turns a missing core answer into a retryable timeout beside the move", async () => {
   const {container, unmount} = await mount();
   try {
@@ -218,7 +254,7 @@ it("draws a raised ask as verb, what and who", async () => {
   const {container, unmount} = await mount();
   try {
     const band = container.querySelector("[data-pane-header-band=raised]")!;
-    expect(band.querySelector("[data-verb=approval]")?.textContent).toBe("Approve");
+    expect(band.querySelector("[data-verb=approval]")?.textContent).toBe("Approval");
     expect(band.textContent).toContain("하위 검증 권한이 필요합니다");
     expect(band.querySelector("[data-pane-band-who=child]")?.textContent).toBe("자식 검증");
     expect(band.querySelector("[data-pane-band-more]")).toBeNull();
@@ -357,6 +393,20 @@ it("names the pane's title and agent product on its record button", async () => 
   } finally { await act(async () => root.unmount()); }
 });
 
+it("says a waiting pane's mark words on its record button, the words its tab and row say", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  initializeInterfaceI18n("en");
+  const agent = legacyAgentRow({ id: "a", pane_id: "pane-1", identity_label: "PR 올리고 CI 확인", agent_kind: "claude", session_id: "s-1", device_id: "local", mark: "waiting", wait: "checks" });
+  useShellStore.setState({ agents: [agent], rest: { status: { pane_focus_request: null } } as SnapshotRest });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  await act(async () => root.render(<TooltipProvider><PaneRecordButton paneId="pane-1" title="PR 올리고 CI 확인" product="Claude Code" actions={createActions(() => true)} plain={<span />}>PR 올리고 CI 확인</PaneRecordButton></TooltipProvider>));
+  try {
+    expect(container.querySelector("[data-pane-record]")?.getAttribute("aria-label")).toBe("PR 올리고 CI 확인, Claude Code, In progress · Waiting, View session record");
+  } finally { await act(async () => root.unmount()); }
+});
+
 // docs/UI_BEHAVIOR.md: a pull request band names only what its verb does not,
 // and nothing Hide could not read reaches it; an approval names no command.
 it("words a pull request band by what its verb leaves out and nothing Hide could not read", async () => {
@@ -367,7 +417,7 @@ it("words a pull request band by what its verb leaves out and nothing Hide could
     [band("fix", "failed", "changes_requested"), "FixCI failed · Changes requestedOpen PR"],
     [band("review", "unknown", null), "ReviewOpen PR"],
     [band("merge", "passing", "approved"), "MergeOpen PR"],
-    [{ working: false, band: { kind: "approval", tone: "warning", reason: null, since_unix_ms: null, action: null, more: 0, exit_code: null } }, "ApproveStopped at a permission request"],
+    [{ working: false, band: { kind: "approval", tone: "warning", reason: null, since_unix_ms: null, action: null, more: 0, exit_code: null } }, "ApprovalStopped at a permission request"],
   ];
   for (const [value, text] of cases) {
     const { container, unmount } = await mount(value, [], { paneId: "solo" });

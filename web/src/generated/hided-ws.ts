@@ -575,6 +575,7 @@ export interface AgentNotice {
       | "idle"
       | "unknown"
       | "waiting"
+      | "unfinished"
       | "stopped"
       | "attached"
       | "sleeping"

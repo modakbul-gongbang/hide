@@ -262,7 +262,7 @@ Its web owners are `web/src/components/usage-history.tsx`, `web/src/components/u
 
 Mobile is `Screen / Mobile`.
 It draws Settings > Mobile as a page of `Screen / Settings`' sheet, blocked on a failing Tailscale check with only that step lit, one action beside it and no QR, then ready with every check passing, the QR, the ts.net address, the code countdown with 새 코드, and the connected phones (2 / 4) with 해지; the push modes are on Settings > Notifications.
-Beside it, the phone app: the pairing confirm the QR opens, the list in four groups (내 확인 대기, 끝, 진행 중, 확인함), the detail with its read-only scrollback, five quick keys and one-line reply, the unreachable state over the dimmed last list, the empty state, the push banner, and the start sheet the list's `+` opens (text box, target, kind, model and `시작` over the dimmed list).
+Beside it, the phone app: the pairing confirm the QR opens, the list in four groups (내 차례, 읽을 것, 작업 중, 확인함), the detail with its read-only scrollback, five quick keys and one-line reply, the unreachable state over the dimmed last list, the empty state, the push banner, and the start sheet the list's `+` opens (text box, target, kind, model and `시작` over the dimmed list).
 The machine name and tailnet are placeholders, and the QR is a drawn pattern, never a real code.
 The Settings > Mobile frames are stale against the shipped tab: they draw the QR open with a `새 코드` button as soon as the checks pass, and one row per Tailscale check.
 The shipped tab opens with no code and a `Show QR` row that turns into `Hide QR`, offers `Show QR` again in place of `Hide QR` once the code has expired, and collapses a passing Tailscale check to one ready line.

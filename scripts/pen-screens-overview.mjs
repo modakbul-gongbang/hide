@@ -163,7 +163,7 @@ export function overviewScreens(tokens, {frame, text, icon, screenButton, screen
     return row(id, key, children, {width: COLS[key], gap: XS});
   }
   function nowCell(id, {needs = 0, working = 0, waiting = 0, done = 0, resting = 0}) {
-    const parts = [[needs, `Needs You ${needs}`, '$--warning'], [working, `일하는 중 ${working}`, '$--agent-working'], [waiting, `기다림 ${waiting}`, '$--success'], [done, `끝남 ${done}`, SUBTLE]].filter(([value]) => value > 0);
+    const parts = [[needs, `내 차례 ${needs}`, '$--warning'], [working, `일하는 중 ${working}`, '$--agent-working'], [waiting, `기다림 ${waiting}`, '$--success'], [done, `끝남 ${done}`, SUBTLE]].filter(([value]) => value > 0);
     if (!parts.length) return cell(id, 'now', [caption(`${id}-t`, resting ? `쉬는 중 ${resting}` : '일감 없음', MUTED)]);
     return cell(id, 'now', parts.map(([, label, fill], index) => caption(`${id}-${index}`, index ? `· ${label}` : label, fill)));
   }

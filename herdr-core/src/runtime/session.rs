@@ -2966,6 +2966,9 @@ impl Runtime {
                 ReadRecordScope::Local,
                 live_pane_ids.as_ref(),
             );
+            // A pull request's checks are a wait the lineage decides and an
+            // end the read axis compares, so they are laid before both.
+            self.lay_checks(&mut agents);
             crate::agent_state::apply_lineage(
                 &mut agents,
                 &self.snapshot.navigator.workspaces,

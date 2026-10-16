@@ -1,19 +1,11 @@
 // The pieces a phone row and its detail share (PRD mobile-companion B20,
-// B24): the status mark in the desktop row's tone, the provider mark, the
+// B24): the status mark the desktop row draws, the provider mark, the
 // task name, and the project · branch with the SSH device's chip.
 
 import { ServerIcon } from "lucide-react";
 import { AgentMark } from "../AgentMark";
 import { StatusMark } from "../components/status-mark";
-import type { PhoneAgent, Tone } from "./protocol";
-
-export const TONE_TEXT: Record<Tone, string> = {
-  error: "text-destructive",
-  warning: "text-warning",
-  working: "text-agent-working",
-  success: "text-success",
-  subtle: "text-status-seen",
-};
+import type { PhoneAgent } from "./protocol";
 
 /** The column a list row's detail lines start in: under the title, after the status mark alone. */
 export const LIST_INSET = "pl-[calc(var(--size-agent-mark)+var(--spacing-sm))]";
@@ -24,7 +16,8 @@ export const DETAIL_INSET = "pl-(--size-mobile-row-inset)";
 export function AgentHead({ agent, large }: { agent: PhoneAgent; large: boolean }) {
   return (
     <span className="flex min-w-0 items-center gap-sm">
-      <StatusMark symbol={agent.symbol} className={TONE_TEXT[agent.tone]} />
+      {/* The desktop row's mark; a read turn is dimmed as it is there. */}
+      <StatusMark mark={agent.mark} className={agent.mark === "turn" && !agent.emphasized ? "opacity-(--opacity-read-status)" : undefined} data-phone-mark={agent.mark} />
       {large ? <AgentMark kind={agent.agent_kind} /> : null}
       <span
         className={`min-w-0 truncate ${large ? "text-headline font-semibold" : "text-title font-medium"} ${

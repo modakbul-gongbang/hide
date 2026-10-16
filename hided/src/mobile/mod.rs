@@ -1797,7 +1797,7 @@ mod tests {
             &json!({
                 "navigator": {
                     "agents": [{
-                        "pane_id": "w1:p1", "group": group, "symbol": "●",
+                        "pane_id": "w1:p1", "group": group, "mark": "going",
                         "identity_label": "Add a dark mode switch", "agent_kind": "claude",
                         "changed_at_unix_ms": 1_790_000_000_000_u64, "status_code": "idle",
                         "demand": demand,

@@ -1,9 +1,9 @@
 // Frozen pre-refactor lineage fixture oracle, main 9f144877.
-import type { AgentRow, Checkout, DescendantCounts, Workspace } from "../src/snapshot";
+import type { AgentRow, Checkout, DescendantCounts, RowMark, Workspace } from "../src/snapshot";
 
 export type CheckoutLine = {
   key: string;
-  symbol: string;
+  mark: RowMark;
   agent: AgentRow;
   /** The checkout's branch or label; null when neither it nor the agent names one. */
   branch: string | null;
@@ -97,7 +97,7 @@ export function foldedLineage(parent: AgentRow, agents: AgentRow[], workspaces: 
       const branch = group.fact?.checkout.branch ?? group.fact?.checkout.label ?? agent.checkout_label ?? null;
       return {
         key,
-        symbol: agent.symbol,
+        mark: agent.mark,
         agent,
         branch,
         pullRequest: group.fact?.checkout.pull_request?.number ?? null,

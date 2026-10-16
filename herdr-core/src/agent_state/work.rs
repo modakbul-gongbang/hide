@@ -12,6 +12,16 @@ pub(crate) struct Linked<'a> {
     duty: bool,
 }
 
+impl<'a> Linked<'a> {
+    pub(crate) fn pull_request(&self) -> &'a PullRequestSnapshot {
+        self.pull_request
+    }
+
+    pub(crate) fn duty(&self) -> bool {
+        self.duty
+    }
+}
+
 pub(crate) fn linked_pull_requests<'a>(
     row: &SidebarAgentSnapshot,
     place: Option<RowPlace<'_>>,

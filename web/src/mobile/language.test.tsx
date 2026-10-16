@@ -41,27 +41,27 @@ describe("the phone's language", () => {
     browserLanguage = "ja-JP";
     await choose("ko");
     await mount();
-    expect(translate("mobile.group.done")).toBe("끝");
+    expect(translate("mobile.group.done")).toBe("읽을 것");
     expect(document.documentElement.lang).toBe("ko");
   });
 
   it("follows the phone's language while no choice exists, and again when it changes", async () => {
     browserLanguage = "ja-JP";
     await mount();
-    expect(translate("mobile.group.done")).toBe("完了");
+    expect(translate("mobile.group.done")).toBe("未読");
     browserLanguage = "zh-Hans-CN";
     await act(async () => window.dispatchEvent(new Event("languagechange")));
-    expect(translate("mobile.group.done")).toBe("已完成");
+    expect(translate("mobile.group.done")).toBe("待读");
     expect(document.documentElement.lang).toBe("zh-CN");
   });
 
   it("shows English for an unsupported phone language and for an unknown stored choice", async () => {
     browserLanguage = "fr-FR";
     await mount();
-    expect(translate("mobile.group.done")).toBe("Done");
+    expect(translate("mobile.group.done")).toBe("Unread");
     browserLanguage = "ko-KR";
     await choose("fr");
-    expect(translate("mobile.group.done")).toBe("Done");
+    expect(translate("mobile.group.done")).toBe("Unread");
   });
 
   it("keeps the language and color theme the last agents frame carried", () => {
@@ -77,10 +77,10 @@ describe("the phone's language", () => {
   it("gives the service worker the notification words on load and on each language change", async () => {
     await choose("ko");
     await mount();
-    await vi.waitFor(() => expect(postMessage.mock.calls.at(-1)?.[0]).toMatchObject({ type: "words", words: { needs_you: "내 확인 대기", done: "끝", observer_unconfirmed: "관찰자가 경고를 확인하지 않았어요", letter_undelivered: "편지가 전달되지 않았어요", status_question: "질문", status_approval: "승인 대기", status_error: "막힘", status_done: "완료" } }));
+    await vi.waitFor(() => expect(postMessage.mock.calls.at(-1)?.[0]).toMatchObject({ type: "words", words: { needs_you: "내 차례", done: "읽을 것", observer_unconfirmed: "관찰자가 경고를 확인하지 않았어요", letter_undelivered: "편지가 전달되지 않았어요", status_question: "질문", status_approval: "승인", status_error: "막힘", status_done: "끝남" } }));
     await choose("ja");
-    await vi.waitFor(() => expect(postMessage.mock.calls.at(-1)?.[0]).toMatchObject({ type: "words", words: { needs_you: "確認待ち", done: "完了", observer_unconfirmed: "オブザーバーが警告を確認していません", letter_undelivered: "手紙が届いていません", status_question: "質問", status_approval: "承認待ち", status_error: "ブロック中", status_done: "完了" } }));
+    await vi.waitFor(() => expect(postMessage.mock.calls.at(-1)?.[0]).toMatchObject({ type: "words", words: { needs_you: "自分の番", done: "未読", observer_unconfirmed: "オブザーバーが警告を確認していません", letter_undelivered: "手紙が届いていません", status_question: "質問", status_approval: "承認", status_error: "ブロック", status_done: "完了" } }));
     await choose(null);
-    await vi.waitFor(() => expect(postMessage.mock.calls.at(-1)?.[0]).toMatchObject({ type: "words", words: { needs_you: "Needs your attention", done: "Done", observer_unconfirmed: "Observer has not confirmed a warning", letter_undelivered: "Letter not delivered", status_question: "Question", status_approval: "Approval", status_error: "Blocked", status_done: "Done" } }));
+    await vi.waitFor(() => expect(postMessage.mock.calls.at(-1)?.[0]).toMatchObject({ type: "words", words: { needs_you: "Needs You", done: "Unread", observer_unconfirmed: "Observer has not confirmed a warning", letter_undelivered: "Letter not delivered", status_question: "Question", status_approval: "Approval", status_error: "Blocked", status_done: "Done" } }));
   });
 });

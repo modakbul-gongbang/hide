@@ -112,7 +112,7 @@ describe("the Agents explorer", () => {
 
   it("names the groups in the selected language and shows an unknown group under its wire name", async () => {
     const { t } = await createInterfaceI18n("ko");
-    expect(["needs_you", "done", "working", "seen", "on_hold"].map((group) => agentGroupTitle(group, t))).toEqual(["내 차례", "완료", "작업 중", "확인함", "on hold"]);
+    expect(["needs_you", "done", "working", "seen", "on_hold"].map((group) => agentGroupTitle(group, t))).toEqual(["내 차례", "읽을 것", "작업 중", "확인함", "on hold"]);
   });
 
   it("counts every live descendant once, not only the direct children", () => {

@@ -55,7 +55,7 @@ test("Factory questions redirect to ask while a nonworker publishes and clears i
     await fixture.state(nonworker, "idle");
     await expect.poll(() => row()?.user_turn, { message: "native unanswered question reached the snapshot", timeout: 20_000 }).toEqual({ kind: "question", content: { text: "배포 대상을 골라주세요", choices: ["미리보기", "운영"], truncated: false } });
     expect(row()).toMatchObject({ group: "needs_you", status_code: "question" });
-    await expect(page.locator(`[data-raised-group="needs_you"] [data-pane="${nonworker}"] [data-agent-status-mark="question"]`)).toBeVisible();
+    await expect(page.locator(`[data-raised-group="needs_you"] [data-pane="${nonworker}"] [data-agent-status="question"]`)).toBeVisible();
     // The row says what is asked, in the agent's words, with no label sentence behind it.
     expect(row()?.detail).toBe("배포 대상을 골라주세요");
     await expect(page.locator(`[data-raised-group="needs_you"] [data-pane="${nonworker}"] [data-ask-line="answer"]`)).toContainText("배포 대상을 골라주세요");

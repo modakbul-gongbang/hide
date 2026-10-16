@@ -120,7 +120,7 @@ describe("snapshot merge", () => {
                 pane_id: "p1",
                 identity_label: "codex",
                 agent_kind: "codex",
-                symbol: "?",
+                mark: "turn",
                 group: "needs_you",
                 status_code: "question",
                 changed_at_unix_ms: null,
@@ -152,7 +152,7 @@ describe("snapshot merge", () => {
                 pane_id: "p1",
                 identity_label: "x",
                 agent_kind: "x",
-                symbol: "?",
+                mark: "turn",
                 group: "brand_new",
                 status_code: "unknown",
                 changed_at_unix_ms: null,
@@ -166,7 +166,31 @@ describe("snapshot merge", () => {
     });
     const state = useShellStore.getState();
     expect(state.agents[0]?.unknown).toBe(true);
+    // A state Hide cannot read draws no mark rather than a `!` (status-marks B16).
+    expect(state.agents[0]?.mark).toBe("quiet");
     expect(state.diagnostics[0]).toContain("brand_new");
+  });
+
+  it("draws a mark this shell does not know as no mark, and logs it", () => {
+    useShellStore.getState().applyFrame({
+      type: "snapshot",
+      payload: { rest: { navigator: { agents: [legacyAgentRow({ id: "a", pane_id: "p1", identity_label: "x", agent_kind: "x", mark: "sparkle" as never, group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false })] } } },
+    });
+    const state = useShellStore.getState();
+    expect([state.agents[0]?.mark, state.agents[0]?.status_code]).toEqual(["quiet", "unknown"]);
+    expect(state.diagnostics.some((line) => line.includes("mark=sparkle"))).toBe(true);
+  });
+
+  it("keeps a sleeping agent's moon and a waiting agent's dashed ring (status-marks D-21, D-25)", () => {
+    useShellStore.getState().applyFrame({
+      type: "snapshot",
+      payload: { rest: { navigator: { agents: [
+        legacyAgentRow({ id: "a", pane_id: "p1", identity_label: "x", agent_kind: "x", mark: "asleep", group: "seen", status_code: "sleeping", changed_at_unix_ms: null, emphasized: false, unread: false }),
+        legacyAgentRow({ id: "b", pane_id: "p2", identity_label: "y", agent_kind: "x", mark: "waiting", group: "working", status_code: "waiting", wait: "checks", changed_at_unix_ms: null, emphasized: false, unread: false }),
+      ] } } },
+    });
+    const state = useShellStore.getState();
+    expect(state.agents.map((agent) => [agent.mark, agent.status_code])).toEqual([["asleep", "sleeping"], ["waiting", "waiting"]]);
   });
 
   it("returns a terminal frame's chunks without storing them and keeps its cursor and the hub's epoch", () => {
@@ -222,7 +246,7 @@ describe("snapshot merge", () => {
                 pane_id: "p1",
                 identity_label: "codex",
                 agent_kind: "codex",
-                symbol: "?",
+                mark: "turn",
                 group: "working",
                 status_code: "working",
                 changed_at_unix_ms: null,

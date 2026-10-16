@@ -254,8 +254,8 @@ fn an_unfinished_turn_stops_the_row_and_summaries_off_take_every_ai_field_away()
 /// B1, B2, B3, B4, B10, D-25: a turn that named its cause is a block in Needs
 /// You with its own mark and word and the cause as the second line; reading
 /// it moves it to Seen and keeps the dimmed cause; the agent working again
-/// ends it. An unfinished turn is a half-disc in Done, never a check, and a
-/// turn the agent reported finished keeps the check.
+/// ends it. An unfinished turn is a plain dot to read with work left, and only
+/// a turn the agent reported finished draws the green dot (status-marks D-03).
 #[test]
 fn a_blocked_turn_is_a_needs_you_block_and_an_unfinished_one_a_stop_not_a_check() {
     use crate::labels::analysis::LabelEnd;
@@ -273,7 +273,7 @@ fn a_blocked_turn_is_a_needs_you_block_and_an_unfinished_one_a_stop_not_a_check(
     ));
     assert_eq!(blocked["demand"], "error");
     assert_eq!(blocked["group"], "needs_you");
-    assert_eq!(blocked["symbol"], "\u{25b2}");
+    assert_eq!(blocked["mark"], "turn");
     assert_eq!(blocked["status_code"], "error");
     assert_eq!(blocked["detail"], "디스크 여유가 없어 검증을 못 함");
     assert_eq!(blocked["request"]["verb"], "blocked");
@@ -287,11 +287,11 @@ fn a_blocked_turn_is_a_needs_you_block_and_an_unfinished_one_a_stop_not_a_check(
     ));
     assert_eq!(stopped["demand"], "none");
     assert_eq!(stopped["group"], "done");
-    assert_eq!(stopped["symbol"], "\u{25d0}");
-    assert_eq!(stopped["status_code"], "stopped");
+    assert_eq!(stopped["mark"], "unread");
+    assert_eq!(stopped["status_code"], "unfinished");
     assert_eq!(stopped["detail"], "배포 단계가 남음");
     assert_eq!(stopped["request"]["verb"], "stopped");
-    assert_eq!(stopped["state"]["chip_tone"]["kind"], "subtle");
+    assert_eq!(stopped["state"]["chip_tone"]["kind"], "news");
 
     let done = row(&runtime_with_record(
         record(LabelEnd::Done, "검증을 끝냄"),
@@ -299,18 +299,19 @@ fn a_blocked_turn_is_a_needs_you_block_and_an_unfinished_one_a_stop_not_a_check(
         true,
     ));
     assert_eq!(done["group"], "done");
-    assert_eq!(done["symbol"], "\u{2713}");
+    assert_eq!(done["mark"], "done");
     assert_eq!(done["status_code"], "done");
 
-    // With no label verdict (summaries off) the same Herdr `done` is the
-    // check it always was (D-16, B17).
+    // With no label verdict (summaries off) the same Herdr `done` is a stop
+    // to read with no verdict: a plain dot, never the green one (D-03).
     let off = row(&runtime_with_record(
         record(LabelEnd::Blocked, "디스크 여유가 없어 검증을 못 함"),
         "done",
         false,
     ));
     assert_eq!(off["demand"], "none");
-    assert_eq!(off["symbol"], "\u{2713}");
+    assert_eq!(off["mark"], "unread");
+    assert_eq!(off["status_code"], "stopped");
 }
 
 /// B15, D-29: opening a finished row reads the pane as a focus would, and
@@ -406,6 +407,209 @@ fn running_checks_are_read_again_once_a_minute_only_while_the_view_is_shown() {
     runtime.ingest_github(github(&pending));
     runtime.reread_pending_checks(start + std::time::Duration::from_secs(400));
     assert_eq!(generation(&runtime), Some(1), "the view was left");
+}
+
+/// status-marks D-07, D-08, B11-B13: a row whose pull request has checks
+/// running is in progress and read for once a minute whatever the window
+/// shows; a required check that never reported, or a project whose answer is
+/// stale, holds nothing; the end of the checks it waited on is news.
+#[test]
+fn a_row_waits_on_its_running_checks_and_their_end_is_news() {
+    let mut facts = operator_asked("PR 올려줘");
+    facts.created_prs = vec![crate::labels::facts::CreatedPr {
+        repository: "acme/app".to_owned(),
+        number: 7,
+        sighted_at_unix_ms: 5,
+    }];
+    let mut runtime = runtime_with_facts(facts, "done");
+    let mut pull_request = checks_pull_request();
+    let github = checks_github;
+
+    // Only a required check that never reported: it may never run.
+    runtime.ingest_github(github(&pull_request, false));
+    assert_eq!(row(&runtime)["wait"], serde_json::Value::Null);
+    assert!(runtime.checks_wait_projects().is_empty());
+
+    pull_request.work.running_checks = 2;
+    runtime.ingest_github(github(&pull_request, true));
+    assert_eq!(
+        row(&runtime)["wait"],
+        serde_json::Value::Null,
+        "a stale answer may be long over"
+    );
+
+    runtime.ingest_github(github(&pull_request, false));
+    let waiting = row(&runtime);
+    assert_eq!(waiting["wait"], "checks", "{waiting}");
+    assert_eq!(
+        (&waiting["group"], &waiting["mark"], &waiting["status_code"]),
+        (
+            &serde_json::json!("working"),
+            &serde_json::json!("waiting"),
+            &serde_json::json!("waiting")
+        )
+    );
+    assert_eq!(waiting["state"]["line"]["mode"], "waiting");
+    assert_eq!(waiting["state"]["line"]["pull_request"], 7);
+    let generation = |runtime: &Runtime| runtime.github_generations.get("/work/app").copied();
+    let start = std::time::Instant::now();
+    runtime.reread_pending_checks(start);
+    runtime.reread_pending_checks(start + std::time::Duration::from_secs(61));
+    assert_eq!(
+        generation(&runtime),
+        Some(1),
+        "read again a minute on with no window showing the view"
+    );
+
+    pull_request.checks = crate::model::PullRequestChecks::Failed;
+    pull_request.work.running_checks = 0;
+    runtime.ingest_github(github(&pull_request, false));
+    let ended = row(&runtime);
+    assert_eq!(ended["wait"], serde_json::Value::Null);
+    assert_eq!(
+        (&ended["group"], ended["unread"].as_bool()),
+        (&serde_json::json!("done"), Some(true)),
+        "{ended}"
+    );
+    assert_eq!(ended["state"]["line"]["mode"], "checks_failed");
+    assert_eq!(ended["state"]["line"]["pull_request"], 7);
+    assert!(runtime.checks_wait_projects().is_empty());
+}
+
+/// Pull request #7 of acme/app, its checks pending and none reported yet.
+fn checks_pull_request() -> crate::model::PullRequestSnapshot {
+    crate::model::PullRequestSnapshot {
+        closing_issues: Vec::new(),
+        title: "Request view".to_owned(),
+        checks: crate::model::PullRequestChecks::Pending,
+        number: 7,
+        head_branch: "prd/request-view".to_owned(),
+        base_branch: "main".to_owned(),
+        url: "https://github.com/acme/app/pull/7".to_owned(),
+        badge: crate::model::PullRequestBadge::Open,
+        review: None,
+        is_draft: false,
+        merged_at_unix_ms: None,
+        updated_at_unix_ms: Some(10),
+        created_at_unix_ms: Some(5),
+        closed_at_unix_ms: None,
+        head_oid: None,
+        cross_repository: false,
+        work: Default::default(),
+    }
+}
+
+/// GitHub's answer for acme/app holding `pull_request`, current or `stale`.
+fn checks_github(
+    pull_request: &crate::model::PullRequestSnapshot,
+    stale: bool,
+) -> crate::model::GithubSnapshot {
+    crate::model::GithubSnapshot {
+        projects: vec![crate::model::GithubProjectSnapshot {
+            root_path: "/work/app".to_owned(),
+            status: crate::model::GithubStatusSnapshot {
+                available: true,
+                stale,
+                ..Default::default()
+            },
+            pull_requests: vec![pull_request.clone()],
+            pull_requests_read: true,
+            ..Default::default()
+        }],
+    }
+}
+
+/// status-marks B13 with the read record (`checks_ended` in the read
+/// fingerprint): the end of checks the operator already saw the row wait on
+/// is news once, and a row read after it stays read across later passes.
+#[test]
+fn the_end_of_checks_is_news_once_and_a_row_read_after_it_stays_read() {
+    let mut facts = operator_asked("PR 올려줘");
+    facts.created_prs = vec![crate::labels::facts::CreatedPr {
+        repository: "acme/app".to_owned(),
+        number: 7,
+        sighted_at_unix_ms: 5,
+    }];
+    // A read needs the live connection that applies the operator's focus.
+    let mut runtime = live_runtime();
+    let records = [(
+        PANE.to_owned(),
+        PaneRecord {
+            owner: hide_session::label_reference_token("claude", "id", SESSION),
+            facts,
+            ..PaneRecord::default()
+        },
+    )];
+    runtime.set_label_overlay(LabelOverlay::of_records(
+        records.iter().map(|(pane, record)| (pane, record)),
+        true,
+        true,
+    ));
+    let tabs = ["w-order:t1", "w-order:t2"];
+    // Herdr's layout with `active` in front, the agent stopped in the first tab.
+    let herdr = |active: &str| {
+        let mut payload = tab_order_payload(CHECKOUT, &tabs, &tabs, active);
+        let agent: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({"agents": [{
+            "id": "worker", "pane_id": PANE, "agent": "claude",
+            "agent_status": "done", "state_change_seq": 4, "cwd": CHECKOUT,
+            "agent_session": {"kind": "id", "value": SESSION}
+        }]}))
+        .unwrap();
+        payload.agents.extend(agent.agents);
+        payload
+    };
+    runtime.ingest_session(Ok(herdr("w-order:t1")));
+    let mut pull_request = checks_pull_request();
+    pull_request.work.running_checks = 2;
+    runtime.ingest_github(checks_github(&pull_request, false));
+    assert_eq!(row(&runtime)["mark"], "waiting");
+    let checkout_id = runtime
+        .snapshot()
+        .navigator
+        .workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.checkouts)
+        .find(|checkout| {
+            checkout
+                .tabs
+                .iter()
+                .any(|tab| tab.id.as_deref() == Some("w-order:t1"))
+        })
+        .map(|checkout| checkout.id.clone())
+        .expect("the checkout");
+    // The operator moves to another tab and Herdr confirms it.
+    let leave = |runtime: &mut Runtime| {
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+        runtime.ingest_session(Ok(herdr("w-order:t2")));
+    };
+
+    // The operator looks at the waiting row, then moves on.
+    assert!(runtime.dispatch_json(&operator_focus_event(PANE)));
+    leave(&mut runtime);
+    assert_eq!(row(&runtime)["unread"].as_bool(), Some(false));
+
+    pull_request.checks = crate::model::PullRequestChecks::Failed;
+    pull_request.work.running_checks = 0;
+    runtime.ingest_github(checks_github(&pull_request, false));
+    let ended = row(&runtime);
+    assert_eq!(
+        (ended["unread"].as_bool(), &ended["mark"]),
+        (Some(true), &serde_json::json!("unread")),
+        "the end is news even though the row was read while it waited: {ended}"
+    );
+    assert_eq!(ended["state"]["line"]["mode"], "checks_failed");
+
+    // Read again: later answers and projections with the same end keep it read.
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
+    runtime.ingest_session(Ok(herdr("w-order:t1")));
+    assert!(runtime.dispatch_json(&operator_focus_event(PANE)));
+    leave(&mut runtime);
+    runtime.ingest_github(checks_github(&pull_request, false));
+    runtime.ingest_session(Ok(herdr("w-order:t2")));
+    runtime.refresh_checks_waits();
+    let read = row(&runtime);
+    assert_eq!(read["unread"].as_bool(), Some(false), "{read}");
+    assert_eq!(read["mark"], "quiet");
 }
 
 /// A fresh projection with one Codex agent on `SESSION` at `status` and
@@ -623,6 +827,20 @@ fn wake_overlay_with(
     marks: &[hide_session::turns::WakeMark],
     summaries: bool,
 ) -> LabelOverlay {
+    wake_overlay_ending(
+        seq,
+        marks,
+        summaries,
+        crate::labels::analysis::LabelEnd::Waiting,
+    )
+}
+
+fn wake_overlay_ending(
+    seq: u64,
+    marks: &[hide_session::turns::WakeMark],
+    summaries: bool,
+    end: crate::labels::analysis::LabelEnd,
+) -> LabelOverlay {
     use hide_session::turns::{TurnMark, TurnTracker};
     let mut turns = TurnTracker::default();
     for (offset, mark) in marks.iter().enumerate() {
@@ -635,7 +853,7 @@ fn wake_overlay_with(
         turns_seq: Some(seq),
         goal: Some("빌드 돌리기".to_owned()),
         line: "CI가 끝나기를 기다림".to_owned(),
-        end: Some(crate::labels::analysis::LabelEnd::Waiting),
+        end: Some(end),
         ..PaneRecord::default()
     };
     LabelOverlay::of_records([(&PANE.to_owned(), &record)], true, summaries)
@@ -759,6 +977,58 @@ fn turn_end_owed_overlay(seq: u64) -> LabelOverlay {
         ..PaneRecord::default()
     };
     LabelOverlay::of_records([(&PANE.to_owned(), &record)], true, false)
+}
+
+/// status-marks D-16, B27: a turn the label read as done is announced Done
+/// once that verdict lands, though the background task it started still runs;
+/// until the read lands it is held like any other turn end.
+#[test]
+fn a_turn_read_as_done_is_announced_done_past_the_background_task_it_left() {
+    use crate::agent_state::push::{NoticeState, Transitions};
+    use hide_session::turns::WakeMark;
+    let mut runtime = runtime();
+    let mut transitions = Transitions::default();
+    let mut look = |runtime: &Runtime| {
+        let rest = serde_json::json!({"navigator": {
+            "agents": serde_json::to_value(&runtime.snapshot().navigator.agents).unwrap(),
+            "workspaces": []}});
+        transitions
+            .observe(&crate::agent_state::phone::project(&rest, "local"))
+            .0
+            .iter()
+            .map(|notice| notice.state)
+            .collect::<Vec<_>>()
+    };
+    runtime.ingest_session(Ok(claude_projection("working", 4)));
+    look(&runtime);
+
+    runtime.set_label_overlay(turn_end_owed_overlay(5));
+    runtime.ingest_session(Ok(claude_projection("done", 5)));
+    assert_eq!(look(&runtime), []);
+
+    runtime.set_label_overlay(wake_overlay_ending(
+        5,
+        &[
+            WakeMark::Boot,
+            WakeMark::Started {
+                id: "bg1".into(),
+                expires_at_unix_ms: None,
+            },
+        ],
+        true,
+        crate::labels::analysis::LabelEnd::Done,
+    ));
+    runtime.ingest_session(Ok(claude_projection("done", 5)));
+    assert_eq!(look(&runtime), [NoticeState::Done]);
+    let row = row(&runtime);
+    assert_eq!(
+        (&row["group"], &row["mark"], &row["background_left"]),
+        (
+            &serde_json::json!("done"),
+            &serde_json::json!("done"),
+            &serde_json::json!(1)
+        )
+    );
 }
 
 /// #902: a Claude Code turn ends with a background task running. The phone

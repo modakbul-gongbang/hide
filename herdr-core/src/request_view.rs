@@ -42,6 +42,10 @@ pub struct RowFacts {
     pub(crate) reply: Option<Reply>,
     /// `(lowercase owner/name, number, when its tool printed it)`.
     pub(crate) created_prs: Vec<(String, u64, u64)>,
+    /// Every pull request address the session printed, newest twenty, as
+    /// `(lowercase owner/name, number)`: a turn that just printed one is
+    /// held until GitHub's read of it lands (status-marks D-09).
+    pub(crate) sighted_prs: Vec<(String, u64)>,
     /// How the label analysis read the turn's end and its line; `None`
     /// without one (summaries off, a failed analysis, a turn not judged
     /// yet).

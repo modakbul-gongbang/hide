@@ -78,8 +78,9 @@ export function useAgentNotifications(actions: Actions) {
       if (clear.length > 0) bridge.withdrawNotifications(clear.map((tag) => `${AGENT_NOTICE_PREFIX}${tag}`));
       for (const notice of notices) {
         if (!(notice.state === "needs_you" ? needsYouEnabled : doneEnabled)) continue;
-        const fallback = notice.state === "needs_you" ? t("firstRun.notice.needsYou") : t("firstRun.notice.done");
-        const state = notice.detail ? [notice.status_code ? statusText(t, notice.status_code) : fallback, notice.detail].join(" · ") : fallback;
+        // The row's own word leads, as on its line (status-marks B23); the section name only when the core sent none.
+        const word = notice.status_code ? statusText(t, notice.status_code) : t(notice.state === "needs_you" ? "firstRun.notice.needsYou" : "firstRun.notice.done");
+        const state = notice.detail ? `${word} · ${notice.detail}` : word;
         const body = notice.place ? t("firstRun.notice.body", { state, project: notice.place }) : state;
         bridge.notify(`${AGENT_NOTICE_PREFIX}${notice.tag}`, cut(notice.title, TITLE_LIMIT), cut(body, BODY_LIMIT), { unlessFocused: true });
       }

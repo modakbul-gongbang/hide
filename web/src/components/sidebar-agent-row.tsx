@@ -5,7 +5,8 @@ import { agentProductName } from "../agentAdapters";
 import { agentClosing } from "../close";
 import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
-import { branchChip, forkLabel, lineText, lineTone, markTone, rowAccessibleName, sidebarLine } from "../agentRow";
+import { branchChip, forkLabel, lineParts, lineTone, markTone, markWords, rowAccessibleName, rowDimmed, rowSentence, sidebarLine, treeLine } from "../agentRow";
+import { RowLineText } from "./row-line-text";
 import { homeTurnLine, originLine } from "../hideAiOrigin";
 import { AgentForkMark } from "./fork-mark";
 import { RowLetterMark } from "./letter-mark";
@@ -131,14 +132,16 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   // Each row reads only the facts it draws, so a snapshot that moves nothing here renders nothing.
   const closing = useShellStore((s) => agentClosing(s.rest?.status?.async_operations, agent.pane_id));
   const agentPrStaleness = useAgentStaleness(agent);
-  // A tree row is one line (B14), except that a block keeps its cause, read or
-  // not (agent-blocked-state B2): the triangle alone does not say what stopped it.
-  const line = tree && agent.status_code !== "error" ? null : sidebarLine(agent);
+  const line = tree ? treeLine(agent) : sidebarLine(agent);
   const branch = branchShown ? branchChip(agent) : null;
   const attention = agent.state.attention;
   const unreachable = remote !== null && !remote.reachable;
+  // A row on a device that is not connected shows what Hide last knew of it,
+  // which may be long over: it draws no mark, and its line says why (status-marks B16).
+  const offline = unreachable ? t("agents.line.disconnected", { device: remote.label }) : null;
   const titleTone = agent.state.title_emphasized || (selected && agent.state.selection_emphasizes_title) ? "text-foreground" : "text-subtle-foreground";
-  const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, agentProductName(agent.agent_kind), agent.detail?.trim(), place].filter(Boolean).join("\n");
+  // The mark's state and word ride the row's hint, which the mark sits inside (B3).
+  const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, agentProductName(agent.agent_kind), offline ?? markWords(t, agent), offline ? null : rowSentence(t, agent), place].filter(Boolean).join("\n");
   const staleness = ask ? undefined : agentPrStaleness;
   const folded = tree ? tree.open !== true : true;
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -171,7 +174,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       data-agent-device={device ?? undefined}
       data-depth={depth}
       data-unreachable={unreachable ? "true" : undefined}
-      className={cn("group/row relative flex rounded-sm text-body", tree ? "items-stretch pr-xs" : "items-start gap-xs py-xs pr-xs", selected ? tree ? "bg-secondary" : "bg-selected" : "hover:bg-accent", unreachable && "opacity-(--opacity-dimmed)")}
+      className={cn("group/row relative flex rounded-sm text-body", tree ? "items-stretch pr-xs" : "items-start gap-xs py-xs pr-xs", selected ? tree ? "bg-secondary" : "bg-selected" : "hover:bg-accent", (unreachable || rowDimmed(agent)) && "opacity-(--opacity-dimmed)")}
       style={{ paddingLeft: inset }}
     >
       <Hint label={hint} reveals>
@@ -179,7 +182,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           ref={main}
           type="button"
           disabled={unreachable}
-          aria-label={[rowAccessibleName(t, agent, device ?? remote?.label ?? null), forkLabel(t, agent), closing ? t("agents.closingName") : null, place].filter(Boolean).join(", ")}
+          aria-label={[offline ? [agent.identity_label, remote?.label, agentProductName(agent.agent_kind), offline].filter(Boolean).join(", ") : rowAccessibleName(t, agent, device ?? remote?.label ?? null), forkLabel(t, agent), closing ? t("agents.closingName") : null, place].filter(Boolean).join(", ")}
           aria-current={selected ? "true" : undefined}
           aria-expanded={tree && tree.open !== null && !tree.popover ? tree.open : undefined}
           data-agent-open={agent.pane_id}
@@ -192,7 +195,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       {tree && tree.open !== null && depth > 0 ? <span className="absolute inset-y-0 flex w-(--size-agent-mark)" style={{ left: `calc(${inset} + var(--size-lineage-indent) * ${depth - 1})` }}><RowChevron agent={agent} tree={tree} returnFocus={() => main.current?.focus()} /></span> : null}
       <span className={cn("flex min-w-0 flex-1 items-start gap-xs", tree && "py-xs")}>
         <span className="pointer-events-none flex min-h-(--size-sidebar-line) shrink-0 items-center gap-xs">
-          <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.wait ? "waiting" : agent.status_code} />
+          <StatusMark mark={unreachable ? "quiet" : agent.mark} className={markTone(agent)} data-agent-status-mark={unreachable ? "quiet" : agent.mark} data-agent-status={agent.status_code} />
           {/* A Hide AI row is never in a tree; the Hide owl stands beside the status mark (PRD agent-mark-quiet D-04). The provider's logo follows the view mode or an ⌥ hold, with the owl as its badge (PRD agent-logo-view-mode D-04, D-09). */}
           <AgentRowMark kind={agent.agent_kind} hideAi={agent.hide_ai && !tree ? "sidebar" : null} />
         </span>
@@ -224,24 +227,26 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
             {/* Every row ends in the fold slot, so every time ends on one column (sidebar-readability D-3). */}
             <FoldLane />
           </span>
-          {ask && agent.state.ask ? <span aria-hidden="true" className="pointer-events-none flex min-w-0 leading-(--size-sidebar-line-detail)"><AskLine ask={agent.state.ask} className="flex-1" /></span> : ask && agent.hide_ai?.turn && !(line && agent.status_code === "error") ? (
+          {offline ? (
+            <span aria-hidden="true" data-agent-line="disconnected" className="pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail) text-subtle-foreground">
+              {offline}
+            </span>
+          ) : ask && agent.state.ask ? <span aria-hidden="true" className="pointer-events-none flex min-w-0 leading-(--size-sidebar-line-detail)"><AskLine ask={agent.state.ask} className="flex-1" /></span> : ask && agent.hide_ai?.turn && !(line && agent.status_code === "error") ? (
             // What the row's home waits for, after the agent's own ask or block cause (PRD hide-ai-work-home D-14, D-16).
             <span aria-hidden="true" data-agent-home-turn={agent.hide_ai.turn.kind} className="pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail) text-warning">
               {homeTurnLine(t, agent.hide_ai.turn)}
             </span>
           ) : line ? (
-            <span aria-hidden="true" data-agent-line={line.mode} className={cn("pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail)", lineTone(line, agent))}>
-              {lineText(t, agent, line)}
-            </span>
+            <RowLineText aria-hidden="true" data-agent-line={line.mode} parts={lineParts(t, agent, line)} className={cn("pointer-events-none text-caption leading-(--size-sidebar-line-detail)", lineTone(line, agent))} />
           ) : null}
           {tree && agent.hide_ai ? (
             <span aria-hidden="true" data-agent-task={originLine(t, agent.hide_ai)} className="pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail) text-muted-foreground">
               {originLine(t, agent.hide_ai)}
             </span>
           ) : null}
-          {remote ? (
+          {remote && !offline ? (
             <span aria-hidden="true" data-agent-remote={remote.label} className="pointer-events-none flex min-w-0 pt-xxs">
-              <DeviceChip label={remote.reachable ? remote.label : `${remote.label} · ${t("devices.rail.notConnected")}`} />
+              <DeviceChip label={remote.label} />
             </span>
           ) : null}
           {place ? (

@@ -27,7 +27,7 @@ afterAll(() => browserCanvas.restore());
 type Sent = { kind: string; payload: Record<string, unknown> };
 
 function row(id: string, over: Partial<AgentRow> = {}, session: Partial<AgentRow["state"]["session"]> = {}): AgentRow {
-  const base = legacyAgentRow({ id, pane_id: id, identity_label: `작업 ${id}`, agent_kind: "claude", symbol: "●", group: "working", demand: "none", unread: false, status_code: "working", emphasized: false, changed_at_unix_ms: 1, session_id: `s-${id}`, ...over });
+  const base = legacyAgentRow({ id, pane_id: id, identity_label: `작업 ${id}`, agent_kind: "claude", mark: "going", group: "working", demand: "none", unread: false, status_code: "working", emphasized: false, changed_at_unix_ms: 1, session_id: `s-${id}`, ...over });
   return { ...base, state: { ...base.state, session: { group: "working", line: null, unfinished: false, ...session } } } as AgentRow;
 }
 
@@ -79,23 +79,24 @@ async function render(rest: SnapshotRest, agents: AgentRow[], focused: string | 
 const heads = (container: HTMLElement) => [...container.querySelectorAll("[data-task-group-head]")].map((head) => head.textContent);
 const rows = (container: HTMLElement) => [...container.querySelectorAll("[data-task-row]")].map((element) => element.getAttribute("data-task-row"));
 
-it("groups the device's tasks as Needs You, 막힘, 일하는 중 and 끝남, drops empty groups, names each row's project, and folds the resting and cleanup ones (B4, B5, B9)", async () => {
+it("groups the device's tasks as 내 차례 (a block included), 읽을 것, 일하는 중 and 대기, drops empty groups, names each row's project, and folds the resting and cleanup ones (B4, B5, B9; status-marks B32)", async () => {
   const agents = [
     row("ask", { status_code: "question", state: undefined as never }, { group: "needs_you" }),
-    row("stuck", {}, { line: "API 서버에 닿지 못해 멈춤" }),
+    row("stuck", { status_code: "error", demand: "error", mark: "turn" }, { group: "needs_you", line: "API 서버에 닿지 못해 멈춤" }),
     row("waits"), row("works", {}, { line: "테스트 돌리는 중" }), row("done"), row("rest"), row("clean"),
   ];
   agents[0] = { ...agents[0]!, state: { ...agents[0]!.state, ask: { verb: "answer", what: "새 언어로 다시 쓸까요?", more: 0 } } };
   const cards = [card("ask", "needs_you", "hide-main"), card("stuck", "blocked", "hide-main"), card("waits", "waiting", "site-main"), card("works", "working", "hide-main"), card("done", "done", "site-main"), card("rest", "resting", "hide-main"), card("clean", "cleanup", "hide-main")];
   const { container } = await render(snapshot(agents, cards), agents);
-  expect(heads(container)).toEqual(["Needs You1", "막힘1", "일하는 중2", "끝남1"]);
-  // A waiting task stands after the working one in its group, whatever the core's order.
-  expect(rows(container)).toEqual(["ask", "stuck", "works", "waits", "done"]);
+  expect(heads(container)).toEqual(["내 차례2", "읽을 것1", "일하는 중1", "대기1"]);
+  expect(rows(container)).toEqual(["ask", "stuck", "done", "works", "waits"]);
   expect(container.querySelector("[data-task-count]")?.textContent).toBe("태스크 5");
   const line = (pane: string) => container.querySelector(`[data-task-row="${pane}"] [data-task-line]`);
-  expect(line("ask")?.textContent).toBe("herdr-ide새 언어로 다시 쓸까요?");
+  // A question leads with its verb, as the sidebar row does (status-marks B5, B33).
+  expect(line("ask")?.textContent).toBe("herdr-ide질문 · 새 언어로 다시 쓸까요?");
   expect(line("ask")?.querySelector(".text-warning")).not.toBeNull();
-  expect(line("stuck")?.querySelector(".text-destructive")?.textContent).toBe("API 서버에 닿지 못해 멈춤");
+  // A block is the operator's turn: its cause in the warning colour, led by 막힘.
+  expect(line("stuck")?.querySelector(".text-warning")?.textContent).toBe("막힘 · API 서버에 닿지 못해 멈춤");
   expect(line("waits")?.textContent).toBe("site");
   // The folds open in place and close with 접기.
   const folds = [...container.querySelectorAll<HTMLElement>("[data-task-fold] > button")];
@@ -106,13 +107,28 @@ it("groups the device's tasks as Needs You, 막힘, 일하는 중 and 끝남, dr
   expect(rows(container)).not.toContain("rest");
 });
 
-it("in 프로젝트별 draws one group per project, the asking project first, with no project name on the rows (B6)", async () => {
-  const agents = [row("a"), row("b", {}, { group: "needs_you" }), row("c")];
-  const cards = [card("a", "working", "hide-main"), card("b", "needs_you", "site-main"), card("c", "done", "hide-main")];
+it("in 프로젝트별 draws one group per project, the asking project first, with no project name on the rows and a state label over each band (B6; status-marks B32)", async () => {
+  const agents = [row("a"), row("b", {}, { group: "needs_you" }), row("c"), row("d")];
+  const cards = [card("a", "working", "hide-main"), card("b", "needs_you", "site-main"), card("c", "done", "hide-main"), card("d", "waiting", "hide-main")];
   const { container } = await render(snapshot(agents, cards, "project"), agents);
   expect([...container.querySelectorAll("[data-task-group]")].map((group) => group.getAttribute("data-task-group"))).toEqual(["site", "hide"]);
   expect(container.querySelector("[data-task-project]")).toBeNull();
-  expect(rows(container)).toEqual(["b", "a", "c"]);
+  expect(rows(container)).toEqual(["b", "c", "a", "d"]);
+  const bands = (project: string) => [...container.querySelectorAll(`[data-task-group="${project}"] [data-task-band]`)].map((band) => band.textContent);
+  expect(bands("site")).toEqual(["내 차례"]);
+  expect(bands("hide")).toEqual(["읽을 것", "일하는 중", "대기"]);
+  const label = container.querySelector('[data-task-group="site"] [data-task-band]')!;
+  expect(label.getAttribute("aria-hidden")).toBe("true");
+  expect(label.className).toContain("text-warning");
+  expect([...container.querySelectorAll('[data-task-group="hide"] ul[aria-label]')].map((list) => list.getAttribute("aria-label"))).toEqual(["읽을 것", "일하는 중", "대기"]);
+  expect(container.querySelector('[data-task-group-head="project"]')?.textContent).toBe("site내 차례 1");
+  expect([...container.querySelectorAll('[data-task-group-head="project"]')][1]?.textContent).toBe("herdr-ide읽을 것 1일하는 중 1대기 1");
+});
+
+it("in 프로젝트별 puts a project whose only turn is a block first, as a block is the operator's turn (status-marks B32)", async () => {
+  const agents = [row("a"), row("b", { status_code: "error", demand: "error", mark: "turn" }, { group: "needs_you" })];
+  const { container } = await render(snapshot(agents, [card("a", "working", "hide-main"), card("b", "blocked", "site-main")], "project"), agents);
+  expect([...container.querySelectorAll("[data-task-group]")].map((group) => group.getAttribute("data-task-group"))).toEqual(["site", "hide"]);
 });
 
 it("opens a task's pane on a press, its record on Space, and resolves it from the ⋯ menu (B12, B15, B18)", async () => {
@@ -136,8 +152,9 @@ it("selects the row of the pane with the keyboard, and its nearest drawn ancesto
   expect(container.querySelector('[data-task-child="child"]')).toBeNull();
   expect(container.querySelector('[data-task-row="parent"]')?.getAttribute("data-selected")).toBe("true");
   expect(container.querySelector('[data-task-row="other"]')?.getAttribute("data-selected")).toBeNull();
-  // Folded, the parent shows one mark per child.
-  expect(container.querySelector('[data-task-row="parent"] [data-task-children]')?.getAttribute("data-task-children")).toBe("1");
+  // Folded, the parent counts no children; only a raise below it would draw `! N` (status-marks B35).
+  expect(container.querySelector('[data-task-row="parent"] [data-task-children]')).toBeNull();
+  expect(container.querySelector('[data-task-row="parent"] [data-descendant-mark]')).toBeNull();
 });
 
 it("numbers the task rows top to bottom while ⌥ is held, an opened fold's rows after the groups, and a task's children never (electron-digit-shortcuts-hints D-02)", async () => {
@@ -149,10 +166,10 @@ it("numbers the task rows top to bottom while ⌥ is held, an opened fold's rows
   expect(container.querySelector('[data-task-child="child"]')).not.toBeNull();
   expect(container.querySelector("[data-keycap]")).toBeNull();
   await act(async () => useUiStore.getState().setHint("agents"));
-  expect(caps()).toEqual(["ask:1", "parent:2", "child:-", "done:3"]);
+  expect(caps()).toEqual(["ask:1", "done:2", "parent:3", "child:-"]);
   // The fold opened on this page draws its rows, and they take the next numbers.
   await act(async () => container.querySelector<HTMLElement>("[data-task-fold] > button")!.click());
-  expect(caps()).toEqual(["ask:1", "parent:2", "child:-", "done:3", "rest:4"]);
+  expect(caps()).toEqual(["ask:1", "done:2", "parent:3", "child:-", "rest:4"]);
   await act(async () => useUiStore.getState().setHint(null));
   expect(container.querySelector("[data-keycap]")).toBeNull();
 });
@@ -165,4 +182,48 @@ it("draws the first step when the device has no project, and New agent when it h
   cleanup = null;
   const idle = await render(snapshot([], []), []);
   expect(idle.container.querySelector("[data-tasks-empty]")?.textContent).toContain("진행 중인 일감 없음");
+});
+
+// A task row draws the row's own mark and line, as the sidebar's (status-marks D-12, D-22, D-24, B16, B33, B35).
+it("draws each task's row mark and line as the sidebar does, counts no folded children, and dims only an unknown row", async () => {
+  const waits = row("waits", { mark: "waiting", status_code: "waiting", wait: "checks", activity: "stopped" });
+  waits.state = { ...waits.state, line: { text: "", mode: "waiting", tone: { kind: "subtle", read: false }, pull_request: 58 } };
+  const agents = [
+    waits,
+    row("left", { mark: "unread", status_code: "unfinished", activity: "stopped", unread: true }, { group: "done", line: "테스트 환경 연결 남음", unfinished: true }),
+    row("read", { mark: "quiet", status_code: "unfinished", activity: "stopped" }, { group: "idle", line: "문서 정리 남음", unfinished: true }),
+    row("sleep", { mark: "asleep", status_code: "sleeping", activity: "stopped" }, { line: "파서를 나눴어요" }),
+    row("lost", { mark: "quiet", status_code: "unknown", activity: "unknown" }),
+    row("parent", { lineage_child_pane_ids: ["k1", "k2"], descendant_mark: { kind: "raised", count: 1 } }),
+    row("k1", { lineage_parent_pane_id: "parent", delegated: true, mark: "quiet", status_code: "question", demand: "question" }),
+    row("k2", { lineage_parent_pane_id: "parent", delegated: true, mark: "done", status_code: "done", activity: "stopped" }),
+  ];
+  const cards = [card("waits", "waiting", "hide-main"), card("left", "done", "hide-main"), card("read", "resting", "hide-main"), card("sleep", "working", "hide-main"), card("lost", "working", "hide-main"), card("parent", "working", "hide-main", ["parent", "k1", "k2"])];
+  const { container } = await render(snapshot(agents, cards), agents);
+  await act(async () => container.querySelector<HTMLElement>('[data-task-fold="rest"] > button')!.click());
+  const at = (pane: string) => container.querySelector(`[data-task-row="${pane}"]`)!;
+  const mark = (pane: string) => at(pane).querySelector("[data-mark]")?.getAttribute("data-mark");
+  const said = (pane: string) => [...at(pane).querySelectorAll("[data-task-line] [data-line-part]")].map((part) => part.textContent).join("");
+  expect(mark("waits")).toBe("waiting");
+  expect(said("waits")).toBe("대기 · CI · PR #58");
+  // The row's name and hover say the mark as the sidebar does (B3, B33).
+  const named = (pane: string) => at(pane).querySelector('[data-task-focus="row"]')!;
+  expect(named("waits").getAttribute("aria-label")).toContain("진행 중 · 대기");
+  expect(named("waits").getAttribute("title")).toContain("대기 · CI · PR #58");
+  expect(named("waits").getAttribute("title")).toContain("진행 중 · 대기");
+  expect(named("left").getAttribute("aria-label")).toContain("읽을 것 · 일 남음");
+  expect(said("left")).toBe("일 남음 · 테스트 환경 연결 남음");
+  expect(mark("left")).toBe("unread");
+  // Read, work left draws no mark and a quiet line; no warning ◐ anywhere.
+  expect(mark("read")).toBe("quiet");
+  expect(said("read")).toBe("일 남음 · 문서 정리 남음");
+  expect(container.textContent).not.toContain("◐");
+  expect(mark("sleep")).toBe("asleep");
+  expect(said("sleep")).toBe("");
+  expect(said("lost")).toBe("상태 모름");
+  expect(at("lost").className).toContain("opacity-(--opacity-dimmed)");
+  for (const pane of ["waits", "left", "read", "sleep", "parent"]) expect(at(pane).className).not.toContain("opacity-(--opacity-dimmed)");
+  // A folded parent counts no children; a raise below it is its one mark.
+  expect(at("parent").querySelector("[data-task-children]")).toBeNull();
+  expect(at("parent").querySelector("[data-descendant-mark]")?.textContent).toBe("!1");
 });

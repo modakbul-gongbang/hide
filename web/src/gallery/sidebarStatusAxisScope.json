@@ -293,13 +293,10 @@
     "seen": 1
   },
   "marks": {
-    "error": 0,
-    "approval": 0,
-    "question": 0,
-    "working": 4,
-    "stopped": 0,
+    "turn": 0,
+    "going": 4,
     "done": 0,
-    "idle": 1
+    "unread": 0
   },
   "sections": [],
   "members": [

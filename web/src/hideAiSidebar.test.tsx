@@ -35,7 +35,7 @@ function checkout(id: string, branch: string, path: string, over: object = {}) {
 
 function agent(id: string, label: string, over: Partial<AgentRow> = {}): AgentRow {
   return legacyAgentRow({
-    id: `agent:${id}`, pane_id: `pane:${id}`, identity_label: label, agent_kind: "claude", symbol: "●", group: "working", status_code: "working",
+    id: `agent:${id}`, pane_id: `pane:${id}`, identity_label: label, agent_kind: "claude", mark: "going", group: "working", status_code: "working",
     changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "working", ...over,
   }) as AgentRow;
 }
