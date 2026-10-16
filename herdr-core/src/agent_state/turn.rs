@@ -1407,12 +1407,12 @@ mod row_tests {
         assert_eq!(agent.mark, RowMark::Turn);
         let rest = json!({"navigator": {"agents": [&agent], "workspaces": []}});
         let phone = super::super::phone::project(&rest, "local");
-        let line = phone.agents().next().and_then(|listed| listed.line.clone());
-        assert_eq!(
-            line.map(|line| line.mode),
-            agent.state.line.as_ref().map(|line| line.mode.to_owned())
-        );
-        assert!(agent.state.line.is_some(), "an ask draws a line");
+        let line = phone
+            .agents()
+            .next()
+            .and_then(|listed| listed.line.clone())
+            .expect("the ask's line on the phone");
+        assert_eq!((line.mode.as_str(), line.tone), ("request", "warning"));
     }
 
     /// status-marks B16, B31: a waking, a failed and an unknown row keep a

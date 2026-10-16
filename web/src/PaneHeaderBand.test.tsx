@@ -218,7 +218,8 @@ it("draws a waiting child's line in the child tree and its name, and dims an unk
     const popup = document.querySelector('[data-agent-tree="parent"]')!;
     const waiting = popup.querySelector('[data-agent-child="working"]')!;
     expect(waiting.querySelector('[data-tree-line="waiting"]')?.textContent).toBe("Waiting · CI · PR #58");
-    expect(waiting.getAttribute("aria-label")).toContain("Waiting · CI · PR #58");
+    // The line stands in for the status word, so the name says it once.
+    expect(waiting.getAttribute("aria-label")).toBe("Child working, Claude Code, Waiting · CI · PR #58");
     const unknown = popup.querySelector('[data-agent-child="unknown"]')!;
     expect(unknown.querySelector('[data-tree-line="kept"]')?.textContent).toBe("Status unknown");
     expect(unknown.className).toContain("opacity-(--opacity-dimmed)");

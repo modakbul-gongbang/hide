@@ -331,7 +331,7 @@ function TreeItem({
       data-tree-pane={child.pane_id}
       data-agent-child={child.pane_id}
       data-depth={line.depth}
-      aria-label={[child.identity_label, agentProductName(child.agent_kind), reason ?? statusText(t, child.status_code), childLine ? lineText(t, child, childLine) : null, ask && !unavailable ? `${t(`agentSessions.verb.${ask.verb}`)}: ${askWhat(t, ask.verb, ask.what)}` : null, deviceLabel && device !== parentDevice ? deviceLabel : null].filter(Boolean).join(", ")}
+      aria-label={[child.identity_label, agentProductName(child.agent_kind), reason ?? (childLine ? lineText(t, child, childLine) : statusText(t, child.status_code)), ask && !unavailable ? `${t(`agentSessions.verb.${ask.verb}`)}: ${askWhat(t, ask.verb, ask.what)}` : null, deviceLabel && device !== parentDevice ? deviceLabel : null].filter(Boolean).join(", ")}
       className={cn("items-stretch gap-none py-none", ask && !unavailable && "ring-1 ring-inset ring-foreground", (unavailable || rowDimmed(child)) && "opacity-(--opacity-dimmed)")}
     >
       <TreeRails place={place} />
