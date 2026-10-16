@@ -329,7 +329,8 @@ function TaskRow({ entry, family, byPane, open, selected, showProject, disabled,
 
 /**
  * The time, and in its place under the pointer or focus the record button
- * and `⋯` (B15, B18): 기록 보기 · pane으로 · Resolve.
+ * and `⋯` (B15, B18): 기록 보기 · pane으로 · Resolve. Both share one cell, so
+ * the slot is as wide as the wider and neither is drawn over the title.
  */
 function TimeSlot({ agent, record, onPane, resolvable, disabled, actions }: { agent: AgentRow; record: (() => void) | null; onPane: () => void; resolvable: boolean; disabled: boolean; actions: Actions }) {
   const { t } = useInterfaceTranslation();
@@ -337,9 +338,9 @@ function TimeSlot({ agent, record, onPane, resolvable, disabled, actions }: { ag
   const shown = menu ? "opacity-100" : "opacity-0 group-hover/task:opacity-100 group-focus-within/task:opacity-100 hoverless:opacity-100";
   const hidden = menu ? "opacity-0" : "group-hover/task:opacity-0 group-focus-within/task:opacity-0 hoverless:opacity-0";
   return (
-    <span className="relative flex shrink-0 items-center justify-end" onClick={(event) => event.stopPropagation()}>
-      <Elapsed since={agent.state.request_since} className={cn("shrink-0 text-micro text-muted-foreground tabular-nums", hidden)} />
-      <span className={cn("absolute inset-y-0 right-0 flex items-center gap-xxs bg-inherit", shown)}>
+    <span className="grid shrink-0 items-center justify-items-end" onClick={(event) => event.stopPropagation()}>
+      <Elapsed since={agent.state.request_since} className={cn("col-start-1 row-start-1 text-micro text-muted-foreground tabular-nums", hidden)} />
+      <span className={cn("col-start-1 row-start-1 flex items-center gap-xxs", shown)}>
         {record ? (
           <Hint label={t("taskLens.menu.record")} shortcut="Space">
             <button type="button" aria-label={t("taskLens.menu.record")} data-task-record={agent.pane_id} className="rounded-xs p-xxs text-muted-foreground outline-none hover:bg-secondary focus-visible:ring-1 focus-visible:ring-ring" onClick={record}>
