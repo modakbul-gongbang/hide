@@ -1,0 +1,132 @@
+# agy (the Antigravity CLI) on the systems Hide supports it on (PRD
+# antigravity-first-class B34, B36).
+#
+# Each leg runs the agy tests of the crates that write agy's files, read its
+# conversations and drive it for Hide AI against stand-ins and fixtures, then
+# installs the vendor's current agy into the runner and checks that the real
+# binary reads the `hide` block Hide writes, in the runner's throwaway home.
+# A pull request runs Windows (`pr.yml`, the `agy-contract` lane), where the
+# hook commands and the install folder differ; `rust` runs the same tests on
+# Linux, and `nightly.yml` runs the whole contract on all three systems.
+#
+# With `live`, the nightly also runs that check signed in, when the
+# repository holds the CI account's key as the `HIDE_AGY_API_KEY` secret.
+# Without the secret the job says "not configured" and passes: a real agy
+# turn on CI is unproven until the operator adds it (docs/INSTALL.md, What
+# each system supports).
+name: agy contract
+
+on:
+  workflow_call:
+    inputs:
+      systems:
+        description: The systems to run, as a JSON array of `linux`, `macos` and `windows`.
+        type: string
+        required: true
+      live:
+        description: Also run the signed-in check when the HIDE_AGY_API_KEY secret is set.
+        type: boolean
+        default: false
+    secrets:
+      HIDE_AGY_API_KEY:
+        required: false
+
+# `issues: write` files a flaky test; a caller must grant it.
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  contract:
+    name: agy contract (${{ matrix.system }})
+    runs-on: ${{ fromJSON('{"linux":"ubuntu-latest","macos":"macos-15","windows":"windows-latest"}')[matrix.system] }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        system: ${{ fromJSON(inputs.systems) }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      # One package and target list for every step, so cargo resolves features
+      # once and builds the test binaries once.
+      TEST_TARGETS: -p hide-agent-hooks -p hide-session -p hide-ai -p hide-kit --lib --bin hide-agent-hooks --test it
+    steps:
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install cargo-nextest
+        timeout-minutes: 3
+        run: bash scripts/install-nextest.sh
+      - name: Build the test binaries
+        timeout-minutes: 25
+        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS --no-run
+      - name: agy's hook block, trust, skills, conversations and Hide AI backend
+        # Install and removal in a fixture home, the hook commands (`cmd /c`
+        # on Windows), the conversation readers against agy's recorded files,
+        # and the Hide AI backend against a stand-in agy.
+        timeout-minutes: 10
+        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'test(/antigravity|agy/)'
+      - name: Install agy
+        id: agy
+        timeout-minutes: 5
+        run: echo "bin=$(bash scripts/install-agy.sh | tr -d '\r')" >> "$GITHUB_OUTPUT"
+      - name: The real agy reads Hide's hook block
+        timeout-minutes: 5
+        env:
+          HIDE_AGY_BINARY: ${{ steps.agy.outputs.bin }}
+        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'test(=agy_binary::the_real_agy_loads_hide_s_hook_block)' --run-ignored only --no-capture
+      - name: Report flaky and failed tests
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci-flaky-report.py --suite rust --junit target/nextest/ci/junit*.xml
+
+  live:
+    name: agy signed in (${{ matrix.system }})
+    if: ${{ inputs.live }}
+    runs-on: ${{ fromJSON('{"linux":"ubuntu-latest","macos":"macos-15","windows":"windows-latest"}')[matrix.system] }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        system: ${{ fromJSON(inputs.systems) }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      TEST_TARGETS: -p hide-agent-hooks --test it
+      HIDE_AGY_API_KEY: ${{ secrets.HIDE_AGY_API_KEY }}
+    steps:
+      - name: Not configured without the CI account's key
+        if: ${{ env.HIDE_AGY_API_KEY == '' }}
+        run: echo "::notice title=agy signed in::not configured (no HIDE_AGY_API_KEY secret); a real agy turn on CI stays unproven"
+      - name: Keep line endings as committed
+        if: ${{ env.HIDE_AGY_API_KEY != '' }}
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+        if: ${{ env.HIDE_AGY_API_KEY != '' }}
+      - uses: Swatinem/rust-cache@v2
+        if: ${{ env.HIDE_AGY_API_KEY != '' }}
+        with:
+          workspaces: ". -> target"
+          save-if: false
+      - name: Install cargo-nextest
+        if: ${{ env.HIDE_AGY_API_KEY != '' }}
+        run: bash scripts/install-nextest.sh
+      - name: Install agy
+        if: ${{ env.HIDE_AGY_API_KEY != '' }}
+        id: agy
+        run: echo "bin=$(bash scripts/install-agy.sh | tr -d '\r')" >> "$GITHUB_OUTPUT"
+      - name: The real agy, signed in with the CI key, lists Hide's hooks
+        if: ${{ env.HIDE_AGY_API_KEY != '' }}
+        env:
+          HIDE_AGY_BINARY: ${{ steps.agy.outputs.bin }}
+        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'test(=agy_binary::the_real_agy_loads_hide_s_hook_block)' --run-ignored only --no-capture

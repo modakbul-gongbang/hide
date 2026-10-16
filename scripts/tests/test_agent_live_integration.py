@@ -56,20 +56,22 @@ class IntegrationEvidence(unittest.TestCase):
                 # not attest that a real CLI loaded an integration.
                 relative = {"claude": ".claude", "codex": ".codex", "pi": ".pi/agent",
                             "omp": ".omp/agent", "opencode": ".config/opencode",
-                            "cursor": ".cursor", "grok": ".grok"}[kind]
+                            "cursor": ".cursor", "grok": ".grok", "agy": ".gemini/config"}[kind]
+                target = {"agy": "antigravity-cli"}.get(kind, kind)
+                marked = {"agy": "antigravity_cli"}.get(kind, kind)
                 def installer(args, *, env, cwd):
-                    self.assertEqual(args, ["/fixture/pinned-herdr", "integration", "install", kind])
+                    self.assertEqual(args, ["/fixture/pinned-herdr", "integration", "install", target])
                     self.assertNotEqual(env["HOME"], str(operator))
                     self.assertEqual(env["XDG_CONFIG_HOME"], str(Path(env["HOME"]) / ".config"))
                     self.assertTrue(all(str(value).startswith(env["HOME"] + "/") for key, value in env.items()
                                         if key.startswith("XDG_")))
                     root = Path(env["HOME"]) / relative
                     write_private(root / "fixture-hook", (
-                        "# HERDR_INTEGRATION_ID=" + kind + "\n# HERDR_INTEGRATION_VERSION=17\n").encode())
+                        "# HERDR_INTEGRATION_ID=" + marked + "\n# HERDR_INTEGRATION_VERSION=17\n").encode())
                     if kind == "opencode":
                         write_private(root / "fixture-tui", (
                             "// HERDR_INTEGRATION_ID=opencode-tui\n// HERDR_INTEGRATION_VERSION=18\n").encode())
-                    if kind in ("claude", "cursor"):
+                    if kind in ("claude", "cursor", "agy"):
                         write_private(root / ("settings.json" if kind == "claude" else "hooks.json"), b"{}")
                 native = [None]
                 runtime = SimpleNamespace(probe=probe, fixture_bin=None,
@@ -82,13 +84,14 @@ class IntegrationEvidence(unittest.TestCase):
                 first = observe(runtime, "owned", recipe, plan)
                 self.assertEqual(first["status"], "not_observed")
                 self.assertIsNone(first["loaded_version"])
-                native[0] = {"agent_session": {"source": "herdr:" + kind, "kind": "id", "value": "native"}}
+                native[0] = {"agent_session": {"source": "herdr:" + marked, "kind": "id", "value": "native"}}
                 later = observe(runtime, "owned", recipe, plan)
-                if kind == "cursor":
+                if kind in ("cursor", "agy"):
                     cwd = probe / "project"
                     private_directory(cwd)
                     project_args(plan, recipe, cwd)
-                    self.assertEqual(json.loads((cwd / ".cursor/hooks.json").read_text()), {})
+                    hooks = ".cursor/hooks.json" if kind == "cursor" else ".agents/hooks.json"
+                    self.assertEqual(json.loads((cwd / hooks).read_text()), {})
                     self.assertIsNone(later["loaded_version"], "project hooks cannot exclude global ambiguity")
                 elif kind == "opencode":
                     self.assertIsNone(later["loaded_version"], "native source does not identify alternative frontend versions")

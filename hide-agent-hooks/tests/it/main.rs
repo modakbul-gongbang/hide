@@ -4,6 +4,7 @@
 //! test binary per crate", owns the rule.
 
 mod adapter_contract;
+mod agy_binary;
 mod bell_intake;
 mod claude_subagent_counts;
 mod codex_trust;

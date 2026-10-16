@@ -105,6 +105,21 @@ jobs:
       runner: macos-15
       herdr-platform: macos-aarch64
 
+  # The agy contract on all three systems, and the signed-in check when the
+  # CI account's key is set; a pull request runs only its Windows leg.
+  agy-contract-all:
+    name: agy contract
+    if: ${{ inputs.lane != 'linux' && inputs.lane != 'windows' }}
+    uses: ./.github/workflows/agy-contract.yml
+    permissions:
+      contents: read
+      issues: write
+    with:
+      systems: ${{ inputs.lane == 'linux' && '["linux"]' || inputs.lane == 'macos' && '["macos"]' || inputs.lane == 'windows' && '["windows"]' || '["linux","macos","windows"]' }}
+      live: true
+    secrets:
+      HIDE_AGY_API_KEY: ${{ secrets.HIDE_AGY_API_KEY }}
+
   # The whole desktop suite runs on macOS, the system the desktop app is written
   # against. Linux and Windows run only the tests tagged `@platform`: what the
   # desktop host does differently on that system (its processes and local
@@ -157,7 +172,7 @@ jobs:
 
   report:
     name: nightly report
-    needs: [web-e2e-macos, web-e2e-windows, remote-mailbox-macos, desktop-e2e, perf, verify, package]
+    needs: [web-e2e-macos, web-e2e-windows, remote-mailbox-macos, agy-contract-all, desktop-e2e, perf, verify, package]
     if: ${{ always() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
