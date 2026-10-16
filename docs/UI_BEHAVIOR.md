@@ -227,10 +227,10 @@ If shell creation fails, nothing closes; if closing is refused, the shell remain
 Retry close reuses that intent's shell, while Dismiss ends the failed intent; detailed Herdr failures are diagnostic-only.
 
 A tab the operator named is a place they keep, like a channel: its name outlives the agents in it.
-A tab is named when it has a manual name, the same test that draws its sidebar tab line ([Sidebar hierarchy](#sidebar-hierarchy)); Rename gives one, and so does `hide agent spawn` for the tab it opens.
+A tab is named when it has a manual name, the same test that draws its sidebar tab line ([Sidebar hierarchy](#sidebar-hierarchy)); Rename gives one, and so does `hide agent spawn` for the tab it opens, though only a spawn without `--parent` makes a tab this rule keeps, since a delegated child's tab is never kept (below).
 Closing a named tab's only pane while that pane holds an agent (its close button, ⌘W or ⇧⌘W on it, its pane menu, or a subtree close aimed at it) first splits a shell at the tab's checkout into the same tab, then closes the agent pane.
 The tab stays in its place and holds the keyboard while the shell is made, and the keyboard moves to the shell once it is there; Reopen closed tab brings the agent back beside the shell.
-The failure rules above hold: if the shell cannot be made, nothing closes; if the close is refused, the shell stays, and Retry close closes beside that same shell, making another only when the operator closed it meanwhile.
+The failure rules above hold: if the shell cannot be made, nothing closes; if the close is refused, the shell stays, and Retry close closes beside that same shell, making another only when the operator closed it meanwhile; a shell Herdr made whose answer was lost counts as that same shell.
 Closing that shell while it is the tab's only pane, or Close tab… at any time, closes the tab and its name as before.
 An unnamed tab, a delegated child's tab, a pane whose terminal Herdr could not restore and a sleep's own close behave as any other close.
 An agent that quits on its own leaves its shell in the pane, as Herdr starts agents inside the pane's shell, so its named tab stays without Hide doing anything.

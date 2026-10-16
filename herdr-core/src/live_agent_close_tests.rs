@@ -321,7 +321,7 @@ fn replacement_creation_failure_sends_no_close() {
         true,
     )
     .unwrap_err();
-    assert!(error.contains("fixture_create_refused"));
+    assert!(error.message.contains("fixture_create_refused"));
     assert_eq!(herdr.methods(), ["session.snapshot", "tab.create"]);
 }
 
@@ -464,7 +464,7 @@ fn reuse_only_retry_cannot_create_when_its_shell_disappears_before_worker_reads(
         false,
     )
     .unwrap_err();
-    assert!(error.contains("disappeared"));
+    assert!(error.message.contains("disappeared"));
     assert_eq!(herdr.methods(), ["session.snapshot"]);
 }
 
@@ -669,6 +669,39 @@ fn a_named_tab_whose_shell_cannot_be_made_closes_nothing() {
         true,
     )
     .unwrap_err();
-    assert!(error.contains("fixture_split_refused"));
-    assert_eq!(herdr.methods(), ["layout.export", "pane.split"]);
+    assert!(error.message.contains("fixture_split_refused"));
+    assert_eq!(error.shell_in_tab, None, "Herdr made no shell");
+    assert_eq!(
+        herdr.methods(),
+        ["layout.export", "pane.split", "layout.export"]
+    );
+}
+
+/// A split Herdr made whose answer was lost still leaves its shell in the
+/// tab; the failure names it by its marker so the retry closes beside it.
+#[test]
+fn a_named_tabs_shell_whose_split_answer_is_lost_is_named_by_its_marker() {
+    let mut split = false;
+    let herdr = FakeHerdr::start_with_errors("named-tab-lost-ack", move |method, _| match method {
+        "layout.export" => Ok(named_tab_export(split)),
+        "pane.split" => {
+            assert!(!split, "the shell is made once");
+            split = true;
+            Err(("fixture_answer_lost".into(), "private diagnostic".into()))
+        }
+        other => panic!("unexpected effect {other}"),
+    });
+    let error = prepare_close_replacement(
+        &herdr.connector(),
+        "intent",
+        &named_tab_context(),
+        &closing_agent(),
+        true,
+    )
+    .unwrap_err();
+    assert_eq!(error.shell_in_tab.as_deref(), Some("w1:p2"));
+    assert_eq!(
+        herdr.methods(),
+        ["layout.export", "pane.split", "layout.export"]
+    );
 }

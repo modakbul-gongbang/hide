@@ -267,3 +267,32 @@ fn retry_reuses_the_shell_in_the_tab_and_makes_another_only_when_it_is_gone() {
     assert_eq!(operation.replacement_id, None);
     assert!(runtime.close_precondition_failure(operation).is_none());
 }
+
+/// The worker made the shell but could not hand it over (Herdr's answer was
+/// lost): the failure names the shell, and Retry closes beside it instead of
+/// refusing the tab as changed or making a second one.
+#[test]
+fn retry_closes_beside_a_shell_the_worker_made_but_could_not_hand_over() {
+    let mut runtime = started("Planning", true);
+    close_pane(&mut runtime, AGENT);
+    let effect = captured(&mut runtime);
+    runtime.note_shell_in_tab(&effect.key, SHELL);
+    runtime.ingest_close_effect_result(
+        &effect,
+        Err(hide_herdr_client::ApiError::Remote {
+            code: "replacement_failed".into(),
+            message: "pane.split response is missing pane.pane_id".into(),
+        }),
+    );
+    let key = effect.key.clone();
+    assert_eq!(runtime.close_operations[&key].phase, "refused");
+    runtime.ingest_session(Ok(session("Planning", true, &[AGENT, SHELL])));
+
+    assert!(runtime.retry_agent_close(&key));
+    let operation = &runtime.close_operations[&key];
+    assert_eq!(operation.phase, "preparing", "the close goes on");
+    assert!(
+        !operation.allow_replacement_create,
+        "the worker adopts the shell already in the tab"
+    );
+}

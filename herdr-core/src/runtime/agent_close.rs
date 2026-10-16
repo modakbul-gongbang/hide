@@ -109,25 +109,39 @@ impl Runtime {
         Ok(())
     }
 
-    /// The shell a named tab's last agent leaves behind is in the tab now:
-    /// it is this close's own, proven by its marker, so the tab's approved
-    /// panes grow by it, and it takes the keyboard from the closing pane.
+    /// A shell in the closing tab that carries this close's marker is the
+    /// close's own, whether or not the worker could hand it over: the tab's
+    /// approved panes grow by it, so a retry closes beside it rather than
+    /// reading the tab as changed.
+    pub(crate) fn note_shell_in_tab(&mut self, key: &str, shell: &str) {
+        let Some(operation) = self.close_operations.get_mut(key) else {
+            return;
+        };
+        if !operation.request.context.replacement_in_tab {
+            return;
+        }
+        operation.replacement_id = Some(shell.to_owned());
+        if !operation.scope_pane_ids.iter().any(|id| id == shell) {
+            operation.scope_pane_ids.push(shell.to_owned());
+            operation.scope_pane_ids.sort();
+        }
+    }
+
+    /// The shell a named tab's last agent leaves behind is in the tab now,
+    /// and it takes the keyboard from the closing pane.
     fn ingest_shell_in_tab(
         &mut self,
         request: &live::CloseEffectRequest,
         shell: &str,
         payload: SessionSnapshotPayload,
     ) -> Result<(), String> {
-        let operation = self
+        self.note_shell_in_tab(&request.key, shell);
+        let closing = self
             .close_operations
-            .get_mut(&request.key)
-            .ok_or("close intent disappeared")?;
-        operation.replacement_id = Some(shell.to_owned());
-        if !operation.scope_pane_ids.iter().any(|id| id == shell) {
-            operation.scope_pane_ids.push(shell.to_owned());
-            operation.scope_pane_ids.sort();
-        }
-        let closing = operation.target_id.clone();
+            .get(&request.key)
+            .ok_or("close intent disappeared")?
+            .target_id
+            .clone();
         self.ingest_session(Ok(payload));
         if self.snapshot.terminal.pane_id.as_deref() == Some(closing.as_str()) {
             self.select_terminal_pane(Some(shell.to_owned()));
