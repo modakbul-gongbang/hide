@@ -288,14 +288,15 @@ test("a branch update on a pull request that moved is refused, looked at again, 
 
 test("the list and the card read without sideways scrolling in each language and both themes", async ({ page }) => {
   await openWork(page, async ({ work }) => {
+    // The lane opens unpinned, over the agents; a pinned one would dock and redraw under the keys.
+    // The pin is in the tool's head, so it is read before the card takes the slot, whose head has none.
+    if ((await page.locator("[data-lane-pin]").getAttribute("data-lane-pin")) !== "off") await page.locator("[data-lane-pin]").click();
+    await expect(page.locator("[data-lane-pin]")).toHaveAttribute("data-lane-pin", "off");
     await work.locator('[data-pr-row="33"]').click();
     const review = cardOf(page, 33);
     await expect(review).toBeVisible({ timeout: 30_000 });
     const overflow = (target: Locator) => target.evaluate((node) => node.scrollWidth - node.clientWidth);
     // The narrowest lane (B48): the divider's keys narrow it to its minimum.
-    // The lane opens unpinned, over the agents; a pinned one would dock and redraw under the keys.
-    if ((await page.locator("[data-lane-pin]").getAttribute("data-lane-pin")) !== "off") await page.locator("[data-lane-pin]").click();
-    await expect(page.locator("[data-lane-pin]")).toHaveAttribute("data-lane-pin", "off");
     const divider = page.locator('[data-lane-divider="lane"]');
     await divider.focus();
     const reading = (name: string) => divider.evaluate((node, attribute) => Number(node.getAttribute(attribute)), name);
