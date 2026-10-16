@@ -350,7 +350,7 @@ There it also builds the macOS archive and runs the packaged app's own specs on 
 ## Bundled Herdr runtime
 
 The version and digest of the Herdr binary the app ships are pinned in `contracts/herdr-bundle.json` and nowhere else.
-`scripts/bump-herdr.sh <version>` moves the pin after verifying the release asset; a weekly workflow proposes that bump as a pull request when a new stable Herdr release appears.
+`scripts/bump-herdr.sh <version>` moves the pin after verifying the release asset; a daily workflow proposes that bump as a pull request when a new stable Herdr release appears.
 It never merges, because three Herdr behaviors the core relies on are covered by fixtures this repository wrote, not by Herdr's own tests.
 
 ## License of contributions
