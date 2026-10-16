@@ -375,6 +375,8 @@ test("a file a terminal link opens takes the keyboard, so Command W closes the f
   await hoverLink(page, paneId, folder);
   await page.mouse.click(folder.x, folder.y);
   await expect(page.locator(`[data-explorer-row="${path.join(checkout, "src")}"][data-selected="true"]`)).toBeVisible({ timeout: 20_000 });
+  // Two frames, so a keyboard move the reveal set off would have run before the pane is read.
+  await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
   await expect(page.locator(`[data-pane-view="${paneId}"] .xterm-helper-textarea`)).toBeFocused();
 
   const point = await pointOf(page, paneId, "src/focus.ts", { offset: 2 });

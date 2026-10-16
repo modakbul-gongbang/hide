@@ -512,7 +512,7 @@ export function createActions(send: DispatchFn) {
    * Returns the `request_id` the `browser_open` carries.
    */
   const followBrowserOpen = (workspace: ViewWorkspace): string => {
-    const requestId = `follow:${crypto.randomUUID()}`;
+    const requestId = `follow:${remoteRequestId()}`;
     ui().setViewFocusRequest({ workspace: workspaceKey(workspace), browserOpen: requestId });
     return requestId;
   };
