@@ -316,8 +316,7 @@ fn run_antigravity_hook(arguments: &[String], started: Instant) {
         // A payload that does not arrive in time refuses nothing: the call
         // is left to agy's own rules, and the miss is recorded.
         let refusal = std::panic::catch_unwind(|| {
-            let (payload, truncated) =
-                read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)?;
+            let (payload, truncated) = read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)?;
             guard_refusal(
                 HookDialect::Antigravity,
                 GuidanceAgent::Antigravity.id(),
