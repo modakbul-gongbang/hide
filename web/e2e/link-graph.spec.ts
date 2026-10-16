@@ -161,8 +161,9 @@ test("a pull request's panel shows the sessions that made it and worked on it af
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
     await chooseTheme(page, "light");
 
-    // The card's timeline: the sessions oldest first by their start, the
-    // maker before `PR 열림`, each keeping the request it was given in its
+    // The card's timeline: the milestones the list knows first (`PR 열림`,
+    // then the timeless check row right after it), then the sessions oldest
+    // first by their start, each keeping the request it was given in its
     // tooltip; the maker's row carries `Created PR` (B6, B7; PRD
     // pr-card-and-session-record-redesign B4, B7).
     const panel = await openCard(page, 31);
@@ -172,7 +173,7 @@ test("a pull request's panel shows the sessions that made it and worked on it af
     expect(await lines.evaluateAll((items) => items.map((item) => item.getAttribute("data-link-session")))).toEqual(["s-maker", "s-review", "s-gone"]);
     await expect(panel.locator("[data-link-sessions]")).toHaveAttribute("data-link-sessions", "3");
     const rows = panel.locator("[data-link-session], [data-timeline-milestone]");
-    expect((await rows.evaluateAll((items) => items.map((item) => item.getAttribute("data-link-session") ?? item.getAttribute("data-timeline-milestone")))).slice(0, 2)).toEqual(["s-maker", "opened"]);
+    expect((await rows.evaluateAll((items) => items.map((item) => item.getAttribute("data-link-session") ?? item.getAttribute("data-timeline-milestone")))).slice(0, 3)).toEqual(["opened", "checks_passed", "s-maker"]);
     const maker = panel.locator('[data-link-session="s-maker"]');
     await expect(maker).toHaveAttribute("data-link-role", "created");
     await expect(maker).toHaveAttribute("data-link-request", "검증 끝났으면 PR 올려 줘");
@@ -261,6 +262,7 @@ test(`a ${kind} archive resume keeps its selected source and uses the current co
     const resume = archived.locator('[data-link-button="resume"]');
     await expect(resume).toBeEnabled();
     await archived.hover();
+    await expect(archived.locator('[data-link-button="view"]')).toBeVisible();
     await archived.locator('[data-link-button="view"]').click();
     await expect(page.locator('aside[data-lane="detail"] [data-session-record="lane"]')).toBeVisible({ timeout: 30_000 });
     await screenshot(page, `${kind}-archive-record`);

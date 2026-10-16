@@ -300,7 +300,7 @@ function LineButton({ icon, label, blocked, busy = false, onClick, data, id }: {
       size="sm"
       aria-disabled={off ? "true" : undefined}
       aria-busy={busy ? "true" : undefined}
-      className={cn("text-caption", off && "opacity-(--opacity-disabled) hover:bg-transparent")}
+      className={cn("h-(--size-sidebar-line) px-xs text-caption", off && "opacity-(--opacity-disabled) hover:bg-transparent")}
       onClick={() => {
         if (!off) onClick();
       }}
