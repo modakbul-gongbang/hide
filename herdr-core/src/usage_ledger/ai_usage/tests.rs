@@ -28,7 +28,6 @@ fn request_feature_ids_fall_into_the_closed_list_and_an_unknown_one_is_other() {
         ("factory_watch", Feature::Factory),
         ("factory_observer", Feature::Factory),
         ("worktree_name", Feature::Issue),
-        ("pr_summary", Feature::Other),
     ] {
         assert_eq!(Feature::of(id), (expected, true), "{id}");
     }

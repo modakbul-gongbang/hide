@@ -520,7 +520,7 @@ def runner_jobs(block):
         shards = int(re.search(r"\n      shards: (\d+)", block).group(1))
         # With more than one shard a `build` job precedes them.
         return shards + (1 if shards > 1 else 0)
-    if "uses: ./.github/workflows/os-contract.yml" in block:
+    if "uses: ./.github/workflows/os-contract.yml" in block or "uses: ./.github/workflows/agy-contract.yml" in block:
         return len(json.loads(re.search(r"systems: '(\[[^']*\])'", block).group(1)))
     if "uses: ./.github/workflows/package.yml" in block:
         package = (ROOT / ".github/workflows/package.yml").read_text()
@@ -536,7 +536,7 @@ class Workflows(unittest.TestCase):
         for lane, block in pr_jobs().items():
             for called in re.findall(r"uses: \./(\.github/workflows/[a-z0-9-]+\.yml)", block):
                 callers.setdefault(called, set()).add(lane)
-        self.assertEqual(len(callers), 5)
+        self.assertEqual(len(callers), 6)
         for workflow, lanes in callers.items():
             with self.subTest(workflow=workflow):
                 result = plan(workflow)

@@ -52,6 +52,9 @@ impl LimitFailure {
             UsageError::Cancelled => (FailureDisposition::Offline, "cancelled"),
             UsageError::Failed(_) => (FailureDisposition::Offline, "cli_failed"),
             UsageError::NoResultFrame => (FailureDisposition::Schema, "no_result_frame"),
+            UsageError::NotAuthenticated => {
+                (FailureDisposition::Authentication, "not_authenticated")
+            }
         };
         Self::new(disposition, kind)
     }

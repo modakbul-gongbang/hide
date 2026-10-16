@@ -1,7 +1,7 @@
 import { emptyScope } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
-import { foldLines, requestTurn, resumeBlock, resumeCheckout, sameIssue, sessionLines, spanText, viewBlock } from "./linkPanel";
+import { foldTimeline, requestTurn, resumeBlock, resumeCheckout, sameIssue, sessionLines, spanText, viewBlock } from "./linkPanel";
 import type { AgentRow, Checkout, Device, LinkedSession, Workspace } from "./snapshot";
 
 function line(id: string, patch: Partial<LinkedSession> = {}): LinkedSession {
@@ -29,10 +29,16 @@ describe("the sessions section", () => {
     ]);
   });
 
-  it("folds six lines or more to the newest five and says how many are behind the fold", () => {
-    expect(foldLines([1, 2, 3, 4, 5], false)).toEqual({ shown: [1, 2, 3, 4, 5], earlier: 0 });
-    expect(foldLines([1, 2, 3, 4, 5, 6, 7], false)).toEqual({ shown: [1, 2, 3, 4, 5], earlier: 2 });
-    expect(foldLines([1, 2, 3, 4, 5, 6, 7], true).shown).toHaveLength(7);
+  it("folds the oldest ended sessions past five, never a live one or a milestone, and says how many are behind the fold", () => {
+    const session = (id: number, live = false) => ({ kind: "session" as const, id, live });
+    const milestone = { kind: "milestone" as const, id: 0, live: false };
+    const isSession = (entry: { kind: string }) => entry.kind === "session";
+    const isLive = (entry: { live: boolean }) => entry.live;
+    const five = [1, 2, 3, 4, 5].map((id) => session(id));
+    expect(foldTimeline(five, isSession, isLive, false)).toEqual({ shown: five, earlier: 0 });
+    const seven = [session(1), milestone, session(2, true), session(3), session(4), session(5), session(6), session(7)];
+    expect(foldTimeline(seven, isSession, isLive, false)).toEqual({ shown: [milestone, session(2, true), session(4), session(5), session(6), session(7)], earlier: 2 });
+    expect(foldTimeline(seven, isSession, isLive, true)).toEqual({ shown: seven, earlier: 2 });
   });
 
   it("says why a line cannot resume, the agent first and the worktree last", () => {
@@ -65,8 +71,8 @@ describe("the sessions section", () => {
 
   it("writes a line's time as its day and clock, the day again when it ran past midnight", () => {
     const at = (day: number, hour: number, minute: number) => new Date(2026, 9, day, hour, minute).getTime();
-    expect(spanText(at(6, 13, 10), at(6, 13, 52))).toBe("10/6 13:10 - 13:52");
-    expect(spanText(at(5, 23, 10), at(6, 0, 31))).toBe("10/5 23:10 - 10/6 00:31");
+    expect(spanText(at(6, 13, 10), at(6, 13, 52))).toBe("10/6 13:10 – 13:52");
+    expect(spanText(at(5, 23, 10), at(6, 0, 31))).toBe("10/5 23:10 – 10/6 00:31");
     expect(spanText(at(6, 9, 5), null)).toBe("10/6 09:05");
     expect(spanText(null, at(6, 9, 5))).toBeNull();
   });

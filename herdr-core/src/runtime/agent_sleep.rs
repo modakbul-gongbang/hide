@@ -570,11 +570,18 @@ impl Runtime {
         record.phase = SleepPhase::Waking;
         record.reason = None;
         record.pending_wake = None;
+        // An agent that slept before it reported a conversation has none to
+        // resume, and wakes as a new one in the same checkout (B24).
+        let mode = if record.session_id.is_none() {
+            WakeMode::Fresh
+        } else {
+            mode
+        };
         let args = match mode {
             WakeMode::Resume => {
                 let Some(args) = crate::recent_closed::resume_arguments(&ClosedAgent {
                     kind: record.kind.clone(),
-                    session_id: Some(record.session_id.clone()),
+                    session_id: record.session_id.clone(),
                 }) else {
                     // Only Claude and Codex sleep, so this is a record this
                     // build cannot resume; starting it bare would lose the
@@ -603,6 +610,7 @@ impl Runtime {
             mode,
             args,
             cwd: record.cwd.clone(),
+            session_id: record.session_id.clone(),
             codex_daemon,
         };
         crate::diagnostic!(serde_json::json!({

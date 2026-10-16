@@ -30,6 +30,9 @@ pub enum AbsenceKind {
 pub enum LimitSource {
     ClaudeUsageText,
     CodexUsage,
+    /// `agy -p "/usage" --output-format json`, which asks agy's server for
+    /// its weekly buckets without a model call.
+    AntigravityUsage,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,16 +50,21 @@ pub enum Presence {
 }
 
 impl LimitSource {
-    pub const ALL: [Self; 2] = [Self::ClaudeUsageText, Self::CodexUsage];
+    pub const ALL: [Self; 3] = [
+        Self::ClaudeUsageText,
+        Self::CodexUsage,
+        Self::AntigravityUsage,
+    ];
 
     pub const fn presence(self, window: WindowKind) -> Presence {
         match (self, window) {
             (Self::ClaudeUsageText, WindowKind::FiveHour | WindowKind::Weekly)
-            | (Self::CodexUsage, WindowKind::Weekly) => Presence::Always,
-            (Self::CodexUsage, WindowKind::FiveHour)
-            | (Self::ClaudeUsageText | Self::CodexUsage, WindowKind::Monthly) => {
-                Presence::PlanDependent
-            }
+            | (Self::CodexUsage | Self::AntigravityUsage, WindowKind::Weekly) => Presence::Always,
+            (Self::CodexUsage | Self::AntigravityUsage, WindowKind::FiveHour)
+            | (
+                Self::ClaudeUsageText | Self::CodexUsage | Self::AntigravityUsage,
+                WindowKind::Monthly,
+            ) => Presence::PlanDependent,
         }
     }
 }
@@ -70,6 +78,8 @@ pub enum TokenSource {
     OpenCodeParts,
     PiSession,
     OmpSession,
+    /// The per-call token counts of agy's `transcript_full.jsonl`.
+    AntigravityTranscript,
 }
 impl TokenSource {
     pub const fn format(self) -> crate::SessionFormat {
@@ -80,6 +90,7 @@ impl TokenSource {
             Self::OpenCodeParts => crate::SessionFormat::OpenCode,
             Self::PiSession => crate::SessionFormat::Pi,
             Self::OmpSession => crate::SessionFormat::Omp,
+            Self::AntigravityTranscript => crate::SessionFormat::Antigravity,
         }
     }
 }

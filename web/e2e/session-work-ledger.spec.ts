@@ -149,10 +149,11 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     // The parent's two requests; the child's is in its own record, behind its row.
     await expect(record.locator('[data-record-request]')).toHaveCount(2);
     await expect(record.locator('[data-record-output="pr"]')).toHaveCount(3);
-    await expect(record.getByRole('heading', { level: 2 })).toHaveText('Claude');
+    await expect(record.getByRole('heading', { level: 2 })).toContainText('Claude');
     await expect(record.locator('[data-record-child]')).toContainText('Claude');
-    // Only the child's pull request names its maker; the session's own say nothing.
-    await expect(record.locator('[data-output-source]')).toHaveText(['Claude']);
+    // The child's pull request stands on the child's row; the session's own stand beside the title (B15).
+    await expect(record.locator('[data-record-child] [data-record-output="pr"]')).toHaveCount(1);
+    await expect(record.locator('h2 [data-record-output="pr"]')).toHaveCount(2);
     // With summaries off the backlog draws no missed line, though one is still open (B52).
     await openOverview(page, "backlog");
     await expect(page.locator("[data-backlog-section]").first()).toBeVisible();

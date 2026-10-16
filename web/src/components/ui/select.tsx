@@ -67,13 +67,18 @@ function SelectLabel({ className, ...props }: ComponentProps<typeof SelectPrimit
 
 function SelectItem({ className, children, ...props }: ComponentProps<typeof SelectPrimitive.Item>) {
   return (
-    <SelectPrimitive.Item data-slot="select-item" className={cn(menuItem, "w-full pr-xl", className)} {...props}>
+    <SelectPrimitive.Item
+      data-slot="select-item"
+      className={cn(menuItem, "w-full pr-xl *:data-[slot=select-item-text]:flex *:data-[slot=select-item-text]:min-w-0 *:data-[slot=select-item-text]:items-center *:data-[slot=select-item-text]:gap-sm", className)}
+      {...props}
+    >
       <span className="absolute right-sm flex size-(--size-icon) items-center justify-center">
         <SelectPrimitive.ItemIndicator>
           <CheckIcon className="size-(--size-icon-sm)" />
         </SelectPrimitive.ItemIndicator>
       </span>
-      <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      {/* Radix drops ItemText's className, so the row lays its mark beside its name from here, as a menu item does. */}
+      <SelectPrimitive.ItemText data-slot="select-item-text">{children}</SelectPrimitive.ItemText>
     </SelectPrimitive.Item>
   );
 }

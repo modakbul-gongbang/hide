@@ -344,6 +344,7 @@ How it fails (D-27):
 - The hook panics, or the payload does not arrive within 0.5 seconds, while some project has a protection on: the call runs, and one `guard.failed` line with its cause (`panic`, `payload_deadline`) is appended, throttled the same way (cause `guardrails_failed`).
   A hook the runtime kills at its own timeout leaves no line, since the process is gone, and the call takes that runtime's default.
 - A payload past the helper's 256 KiB read is judged by the tool name and the paths that arrived, a patch's file lines included; a shell command cut short is not judged.
+- agy sorts its payload's keys, so a long file write is cut inside its new text, before the tool's name and target; such a write is refused in a project where a protection judges writes, since its target may be one the protection guards.
 
 The payload each runtime sends, observed on the versions Hide installs into (`hide_agent_hooks::guardrails::payload`):
 
@@ -435,15 +436,15 @@ The kit row reads the file as it reads OpenCode's plugin, and Settings names the
 
 ## Other agents: skill and guidance hook
 
-On a machine where the kit has never run (no `~/.hide/kit/installed.json`), the default-on agents (Claude Code and Codex) are recorded off in the same pass and the record is marked `awaiting_choice`, so nothing is written to any agent until the operator answers the first-run agent choice, the first step of the first-run wizard (UI_BEHAVIOR.md, First run).
-The hold records both default-on agents off explicitly, whether or not they are installed (operator decision D7): an agent installed later appears in Settings, Agents off and is never turned on by a pass, and the operator switches it on there.
+On a machine where the kit has never run (no `~/.hide/kit/installed.json`), the default-on agents (Claude Code, Codex and agy) are recorded off in the same pass and the record is marked `awaiting_choice`, so nothing is written to any agent until the operator answers the first-run agent choice, the first step of the first-run wizard (UI_BEHAVIOR.md, First run).
+The hold records the three default-on agents off explicitly, whether or not they are installed (operator decision D7): an agent installed later appears in Settings, Agents off and is never turned on by a pass, and the operator switches it on there.
 An explicit agent choice in the same pass wins over the hold, and any explicit choice (a scope that names an agent, which the first-run answer always does, naming the unchosen default agents off) clears the mark; an existing install, a record without the field, is never held.
 The mark lives in the same record as the choices, so it outlasts a quit between the hold and the answer, and `held_for_onboarding` in the report reads it on every pass.
 The core follows it (`ui_state.agent_onboarding`), applies the answer to this Mac and to every device whose own record waits, and sends the saved choice once per run to a device that reports waiting later; one that still waits afterwards is logged, not asked again on every report.
 The same step reopened from Help > Set up Hide, once the question is answered, sends only the agents whose switch it changed, as Settings > Agents does, so it never rewrites an agent the operator left alone.
 
-Claude Code and Codex are the agents the kit has always had a hook for; OpenCode has Hide's plugin, and Pi and omp Hide's extension.
-Hide supports seven agents: Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, in that order.
+Claude Code and Codex are the agents the kit has always had a hook for; OpenCode has Hide's plugin, Pi and omp Hide's extension, and agy (the Antigravity CLI) Hide's block in its `hooks.json`.
+Hide supports eight agents: Claude Code, Codex, Grok, OpenCode, Pi, omp, Cursor and Antigravity, in that order.
 Every agent is one row of `hide-agent-adapter/src/declarations.rs` (`ADAPTERS`), and one switch per agent per machine turns its pieces on and off, in Settings, Agents and in each device's row.
 `hide-kit/src/agents.rs` projects those declarations into installation pieces; it does not maintain a second support table.
 A row carries the agent's program names (`executables`), the folder it reads skills from, whether Hide writes a hook for it, Herdr's integration name for it, and the official page the row's answers come from (`doc_url`).
@@ -454,13 +455,25 @@ A test fails a row with no `https` `doc_url`, and a row with no program, so a cl
 Hide supports an agent only when the pinned Herdr ships an integration for it (`herdr integration install <target>`, listed by `herdr integration status`).
 Lineage, the mailbox identity, labels and sleep all read the session id that integration gives Herdr, and an agent without one could only have its state judged from its screen, a second kind of row that behaves unlike every other; so the support list follows Herdr's, and an agent Herdr has no target for is not listed (Gemini CLI left for that reason and is retired below).
 `AgentAdapter::herdr` is therefore required, not optional.
-Among the supported agents, one gets the multi-agent collaboration tier (letters, the spawn guard, Memory and the subagent count) when its official documentation or SDK types give a hook or plugin that can both put text into the prompt and refuse a tool call; today that is Claude Code and Codex, through the six-event hook, OpenCode, through Hide's plugin, and Pi and omp, through Hide's extension (Pi without a subagent count, since Pi runs none).
+Among the supported agents, one gets the multi-agent collaboration tier (letters, the spawn guard, Memory and the subagent count) when its official documentation or SDK types give a hook or plugin that can both put text into the prompt and refuse a tool call; today that is Claude Code and Codex, through the six-event hook, OpenCode, through Hide's plugin, Pi and omp, through Hide's extension (Pi without a subagent count, since Pi runs none), and Antigravity, through Hide's `hide` block ([Antigravity: Hide's hook block](#antigravity-hides-hook-block)), with no bell yet.
 Every other supported agent is the basic tier: the skill, Herdr's integration and, where its documentation gives a command hook, the agent hook: the spawn guard where the hook can refuse a shell call (Grok and Cursor), the subagent count where the hook also sees a subagent start and end (Grok), and the guidance where its session start adds context (Cursor).
 A basic-tier agent takes no letters through a hook, so `hide request ack` stays its receipt and it is no bell target (PRD grok-cursor-hooks D-07).
 Adding an agent to the list checks, in order: the pinned Herdr lists a target for it and which folder that target needs; the vendor's documentation confirms the folder it reads skills from and the name of the program it installs; the vendor publishes a mark (`docs/BRAND.md`) or the row draws a monogram; and whether its hooks or plugins meet the collaboration tier above.
 It is then one shared declaration, its contract fixtures, the logo manifest, and the expected kit case; the web shell reads the generated `contracts/agent-adapters.json` rather than maintaining its own order, names or links.
 
 ### Adding an agent
+
+Prove it on the real agent first, before any code, and pin what you measure with a test:
+
+- A vendor document is a lead, not a fact.
+  On 2026-10-16 agy 1.4.0 ignored `ANTIGRAVITY_CLI_CONFIG_DIR`, and its `/skills` listed a folder whose skills its model never received.
+  Prove a skill by asking the model for its own list of skills, not by reading the agent's listing.
+- Measure the hook failure matrix for the agent: a missing helper, a helper that is not executable, a crash, a non-zero exit, empty or malformed output, and a timeout.
+  agy refuses the tool call on every one of them but an empty answer with exit 0 (measured 2026-10-16 and 2026-10-17), so each case has a test that the installed command still answers (`guidance::tests::agys_tool_command_leaves_the_call_to_agy_when_the_helper_is_gone_cannot_run_or_fails`).
+- Measure how the pinned Herdr reads the agent's permission and folder-trust prompts before relying on Needs You or the bell.
+  On 2026-10-16 a probe outside the app read agy's permission question as `idle`, and the running app then showed Herdr 0.9.3 reading it as an approval; measure in the app, and its folder-trust question is still unmeasured, which is why agy has no bell.
+- Record the agent version every fact was proven on.
+  agy moved from 1.3.6 to 1.4.0 on 2026-10-16, during the work, so every fact proven on 1.3.6 had to be proven again on 1.4.0.
 
 Add the declaration in `hide-agent-adapter/src/declarations.rs`, keeping its canonical id stable across records, hook commands and device reports.
 Aliases belong on that row: every caller uses the same borrowed, case-insensitive lookup, including surrounding-whitespace normalization.
@@ -479,12 +492,12 @@ Two pieces are written per agent into the agent's own files, and nothing else; a
 
 - The skill stub `hide-browser/SKILL.md` in the folder the agent reads.
   It is a few lines that point at `hide browser help`, so it stays right as the CLI's guide changes.
-  Its folder is `~/.agents/skills` for the agents that read it, `~/.claude/skills` for Claude Code (which documents that it does not read the shared folder), and no agent has a folder of its own.
+  Its folder is `~/.agents/skills` for the agents that read it, `~/.claude/skills` for Claude Code (which documents that it does not read the shared folder), and `~/.gemini/config/skills` for agy, whose model is given neither of the others: agy 1.4.0 lists skills in its documented `~/.gemini/antigravity-cli/skills` under `/skills` but does not give them to the model, while those in `~/.gemini/config/skills` reach it (measured on 2026-10-16), so Hide writes there and never in `~/.gemini/antigravity-cli/skills`, where the operator's own links stay; agy's desktop app shares `~/.gemini/config`, so it sees the skill too.
   A shared folder is written while any agent that reads it is on and installed, and it is removed only when none is.
   A file is Hide's only when its marker line, `<!-- hide-skill@<version>: ... -->`, is the first line after the front matter; a file that merely mentions `hide-skill@` is never replaced or removed, and the agent's row says a skill that Hide did not write is already there.
   A stub with Hide's marker over text that is not Hide's was edited by the operator: no pass rewrites it and a switch-off leaves it, the row reads Outdated with that reason, and only Reinstall puts Hide's text back.
   A stub of an older marker version is Hide's own and is replaced by the next pass.
-  An agent's own folder (`~/.claude`) is never created for the stub: the hook code reads that folder as the agent's settings being there, so a pass that made it would write a hook on the next pass that it did not write on this one, and a second apply would not be a no-op; the row says the agent has not created its folder yet, and the stub goes in on the pass after it has.
+  An agent's own folder (`~/.claude`, `~/.gemini/config`) is never created for the stub: the hook code reads that folder as the agent's settings being there, so a pass that made it would write a hook on the next pass that it did not write on this one, and a second apply would not be a no-op; the row says the agent has not created its folder yet, and the stub goes in on the pass after it has.
 - The agent hook, for the agents below marked as done; for OpenCode this piece is Hide's plugin, and for Pi and omp Hide's extension, which carry the guidance with the rest ([OpenCode: Hide's plugin](#opencode-hides-plugin), [Pi and omp: Hide's extension](#pi-and-omp-hides-extension)).
   It is one entry per event the agent's documentation names, in the agent's own format, whose command is `hide-agent-hooks hook --runtime <agent id> --event <event>`.
   `hide-agent-hooks` writes it (`src/guidance.rs`) and nothing else does, under the marker `hide-guidance@5` that proves an entry is Hide's and separates a current one from an older one; an entry of `@1`, which only knew the session start, of `@2`, `@3`, or of `@4`, whose `PreToolUse` matchers did not select the file tools, is Hide's own and replaced by the next pass.
@@ -561,10 +574,42 @@ A piece that was installed and is gone stays gone until Reinstall, and an agent 
 Whether the agent is installed only decides whether a switch can work: an agent that is not installed on a machine has no switch there, and switching it on is not recorded.
 A guidance hook also needs the agent's own settings folder, which Hide does not create: an installed agent that has not made it yet reads that, and its hook goes in on the pass after it has.
 
+### Antigravity: Hide's hook block
+
+agy reads every named block of `~/.gemini/config/hooks.json` beside the others, so Hide writes one block of its own, `hide`, and touches no other (Herdr's `herdr`, Orca's `orca-status` and the operator's stay byte for byte; PRD antigravity-first-class D-04).
+The block holds four events in agy's own format (`{"hide": {"<Event>": [{"type": "command", "command", "timeout"}]}}`, seconds, and a group with a `matcher` for `PreToolUse`), read from the agy 1.4.0 binary and measured live on 2026-10-16:
+
+| Event | What Hide answers |
+| --- | --- |
+| `SessionStart` (a conversation's first prompt, never a resume) | the guidance and the Memory index, as an injected system message (`injectSteps`) |
+| `PreInvocation` (every model call; `invocationNum` 0 is a prompt's first) | the prompt's Memory cards and the pane's letters, the same way |
+| `PreToolUse` (matcher `run_command\|view_file\|write_to_file\|replace_file_content\|multi_replace_file_content\|ask_question`) | `{"decision":"deny","reason"}` for a refused call, `{"decision":"ask"}` on every other path |
+| `Stop` (one per turn of each conversation) | nothing; a subagent's own stop counts it done |
+
+agy refuses a tool call whose `PreToolUse` hook fails (a nonzero exit, output that is not its JSON, a timeout, a missing program), unlike every other agent Hide supports; empty output with exit 0 lets the call run (agy 1.4.0, measured 2026-10-17).
+In agy 1.4.0 only `deny` changes what agy does: `allow`, `ask` and an empty answer each leave agy's own permission question exactly as with no hook, asking before a command (`hide inbox` included) or a file write and not before a read (measured 2026-10-17 with no other block installed).
+Hide answers `ask` because agy's hook contract documents `allow` as running the call without its question, and Hide never makes agy ask less than agy's own rules; for the same reason a hook cannot spare the operator agy's question before Hide's own commands, and agy 1.4.0's settings hold no command allow list (only `trustedWorkspaces`), so an agy pane asks before each `hide` command until the operator answers agy's own "always allow".
+So the helper prints one of the two answers on every path, and the installed command prints the ask answer itself when the helper is gone or ends without answering (a binary that cannot run, a crash): `if [ -x <helper> ]; then <helper> ... || printf '%s\n' '{"decision":"ask"}'; else ...; fi`, and on Windows, where agy runs the command through `cmd /c`, `if exist <helper> (<helper> ... || echo {"decision":"ask"}) else (echo {"decision":"ask"})` (D-05).
+The helper's own waits end far inside the block's eight-second timeout: half a second for the payload, two and a half for the daemon's answer to a start or a question, two for `git status` before a discarding command, and a daemon that never answers lets the call run (`a_hide_that_never_answers_lets_the_call_run_well_inside_the_blocks_timeout` in `hide-agent-hooks/tests/it/agy_hooks.rs`).
+agy is on by default like Claude Code and Codex, so these guarantees, not the operator's switch, are what keep Hide from ever being what blocks an agy tool call.
+A subagent is a conversation of its own in the same process and pane, with its own `SessionStart` and `Stop` and no parent field; its transcript opens with the message its parent sent it, and that is how the helper tells a subagent's start and stop from the pane's own conversation; a subagent a subagent started is counted under the pane's own conversation too, found by following those first messages up at most eight levels (`hide_agent_hooks::antigravity::root_of`).
+An entry the operator edited reads Outdated and stays until Reinstall, and a `hooks.json` that is not JSON fails agy's row alone and is left as it is.
+`hide-agent-hooks/src/antigravity.rs` and `src/guidance.rs` test the answers and the block's install and removal in a fixture home, and the `agy contract` CI lane (`.github/workflows/agy-contract.yml`) also runs the vendor's current agy against the block in the runner's throwaway home.
+
+agy 1.4.0 loads a workspace's own `.agents/hooks.json` only for a folder in `trustedWorkspaces` of `~/.gemini/antigravity-cli/settings.json` (1.3.6 also loaded it in print mode without trust), trust is per exact path and is not inherited from a parent folder, and the first interactive start in a folder it has not been told to trust asks, which would leave a delegated child stopped at that question.
+Hide therefore adds the exact path of a worktree it made to that list before it starts agy there; the node refuses to trust a folder that is not a Git worktree, a path written with `.` or `..`, the filesystem root, the home folder or a folder above it, whoever asks, and keeps which entries it added in `~/.hide/agent-hooks/antigravity-trust.json` (D-08); removing that worktree, or switching agy off, takes out only those entries, and an entry the operator added, before Hide or after it, stays.
+Every change holds one account lock and rewrites `settings.json` through the same lossless read as the hook files, so its other keys keep their bytes; a trust Hide cannot record keeps agy from starting there, and the caller gets the reason (B20).
+Hide AI's own folder for agy is trusted the same way ([AI_PROVIDERS.md](AI_PROVIDERS.md#antigravity)), and switching agy off removes it too.
+
+agy's tool-permission question reaches Needs You as an approval: Herdr 0.9.3 reports the pane as waiting on an approval while it is open (seen in the app on 2026-10-16; an earlier probe outside the app had read it as idle).
+Its folder-trust question has not been measured, and agy has no bell (D-06): an Enter from the bell into a dialog Herdr reads as idle would answer that dialog, and a letter that arrives meanwhile reaches agy on its next prompt through `PreInvocation`.
+The bell is turned on for agy once the pinned Herdr is shown to read the folder-trust question as blocked too, and this paragraph goes ([INSTALL.md](INSTALL.md#what-each-system-supports)).
+Claude Code's hook needs no silencing inside agy, because agy reads neither `CLAUDE.md` nor `~/.claude` hooks (D-22).
+
 ### Installed means the program is found
 
 An agent is installed on a machine when one of its programs is found there, the way the operator's terminal would find it; a folder the agent creates does not count, because an editor makes `~/.cursor` without the `cursor-agent` CLI and a CLI that was removed leaves its folder behind (`~/.pi/agent` without `pi`).
-The program names are the ones each vendor's install documentation and install script give the command: `claude`, `codex`, `grok`, `opencode`, `pi`, `omp` and `cursor-agent`.
+The program names are the ones each vendor's install documentation and install script give the command: `claude`, `codex`, `grok`, `opencode`, `pi`, `omp`, `cursor-agent` and `agy`.
 Cursor's installer now calls its command `agent` and keeps `cursor-agent` as a second name; Hide looks for `cursor-agent` only, because Grok's installer also puts an `agent` on the `PATH`.
 The program names live in the shared adapter declaration alone; Hide AI keeps no list of them, and an agent it cannot use yet is listed as not installed from what the kit found (`AiRequest.cli_found`).
 
@@ -574,7 +619,7 @@ No daemon sees those folders on its own: an app opened from the Dock gets the sy
 `hide_platform::host::login_shell_path` runs `$SHELL -ilc` with the account's login variables and the home being searched, and reads the `PATH` it prints between two marks, past anything the startup files print; it gives the shell ten seconds, the same as the desktop host's own ask, and ends it and everything it started after that or when Hide quits.
 The kit asks, on the kit worker on this Mac and in the helper on a device, and Hide AI's backends ask through the same cached answer on their own worker threads (the Settings reader, the label analyzer and Memory's analysis, never under the runtime lock); the hook diagnosis, Memory's version probe and the read of Codex's daemon setting keep the search without the shell, so nothing else that reads `cli_path` starts a shell.
 The answer is kept until one of the shell's startup files changes (zsh's, bash's and sh's in the home and in `~/.config/zsh`, fish's, and the system's in `/etc`), which is how an installer adds a folder, so Settings re-reading the kit every few seconds starts no shell; a file those files read in turn is not watched, and is read again when `hided` or a device's helper next starts.
-A shell that does not answer is logged as `platform.login_shell_unread` with its error kind, asked again after a minute, and the search goes on without its folders meanwhile; Windows has no login shell, and its search is the account's own `Path` plus the usual folders.
+A shell that does not answer is logged as `platform.login_shell_unread` with its error kind, asked again after a minute, and the search goes on without its folders meanwhile; Windows has no login shell, and its search is the account's own `Path` plus the usual folders, which there include agy's own `%LOCALAPPDATA%\agy\bin`.
 A program found by the search is also run with it, because a CLI installed as a script starts its interpreter by name (pnpm's `codex` runs `node`).
 The Memory version probe does, and so does every child Hide AI starts: a model-list or sign-in probe as much as a request, and the Codex app-server, each given the `PATH` its program was found on (`hide-ai/src/program.rs`, one `Program` type that every backend resolves through and `runner::run` and the Codex session apply).
 A CLI named by file, which only a test does, keeps the process's own `PATH` unless the backend's `search_path` is set.
@@ -583,7 +628,7 @@ A CLI named by file, which only a test does, keeps the process's own `PATH` unle
 
 An agent that is on and whose program is no longer found (uninstalled, or moved where the search does not reach) keeps everything: the operator's choice stays on record, the stub and the hook Hide wrote stay where they are, and no pass installs, replaces or removes anything for it.
 Taking them out on a guess would remove what the operator may want back, and an unused stub or a guarded hook does nothing; this is the kit's rule that only the operator takes a piece away (D-20, D-26).
-Its row stays under Installed in Settings with its switch only when the record holds the operator's own choice for it (`AgentReport.chosen`, `KitAgentSnapshot.chosen`); Claude Code and Codex are on by default with no recorded choice, so one of them with no program is listed under Not installed with no switch, and never reads Ready.
+Its row stays under Installed in Settings with its switch only when the record holds the operator's own choice for it (`AgentReport.chosen`, `KitAgentSnapshot.chosen`); Claude Code, Codex and agy are on by default with no recorded choice, so one of them with no program is listed under Not installed with no switch, and never reads Ready.
 A kept row reads `Not on this machine` with the reason that its program is not found, and offers no Reinstall, since Reinstall cannot bring a CLI back; switching it off takes out Hide's pieces as for any agent, and once the program is found again the agent is whole with nothing asked.
 Claude Code's and Codex's hook parts follow the kit-part rule instead: they are written while the agent is on and its folder (`~/.claude`, `~/.codex`) is there, found or not, because a CLI the search misses still runs the hook.
 
@@ -602,26 +647,27 @@ On Windows `~/.agents/skills` is `%USERPROFILE%\.agents\skills`; no vendor page 
 | Pi | `~/.agents/skills` | done: Hide's extension in `~/.pi/agent/extensions/`, not a command hook; Pi has none, only TS extensions, whose `before_agent_start` adds a hidden message to the prompt and whose `tool_call` refuses a call ([Pi and omp: Hide's extension](#pi-and-omp-hides-extension)) | `pi` | [skills](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) |
 | omp | `~/.agents/skills` | done: the same extension in `~/.omp/agent/extensions/`, with omp's subagent counts and `ask` guard | `omp`, in `~/.omp/agent` | [skills](https://omp.sh/docs/skills) |
 | Cursor | `~/.agents/skills` | done: spawn guard and guidance `sessionStart` in `~/.cursor/hooks.json`, no subagent count (above), returning `additional_context` ([hooks](https://cursor.com/docs/hooks)); the hooks page does not mention the CLI, and its changelog says the CLI runs session-start hooks (<https://cursor.com/docs/cli/changelog>), and the CLI honours `additional_context`: a Cursor CLI 2026.10.01 session started in a Hide pane on macOS on 2026-10-10 recorded Hide's guidance in its chat store (`~/.cursor/chats/<project>/<chat>/store.db`) as part of the model's context, inside a `<hooks_context>` block that Cursor labels as context from session hooks; on Windows the CLI runs the command inside a PowerShell pipeline, read from its package ([Installing](#installing)) | `cursor` | [skills](https://cursor.com/docs/context/skills) |
+| Antigravity | `~/.gemini/config/skills` | done: the `hide` block in `~/.gemini/config/hooks.json`, with guidance, letters, Memory, the spawn guard and the subagent count ([Antigravity: Hide's hook block](#antigravity-hides-hook-block)) | `antigravity-cli`, in `~/.gemini/config` | [skills](https://antigravity.google/docs/skills/) |
 
 Each row also carries what Hide can do for that agent as a list of features (`hide_agent_adapter::Feature`, re-exported by `hide_kit::agents`, and `KitAgentSnapshot.features`).
 An agent without both prompt intake and spawn refusal wears the Basic chip, regardless of other missing features.
 Its popover groups the feature table into Herdr basics, session reading and multi-agent collaboration, retaining a mark and a supported/unavailable word for every feature:
 
-| Feature | Supported when | Claude Code, Codex | OpenCode | Pi | omp | Grok | Cursor |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `skill` | always | yes | yes | yes | yes | yes | yes |
-| `guidance` | Hide's hook, plugin or extension prints the session guidance | yes | yes | yes | yes | no | yes |
-| `letters` | its prompt dialect declaration | yes | yes | yes | yes | no | no |
-| `spawn_guard` | its refusal dialect declaration | yes | yes | yes | yes | yes | yes |
-| `memory` | its Memory dialect declaration | yes | yes | yes | yes | no | no |
-| `bell` | the core rings the doorbell for that agent (`AgentAdapter::bell`, tied to `delivery::doorbell::bell_target`) | yes | no | no | no | no | no |
-| `herdr_integration` | always: every supported agent has a Herdr target | yes | yes | yes | yes | yes | yes |
-| `start` | its launch declaration | yes | yes | yes | yes | yes | yes |
-| `sleep` | its Sleep declaration | yes | yes | yes | yes | yes | yes |
-| `fork` | its Fork declaration | yes | yes | yes | yes | yes | no |
-| `titles` | its conversation declaration enables generated labels | yes | yes | yes | yes | yes | yes |
+| Feature | Supported when | Claude Code, Codex | OpenCode | Pi | omp | Grok | Cursor | Antigravity |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `skill` | always | yes | yes | yes | yes | yes | yes | yes |
+| `guidance` | Hide's hook, plugin or extension prints the session guidance | yes | yes | yes | yes | no | yes | yes |
+| `letters` | its prompt dialect declaration | yes | yes | yes | yes | no | no | yes |
+| `spawn_guard` | its refusal dialect declaration | yes | yes | yes | yes | yes | yes | yes |
+| `memory` | its Memory dialect declaration | yes | yes | yes | yes | no | no | yes |
+| `bell` | the core rings the doorbell for that agent (`AgentAdapter::bell`, tied to `delivery::doorbell::bell_target`) | yes | no | no | no | no | no | no |
+| `herdr_integration` | always: every supported agent has a Herdr target | yes | yes | yes | yes | yes | yes | yes |
+| `start` | its launch declaration | yes | yes | yes | yes | yes | yes | yes |
+| `sleep` | its Sleep declaration | yes | yes | yes | yes | yes | yes | yes |
+| `fork` | its Fork declaration | yes | yes | yes | yes | yes | no | yes |
+| `titles` | its conversation declaration enables generated labels | yes | yes | yes | yes | yes | yes | yes |
 
-Claude Code, Codex, Grok, Pi, omp and Cursor are the agents whose session files Hide reads for these features, so only they get a per-agent session count, and the count is per machine and only of the sessions running now: one number of open panes holding an awake agent, never an accumulation of warnings.
+Claude Code, Codex, Grok, Pi, omp, Cursor and Antigravity are the agents whose session files Hide reads for these features, so only they get a per-agent session count, and the count is per machine and only of the sessions running now: one number of open panes holding an awake agent, never an accumulation of warnings.
 OpenCode's sessions live in its database rather than in session files, so it has no session count; its database reader gives it titles, sleep, fork and its conversation ([ARCHITECTURE.md](ARCHITECTURE.md)).
 Cursor's Titles feature is a generated goal; its native store supplies no title, structured wait, tool-output PR fact or Memory extraction.
 `herdr-core/src/runtime/tests/agent_features.rs` ties each flag to the gate in the core that decides it (`runtime_of`, `sleeps_kind`, `ForkableAgent`, `AGENT_KINDS`, `conversation_agent_kind`), so a flag cannot say yes where the core says no, and holds each row's Herdr target to the kind Herdr reports its panes as.
@@ -629,7 +675,7 @@ Cursor's Titles feature is a generated goal; its native store supplies no title,
 An agent is a row only when its documentation confirms where it reads skills and the name of the program it installs.
 The other fourteen agents earlier builds supported are no longer rows (see Retired agents below).
 Hide does not write an agent's `AGENTS.md` or `CLAUDE.md`, its MCP configuration or its model settings, and it runs no installer for an agent.
-The one thing it records in an agent's own state is Codex's trust for Hide's own hooks, below.
+The things it records in an agent's own state are Codex's trust for Hide's own hooks, below, and agy's folder trust for the worktrees Hide makes ([Antigravity: Hide's hook block](#antigravity-hides-hook-block)).
 
 ### Herdr's integration for an agent
 
@@ -641,7 +687,7 @@ The integration is put in only when the agent is on, installed and has made its 
 For Codex the kit also keeps what Herdr's install wrote into `~/.codex/hooks.json`, because Codex asks the operator to review a hook before it runs and Hide records that trust for the entries it installed ([Codex trusts Hide's own hooks](#codex-trusts-hides-own-hooks)); it goes from the record with the `herdr:codex` piece.
 Hide takes out only what it put in: an integration that was already in place when Hide first looked is the operator's and stays, whether the agent is switched on or off or the machine leaves Hide, and an older one of the operator's is not replaced.
 One of Hide's own that is older is replaced, and one the operator removed by hand stays removed until Reinstall, as for every other piece.
-A failed install shows on that agent's row alone and the other agents are untouched; an agent that has not made its folder yet (omp's `~/.omp/agent`, Pi's `~/.pi/agent`) reads that on its row, and neither Hide nor Herdr makes the folder.
+A failed install shows on that agent's row alone and the other agents are untouched; an agent that has not made its folder yet (omp's `~/.omp/agent`, Pi's `~/.pi/agent`, agy's `~/.gemini/config`) reads that on its row, and neither Hide nor Herdr makes the folder.
 The integration goes in on the first pass after the folder exists that switches the agent on, the launch pass included.
 
 ### Which agents ask for a review
@@ -650,6 +696,7 @@ Only Codex asks the operator to approve a hook before it runs.
 A survey on 2026-10-07 read each agent's official documentation and the executables installed on the maintainer's machine: Claude Code, Grok and OpenCode run a hook or plugin from the user folder with no approval screen, and the check a project folder's hook gets is a folder trust, not a hook review.
 Pi 1.0.4 and omp 18.7.0 loaded Hide's extension from a private user folder with no approval screen on 2026-10-09.
 Cursor's current CLI hooks are read from its documentation and were not run, so they are an inference.
+agy 1.3.6 and 1.4.0 ran the user folder's `~/.gemini/config/hooks.json` with no approval screen on 2026-10-16, and neither its folder-trust dialog nor `/hooks` has a step that approves one hook; its folder trust, which Hide records for its own worktrees, is the check a workspace's hooks get.
 Hide therefore writes no trust for any other agent, and an agent that starts asking for approval of a user-folder hook is a new row for this section and a new trust step beside Codex's, not a change to Codex's.
 
 ### Retired agents

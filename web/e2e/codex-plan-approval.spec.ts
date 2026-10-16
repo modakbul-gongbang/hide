@@ -7,10 +7,11 @@
 // core's rule, tested in `herdr-core/src/runtime/tests/labels.rs`.
 //
 // The fixture Codex is the shim copied as `codex`. Pinned Herdr reads its
-// screen as working while the title carries Codex's spinner and as unknown
-// otherwise (`codex_state_ambiguous`); only a real Codex screen reads idle.
-// Each change moves Herdr's state sequence, which is what makes the core read
-// the session again, so the wait is read for the state the row is in.
+// screen as working while the title carries Codex's spinner and, once a title
+// without it is drawn (its `osc_title_idle` rule), as a finished turn: `done`,
+// since nobody has looked at the pane. A real Codex back at its prompt reads
+// the same. Each change moves Herdr's state sequence, which is what makes the
+// core read the session again, so the wait is read for the state the row is in.
 
 import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
@@ -65,8 +66,8 @@ function seqOf(herdr: HerdrFixture, pane: string): number {
   return (herdr.run(["agent", "list"]) as { result: { agents: Agent[] } }).result.agents.find((agent) => agent.pane_id === pane)!.state_change_seq;
 }
 
-/** Draws a screen Herdr reads as Codex working, or, with no spinner, unknown. */
-async function moveState(herdr: HerdrFixture, pane: string, state: "working" | "unknown"): Promise<void> {
+/** Draws a screen Herdr reads as Codex working, or, with no spinner, a finished turn. */
+async function moveState(herdr: HerdrFixture, pane: string, state: "working" | "done"): Promise<void> {
   type Agent = { pane_id: string; agent_status: string; state_change_seq: number };
   const current = () => (herdr.run(["agent", "list"]) as { result: { agents: Agent[] } }).result.agents.find((agent) => agent.pane_id === pane)!;
   const before = current().state_change_seq;
@@ -74,8 +75,8 @@ async function moveState(herdr: HerdrFixture, pane: string, state: "working" | "
   execFileSync(herdr.bin, ["pane", "send-text", pane, `\x1b]0;${title}\x07`], { env: herdr.env, timeout: 30_000 });
   await expect.poll(() => {
     const agent = current();
-    return agent.agent_status === state && agent.state_change_seq > before;
-  }, { message: `Herdr reads the Codex pane ${state}`, timeout: 10_000 }).toBe(true);
+    return { status: agent.agent_status, moved: agent.state_change_seq > before };
+  }, { message: `Herdr reads the Codex pane ${state}`, timeout: 10_000 }).toEqual({ status: state, moved: true });
 }
 
 test("a Codex plan waiting for approval holds its row in Needs You until the next turn", async ({ page }) => {
@@ -111,7 +112,7 @@ test("a Codex plan waiting for approval holds its row in Needs You until the nex
     // B1: the turn that proposed the plan has ended, as Herdr's next state
     // reads it; the row is the operator's to answer, with the approval mark.
     await moveState(herdr, pane, "working");
-    await moveState(herdr, pane, "unknown");
+    await moveState(herdr, pane, "done");
     const waiting = page.locator(`[data-raised-group="needs_you"] [data-pane="${pane}"]`);
     await expect(waiting).toBeVisible({ timeout: 20_000 });
     await expect(waiting.locator('[data-mark="!"]')).toBeVisible();
@@ -122,7 +123,7 @@ test("a Codex plan waiting for approval holds its row in Needs You until the nex
     fs.appendFileSync(rollout, event("task_started", "turn-2", { collaboration_mode_kind: "default" }) + person("Implement the plan."));
     await moveState(herdr, pane, "working");
     await expect(row.locator('[data-mark="●"]')).toBeVisible({ timeout: 20_000 });
-    await moveState(herdr, pane, "unknown");
+    await moveState(herdr, pane, "done");
     // A state not read yet shows no wait either, so the row's absence counts
     // only once the read for this state has folded the approving turn.
     const current = seqOf(herdr, pane);

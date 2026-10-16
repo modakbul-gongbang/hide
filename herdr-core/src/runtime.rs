@@ -456,9 +456,6 @@ struct WaitingExplorerChange {
     request: ExplorerRequest,
 }
 
-/// Pull request summaries kept for their head commit (D-29).
-const PR_SUMMARY_CACHE_LIMIT: usize = 64;
-
 /// How many Explorer changes wait behind the running one. A drag and the
 /// keys that follow it queue one or two; past this the newest is refused.
 const EXPLORER_QUEUE_LIMIT: usize = 4;
@@ -1613,11 +1610,6 @@ pub struct Runtime {
     /// Each checkout's Local issue number, for a project that reads Local
     /// issues; `sync_issues` fills it from the same chain a GitHub link uses.
     local_issue_links: BTreeMap<String, u32>,
-    /// The summary hide-ai made of a pull request at a head commit, kept for
-    /// that head (D-29). In memory, capped at [`PR_SUMMARY_CACHE_LIMIT`].
-    pr_summaries: BTreeMap<(String, u32), (String, String)>,
-    /// Summaries being asked for now, so one head is asked once.
-    pr_summaries_asked: BTreeSet<(String, u32, String)>,
     /// The one running GitHub search and the one waiting behind it
     /// (`issues::GithubSearchWork`).
     github_search: issues::GithubSearchWork,
@@ -2240,8 +2232,6 @@ impl Runtime {
             local_issues_save_pending: false,
             local_issues_save_active: false,
             local_issue_links: BTreeMap::new(),
-            pr_summaries: BTreeMap::new(),
-            pr_summaries_asked: BTreeSet::new(),
             github_search: issues::GithubSearchWork::default(),
             pr_link_checkout: None,
             task_agent_launch: None,

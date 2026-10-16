@@ -109,6 +109,7 @@ pub(crate) fn reopen(
             mode: WakeMode::Resume,
             args,
             cwd: request.cwd.clone(),
+            session_id: Some(request.session_id.clone()),
             codex_daemon: request.codex_daemon,
         },
     ) {

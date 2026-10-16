@@ -560,5 +560,85 @@
         }
       }
     }
+  },
+  {
+    "agent": "antigravity",
+    "cells": {
+      "cost": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "Google publishes no price table for the agent's models.",
+          "would_change": "A public price table for the agent's models."
+        }
+      },
+      "five_hour": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "The agent has no independent subscription window.",
+          "would_change": "The agent exposes its own subscription limits."
+        }
+      },
+      "models": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "The transcript does not name the model of a call.",
+          "would_change": "The agent records the model beside each call's tokens."
+        }
+      },
+      "monthly": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "The agent has no independent subscription window.",
+          "would_change": "The agent exposes its own subscription limits."
+        }
+      },
+      "project": {
+        "support": "supported",
+        "detail": {
+          "type": "attribution",
+          "source": "usage_record"
+        }
+      },
+      "scoped": {
+        "support": "supported",
+        "detail": {
+          "type": "limit",
+          "source": "antigravity_usage"
+        }
+      },
+      "session": {
+        "support": "supported",
+        "detail": {
+          "type": "attribution",
+          "source": "usage_record"
+        }
+      },
+      "tokens": {
+        "support": "supported",
+        "detail": {
+          "type": "tokens",
+          "source": "antigravity_transcript"
+        }
+      },
+      "weekly": {
+        "support": "supported",
+        "detail": {
+          "type": "limit",
+          "source": "antigravity_usage"
+        }
+      }
+    }
   }
 ]

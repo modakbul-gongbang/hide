@@ -29,6 +29,12 @@ struct Record {
     message: Option<Message>,
     payload: Option<Payload>,
     ordinal: Option<u64>,
+    // agy's transcript steps.
+    step_index: Option<u64>,
+    created_at: Option<String>,
+    input_tokens: Option<u64>,
+    cache_read_tokens: Option<u64>,
+    output_tokens: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -337,6 +343,50 @@ pub(super) fn parse(
                 incomplete: false,
             }))
         }
+        Agent::Antigravity => {
+            // Each model call is one planner step that carries its tokens;
+            // the input count leaves out what was read from the cache.
+            if record.kind != "PLANNER_RESPONSE" {
+                return Ok(None);
+            }
+            let session = context.session.clone().ok_or("identity_missing")?;
+            let step = record.step_index.ok_or("record_invalid")?;
+            let usage = Usage {
+                input: Some(record.input_tokens.ok_or("usage_missing")?),
+                output: Some(record.output_tokens.ok_or("usage_missing")?),
+                cache_read: record.cache_read_tokens,
+                ..Usage::default()
+            };
+            Ok(Some(Event {
+                key: key(&[&session, &step.to_string()]),
+                at_ms: record
+                    .created_at
+                    .as_deref()
+                    .and_then(crate::parse_rfc3339)
+                    .and_then(|s| s.checked_mul(1000))
+                    .ok_or("timestamp_invalid")?,
+                model: super::UNNAMED_MODEL.to_owned(),
+                tokens: tokens(&usage, false)?,
+                recorded_cost_micro_usd: None,
+                session,
+                cwd: context.cwd.clone(),
+                provider: None,
+                incomplete: false,
+            }))
+        }
         _ => Err("unsupported"),
+    }
+}
+
+/// Names the conversation an agy transcript belongs to, and the checkout
+/// its index row gives it, before the transcript's steps are read.
+/// A checkout the index gives only later (agy writes the row about a second
+/// after the first prompt) is taken then.
+pub(super) fn antigravity_context(context: &mut Context, session: &str, cwd: Option<String>) {
+    if context.session.is_none() {
+        context.session = Some(session.to_owned());
+    }
+    if context.cwd.is_none() {
+        context.cwd = cwd;
     }
 }

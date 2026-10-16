@@ -582,5 +582,90 @@
     "efforts": [],
     "can_pick_model": false,
     "hook_kind": "hook"
+  },
+  {
+    "usage": {
+      "limits": {
+        "five_hour": {
+          "support": "unsupported",
+          "detail": {
+            "kind": {
+              "kind": "no_such_data"
+            },
+            "reason": "The agent has no independent subscription window.",
+            "would_change": "The agent exposes its own subscription limits."
+          }
+        },
+        "weekly": {
+          "support": "supported",
+          "detail": "antigravity_usage"
+        },
+        "scoped": {
+          "support": "supported",
+          "detail": "antigravity_usage"
+        },
+        "monthly": {
+          "support": "unsupported",
+          "detail": {
+            "kind": {
+              "kind": "no_such_data"
+            },
+            "reason": "The agent has no independent subscription window.",
+            "would_change": "The agent exposes its own subscription limits."
+          }
+        }
+      },
+      "tokens": {
+        "support": "supported",
+        "detail": "antigravity_transcript"
+      },
+      "cost": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "Google publishes no price table for the agent's models.",
+          "would_change": "A public price table for the agent's models."
+        }
+      },
+      "models": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "The transcript does not name the model of a call.",
+          "would_change": "The agent records the model beside each call's tokens."
+        }
+      },
+      "attribution": {
+        "session": {
+          "support": "supported",
+          "detail": "usage_record"
+        },
+        "project": {
+          "support": "supported",
+          "detail": "usage_record"
+        }
+      }
+    },
+    "id": "antigravity",
+    "aliases": [
+      "agy",
+      "antigravity-cli",
+      "antigravity_cli"
+    ],
+    "label": "Antigravity",
+    "picker_label": "Antigravity",
+    "herdr_kind": "agy",
+    "doc_url": "https://antigravity.google/docs/skills/",
+    "install_url": "https://antigravity.google/docs/install?tab=cli",
+    "logo_id": "antigravity",
+    "can_start": true,
+    "can_resume": true,
+    "efforts": [],
+    "can_pick_model": true,
+    "hook_kind": "hook"
   }
 ]

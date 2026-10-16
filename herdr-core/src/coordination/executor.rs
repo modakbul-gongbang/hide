@@ -734,7 +734,11 @@ fn spawn(
             )
             .map_err(|error| format!("{error}"))?;
             let existing = crate::wire::listed_worktree_path(listed, branch)?;
-            let (checkout, pane, seed_tab) = if let Some(existing) = existing {
+            // `made`: this spawn made the worktree, now or in an attempt whose
+            // reply was lost; only such a worktree is trusted for an agent
+            // that asks (agy), as for a task's worktree. A worktree that was
+            // already the operator's keeps whatever trust they gave it.
+            let (checkout, pane, seed_tab, made) = if let Some(existing) = existing {
                 if path.as_ref().is_some_and(|path| path != &existing) {
                     return Err("checkout_path_conflict".into());
                 }
@@ -763,6 +767,15 @@ fn spawn(
                 let snapshot =
                     crate::wire::snapshot_response(snapshot).map_err(|_| "snapshot_unavailable")?;
                 let label = format!("hide:{}", reserved.id);
+                let made = made_by_spawn(
+                    &existing,
+                    repo,
+                    snapshot
+                        .workspaces
+                        .iter()
+                        .map(|workspace| workspace.label.as_str()),
+                    &label,
+                );
                 let launch = crate::agent_start::shell_launch(node.as_deref(), &reserved.id);
                 // A tab under the spawn's label is one this spawn opened, with
                 // the launch when there is one; a workspace under it holds
@@ -814,7 +827,7 @@ fn spawn(
                         tab.pane_id
                     }
                 };
-                (existing, pane, seed_tab)
+                (existing, pane, seed_tab, made)
             } else {
                 let mut params = crate::wire::worktree_create_params(repo, branch, None, false)?;
                 params["label"] = json!(format!("hide:{}", reserved.id));
@@ -853,8 +866,11 @@ fn spawn(
                     id: tab.tab_id,
                     label,
                 });
-                (created.path, tab.pane_id, seed_tab)
+                (created.path, tab.pane_id, seed_tab, true)
             };
+            if made {
+                crate::agent_start::trust_worktree(node.as_deref(), kind, &checkout)?;
+            }
             // The terminal is recorded with the pane, so a later attempt can
             // tell this pane from one Herdr gives the same id afterwards.
             let terminal = pane_terminal(connector.as_ref(), &pane)?;
@@ -1226,8 +1242,39 @@ pub(crate) fn link_fork(
     )
 }
 
+/// Whether the existing worktree `existing` of `repo` is one this spawn
+/// made in an attempt whose reply was lost: `worktree.create` names the
+/// workspace it makes `label` (`hide:<spawn id>`). The repository itself,
+/// or a worktree with no such workspace, is the operator's.
+fn made_by_spawn<'a>(
+    existing: &str,
+    repo: &str,
+    mut workspaces: impl Iterator<Item = &'a str>,
+    label: &str,
+) -> bool {
+    existing != repo && workspaces.any(|workspace| workspace == label)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_a_worktree_the_spawn_made_counts_as_made_by_it() {
+        let label = "hide:spawn-1";
+        assert!(made_by_spawn(
+            "/r/wt",
+            "/r",
+            ["main", label].into_iter(),
+            label
+        ));
+        assert!(!made_by_spawn(
+            "/r/wt",
+            "/r",
+            ["main", "hide:spawn-2"].into_iter(),
+            label
+        ));
+        assert!(!made_by_spawn("/r", "/r", [label].into_iter(), label));
+    }
+
     use super::*;
     use crate::fake_herdr::FakeHerdr;
     use std::sync::atomic::{AtomicUsize, Ordering};

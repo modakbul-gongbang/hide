@@ -308,6 +308,8 @@ export type PullRequest = {
   checks?: "unknown" | "none" | "pending" | "failed" | "passing";
   merged_at_unix_ms?: number | null;
   updated_at_unix_ms?: number | null;
+  /** When GitHub made it: the timeline's `PR 열림` row (PRD pr-card-and-session-record-redesign B5). */
+  created_at_unix_ms?: number | null;
   /** The branch the pull request comes from. */
   head_branch?: string;
   /** The issues its body closes when it merges, as GitHub reads the body. */
@@ -352,8 +354,10 @@ export type PrCard = {
   merge: { methods: PrMergeMethod[]; queue: boolean; can_merge: boolean } | null;
   /** Parts the last read could not get. */
   failed: ("body" | "files" | "threads")[];
-  /** hide-ai's summary at `head`; absent while off, paused, failed or not made. */
-  summary?: string;
+  /** When the head's last check run finished, for the timeline's check row (PRD pr-card-and-session-record-redesign D-15); absent until the card read it or when no check ran. */
+  checks_completed_at_unix_ms?: number;
+  /** When the latest approval or change request was submitted, for the timeline's review row; absent until read or without one. */
+  review_at_unix_ms?: number;
   write: PrWrite | null;
 };
 
@@ -1599,8 +1603,6 @@ export type BackgroundAi = {
   chosen: boolean;
   /** The `에이전트 요약` switch; absent from an older daemon, which always summarizes. */
   agent_summary?: boolean;
-  /** The `PR 요약` switch; absent from an older daemon, which has none. */
-  pr_summary?: boolean;
   /** The share of an agent's week Hide AI may use (Settings › Hide AI › Usage limit); null is No limit. Absent from an older daemon, which has none. */
   usage_limit?: number | null;
   providers: AiProvider[];

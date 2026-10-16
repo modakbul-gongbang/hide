@@ -7,7 +7,7 @@ const html = (text: string) => renderToStaticMarkup(<>{renderMarkdown(text)}</>)
 describe("renderMarkdown", () => {
   it("draws the syntax an agent writes and drops its marks", () => {
     const out = html("## 결과\n\n**굵게**, *기울임*, `code`, ~~취소~~\n\n- 하나\n- 둘\n\n1. 첫째\n2. 둘째\n\n> 인용\n\n```ts\nconst a = 1;\n```");
-    expect(out).toContain('<p class="whitespace-pre-line font-semibold">결과</p>');
+    expect(out).toContain('<p class="whitespace-pre-line font-semibold" data-markdown-heading="2">결과</p>');
     expect(out).toContain('<strong class="font-semibold">굵게</strong>');
     expect(out).toContain("<em>기울임</em>");
     expect(out).toContain('<code class="rounded-xs bg-secondary px-xxs font-mono">code</code>');

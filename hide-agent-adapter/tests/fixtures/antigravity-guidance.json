@@ -1,0 +1,5 @@
+{
+  "injectSteps": [
+    { "systemMessage": { "systemMessage": "fixture context" } }
+  ]
+}

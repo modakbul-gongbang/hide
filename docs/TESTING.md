@@ -251,7 +251,7 @@ A piece that another open change is still building is marked as pending with the
 6. **Leave the renderer off; turn WebGL on only in a spec that tests it.**
    Headless Chromium composites in software, so each frame of xterm's WebGL canvas is read back synchronously on the page's main thread, 250 to 500 ms at a time.
    `web/playwright.config.ts` launches every web e2e Chromium with `--disable-webgl`, so the shell uses xterm's DOM renderer, its existing fallback, and a spec needs no setting of its own; [Wait for state, not time](#wait-for-state-not-time) has the measurement.
-   A spec file that tests the WebGL renderer sets `test.use({ launchOptions })` at file top level, which replaces the config's `launchOptions` rather than adding to it, and says why; no web spec does today.
+   A spec file that tests the WebGL renderer sets `test.use({ launchOptions })` at file top level, which replaces the config's `launchOptions` rather than adding to it, and says why: `sleep-wake-click.spec.ts` does, because the layer that once covered Wake agent is a WebGL canvas the DOM renderer never draws, and `terminal-webgl.spec.ts` gives its WebGL cases a separate fixture pool with `test.extend` beside a case that keeps the suite's flag.
    Assert terminal content through the probe, never through DOM text, because the DOM renderer puts terminal text in the page.
    The desktop suite is not covered: Electron has its own GPU path.
    Do not raise a timeout to cover the stall.
@@ -358,9 +358,10 @@ A planned lane that was skipped, failed or cancelled fails `verify`, so a wrong 
 | A Rust crate | `rust` over the crate and every crate that depends on it (from `cargo metadata`), `windows-check`, which compiles every crate for Windows, the Linux `web-e2e` and the macOS `desktop-e2e`, since every crate reaches `hided` and both suites drive it, and `remote-mailbox` when the crate reaches `herdr-core`, `hided`, `hide-agent-hooks` or `hide-host` |
 | `herdr-core`, `hided`, `hide-platform`, `hide-herdr-client`, `hide-host`, `hide-kit`, `hide-agent-hooks` | also `os-contract` (its Linux and Windows legs), `windows-e2e` and `windows-desktop`; no macOS job beyond every crate's `desktop-e2e` but `package` for the package inputs among them |
 | `hide-platform`, `hide-herdr-client` | also `os-contract-macos`, the OS contract's macOS leg, which tests exactly these two crates |
+| `hide-agent-adapter`, `hide-agent-hooks`, `hide-ai`, `hide-kit`, `hide-session` | also `agy-contract`, agy's tests and the real agy on Windows (`AGY_CRATES` in the script); the nightly runs it on all three systems |
 | What goes into a package (`PACKAGE_PATHS` in the script): `desktop/scripts`, `desktop/package.json`, `desktop/resources`, the Herdr pin and its fetch scripts, `verify-cargo.sh`, `verify-web.sh`, `toolchain-env.sh`, `hided/build.rs`, which embeds the web shell, `hided/src/cli.rs`, `hide-kit`, `hide-agent-hooks`, `package.yml` and `release.yml` | also `package`: `package.yml`'s Windows and Linux packages, and the macOS archive with the packaged app's own specs |
 | The paths `POLICY_ONLY` names, which no lane reads: `agents/`, `site/`, `tools/`, `spikes/`, `.gitignore` files, the root `LICENSE` and `NOTICE`, the PR template and `dependabot.yml`, the contribution intake (the issue and discussion forms, `APPROVED_CONTRIBUTORS` and `contribution-gate.yml`), the workflows no `pr.yml` job calls (`nightly`, `perf`, `herdr-update`, `design-contract`), `scripts/tests/`, the policy `check-*` scripts, the design, release and measurement scripts, the pre-merge check and the merge order with the helpers they share, the design contract's generators, token map and checks (`gen-tokens.mjs`, `gen-pen.mjs`, `gen-screens.mjs`, `pen-token-map.json`, `check-design-contract.mjs` and the checks it runs, which `design-contract.yml` runs on every pull request), and Markdown below a folder no rule claims | `policy` alone |
-| The paths `NAMED_LANES` names, whose readers are a known set: a `web/e2e` file that is not a spec (the `desktop` suites on macOS and Windows import it, and `desktop/e2e` unit tests run in `windows-check`), a `desktop/e2e` file that is not a spec, the Playwright, eslint and vitest configurations, `web/vite.config.ts` (every lane that builds the shell or runs its unit suite), `web/scripts`, `desktop/scripts`, the workflows `pr.yml` lanes call (`web-e2e.yml`, `desktop-e2e.yml`, `os-contract.yml`, `remote-mailbox.yml`, each planning the lanes that call it), `package.yml` and `release.yml` | the lanes that read it, listed in the script and its test; never `rust`, and `os-contract` and `os-contract-macos` only for `os-contract.yml` |
+| The paths `NAMED_LANES` names, whose readers are a known set: a `web/e2e` file that is not a spec (the `desktop` suites on macOS and Windows import it, and `desktop/e2e` unit tests run in `windows-check`), a `desktop/e2e` file that is not a spec, the Playwright, eslint and vitest configurations, `web/vite.config.ts` (every lane that builds the shell or runs its unit suite), `web/scripts`, `desktop/scripts`, the workflows `pr.yml` lanes call (`web-e2e.yml`, `desktop-e2e.yml`, `os-contract.yml`, `agy-contract.yml` with `scripts/install-agy.sh`, `remote-mailbox.yml`, each planning the lanes that call it), `package.yml` and `release.yml` | the lanes that read it, listed in the script and its test; never `rust`, and `os-contract` and `os-contract-macos` only for `os-contract.yml` |
 | `pr.yml`, `scripts/` the lanes call (`verify-*.sh`, `ci-flaky-report.py`, `ci-plan.py`, ...), the Herdr pin and schema and any contract `READERS` does not name, any `package.json`, lockfile, the workspace `Cargo.toml`, a type change, and any path no row above names | every lane but `package`, which only the package inputs add |
 
 Every plan includes `policy`, whatever else it names, except a draft pull request's: it plans no lane, and `verify` fails with "draft: lanes not run, mark ready for review".
@@ -368,7 +369,7 @@ A body edit (`edited`) starts a run too, for the checks that read the body (`che
 Marking the pull request ready (`ready_for_review`) starts the run that plans and runs the lanes, and that run's `verify` replaces the failed one.
 `verify` fails on a draft instead of being skipped because a skipped required check counts as passed, and `verify` is not started until its lanes finish: a skipped `verify` from the draft run would otherwise be the only check on the commit for the minutes after it is marked ready.
 Keep `ready_for_review` in `pr.yml`'s `types`, and keep `verify` running on a draft; `scripts/tests/test_ci_plan.py` reads the workflow for both.
-A hand run of `nightly.yml` takes a `lane` (`all`, `linux`, `macos`, `windows`): one system's web and desktop suites and the remote mailbox lane, with `verify` and `package` for `all` only; the schedule runs everything.
+A hand run of `nightly.yml` takes a `lane` (`all`, `linux`, `macos`, `windows`, `agy`): one system's web and desktop suites, the remote mailbox lane and the agy contract, with `verify` and `package` for `all` only, or for `agy` the agy contract alone on all three systems, signed in when the `HIDE_AGY_API_KEY` secret is set, which a branch can run with `gh workflow run nightly.yml --ref <branch> -f lane=agy`; the schedule runs everything.
 The nightly runs the `@platform` web tests on macOS and Windows (`web e2e (<system> @platform)`) and the desktop suite whole on macOS and only its `@platform` tests on Linux and Windows (`desktop e2e (<system> @platform)`); the whole web suite runs in the pull request and in the `verify` job a scheduled nightly calls, so Linux has no web job there and these two do not repeat it.
 It also runs the performance lane on macOS (`performance (macOS)`, `perf.yml`), for the schedule and a hand run of `all` or `macos`; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#the-nightly-performance-lane) owns its fixture and what fails it.
 Tag a `desktop/e2e` test `{ tag: "@platform" }`, with a comment saying what differs, when it checks what the desktop host does differently on another system: its processes and local stream (including whether closing the last window ends the app), the CLI's name and places, the path it hands the wire, the file manager's reveal, the accelerators it registers for the system (one test reads them through `web/e2e/chords.ts`).
@@ -413,7 +414,7 @@ The desktop `@platform` tests run on Windows in a pull request (`windows-desktop
 
 ### How many jobs a run starts
 
-A run that plans every lane a pull request can plan starts at most 21 jobs, down from 23 (the 2026-10-05 shape of run `37324202934`, before the macOS and mailbox work), and `scripts/tests/test_ci_plan.py` counts them from the workflows:
+A run that plans every lane a pull request can plan starts at most 22 jobs, down from 23 (the 2026-10-05 shape of run `37324202934`, before the macOS and mailbox work), and `scripts/tests/test_ci_plan.py` counts them from the workflows:
 
 | Jobs | Count | Why |
 | --- | --- | --- |
@@ -422,11 +423,12 @@ A run that plans every lane a pull request can plan starts at most 21 jobs, down
 | `windows desktop` | 1 | the desktop `@platform` tests on Windows, the one job that starts the Electron app there in a pull request; it keeps the window it drew as the run's artifact |
 | `web e2e` (Linux) | 5 | one build, which also downloads the zsh packages the `fetch zsh` job used to, and four shards instead of six, dealt by recorded durations; fewer jobs queue at the 20-job limit, and a shard's time at four is measured after merge |
 | `os contract` (Linux, Windows), `os contract (macOS)` | 3 | one job per system, the macOS leg planned only for its two crates |
+| `agy contract` (Windows) | 1 | agy's hook block, trust, conversations and Hide AI backend, and the real agy reading Hide's block, where the hook commands and install folder differ; `rust` runs the same tests on Linux and the nightly runs all three systems |
 | `remote mailbox` | 1 | the lane that was the tail of the macOS `@platform` job, now on Linux and, in the nightly, on macOS |
 | `desktop e2e` | 1 | the only macOS job of the desktop app's own changes |
 | `package` (Windows, Linux, macOS) | 3 | `package.yml`'s jobs, planned only for what goes into a package; before the lane its Windows and Linux jobs ran on the same paths outside `verify` |
 
-The common runs are smaller: a `herdr-core` or `hided` change starts 16 jobs with one on macOS (`desktop e2e`), a web shell change 11 with one on macOS, a desktop-only change 6 with one on macOS, a `hide-platform` change 17 with two on macOS, a `hide-kit` or `hide-agent-hooks` change 19 with two on macOS (`desktop e2e` and `package`), and a documentation change 3, as does a push that reuses the pull request's last green run.
+The common runs are smaller: a `herdr-core` or `hided` change starts 16 jobs with one on macOS (`desktop e2e`), a web shell change 11 with one on macOS, a desktop-only change 6 with one on macOS, a `hide-platform` change 17 with two on macOS, a `hide-kit` or `hide-agent-hooks` change 20 with two on macOS (`desktop e2e` and `package`), and a documentation change 3, as does a push that reuses the pull request's last green run.
 The median wall time, the share of runs whose Linux shards waited more than 10 minutes, and each shard's time at four shards come from a measurement of the pull request runs after this change merges, taken the way issue #561 took its baseline; they are not in this guide because a pull request cannot prove them.
 The `plan` job's summary lists each lane with the paths that chose it.
 
@@ -451,6 +453,15 @@ Refresh it when a shard's time drifts from the others in a run, when the plan wa
 2. `bash scripts/verify-web.sh web e2e --list --reporter=list > list.txt`, then `python3 scripts/web-e2e-shard.py durations --list list.txt <logs>... > web/e2e/shard-durations.json`; it keeps only the listed tests, takes a passing retry as its test, and names the listed tests no log has a passing line for (they keep the median).
 3. Commit `web/e2e/shard-durations.json`.
 A table from a Windows or macOS runner's logs would need its own file and a lane that reads it; `durations` already reads their `ok` and `✓` marks.
+
+### A real agent on CI
+
+A lane that signs a real agent in, like the nightly `agy contract` lane, proves only what the agent does before and around its model's answer; keep its real turn to the minimum.
+
+- An API key alone may not sign the agent in: agy 1.4.0 asked for a browser sign-in until its settings also named `"modelProvider": "gemini"` (2026-10-16).
+- A free-tier quota is counted per model per day across the key's project: 20 requests on 2026-10-16, so hand runs of the lane spend the nightly's turns and the next one fails with `429`.
+- Assert what happens before the model answers (the hooks fired, the letter went in, a refused call carried Hide's reason) rather than what the model writes, and name the model in the workflow so a renamed one is one line to change.
+- Keep the turn's own bounds inside the test's hang guard (`.config/nextest.toml`), so a slow turn fails with the agent's report instead of being ended with nothing.
 
 ## Flaky tests
 

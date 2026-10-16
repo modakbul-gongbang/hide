@@ -7,7 +7,7 @@
 //! the one search the install kit uses too. Nothing else in the
 //! workspace keeps a list of them; settings, the router and the core's
 //! Settings reader all iterate this one, in this order (D-06, D-18): Claude
-//! Code, Codex, Gemini CLI, Grok, OpenCode, Pi, Cursor.
+//! Code, Codex, Gemini CLI, Grok, OpenCode, Pi, Cursor, Antigravity.
 //!
 //! The id is a string the registry owns, not a closed enum, so a file written
 //! by a newer Hide that names an agent this build does not know is read, and
@@ -37,6 +37,7 @@ impl ProviderId {
     pub const OPENCODE: Self = Self("opencode");
     pub const PI: Self = Self("pi");
     pub const CURSOR: Self = Self("cursor");
+    pub const ANTIGRAVITY: Self = Self("antigravity");
 
     pub fn as_str(self) -> &'static str {
         self.0
@@ -52,6 +53,17 @@ impl ProviderId {
     /// not know.
     pub fn from_id(id: &str) -> Option<Self> {
         PROVIDERS.iter().copied().find(|provider| provider.0 == id)
+    }
+
+    /// The provider that runs the install kit's agent `agent` (its adapter
+    /// id, [`ProviderDescriptor::agent`]), `None` for an agent Hide AI does
+    /// not run. The ids differ where the kit and Herdr name an agent apart,
+    /// as `antigravity` and `agy` do.
+    pub fn for_agent(agent: &str) -> Option<Self> {
+        PROVIDERS
+            .iter()
+            .copied()
+            .find(|provider| provider.descriptor().agent == agent)
     }
 
     /// Whether this agent's sign-in can be checked without a request
@@ -116,6 +128,7 @@ pub const PROVIDERS: &[ProviderId] = &[
     ProviderId::OPENCODE,
     ProviderId::PI,
     ProviderId::CURSOR,
+    ProviderId::ANTIGRAVITY,
 ];
 
 /// What the registry knows about one provider besides its backend.
@@ -196,6 +209,14 @@ const DESCRIPTORS: &[ProviderDescriptor] = &[
         default_model: CLI_DEFAULT_MODEL,
         efforts: &[],
     },
+    ProviderDescriptor {
+        id: ProviderId::ANTIGRAVITY,
+        label: "Antigravity",
+        agent: "antigravity",
+        login_probe: true,
+        default_model: CLI_DEFAULT_MODEL,
+        efforts: &[],
+    },
 ];
 
 /// Builds the backend for one registered provider, configured with the model
@@ -223,6 +244,9 @@ pub fn build_backend(
         ))),
         ProviderId::GROK => Arc::new(crate::GrokCliBackend::new(crate::TextCliConfig::new(model))),
         ProviderId::PI => Arc::new(crate::PiCliBackend::new(crate::TextCliConfig::new(model))),
+        ProviderId::ANTIGRAVITY => Arc::new(crate::AntigravityCliBackend::new(
+            crate::TextCliConfig::new(model),
+        )),
         other => Arc::new(crate::UnprovenReadOnlyBackend::new(other)),
     }
 }
@@ -251,7 +275,8 @@ mod tests {
                 "Grok",
                 "OpenCode",
                 "Pi",
-                "Cursor"
+                "Cursor",
+                "Antigravity"
             ]
         );
     }
