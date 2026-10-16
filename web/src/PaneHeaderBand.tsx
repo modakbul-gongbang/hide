@@ -20,7 +20,7 @@ import { relationState } from "./lineage";
 import { deviceConnected } from "./devices";
 import { remoteTargetOfPane } from "./remote";
 import { useRelationProgress } from "./PaneRelations";
-import { lineText, stateLine } from "./agentRow";
+import { lineText, markWords, stateLine } from "./agentRow";
 import { allAgents, agentsByPane } from "./paneAgents";
 import { paneChildren, type PaneChildren } from "./paneChildren";
 import { sessionOfAgentOn } from "./sessionWork";
@@ -276,7 +276,9 @@ function ChildSummary({ child, connection }: { child: AgentRow; connection: stri
   const own = stateLine(child);
   const line = own === undefined ? child.state.line : own;
   const summary = connection ?? (line ? lineText(t, child, line) : child.identity_label);
-  return <Hint label={connection ?? [child.identity_label, agentProductName(child.agent_kind), summary].filter((text, index, all) => all.indexOf(text) === index).join(" · ")}>
+  // With no line, a sleeping child's hover still says what its moon means.
+  const state = line ? summary : child.mark === "asleep" ? markWords(t, child) : summary;
+  return <Hint label={connection ?? [child.identity_label, agentProductName(child.agent_kind), state].filter((text, index, all) => all.indexOf(text) === index).join(" · ")}>
     <span className="flex min-w-0 flex-1 items-center gap-xxs" data-pane-child-summary={child.pane_id}><span className="min-w-0 truncate">{summary}</span></span>
   </Hint>;
 }

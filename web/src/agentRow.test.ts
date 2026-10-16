@@ -241,6 +241,9 @@ describe("the line's words (status-marks D-04, B7, B10, B13, B16)", () => {
       expect(rowDimmed(agent)).toBe(false);
     }
     expect(rowDimmed(row("u", { status_code: "unknown", mark: "quiet" }))).toBe(true);
+    // The operator's turn outranks the moon (D-10): its ask draws as on any other row.
+    const asked = row("y", { activity: "stopped", mark: "turn", status_code: "sleeping", demand: "question", detail: "어느 쪽으로 나눌까요?" });
+    expect(sidebarLine(asked)).toMatchObject({ text: "어느 쪽으로 나눌까요?", mode: "request" });
   });
 
   it("names the pull request whose checks ended, in warning only when they failed", async () => {

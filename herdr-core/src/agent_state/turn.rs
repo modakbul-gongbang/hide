@@ -1400,10 +1400,47 @@ mod row_tests {
             .expect("the sleeping row on the phone");
         assert_eq!(listed.line, None);
 
-        // The operator's turn outranks the moon (D-10).
+        // The operator's turn outranks the moon (D-10), and the phone draws
+        // its ask as it would on any other row.
         agent.demand = "question".into();
         derive_from_axes(&mut agent);
         assert_eq!(agent.mark, RowMark::Turn);
+        let rest = json!({"navigator": {"agents": [&agent], "workspaces": []}});
+        let phone = super::super::phone::project(&rest, "local");
+        let line = phone.agents().next().and_then(|listed| listed.line.clone());
+        assert_eq!(
+            line.map(|line| line.mode),
+            agent.state.line.as_ref().map(|line| line.mode.to_owned())
+        );
+        assert!(agent.state.line.is_some(), "an ask draws a line");
+    }
+
+    /// status-marks B16, B31: a waking, a failed and an unknown row keep a
+    /// line on the phone that says their state, as the sidebar's does.
+    #[test]
+    fn a_waking_failed_or_unknown_row_keeps_a_state_line_on_the_phone() {
+        for code in [
+            AgentStatusCode::Waking,
+            AgentStatusCode::SleepFailed,
+            AgentStatusCode::Unknown,
+        ] {
+            let mut agent = row();
+            agent.progress = Some("파서를 나눴어요".into());
+            derive_from_axes(&mut agent);
+            agent.status_code = code;
+            let rest = json!({"navigator": {"agents": [&agent], "workspaces": []}});
+            let phone = super::super::phone::project(&rest, "local");
+            let line = phone
+                .agents()
+                .next()
+                .and_then(|listed| listed.line.clone())
+                .unwrap_or_else(|| panic!("{code:?} keeps a line"));
+            assert_eq!(
+                (line.mode.as_str(), line.text.as_str(), line.tone),
+                ("kept", "", "subtle"),
+                "{code:?}"
+            );
+        }
     }
 
     /// D-07, D-08: a quiet row waiting on its pull request's checks is in

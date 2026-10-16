@@ -42,7 +42,11 @@ it("keeps the lead and the tail whole and cuts only the sentence, with one separ
     expect(line("all").textContent).toBe("끝남 · 배포 시작함 · 백그라운드 2");
     expect(cut("all")).toEqual([["lead", false], ["text", true], ["tail", false]]);
     expect(line("lead-tail").textContent).toBe("끝남 · 백그라운드 1");
+    expect(cut("lead-tail")).toEqual([["lead", false], ["tail", false]]);
+    // The separator sits inside the part after it, so a part that is absent leaves none behind.
+    expect([...line("all").querySelectorAll("[data-line-part]")].map((part) => part.textContent)).toEqual(["끝남", " · 배포 시작함", " · 백그라운드 2"]);
     expect(line("text").textContent).toBe("파서 고치는 중");
+    expect(cut("text")).toEqual([["text", true]]);
   } finally {
     await unmount();
   }

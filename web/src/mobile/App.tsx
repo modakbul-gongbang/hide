@@ -7,7 +7,7 @@ import { StatusMark } from "../components/status-mark";
 import { useEffect, useState } from "react";
 import { useElapsed } from "../components/elapsed";
 import { useInterfaceTranslation } from "../i18n/translator";
-import { lineText, markWords } from "../agentRow";
+import { lineText, markWords, rowDimmed } from "../agentRow";
 import { Button } from "../components/ui/button";
 import { agentProductName } from "../agentAdapters";
 import { sleepingCaption } from "../sleeping-session";
@@ -223,7 +223,7 @@ function AgentRow({ agent }: { agent: PhoneAgent }) {
   const elapsed = useElapsed(agent.changed_at_unix_ms);
   const label = [markWords(t, agent), agent.title, agentProductName(agent.agent_kind), agent.place, agent.device_label, elapsed].filter(Boolean).join(", ");
   return (
-    <li>
+    <li className={rowDimmed(agent) ? "opacity-(--opacity-dimmed)" : undefined}>
       <button
         type="button"
         aria-label={label}

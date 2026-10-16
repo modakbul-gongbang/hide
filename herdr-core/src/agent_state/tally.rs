@@ -509,12 +509,13 @@ pub mod phone {
     }
 
     /// The desktop sidebar's second-line rule (`sidebarLine`): a sleeping
-    /// row has none, a waking, failed or unknown one says its state
-    /// (status-marks B16, B31), else the core's line, except a quiet
-    /// sentence, which no row draws at rest.
+    /// row has none unless the operator's turn outranks its moon (D-10), a
+    /// waking, failed or unknown one says its state (status-marks B16, B31),
+    /// else the core's line, except a quiet sentence, which no row draws at
+    /// rest.
     fn line(agent: &Value) -> Option<Line> {
         match str_of(agent, "status_code") {
-            "sleeping" => return None,
+            "sleeping" if str_of(agent, "mark") != "turn" => return None,
             "waking" | "sleep_failed" | "unknown" => {
                 return Some(Line {
                     text: String::new(),

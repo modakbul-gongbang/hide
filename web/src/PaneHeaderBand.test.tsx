@@ -207,6 +207,38 @@ it("keeps online raised requests accessible when another descendant's device is 
   } finally { await unmount(); }
 });
 
+// The tree draws a waiting child's 대기 line and dims an unknown child (status-marks B16, B29).
+it("draws a waiting child's line in the child tree and its name, and dims an unknown child", async () => {
+  const agents = childrenFixture();
+  const working = agents.find((row) => row.pane_id === "working")!;
+  Object.assign(working, { status_code: "waiting", wait: "checks", activity: "stopped", state: { ...working.state, line: { text: "", mode: "waiting", tone: { kind: "subtle", read: false }, pull_request: 58 } } });
+  const { container, unmount } = await mount({ working: false, band: null }, agents);
+  try {
+    await act(async () => container.querySelector<HTMLButtonElement>("[data-pane-tree]")!.click());
+    const popup = document.querySelector('[data-agent-tree="parent"]')!;
+    const waiting = popup.querySelector('[data-agent-child="working"]')!;
+    expect(waiting.querySelector('[data-tree-line="waiting"]')?.textContent).toBe("Waiting · CI · PR #58");
+    expect(waiting.getAttribute("aria-label")).toContain("Waiting · CI · PR #58");
+    const unknown = popup.querySelector('[data-agent-child="unknown"]')!;
+    expect(unknown.querySelector('[data-tree-line="kept"]')?.textContent).toBe("Status unknown");
+    expect(unknown.className).toContain("opacity-(--opacity-dimmed)");
+    expect(waiting.className).not.toContain("opacity-(--opacity-dimmed)");
+  } finally { await unmount(); }
+});
+
+// A sleeping child has no line; the band's hover still says what its moon means (status-marks B31).
+it("names a sleeping lead child's moon in the band's hover with no line of its own", async () => {
+  const [parent, ...all] = childrenFixture();
+  const child = all.find((row) => row.pane_id === "idle")!;
+  const sleeping = { ...child, mark: "asleep" as const, status_code: "sleeping" as const, state: { ...child.state, line: { text: "Split the parser", mode: "kept" as const, tone: { kind: "subtle" as const, read: true } } } };
+  const { container, unmount } = await mount({ working: false, band: null }, [{ ...parent!, lineage_child_pane_ids: [sleeping.pane_id], direct_child_counts: { error: 0, approval: 0, question: 0, working: 0, done: 0 } }, sleeping]);
+  try {
+    const summary = container.querySelector("[data-pane-child-summary]")!;
+    expect(summary.textContent).toBe("Child idle");
+    expect(summary.getAttribute("aria-label")).toBe("Child idle · Claude Code · Sleeping · wakes when opened");
+  } finally { await unmount(); }
+});
+
 it("turns a missing core answer into a retryable timeout beside the move", async () => {
   const {container, unmount} = await mount();
   try {

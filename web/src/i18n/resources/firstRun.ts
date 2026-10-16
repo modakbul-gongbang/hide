@@ -168,7 +168,7 @@ const zhCN = {
   "firstRun.settings.allowed": "已允许",
   "firstRun.settings.blocked": "被 macOS 阻止",
   "firstRun.settings.testRow": "测试通知",
-  "firstRun.settings.sentWhen": "仅在没有 Hide 窗口位于前台时发送。开启需要我处理的通知后，应用图标会显示需要你的智能体数量。",
+  "firstRun.settings.sentWhen": "仅在没有 Hide 窗口位于前台时发送。开启轮到你的通知后，应用图标会显示轮到你的智能体数量。",
   "firstRun.intro.factory": "Factory 会把你加了标签的 GitHub issue 逐个推进到已合并的拉取请求。为项目创建一个即可开始。",
 } satisfies Catalog<typeof firstRunEnglish>;
 
@@ -224,7 +224,7 @@ const ja = {
   "firstRun.settings.allowed": "許可済み",
   "firstRun.settings.blocked": "macOSがブロック中",
   "firstRun.settings.testRow": "テスト通知",
-  "firstRun.settings.sentWhen": "Hideのウィンドウが前面にないときだけ送ります。呼ばれたときの通知をオンにすると、アプリのアイコンに待っているエージェントの数を表示します。",
+  "firstRun.settings.sentWhen": "Hideのウィンドウが前面にないときだけ送ります。自分の番の通知をオンにすると、アプリのアイコンに自分の番のエージェントの数を表示します。",
   "firstRun.intro.factory": "Factoryはラベルを付けたGitHubのissueを一つずつマージ済みのプルリクエストまで運びます。プロジェクトに一つ作成して始めます。",
 } satisfies Catalog<typeof firstRunEnglish>;
 

@@ -22,8 +22,10 @@ struct Awaited {
 }
 
 /// The checks each pane waited on, by pane, and the exclusions already logged.
-/// Both hold only panes the last pass listed. `projects` are the projects a
-/// row waits on running checks in, as of the last pass.
+/// A full pass keeps both to the panes it listed; a pass that finds no pull
+/// request waiting leaves the exclusions as they were, so the next full pass
+/// bounds them. `projects` are the projects a row waits on running checks in,
+/// as of the last pass.
 #[derive(Default)]
 pub(super) struct ChecksMemory {
     awaited: HashMap<String, Awaited>,

@@ -43,7 +43,7 @@ export function rowLine(agent: Pick<AgentRow, "state">): RowLine | null {
  * draws its word (B5). A sleeping row has no line, its moon and hover say it;
  * a waking or failed one says so on its line (status-marks B31).
  */
-export function sidebarLine(agent: Pick<AgentRow, "state" | "status_code">): RowLine | null {
+export function sidebarLine(agent: Pick<AgentRow, "state" | "status_code" | "mark">): RowLine | null {
   const own = stateLine(agent);
   if (own !== undefined) return own;
   const line = rowLine(agent);
@@ -53,14 +53,15 @@ export function sidebarLine(agent: Pick<AgentRow, "state" | "status_code">): Row
 
 /**
  * The line an agent's own state decides in every list, ahead of its
- * sentence: a sleeping row has none, its moon and hover say it; a waking, a
- * failed and an unknown row say their state (B16, B31). Undefined when the
- * state decides nothing.
+ * sentence: a sleeping row has none, its moon and hover say it, unless the
+ * operator's turn outranks the moon (D-10) and its ask reads as any other; a
+ * waking, a failed and an unknown row say their state (B16, B31). Undefined
+ * when the state decides nothing.
  */
-export function stateLine(agent: Pick<AgentRow, "status_code">): RowLine | null | undefined {
+export function stateLine(agent: Pick<AgentRow, "status_code" | "mark">): RowLine | null | undefined {
   switch (agent.status_code) {
     case "sleeping":
-      return null;
+      return agent.mark === "turn" ? undefined : null;
     case "waking":
     case "sleep_failed":
     case "unknown":
@@ -75,7 +76,7 @@ export function stateLine(agent: Pick<AgentRow, "status_code">): RowLine | null 
  * (agent-blocked-state B2), a dimmed row's reason (B16), a waiting row's 대기
  * (status-marks B29) and a waking or failed sleep (B31).
  */
-export function treeLine(agent: Pick<AgentRow, "state" | "status_code">): RowLine | null {
+export function treeLine(agent: Pick<AgentRow, "state" | "status_code" | "mark">): RowLine | null {
   const line = sidebarLine(agent);
   if (!line) return null;
   return agent.status_code === "error" || stateLine(agent) || line.mode === "waiting" ? line : null;
