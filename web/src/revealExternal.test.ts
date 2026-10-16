@@ -28,7 +28,7 @@ describe("reveal_external (issue 324)", () => {
 describe("the Explorer's context menu", () => {
   /** Each item as the menu draws it: a separator line before it, then its label. */
   const drawn = (items: { label: string; separated?: boolean }[]) => items.flatMap((item) => [...(item.separated ? ["─"] : []), item.label]);
-  const base = { html: false, besideReason: null, reveal: { label: revealLabel("darwin") }, device: "local", node: "local" };
+  const base = { html: false, besideReason: null, reveal: { label: revealLabel("darwin") }, device: "local", node: "local", chord: () => "" };
   const file = { path: "/Users/example/repo/a.html" };
   const folder = { path: "/Users/example/repo/src" };
 
@@ -39,16 +39,19 @@ describe("the Explorer's context menu", () => {
       "─",
       "Reveal in Finder",
       "─",
+      "Copy Path",
+      "Copy Relative Path",
+      "─",
       "Rename",
       "─",
       "Move to Trash",
     ]);
-    expect(drawn(explorerMenuItems({ ...base, isDirectory: true, row: folder }))).toEqual(["New File", "New Folder", "─", "Reveal in Finder", "─", "Rename", "─", "Move to Trash"]);
+    expect(drawn(explorerMenuItems({ ...base, isDirectory: true, row: folder }))).toEqual(["New File", "New Folder", "─", "Reveal in Finder", "─", "Copy Path", "Copy Relative Path", "─", "Rename", "─", "Move to Trash"]);
   });
 
-  it("offers only the two creations on the root, and no reveal in a browser tab", () => {
-    expect(drawn(explorerMenuItems({ ...base, isDirectory: true, row: null }))).toEqual(["New File", "New Folder"]);
-    expect(drawn(explorerMenuItems({ ...base, reveal: null, isDirectory: false, row: file }))).toEqual(["Open to the side", "Rename", "─", "Move to Trash"]);
+  it("offers the creations, the reveal and the path copies on the root, never a rename or a trash, and no reveal in a browser tab", () => {
+    expect(drawn(explorerMenuItems({ ...base, isDirectory: true, row: null }))).toEqual(["New File", "New Folder", "─", "Reveal in Finder", "─", "Copy Path", "Copy Relative Path"]);
+    expect(drawn(explorerMenuItems({ ...base, reveal: null, isDirectory: false, row: file }))).toEqual(["Open to the side", "─", "Copy Path", "Copy Relative Path", "─", "Rename", "─", "Move to Trash"]);
   });
 
   it("lists the reveal disabled with the reason on another device's tree", () => {

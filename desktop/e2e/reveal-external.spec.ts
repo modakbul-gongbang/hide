@@ -100,19 +100,19 @@ test("reveal: Explorer, History, a View tab and a sidebar row hand the item to t
   await enterWorkspace(page, "fixture");
   await recordReveals();
 
-  // Explorer: a file row's opens, the reveal, Rename, then Move to Trash.
+  // Explorer: a file row's opens, the reveal, the path copies, Rename, then Move to Trash.
   await showExplorer(page);
   const notes = path.join(checkout, "notes.md");
   let menu = await openMenu(page, page.locator(`[data-explorer-row="${toPage(notes)}"]`), "notes.md actions");
-  expect(await menuLines(menu)).toEqual(["Open to the side", "─", label, "─", "Rename", "─", "Move to Trash"]);
+  expect(await menuLines(menu)).toEqual(["Open to the side", "─", label, "─", "Copy Path", "Copy Relative Path", "─", "Rename", "─", "Move to Trash"]);
   await screenshot(page, "reveal-explorer-file-menu");
   await menu.locator('[data-menu-item="reveal_external"]').click();
   await expect.poll(revealed).toEqual([notes]);
 
-  // A folder row: its creations, the reveal, Rename, Move to Trash.
+  // A folder row: its creations, the reveal, the path copies, Rename, Move to Trash.
   const src = path.join(checkout, "src");
   menu = await openMenu(page, page.locator(`[data-explorer-row="${toPage(src)}"]`), "src actions");
-  expect(await menuLines(menu)).toEqual(["New File", "New Folder", "─", label, "─", "Rename", "─", "Move to Trash"]);
+  expect(await menuLines(menu)).toEqual(["New File", "New Folder", "─", label, "─", "Copy Path", "Copy Relative Path", "─", "Rename", "─", "Move to Trash"]);
   await menu.locator('[data-menu-item="reveal_external"]').click();
   await expect.poll(revealed).toEqual([notes, src]);
 

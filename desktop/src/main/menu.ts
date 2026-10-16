@@ -87,6 +87,8 @@ export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pa
 
 export const KEYBOARD_ONLY: readonly CommandId[] = [
   "move_to_trash",
+  "copy_path",
+  "copy_relative_path",
   ...REGISTRY.map((command) => command.id).filter(isNumberedCommand),
 ];
 
