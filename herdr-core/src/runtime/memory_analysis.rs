@@ -1461,6 +1461,7 @@ fn read_receipts(
                 operator_events: 0,
                 updated_at_unix_ms: now_ms(),
             },
+            &[],
         )
         .map_err(|error| error.to_string())?;
     log_skipped("receipts.records_skipped", project_id, session, &read);
@@ -1579,6 +1580,7 @@ fn read_database_receipts(
                     session.updated_at_unix_ms
                 },
             },
+            &[],
         )
         .map_err(|error| error.to_string())?;
     Ok(())
@@ -1763,6 +1765,7 @@ fn analyze_session(
         .collect::<Vec<_>>();
     let checkout = session.checkout_path.to_string_lossy().into_owned();
     let mut learned = 0;
+    let mut left_out = BTreeMap::new();
     let (mut last_hash, earlier) = saved.map_or((None, 0), |record| {
         (record.last_content_hash, record.operator_events)
     });
@@ -1801,10 +1804,23 @@ fn analyze_session(
             admit,
         )?;
         last_hash = Some(written.content_hash);
+        for card in written.left_out {
+            left_out.insert(card.id, card.number);
+        }
         if !written.summary.duplicate_batch {
             learned += written.summary.created + written.summary.superseded;
         }
     }
+    for number in left_out.values() {
+        crate::diagnostic!(json!({
+            "component": "memory",
+            "kind": "stale.hint_left_out",
+            "project_id": project_id,
+            "card": number,
+            "session_id": session.id,
+        }));
+    }
+    let unsent = left_out.into_keys().collect::<Vec<_>>();
     let settled = store
         .save_cursor(
             CursorReader::Analysis,
@@ -1818,6 +1834,7 @@ fn analyze_session(
                 operator_events,
                 updated_at_unix_ms: now_ms(),
             },
+            &unsent,
         )
         .map_err(|error| local(error.to_string()))?;
     for ended in &settled {
@@ -1863,6 +1880,8 @@ pub(crate) struct WrittenCards {
     pub(crate) summary: ApplySummary,
     pub(crate) batch_id: String,
     content_hash: String,
+    /// Reported cards this group's comparison set had no room for.
+    left_out: Vec<hide_memory::ComparisonCard>,
 }
 
 /// The content hash and batch id one group from one source is written
@@ -1903,6 +1922,10 @@ pub(crate) fn write_cards(
     let local = |error: String| AnalysisFailure::Local(error);
     let serialized = serde_json::to_string(group).map_err(|error| local(error.to_string()))?;
     let (content_hash, batch_id) = batch_identity(source, &serialized);
+    let ComparisonSet {
+        cards: similar,
+        left_out,
+    } = comparison_set(store, source, group).map_err(|error| local(error.to_string()))?;
     if store
         .has_batch(&batch_id)
         .map_err(|error| local(error.to_string()))?
@@ -1914,9 +1937,9 @@ pub(crate) fn write_cards(
             },
             batch_id,
             content_hash,
+            left_out,
         });
     }
-    let similar = comparison_set(store, source, group).map_err(|error| local(error.to_string()))?;
     let analyzer = HideNativeAnalyzer;
     let request_id = digest(&[
         "memory-request",
@@ -2165,7 +2188,18 @@ pub(crate) fn write_cards(
         summary,
         batch_id,
         content_hash,
+        left_out,
     })
+}
+
+/// The cards one group is compared against, and the reported cards that did
+/// not fit beside them.
+pub(super) struct ComparisonSet {
+    pub(super) cards: Vec<hide_memory::ComparisonCard>,
+    /// Reported cards left out for the byte bound: the analysis never saw
+    /// them, so saving its cursor keeps their holds (PRD memory-stale-cards
+    /// D-06).
+    pub(super) left_out: Vec<hide_memory::ComparisonCard>,
 }
 
 /// The cards a group is compared against: first the held cards an agent of
@@ -2176,11 +2210,12 @@ pub(super) fn comparison_set(
     store: &MemoryStore,
     source: &BatchSource<'_>,
     group: &[Value],
-) -> Result<Vec<hide_memory::ComparisonCard>, hide_memory::MemoryError> {
+) -> Result<ComparisonSet, hide_memory::MemoryError> {
     // A reported card is charged like any other, so the set and one event
-    // group still fit one request; one that does not fit is left out and its
-    // hold ends by its deadline or a release instead.
-    let mut set = Vec::new();
+    // group still fit one request; one that does not fit is named back, and
+    // its hold outlives this pass.
+    let mut cards = Vec::new();
+    let mut left_out = Vec::new();
     let mut bytes = 0;
     for card in store.reported_cards(
         source.project_id,
@@ -2190,31 +2225,25 @@ pub(super) fn comparison_set(
     )? {
         let card_bytes = card.body.len() + card.title.len() + 64;
         if bytes + card_bytes > COMPARISON_INPUT_LIMIT_BYTES {
-            crate::diagnostic!(json!({
-                "component": "memory",
-                "kind": "stale.hint_left_out",
-                "project_id": source.project_id,
-                "card": card.number,
-                "session_id": source.session_id,
-            }));
+            left_out.push(card);
             continue;
         }
         bytes += card_bytes;
-        set.push(card);
+        cards.push(card);
     }
     let similar = store.similar(
         source.project_id,
         &comparison_text(group),
-        hide_memory::COMPARISON_LIMIT.saturating_sub(set.len()),
+        hide_memory::COMPARISON_LIMIT.saturating_sub(cards.len()),
         COMPARISON_INPUT_LIMIT_BYTES.saturating_sub(bytes),
     )?;
-    set.extend(
+    cards.extend(
         similar
             .into_iter()
-            .filter(|card| !set.iter().any(|reported| reported.id == card.id))
+            .filter(|card| !cards.iter().any(|reported| reported.id == card.id))
             .collect::<Vec<_>>(),
     );
-    Ok(set)
+    Ok(ComparisonSet { cards, left_out })
 }
 
 /// The text the comparison set is chosen by: the group's words, bounded.
@@ -3557,6 +3586,7 @@ mod tests {
                         updated_at_unix_ms: 1,
                         operator_events: 0,
                     },
+                    &[],
                 )
                 .unwrap();
         }

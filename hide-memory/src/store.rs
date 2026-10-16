@@ -1117,11 +1117,13 @@ impl MemoryStore {
     /// Saves a reader's cursor. The analysis cursor is saved only after every
     /// group before it was written, so saving it also ends the holds this
     /// session reported before that point, which it answers (PRD
-    /// memory-stale-cards D-14); the receipt cursor ends none.
+    /// memory-stale-cards D-14), except those of `unsent`, the cards whose
+    /// report the analysis had no room to send; the receipt cursor ends none.
     pub fn save_cursor(
         &self,
         reader: CursorReader,
         cursor: &SessionCursorRecord,
+        unsent: &[String],
     ) -> Result<Vec<hold::EndedHold>, MemoryError> {
         self.require_writer()?;
         let table = reader.table();
@@ -1131,7 +1133,7 @@ impl MemoryStore {
             params![cursor.project_id,cursor.provider,cursor.session_id,cursor.byte_offset,cursor.checkpoint,cursor.last_content_hash,cursor.updated_at_unix_ms,cursor.operator_events],
         )?;
         let ended = match reader {
-            CursorReader::Analysis => hold::settle_analyzed(&transaction, cursor)?,
+            CursorReader::Analysis => hold::settle_analyzed(&transaction, cursor, unsent)?,
             CursorReader::Receipts => Vec::new(),
         };
         transaction.commit()?;

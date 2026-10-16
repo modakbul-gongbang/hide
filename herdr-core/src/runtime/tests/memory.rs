@@ -441,7 +441,7 @@ fn the_largest_comparison_set_and_event_group_fit_one_request() {
         ));
     }
     let root_path = root.to_string_lossy().into_owned();
-    let similar = crate::runtime::memory_analysis::comparison_set(
+    let set = crate::runtime::memory_analysis::comparison_set(
         &store,
         &crate::runtime::memory_analysis::BatchSource {
             project_id,
@@ -457,8 +457,45 @@ fn the_largest_comparison_set_and_event_group_fit_one_request() {
     .unwrap();
     // One near-cap card fills the 16 KiB set; the other two are left out
     // rather than pushing the request past its cap.
+    let similar = set.cards;
     assert_eq!(similar.len(), 1);
     assert!(similar[0].reported);
+    let unsent = set
+        .left_out
+        .iter()
+        .map(|card| card.id.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(set.left_out.len(), 2);
+    // Saving the cursor past the report ends only the hold the analysis was
+    // shown; the two it never saw stay held.
+    let ended = store
+        .save_cursor(
+            hide_memory::CursorReader::Analysis,
+            &hide_memory::SessionCursorRecord {
+                project_id: project_id.to_owned(),
+                provider: "codex".to_owned(),
+                session_id: "session".to_owned(),
+                byte_offset: 2,
+                checkpoint: Vec::new(),
+                last_content_hash: None,
+                updated_at_unix_ms: crate::runtime::memory::now_ms(),
+                operator_events: 0,
+            },
+            &unsent,
+        )
+        .unwrap();
+    assert_eq!(
+        ended.iter().map(|hold| hold.number).collect::<Vec<_>>(),
+        [similar[0].number]
+    );
+    for card in &set.left_out {
+        assert!(
+            store
+                .hold(project_id, card.number, crate::runtime::memory::now_ms())
+                .unwrap()
+                .is_some()
+        );
+    }
 
     let request = hide_memory::HideNativeAnalyzer
         .request(
