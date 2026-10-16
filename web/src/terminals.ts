@@ -395,7 +395,15 @@ function setKept(instance: Instance, text: string | null) {
   const area = instance.term.textarea;
   if (!area) return;
   area.value = text ?? "";
-  if (text !== null) area.select();
+  if (text !== null && document.activeElement === area) area.select();
+}
+
+/** The terminal's textarea was focused: xterm empties it on blur, so the kept text is put back. */
+function holdKept(instance: Instance) {
+  const area = instance.term.textarea;
+  if (!area || instance.kept === null) return;
+  area.value = instance.kept;
+  area.select();
 }
 
 /** Whether Copy has something to take: a drawn selection or one the wheel carried off. */
@@ -545,7 +553,8 @@ function cellAt(geometry: CellGeometry, event: { clientX: number; clientY: numbe
 function onMouseDown(instance: Instance, event: MouseEvent) {
   instance.press = null;
   // A right-click opens the menu, whose Copy still takes the kept text.
-  if (event.button === 0) setKept(instance, null);
+  // On macOS a ctrl-press is a right-click too.
+  if (event.button === 0 && !(event.ctrlKey && keySystem() === "mac")) setKept(instance, null);
   // The primary button alone can become a click; ⌥ + press and a second
   // click of a multi-click are the `application` and `localSelection`
   // routes, and neither is replayed to the program. A press on a link is the
@@ -723,7 +732,8 @@ function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLin
     // A key that is not a modifier ends the text kept off screen, as it ends
     // a drawn selection; the chord that copies it keeps it for its own read.
     // On macOS ⌘C is the browser's own copy, which `terminalKey` leaves alone.
-    const copying = action?.kind === "copy" || (system === "mac" && event.metaKey && event.code === "KeyC");
+    const copying = action?.kind === "copy"
+      || (system === "mac" && event.metaKey && !event.shiftKey && !event.altKey && (event.code === "KeyC" || event.key.toLowerCase() === "c"));
     if (!copying && !MODIFIER_KEYS.has(event.key)) setKept(instance, null);
     if (!action) return true;
     event.preventDefault();
@@ -829,6 +839,7 @@ export function attachTerminal(
     // owns the focus pane, so the click is an event and the header follows
     // the snapshot, not the click.
     shown.term.textarea?.addEventListener("focus", () => {
+      holdKept(shown);
       noteTerminalFocus(paneId);
       if (followingSnapshot) return;
       // A snapshot can lag a newer intent. Core owns focus idempotence and
@@ -856,6 +867,9 @@ export function attachTerminal(
     observer.disconnect();
     shown.observer = null;
     shown.host = null;
+    // Text kept off screen is the shown pane's; coming back to it later must
+    // not find Ctrl+C taken for a copy nobody can see.
+    setKept(shown, null);
     parkingLot().append(shown.element);
     // A pane closed while shown left the core's list before its view
     // unmounted, so the park decides for itself instead of waiting for a
