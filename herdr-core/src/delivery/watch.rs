@@ -348,8 +348,14 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
                 )
             }
         };
+        let advice = match early {
+            Some(Early::Blocked) => {
+                "Its runtime may time the prompt out on its own; read the prompt, then answer it, tell the operator or send the target a safer instruction."
+            }
+            _ => "Inspect the target before deciding whether it is blocked.",
+        };
         let body = format!(
-            "{summary}\nTarget {}. Last activity unix_ms={activity}; Herdr status={}; open requests={open_requests}; activity basis={basis}; read failure={failure}.\nInspect the target before deciding whether it is blocked.",
+            "{summary}\nTarget {}. Last activity unix_ms={activity}; Herdr status={}; open requests={open_requests}; activity basis={basis}; read failure={failure}.\n{advice}",
             watch.target.name,
             if reading.status_available {
                 reading.status.as_str()
