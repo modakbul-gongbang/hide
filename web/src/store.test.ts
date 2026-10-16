@@ -181,6 +181,15 @@ describe("snapshot merge", () => {
     expect(state.diagnostics.some((line) => line.includes("mark=sparkle"))).toBe(true);
   });
 
+  it("keeps a sleeping agent's moon (status-marks D-21)", () => {
+    useShellStore.getState().applyFrame({
+      type: "snapshot",
+      payload: { rest: { navigator: { agents: [legacyAgentRow({ id: "a", pane_id: "p1", identity_label: "x", agent_kind: "x", mark: "asleep", group: "seen", status_code: "sleeping", changed_at_unix_ms: null, emphasized: false, unread: false })] } } },
+    });
+    const state = useShellStore.getState();
+    expect([state.agents[0]?.mark, state.agents[0]?.status_code]).toEqual(["asleep", "sleeping"]);
+  });
+
   it("returns a terminal frame's chunks without storing them and keeps its cursor and the hub's epoch", () => {
     const chunks = useShellStore.getState().applyFrame({
       type: "terminal",

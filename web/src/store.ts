@@ -14,6 +14,7 @@ import {
   type EditorDocumentSnapshot,
   type EditorSnapshot,
   type PaneFind,
+  type RowMark,
   type SnapshotRest,
 } from "./snapshot";
 
@@ -269,7 +270,8 @@ function mergeDocuments(previous: Documents, section: DocumentsSection): Documen
 }
 
 const KNOWN_GROUPS = new Set(["needs_you", "done", "working", "seen"]);
-const KNOWN_MARKS = new Set(["turn", "going", "done", "unread", "quiet"]);
+// Every mark the type names, so a mark the core adds cannot be read as unknown here.
+const KNOWN_MARKS = new Set(Object.keys({ turn: true, going: true, done: true, unread: true, quiet: true, asleep: true } satisfies Record<RowMark, true>));
 export const DIAGNOSTIC_CAP = 200;
 
 /** Expanded folders the store keeps a listing for; the PRD's watch cap is the same number. */
