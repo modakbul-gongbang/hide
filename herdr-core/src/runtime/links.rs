@@ -92,6 +92,9 @@ impl Sink for RuntimeSink {
     fn summaries(&self, summaries: BTreeMap<String, ProjectLinkSummary>) {
         self.apply(move |runtime| runtime.ingest_link_summaries(summaries));
     }
+    fn progress(&self, progress: Vec<crate::links::ledger::WorkProgress>) {
+        self.apply(move |runtime| runtime.ingest_work_progress(progress));
+    }
 
     fn panel(&self, generation: u64, answer: Result<PanelAnswer, String>) {
         self.apply(move |runtime| runtime.ingest_link_panel(generation, answer));
@@ -901,6 +904,23 @@ impl Runtime {
         summaries.projects = projects;
         self.refresh_inactive_groups();
         self.refresh_agent_scopes();
+        true
+    }
+
+    /// The pane chips' tasks and children; the worker sends them only when
+    /// one changed, so an equal answer publishes nothing.
+    pub(super) fn ingest_work_progress(
+        &mut self,
+        progress: Vec<crate::links::ledger::WorkProgress>,
+    ) -> bool {
+        let summaries = self
+            .snapshot
+            .link_summaries
+            .get_or_insert_with(LinkSummariesSnapshot::default);
+        if summaries.progress == progress {
+            return false;
+        }
+        summaries.progress = progress;
         true
     }
 
