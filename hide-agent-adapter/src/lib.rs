@@ -240,10 +240,17 @@ impl LaunchDialect {
     }
 
     /// How the CLI takes a model and a reasoning effort at launch; `{}` is
-    /// replaced by the value. Verified against Claude Code 2.1 and Codex 0.160;
-    /// the other agents declare neither, so a start of theirs takes none.
+    /// replaced by the value. Verified against Claude Code 2.1 and Codex 0.160,
+    /// and agy 1.4.0's model (`--model`, listed by `agy models`, which Hide
+    /// AI's agy backend reads and passes too); the other agents declare
+    /// neither, so a start of theirs takes none.
     pub const fn options(self) -> LaunchOptions {
         match self {
+            Self::Antigravity => LaunchOptions {
+                model: &["--model", "{}"],
+                effort: &[],
+                efforts: &[],
+            },
             Self::Claude => LaunchOptions {
                 model: &["--model", "{}"],
                 effort: &["--effort", "{}"],
@@ -258,8 +265,7 @@ impl LaunchDialect {
             | Self::OpenCode
             | Self::Pi
             | Self::Omp
-            | Self::Cursor
-            | Self::Antigravity => LaunchOptions {
+            | Self::Cursor => LaunchOptions {
                 model: &[],
                 effort: &[],
                 efforts: &[],

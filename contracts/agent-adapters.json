@@ -665,7 +665,7 @@
     "can_start": true,
     "can_resume": true,
     "efforts": [],
-    "can_pick_model": false,
+    "can_pick_model": true,
     "hook_kind": "hook"
   }
 ]

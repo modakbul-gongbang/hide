@@ -312,6 +312,14 @@ fn every_start_dialect_takes_only_the_model_and_effort_it_declares_and_refuses_u
             .unwrap(),
         ["-m", "gpt-5.5", "-c", "model_reasoning_effort=high"]
     );
+    // agy 1.4.0 takes a model by `--model`; its effort is not declared yet.
+    assert_eq!(
+        LaunchDialect::Antigravity
+            .options()
+            .arguments(Some("gemini-3.8-flash-high"), None)
+            .unwrap(),
+        ["--model", "gemini-3.8-flash-high"]
+    );
 }
 
 #[test]
