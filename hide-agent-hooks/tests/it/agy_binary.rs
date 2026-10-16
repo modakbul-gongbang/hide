@@ -200,7 +200,7 @@ fn a_signed_in_agy_turn_fires_hide_s_hooks() {
     let output = child
         .capture_until(
             std::time::Instant::now() + Duration::from_secs(240),
-            16 * 1024 * 1024,
+            1024 * 1024,
         )
         .expect("agy ends its turn");
     let stdout = String::from_utf8_lossy(&output.stdout);
