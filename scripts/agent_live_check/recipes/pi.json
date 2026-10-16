@@ -21,7 +21,7 @@
   "scenes": {
     "rest": {
       "send": "",
-      "arrived": "(?:[\u203a\u276f>] .*|.*(?:Ask.*anything|What.*work on|Type.*message|Send a message).*)$",
+      "arrived": "(?:[\u203a\u276f>] .*|.*(?:Ask.*anything|What.*work on|Type.*message|Send a message|[0-9.]+%/[0-9]+k \\(auto\\)).*)$",
       "draft": "^[\u203a\u276f>] {bell}\\s*$",
       "no_match": "(?:No (?:matching |matching.*|models|sessions|results)|0 results|No matches).*",
       "unsafe": "(?:Selected model:|Resumed session:|Trust saved:|Approval accepted:).*"
