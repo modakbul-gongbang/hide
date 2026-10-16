@@ -148,7 +148,12 @@ use crate::error::HostError;
 /// made. A helper on 37 could not read an agy session or start agy in a
 /// worktree without its trust question, so it is refused at Hello and
 /// upgraded.
-pub const PROTOCOL_VERSION: u32 = 38;
+/// 39: the pull request card query also reads the head commit's checks and
+/// the reviews, for the card's timeline (PRD pr-card-and-session-record-
+/// redesign D-04). A helper on 38 allows only the query text it knows, so it
+/// would refuse every card read of a device project; it is refused at Hello
+/// and upgraded.
+pub const PROTOCOL_VERSION: u32 = 39;
 
 /// What agy's index held in a checkout before Hide typed `/fork`
 /// ([`Call::AntigravityForkMark`]).

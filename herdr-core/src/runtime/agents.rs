@@ -1817,9 +1817,6 @@ impl Runtime {
         if let Some(on) = payload.agent_summary {
             next.agent_summary = on;
         }
-        if let Some(on) = payload.pr_summary {
-            next.pr_summary = on;
-        }
         if let Some(limit) = payload.usage_limit {
             next.usage_limit = limit;
         }
@@ -1894,7 +1891,6 @@ impl Runtime {
             }) {
                 self.drop_missed_backlog();
             }
-            self.drop_pr_summaries_if_inactive();
             self.refresh_background_ai();
         }
         true
@@ -2161,7 +2157,6 @@ impl Runtime {
             .chosen
             .then(|| settings.provider.as_str().to_owned());
         snapshot.agent_summary = settings.agent_summary;
-        snapshot.pr_summary = settings.pr_summary;
         snapshot.fallback = settings
             .fallback
             .iter()

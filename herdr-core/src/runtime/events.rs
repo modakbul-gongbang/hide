@@ -1202,9 +1202,6 @@ pub(super) struct AiSettingsPayload {
     /// The agent-summary switch (PRD overview-request-view D-11).
     #[serde(default)]
     pub(super) agent_summary: Option<bool>,
-    /// The PR-summary switch (PRD work-tab-pr-lens D-29).
-    #[serde(default)]
-    pub(super) pr_summary: Option<bool>,
     /// Use Hide AI (D-14): off, no model is asked anything.
     #[serde(default)]
     pub(super) enabled: Option<bool>,

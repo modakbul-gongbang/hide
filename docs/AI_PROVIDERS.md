@@ -32,10 +32,7 @@ END waits for a known ledger context instead of treating missing parent authorit
 
 The Start dialog of the Overview uses feature id `worktree_name` (`herdr-core/src/ai.rs::suggest_worktree_name`): it sends the issue's title and at most 2,000 characters of its body, asks for `{slug}` against a schema, and the core keeps only lowercase ASCII words joined by hyphens, at most 48 characters, behind the issue-number prefix the dialog passed; the deadline is 30 seconds, a failure leaves the dialog's own name in place, and Settings › Issues turns the feature off.
 
-A pull request's card uses feature id `pr_summary` (`herdr-core/src/ai.rs::summarize_pull_request`, PRD work-tab-pr-lens D-04, D-29): it sends the title, at most 4,000 characters of the body, at most 100 changed files with their added and removed counts, and the names of the failed checks and the number of running ones, every text redacted again at the provider boundary, and asks for one `{summary}` of at most 600 characters in two or three plain sentences in the operator's output language, quoting the title, file names and check names as they are written.
-It never sends a diff, and the title, body, file names and check names are marked untrusted content in the instruction.
-The core asks once per head commit when a card with its parts read is open, keeps the answer for that head (at most 64 summaries), and drops it when the head moves, the switch turns off or the card's project stops showing; it runs on the label router, so the usage limit that pauses agent summaries pauses this too, and a paused, disabled or failed ask leaves the card without a summary and writes the class to the diagnostic log (`invalid_output` for an answer that does not fit the schema).
-The summary is drawn under the card's reason box with an `AI 요약` mark and changes neither the list's groups nor its second lines.
+A pull request's card asks Hide AI nothing: the `pr_summary` feature was retired (PRD pr-card-and-session-record-redesign D-19), and a `pr_summary` field an older Hide left in the settings file is read past and not written back.
 
 Project Memory uses feature id `project_memory` with Hide's own extraction prompt (`hide-memory/src/engine.rs`, under 8 KiB) and strict schema: each card's text, a one-line title, aliases, kind, extraction confidence and salience, source offsets, cited repository paths, and a `new`, `same`, `supersedes`, `conflicts` or `discard` relation to one of the cards it was shown, plus titles and aliases for shown cards that have none.
 No third-party memory engine or prompt asset is part of it.
@@ -215,7 +212,6 @@ The file names a provider, a model per provider, whether Hide AI is on, an order
   "enabled": true,
   "fallback": [{ "provider": "codex", "model": "gpt-5.6-luna" }],
   "agent_summary": true,
-  "pr_summary": true,
   "usage_limit": 95
 }
 ```
@@ -231,8 +227,6 @@ A provider the registry does not know is ignored wherever it appears, so a file 
 `agent_summary` is the Settings › Hide AI › Features Agent summaries switch (PRD overview-request-view D-11), on when the field is absent.
 Off, the label analyzer asks nothing and cancels the request it is running, and no surface shows a label; worktree naming and Project Memory keep their own switches.
 Turning it does not rebuild the router, because it is not part of the router's choice.
-`pr_summary` is the Settings › Hide AI › Features PR summaries switch, on when the field is absent; off, the core asks nothing for a card and drops the summaries it holds, and the rest of the card stands.
-It is not part of the router's choice either, and the usage limit applies to it as to every background feature.
 
 The defaults are the registry's own constants: `claude` with `sonnet`, `codex` with `gpt-5.6-luna`, and the CLI's own model for every other agent.
 `provider` is in the file only once it was chosen (`AiSettings.chosen`), so a file that only turned a switch makes no choice for the operator, and a settings value with nothing chosen asks no model anything (`router_config().enabled` is `enabled && chosen`).
@@ -250,9 +244,9 @@ A session with no home directory to write to reports that on the tab for the sam
 Choosing a provider changes which provider is asked first and nothing else.
 Every feature, Project Memory included, asks the chosen provider and then the fallback list under the policy below, while the router's retry, cooldown, cancellation, duplicate-suppression, process, and budget rules apply to all of them.
 
-The Hide AI tab reads `status.background_ai`, one section the core publishes (`herdr-core/src/model.rs`, `BackgroundAiSnapshot`): `enabled`, `provider` (null until one is chosen), `chosen`, `agent_summary`, `pr_summary`, one `providers` row per registered agent in the fixed order (`agent` is the shared agent adapter id, or `gemini-cli` for Gemini CLI, which names only its logo; `state` one of `ready`, `needs_login`, `usage_limited`, `not_installed`, `unavailable`, `unsupported`, `unread`, `installed`, `login_checked`, `selectable`, `retry_at_ms`, `model`, `models`, `models_fixed`, `cli_default`, and `models_unavailable_reason`), the ordered `fallback` list, and `refusal`.
+The Hide AI tab reads `status.background_ai`, one section the core publishes (`herdr-core/src/model.rs`, `BackgroundAiSnapshot`): `enabled`, `provider` (null until one is chosen), `chosen`, `agent_summary`, one `providers` row per registered agent in the fixed order (`agent` is the shared agent adapter id, or `gemini-cli` for Gemini CLI, which names only its logo; `state` one of `ready`, `needs_login`, `usage_limited`, `not_installed`, `unavailable`, `unsupported`, `unread`, `installed`, `login_checked`, `selectable`, `retry_at_ms`, `model`, `models`, `models_fixed`, `cli_default`, and `models_unavailable_reason`), the ordered `fallback` list, and `refusal`.
 Every reason in it is a code the shell turns into words, never prose, an account, a path or a conversation, and the cause of a failed model-list read stays in the diagnostic log (B68) as an `ai.models.unavailable` record with the agent and a `reason=` code, written when the reason first appears or changes and not on every read.
-`ai_settings` carries `enabled`, `provider` (Runs on), `model` (for Runs on, or for an agent in the fallback list, which keeps its own), `fallback_add`, `fallback_remove`, `agent_summary`, `pr_summary` and the two observation hints; the core refuses an agent that the last read did not find selectable (`ai_settings.provider_not_selectable`), an unknown one (`ai_settings.unknown_provider`), the Runs on agent as its own fallback (`ai_settings.fallback_is_runs_on`) and a listed one twice (`ai_settings.fallback_listed`).
+`ai_settings` carries `enabled`, `provider` (Runs on), `model` (for Runs on, or for an agent in the fallback list, which keeps its own), `fallback_add`, `fallback_remove`, `agent_summary` and the two observation hints; the core refuses an agent that the last read did not find selectable (`ai_settings.provider_not_selectable`), an unknown one (`ai_settings.unknown_provider`), the Runs on agent as its own fallback (`ai_settings.fallback_is_runs_on`) and a listed one twice (`ai_settings.fallback_listed`).
 `refusal` is how the label analyzer last found the chosen agent (`AiStanding`, written on the analyzer's thread after each job): its reason class, the end of a usage limit when the agent said, and the listed agent a request made now would run on (`using`), or none when no listed agent can answer, which is the Runs on row's reason (B41, B42).
 It is absent while the chosen agent answers and while Hide AI is off.
 

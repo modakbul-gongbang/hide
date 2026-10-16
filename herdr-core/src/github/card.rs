@@ -11,7 +11,7 @@ use hide_node_link::gh::{
 };
 use serde_json::Value;
 
-use super::{GhFailure, Where, gh_at, issue_repository};
+use super::{GhFailure, Where, gh_at, issue_repository, parse_rfc3339_ms};
 use crate::model::{PrCardFile, PrCardMerge, PrCardThread};
 use crate::node_access::NodeLink;
 
@@ -42,6 +42,17 @@ pub(crate) struct CardRead {
     pub threads: Option<Vec<PrCardThread>>,
     pub merge: Option<PrCardMerge>,
     pub failed: Vec<&'static str>,
+    /// When the head commit's checks last completed: the latest completed
+    /// run's time (PRD pr-card-and-session-record-redesign D-15); `None`
+    /// while none has completed or the answer lacks it.
+    pub checks_completed_at: Option<u64>,
+    /// When the review that stands (the latest approval or change request)
+    /// was submitted; `None` without one.
+    pub review_at: Option<u64>,
+    /// The time parts the answer did not carry in a readable shape
+    /// (`checks`, `review`): the card stands without them and the caller
+    /// logs why (B21). A part that is there and empty is not named.
+    pub times_unread: Vec<&'static str>,
 }
 
 /// Reads the card of pull request `number`; `Err` when GitHub could not be
@@ -122,6 +133,14 @@ pub(crate) fn parse(output: &str) -> Result<CardRead, String> {
     let allowed = |field: &str| repository[field].as_bool().unwrap_or(false);
     let default_branch = repository["defaultBranchRef"]["name"].as_str();
     let base = pull_request["baseRefName"].as_str();
+    read.checks_completed_at = checks_completed_at(pull_request);
+    read.review_at = review_at(pull_request);
+    if !pull_request["commits"]["nodes"].is_array() {
+        read.times_unread.push("checks");
+    }
+    if !pull_request["reviews"]["nodes"].is_array() {
+        read.times_unread.push("review");
+    }
     read.merge = Some(PrCardMerge {
         methods: [
             (PrMergeMethod::Merge, "mergeCommitAllowed"),
@@ -143,6 +162,40 @@ pub(crate) fn parse(output: &str) -> Result<CardRead, String> {
         ),
     });
     Ok(read)
+}
+
+/// The latest time a check of the head commit completed: a check run's
+/// `completedAt`, or a commit status's `createdAt`, which is when its state
+/// was set. A run still queued or in progress has none and is passed over.
+fn checks_completed_at(pull_request: &Value) -> Option<u64> {
+    pull_request["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["nodes"]
+        .as_array()?
+        .iter()
+        .filter_map(|node| {
+            let at = match node["__typename"].as_str()? {
+                "CheckRun" => node["completedAt"].as_str()?,
+                "StatusContext" => node["createdAt"].as_str()?,
+                _ => return None,
+            };
+            parse_rfc3339_ms(at)
+        })
+        .max()
+}
+
+/// When the review that decides the pull request was submitted: the latest
+/// approval or change request, as reviews come oldest first.
+fn review_at(pull_request: &Value) -> Option<u64> {
+    pull_request["reviews"]["nodes"]
+        .as_array()?
+        .iter()
+        .rev()
+        .find(|node| {
+            matches!(
+                node["state"].as_str(),
+                Some("APPROVED" | "CHANGES_REQUESTED")
+            )
+        })
+        .and_then(|node| parse_rfc3339_ms(node["submittedAt"].as_str()?))
 }
 
 /// How much of a body the card keeps: GitHub allows 65,536 characters, and
@@ -384,7 +437,15 @@ mod tests {
             {"path":"tests/__snapshots__/x.snap","additions":9,"deletions":0}]},
           "reviewThreads":{"nodes":[
             {"isResolved":false,"path":"src/a.rs","line":7,"comments":{"nodes":[{"author":{"login":"ann"},"body":"Please rename this. It reads badly."}]}},
-            {"isResolved":true,"path":"src/b.rs","line":1,"comments":{"nodes":[{"author":{"login":"bob"},"body":"done"}]}}]}}}}}"##;
+            {"isResolved":true,"path":"src/b.rs","line":1,"comments":{"nodes":[{"author":{"login":"bob"},"body":"done"}]}}]},
+          "commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[
+            {"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"2026-10-16T11:21:00Z"},
+            {"__typename":"CheckRun","status":"IN_PROGRESS","conclusion":null,"completedAt":null},
+            {"__typename":"StatusContext","state":"SUCCESS","createdAt":"2026-10-16T11:05:30Z"}]}}}}]},
+          "reviews":{"nodes":[
+            {"state":"CHANGES_REQUESTED","submittedAt":"2026-10-16T09:00:00Z"},
+            {"state":"COMMENTED","submittedAt":"2026-10-16T12:00:00Z"},
+            {"state":"APPROVED","submittedAt":"2026-10-16T11:30:00Z"}]}}}}}"##;
 
     #[test]
     fn a_card_read_keeps_the_head_the_files_the_open_threads_and_what_a_merge_may_be() {
@@ -416,6 +477,13 @@ mod tests {
         );
         assert!(merge.queue && merge.can_merge);
         assert!(read.failed.is_empty());
+        // The latest completed check, a running one passed over, and the
+        // latest decisive review, a comment-only one passed over (D-15).
+        assert_eq!(
+            read.checks_completed_at,
+            parse_rfc3339_ms("2026-10-16T11:21:00Z")
+        );
+        assert_eq!(read.review_at, parse_rfc3339_ms("2026-10-16T11:30:00Z"));
     }
 
     #[test]
@@ -427,6 +495,10 @@ mod tests {
         .unwrap();
         assert_eq!(read.failed, vec!["body", "files"]);
         assert_eq!(read.threads, Some(Vec::new()));
+        // An answer without the times leaves them absent and names the parts
+        // for the log; the card stands (B21).
+        assert_eq!((read.checks_completed_at, read.review_at), (None, None));
+        assert_eq!(read.times_unread, vec!["checks", "review"]);
         let merge = read.merge.unwrap();
         assert!(!merge.queue && !merge.can_merge && merge.methods.is_empty());
         assert!(parse(r#"{"data":{"repository":null}}"#).is_err());
