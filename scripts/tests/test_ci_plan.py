@@ -60,11 +60,30 @@ class Selection(unittest.TestCase):
         self.assertEqual(guide["rust_packages"], ["hide-agent-adapter"])
         self.assertEqual(plan("web/src/assets/agents/manifest.json")["rust_packages"], ["herdr-core", "hide-agent-adapter"])
 
-    def test_a_web_display_change_skips_windows_and_desktop(self):
+    def test_a_web_display_change_runs_both_suites_of_the_shell_and_skips_windows(self):
         result = plan("web/src/components/ui/button.tsx", "web/src/Overview.tsx")
-        # herdr-core's structure tests scan the shell's sources.
-        self.assertEqual(set(result["lanes"]), {"policy", "checks", "web-e2e", "rust"})
+        # herdr-core's structure tests scan the shell's sources, and the
+        # desktop suite drives the same shell inside the app.
+        self.assertEqual(set(result["lanes"]), {"policy", "checks", "web-e2e", "desktop-e2e", "rust"})
         self.assertEqual(result["rust_packages"], ["herdr-core"])
+        # The phone page is served by hided, and the app never loads it.
+        for path in ("web/mobile.html", "web/public/m/sw.js"):
+            with self.subTest(path=path):
+                self.assertEqual(set(plan(path)["lanes"]), {"policy", "checks", "web-e2e"})
+
+    def test_the_changes_that_broke_a_desktop_spec_on_main_plan_the_desktop_suite(self):
+        # Issue #1288: each pull request's run left `desktop-e2e` out, and
+        # main's full run failed the desktop spec that asserted what it changed.
+        for number, paths in (
+            # desktop/e2e/session-work-ledger.spec.ts read the session record.
+            (1106, ("web/src/SessionRecord.tsx", "web/src/sessionWork.ts", "hide-session/src/conversation_cursor.rs")),
+            # desktop/e2e/right-lane.spec.ts read the file tree a lane close keeps.
+            (1147, ("herdr-core/src/runtime/workspace_view.rs", "herdr-core/src/runtime/tests/workspace_view.rs", "web/e2e/s3.spec.ts")),
+        ):
+            with self.subTest(pull_request=number):
+                result = plan(*paths, "docs/UI_BEHAVIOR.md")
+                self.assertFalse(result["full"])
+                self.assertIn("desktop-e2e", result["lanes"])
 
     def test_web_code_the_desktop_host_reads_reaches_desktop_and_windows(self):
         for path in ("web/src/shortcuts.ts", "web/src/host.ts", "web/src/store.ts", "web/src/keys.ts"):
@@ -144,8 +163,10 @@ class Selection(unittest.TestCase):
 
     def test_a_platform_crate_reaches_every_os_and_its_consumers(self):
         result = plan("hide-platform/src/process.rs")
-        self.assertTrue({"rust", "os-contract", "os-contract-macos", "windows-check", "windows-e2e", "web-e2e", "remote-mailbox"} <= set(result["lanes"]))
-        self.assertNotIn("desktop-e2e", result["lanes"])
+        self.assertTrue(
+            {"rust", "os-contract", "os-contract-macos", "windows-check", "windows-e2e", "web-e2e", "desktop-e2e", "remote-mailbox"}
+            <= set(result["lanes"])
+        )
         # The data-only adapter is independent, and workspace-hack depends on no member;
         # every other crate consumes the platform layer.
         self.assertEqual(result["rust_packages"],
@@ -163,8 +184,8 @@ class Selection(unittest.TestCase):
             with self.subTest(path=path):
                 result = plan(path)
                 self.assertEqual(result["rust_packages"], consumers)
-                self.assertTrue({"rust", "windows-check", "web-e2e", "remote-mailbox"} <= set(result["lanes"]))
-                self.assertFalse(set(result["lanes"]) & {"os-contract", "os-contract-macos", "windows-e2e", "desktop-e2e"})
+                self.assertTrue({"rust", "windows-check", "web-e2e", "desktop-e2e", "remote-mailbox"} <= set(result["lanes"]))
+                self.assertFalse(set(result["lanes"]) & {"os-contract", "os-contract-macos", "windows-e2e"})
                 self.assertFalse(result["full"])
 
     def test_a_leaf_crate_tests_its_reverse_dependencies_and_compiles_on_windows(self):
@@ -182,22 +203,26 @@ class Selection(unittest.TestCase):
             with self.subTest(path=path):
                 lanes = set(plan(path)["lanes"])
                 self.assertTrue({"os-contract", "os-contract-macos"} <= lanes)
-                self.assertNotIn("desktop-e2e", lanes)
 
-    def test_a_core_or_daemon_change_asks_for_no_macos_runner(self):
-        # Their OS differences are checked on Linux and Windows; the nightly
-        # runs the macOS leg and the macOS `@platform` tests for them.
+    def test_a_core_daemon_or_shell_change_asks_for_the_desktop_suite_and_no_other_macos_runner(self):
+        # The app runs them, so the desktop suite does too; their OS
+        # differences are checked on Linux and Windows, and the nightly runs
+        # the macOS leg and the macOS `@platform` tests for them.
         for path in (
             "herdr-core/src/lib.rs", "hided/src/lib.rs", "hide-host/src/lib.rs", "hide-session/src/lib.rs",
-            "web/src/Overview.tsx", "web/e2e/s3.spec.ts", "web/playwright.config.ts",
+            "web/src/Overview.tsx",
         ):
+            with self.subTest(path=path):
+                self.assertEqual(set(plan(path)["lanes"]) & MACOS_LANES, {"desktop-e2e"})
+        # What only the web suite runs asks for no macOS runner.
+        for path in ("web/e2e/s3.spec.ts", "web/playwright.config.ts", "web/mobile.html"):
             with self.subTest(path=path):
                 lanes = set(plan(path)["lanes"])
                 self.assertFalse(lanes & MACOS_LANES, lanes & MACOS_LANES)
         self.assertEqual(set(plan("herdr-core/src/lib.rs")["lanes"]) & {"os-contract", "windows-e2e"}, {"os-contract", "windows-e2e"})
 
     def test_what_goes_into_a_package_plans_the_package_lane_and_nothing_else_does(self):
-        # The kit and hooks a packaged daemon runs reach macOS only through it.
+        # The kit and hooks a packaged daemon runs reach the packaged app only through it.
         for path in PACKAGE_INPUTS:
             with self.subTest(path=path):
                 self.assertIn("package", plan(path)["lanes"])
@@ -208,13 +233,23 @@ class Selection(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertNotIn("package", plan(path)["lanes"])
-        self.assertEqual(set(plan("hide-kit/src/lib.rs")["lanes"]) & MACOS_LANES, {"package"})
+        self.assertEqual(set(plan("hide-kit/src/lib.rs")["lanes"]) & MACOS_LANES, {"desktop-e2e", "package"})
         self.assertEqual(plan(".github/workflows/package.yml")["lanes"], ["policy", "package"])
 
-    def test_only_the_desktop_app_and_the_web_code_it_drives_ask_for_the_desktop_lane(self):
-        for path in ("desktop/src/main/index.ts", "desktop/static/icon.png", "desktop/e2e/desktop.spec.ts", "web/src/shortcuts.ts", "web/e2e/herdr-fixture.ts"):
+    def test_the_desktop_lane_follows_what_the_app_runs(self):
+        for path in (
+            "desktop/src/main/index.ts", "desktop/static/icon.png", "desktop/e2e/desktop.spec.ts", "web/src/shortcuts.ts",
+            "web/src/Overview.tsx", "web/index.html", "web/e2e/herdr-fixture.ts",
+            "herdr-core/src/lib.rs", "hided/src/lib.rs", "hide-platform/src/process.rs",
+        ):
             with self.subTest(path=path):
                 self.assertIn("desktop-e2e", plan(path)["lanes"])
+        for path in (
+            "web/e2e/new-tab.spec.ts", "web/playwright.config.ts", "web/mobile.html", "web/public/m/manifest.webmanifest",
+            "docs/TESTING.md", "design/tokens.json",
+        ):
+            with self.subTest(path=path):
+                self.assertNotIn("desktop-e2e", plan(path)["lanes"])
 
     def test_shared_unknown_and_unsafe_changes_run_everything(self):
         for entries in (
@@ -373,7 +408,7 @@ class NamedPaths(unittest.TestCase):
         expected = {
             "contracts/hided-ws.schema.json": ({"policy", "rust"}, ["herdr-core", "hide-agent-adapter"]),
             "contracts/snapshot-wire-enums.json": ({"policy", "rust", "checks"}, ["herdr-core"]),
-            "contracts/agent-adapters.json": ({"policy", "rust", "checks", "web-e2e"}, ["hide-agent-adapter"]),
+            "contracts/agent-adapters.json": ({"policy", "rust", "checks", "web-e2e", "desktop-e2e"}, ["hide-agent-adapter"]),
             "contracts/hide-cli.json": ({"policy", "rust"}, ["hided"]),
             "contracts/usage-coverage.json": ({"policy", "rust"}, ["hide-agent-adapter"]),
         }
@@ -387,7 +422,8 @@ class NamedPaths(unittest.TestCase):
                 # The claim behind it, from the sources rather than READERS:
                 # the crates whose code names the file are the ones planned, a
                 # web unit test that reads it brings `checks`, and web shell
-                # code brings `checks` and `web-e2e`. A reader anywhere else
+                # code brings `checks` and both suites of the shell,
+                # `web-e2e` and `desktop-e2e`. A reader anywhere else
                 # names a lane this rule does not plan.
                 read = set()
                 for source, (crate, text) in sources.items():
@@ -398,7 +434,7 @@ class NamedPaths(unittest.TestCase):
                     elif source.startswith("web/src/") and re.search(r"\.test\.tsx?$", source):
                         read.add("checks")
                     elif source.startswith("web/src/"):
-                        read |= {"checks", "web-e2e"}
+                        read |= {"checks", "web-e2e", "desktop-e2e"}
                     else:
                         read.add(f"unplanned reader: {source}")
                 self.assertEqual(read, (lanes - {"policy"}) | {f"crate:{name}" for name in packages})
@@ -556,9 +592,9 @@ class Workflows(unittest.TestCase):
         desktop = nightly[nightly.index("\n  desktop-e2e:\n"):nightly.index("\n  verify:\n")]
         self.assertIn("uses: ./.github/workflows/desktop-e2e.yml", desktop)
         self.assertIn("grep: ${{ matrix.system != 'macos' && '@platform' || '' }}", desktop)
-        # A desktop change plans the macOS desktop job; the OS contract's macOS leg does not bring it.
+        # A desktop change plans the macOS desktop job; a web spec, which the app does not run, does not.
         self.assertIn("desktop-e2e", plan("desktop/e2e/fixture.ts")["lanes"])
-        self.assertNotIn("desktop-e2e", plan("hide-platform/src/process.rs")["lanes"])
+        self.assertNotIn("desktop-e2e", plan("web/e2e/new-tab.spec.ts")["lanes"])
 
     def test_only_the_macos_lanes_name_a_macos_runner(self):
         # The macOS jobs are the ones in MACOS_LANES; no other job names a macOS
