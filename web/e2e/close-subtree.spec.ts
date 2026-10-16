@@ -145,22 +145,24 @@ test("the close sheet counts and brightens what needs the operator, stays live w
     const summary = sheet.locator("[data-subtree-summary]");
     await page.locator(`[data-terminal-host="${target}"]`).click();
     await page.keyboard.press(chord("close_tab"));
-    await expect(summary).toHaveAttribute("data-subtree-summary", "working 1 · waiting for you 1 · unread result 1");
+    await expect(summary).toHaveAttribute("data-subtree-summary", "waiting for you 1 · working 1");
     await expect(sheet.getByRole("heading")).toHaveText("Close this agent and 4 children?");
     await expect(sheet.locator(`[data-subtree-row="${working}"]`)).toHaveAttribute("data-subtree-state", "working");
     await expect(sheet.locator(`[data-subtree-row="${asking}"]`)).toHaveAttribute("data-subtree-state", "waiting");
-    await expect(sheet.locator(`[data-subtree-row="${finished}"]`)).toHaveAttribute("data-subtree-state", "unread");
-    await expect(sheet.locator(`[data-subtree-row="${quiet}"]`)).toHaveAttribute("data-subtree-state", "quiet");
-    // Bright rows keep full opacity; the quiet one is dimmed.
+    // A delegated child's finished turn is its parent's news, not a dot of its own (status-marks B24).
+    for (const pane of [finished, quiet]) await expect(sheet.locator(`[data-subtree-row="${pane}"]`)).toHaveAttribute("data-subtree-state", "quiet");
+    // Bright rows keep full opacity; the quiet ones are dimmed.
     const opacity = (pane: string) => sheet.locator(`[data-subtree-row="${pane}"]`).evaluate((row) => Number(getComputedStyle(row).opacity));
-    for (const pane of [working, asking, finished]) expect(await opacity(pane)).toBe(1);
-    expect(await opacity(quiet)).toBeLessThan(1);
+    for (const pane of [working, asking]) expect(await opacity(pane)).toBe(1);
+    for (const pane of [finished, quiet]) expect(await opacity(pane)).toBeLessThan(1);
     // Each row's accessible name says its state; only the rows that need the
     // operator show the word, and a quiet row's mark says it on hover.
     await expect(sheet.locator(`[data-subtree-row="${asking}"]`)).toHaveAttribute("aria-label", /병합 전 검증/);
-    for (const pane of [working, asking, finished]) await expect(sheet.locator(`[data-subtree-row="${pane}"] [data-subtree-status]`)).toHaveCount(1);
-    await expect(sheet.locator(`[data-subtree-row="${quiet}"] [data-subtree-status]`)).toHaveCount(0);
-    await expect(sheet.locator(`[data-subtree-row="${quiet}"] [data-row-mark-hint]`)).toHaveCount(1);
+    for (const pane of [working, asking]) await expect(sheet.locator(`[data-subtree-row="${pane}"] [data-subtree-status]`)).toHaveCount(1);
+    for (const pane of [finished, quiet]) {
+      await expect(sheet.locator(`[data-subtree-row="${pane}"] [data-subtree-status]`)).toHaveCount(0);
+      await expect(sheet.locator(`[data-subtree-row="${pane}"] [data-row-mark-hint]`)).toHaveCount(1);
+    }
     await screenshot(page, "close-subtree-states");
 
     // The list is live (D-20, B13): a child spawned while the sheet is open
