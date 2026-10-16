@@ -936,7 +936,7 @@ Whatever opens a card or a record opens it there, and the Workspace in front, it
 Its head reads `←`, the item's mark and name (`PR #N · <project>` or `기록 · <title>`), `↗` (GitHub) on a card, and `✕` (B47).
 Opening another item puts it in front, and `←` steps back through the ones opened before, at most 20, the oldest leaving first; `✕` empties the slot and the lane goes back to the tool it showed, or closes when it had none.
 While the slot holds something, the rail carries a fifth button above Memory with its mark, pressed while the lane draws the slot; calling a tool turns the lane to that tool and the button stays, so pressing it comes back to the slot (B46).
-A changed file pressed on a card opens its diff in this tab's Files and the lane turns to Files, the slot staying on the rail (B49).
+A changed file pressed on a card opens its diff in the checkout's Files and the lane turns to Files, the slot staying on the rail (B49).
 At Home, with no Workspace in front, a record opens in the Overview's panel beside the tabs and a PR mark opens the pull request's Workspace with its card in the slot (B17).
 A pane head's agent-tree button and a started backlog item (from ⌘K, a Factory card, a record or a missed line's `· 백로그 #N`) show the sidebar on 태스크 with the row unfolded and selected, and open the agent's record in the slot, or in the Overview's panel at Home (B40).
 
@@ -1010,7 +1010,7 @@ The tool and a card each hold that one demand, and it is released only when the 
 
 A card opens in the lane's 보기 slot (PRD sidebar-task-lens D-43, D-50): the Workspace in front, its Agent tab and the keyboard stay where they were, and the slot's head reads `←`, `PR #N · <project>`, `↗` (GitHub) and `✕`.
 A card opens from a row, a 태스크 row's PR mark, the sidebar's PR card, ⌘K, a session's PR chip, Memory's PR button, a session record's PR and Recent Panels, and `이슈 없는 PR N` opens the PRs tool instead; at Home the pull request's Workspace opens with the card in its lane.
-A stored `PR #N` tab from an older build is dropped when the app starts, and the rest of that tab's Views stay; a pull request on a device this core does not read opens on GitHub.
+A stored `PR #N` tab from an older build is dropped when the app starts, and the rest of the checkout's Views stay; a pull request on a device this core does not read opens on GitHub.
 
 From the top the card reads (B32-B36):
 
@@ -1021,7 +1021,7 @@ From the top the card reads (B32-B36):
 - three folded lines that open in place and stay as they were left while the app runs: `본문` with its `##` headings at the right, opening to a preview and `모두 보기` for the Markdown; `바뀐 파일 N` with +/- at the right, opening to the files with files `.gitattributes` marks `linguist-generated` and the common lock files gathered into `생성 파일 N개 접음`; and `연결` with `이슈 #N · 워크트리 N · 세션 N` at the right, opening to the link record (below).
 
 No part of the body is lifted out as the card's own judgment.
-A changed file opens as the Hide diff in this Agent tab's Files when the Workspace in front is a checkout of the pull request's branch and its committed changes already hold the file, and the lane turns to Files while the 보기 slot stays on the rail and brings the card back as it was (B49); otherwise it opens the pull request's files page on GitHub.
+A changed file opens as the Hide diff in the checkout's Files when the Workspace in front is a checkout of the pull request's branch and its committed changes already hold the file, and the lane turns to Files while the 보기 slot stays on the rail and brings the card back as it was (B49); otherwise it opens the pull request's files page on GitHub.
 A part that could not be read keeps the head, the decision box and the steps from the list, and says `읽지 못함 · 다시 시도` on that part (its folded line says `읽지 못함`), which reads again only that part.
 
 The decision box's button is the case's: `Merge` when the pull request can merge, in a method the repository allows (a choice when it allows several) or `머지 큐에 넣기` in a repository with a merge queue; `브랜치 업데이트` when it is behind; `GitHub에서 리뷰` and `에이전트에게 리뷰 맡기기` for a review asked of the operator; `맡기기` for a blocked pull request with no agent; `pane에서 답하기` for an asking agent; `pane 보기` for a stopped one; `리뷰어 지정` opens the pull request on GitHub; with no button of its own the case leaves GitHub to the slot's `↗`.

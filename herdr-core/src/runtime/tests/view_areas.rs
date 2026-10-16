@@ -2089,7 +2089,7 @@ fn a_pull_request_card_opens_in_the_detail_slot_and_never_as_a_view() {
     )));
     assert!(runtime.dispatch_json(&explorer_event("detail_back", serde_json::json!({}))));
     assert_eq!(runtime.snapshot.ui_state.detail.items, vec![item(42)]);
-    // A changed file opened from the card shows in this tab's Files, and the
+    // A changed file opened from the card shows in the checkout's Files, and the
     // card keeps its rail slot to come back to (B49).
     open(
         &mut runtime,

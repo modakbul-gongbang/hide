@@ -490,6 +490,11 @@ fn a_background_agents_open_joins_the_list_and_moves_nothing() {
         assert_eq!(bookmark(&runtime, &directory, TABS[1]), Some(c));
         focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
         assert_eq!(fronts(&runtime, &directory), ["c.md"], "B2 on its tab");
+        assert_eq!(
+            lane_tool(&runtime),
+            tool_of(&tool),
+            "the lane stays as it was"
+        );
     }
 }
 
