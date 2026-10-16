@@ -24,8 +24,12 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   initializeInterfaceI18n("en");
+  Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 400 });
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 200 });
 });
 afterEach(() => {
+  delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+  delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
   useShellStore.setState(savedShell, true);
   useFeedbackStore.setState(savedFeedback, true);
   vi.unstubAllGlobals();
@@ -62,8 +66,6 @@ it("keeps a picked image area outlined while its note is open and drops it with 
 it("keeps a browser page's picked place outlined over its still while the note is open", async () => {
   const key = "mac:d1";
   const { container, unmount } = await mount(<PageNoteLayer commentKey={key} displayId="d1" workspace={workspace} actions={actions} add={() => {}} done={() => {}} />);
-  Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 400 });
-  Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 200 });
   await act(async () => useFeedbackStore.setState({ browserNotes: { [key]: { kind: "pick", pick: 1, anchor: { kind: "element", selector: "#a" } as never, at: { left: 0.25, top: 0.5, width: 0.5, height: 0.25 } } } }));
   const [outline] = outlines(container);
   expect(outlines(container)).toHaveLength(1);
@@ -74,13 +76,10 @@ it("keeps a browser page's picked place outlined over its still while the note i
   await act(async () => useFeedbackStore.setState({ browserNotes: {} }));
   expect(outlines(container)).toHaveLength(0);
   await unmount();
-  delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
-  delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
 });
 
 function Lines({ marks }: { marks: (rows: number[]) => void }) {
-  const sent: unknown[] = [];
-  const view = { dispatch: (tr: { effects: { is: (e: unknown) => boolean; value: { marked: number[] } } }) => { if (tr.effects.is(setComments)) marks(tr.effects.value.marked); sent.push(tr); } } as unknown as EditorView;
+  const view = { dispatch: (tr: { effects: { is: (e: unknown) => boolean; value: { marked: number[] } } }) => { if (tr.effects.is(setComments)) marks(tr.effects.value.marked); } } as unknown as EditorView;
   const display = { id: "d1", kind: "file", path: "/repo/a.ts" } as unknown as ViewDisplaySnapshot;
   useLineComments({ view, display, workspace, actions, model: fileModel("a\nb\nc\nd\n"), rows: 4, saved: "a\nb\nc\nd\n" });
   return null;

@@ -745,7 +745,7 @@ export function RegionLayer({ displayId, path, source, workspace: view, actions 
             onPointerCancel={() => setDrag(null)}
           >
             {dragging ? <AreaOutline rect={dragging} /> : null}
-            {formHere && formHere.commentId === null && formHere.anchor.kind === "region" ? <AreaOutline rect={scaledRect(formHere.anchor.rect, page)} /> : null}
+            {!dragging && formHere && formHere.commentId === null && formHere.anchor.kind === "region" ? <AreaOutline rect={scaledRect(formHere.anchor.rect, page)} /> : null}
             {here.map((comment) => {
               const rect = scaledRect(comment.anchor.kind === "region" ? comment.anchor.rect : { x: 0, y: 0, width: 0, height: 0 }, page);
               return (
