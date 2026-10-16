@@ -117,8 +117,8 @@ export function dedent(text: string, firstLinePartial = false): string {
  * made, `first` the screen row of the first, `screen` every row's text now,
  * `expected` the shift the wheel asked for (positive moves text down). The
  * answer is the shift whose rows still on screen all read as they did,
- * nearest `expected` first, so repeated rows resolve to the shift the wheel
- * asked for. A selection with text needs a row of text to overlap: blank
+ * nearest `expected` first and never against its direction, so repeated rows
+ * resolve to the shift the wheel asked for. A selection with text needs a row of text to overlap: blank
  * rows alone match anywhere. Null when none of it is on screen any more or
  * no shift reads the same.
  */
@@ -129,6 +129,8 @@ export function followScroll(selected: string[], first: number, screen: string[]
   shifts.sort((a, b) => Math.abs(a - expected) - Math.abs(b - expected) || Math.abs(a) - Math.abs(b));
   const hasText = selected.some((text) => text !== "");
   for (const shift of shifts) {
+    // Text moves the way the wheel turned; a repeated row never says otherwise.
+    if (expected !== 0 && Math.sign(shift) === -Math.sign(expected)) continue;
     let overlap = 0;
     let overlapText = 0;
     let same = true;

@@ -351,6 +351,8 @@ function armFollow(instance: Instance, rows: number) {
   const shift = rows > 0 ? -Math.abs(rows) : Math.abs(rows);
   if (same) {
     known.expected += shift;
+    // Wheels that cancel out before any frame moved nothing.
+    if (known.expected === 0) instance.follow = null;
     return;
   }
   // A selection ending at column 0 does not take that row.
@@ -379,8 +381,12 @@ function followSelection(instance: Instance) {
     instance.follow = null;
     return;
   }
+  // Only the selected rows are read while they are unchanged, which is every
+  // chunk of output elsewhere on the screen.
+  const buffer = term.buffer.active;
+  const unchanged = follow.rows.every((text, index) => (buffer.getLine(follow.start.y + index)?.translateToString(true) ?? "") === text);
+  if (unchanged) return;
   const screen = screenRows(term);
-  if (follow.rows.every((text, index) => screen[follow.start.y + index] === text)) return;
   const shift = followScroll(follow.rows, follow.start.y, screen, follow.expected);
   if (shift === null) {
     instance.follow = null;

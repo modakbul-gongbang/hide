@@ -107,10 +107,16 @@ describe("followScroll", () => {
     expect(followScroll(["foo", ""], 10, ["", "a", "b", "c", "d", "e"], -50)).toBeNull();
   });
 
+  it("never takes a shift against the direction the wheel turned", () => {
+    const rule = "----";
+    expect(followScroll([rule], 2, [rule, "a", "b", "c", "d", "e"], 2)).toBeNull();
+  });
+
   it("takes repeated rows at the shift the wheel asked for", () => {
     const rule = "----";
     expect(followScroll([rule], 2, [rule, "a", rule, "b", rule, "c"], -2)).toBe(-2);
     expect(followScroll([rule], 2, [rule, "a", rule, "b", rule, "c"], 2)).toBe(2);
+    expect(followScroll([rule], 2, [rule, "a", rule, "b", rule, "c"], 3)).toBe(2);
   });
 });
 
