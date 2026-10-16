@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronRightIcon, ExternalLinkIcon, SparklesIcon, SquareTerminalIcon, TriangleAlertIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, EllipsisIcon, ExternalLinkIcon, SparklesIcon, SquareTerminalIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { lineTone, markTone, rowLine } from "./agentRow";
@@ -7,6 +7,7 @@ import { Elapsed } from "./components/elapsed";
 import { PrMark } from "./components/pr-mark";
 import { StatusMark } from "./components/status-mark";
 import { Button } from "./components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
 import { Hint } from "./components/ui/tooltip";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
@@ -148,6 +149,7 @@ function Head({ project, pr, entry, card, actions }: { project: Workspace; pr: P
             </Button>
           </Hint>
         ) : null}
+        <CardMenu project={project} pr={pr} entry={entry} />
       </div>
       <p className="flex min-w-0 flex-wrap items-center gap-x-xs gap-y-xxs font-mono text-micro text-muted-foreground" data-pr-card-facts="true">
         <span className="min-w-0 truncate" data-pr-card-branch={pr.head_branch}>{pr.head_branch}</span>
@@ -156,6 +158,27 @@ function Head({ project, pr, entry, card, actions }: { project: Workspace; pr: P
         {staleText ? <Hint label={staleText}><span role="img" aria-label={staleText} className="inline-flex text-warning" data-pr-card-stale="true"><TriangleAlertIcon aria-hidden="true" className="size-(--size-icon-sm)" /></span></Hint> : null}
       </p>
     </header>
+  );
+}
+
+/** `⋯` of the card (D-28): hand the PR to an agent, make an issue for it, copy the branch name. */
+function CardMenu({ project, pr, entry }: { project: Workspace; pr: PullRequest; entry: PrEntry | null }) {
+  const { t } = useInterfaceTranslation();
+  const merged = pr.state === "merged" || pr.state === "closed";
+  const linkable = !merged && !entry?.row.issue;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon-sm" className="shrink-0" aria-label={t("work.card.menu")} data-pr-card-menu={pr.number}>
+          <EllipsisIcon aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {!merged ? <DropdownMenuItem onSelect={() => useUiStore.getState().setWorkspaceDialog({ kind: "pr_delegate", workspaceId: project.id, prNumber: pr.number })}>{t("prList.delegate")}</DropdownMenuItem> : null}
+        {linkable ? <DropdownMenuItem onSelect={() => useUiStore.getState().setWorkspaceDialog({ kind: "pr_new_issue", workspaceId: project.id, prNumber: pr.number })}>{t("prList.newIssue")}</DropdownMenuItem> : null}
+        <DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(pr.head_branch ?? "")} data-pr-card-copy="true">{t("prList.copyBranch")}</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

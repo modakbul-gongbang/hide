@@ -216,6 +216,11 @@ test("the card opens in the 보기 slot and Merge goes out on the head it showed
     await expect(card).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('[data-view-tab-bar] [role="tab"]', { hasText: "#31" })).toHaveCount(0);
     await expect(card.locator('[data-pr-card-reason="merge"]')).toBeVisible();
+    // The head's ⋯ hands the pull request to an agent, makes an issue for it
+    // or copies its branch name (D-28).
+    await card.locator('[data-pr-card-menu="31"]').click();
+    await expect(page.getByRole("menuitem")).toHaveText(["Assign", "Create new issue", "Copy branch name"]);
+    await page.keyboard.press("Escape");
     // The four steps fill to review for a pull request that can merge (B34).
     await expect(card.locator("[data-pr-card-steps]")).toHaveAttribute("data-pr-card-steps", "3");
     await expect(card.locator("[data-pr-card-files]")).toHaveAttribute("data-pr-card-files", "3", { timeout: 30_000 });
@@ -333,6 +338,10 @@ test("a merged pull request opens its card and draws its parts, with no Merge", 
     await unfold(card, "body");
     await expect(card.locator("[data-pr-card-preview]")).toBeVisible();
     await expect(card.locator("[data-pr-card-merge]")).toHaveCount(0);
+    // A finished pull request's ⋯ keeps only the branch name to copy (D-28).
+    await card.locator('[data-pr-card-menu="37"]').click();
+    await expect(page.getByRole("menuitem")).toHaveText(["Copy branch name"]);
+    await page.keyboard.press("Escape");
   });
 });
 
