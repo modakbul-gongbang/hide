@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dedent, rowContinues, selectionToText, type CellRow } from "./selection";
+import { dedent, followScroll, movedSelection, rowContinues, selectionToText, type CellRow } from "./selection";
 
 /** A row of `width` cells holding `text`, padded with written spaces the way a Herdr frame draws it. */
 function row(text: string, width: number): CellRow {
@@ -73,5 +73,69 @@ describe("selectionToText", () => {
     const rows: CellRow = ["a", "", "b", "", ""];
     expect(selectionToText([rows], 0, 5)).toBe("a b");
     expect(rowContinues(rows)).toBe(false);
+  });
+});
+
+describe("followScroll", () => {
+  const screen = ["a", "b", "c", "d", "e", "f"];
+
+  it("finds the rows where the wheel moved the text", () => {
+    // The text scrolled up by two rows: what was rows 3-4 is now rows 1-2.
+    expect(followScroll(["d", "e"], 3, screen.slice(2).concat(["x", "y"]), -2)).toBe(-2);
+    // It scrolled down by one row.
+    expect(followScroll(["b", "c"], 1, ["z"].concat(screen.slice(0, 5)), 1)).toBe(1);
+  });
+
+  it("finds a shift smaller than the wheel asked for at the end of the history", () => {
+    expect(followScroll(["d", "e"], 3, screen.slice(1).concat(["x"]), -5)).toBe(-1);
+  });
+
+  it("reads blank rows as the shift the wheel asked for", () => {
+    expect(followScroll(["", ""], 2, ["a", "", "", "", "", ""], 1)).toBe(1);
+  });
+
+  it("keeps the part of the selection still on screen", () => {
+    // The first row left the top; the second is now row 0.
+    expect(followScroll(["a", "b"], 0, ["b", "c", "d", "e", "f", "g"], -1)).toBe(-1);
+  });
+
+  it("gives up when the text is no longer on screen", () => {
+    expect(followScroll(["a", "b"], 0, ["m", "n", "o", "p", "q", "r"], 3)).toBeNull();
+  });
+
+  it("does not take blank rows alone for the text it followed", () => {
+    expect(followScroll(["foo", ""], 10, ["", "a", "b", "c", "d", "e"], -50)).toBeNull();
+  });
+
+  it("never takes a shift against the direction the wheel turned", () => {
+    const rule = "----";
+    expect(followScroll([rule], 2, [rule, "a", "b", "c", "d", "e"], 2)).toBeNull();
+  });
+
+  it("takes repeated rows at the shift the wheel asked for", () => {
+    const rule = "----";
+    expect(followScroll([rule], 2, [rule, "a", rule, "b", rule, "c"], -2)).toBe(-2);
+    expect(followScroll([rule], 2, [rule, "a", rule, "b", rule, "c"], 2)).toBe(2);
+    expect(followScroll([rule], 2, [rule, "a", rule, "b", rule, "c"], 3)).toBe(2);
+  });
+});
+
+describe("movedSelection", () => {
+  const start = { x: 3, y: 4 };
+  const end = { x: 7, y: 6 };
+
+  it("moves the whole selection when it stays on screen", () => {
+    expect(movedSelection(start, end, 2, 20, 10)).toEqual({ column: 3, row: 6, length: 24 });
+    expect(movedSelection(start, end, -2, 20, 10)).toEqual({ column: 3, row: 2, length: 24 });
+  });
+
+  it("starts at column 0 when the top scrolled off and ends at the last column when the bottom did", () => {
+    expect(movedSelection(start, end, -5, 20, 10)).toEqual({ column: 0, row: 0, length: 17 });
+    expect(movedSelection(start, end, 14, 20, 10)).toEqual({ column: 3, row: 18, length: 17 });
+  });
+
+  it("selects nothing once every row left the screen", () => {
+    expect(movedSelection(start, end, -7, 20, 10)).toBeNull();
+    expect(movedSelection(start, end, 16, 20, 10)).toBeNull();
   });
 });

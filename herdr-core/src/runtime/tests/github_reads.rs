@@ -6,7 +6,7 @@ use super::*;
 use crate::github_store::GithubStore;
 use crate::labels::worker::SightedPullRequest;
 use crate::model::{
-    GithubProjectSnapshot, GithubSnapshot, GithubStatusSnapshot, PullRequestBadge,
+    ExtraQuery, GithubProjectSnapshot, GithubSnapshot, GithubStatusSnapshot, PullRequestBadge,
     PullRequestChecks, PullRequestSnapshot,
 };
 use crate::runtime::projects::{GithubClock, LookRead};
@@ -528,6 +528,67 @@ fn a_restart_draws_the_last_answer_as_stale_and_a_failed_read_keeps_it() {
     let row = &second.snapshot.navigator.workspaces[0].checkouts[0];
     assert!(!row.github.stale);
     assert_eq!(row.github.last_success_at_unix_ms, Some(2_000));
+}
+
+#[test]
+fn a_read_with_an_unanswered_extra_question_is_current_and_a_later_failure_keeps_it_named() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![git_project("a", "/tmp/a", "feature")];
+    let mut partial = read_ok(
+        "/tmp/a",
+        vec![pull_request(7, "feature", PullRequestBadge::Open)],
+        1_000,
+    );
+    partial.status.unread_queries = vec![ExtraQuery::MergeQueue];
+    assert!(runtime.ingest_github_answer(
+        GithubSnapshot {
+            projects: vec![partial],
+        },
+        true
+    ));
+    let row = &runtime.snapshot.navigator.workspaces[0].checkouts[0];
+    assert_eq!(
+        row.pull_request
+            .as_ref()
+            .map(|pull_request| pull_request.number),
+        Some(7)
+    );
+    assert!(!row.github.stale, "the list itself is current");
+    assert_eq!(row.github.unread_queries, vec![ExtraQuery::MergeQueue]);
+
+    // The next read fails outright: the list stays and so does the name of
+    // the question that was already unanswered in it.
+    assert!(runtime.ingest_github_answer(
+        GithubSnapshot {
+            projects: vec![read_failed("/tmp/a")],
+        },
+        true
+    ));
+    let row = &runtime.snapshot.navigator.workspaces[0].checkouts[0];
+    assert_eq!(
+        row.pull_request
+            .as_ref()
+            .map(|pull_request| pull_request.number),
+        Some(7)
+    );
+    assert!(row.github.stale);
+    assert_eq!(row.github.last_success_at_unix_ms, Some(1_000));
+    assert_eq!(row.github.unread_queries, vec![ExtraQuery::MergeQueue]);
+
+    // A read that answers everything clears it.
+    assert!(runtime.ingest_github_answer(
+        GithubSnapshot {
+            projects: vec![read_ok(
+                "/tmp/a",
+                vec![pull_request(7, "feature", PullRequestBadge::Open)],
+                2_000
+            )],
+        },
+        true
+    ));
+    let row = &runtime.snapshot.navigator.workspaces[0].checkouts[0];
+    assert!(!row.github.stale);
+    assert!(row.github.unread_queries.is_empty());
 }
 
 fn many_projects(runtime: &mut Runtime, count: usize) {

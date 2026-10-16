@@ -105,7 +105,9 @@ use crate::model::{
     SessionRowSnapshot, SidebarAgentSnapshot, Snapshot, StripTabKind, StripTabSnapshot, Surface,
     TabSnapshot, TerminalPaneSnapshot, UiStateSnapshot, WorkspaceSnapshot, clamp_pane_text_scale,
 };
-use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
+use crate::recent_closed::{
+    ClosedAgent, ClosedContext, ClosedItem, ClosedPane, ClosedTabName, push_bounded,
+};
 use crate::remote::DeviceConnector;
 use crate::sidebar::{SessionSnapshotPayload, project_agents};
 use crate::{environment, files, live, persistence, pet, session_sync, workspace};
@@ -380,6 +382,16 @@ pub(crate) enum ExplorerChange {
         path: String,
         destination: String,
     },
+    /// `path` copied into the folder `destination`.
+    Copy {
+        path: String,
+        destination: String,
+    },
+    /// A drop's items written into the folder `destination`.
+    Import {
+        destination: String,
+        items: Vec<files::ImportItem>,
+    },
     Trash {
         path: String,
         select_after: String,
@@ -393,14 +405,19 @@ impl ExplorerChange {
             Self::Create { kind, .. } => *kind,
             Self::Rename { .. } => files::ExplorerOperationKind::PathRename,
             Self::Move { .. } => files::ExplorerOperationKind::PathMove,
+            Self::Copy { .. } => files::ExplorerOperationKind::PathCopy,
+            Self::Import { .. } => files::ExplorerOperationKind::PathImport,
             Self::Trash { .. } => files::ExplorerOperationKind::PathTrash,
         }
     }
 
-    /// The row the change started from, where a refusal is shown.
+    /// The row the change started from, where a refusal is shown: the folder
+    /// a copy or a drop was meant to land in, since that is where the
+    /// operator pasted or dropped.
     fn started_from(&self) -> &str {
         match self {
             Self::Create { parent, .. } => parent,
+            Self::Copy { destination, .. } | Self::Import { destination, .. } => destination,
             Self::Rename { path, .. } | Self::Move { path, .. } | Self::Trash { path, .. } => path,
         }
     }
@@ -413,6 +430,12 @@ impl ExplorerChange {
             Self::Rename { path, name } => files::ExplorerOperation::rename(root, path, name),
             Self::Move { path, destination } => {
                 files::ExplorerOperation::move_into(root, path, destination)
+            }
+            Self::Copy { path, destination } => {
+                files::ExplorerOperation::copy_into(root, path, destination)
+            }
+            Self::Import { destination, items } => {
+                files::ExplorerOperation::import_into(root, destination, items.clone())
             }
             Self::Trash {
                 path,
