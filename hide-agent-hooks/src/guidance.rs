@@ -945,7 +945,11 @@ pub fn install(
                 .to_owned(),
         });
     }
-    install_any(agent, home, helper)
+    let outcome = install_any(agent, home, helper)?;
+    if agent == GuidanceAgent::Antigravity {
+        crate::antigravity_trust::prepare_read_only(home)?;
+    }
+    Ok(outcome)
 }
 
 /// [`install`] without the retirement and system checks; the tests use it to
@@ -1042,10 +1046,12 @@ pub fn remove(agent: GuidanceAgent, home: &Path) -> Result<RemoveOutcome, Instal
         total.removed_entries += outcome.removed_entries;
         total.preserved_entries += outcome.preserved_entries;
     }
-    // Switching agy off also takes out the folder trust Hide added (D-08).
+    // Switching agy off also takes out the folder trust Hide added (D-08)
+    // and Hide AI's folder for agy (D-09).
     if agent == GuidanceAgent::Antigravity {
         let forgotten = crate::antigravity_trust::forget_all(home)?;
-        total.changed |= forgotten > 0;
+        let removed = crate::antigravity_trust::remove_read_only(home)?;
+        total.changed |= forgotten > 0 || removed;
         total.removed_entries += forgotten;
     }
     Ok(total)

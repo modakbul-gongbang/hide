@@ -1,4 +1,4 @@
-import { agentMarkOf } from "./agentLogos";
+import { agentMarkOf, monogram } from "./agentLogos";
 import hideMark from "./assets/hide-mark.png";
 import { cn } from "./lib/utils";
 
@@ -55,7 +55,7 @@ export function AgentMark({ kind, className = "", hideAi = null }: { kind: strin
 
 function PlainMark({ kind, className }: { kind: string | null | undefined; className: string }) {
   const mark = agentMarkOf(kind);
-  if (mark) {
+  if (mark?.logo) {
     return (
       <img
         src={mark.logo}
@@ -64,6 +64,17 @@ function PlainMark({ kind, className }: { kind: string | null | undefined; class
         data-agent-mark={mark.id}
         className={`h-[var(--size-agent-badge-compact)] w-[var(--size-agent-badge-compact)] shrink-0 rounded-xs object-contain ${mark.plated ? "bg-(--logo-plate) p-xxs" : ""} ${className}`}
       />
+    );
+  }
+  if (mark) {
+    return (
+      <span
+        aria-hidden="true"
+        data-agent-mark={mark.id}
+        className={`flex h-[var(--size-agent-badge-compact)] w-[var(--size-agent-badge-compact)] shrink-0 items-center justify-center rounded-xs bg-(--logo-plate) font-mono text-micro font-semibold text-muted-foreground ${className}`}
+      >
+        {monogram(mark.label)}
+      </span>
     );
   }
   return (

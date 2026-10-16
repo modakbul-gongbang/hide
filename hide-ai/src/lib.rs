@@ -5,6 +5,7 @@
 //! cancellation, structured errors and duplicate suppression, and hands back
 //! a schema-validated [`serde_json::Value`]. No feature type lives here.
 
+mod antigravity;
 mod claude;
 mod codex;
 mod codex_home;
@@ -23,6 +24,10 @@ mod text_cli;
 mod unproven;
 mod usage_limit;
 
+pub use antigravity::{
+    AntigravityCliBackend, READ_ONLY_HOOKS, read_only_hooks_file, read_only_prepared,
+    read_only_workspace,
+};
 pub use claude::{ClaudeCliBackend, ClaudeConfig, USAGE_ENVIRONMENT, UsageError};
 pub use codex::{CodexAppServerBackend, CodexConfig};
 pub use gemini::GeminiCliBackend;

@@ -1216,6 +1216,7 @@ name = "hide-agent-hooks"
 version = "0.1.0"
 dependencies = [
  "hide-agent-adapter",
+ "hide-ai",
  "hide-herdr-client",
  "hide-memory",
  "hide-platform",

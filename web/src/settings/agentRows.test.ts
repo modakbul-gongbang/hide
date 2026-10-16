@@ -32,10 +32,10 @@ const device = (patch: Partial<Device> & { agents?: KitAgent[]; unavailable?: st
 };
 
 describe("the agents of a machine (B8, B9, D-06)", () => {
-  it("lists the seven supported agents in their order and nothing a machine still reports from before", () => {
+  it("lists the eight supported agents in their order and nothing a machine still reports from before", () => {
     const reported = ["cursor", "kiro", "gemini-cli", "omp", "claude-code", "amp", "pi", "codex"].map((id) => agent(id));
     expect(supportedAgents(reported).map((row) => row.id)).toEqual(["claude-code", "codex", "pi", "omp", "cursor"]);
-    expect(SUPPORTED_AGENTS).toEqual(["claude-code", "codex", "grok", "opencode", "pi", "omp", "cursor"]);
+    expect(SUPPORTED_AGENTS).toEqual(["claude-code", "codex", "grok", "opencode", "pi", "omp", "cursor", "antigravity"]);
   });
 
   it("calls an agent installed only when its program was found; an agent the operator switched on keeps its switch after its program goes (B9)", () => {

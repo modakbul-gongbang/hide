@@ -154,6 +154,63 @@ pub fn trust(home: &Path, folder: &Path) -> Result<(), InstallFailure> {
     write_document(&settings, &document)
 }
 
+/// Makes Hide AI's tool-free folder for agy (`hide_ai::read_only_workspace`)
+/// with its refuse-every-tool hook file, and records agy's trust of it, which
+/// is what makes agy load that hook (PRD antigravity-first-class D-09). Done
+/// when Hide installs agy's hook, once agy has made its own settings folder;
+/// switching agy off takes both out ([`remove_read_only`]).
+pub fn prepare_read_only(home: &Path) -> Result<(), InstallFailure> {
+    if !settings_path(home).parent().is_some_and(Path::is_dir) {
+        return Ok(());
+    }
+    let folder = hide_ai::read_only_workspace(home);
+    let hooks = hide_ai::read_only_hooks_file(&folder);
+    let failure = |detail: String| InstallFailure::NotWritable {
+        path: hooks.display().to_string(),
+        detail,
+    };
+    if let Some(parent) = hooks.parent() {
+        hide_platform::fs::private::create_dir_all(parent)
+            .map_err(|error| failure(error.to_string()))?;
+    }
+    if std::fs::read(&hooks).ok().as_deref() != Some(hide_ai::READ_ONLY_HOOKS.as_bytes()) {
+        hide_platform::fs::atomic::write_file(
+            &hooks,
+            hide_ai::READ_ONLY_HOOKS.as_bytes(),
+            hide_platform::fs::Access::Private,
+        )
+        .map_err(|error| failure(error.to_string()))?;
+    }
+    let canonical = hide_platform::fs::identity::canonical(&folder)
+        .map_err(|error| failure(error.to_string()))?;
+    trust(home, &canonical)
+}
+
+/// Whether Hide AI's agy folder is as [`prepare_read_only`] leaves it.
+pub fn read_only_ready(home: &Path) -> bool {
+    hide_ai::read_only_prepared(home).is_ok()
+}
+
+/// Whether [`prepare_read_only`] has something to do: agy has made its
+/// settings folder and Hide AI's folder is not ready.
+pub fn read_only_due(home: &Path) -> bool {
+    settings_path(home).parent().is_some_and(Path::is_dir) && !read_only_ready(home)
+}
+
+/// Takes Hide AI's agy folder away; its trust goes with [`forget_all`].
+/// Answers whether there was one.
+pub fn remove_read_only(home: &Path) -> Result<bool, InstallFailure> {
+    let folder = hide_ai::read_only_workspace(home);
+    match std::fs::remove_dir_all(&folder) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(InstallFailure::NotWritable {
+            path: folder.display().to_string(),
+            detail: error.to_string(),
+        }),
+    }
+}
+
 /// Takes out the trust Hide added for `folder`, as when Hide removes the
 /// worktree; a folder Hide did not add is left alone. Answers how many
 /// entries left agy's settings.
@@ -246,6 +303,23 @@ mod tests {
         assert_eq!(forget_all(home.path()).unwrap(), 0);
         assert!(!home.path().join(".hide").exists());
         assert!(!settings_path(home.path()).exists());
+    }
+
+    #[test]
+    fn hide_ai_s_folder_is_made_trusted_and_taken_away_with_agy() {
+        let home = home();
+        prepare_read_only(home.path()).unwrap();
+        prepare_read_only(home.path()).unwrap();
+        assert!(read_only_ready(home.path()));
+        assert_eq!(read_record(home.path()).unwrap().len(), 1);
+        assert_eq!(forget_all(home.path()).unwrap(), 1);
+        assert!(remove_read_only(home.path()).unwrap());
+        assert!(!read_only_ready(home.path()));
+        assert!(!remove_read_only(home.path()).unwrap());
+        // Before agy has made its settings folder there is nothing to trust in.
+        let fresh = tempfile::tempdir().unwrap();
+        prepare_read_only(fresh.path()).unwrap();
+        assert!(!fresh.path().join(".hide").exists());
     }
 
     #[test]

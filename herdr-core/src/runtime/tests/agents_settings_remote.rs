@@ -595,7 +595,8 @@ fn the_snapshot_carries_the_choice_the_providers_and_their_models() {
             "grok",
             "opencode",
             "pi",
-            "cursor"
+            "cursor",
+            "antigravity"
         ],
         "every registered provider is a row, in the registry order"
     );

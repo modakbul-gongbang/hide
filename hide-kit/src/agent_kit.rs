@@ -158,6 +158,14 @@ fn observe_guidance(target: &KitTarget, adapter: &AgentAdapter, agent: GuidanceA
                     "the hook runs {found}, not this build's {}",
                     wanted.display()
                 )),
+                // Hide AI's agy folder goes in with agy's hook, so a pass
+                // after it went missing or lost agy's trust writes it again.
+                Some(_)
+                    if agent == GuidanceAgent::Antigravity
+                        && hide_agent_hooks::antigravity_trust::read_only_due(&target.home) =>
+                {
+                    Observed::Stale("Hide AI's tool-free folder for agy is missing or untrusted".to_owned())
+                }
                 Some(_) if guidance::matches_install(agent, &target.home, &wanted) => {
                     Observed::Current
                 }
