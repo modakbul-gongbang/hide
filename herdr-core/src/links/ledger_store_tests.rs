@@ -784,6 +784,107 @@ fn a_done_task_waits_for_every_assigned_pr_to_merge() {
     assert!(store.ledger_record(&session()).unwrap().tasks[0].done);
 }
 
+/// One finished task per offset: the request, then an END that opens it as
+/// new work and ends done.
+fn finish_task(store: &mut LinkStore, offset: u64, name: &str) {
+    request(store, offset, name);
+    end(
+        store,
+        offset,
+        TurnJudgment {
+            task: TaskDecision::New { name: name.into() },
+            ..Default::default()
+        },
+    );
+}
+
+#[test]
+fn a_finished_task_asked_for_again_is_reopened_not_dropped() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    chapter(&mut store);
+    finish_task(&mut store, 1, "설치 빌드 실측");
+
+    // The judgment is shown the finished task, so it can name it.
+    let context = store.ledger_context(&session()).unwrap();
+    assert!(context.open_tasks.is_empty());
+    assert_eq!(
+        context
+            .finished_tasks
+            .iter()
+            .map(|task| (task.id.as_str(), task.name.as_str()))
+            .collect::<Vec<_>>(),
+        [("task-1", "설치 빌드 실측")]
+    );
+
+    // The operator asks for the same work again; the verdict continues it.
+    request(&mut store, 2, "설치하고 재측정해줘");
+    store
+        .apply_ledger_update(&LedgerUpdate::TurnEnd {
+            session: session(),
+            offset: 2,
+            at_unix_ms: 2_500,
+            end: LabelEnd::Waiting,
+            work_author: true,
+            turn_witness: None,
+            judgment: TurnJudgment {
+                task: TaskDecision::Continue {
+                    ids: vec!["task-1".into()],
+                },
+                ..Default::default()
+            },
+        })
+        .unwrap();
+
+    // The session record lists the one task as open again, with the new
+    // request under it, instead of showing nothing for the second request.
+    let record = store.ledger_record(&session()).unwrap();
+    assert_eq!(record.tasks.len(), 1);
+    assert!(!record.tasks[0].done);
+    assert_eq!(record.tasks[0].end, LabelEnd::Waiting);
+    let asked_again = record
+        .requests
+        .iter()
+        .find(|request| request.offset == 2)
+        .unwrap();
+    assert_eq!(asked_again.task_ids, ["task-1"]);
+    let context = store.ledger_context(&session()).unwrap();
+    assert_eq!(context.open_tasks.len(), 1);
+    assert!(context.finished_tasks.is_empty());
+
+    // Finishing it again closes it again.
+    request(&mut store, 3, "고마워 끝났네");
+    end(
+        &mut store,
+        3,
+        TurnJudgment {
+            task: TaskDecision::Continue {
+                ids: vec!["task-1".into()],
+            },
+            ..Default::default()
+        },
+    );
+    assert!(store.ledger_record(&session()).unwrap().tasks[0].done);
+}
+
+#[test]
+fn the_judgment_is_shown_only_the_three_newest_finished_tasks() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    chapter(&mut store);
+    for offset in 1..=5 {
+        finish_task(&mut store, offset, &format!("작업 {offset}"));
+    }
+    let names = store
+        .ledger_context(&session())
+        .unwrap()
+        .finished_tasks
+        .into_iter()
+        .map(|task| task.name)
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["작업 5", "작업 4", "작업 3"]);
+}
+
 #[test]
 fn request_retention_discards_the_oldest_and_keeps_recent_questions() {
     let directory = tempfile::tempdir().unwrap();

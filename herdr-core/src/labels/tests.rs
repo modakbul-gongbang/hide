@@ -665,6 +665,63 @@ fn an_end_waits_for_parent_authority_after_a_cold_context() {
 }
 
 #[test]
+fn the_end_request_names_the_finished_tasks_a_re_request_may_continue() {
+    use crate::links::ledger::{LedgerContext, SessionIdentity};
+    let harness = Harness::new();
+    let store = harness.store();
+    let client = crate::links::worker::LinkClient::full_mailbox_for_test();
+    let node: Arc<dyn crate::node_access::NodeLink> = Arc::new(hide_node::Local::new(Some(
+        harness.home.path().to_path_buf(),
+    )));
+    let (mut worker, woken) = harness.spawn_with_ledger(
+        Arc::clone(&store),
+        LOCAL_TARGET,
+        "local.sock",
+        Arc::new(NodeTranscripts::new(Box::new(move || {
+            Ok(Arc::clone(&node))
+        }))),
+        Arc::new(Mutex::new(Some(client.clone()))),
+    );
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[
+            ("user", "설치하고 재측정해줘"),
+            ("assistant", "다시 재측정했습니다"),
+        ],
+    );
+    client.prime_context_for_test(
+        SessionIdentity {
+            device_id: LOCAL_TARGET.into(),
+            agent: "claude".into(),
+            session_id: "native-a".into(),
+        },
+        LedgerContext {
+            finished_tasks: vec![crate::links::ledger::WorkTask {
+                id: "task-1".into(),
+                chapter_id: "chapter-1".into(),
+                name: "설치 빌드 실측".into(),
+                at_unix_ms: 1,
+                last_at_unix_ms: 2,
+                end: super::analysis::LabelEnd::Done,
+                done: true,
+            }],
+            ..Default::default()
+        },
+    );
+    harness.backend.answer("설치 빌드 실측 작업", "done", "");
+    observe(&mut worker, &agent(&path, "idle", 3));
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 1);
+    assert!(
+        harness.backend.inputs.lock().unwrap()[0].contains(
+            r#"<finished-tasks>[{"id":"task-1","name":"설치 빌드 실측"}]</finished-tasks>"#
+        ),
+        "the judgment sees the finished task and its ID"
+    );
+}
+
+#[test]
 fn a_request_repeated_word_for_word_is_a_new_turn_and_is_asked_again() {
     let harness = Harness::new();
     let (mut worker, woken, _) = harness.worker(harness.store());

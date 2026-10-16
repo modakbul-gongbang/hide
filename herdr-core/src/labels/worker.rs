@@ -1445,18 +1445,7 @@ impl LabelWorker {
             .and_then(|event| hide_session::label_transcript::work_turn(events, event.offset))
             .map(|turn| turn.witness());
         if phase == AnalysisPhase::TurnEnd {
-            let tasks = ledger
-                .open_tasks
-                .iter()
-                .map(|task| json!({"id":task.id,"name":task.name}))
-                .collect::<Vec<_>>();
-            let missed = ledger
-                .open_missed
-                .iter()
-                .map(|missed| json!({"id":missed.id,"kind":missed.kind,"text":missed.text}))
-                .collect::<Vec<_>>();
-            context.push_str(&format!("\n<work-author>{work_author}</work-author>\n<open-tasks>{}</open-tasks>\n<open-missed>{}</open-missed>",
-                super::analysis::redact(&json!(tasks).to_string()),super::analysis::redact(&json!(missed).to_string())));
+            context.push_str(&super::analysis::work_context(work_author, &ledger));
         }
         let generation = pane.generation;
         let retry = if phase == AnalysisPhase::TurnEnd && pane.end_retried == Some(turn) {
