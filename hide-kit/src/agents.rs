@@ -37,30 +37,42 @@ pub enum SkillDir {
     Shared,
     /// `~/.claude/skills`: Claude Code does not read the shared folder.
     Claude,
+    /// `~/.gemini/antigravity-cli/skills`: agy reads neither of the others.
+    Antigravity,
 }
 
 impl SkillDir {
-    pub const ALL: [SkillDir; 2] = [Self::Shared, Self::Claude];
+    pub const ALL: [SkillDir; 3] = [Self::Shared, Self::Claude, Self::Antigravity];
 
     /// The stable name the record carries.
     pub fn code(self) -> &'static str {
         match self {
             Self::Shared => "agents",
             Self::Claude => "claude",
+            Self::Antigravity => "antigravity",
         }
     }
 
-    fn relative(self) -> [&'static str; 2] {
+    /// The agent's own folder the skill folder sits in (none for the shared
+    /// one), and the skill folder's name inside it.
+    fn relative(self) -> (&'static [&'static str], &'static str) {
         match self {
-            Self::Shared => [".agents", "skills"],
-            Self::Claude => [".claude", "skills"],
+            Self::Shared => (&[".agents"], "skills"),
+            Self::Claude => (&[".claude"], "skills"),
+            Self::Antigravity => (&[".gemini", "antigravity-cli"], "skills"),
         }
+    }
+
+    fn folder(self, home: &Path) -> PathBuf {
+        self.relative()
+            .0
+            .iter()
+            .fold(home.to_owned(), |path, part| path.join(part))
     }
 
     /// `~/<folder>/skills`.
     pub fn path(self, home: &Path) -> PathBuf {
-        let [folder, skills] = self.relative();
-        home.join(folder).join(skills)
+        self.folder(home).join(self.relative().1)
     }
 
     /// Whether the folder can be written without creating the agent's own
@@ -70,8 +82,7 @@ impl SkillDir {
     /// pass that made it would let the next pass write a hook this one did
     /// not, and a second apply would not be a no-op.
     pub(crate) fn writable(self, home: &Path) -> bool {
-        let [folder, _] = self.relative();
-        self == Self::Shared || home.join(folder).is_dir()
+        self == Self::Shared || self.folder(home).is_dir()
     }
 
     fn skill_file(self, home: &Path) -> PathBuf {
@@ -143,6 +154,7 @@ const fn project(declaration: &'static hide_agent_adapter::AgentAdapter) -> Agen
         skill_dir: match declaration.skill_location {
             SkillLocation::Shared => SkillDir::Shared,
             SkillLocation::Claude => SkillDir::Claude,
+            SkillLocation::Antigravity => SkillDir::Antigravity,
         },
         hook: match declaration.hook {
             HookInstall::Runtime(HookDialect::ClaudeCode) => {
@@ -156,14 +168,19 @@ const fn project(declaration: &'static hide_agent_adapter::AgentAdapter) -> Agen
             HookInstall::Runtime(HookDialect::OpenCode | HookDialect::Pi | HookDialect::Omp) => {
                 panic!("this agent's hook is a script file of Hide's, not a settings file")
             }
-            HookInstall::Runtime(HookDialect::Grok | HookDialect::Cursor) => {
-                panic!("Grok and Cursor hooks are installed as a guidance file")
+            HookInstall::Runtime(
+                HookDialect::Grok | HookDialect::Cursor | HookDialect::Antigravity,
+            ) => {
+                panic!("Grok's, Cursor's and agy's hooks are installed as a guidance file")
             }
             HookInstall::Guidance(GuidanceDialect::Cursor) => {
                 HookSupport::Guidance(GuidanceAgent::Cursor)
             }
             HookInstall::Guidance(GuidanceDialect::Grok) => {
                 HookSupport::Guidance(GuidanceAgent::Grok)
+            }
+            HookInstall::Guidance(GuidanceDialect::Antigravity) => {
+                HookSupport::Guidance(GuidanceAgent::Antigravity)
             }
             HookInstall::Plugin(dialect) => HookSupport::Plugin(dialect),
             HookInstall::None => HookSupport::None,
