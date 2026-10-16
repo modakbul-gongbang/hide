@@ -798,9 +798,6 @@ fn read_connection(
             Some(_) => {}
         }
     }
-    if turns.capacity_exceeded() {
-        return Err(SkipReason::UserTurnCapacity.as_str().to_owned());
-    }
     let has_more = over_budget || (unfinished.is_none() && visited == MESSAGES_PER_READ);
     let skipped_lines = transcript.skipped.values().sum();
     let skipped_reasons = transcript
