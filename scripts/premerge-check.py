@@ -50,6 +50,7 @@ CHECKS = (
     ("worktree removal boundary", ".", ["bash", "scripts/check-worktree-removal-boundary.sh"]),
     ("herdr pin single source", ".", ["zsh", "scripts/check-herdr-pin-single-source.sh"]),
     ("core touches no machine", ".", ["python3", "scripts/check-core-touches-no-machine.py"]),
+    ("ai prompt language", ".", ["python3", "scripts/check-ai-prompt-language.py"]),
 )
 
 # A check that runs this long has stalled; the answer is undecided, not a pass.
