@@ -58,6 +58,14 @@ test("a selection stays on the text it covers when the wheel scrolls the pane", 
     await expect.poll(() => paneText(page, pane), { timeout: 10_000 }).toBe(textBefore);
     await expect.poll(() => selection(page, pane)).toBe(before);
 
+    // Several wheels in a row, answered by several frames, move it each time.
+    for (let turn = 0; turn < 4; turn += 1) await page.mouse.wheel(0, -(screen.height / grid.rows));
+    await expect.poll(() => paneText(page, pane), { timeout: 10_000 }).not.toBe(textBefore);
+    await expect.poll(() => selection(page, pane), { timeout: 10_000 }).toBe(before);
+    for (let turn = 0; turn < 4; turn += 1) await page.mouse.wheel(0, screen.height / grid.rows);
+    await expect.poll(() => paneText(page, pane), { timeout: 10_000 }).toBe(textBefore);
+    await expect.poll(() => selection(page, pane)).toBe(before);
+
     // Scrolled until its text leaves the screen, nothing stays selected on other text.
     await page.mouse.wheel(0, -(grid.rows + 6) * (screen.height / grid.rows));
     await expect.poll(() => paneText(page, pane), { timeout: 10_000 }).not.toContain("row-12");

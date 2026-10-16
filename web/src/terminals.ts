@@ -30,7 +30,7 @@ import { noteWriteComplete, probeEnabled } from "./probe";
 import { loadTerminalRenderer } from "./terminalRenderer";
 import { remoteControl, remoteTargetOfPane } from "./remote";
 import { keyPayload, noteTerminalFocus } from "./keyTarget";
-import { bufferRow, followScroll, selectionToText, type CellRow } from "./selection";
+import { bufferRow, followScroll, movedSelection, selectionToText, type CellRow } from "./selection";
 import { osc8Handler, registerTerminalLinks, terminalLinkAtCell, terminalPathOwner, type LinkState, type TerminalContextLink, type TerminalLinkActions } from "./terminalLinkProvider";
 import { isHtmlFile } from "./browserViews";
 import { pointerModifiers, wheelRows } from "./wheel";
@@ -59,7 +59,7 @@ type Instance = {
   /** The grid the core last got from this instance, so a host resize that keeps it sends nothing; null when the core may not have one. */
   grid: { cols: number; rows: number } | null;
   /** Wheel rows accumulated toward the next flush, and the pending flush. */
-  wheel: { rows: number; remainder: number; column: number; row: number; modifiers: number; frame: number | null };
+  wheel: { held: boolean; rows: number; remainder: number; column: number; row: number; modifiers: number; frame: number | null };
   /**
    * The selection a wheel scrolled and the text it covered, until the frame
    * that moved that text under it has been found; null when none waits.
@@ -259,6 +259,8 @@ const heldGrids = new Set<string>();
 
 function sendGrid(paneId: string, instance: Instance, newView: boolean, onlyChanged = false) {
   if (!instance.host) return;
+  // The rows a selection was remembered at no longer exist at another grid.
+  instance.follow = null;
   // A held pane keeps its grid. One that never had a grid still sends its
   // first, because there is no PTY size of this view's to keep. A new view of
   // a held pane still asks for a whole frame, at the grid it keeps.
@@ -351,41 +353,63 @@ function armFollow(instance: Instance, rows: number) {
     known.expected += shift;
     return;
   }
-  const screen = screenRows(term);
+  // A selection ending at column 0 does not take that row.
+  const last = range.end.x === 0 && range.end.y > range.start.y ? range.end.y : range.end.y + 1;
   instance.follow = {
     start: { ...range.start },
     end: { ...range.end },
-    rows: screen.slice(range.start.y, range.end.y + 1),
+    rows: screenRows(term).slice(range.start.y, last),
     expected: shift,
   };
 }
 
-/** Runs after a frame is drawn: moves a waiting selection onto the text it covered. */
+/**
+ * Runs after a frame is drawn: moves a waiting selection onto the text it
+ * covered. It waits while the wheel's rows are not all accounted for, so
+ * several frames of one fast scroll each move it, and ends when they are, when
+ * the selection is cleared, replaced or moved by xterm, or when text it
+ * cannot find changed under it.
+ */
 function followSelection(instance: Instance) {
   const follow = instance.follow;
   if (!follow) return;
   const { term } = instance;
   const range = term.getSelectionPosition();
-  // Cleared, replaced by a drag, or moved by xterm itself: nothing to follow.
   if (!range || range.start.x !== follow.start.x || range.start.y !== follow.start.y || range.end.x !== follow.end.x || range.end.y !== follow.end.y) {
     instance.follow = null;
     return;
   }
   const screen = screenRows(term);
   if (follow.rows.every((text, index) => screen[follow.start.y + index] === text)) return;
-  instance.follow = null;
   const shift = followScroll(follow.rows, follow.start.y, screen, follow.expected);
   if (shift === null) {
+    instance.follow = null;
+    // Text the wheel carried off the screen leaves nothing to select; text
+    // that changed in place under a selection stays as xterm keeps it.
+    const first = follow.start.y + follow.expected;
+    const last = follow.end.y + follow.expected;
+    if (last < 0 || first > term.rows - 1) term.clearSelection();
+    return;
+  }
+  const moved = movedSelection(follow.start, follow.end, shift, term.rows, term.cols);
+  if (!moved) {
+    instance.follow = null;
     term.clearSelection();
     return;
   }
-  const first = follow.start.y + shift;
-  const last = follow.end.y + shift;
-  const top = Math.max(first, 0);
-  const bottom = Math.min(last, term.rows - 1);
-  const startX = first < 0 ? 0 : follow.start.x;
-  const endX = last > term.rows - 1 ? term.cols : follow.end.x;
-  term.select(startX, top, (bottom - top) * term.cols + endX - startX);
+  term.select(moved.column, moved.row, moved.length);
+  const now = term.getSelectionPosition();
+  const remaining = follow.expected - shift;
+  if (!now || remaining === 0 || Math.sign(remaining) !== Math.sign(follow.expected)) {
+    instance.follow = null;
+    return;
+  }
+  instance.follow = {
+    start: { ...now.start },
+    end: { ...now.end },
+    rows: screen.slice(now.start.y, now.end.x === 0 && now.end.y > now.start.y ? now.end.y : now.end.y + 1),
+    expected: remaining,
+  };
 }
 
 function flushWheel(paneId: string, instance: Instance) {
@@ -394,7 +418,10 @@ function flushWheel(paneId: string, instance: Instance) {
   const rows = wheel.rows;
   wheel.rows = 0;
   if (rows === 0) return;
-  armFollow(instance, rows);
+  // A wheel turned while the button is held belongs to the drag, which
+  // `select` would end; the selection then stays as xterm keeps it.
+  if (wheel.held) instance.follow = null;
+  else armFollow(instance, rows);
   instance.dispatch({
     schema_version: 2,
     kind: "terminal_scroll",
@@ -433,6 +460,7 @@ function onWheel(paneId: string, instance: Instance, event: WheelEvent) {
   wheel.column = cell.column;
   wheel.row = cell.row;
   wheel.modifiers = pointerModifiers(event);
+  wheel.held = (event.buttons & 1) !== 0;
   if (wheel.frame === null) wheel.frame = requestAnimationFrame(() => flushWheel(paneId, instance));
 }
 
@@ -625,7 +653,7 @@ function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLin
     observer: null,
     stale: false,
     grid: null,
-    wheel: { rows: 0, remainder: 0, column: 0, row: 0, modifiers: 0, frame: null },
+    wheel: { held: false, rows: 0, remainder: 0, column: 0, row: 0, modifiers: 0, frame: null },
     follow: null,
     press: null,
     commitPending: false,
