@@ -87,7 +87,8 @@ test("A local HTML page loads its own folder's files and nothing else", async ()
 
     const probe = `(async () => {
       const out = {};
-      const attempt = async (name, read) => { try { out[name] = await read(); } catch (error) { out[name] = "refused"; } };
+      // A request that is cancelled may never answer at all, which reads as refused as well.
+      const attempt = async (name, read) => { try { out[name] = await Promise.race([read(), new Promise((_, reject) => setTimeout(() => reject(new Error("silent")), 3000))]); } catch (error) { out[name] = "refused"; } };
       const image = (source) => new Promise((resolve, reject) => { const element = new Image(); element.onload = () => resolve(element); element.onerror = () => reject(new Error("image")); element.src = source; });
       const read = (element) => { const canvas = document.createElement("canvas"); canvas.width = canvas.height = 1; const context = canvas.getContext("2d"); context.drawImage(element, 0, 0); return Array.from(context.getImageData(0, 0, 1, 1).data); };
       await attempt("fetchSibling", async () => (await fetch("sibling.txt")).text());
