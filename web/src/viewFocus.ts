@@ -117,6 +117,7 @@ export function installKeyboardOwner(): () => void {
 export type CloseShortcutTarget =
   | { kind: "view"; id: string }
   | { kind: "pane"; id: string }
+  | { kind: "detail" }
   | { kind: "nothing"; reason: string };
 
 /** Close the keyboard's unit, never fall through to a larger unit. */
@@ -125,8 +126,14 @@ export function closeShortcutPolicy(input: {
   workspace: string | null;
   displayId: string | null;
   paneIds: readonly string[];
+  /** The lane draws the 보기 slot in the Workspace in front. */
+  detailShown: boolean;
 }): CloseShortcutTarget {
-  const { owner, workspace, displayId, paneIds } = input;
+  const { owner, workspace, displayId, paneIds, detailShown } = input;
+  // The 보기 slot covers the lane, so the lane's keyboard is the slot's; with
+  // the keyboard nowhere (the sidebar row or the rail that opened it) the
+  // slot is the one closable thing drawn. A pane or a View keeps its own.
+  if (detailShown && (owner.kind === "none" || (owner.kind === "tool" && owner.workspace === workspace))) return { kind: "detail" };
   if (owner.kind === "none") return { kind: "nothing", reason: "no keyboard owner" };
   if (owner.workspace !== workspace) return { kind: "nothing", reason: "keyboard owner is outside the front Workspace" };
   if (owner.kind === "agent") return { kind: "nothing", reason: "the Agent controls own the keyboard" };
