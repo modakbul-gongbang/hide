@@ -128,6 +128,32 @@ pub struct AiRequest {
     /// unless the field names its reader, which is why it does.
     #[serde(deserialize_with = "Option::<OutputLanguage>::deserialize")]
     pub output_language: Option<OutputLanguage>,
+    /// How a provider that has a native schema surface is asked for the
+    /// answer's shape. Absent on the wire from an older peer, which asks the
+    /// way it always did.
+    #[serde(default)]
+    pub answer: AnswerMode,
+}
+
+/// How a request asks a provider for a JSON answer. The router validates the
+/// answer against the feature's schema whichever mode produced it.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnswerMode {
+    /// The provider's own schema surface (`claude -p --json-schema`,
+    /// Codex's `outputSchema`) constrains the answer. Claude Code does this
+    /// by calling a synthetic tool, which is a second model turn and a
+    /// larger prompt: the right price for an answer with a long or strict
+    /// shape.
+    #[default]
+    Schema,
+    /// The system prompt names the schema and asks for one JSON object, and
+    /// the object is read back from the text. One model turn: the choice for
+    /// a short answer whose shape the router checks anyway. The schema rides
+    /// in the system prompt, an argument of the child, so only a short one
+    /// belongs here. A provider that
+    /// has no schema surface answers this way in either mode.
+    PlainJson,
 }
 
 /// A language Hide writes in for the operator, the interface's four

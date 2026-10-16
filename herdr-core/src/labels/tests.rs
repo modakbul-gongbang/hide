@@ -1331,6 +1331,8 @@ fn a_label_request_carries_its_language_and_that_languages_lengths() {
         for phase in [AnalysisPhase::TurnStart, AnalysisPhase::TurnEnd] {
             let asked = request(phase, language, "pane", "r".to_owned(), "context");
             assert_eq!(asked.output_language, Some(language));
+            // A short answer: one model turn, the router checks its shape.
+            assert_eq!(asked.answer, hide_ai::AnswerMode::PlainJson);
             assert_eq!(asked.output_schema["properties"]["goal"]["maxLength"], goal);
             assert!(asked.system.contains(&format!("8 to {goal} characters")));
             assert!(

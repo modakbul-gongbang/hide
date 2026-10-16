@@ -57,6 +57,7 @@ fn request(deadline: Duration) -> AiRequest {
         schema_version: "fixture.v1".into(),
         pick: None,
         output_language: None,
+        answer: hide_ai::AnswerMode::default(),
     }
 }
 
@@ -128,6 +129,7 @@ fn the_child_receives_the_system_prompt_and_the_emptied_tool_and_setting_sources
         }
         let request = AiRequest {
             output_language: Some(OutputLanguage::Korean),
+            answer: hide_ai::AnswerMode::default(),
             ..request(Duration::from_secs(30))
         };
         backend().execute(&request, &CancelToken::new()).unwrap();
@@ -147,7 +149,7 @@ fn the_child_receives_the_system_prompt_and_the_emptied_tool_and_setting_sources
                 "haiku",
                 None,
                 &request.system_prompt(),
-                &request.output_schema
+                Some(&request.output_schema)
             )
         );
         assert_eq!(args.first().map(String::as_str), Some("-p"));
@@ -183,6 +185,52 @@ fn the_child_receives_the_system_prompt_and_the_emptied_tool_and_setting_sources
         assert!(
             !args.iter().any(|arg| arg.contains("compact task labels")),
             "{args:?}"
+        );
+    });
+}
+
+/// A plain-JSON request asks the CLI for one model turn: no `--json-schema`
+/// (which Claude Code answers with a second turn through a synthetic tool),
+/// and the schema in the system prompt instead.
+#[test]
+fn a_plain_json_request_sends_no_schema_flag_and_names_the_schema_in_the_prompt() {
+    with_mode("fenced_result", || {
+        let args_file = scratch("claude-plain-args");
+        unsafe { std::env::set_var("FAKE_ARGS_FILE", &args_file) };
+        let request = AiRequest {
+            answer: hide_ai::AnswerMode::PlainJson,
+            ..request(Duration::from_secs(30))
+        };
+        let response = backend().execute(&request, &CancelToken::new()).unwrap();
+        unsafe { std::env::remove_var("FAKE_ARGS_FILE") };
+        let args: Vec<String> =
+            serde_json::from_slice(&std::fs::read(&args_file).unwrap()).unwrap();
+        let _ = std::fs::remove_file(&args_file);
+
+        assert!(!args.iter().any(|arg| arg == "--json-schema"), "{args:?}");
+        let system = &args[args.iter().position(|a| a == "--system-prompt").unwrap() + 1];
+        assert!(system.starts_with(&request.system), "{system}");
+        assert!(system.contains(&schema().to_string()), "{system}");
+        // The answer is read out of the fenced `result` text.
+        assert_eq!(response.value["summary"], "fixture");
+    });
+}
+
+/// Without a schema the shape is the router's to check, but a `result` that
+/// holds no JSON at all is an unusable answer, retried like any other.
+#[test]
+fn a_plain_json_result_without_json_is_invalid_output() {
+    with_mode("prose_result", || {
+        let request = AiRequest {
+            answer: hide_ai::AnswerMode::PlainJson,
+            ..request(Duration::from_secs(30))
+        };
+        let error = backend()
+            .execute(&request, &CancelToken::new())
+            .unwrap_err();
+        assert_eq!(
+            error,
+            AiError::InvalidOutput("claude_result_not_json".to_owned())
         );
     });
 }

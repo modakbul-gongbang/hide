@@ -58,11 +58,22 @@ static void raw_terminal(void) {
 }
 #endif
 static char prompt[1 << 20];
-/* A provider answers in the shape `--json-schema` asks for: a turn start's
+/* The schema a request asks its answer to fit: `--json-schema`, or, for a
+   plain-JSON request, the schema its `--system-prompt` carries. */
+static const char *request_schema(int argc, char **argv, int *plain) {
+  const char *schema = NULL, *system = NULL;
+  for (int i = 1; i + 1 < argc; i++) {
+    if (strcmp(argv[i], "--json-schema") == 0) schema = argv[i + 1];
+    if (strcmp(argv[i], "--system-prompt") == 0) system = argv[i + 1];
+  }
+  *plain = !schema && system;
+  return schema ? schema : system;
+}
+/* A provider answers in the shape its schema asks for: a turn start's
    schema has no `end`, so the label's `end` is left out of that answer. */
 static int fit_schema(char *label, int argc, char **argv) {
-  const char *schema = NULL;
-  for (int i = 1; i + 1 < argc; i++) if (strcmp(argv[i], "--json-schema") == 0) schema = argv[i + 1];
+  int plain;
+  const char *schema = request_schema(argc, argv, &plain);
   if (!schema) return 1;
   if (strstr(schema, "\"end\"")) {
     /* Recorded native-format fixtures retain their old label marker. This
@@ -86,6 +97,21 @@ static int fit_schema(char *label, int argc, char **argv) {
   if (close) memmove(field, close + 1, strlen(close + 1) + 1);
   return 1;
 }
+/* A schema request answers in `structured_output`; a plain-JSON request
+   answers the same object as the text of `result`. */
+static void emit_answer(const char *json, int plain) {
+  if (!plain) {
+    printf("{\"type\":\"result\",\"is_error\":false,\"structured_output\":%s}\n", json);
+    return;
+  }
+  printf("{\"type\":\"result\",\"is_error\":false,\"result\":\"");
+  for (const char *at = json; *at; at++) {
+    if (*at == '"' || *at == '\\') printf("\\%c", *at);
+    else if ((unsigned char)*at < 32) printf("\\u%04x", (unsigned char)*at);
+    else putchar(*at);
+  }
+  puts("\"}");
+}
 static int provider(int argc, char **argv) {
   if (argc > 2 && strcmp(argv[1], "auth") == 0 && strcmp(argv[2], "status") == 0) {
     puts("{\"loggedIn\":true}");
@@ -98,9 +124,9 @@ static int provider(int argc, char **argv) {
   for (char *at = prompt; (at = strstr(at, "HIDE_E2E_LABEL ")) != NULL; at++) label = at;
   /* A draft may quote the label marker in its original assistant context.
      Its title/body schema selects the explicit draft answer instead. */
-  for (int i = 1; i + 1 < argc; i++) {
-    if (strcmp(argv[i], "--json-schema") == 0 && strstr(argv[i + 1], "\"title\"") && strstr(argv[i + 1], "\"body\"")) label = NULL;
-  }
+  int plain;
+  const char *requested = request_schema(argc, argv, &plain);
+  if (requested && strstr(requested, "\"title\"") && strstr(requested, "\"body\"")) label = NULL;
   if (!label) {
     /* A judgment's input is JSON, where a label cannot stand unescaped: a spec
        that drives one names a file whose one-line answer every such call gets. */
@@ -114,7 +140,7 @@ static int provider(int argc, char **argv) {
       char *line = strchr(fixed, '\n');
       if (line) *line = 0;
       if (got > 0) {
-        printf("{\"type\":\"result\",\"is_error\":false,\"structured_output\":%s}\n", fixed);
+        emit_answer(fixed, plain);
         return 0;
       }
     }
@@ -142,7 +168,7 @@ static int provider(int argc, char **argv) {
   const char *calls = getenv("HIDE_E2E_PROVIDER_LOG");
   FILE *log = calls ? fopen(calls, "a") : NULL;
   if (log) { fprintf(log, "%s\n", label); fclose(log); }
-  printf("{\"type\":\"result\",\"is_error\":false,\"structured_output\":%s}\n", label);
+  emit_answer(label, plain);
   return 0;
 }
 // The model list Hide AI reads: one `initialize` control request on stdin, answered with
@@ -275,6 +301,11 @@ static int native_session(int argc, char **argv) {
   return 0;
 }
 
+static int has_option(int argc, char **argv, const char *name) {
+  for (int i = 1; i < argc; i++) if (strcmp(argv[i], name) == 0) return 1;
+  return 0;
+}
+
 int main(int argc, char **argv) {
 #ifdef _WIN32
   _setmode(0, _O_BINARY);
@@ -283,6 +314,7 @@ int main(int argc, char **argv) {
   if (getenv("HIDE_E2E_LIVE_CHECK")) return live_check(argc, argv);
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--json-schema") == 0 || (i == 1 && strcmp(argv[i], "auth") == 0)) return provider(argc, argv);
+    if (i == 1 && strcmp(argv[i], "-p") == 0 && has_option(argc, argv, "--system-prompt")) return provider(argc, argv);
     if (strcmp(argv[i], "--input-format") == 0) return models();
   }
   if (native_session(argc, argv) != 0) return 1;

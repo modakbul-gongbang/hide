@@ -1534,6 +1534,7 @@ mod tests {
             schema_version: "test.v1".into(),
             pick: None,
             output_language: None,
+            answer: crate::AnswerMode::default(),
         }
     }
 
@@ -2327,6 +2328,7 @@ mod tests {
         let router = Arc::new(make_router(vec![held.clone()], sink.clone()));
         let asked = |language| AiRequest {
             output_language: language,
+            answer: crate::AnswerMode::default(),
             ..request("same", "same input")
         };
         let korean = {
@@ -2367,6 +2369,7 @@ mod tests {
     fn a_request_without_its_output_language_is_refused_on_the_wire() {
         let mut wire = serde_json::to_value(AiRequest {
             output_language: Some(crate::OutputLanguage::SimplifiedChinese),
+            answer: crate::AnswerMode::default(),
             ..request("s", "x")
         })
         .unwrap();

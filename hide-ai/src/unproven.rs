@@ -72,6 +72,7 @@ mod tests {
             schema_version: "v1".into(),
             pick: None,
             output_language: None,
+            answer: crate::AnswerMode::default(),
         };
         assert_eq!(
             backend.execute(&request, &CancelToken::new()).unwrap_err(),

@@ -33,9 +33,10 @@ use serde_json::Value;
 
 use crate::program::Program;
 use crate::runner::{self, Environment, Run, Spec};
+use crate::text_cli::{json_from_text, system_with_schema};
 use crate::{
-    AiBackend, AiError, AiRequest, AiResponse, AiUsage, Availability, CancelToken, ModelCatalog,
-    ModelTokens, ProviderId,
+    AiBackend, AiError, AiRequest, AiResponse, AiUsage, AnswerMode, Availability, CancelToken,
+    ModelCatalog, ModelTokens, ProviderId,
 };
 
 /// The default for background features. With thinking off (see
@@ -152,11 +153,15 @@ impl ClaudeCliBackend {
     /// The exact argument vector one request is started with. The prompt body
     /// is not here: it goes on stdin, so no transcript reaches an argument
     /// list, a process listing, or the argv length limit.
+    ///
+    /// `output_schema` is the schema the CLI itself enforces, or `None` when
+    /// the system prompt carries it and the answer is read from the text
+    /// ([`AnswerMode::PlainJson`]).
     pub fn print_arguments(
         model: &str,
         effort: Option<&str>,
         system: &str,
-        output_schema: &Value,
+        output_schema: Option<&Value>,
     ) -> Vec<String> {
         let mut arguments = vec![
             "-p".to_owned(),
@@ -175,11 +180,12 @@ impl ClaudeCliBackend {
             "--no-session-persistence".to_owned(),
             "--permission-prompts".to_owned(),
             "none".to_owned(),
-            "--json-schema".to_owned(),
-            output_schema.to_string(),
             "--output-format".to_owned(),
             "json".to_owned(),
         ];
+        if let Some(schema) = output_schema {
+            arguments.extend(["--json-schema".to_owned(), schema.to_string()]);
+        }
         if let Some(effort) = effort {
             arguments.extend(["--effort".to_owned(), effort.to_owned()]);
         }
@@ -408,14 +414,24 @@ impl AiBackend for ClaudeCliBackend {
             .resolved_binary()
             .ok_or_else(|| AiError::ProviderUnavailable("claude_not_installed".to_owned()))?;
         let thinking_off = [(THINKING_OFF.0, THINKING_OFF.1.to_owned())];
+        let (system, schema) = match request.answer {
+            AnswerMode::Schema => (
+                request.system_prompt().into_owned(),
+                Some(&request.output_schema),
+            ),
+            AnswerMode::PlainJson => (
+                system_with_schema(&request.system_prompt(), &request.output_schema),
+                None,
+            ),
+        };
         let run = runner::run(
             &Spec {
                 binary: &binary,
                 args: &Self::print_arguments(
                     request.model(&self.config.model),
                     request.effort(),
-                    &request.system_prompt(),
-                    &request.output_schema,
+                    &system,
+                    schema,
                 ),
                 cwd: &self.config.cwd,
                 stdin: Some(&request.input),
@@ -432,12 +448,12 @@ impl AiBackend for ClaudeCliBackend {
             cancel,
         )
         .map_err(|error| error.into_error("claude"))?;
-        answer(&run)
+        answer(&run, request.answer)
     }
 }
 
 /// Turns one finished child into the answer or the failure it reported.
-fn answer(run: &Run) -> Result<AiResponse, AiError> {
+fn answer(run: &Run, mode: AnswerMode) -> Result<AiResponse, AiError> {
     let frame = match serde_json::from_str::<Value>(run.stdout.trim()) {
         Ok(frame) if frame.get("type").and_then(Value::as_str) == Some("result") => frame,
         // The child ran, so the prompt was submitted, and without a result
@@ -453,16 +469,25 @@ fn answer(run: &Run) -> Result<AiResponse, AiError> {
     if failed {
         return Err(classify(&frame, run));
     }
-    // The schema-bound answer is `structured_output`, never the `result`
-    // string: without a schema print mode returns the object inside a
-    // ```json fence, and parsing that back would accept an unvalidated shape.
-    let value = frame
-        .get("structured_output")
-        .filter(|value| !value.is_null())
-        .cloned()
-        .ok_or_else(|| {
-            AiError::InvalidOutput("claude_result_without_structured_output".to_owned())
-        })?;
+    let value = match mode {
+        // The schema-bound answer is `structured_output`, never the `result`
+        // string: the CLI validated that field against `--json-schema`.
+        AnswerMode::Schema => frame
+            .get("structured_output")
+            .filter(|value| !value.is_null())
+            .cloned()
+            .ok_or_else(|| {
+                AiError::InvalidOutput("claude_result_without_structured_output".to_owned())
+            })?,
+        // Without `--json-schema` the object is in the `result` text, plain
+        // or inside a code fence; the router checks its shape against the
+        // feature's schema, so nothing unvalidated is accepted.
+        AnswerMode::PlainJson => frame
+            .get("result")
+            .and_then(Value::as_str)
+            .and_then(json_from_text)
+            .ok_or_else(|| AiError::InvalidOutput("claude_result_not_json".to_owned()))?,
+    };
     Ok(AiResponse {
         value,
         usage: usage(&frame),
@@ -634,7 +659,8 @@ mod tests {
     /// assertion would catch.
     #[test]
     fn the_argument_vector_carries_the_three_flags_that_decide_correctness() {
-        let args = ClaudeCliBackend::print_arguments("haiku", None, "classify this", &schema());
+        let args =
+            ClaudeCliBackend::print_arguments("haiku", None, "classify this", Some(&schema()));
         assert!(
             args.windows(2)
                 .any(|pair| pair == ["--system-prompt", "classify this"]),
@@ -667,7 +693,7 @@ mod tests {
     /// The transcript is the one thing that must not be in argv.
     #[test]
     fn the_prompt_body_is_absent_from_the_argument_vector() {
-        let args = ClaudeCliBackend::print_arguments("haiku", None, "sys", &schema());
+        let args = ClaudeCliBackend::print_arguments("haiku", None, "sys", Some(&schema()));
         assert!(
             !args.iter().any(|arg| arg.contains("the user's transcript")),
             "{args:?}"
@@ -676,9 +702,9 @@ mod tests {
 
     #[test]
     fn a_picked_effort_reaches_the_argument_vector_and_none_adds_nothing() {
-        let plain = ClaudeCliBackend::print_arguments("opus", None, "sys", &schema());
+        let plain = ClaudeCliBackend::print_arguments("opus", None, "sys", Some(&schema()));
         assert!(!plain.iter().any(|arg| arg == "--effort"));
-        let picked = ClaudeCliBackend::print_arguments("opus", Some("max"), "sys", &schema());
+        let picked = ClaudeCliBackend::print_arguments("opus", Some("max"), "sys", Some(&schema()));
         assert!(
             picked.windows(2).any(|pair| pair == ["--effort", "max"]),
             "{picked:?}"
@@ -708,7 +734,7 @@ mod tests {
     fn a_result_frame_without_structured_output_is_invalid_output() {
         let ok = frame(json!({"structured_output": {"summary": "x"},
                               "usage": {"input_tokens": 12, "output_tokens": 3}}));
-        let response = answer(&run_of(&ok, 0)).unwrap();
+        let response = answer(&run_of(&ok, 0), AnswerMode::Schema).unwrap();
         assert_eq!(response.value["summary"], "x");
         assert_eq!(response.usage.input_tokens, Some(12));
         assert_eq!(response.usage.output_tokens, Some(3));
@@ -717,12 +743,12 @@ mod tests {
         // answer: only `structured_output` is.
         let missing = frame(json!({"result": "{\"summary\":\"x\"}"}));
         assert_eq!(
-            answer(&run_of(&missing, 0)).unwrap_err(),
+            answer(&run_of(&missing, 0), AnswerMode::Schema).unwrap_err(),
             AiError::InvalidOutput("claude_result_without_structured_output".to_owned())
         );
         let null = frame(json!({"structured_output": null}));
         assert!(matches!(
-            answer(&run_of(&null, 0)),
+            answer(&run_of(&null, 0), AnswerMode::Schema),
             Err(AiError::InvalidOutput(_))
         ));
     }
@@ -831,7 +857,7 @@ mod tests {
                 stdout: stdout.to_owned(),
                 stderr: String::new(),
             };
-            match answer(&run) {
+            match answer(&run, AnswerMode::Schema) {
                 Err(AiError::CompletionUnknown(reason)) => {
                     assert!(reason.contains("exit=1"), "{reason}");
                 }
@@ -860,7 +886,7 @@ mod tests {
                 "result": "API Error"
             }));
             assert_eq!(
-                answer(&run_of(&failed, 1)).unwrap_err(),
+                answer(&run_of(&failed, 1), AnswerMode::Schema).unwrap_err(),
                 expected,
                 "status {status}"
             );
@@ -874,12 +900,12 @@ mod tests {
             "terminal_reason": "structured_output_retry_exhausted", "errors": []
         }));
         assert_eq!(
-            answer(&run_of(&retries, 1)).unwrap_err(),
+            answer(&run_of(&retries, 1), AnswerMode::Schema).unwrap_err(),
             AiError::InvalidOutput("claude_structured_output_retries".to_owned())
         );
         for reason in ["blocking_limit", "prompt_too_long", "rapid_refill_breaker"] {
             let limited = frame(json!({"is_error": true, "terminal_reason": reason}));
-            match answer(&run_of(&limited, 1)) {
+            match answer(&run_of(&limited, 1), AnswerMode::Schema) {
                 Err(AiError::Rejected(detail)) => {
                     assert!(detail.contains(reason), "{detail}");
                 }
@@ -894,14 +920,14 @@ mod tests {
     fn an_unrecognised_failure_carries_the_token_it_was_given() {
         let unknown = frame(json!({"is_error": true, "terminal_reason": "model_error"}));
         assert_eq!(
-            answer(&run_of(&unknown, 1)).unwrap_err(),
+            answer(&run_of(&unknown, 1), AnswerMode::Schema).unwrap_err(),
             AiError::Transient("claude_model_error".to_owned())
         );
         // A frame that claims success while the process failed is still a
         // failure, and the exit status is what names it.
         let inconsistent = frame(json!({"structured_output": {"summary": "x"}}));
         assert_eq!(
-            answer(&run_of(&inconsistent, 7)).unwrap_err(),
+            answer(&run_of(&inconsistent, 7), AnswerMode::Schema).unwrap_err(),
             AiError::Transient("claude_success".to_owned())
         );
     }
@@ -924,6 +950,7 @@ mod tests {
             schema_version: "v1".into(),
             pick: None,
             output_language: None,
+            answer: crate::AnswerMode::default(),
         };
         assert_eq!(
             backend.execute(&request, &CancelToken::new()).unwrap_err(),
