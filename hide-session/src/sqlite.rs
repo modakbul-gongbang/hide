@@ -111,6 +111,108 @@ unsafe extern "C" fn refuse_delete(
     ffi::SQLITE_READONLY
 }
 
+/// The reasons one provider's database read fails with.
+pub(crate) struct Reasons {
+    pub(crate) busy: &'static str,
+    pub(crate) unreadable: &'static str,
+    pub(crate) changed: &'static str,
+    pub(crate) work: &'static str,
+}
+
+const BUSY_WAIT: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// One bounded read of the provider database at `path` under `folder` in
+/// `home`, buffered until its source and companions are proven unchanged.
+/// The VFS forbids writes even if the provider removes a WAL between
+/// admission and SQLite opening it. A checkpointed main is read without
+/// asking SQLite to create companions; a live WAL retains locking.
+pub(crate) fn with_read<T>(
+    home: &Path,
+    folder: &str,
+    path: &Path,
+    reasons: &Reasons,
+    steps: usize,
+    read: impl FnOnce(&Connection) -> T,
+) -> Result<T, String> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "session_file_missing".to_owned()
+        } else {
+            reasons.unreadable.to_owned()
+        }
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err("label_session_linked".to_owned());
+    }
+    if !metadata.is_file() {
+        return Err("label_session_not_regular".to_owned());
+    }
+    // Resolve OS aliases such as macOS /var before SQLite's NOFOLLOW check.
+    // The final database symlink was refused above.
+    let path = crate::native_file::checked_path_under(home, folder, path)
+        .map_err(|_| reasons.unreadable.to_owned())?;
+    let gate = read_gate(&path).map_err(str::to_owned)?;
+    let _read_guard = gate.try_lock().map_err(|error| match error {
+        std::sync::TryLockError::WouldBlock => reasons.busy.to_owned(),
+        std::sync::TryLockError::Poisoned(_) => reasons.unreadable.to_owned(),
+    })?;
+    // Drop order matters: Source's raw handles close before this gate opens.
+    let source = Source::admit(home, &path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::WouldBlock {
+            reasons.busy.to_owned()
+        } else {
+            reasons.unreadable.to_owned()
+        }
+    })?;
+    let failed = |error: &rusqlite::Error| refusal(reasons, error);
+    let connection = open_readonly(
+        &read_uri(&path, !source.checkpointed_wal).map_err(str::to_owned)?,
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_URI
+            | OpenFlags::from_bits_retain(ffi::SQLITE_OPEN_NOFOLLOW),
+    )
+    .map_err(|error| failed(&error))?;
+    connection
+        .busy_timeout(BUSY_WAIT)
+        .map_err(|error| failed(&error))?;
+    work_budget(&connection, steps);
+    connection
+        .execute_batch("BEGIN")
+        .map_err(|error| failed(&error))?;
+    let result = read(&connection);
+    connection
+        .execute_batch("ROLLBACK")
+        .map_err(|error| failed(&error))?;
+    connection.close().map_err(|(_, error)| failed(&error))?;
+    source
+        .validate()
+        .map_err(|_| reasons.changed.to_owned())?;
+    Ok(result)
+}
+
+/// Gives `connection` a fresh cap of `steps` SQL work units.
+pub(crate) fn work_budget(connection: &Connection, steps: usize) {
+    let mut sql_steps = 0;
+    connection.progress_handler(
+        1_000,
+        Some(move || {
+            sql_steps += 1_000;
+            sql_steps >= steps
+        }),
+    );
+}
+
+pub(crate) fn refusal(reasons: &Reasons, error: &rusqlite::Error) -> String {
+    match error.sqlite_error_code() {
+        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked) => {
+            reasons.busy.to_owned()
+        }
+        Some(rusqlite::ErrorCode::OperationInterrupted) => reasons.work.to_owned(),
+        _ => reasons.unreadable.to_owned(),
+    }
+}
+
 type Mark = (
     hide_platform::fs::identity::FileId,
     hide_platform::fs::identity::Stamp,

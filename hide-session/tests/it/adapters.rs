@@ -50,7 +50,7 @@ fn home(agent: Agent) -> tempfile::TempDir {
             &fixtures().join("codex-0.160.0"),
             &home.path().join(".codex"),
         ),
-        Agent::Grok | Agent::Pi | Agent::Omp | Agent::Cursor => {
+        Agent::Grok | Agent::Pi | Agent::Omp | Agent::Cursor | Agent::Antigravity => {
             unreachable!("Native file fixtures bind their cwd to an owned checkout")
         }
         Agent::OpenCode => {
@@ -77,6 +77,7 @@ fn request(agent: Agent) -> LabelTranscriptRequest {
         Agent::Omp => "omp-native-a",
         Agent::Cursor => "a1b2c3d4-0000-4000-8000-000000000001",
         Agent::OpenCode => "ses_0a1b2c3d4e5f60718293a4b5c6",
+        Agent::Antigravity => AGY_ID,
     };
     LabelTranscriptRequest {
         agent,
@@ -4285,4 +4286,185 @@ fn original_turn_rejects_a_same_id_file_replacement_before_preview_and_accepts_a
         read_work_turn(home.path(), &request).unwrap_err(),
         "work_turn_changed"
     );
+}
+
+const AGY_ID: &str = "a9c0e2f4-0000-4000-8000-000000000008";
+
+mod antigravity {
+    use super::*;
+    use hide_session::{SessionIdentity, SessionLocator};
+    use std::fs;
+
+    /// A subagent agy started from the fixture's conversation.
+    const CHILD: &str = "a9c0e2f4-0000-4000-8000-000000000009";
+
+    struct Native {
+        home: tempfile::TempDir,
+        cwd: PathBuf,
+        request: LabelTranscriptRequest,
+    }
+
+    impl Native {
+        fn new() -> Self {
+            let home = tempfile::tempdir().unwrap();
+            let cwd = home.path().join("checkout 1");
+            fs::create_dir(&cwd).unwrap();
+            let cwd = fs::canonicalize(cwd).unwrap();
+            let folder = home.path().join(".gemini/antigravity-cli");
+            fs::create_dir_all(&folder).unwrap();
+            let database =
+                rusqlite::Connection::open(folder.join("conversation_summaries.db")).unwrap();
+            database
+                .execute_batch(
+                    &fs::read_to_string(fixtures().join("antigravity-1.3.6/summaries.sql")).unwrap(),
+                )
+                .unwrap();
+            drop(database);
+            let native = Self {
+                request: LabelTranscriptRequest {
+                    cwd: Some(cwd.display().to_string()),
+                    ..request(Agent::Antigravity)
+                },
+                home,
+                cwd,
+            };
+            native.conversation(AGY_ID, "", "2026-10-03 01:02:09+00:00");
+            native
+        }
+
+        /// agy writes a conversation's transcript, its store and its index row.
+        fn conversation(&self, id: &str, parent: &str, modified: &str) {
+            let transcript = hide_session::antigravity::transcript(self.home.path(), id);
+            fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+            fs::copy(
+                fixtures().join("antigravity-1.3.6/transcript_full.jsonl"),
+                &transcript,
+            )
+            .unwrap();
+            let folder = self.home.path().join(".gemini/antigravity-cli");
+            fs::create_dir_all(folder.join("conversations")).unwrap();
+            fs::write(folder.join("conversations").join(format!("{id}.db")), b"").unwrap();
+            let uri = format!(
+                "file://{}",
+                self.cwd.display().to_string().replace(' ', "%20")
+            );
+            rusqlite::Connection::open(folder.join("conversation_summaries.db"))
+                .unwrap()
+                .execute(
+                    "INSERT INTO conversation_summaries (conversation_id, title, last_modified_time, \
+                     workspace_uris, parent_conversation_id, last_user_input_time, app_data_dir) \
+                     VALUES (?1, '요청 보기 만들기', ?3, ?2, ?4, ?3, 'antigravity-cli')",
+                    rusqlite::params![id, serde_json::json!([uri]).to_string(), modified, parent],
+                )
+                .unwrap();
+        }
+
+        fn route(&self, id: &str, cwd: &Path) -> Result<(), String> {
+            hide_session::session_activity::read(
+                self.home.path(),
+                &hide_session::session_activity::SessionActivityRequest {
+                    agent: Agent::Antigravity,
+                    reference_kind: "id".into(),
+                    reference_value: id.into(),
+                    cwd: cwd.to_str().map(str::to_owned),
+                    exact_route: true,
+                    expected_id: None,
+                },
+            )
+            .map(|_| ())
+        }
+    }
+
+    #[test]
+    fn native_history_has_the_shared_conversation_facts() {
+        let native = Native::new();
+        let transcript = read(native.home.path(), &native.request).unwrap();
+        assert_eq!(transcript.title.as_deref(), Some("요청 보기 만들기"));
+        let people: Vec<_> = transcript
+            .events
+            .iter()
+            .filter(|event| event.kind == LabelEventKind::Human)
+            .collect();
+        assert_eq!(people.len(), 1, "what a hook gave agy is no one's request");
+        assert_eq!(people[0].text, "요청 보기를 만들어줘\n긴 요청의 둘째 줄");
+        assert_eq!(people[0].at_unix_ms, START);
+        let replies: Vec<_> = transcript
+            .events
+            .iter()
+            .filter(|event| event.kind == LabelEventKind::Assistant)
+            .collect();
+        assert_eq!(replies.len(), 1, "a tool call step is no answer");
+        assert!(replies[0].text.starts_with("PR을 열었습니다"));
+        assert_eq!(replies[0].at_unix_ms, START + 129_000);
+        assert_eq!(sighted(&transcript, 12).unwrap().at_unix_ms, START + 30_000);
+        assert!(sighted(&transcript, 99).is_none());
+        assert_eq!(
+            transcript.confirmed.native_session_id.as_deref(),
+            Some(AGY_ID)
+        );
+    }
+
+    #[test]
+    fn a_subagents_conversation_is_never_an_operators_session() {
+        let native = Native::new();
+        native.conversation(CHILD, AGY_ID, "2026-10-03 01:03:00+00:00");
+        let child = LabelTranscriptRequest {
+            reference_value: CHILD.into(),
+            ..native.request.clone()
+        };
+        assert_eq!(
+            read(native.home.path(), &child).unwrap_err(),
+            "label_session_not_root"
+        );
+        // The newest conversation in the checkout is the subagent's; a pane
+        // with no reported session still reads its operator's.
+        let located = SessionLocator::new(native.home.path())
+            .locate("pane", Agent::Antigravity, None, native.cwd.to_str())
+            .unwrap();
+        assert_eq!(
+            located,
+            hide_session::antigravity::transcript(native.home.path(), AGY_ID)
+        );
+    }
+
+    #[test]
+    fn a_conversation_routes_only_from_its_own_checkout_while_agy_keeps_it() {
+        let native = Native::new();
+        native.route(AGY_ID, &native.cwd).unwrap();
+        let other = native.home.path().join("other");
+        fs::create_dir(&other).unwrap();
+        assert!(native.route(AGY_ID, &other).is_err());
+        fs::remove_file(
+            native
+                .home
+                .path()
+                .join(".gemini/antigravity-cli/conversations")
+                .join(format!("{AGY_ID}.db")),
+        )
+        .unwrap();
+        assert_eq!(
+            native.route(AGY_ID, &native.cwd).unwrap_err(),
+            "session_route_missing"
+        );
+    }
+
+    #[test]
+    fn a_reported_conversation_the_index_does_not_hold_is_refused() {
+        let native = Native::new();
+        let missing = "a9c0e2f4-0000-4000-8000-00000000000a";
+        let transcript = hide_session::antigravity::transcript(native.home.path(), missing);
+        fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        fs::copy(
+            fixtures().join("antigravity-1.3.6/transcript_full.jsonl"),
+            &transcript,
+        )
+        .unwrap();
+        let located = SessionLocator::new(native.home.path()).locate(
+            "pane",
+            Agent::Antigravity,
+            Some(&SessionIdentity::id(missing)),
+            native.cwd.to_str(),
+        );
+        assert!(located.is_err());
+    }
 }

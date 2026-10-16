@@ -161,7 +161,7 @@ fn confirm_metadata(
     let mut native_id = None;
     if agent.requires_native_file_proof() {
         let mut remaining = SESSION_INCREMENT_READ_LIMIT_BYTES;
-        let header = if agent == Agent::Grok {
+        let header = if matches!(agent, Agent::Grok | Agent::Antigravity) {
             crate::native_file::header(agent, path)?
         } else {
             crate::native_file::header_from_reader(agent, &mut reader, &mut remaining)?
@@ -175,7 +175,12 @@ fn confirm_metadata(
             return Err(anyhow!("label_session_cwd_mismatch"));
         }
         let home = home.ok_or_else(|| anyhow!("label_session_outside_roots"))?;
-        let native_directory = crate::native_file::default_directory(home, agent, &native)?;
+        // agy finds a conversation by its id alone, in no folder of its cwd.
+        let native_directory = if agent == Agent::Antigravity {
+            crate::antigravity::directory(home, &header.id)
+        } else {
+            crate::native_file::default_directory(home, agent, &native)?
+        };
         let actual_directory = crate::native_file::directory_of(agent, path)
             .and_then(|parent| hide_platform::fs::identity::canonical(parent).ok());
         if actual_directory.is_none()
@@ -313,7 +318,7 @@ mod tests {
                 Agent::Claude => {
                     serde_json::json!({"type":"user","sessionId":"native-a","message":{"role":"user","content":"content must not identify the owner"}})
                 }
-                Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode | Agent::Cursor => {
+                Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode | Agent::Cursor | Agent::Antigravity => {
                     unreachable!("legacy metadata fixtures")
                 }
             };

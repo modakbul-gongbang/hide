@@ -481,6 +481,8 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
     let title = match request.agent {
         Agent::Codex => codex_thread_name(home, request, &path),
         Agent::Cursor => None,
+        // agy keeps a conversation's title in its index, not its transcript.
+        Agent::Antigravity => crate::antigravity::title(&path),
         Agent::Claude | Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode => {
             parsed.title.clone()
         }

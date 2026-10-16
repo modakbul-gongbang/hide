@@ -126,7 +126,7 @@ mod tests {
         let root = match agent {
             Agent::Claude => home.join(".claude/projects/project"),
             Agent::Codex => home.join(".codex/sessions/2026/01/01"),
-            Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode | Agent::Cursor => {
+            Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode | Agent::Cursor | Agent::Antigravity => {
                 unreachable!("legacy metadata fixtures")
             }
         };
@@ -135,7 +135,7 @@ mod tests {
         let header = match agent {
             Agent::Claude => serde_json::json!({"type":"user","sessionId":"native-a"}),
             Agent::Codex => serde_json::json!({"type":"session_meta","payload":{"id":"native-a"}}),
-            Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode | Agent::Cursor => {
+            Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode | Agent::Cursor | Agent::Antigravity => {
                 unreachable!("legacy metadata fixtures")
             }
         };

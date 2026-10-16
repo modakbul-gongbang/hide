@@ -383,7 +383,7 @@ fn collect_grok(
 
 fn session_cwd(agent: Agent, path: &Path) -> Option<PathBuf> {
     match agent {
-        Agent::Grok | Agent::Pi | Agent::Omp => crate::native_file::header(agent, path)
+        Agent::Grok | Agent::Pi | Agent::Omp | Agent::Antigravity => crate::native_file::header(agent, path)
             .ok()
             .map(|header| header.cwd),
         Agent::Codex => crate::codex_session_cwd(path).map(PathBuf::from),
