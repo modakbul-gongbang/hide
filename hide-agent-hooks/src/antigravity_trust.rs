@@ -146,15 +146,25 @@ pub fn trust(home: &Path, folder: &Path) -> Result<(), InstallFailure> {
     {
         return Ok(());
     }
-    // The record is written first: a settings write that then fails leaves a
-    // recorded folder agy does not trust, which a removal skips harmlessly.
+    // The record is written first, so a crash between the two writes leaves
+    // a recorded folder agy does not trust, which a removal skips. A settings
+    // write that fails takes the folder back out of the record: left there,
+    // it would make a trust the operator gives agy later look like Hide's.
     let mut record = read_record(home)?;
-    if !record.contains(&folder) {
+    let added = !record.contains(&folder);
+    if added {
         record.push(folder.clone());
         write_record(home, &record)?;
     }
-    list.push(Value::String(folder));
-    write_document(&settings, &document)
+    list.push(Value::String(folder.clone()));
+    let written = write_document(&settings, &document);
+    if written.is_err() && added {
+        record.retain(|entry| entry != &folder);
+        // The settings failure is the one reported; a record left behind is
+        // the crash case above.
+        let _ = write_record(home, &record);
+    }
+    written
 }
 
 /// Makes Hide AI's tool-free folder for agy (`hide_ai::read_only_workspace`)

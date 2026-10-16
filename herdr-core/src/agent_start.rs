@@ -1287,21 +1287,25 @@ mod tests {
         let settings = home.path().join(".gemini/antigravity-cli/settings.json");
         std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
         let node = hide_node::Local::new(Some(home.path().to_path_buf()));
-        trust_worktree(Some(&node), "claude", "/work/tree-1").unwrap();
+        // The core names the worktree in its wire spelling; agy's list holds
+        // the native one.
+        let tree = |name: &str| home.path().join(name);
+        let wire = |name: &str| hide_platform::path::to_wire(&tree(name)).unwrap();
+        trust_worktree(Some(&node), "claude", &wire("tree-1")).unwrap();
         assert!(!settings.exists(), "Claude asks no folder trust");
-        trust_worktree(Some(&node), "antigravity", "/work/tree-1").unwrap();
+        trust_worktree(Some(&node), "antigravity", &wire("tree-1")).unwrap();
         let written: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
         assert_eq!(
             written["trustedWorkspaces"],
-            serde_json::json!(["/work/tree-1"])
+            serde_json::json!([tree("tree-1").to_str().unwrap()])
         );
         // A trust that cannot be recorded stops the start with its reason.
         std::fs::write(&settings, "{ not json").unwrap();
-        let refused = trust_worktree(Some(&node), "antigravity", "/work/tree-2").unwrap_err();
+        let refused = trust_worktree(Some(&node), "antigravity", &wire("tree-2")).unwrap_err();
         assert!(refused.starts_with("agent_trust_failed"), "{refused}");
         assert!(
-            trust_worktree(None, "antigravity", "/work/tree-2")
+            trust_worktree(None, "antigravity", &wire("tree-2"))
                 .unwrap_err()
                 .starts_with("agent_trust_unavailable")
         );
