@@ -3,7 +3,7 @@
 // existing System masters supplied by pen-screens, and the verb, descendant
 // mark, tree button and PR mark are refs of Component / Agent tree parts.
 import {AGENT_TREE_MASTERS, PR_STATES} from './pen-agent-tree.mjs';
-import {num} from './pen-system.mjs';
+import {legacyMark, markSlot, num} from './pen-system.mjs';
 export function sessionScreens(tokens, {frame, text, icon, themedXref, screenButton, screenBadge, screenIconButton}) {
   // A row leads with its status mark alone (PRD agent-mark-quiet D-01): its second line starts under the title, one gap after the mark.
   const detailIndent = num(tokens, '--size-agent-mark') + 6;
@@ -60,7 +60,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
     lane(id, spec),
     frame(`${id}-body`, 'Lines', {width:'fill_container', layout:'vertical', gap:2, padding:[4,0,4,4]}, [
       frame(`${id}-head`, 'Line one', {width:'fill_container',height:20,layout:'horizontal',gap:6,alignItems:'center'}, [
-        caption(`${id}-mark`, spec.mark ?? '●', spec.tone ?? '$--agent-working', {mono:true,weight:'600'}),
+        markSlot(`${id}-mark`, legacyMark(spec.mark ?? '●', spec.tone ?? '$--agent-working')),
         caption(`${id}-title`, spec.title, spec.depth && !spec.selected && !spec.ask ? '$--subtle-foreground' : '$--foreground', {width:'fill_container',weight: spec.depth ? '400' : '500'}),
         ...(spec.desc ? [descendantMark(`${id}-desc`, spec.desc[0], spec.desc[1])] : []),
         ...(spec.pr ? [prChip(`${id}-pr`, spec.pr)] : []),
@@ -109,10 +109,10 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
         {title:'에이전트 패널 표시 규칙과 UI 구조 정리안',age:'38s',line:'Sessions 분류 리뷰 3건을 v3에 반영 중'},
       ],{count:3}),
       group('done','Done',[
-        {title:'Factory 워커 시작 지연 수정',mark:'✓',tone:'$--success',pr:{number:872,state:'pending'},age:'6m',line:'진단 로그 추가하고 PR 올림'},
+        {title:'Factory 워커 시작 지연 수정',mark:'✓',tone:'$--success',pr:{number:872,state:'pending'},age:'6m',line:'끝남 · 진단 로그 추가하고 PR 올림'},
       ]),
       group('idle','Idle',[
-        {title:'P8 읽기 전용 준비 계획',mark:'◐',tone:'$--warning',pr:{number:809,state:'failed'},age:'19h',line:'Grok 훅 연결 마무리 남음'},
+        {title:'P8 읽기 전용 준비 계획',mark:'◐',tone:'$--warning',pr:{number:809,state:'failed'},age:'19h',line:'일 남음 · Grok 훅 연결 마무리 남음'},
         {title:'에이전트 막힘 상태 PRD',mark:'○',tone:'$--muted-foreground',pr:{number:861,state:'failed'},age:'3h'},
         {title:'세션 읽기 큰 레코드 건너뛰기',mark:'○',tone:'$--muted-foreground',pr:{number:869,state:'mergeable'},age:'2h'},
         {title:'코어 호스트 노드 이동 설계 문서',mark:'○',tone:'$--muted-foreground',age:'1d'},
@@ -128,15 +128,15 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
   // into the same second-row overlay as the core band.
   // with the one band a pane carries overlaid at the top (D-14, D-43; B20, B21).
   function pane(id, {path = [], mark = '○', tone = '$--agent-working', provider: kind = 'codex', title, forked, pr, children, counts = {}, disconnected = false, summary = '작업 상태 칩과 팝업을 연결하는 중', band, terminal}) {
-    const parts = band ? ['raised'].filter(key=>counts[key]) : Object.keys(counts).filter(key=>counts[key]);
+    // Only the counts a row mark stands for are drawn; a disconnected device's children draw none (status-marks B16, B21).
+    const parts = disconnected ? [] : (band ? ['raised'] : ['raised', 'working', 'result']).filter(key=>counts[key]);
     const tree = children ? [themedXref(`${id}-tree`, 'ath-tree-button', 'Child states', {fill:'$--background'}, {
-      'ath-tb-tree':{enabled:!disconnected && parts.length===0},'ath-tb-counts':{enabled:parts.length>0},
-      'ath-tb-disconnected':{enabled:disconnected},
+      'ath-tb-tree':{enabled:parts.length===0},'ath-tb-counts':{enabled:parts.length>0},
       ...Object.fromEntries(parts.flatMap(key=>[[`ath-tb-${key}`,{enabled:true}],[`ath-tb-${key}-n`,{content:String(counts[key])}]])),
     })] : [];
     const header = frame(`${id}-header`, 'Header', {width:'fill_container',height:28,layout:'horizontal',gap:6,alignItems:'center',padding:[0,8],fill:'$--card'}, [
       ...path.flatMap((name, index) => [caption(`${id}-path-${index}`, name, '$--muted-foreground'), caption(`${id}-sep-${index}`, '›', '$--muted-foreground')]),
-      caption(`${id}-mark`, mark, tone, {mono:true,weight:'600'}),
+      markSlot(`${id}-mark`, legacyMark(mark, tone)),
       provider(`${id}-provider`, kind),
       caption(`${id}-title`, title, '$--foreground'),
       ...(forked ? [icon(`${id}-fork`, 'git-fork', {size:12,fill:'$--subtle-foreground'})] : []),

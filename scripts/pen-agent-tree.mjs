@@ -4,7 +4,7 @@
 // master; every state in the Light and Dark frames is a `ref` of it with
 // descendant overrides, as pen-system.mjs's System parts are. The screens in
 // design/hide-screens.pen ref these masters by id, so the ids are stable.
-import {frame, icon, num, text} from './pen-system.mjs';
+import {frame, icon, markShapes, markSlot, markSwitch, num, text} from './pen-system.mjs';
 
 export const AGENT_TREE_MASTERS = {
   verb: 'ath-verb',
@@ -28,7 +28,6 @@ export function buildAgentTreeParts(tokens) {
   const n = name => num(tokens, name);
   const HAIR = n('--size-hairline');
   const MARK = n('--size-agent-mark');
-  const DOT = n('--size-status-mark');
   const ICON = n('--size-icon-sm');
   const PR = n('--size-pr-icon');
   const LINE = n('--size-sidebar-line');
@@ -60,10 +59,10 @@ export function buildAgentTreeParts(tokens) {
     caption('ath-pr-n', '924', '$--subtle-foreground', {mono: true}),
   ]);
 
-  // Descendant mark: `! N` raised, else `● N` working, on a folded parent only (B17).
+  // Descendant mark: the turn mark and N raised, else the ring and N working, on a folded parent only (B17; status-marks B21).
   const mark = frame(AGENT_TREE_MASTERS.mark, 'Descendant mark', {reusable: true, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', width: 'fit_content'}, [
-    caption('ath-mark-bang', '!', '$--warning', {weight: '600', mono: true}),
-    {type: 'ellipse', id: 'ath-mark-dot', name: 'Dot', enabled: false, width: DOT, height: DOT, fill: '$--agent-working'},
+    markSlot('ath-mark-bang', 'turn'),
+    {...markSlot('ath-mark-dot', 'going'), enabled: false},
     caption('ath-mark-n', '2', '$--warning', {weight: '600', mono: true}),
   ]);
 
@@ -73,12 +72,10 @@ export function buildAgentTreeParts(tokens) {
     cornerRadius: '$--radius-xs', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner',
   }, [
     icon('ath-tb-tree', 'list-tree', {size: ICON, fill: '$--muted-foreground'}),
-    {...caption('ath-tb-disconnected', '⊘', '$--muted-foreground', {mono: true}), enabled: false},
+    // The row marks (status-marks B21): raised asks, working children, results to read; a child's own ask, an unknown or a resting child draws no mark and is named only in the hint.
     frame('ath-tb-counts', 'Child state counts', {enabled:false,layout:'horizontal',gap:'$--spacing-xxs',alignItems:'center'}, [
-      ...[['raised','!','$--warning'],['working','●','$--agent-working'],['result','✓','$--success'],['waiting','○','$--agent-working'],['unknown','~','$--muted-foreground'],['idle','○','$--muted-foreground']].map(([key,symbol,fill])=>frame(`ath-tb-${key}`,key,{enabled:false,layout:'horizontal',alignItems:'center'},[
-        frame(`ath-tb-${key}-mark`,'Status mark',{width:MARK,height:MARK,layout:'horizontal',alignItems:'center',justifyContent:'center'},[
-          ...(['●','○'].includes(symbol) ? [{type:'ellipse',id:`ath-tb-${key}-symbol`,width:DOT,height:DOT,...(symbol==='●'?{fill}:{stroke:fill,strokeWidth:HAIR,strokeAlignment:'inner'})}] : [caption(`ath-tb-${key}-symbol`,symbol,fill,{size:'$--text-micro',mono:true})]),
-        ]),
+      ...[['raised','turn','$--warning'],['working','going','$--agent-working'],['result','unread','$--muted-foreground']].map(([key,state,fill])=>frame(`ath-tb-${key}`,key,{enabled:false,layout:'horizontal',alignItems:'center'},[
+        markSlot(`ath-tb-${key}-mark`, state),
         caption(`ath-tb-${key}-n`,'1',fill,{size:'$--text-micro',mono:true}),
       ])),
     ]),
@@ -100,11 +97,7 @@ export function buildAgentTreeParts(tokens) {
     ]),
     frame('ath-row-body', 'Body', {layout: 'vertical', gap: 0, width: 'fill_container', padding: ['$--spacing-xs', '$--spacing-xs', '$--spacing-xs', '$--spacing-xs']}, [
       frame('ath-row-l1', 'Line one', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: 'fill_container', height: LINE}, [
-        frame('ath-row-mark', 'Status mark', {width: MARK, height: MARK, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [
-          {type: 'ellipse', id: 'ath-row-dot', name: 'Dot', enabled: false, width: DOT, height: DOT, fill: '$--agent-working'},
-          {type: 'ellipse', id: 'ath-row-ring', name: 'Ring', width: DOT, height: DOT, stroke: '$--agent-working', strokeWidth: HAIR, strokeAlignment: 'inner'},
-          {...caption('ath-row-glyph', '!', '$--warning', {mono: true, weight: '600'}), enabled: false},
-        ]),
+        frame('ath-row-mark', 'Status mark', {width: MARK, height: MARK, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, markShapes('ath-row')),
         {...text('ath-row-title', '에이전트 제목', {fill: '$--subtle-foreground'}), textGrowth: 'fixed-width', width: 'fill_container'},
         ref('ath-row-pr', AGENT_TREE_MASTERS.prIcon, 'PR mark'),
         ref('ath-row-desc', AGENT_TREE_MASTERS.mark, 'Descendant mark', {enabled: false}),
@@ -132,21 +125,20 @@ export function buildAgentTreeParts(tokens) {
     const compact = cell('좁은 변형 (번호 없음)', ref(id('pr-compact'), AGENT_TREE_MASTERS.prIcon, 'PR mark', {}, {'ath-pr-g': {icon: 'git-pull-request', fill: '$--pr-mergeable'}, 'ath-pr-n': {enabled: false}}));
     const marks = [
       cell('! N raised', ref(id('mark-raised'), AGENT_TREE_MASTERS.mark, 'Descendant mark')),
-      cell('● N working', ref(id('mark-working'), AGENT_TREE_MASTERS.mark, 'Descendant mark', {}, {'ath-mark-bang': {enabled: false}, 'ath-mark-dot': {enabled: true}, 'ath-mark-n': {content: '3', fill: '$--agent-working'}})),
+      cell('Ring N working', ref(id('mark-working'), AGENT_TREE_MASTERS.mark, 'Descendant mark', {}, {'ath-mark-bang': {enabled: false}, 'ath-mark-dot': {enabled: true}, 'ath-mark-n': {content: '3', fill: '$--agent-working'}})),
     ];
     const buttons = [
       cell('Tree button rest', ref(id('tb-rest'), AGENT_TREE_MASTERS.treeButton, 'Tree button')),
       cell('Tree button open', ref(id('tb-open'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill: '$--secondary'})),
-      cell('Tree button with child states', ref(id('tb-counts'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-tree':{enabled:false},'ath-tb-counts':{enabled:true},...Object.fromEntries(['working','result','waiting','unknown','idle'].map(key=>[`ath-tb-${key}`,{enabled:true}]))})),
+      cell('Tree button with child states', ref(id('tb-counts'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-tree':{enabled:false},'ath-tb-counts':{enabled:true},...Object.fromEntries(['working','result'].map(key=>[`ath-tb-${key}`,{enabled:true}]))})),
       cell('Ask band compact child button', ref(id('tb-raised'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-tree':{enabled:false},'ath-tb-counts':{enabled:true},'ath-tb-raised':{enabled:true},'ath-tb-raised-n':{content:'2'}})),
-      cell('Tree button with unknown child', ref(id('tb-unknown'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-tree':{enabled:false},'ath-tb-counts':{enabled:true},'ath-tb-unknown':{enabled:true}})),
-      cell('Unavailable child states, topology kept', ref(id('tb-disconnected'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-tree':{enabled:false},'ath-tb-disconnected':{enabled:true}})),
+      cell('Unknown or unavailable children: the tree alone', ref(id('tb-unknown'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'})),
     ];
     const rows = [
-      cell('Root, opened', ref(id('row-root'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-chev': {icon: 'chevron-down'}, 'ath-row-ring': {enabled: false}, 'ath-row-dot': {enabled: true}, 'ath-row-title': {content: '루트 에이전트', fill: '$--foreground'}, 'ath-row-pr/ath-pr-g': {fill: '$--pr-mergeable'}})),
-      cell('Child, folded with a raised descendant', ref(id('row-child'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-elbow': {enabled: true}, 'ath-row-title': {content: '자식'}, 'ath-row-desc': {enabled: true}, 'ath-row-age': {content: '19h'}})),
-      cell('Grandchild, no children', ref(id('row-grand'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-rail': {enabled: true}, 'ath-row-elbow': {enabled: true}, 'ath-row-chev': {enabled: false}, 'ath-row-ring': {enabled: false}, 'ath-row-glyph': {enabled: true, content: '✓', fill: '$--success'}, 'ath-row-title': {content: '손자'}, 'ath-row-pr': {enabled: false}, 'ath-row-age': {content: '40m'}})),
-      cell('Child on another device', ref(id('row-remote'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-elbow': {enabled: true}, 'ath-row-chev': {enabled: false}, 'ath-row-ring': {stroke: '$--muted-foreground'}, 'ath-row-title': {content: '다른 기기의 자식'}, 'ath-row-pr': {enabled: false}, 'ath-row-device': {enabled: true}, 'ath-row-age': {content: '5h'}})),
+      cell('Root, opened', ref(id('row-root'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-chev': {icon: 'chevron-down'}, ...markSwitch('ath-row', 'going'), 'ath-row-title': {content: '루트 에이전트', fill: '$--foreground'}, 'ath-row-pr/ath-pr-g': {fill: '$--pr-mergeable'}})),
+      cell('Child, folded with a raised descendant', ref(id('row-child'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-elbow': {enabled: true}, ...markSwitch('ath-row', 'going'), 'ath-row-title': {content: '자식'}, 'ath-row-desc': {enabled: true}, 'ath-row-age': {content: '19h'}})),
+      cell('Grandchild, no children', ref(id('row-grand'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-rail': {enabled: true}, 'ath-row-elbow': {enabled: true}, 'ath-row-chev': {enabled: false}, ...markSwitch('ath-row', 'quiet'), 'ath-row-title': {content: '손자'}, 'ath-row-pr': {enabled: false}, 'ath-row-age': {content: '40m'}})),
+      cell('Child on another device', ref(id('row-remote'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-elbow': {enabled: true}, 'ath-row-chev': {enabled: false}, ...markSwitch('ath-row', 'quiet'), 'ath-row-title': {content: '다른 기기의 자식'}, 'ath-row-pr': {enabled: false}, 'ath-row-device': {enabled: true}, 'ath-row-age': {content: '5h'}})),
     ];
     return [...verbs, ...icons, more, stale, hover, compact, ...marks, ...buttons, ...rows];
   };
@@ -160,7 +152,7 @@ export function buildAgentTreeParts(tokens) {
     layout: 'vertical', gap: '$--spacing-xl', padding: '$--spacing-xl', fill: '$--card', cornerRadius: '$--radius-lg', width: 'fit_content',
   }, [
     text(`${id}-title`, 'Agent tree parts', {size: '$--text-headline', weight: '600'}),
-    text(`${id}-spec`, 'web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the one PR mark every PR surface draws (web/src/components/pr-mark.tsx): the state\'s icon in its colour (failed red, pending amber, mergeable green, draft grey, merged purple, closed dim), the number for one PR and, for several, each state\'s icon and count in that state\'s colour, worst first, no border, a fill under the pointer, dimmed while GitHub cannot be read, and a compact variant without the number; the one descendant mark a folded parent wears, ! N raised else ● N working; the pane header\'s tree button, state counts without a separate total or internal divider, a tree icon when no count is drawn; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, plus a device line only for a child on another machine. Sessions rows, the pane header, the sidebar row and the tree popover all draw the same PR mark.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
+    text(`${id}-spec`, 'web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the one PR mark every PR surface draws (web/src/components/pr-mark.tsx): the state\'s icon in its colour (failed red, pending amber, mergeable green, draft grey, merged purple, closed dim), the number for one PR and, for several, each state\'s icon and count in that state\'s colour, worst first, no border, a fill under the pointer, dimmed while GitHub cannot be read, and a compact variant without the number; the one descendant mark a folded parent wears, ! N while raised, nothing for working alone; the pane header\'s tree button, state counts without a separate total or internal divider, a tree icon when no count is drawn; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, plus a device line only for a child on another machine. Sessions rows, the pane header, the sidebar row and the tree popover all draw the same PR mark.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
     frame(`${id}-masters`, 'Masters', {layout: 'horizontal', gap: '$--spacing-xl', alignItems: 'start'}, [verb, prIcon, mark, treeButton, row]),
     themeFrame(`${id}-light`, 'Light', states('l')),
     themeFrame(`${id}-dark`, 'Dark', states('d')),

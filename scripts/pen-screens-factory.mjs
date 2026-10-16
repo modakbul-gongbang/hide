@@ -8,7 +8,7 @@
 // title and number is invented mock content derived from one example data set
 // below, so the 결정 필요 count, the tab number and the sidebar badge always agree.
 
-import {frame, icon, num, text} from './pen-system.mjs';
+import {frame, icon, legacyMark, markSlot, num, text} from './pen-system.mjs';
 import {fitText} from './pen-screens-disk.mjs';
 
 const FG = '$--foreground';
@@ -59,17 +59,17 @@ const TASKS = {
   t415: {id: '#415', project: 'hide', title: '보드 정렬 상태 기억', state: 'running', lane: 'moving', stage: 1, agent: 'codex', kids: [2, 1], age: '8분',
     summary: '고른 정렬을 ui_state에 남겨 다시 열어도 그대로 둔다', mark: ['○', '하위 대기', WORK], ai: '저장은 끝, 하위 둘이 복원과 테스트를 쓰는 중'},
   t398: {id: '#398', project: 'hide', title: 'Sessions 검색 속도 개선', state: 'verifying', lane: 'moving', stage: 2, pr: '559', agent: 'claude', age: '4분',
-    summary: '세션 검색을 색인으로 바꿔 1초 안에 답한다', mark: ['○', '대기', MUT], ai: '색인을 붙이고 CI 결과를 기다리는 중'},
+    summary: '세션 검색을 색인으로 바꿔 1초 안에 답한다', mark: ['○', '대기', WORK], ai: '색인을 붙이고 CI 결과를 기다리는 중'},
   t420: {id: '#420', project: 'hide', title: 'Task 상세 API 응답 형식', state: 'blocked', lane: 'stuck', wait: 'me', stage: 1, agent: 'codex', age: '3일',
     summary: 'Task 상세를 웹에 보낼 응답 모양을 정한다',
     ask: {question: 'Task 상세를 새 REST 엔드포인트로 낼까요, 기존 WS snapshot에 합칠까요?', choices: ['WS snapshot에 합치기', 'REST 엔드포인트']},
     mark: ['?', '질문', WARN], ai: '두 방식의 snapshot 크기를 재고 답을 기다림'},
   t405: {id: '#405', project: 'hide', title: 'hide-ai 호출 상한 조정', state: 'merge_waiting', lane: 'stuck', wait: 'me', stage: 3, pr: '561', agent: 'claude', age: '1시간',
     summary: 'hide-ai가 분당 부르는 횟수 상한을 설정으로 뺀다', problem: {glyph: 'lock', text: 'manual 머지', tone: WARN}, action: ['머지', 'PR 보기'],
-    mark: ['○', '대기', MUT], ai: '상한 설정과 테스트를 올리고 머지를 기다림'},
+    mark: ['◐', '대기', MUT], ai: '상한 설정과 테스트를 올리고 머지를 기다림'},
   t417: {id: '#417', project: 'hide', title: '디스크 정리 표 다시 그리기', state: 'stopped', lane: 'stuck', wait: 'me', stage: 2, pr: '560', agent: 'claude', age: '40분',
     summary: '디스크 정리 표를 크기순으로 다시 그린다', problem: {glyph: 'circle-alert', text: '검증 3회 실패', tone: CRIT}, action: ['다시 시작', '기록 보기'],
-    mark: ['○', '대기', MUT], ai: 'web-e2e 세 번째 실패 뒤 멈춤'},
+    mark: ['◐', '멈춤', MUT], ai: 'web-e2e 세 번째 실패 뒤 멈춤'},
   t426: {id: '#426', project: 'hide', title: '단축키 도움말 시트', state: 'resting', lane: 'stuck', wait: 'other', stage: 1, age: '50분',
     summary: '⌘/로 여는 단축키 목록 시트를 만든다', problem: {glyph: 'circle-pause', text: '쉬는 중 · 14:00 재개', tone: MUT}},
   t430: {id: '#430', project: 'hide', title: 'flaky: pane-focus 테스트', state: 'outside', lane: 'stuck', wait: 'other', stage: 3, age: '2시간',
@@ -352,9 +352,9 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   const BAR_W = 4 * BAR_CELL + 3 * BAR_GAP;
   const sizeOf = width => (width < SMALL_BELOW ? 'small' : width >= WIDE_FROM ? 'wide' : 'normal');
   const logo = (id, agent) => frame(id, `${agent} logo`, {width: 14, height: 14, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${agent}.png`, mode: 'fit'}}, []);
-  // The sidebar's descendant badge (DescendantBadge, Badge secondary in mono): working and done children.
+  // The sidebar's descendant badge (DescendantBadge, Badge secondary in mono): working and finished children, in the row marks (status-marks B21).
   const kidsBadge = (id, [working, done]) => frame(id, '하위 에이전트', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', height: 16, padding: [0, '$--spacing-xs'], cornerRadius: '$--radius-sm', fill: '$--secondary'}, [
-    cap(`${id}-w`, `●${working}`, WORK, {mono: true}), cap(`${id}-d`, `✓${done}`, OK, {mono: true}),
+    markSlot(`${id}-wm`, 'going'), cap(`${id}-w`, `${working}`, WORK, {mono: true}), markSlot(`${id}-dm`, 'unread'), cap(`${id}-d`, `${done}`, OK, {mono: true}),
   ]);
   // The four-cell stage bar 대기 · 작업 · 검증 · 머지 (B14): cells before the current one in
   // the done color, the current one in the working color, hatched when the card is in 멈춤.
@@ -428,7 +428,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
     if (wide) {
       children.push(row(`${id}-st`, [
         cap(`${id}-sw`, STATE_WORD[task.state], SUB, {weight: '500'}),
-        ...(task.mark ? [row(`${id}-mk`, [text(`${id}-mg`, task.mark[0], {size: '$--text-caption', fill: task.mark[2], mono: true}), cap(`${id}-mw`, task.mark[1])], {gap: '$--spacing-xxs'})] : []),
+        ...(task.mark ? [row(`${id}-mk`, [markSlot(`${id}-mg`, legacyMark(task.mark[0], task.mark[2])), cap(`${id}-mw`, task.mark[1])], {gap: '$--spacing-xxs'})] : []),
       ], {gap: '$--spacing-md'}));
       if (task.diagnosis) {
         children.push(dashedRule(`${id}-dr`, inner));
