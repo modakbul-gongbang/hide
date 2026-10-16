@@ -395,7 +395,7 @@ const zhCN = {
   "devices.rail.menu": "设备栏",
   "devices.rail.hide": "隐藏设备栏",
   "devices.rail.notConnected": "未连接",
-  "devices.rail.needsYou": "待处理 {{count}}",
+  "devices.rail.needsYou": "轮到你 {{count}}",
   "devices.rail.done": "待读 {{count}}",
   "devices.catalog.loading": "正在从 {{device}} 读取项目…",
   "devices.catalog.error": "{{device}} 状态：{{state}}",

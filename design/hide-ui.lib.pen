@@ -22850,6 +22850,65 @@
         },
         {
           "type": "frame",
+          "id": "sidebar-agent-row-state-sleep-failed",
+          "name": "State / Could not reopen: the moon, its line says so",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-sleep-failed-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Could not reopen: the moon, its line says so",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-sleep-failed",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / sleep-failed",
+              "descendants": {
+                "sar-turn": {
+                  "enabled": false,
+                  "fill": "$--warning"
+                },
+                "sar-turn-bang": {
+                  "fill": "$--status-foreground"
+                },
+                "sar-arc": {
+                  "enabled": false,
+                  "fill": "$--agent-working"
+                },
+                "sar-dot": {
+                  "enabled": false,
+                  "fill": "$--success"
+                },
+                "sar-moon": {
+                  "enabled": true,
+                  "fill": "$--muted-foreground"
+                },
+                "sar-title": {
+                  "content": "파서 리팩터링"
+                },
+                "sar-elapsed": {
+                  "content": "2h"
+                },
+                "sar-line": {
+                  "enabled": true,
+                  "content": "재움 · 다시 열지 못함",
+                  "fill": "$--subtle-foreground"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
           "id": "sidebar-agent-row-state-disconnected",
           "name": "State / On a device that is not connected: no mark, dimmed whole, its line names the device",
           "width": "fill_container",

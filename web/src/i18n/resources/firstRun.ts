@@ -112,7 +112,7 @@ const ko = {
   "firstRun.settings.allowed": "허용됨",
   "firstRun.settings.blocked": "macOS가 막음",
   "firstRun.settings.testRow": "테스트 알림",
-  "firstRun.settings.sentWhen": "Hide 창이 앞에 없을 때만 보냅니다. 내 확인 대기 알림을 켜면 앱 아이콘에 나를 기다리는 에이전트 수를 표시합니다.",
+  "firstRun.settings.sentWhen": "Hide 창이 앞에 없을 때만 보냅니다. 내 차례 알림을 켜면 앱 아이콘에 내 차례인 에이전트 수를 표시합니다.",
   "firstRun.intro.factory": "Factory는 라벨을 붙인 GitHub 이슈를 하나씩 머지된 풀 리퀘스트까지 가져갑니다. 프로젝트에 하나 만들어 시작하세요.",
 } satisfies Catalog<typeof firstRunEnglish>;
 
