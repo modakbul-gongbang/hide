@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { continueFixtureTranscript, setFixtureLifecycle, startHerdr } from "../../web/e2e/herdr-fixture";
 import { FIRST_GOAL, MISSED, NEXT_GOAL, nextWork, seedFirstWork, workFixture, workRepositoryReady } from "../../web/e2e/session-work-fixture";
 import { chord } from "../../web/e2e/chords";
-import { enterWorkspace, openTaskFolds, showTasks, showTool } from "../../web/e2e/wire";
+import { enterWorkspace, openTaskFolds, showTool, taskRow } from "../../web/e2e/wire";
 import { fitWindow, isolate, launchShell, REPO, test } from "./fixture";
 import { captureElectronWindow } from "./electron-window";
 
@@ -27,12 +27,11 @@ test("@platform session work records, missed lines, ended work and search render
     // The lane pinned, so the 보기 slot stays docked through the sheets below (PRD right-lane B5).
     await showTool(page, "files");
     await page.locator('[data-lane-pin="off"]').click();
-    const tasks = await showTasks(page);
     const first = Date.now();
     github.clock(first, first);
     const { session, child } = seedFirstWork(herdr, first);
-    const root = tasks.locator(`[data-task-row="${herdr.panes[0]}"]`);
-    await expect(root).toContainText(FIRST_GOAL, { timeout: 45_000 });
+    const root = await taskRow(page, herdr.panes[0], FIRST_GOAL);
+    const tasks = page.locator("[data-task-lens]");
     await root.hover();
     await page.locator(`[data-task-record="${herdr.panes[0]}"]`).click();
     // The record opens in the lane's 보기 slot (PRD sidebar-task-lens B15).

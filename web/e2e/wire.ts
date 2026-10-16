@@ -114,6 +114,20 @@ export async function openTaskFolds(page: Page): Promise<void> {
   while ((await folded.count()) > 0) await folded.first().click();
 }
 
+/**
+ * The 태스크 list row of `pane` once it says `goal`. An idle session rests
+ * under the folded 쉬는 중 (B5), so the fold is opened as soon as it is drawn;
+ * it stays open while the list is shown.
+ */
+export async function taskRow(page: Page, pane: string, goal: string): Promise<Locator> {
+  const list = await showTasks(page);
+  const row = list.locator(`[data-task-row="${pane}"]`);
+  await expect(row.or(list.locator('[data-task-fold="rest"]')).first()).toBeVisible({ timeout: 45_000 });
+  await openTaskFolds(page);
+  await expect(row).toContainText(goal, { timeout: 45_000 });
+  return row;
+}
+
 /** Shows or hides the right lane from the Workspace path's menu (B20). */
 export async function chooseLane(page: Page): Promise<void> {
   await page.locator("[data-workspace-location]").click({ button: "right" });

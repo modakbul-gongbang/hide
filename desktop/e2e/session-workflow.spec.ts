@@ -43,9 +43,9 @@ test("the 태스크 list and raised-child pane bands preserve native terminal ge
       await captureNativeWindow(app, `session-children-${theme}`, facts);
       await page.keyboard.press("Escape");
       await expect(treeButton).toBeFocused();
-      // The raised child asks through its root's row, folded under it (agent-hierarchy-screens B1, B2; sidebar-task-lens B7, B10).
+      // The raised child asks through its root's row, folded under it, with its question as the row's second line (agent-hierarchy-screens B1, B2; sidebar-task-lens B7, B8, B10).
       const tasks = await showTasks(page);
-      await expect(tasks.locator(`[data-task-group="needs_you"] [data-task-row="${parent}"]`)).toContainText("Approve");
+      await expect(tasks.locator(`[data-task-group="needs_you"] [data-task-row="${parent}"] [data-task-line="needs_you"]`)).toContainText("검증 명령 실행 권한이 필요합니다");
       await expect(tasks.locator(`[data-task-row="${child}"], [data-task-child="${child}"]`)).toHaveCount(0);
       await expect(tasks.locator(`[data-task-row="${parent}"] [data-task-children]`)).toHaveAttribute("data-task-children", "1");
       await captureNativeWindow(app, `tasks-${theme}`, facts);

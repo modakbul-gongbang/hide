@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { continueFixtureTranscript, setFixtureLifecycle, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { FIRST_GOAL, MISSED, NEXT_GOAL, nextWork, seedFirstWork, workFixture, workRepositoryReady } from "./session-work-fixture";
-import { enterWorkspace, openTaskFolds, showProjectRow, showTasks } from "./wire";
+import { enterWorkspace, showProjectRow, taskRow } from "./wire";
 import { chord } from "./chords";
 
 test.describe.configure({ timeout: 180_000 });
@@ -205,20 +205,6 @@ function createdIn(contexts: string): (string | null)[] {
   if (!fs.existsSync(contexts)) return [];
   return fs.readFileSync(contexts, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { args: string[]; repository: string | null })
     .filter((call) => call.args[0] === "issue" && call.args[1] === "create").map((call) => call.repository);
-}
-
-/**
- * The 태스크 list row of `pane` once it says `goal`. An idle session rests
- * under the folded 쉬는 중 (PRD sidebar-task-lens B5), so the fold is opened
- * as soon as it is drawn; it stays open while the list is shown.
- */
-async function taskRow(page: import("@playwright/test").Page, pane: string, goal: string) {
-  const list = await showTasks(page);
-  const root = list.locator(`[data-task-row="${pane}"]`);
-  await expect(root.or(list.locator('[data-task-fold="rest"]')).first()).toBeVisible({ timeout: 45_000 });
-  await openTaskFolds(page);
-  await expect(root).toContainText(goal, { timeout: 45_000 });
-  return root;
 }
 
 /** The record of the 태스크 list row of `pane`, once the row says `goal`, opened in the 보기 slot; returns its missed line. */
