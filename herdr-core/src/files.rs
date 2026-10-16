@@ -1118,6 +1118,154 @@ pub(crate) mod tests {
         );
     }
 
+    /// Records each request and answers every one with `answer`, the shape a
+    /// copy or a drop gets back from the host that named the new items.
+    struct AnsweringHost {
+        answer: serde_json::Value,
+        calls: std::sync::Mutex<Vec<Call>>,
+    }
+
+    impl NodeLink for AnsweringHost {
+        fn call(
+            &self,
+            call: Call,
+            _timeout: Duration,
+        ) -> Result<crate::node_access::LinkAnswer, LinkError> {
+            self.calls.lock().unwrap().push(call);
+            Ok(self.answer.clone().into())
+        }
+    }
+
+    #[test]
+    fn a_copy_asks_the_host_for_one_item_and_takes_the_name_the_host_chose() {
+        let root = "/repo";
+        let identity = RootIdentity {
+            device: 1,
+            inode: 2,
+        };
+        let document_root = DocumentRoot {
+            device_id: "macbook".to_owned(),
+            path: "/repo".to_owned(),
+            identity: Some(identity),
+        };
+        let host = AnsweringHost {
+            answer: serde_json::json!({ "name": "a copy.rs" }),
+            calls: Default::default(),
+        };
+        let copy = ExplorerOperation::copy_into(root, "/repo/src/a.rs", "/repo/dest").unwrap();
+        assert_eq!(copy.kind, ExplorerOperationKind::PathCopy);
+        let applied = apply_explorer_operation(&host, &document_root, &copy).unwrap();
+        assert_eq!(applied.destination.as_deref(), Some("/repo/dest/a copy.rs"));
+        assert_eq!(
+            *host.calls.lock().unwrap(),
+            vec![Call::Copy {
+                root: RootRef {
+                    path: "/repo".to_owned(),
+                    identity
+                },
+                path: "src/a.rs".to_owned(),
+                destination: "dest".to_owned()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_copy_or_a_drop_outside_the_checkout_or_into_itself_is_refused_before_anything_is_sent() {
+        let root = "/repo";
+        for (path, destination, expected) in [
+            ("/repo-other/a", "/repo", "outside the workspace"),
+            ("/repo/a", "/repo-other", "outside the workspace"),
+            ("/repo/a", "/repo/../etc", "not a normal path"),
+            ("/repo", "/repo/src", "root itself"),
+            ("/repo/src", "/repo/src", "into itself"),
+            ("/repo/src", "/repo/src/nested", "into itself"),
+        ] {
+            let refused = ExplorerOperation::copy_into(root, path, destination).unwrap_err();
+            assert!(refused.contains(expected), "{path} -> {destination}: {refused}");
+        }
+        let item = |path: &str| ImportItem {
+            path: path.to_owned(),
+            directory: false,
+            staged: None,
+            data: String::new(),
+        };
+        assert!(
+            ExplorerOperation::import_into(root, "/repo", Vec::new())
+                .unwrap_err()
+                .contains("holds nothing")
+        );
+        assert!(
+            ExplorerOperation::import_into(root, "/repo-other", vec![item("a")])
+                .unwrap_err()
+                .contains("outside the workspace")
+        );
+        for path in ["", "../escape", "/abs", "a/../b"] {
+            assert!(
+                ExplorerOperation::import_into(root, "/repo", vec![item(path)]).is_err(),
+                "{path:?}"
+            );
+        }
+        let many = (0..=hide_node_link::mutate::IMPORT_MAX_ITEMS)
+            .map(|n| item(&format!("f{n}")))
+            .collect();
+        assert!(
+            ExplorerOperation::import_into(root, "/repo", many)
+                .unwrap_err()
+                .contains("nothing was added")
+        );
+    }
+
+    #[test]
+    fn a_drop_sends_the_bytes_to_the_host_and_selects_the_first_name_it_made() {
+        let identity = RootIdentity {
+            device: 1,
+            inode: 2,
+        };
+        let document_root = DocumentRoot {
+            device_id: "macbook".to_owned(),
+            path: "/repo".to_owned(),
+            identity: Some(identity),
+        };
+        let host = AnsweringHost {
+            answer: serde_json::json!({ "names": ["a copy.txt", "photos"] }),
+            calls: Default::default(),
+        };
+        let drop = ExplorerOperation::import_into(
+            "/repo",
+            "/repo/src",
+            vec![
+                ImportItem {
+                    path: "a.txt".to_owned(),
+                    directory: false,
+                    staged: None,
+                    data: "aGk=".to_owned(),
+                },
+                ImportItem {
+                    path: "photos".to_owned(),
+                    directory: true,
+                    staged: None,
+                    data: String::new(),
+                },
+            ],
+        )
+        .unwrap();
+        let applied = apply_explorer_operation(&host, &document_root, &drop).unwrap();
+        assert_eq!(applied.destination.as_deref(), Some("/repo/src/a copy.txt"));
+        match host.calls.lock().unwrap().as_slice() {
+            [Call::Import {
+                destination,
+                entries,
+                ..
+            }] => {
+                assert_eq!(destination, "src");
+                assert_eq!(entries.len(), 2);
+                assert_eq!(entries[0].data, "aGk=");
+                assert!(entries[1].directory);
+            }
+            other => panic!("one import call was expected: {other:?}"),
+        }
+    }
+
     #[test]
     fn explorer_refuses_to_trash_outside_the_root_or_the_root_itself() {
         let root = "/repo";

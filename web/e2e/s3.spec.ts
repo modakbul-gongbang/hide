@@ -338,17 +338,24 @@ test("the Explorer copies, pastes, duplicates and cuts items inside one checkout
   const { repo, sent, lastSent } = fixture;
   try {
     const row = (name: string) => page.locator(`[data-explorer-row="${repo}/${name}"]`);
+    // Opening a file hands the keyboard to its View, so the tree takes it back as a Tab press from the row would.
+    const select = async (name: string, opens = true) => {
+      await row(name).click();
+      if (opens && !name.endsWith("/src") && !name.endsWith("src")) await expect(page.locator('[data-tab-kind="file"]').filter({ hasText: name.split("/").pop()! })).toBeVisible();
+      await page.locator("[data-explorer-tree]").focus();
+    };
 
     // Copy README.md and paste with the tree focused and the file selected: the
     // root is its folder, so the host names the copy `README copy.md`.
-    await row("README.md").click();
+    await select("README.md");
     await page.keyboard.press("ControlOrMeta+c");
     await page.keyboard.press("ControlOrMeta+v");
     await expect.poll(() => sent.get("path_copy")).toBe(1);
     expect(lastSent.get("path_copy")).toMatchObject({ root: repo, path: `${repo}/README.md`, destination: repo });
     await expect(row("README copy.md")).toBeVisible();
     expect(fs.readFileSync(`${repo}/README copy.md`, "utf8")).toBe("# repo\n");
-    // The copy is selected, so the next paste is a second copy of the same item.
+    // The copy is selected once it has landed; the clipboard still holds README.md, so the next paste is a second copy of it.
+    await expect(row("README copy.md")).toHaveAttribute("data-selected", "true");
     await page.keyboard.press("ControlOrMeta+v");
     await expect(row("README copy 2.md")).toBeVisible();
     expect(fs.existsSync(`${repo}/README copy 2.md`)).toBe(true);
@@ -364,21 +371,22 @@ test("the Explorer copies, pastes, duplicates and cuts items inside one checkout
     expect(fs.existsSync(`${repo}/src/main copy.ts`)).toBe(true);
 
     // Cut moves on paste: one path_move, and the clipboard is empty afterwards.
-    await row("README copy.md").click();
+    await select("README copy.md");
     await page.keyboard.press("ControlOrMeta+x");
     await expect(row("README copy.md")).toHaveAttribute("data-cut", "true");
-    await row("src").click();
+    await select("src");
     await page.keyboard.press("ControlOrMeta+v");
     await expect.poll(() => sent.get("path_move")).toBe(1);
     expect(lastSent.get("path_move")).toMatchObject({ root: repo, path: `${repo}/README copy.md`, destination: `${repo}/src` });
-    await expect(row("src/README copy.md")).toBeVisible();
+    await expect(row("README copy.md")).toHaveCount(0);
     expect(fs.existsSync(`${repo}/README copy.md`)).toBe(false);
+    expect(fs.existsSync(`${repo}/src/README copy.md`)).toBe(true);
     await page.locator("[data-explorer-root-row]").click({ button: "right" });
     await expect(menu.locator('[data-menu-item="paste"]')).toHaveCount(0);
     await page.keyboard.press("Escape");
 
     // A folder pasted into itself is refused where it was pasted, with nothing sent.
-    await row("src").click();
+    await select("src");
     await page.keyboard.press("ControlOrMeta+c");
     await page.keyboard.press("ControlOrMeta+v");
     await expect(page.locator(`[data-explorer-failure="${repo}/src"]`)).toBeVisible();
