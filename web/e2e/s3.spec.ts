@@ -282,14 +282,15 @@ test("the Explorer's root row creates, folds and copies paths, and a long tree k
     for (const id of actionIds.slice(0, 2)) await expect(rootRow.locator(`[data-explorer-root-action="${id}"]`)).toHaveCSS("opacity", "1");
     await screenshot(page, "s3-explorer-root-hover");
 
-    // Collapse All stays off until a folder is open, then folds every folder.
-    await expect(rootRow.locator('[data-explorer-root-action="collapse-all"]')).toBeDisabled();
-    await page.locator(`[data-explorer-row="${repo}/src"]`).click();
-    await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toBeVisible();
+    // The fixture left `src` open, so Collapse All folds it and is then off
+    // until a folder is open again.
+    const collapse = rootRow.locator('[data-explorer-root-action="collapse-all"]');
+    await expect(collapse).toBeEnabled();
     await rootRow.hover();
-    await rootRow.locator('[data-explorer-root-action="collapse-all"]').click();
+    await collapse.click();
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(0);
     await expect(page.locator(`[data-explorer-row="${repo}/src"]`)).toBeVisible();
+    await expect(collapse).toBeDisabled();
 
     // New File on the root row opens the name field at the top of the root.
     await rootRow.hover();
@@ -301,7 +302,8 @@ test("the Explorer's root row creates, folds and copies paths, and a long tree k
     await rootRow.click({ button: "right" });
     const menu = page.locator("[data-explorer-menu]");
     await expect(menu).toHaveAttribute("data-explorer-menu", repo);
-    await expect(menu.locator("[data-menu-item]")).toHaveText(/^(New File|New Folder|Reveal.*|Show in File Manager|Copy Path.*|Copy Relative Path.*)$/);
+    // A browser tab has no file manager to reveal in, and no chord for the path copies.
+    await expect(menu.locator("[data-menu-item]")).toHaveText(["New File", "New Folder", "Copy Path", "Copy Relative Path"]);
     await expect(menu.locator('[data-menu-item="rename"]')).toHaveCount(0);
     await expect(menu.locator('[data-menu-item="trash"]')).toHaveCount(0);
     await screenshot(page, "s3-explorer-root-menu");
