@@ -179,7 +179,12 @@ fn review_at(pull_request: &Value) -> Option<u64> {
         .as_array()?
         .iter()
         .rev()
-        .find(|node| matches!(node["state"].as_str(), Some("APPROVED" | "CHANGES_REQUESTED")))
+        .find(|node| {
+            matches!(
+                node["state"].as_str(),
+                Some("APPROVED" | "CHANGES_REQUESTED")
+            )
+        })
         .and_then(|node| parse_rfc3339_ms(node["submittedAt"].as_str()?))
 }
 
@@ -464,7 +469,10 @@ mod tests {
         assert!(read.failed.is_empty());
         // The latest completed check, a running one passed over, and the
         // latest decisive review, a comment-only one passed over (D-15).
-        assert_eq!(read.checks_completed_at, parse_rfc3339_ms("2026-10-16T11:21:00Z"));
+        assert_eq!(
+            read.checks_completed_at,
+            parse_rfc3339_ms("2026-10-16T11:21:00Z")
+        );
         assert_eq!(read.review_at, parse_rfc3339_ms("2026-10-16T11:30:00Z"));
     }
 
