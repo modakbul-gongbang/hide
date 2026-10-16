@@ -364,7 +364,7 @@ pub(crate) fn project_identity(
     crate::memory_hook::project_identity(sessions_node, node, checkout_path, SESSION_CALL_TIMEOUT)
 }
 
-pub(super) fn project_sessions(
+pub(crate) fn project_sessions(
     sessions_node: &dyn NodeLink,
     identity: &hide_project::ProjectIdentity,
 ) -> Result<Vec<ProjectSession>, String> {
@@ -389,7 +389,7 @@ pub(super) fn project_sessions(
     Ok(page.rows)
 }
 
-pub(super) fn session_stat(
+pub(crate) fn session_stat(
     sessions_node: &dyn NodeLink,
     session: &ProjectSession,
 ) -> Result<SessionStat, String> {

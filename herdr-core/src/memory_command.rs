@@ -1,5 +1,6 @@
-//! `hide memory show|search|add|forget|undo|placed|outdated` (PRD project-memory-v2
-//! B7, B8, B14-B16, B27, B30, D-03, D-11, D-25).
+//! `hide memory show|search|add|forget|undo|placed|outdated|stale|release`
+//! (PRD project-memory-v2 B7, B8, B14-B16, B27, B30, D-03, D-11, D-25; PRD
+//! memory-stale-cards).
 //!
 //! hided names the caller from its pane capability; the core checks the
 //! caller under its lock and hands back a [`PreparedMemory`] holding what the
@@ -67,6 +68,18 @@ pub enum MemoryCommand {
     Undo {
         number: u64,
     },
+    /// The calling agent, given card `number` by a prompt, found it
+    /// contradicted by what the operator says now: the card is held out of
+    /// Memory until this session is analyzed (PRD memory-stale-cards B1).
+    /// The reason stays in the store, never in a provider request.
+    Stale {
+        number: u64,
+        reason: String,
+    },
+    /// Ends card `number`'s hold at once (B11).
+    Release {
+        number: u64,
+    },
     /// The agent promoting card `number` names the repository file it put
     /// the card in, which the card points at once the pull request merges.
     Placed {
@@ -105,7 +118,15 @@ impl MemoryCommand {
     /// Whether the command's own values are ones a parser could have made.
     pub fn valid(&self) -> bool {
         match self {
-            Self::Show { number } | Self::Forget { number } | Self::Undo { number } => *number > 0,
+            Self::Show { number }
+            | Self::Forget { number }
+            | Self::Undo { number }
+            | Self::Release { number } => *number > 0,
+            Self::Stale { number, reason } => {
+                *number > 0
+                    && !reason.trim().is_empty()
+                    && reason.chars().count() <= hide_memory::STALE_REASON_LIMIT_CHARS
+            }
             Self::Search { words } => !words.trim().is_empty() && words.len() <= SEARCH_LIMIT_BYTES,
             Self::Add { text } => {
                 !text.trim().is_empty() && text.chars().count() <= ADD_LIMIT_CHARS
@@ -251,6 +272,17 @@ impl PreparedMemory {
                     .evidence;
                 let mut answer = card(&item);
                 answer["evidence"] = json!(evidence);
+                answer["hold"] = match store
+                    .hold(&identity.id, number, now)
+                    .map_err(|error| store_failure(&identity.id, &error))?
+                {
+                    Some(hold) => json!({
+                        "reason": hold.reason,
+                        "reported_at": utc(hold.reported_at_unix_ms),
+                        "expires_at": utc(hold.expires_at_unix_ms),
+                    }),
+                    None => Value::Null,
+                };
                 answer["document_comparison"] = json!(
                     store
                         .document_comparison(&identity.id, number)
@@ -286,6 +318,79 @@ impl PreparedMemory {
                         "restored"
                     },
                 }))
+            }
+            MemoryCommand::Stale { number, reason } => {
+                let Some((runtime, session_id)) = self.reader.as_ref() else {
+                    stale_refused(&identity.id, number, None, "memory_stale_session_required");
+                    return Err("memory_stale_session_required".into());
+                };
+                let report_offset = self.report_offset(&identity, runtime, session_id);
+                let outcome = store
+                    .report_stale(
+                        &identity.id,
+                        number,
+                        &hide_memory::StaleReporter {
+                            runtime,
+                            session_id,
+                            report_offset,
+                        },
+                        &reason,
+                        now,
+                    )
+                    .map_err(|error| store_failure(&identity.id, &error))?;
+                let hold = match outcome {
+                    hide_memory::StaleOutcome::Held(hold) => hold,
+                    hide_memory::StaleOutcome::Refused(refusal) => {
+                        stale_refused(
+                            &identity.id,
+                            number,
+                            Some((runtime, session_id)),
+                            refusal.code(),
+                        );
+                        return Err(refusal.code().into());
+                    }
+                };
+                crate::diagnostic!(json!({
+                    "component": "memory",
+                    "kind": "stale.held",
+                    "project_id": identity.id,
+                    "card": number,
+                    "runtime": runtime,
+                    "session_id": session_id,
+                    "report_offset": report_offset,
+                    "reason_chars": hold.reason.chars().count(),
+                }));
+                self.report(&identity.id, MemoryChange::Other);
+                Ok(json!({
+                    "card": card_name(number),
+                    "outcome": "held",
+                    "expires_at": utc(hold.expires_at_unix_ms),
+                }))
+            }
+            MemoryCommand::Release { number } => {
+                let item = store
+                    .item_by_number(&identity.id, number)
+                    .map_err(|error| store_failure(&identity.id, &error))?
+                    .ok_or("memory_card_not_found")?;
+                let ended = store
+                    .release_hold(&identity.id, item.number, now)
+                    .map_err(|error| store_failure(&identity.id, &error))?
+                    .ok_or("memory_card_not_held")?;
+                crate::diagnostic!(json!({
+                    "component": "memory",
+                    "kind": "stale.released",
+                    "project_id": identity.id,
+                    "card": number,
+                    "runtime": ended.runtime,
+                    "session_id": ended.session_id,
+                    "cause": "release",
+                    "caller": self.reader.as_ref().map(|(runtime, session)| json!({
+                        "runtime": runtime,
+                        "session_id": session,
+                    })),
+                }));
+                self.report(&identity.id, MemoryChange::Other);
+                Ok(json!({"card": card_name(number), "outcome": "released"}))
             }
             MemoryCommand::Placed { number, path } => {
                 let promotion = self.own_promotion(&store, &identity.id, number)?;
@@ -473,6 +578,41 @@ impl PreparedMemory {
         }
     }
 
+    /// Where the reporting session's conversation ends now, as the node
+    /// holding its file says: the hold ends once analysis reads past it (D-14).
+    /// `None` when the node cannot say, and the hold lasts to its deadline.
+    fn report_offset(
+        &self,
+        identity: &hide_project::ProjectIdentity,
+        runtime: &str,
+        session_id: &str,
+    ) -> Option<u64> {
+        let stat = crate::runtime::memory::project_sessions(self.sessions_node.as_ref(), identity)
+            .and_then(|sessions| {
+                sessions
+                    .into_iter()
+                    .find(|session| session.agent.as_str() == runtime && session.id == session_id)
+                    .ok_or_else(|| "session_not_listed".to_owned())
+            })
+            .and_then(|session| {
+                crate::runtime::memory::session_stat(self.sessions_node.as_ref(), &session)
+            });
+        match stat {
+            Ok(stat) => Some(stat.size),
+            Err(message) => {
+                crate::diagnostic!(json!({
+                    "component": "memory",
+                    "kind": "stale.offset_unavailable",
+                    "project_id": identity.id,
+                    "runtime": runtime,
+                    "session_id": session_id,
+                    "message": message,
+                }));
+                None
+            }
+        }
+    }
+
     fn add_source<'a>(
         &'a self,
         project_id: &'a str,
@@ -532,6 +672,26 @@ impl PreparedMemory {
             report_memory_change(context, project_id, change);
         }
     }
+}
+
+/// A time as `hide memory show` prints it, in UTC.
+fn utc(unix_ms: u64) -> String {
+    jiff::Timestamp::from_millisecond(unix_ms as i64)
+        .map(|time| time.strftime("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_default()
+}
+
+/// A refused report, by card, session and refusal; never the reason given.
+fn stale_refused(project_id: &str, number: u64, reporter: Option<(&String, &String)>, code: &str) {
+    crate::diagnostic!(json!({
+        "component": "memory",
+        "kind": "stale.refused",
+        "project_id": project_id,
+        "card": number,
+        "runtime": reporter.map(|(runtime, _)| runtime),
+        "session_id": reporter.map(|(_, session)| session),
+        "reason": code,
+    }));
 }
 
 /// The cards of a written batch that are still in use.
@@ -649,6 +809,31 @@ pub fn next_action(code: &str) -> &'static str {
             "The card was forgotten; find another with hide memory search <words>"
         }
         "memory_text_too_long" => "Shorten the text to 4,000 characters and retry",
+        "memory_stale_reason_invalid" => {
+            "Give a reason of at most 500 characters saying what the operator said that contradicts the card"
+        }
+        "memory_stale_session_required" => {
+            "Only an agent whose session Hide knows can report a card; run it from the agent's own pane"
+        }
+        "memory_stale_already_reported" => {
+            "This card's text was reported once already and is not held again; hide memory show <card> says whether it is held"
+        }
+        "memory_stale_not_received" => {
+            "Only a session a prompt gave this card to can report it; if one did just now, retry after Hide reads this conversation, within a minute"
+        }
+        "memory_stale_shown_only" => {
+            "Reading a card with hide memory show does not let a session report it; only a card a prompt gave this session can be reported"
+        }
+        "memory_stale_receipts_full" => {
+            "Hide cannot tell which cards this session was given because this Project's delivery records are full; tell the operator instead"
+        }
+        "memory_stale_session_limit" => {
+            "This session already holds 3 cards; tell the operator about this one instead"
+        }
+        "memory_stale_project_limit" => {
+            "This Project already holds 10 cards; tell the operator about this one instead"
+        }
+        "memory_card_not_held" => "The card is not held; hide memory show <card> shows it",
         "memory_card_not_promoting" => {
             "Only the agent Hide started to put this card in the repository names its file or says where it stands"
         }

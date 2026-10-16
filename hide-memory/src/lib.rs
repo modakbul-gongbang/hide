@@ -27,6 +27,7 @@ pub use reconcile::{
     COMPARISON_EXCERPT_BYTES, DocumentAuthority, DocumentComparison, PROMOTION_BATCH_LIMIT,
 };
 pub use redaction::{RedactedText, redact};
+pub use store::hold::{CardHold, EndedHold, StaleOutcome, StaleRefusal, StaleReporter};
 pub use store::{
     AnalysisBatch, ApplyOptions, ApplySummary, Candidate, CandidateKind, CandidateOutcome,
     CandidateRelation, CardEvidence, ComparisonCard, CursorReader, DeleteProjectOutcome,
@@ -111,3 +112,12 @@ pub const REVERIFY_PER_PASS: usize = 4;
 /// analysis; without due checks, analysis may use the whole remaining total.
 pub const MAINTENANCE_CALL_LIMIT: u64 = DAILY_ANALYSIS_CALL_LIMIT / 2;
 pub const PROMOTION_CHECKS_PER_PASS: usize = 3;
+/// Cards one session may hold out of injection at once by reporting them
+/// stale, and cards a Project may have held (PRD memory-stale-cards D-09).
+pub const STALE_HOLDS_PER_SESSION: usize = 3;
+pub const STALE_HOLDS_PER_PROJECT: usize = 10;
+/// How long a hold lasts when the reporting session is not analyzed (D-07).
+pub const STALE_HOLD_MS: u64 = 7 * 86_400_000;
+/// The most characters kept of the reason an agent reports a card stale
+/// with, after the redactor masked it (D-08).
+pub const STALE_REASON_LIMIT_CHARS: usize = 500;

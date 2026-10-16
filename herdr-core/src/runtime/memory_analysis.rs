@@ -1023,6 +1023,15 @@ fn walk_project(
     store
         .prune_receipts(project_id, now_ms())
         .map_err(|error| error.to_string())?;
+    // A hold whose session was not analyzed within its seven days ends here,
+    // reason and all; the hooks already stopped honoring it (PRD
+    // memory-stale-cards D-07).
+    for ended in store
+        .expire_holds(project_id, now_ms())
+        .map_err(|error| error.to_string())?
+    {
+        log_ended_hold(project_id, &ended, "expired");
+    }
     // Memory analyzes the sessions of agents the node holding them reads for
     // Memory (the JSONL ones: Claude Code, Codex, Grok, Pi, omp), which it
     // does through their conversation reader; an OpenCode session, kept in
@@ -1571,7 +1580,8 @@ fn read_database_receipts(
                 },
             },
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 /// Records one receipt a session carried, when its tag is the one this
@@ -1795,7 +1805,7 @@ fn analyze_session(
             learned += written.summary.created + written.summary.superseded;
         }
     }
-    store
+    let settled = store
         .save_cursor(
             CursorReader::Analysis,
             &SessionCursorRecord {
@@ -1810,8 +1820,25 @@ fn analyze_session(
             },
         )
         .map_err(|error| local(error.to_string()))?;
+    for ended in &settled {
+        log_ended_hold(project_id, ended, "analyzed");
+    }
     log_skipped("analysis.records_skipped", project_id, session, &read);
     Ok(learned)
+}
+
+/// One hold that ended, by card and reporting session; never its reason
+/// (PRD memory-stale-cards B16).
+pub(crate) fn log_ended_hold(project_id: &str, ended: &hide_memory::EndedHold, cause: &str) {
+    crate::diagnostic!(json!({
+        "component": "memory",
+        "kind": "stale.released",
+        "project_id": project_id,
+        "card": ended.number,
+        "runtime": ended.runtime,
+        "session_id": ended.session_id,
+        "cause": cause,
+    }));
 }
 
 /// Where a batch of new text came from.
@@ -1889,14 +1916,7 @@ pub(crate) fn write_cards(
             content_hash,
         });
     }
-    let similar = store
-        .similar(
-            source.project_id,
-            &comparison_text(group),
-            hide_memory::COMPARISON_LIMIT,
-            COMPARISON_INPUT_LIMIT_BYTES,
-        )
-        .map_err(|error| local(error.to_string()))?;
+    let similar = comparison_set(store, source, group).map_err(|error| local(error.to_string()))?;
     let analyzer = HideNativeAnalyzer;
     let request_id = digest(&[
         "memory-request",
@@ -2146,6 +2166,40 @@ pub(crate) fn write_cards(
         batch_id,
         content_hash,
     })
+}
+
+/// The cards a group is compared against: first the held cards an agent of
+/// this session reported stale, so the analysis checks each for the reversal
+/// (PRD memory-stale-cards D-06), then the cards most like the group's words,
+/// within the same card and byte bounds.
+fn comparison_set(
+    store: &MemoryStore,
+    source: &BatchSource<'_>,
+    group: &[Value],
+) -> Result<Vec<hide_memory::ComparisonCard>, hide_memory::MemoryError> {
+    let mut set = store.reported_cards(
+        source.project_id,
+        source.provider,
+        source.session_id,
+        now_ms(),
+    )?;
+    let bytes = set
+        .iter()
+        .map(|card| card.body.len() + card.title.len() + 64)
+        .sum::<usize>();
+    let similar = store.similar(
+        source.project_id,
+        &comparison_text(group),
+        hide_memory::COMPARISON_LIMIT.saturating_sub(set.len()),
+        COMPARISON_INPUT_LIMIT_BYTES.saturating_sub(bytes),
+    )?;
+    set.extend(
+        similar
+            .into_iter()
+            .filter(|card| !set.iter().any(|reported| reported.id == card.id))
+            .collect::<Vec<_>>(),
+    );
+    Ok(set)
 }
 
 /// The text the comparison set is chosen by: the group's words, bounded.
