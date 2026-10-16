@@ -18,6 +18,7 @@ const words = {
   "overviewTasks.newAgent": ["New agent", "새 에이전트", "新しいエージェント", "新建智能体"],
   "overviewTasks.fold": ["Fold", "접기", "折りたたむ", "收起"],
   "overviewTasks.children": ["{{count}} children", "자식 {{count}}", "子 {{count}}", "子 {{count}}"],
+  "overviewTasks.stage": ["Work → PR → Review → Merge, {{stage}} of 4", "작업 → PR → 검토 → 머지, 4칸 중 {{stage}}", "作業 → PR → レビュー → マージ、4段階中 {{stage}}", "工作 → PR → 审查 → 合并，第 {{stage}}/4 步"],
   "overviewTasks.state.needs_you": ["Asking", "묻는 중", "質問中", "提问中"],
   "overviewTasks.state.blocked": ["Blocked", "막힘", "ブロック中", "受阻"],
   "record.close": ["Close the record", "기록 닫기", "記録を閉じる", "关闭记录"],

@@ -32,6 +32,16 @@ const LANE = "pl-[calc(var(--size-icon-sm)+var(--spacing-xs))]";
 const GLYPH: Record<TaskState, string> = { done: "text-success", working: "text-agent-working", review: "text-success", ci_failed: "text-success", unfinished: "text-warning", blocked: "text-warning", question: "text-warning" };
 const FIRST_OPEN_REQUESTS = 5;
 
+/** `작업 → PR → 검토 → 머지` filled up to the task's stage (PRD overview-device-tasks B9). */
+function StageBar({ stage, tone }: { stage: 1 | 2 | 3 | 4; tone: string }) {
+  const { t } = useInterfaceTranslation();
+  return (
+    <span role="img" aria-label={t("overviewTasks.stage", { stage })} className="flex w-(--size-control-lg) shrink-0 gap-px" data-stage-bar={stage}>
+      {[1, 2, 3, 4].map((step) => <span key={step} className={cn("h-(--size-hairline) flex-1 rounded-full", step <= stage ? tone : "bg-muted")} />)}
+    </span>
+  );
+}
+
 /**
  * Where a record is drawn (PRD overview-device-tasks D-07, B17-B21): the
  * lane's 보기 slot, under the slot's head, or the Overview's panel, whose head the
@@ -166,7 +176,7 @@ function RecordPlace({ record, children }: { record: RecordValue; children: numb
         {line?.kind === "blocked" ? <p className="whitespace-normal text-destructive [overflow-wrap:anywhere]">{line.what ?? t("overviewTasks.state.blocked")}</p> : null}
         {merge !== null ? <p className="text-success">{t("record.mergeTurn", { number: merge })}</p> : null}
       </section>
-    ) : null}
+    ) : root?.stage && line ? <span className="mb-sm flex"><StageBar stage={root.stage} tone={line.kind === "merged" ? "bg-pr-merged" : line.kind === "done" ? "bg-success" : line.kind === "resting" ? "bg-muted-foreground" : "bg-agent-working"} /></span> : null}
   </>;
 }
 
