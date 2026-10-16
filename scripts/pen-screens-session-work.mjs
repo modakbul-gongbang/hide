@@ -62,7 +62,8 @@ export function sessionWorkScreens({frame, text, icon, screenButton, themedXref}
   ]);
   // A task's mark is the row's (status-marks D-23, B34): `✓` done, the ring
   // in progress, `!` a question or a block, an empty slot for work left (its
-  // name says 일 남음) and for a task a PR holds, whose PR mark says the state.
+  // name says 일 남음) and for a task a PR holds, whose PR mark says the state;
+  // a task whose request's PR mark hangs on its first task says the state in words.
   const taskMark = (id, state) => state === 'done' ? label(id, '✓', '$--success', {weight: '600'})
     : state === 'working' ? markSlot(id, 'going')
       : state === 'question' || state === 'blocked' ? markSlot(id, 'turn')
@@ -72,6 +73,7 @@ export function sessionWorkScreens({frame, text, icon, screenButton, themedXref}
       taskMark(`${id}-glyph`, state),
       label(`${id}-name`, name, state === 'done' ? '$--subtle-foreground' : '$--foreground', {width: 'fill_container', weight: state === 'done' ? '400' : '500'}),
       ...(state === 'unfinished' ? [label(`${id}-left`, '일 남음', '$--muted-foreground')] : []),
+      ...((state === 'review' || state === 'ci_failed') && !pr ? [label(`${id}-left`, state === 'review' ? '리뷰 대기' : 'CI 실패', '$--muted-foreground')] : []),
       ...(pr ? [prMark(`${id}-pr`, pr[0], pr[1])] : []),
     ]),
     ...words.map((word, index) => said(`${id}-w${index}`, word.text ?? word, word)),

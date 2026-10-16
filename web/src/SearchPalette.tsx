@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { agentProductName } from "./agentAdapters";
-import { markTone } from "./agentRow";
+import { markTone, markWords } from "./agentRow";
 import { StatusMark } from "./components/status-mark";
 import { PrMark } from "./components/pr-mark";
 import { DeviceChip } from "./components/device-chip";
@@ -305,13 +305,14 @@ function SearchRow({ entry, read, onSelect }: { entry: SearchEntry; read: Projec
   const depth = entry.depth ?? 0;
   return (
     <CommandItem asChild value={entry.id} onSelect={onSelect}>
-      <button type="button" data-palette-row={entry.id} data-palette-depth={depth} data-palette-dim={entry.dimmed ? "true" : undefined} title={entry.agentKind ? agentProductName(entry.agentKind) : undefined} className={`group/palette-row w-full text-left ${entry.dimmed ? "opacity-(--opacity-dimmed)" : ""}`} style={depth > 0 ? { paddingLeft: `calc(var(--spacing-sm) + ${depth} * var(--spacing-lg))` } : undefined}>
+      <button type="button" data-palette-row={entry.id} data-palette-depth={depth} data-palette-dim={entry.dimmed ? "true" : undefined} title={[entry.agentKind ? agentProductName(entry.agentKind) : null, entry.agent ? markWords(t, entry.agent) : null].filter(Boolean).join("\n") || undefined} className={`group/palette-row w-full text-left ${entry.dimmed ? "opacity-(--opacity-dimmed)" : ""}`} style={depth > 0 ? { paddingLeft: `calc(var(--spacing-sm) + ${depth} * var(--spacing-lg))` } : undefined}>
         <EntryIcon entry={entry} />
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-w-0 items-center gap-xs">
             {entry.tag === "parent" ? <span className="shrink-0 text-caption text-muted-foreground">{t("search.parent")}</span> : null}
             <span className="min-w-0 truncate font-medium">{entry.title}</span>
             {entry.agentKind ? <span className="sr-only">, {agentProductName(entry.agentKind)}</span> : null}
+            {entry.agent ? <span className="sr-only">, {markWords(t, entry.agent)}</span> : null}
             {entry.chip ? <DeviceChip label={entry.chip.label} local={entry.chip.local} className="max-w-2/5" /> : null}
           </span>
           {entry.subtitle ? <span data-palette-detail="true" className="truncate text-caption text-muted-foreground">{entry.subtitle}</span> : null}

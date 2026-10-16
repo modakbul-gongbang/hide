@@ -92,7 +92,8 @@ it("groups the device's tasks as 내 차례 (a block included), 읽을 것, 일�
   expect(rows(container)).toEqual(["ask", "stuck", "done", "works", "waits"]);
   expect(container.querySelector("[data-task-count]")?.textContent).toBe("태스크 5");
   const line = (pane: string) => container.querySelector(`[data-task-row="${pane}"] [data-task-line]`);
-  expect(line("ask")?.textContent).toBe("herdr-ide새 언어로 다시 쓸까요?");
+  // A question leads with its verb, as the sidebar row does (status-marks B5, B33).
+  expect(line("ask")?.textContent).toBe("herdr-ide질문 · 새 언어로 다시 쓸까요?");
   expect(line("ask")?.querySelector(".text-warning")).not.toBeNull();
   // A block is the operator's turn: its cause in the warning colour, led by 막힘.
   expect(line("stuck")?.querySelector(".text-warning")?.textContent).toBe("막힘 · API 서버에 닿지 못해 멈춤");
@@ -122,6 +123,12 @@ it("in 프로젝트별 draws one group per project, the asking project first, wi
   expect([...container.querySelectorAll('[data-task-group="hide"] ul[aria-label]')].map((list) => list.getAttribute("aria-label"))).toEqual(["읽을 것", "일하는 중", "대기"]);
   expect(container.querySelector('[data-task-group-head="project"]')?.textContent).toBe("site내 차례 1");
   expect([...container.querySelectorAll('[data-task-group-head="project"]')][1]?.textContent).toBe("herdr-ide읽을 것 1일하는 중 1대기 1");
+});
+
+it("in 프로젝트별 puts a project whose only turn is a block first, as a block is the operator's turn (status-marks B32)", async () => {
+  const agents = [row("a"), row("b", { status_code: "error", demand: "error", mark: "turn" }, { group: "needs_you" })];
+  const { container } = await render(snapshot(agents, [card("a", "working", "hide-main"), card("b", "blocked", "site-main")], "project"), agents);
+  expect([...container.querySelectorAll("[data-task-group]")].map((group) => group.getAttribute("data-task-group"))).toEqual(["site", "hide"]);
 });
 
 it("opens a task's pane on a press, its record on Space, and resolves it from the ⋯ menu (B12, B15, B18)", async () => {
@@ -199,6 +206,11 @@ it("draws each task's row mark and line as the sidebar does, counts no folded ch
   const said = (pane: string) => [...at(pane).querySelectorAll("[data-task-line] [data-line-part]")].map((part) => part.textContent).join("");
   expect(mark("waits")).toBe("waiting");
   expect(said("waits")).toBe("대기 · CI · PR #58");
+  // The row's name and hover say the mark as the sidebar does (B3, B33).
+  const named = (pane: string) => at(pane).querySelector('[data-task-focus="row"]')!;
+  expect(named("waits").getAttribute("aria-label")).toContain("진행 중 · 대기, 대기 · CI · PR #58");
+  expect(named("waits").getAttribute("title")).toContain("진행 중 · 대기");
+  expect(named("left").getAttribute("aria-label")).toContain("읽을 것 · 일 남음");
   expect(said("left")).toBe("일 남음 · 테스트 환경 연결 남음");
   expect(mark("left")).toBe("unread");
   // Read, work left draws no mark and a quiet line; no warning ◐ anywhere.

@@ -1,36 +1,56 @@
 import { CheckIcon } from "lucide-react";
 import type { HTMLAttributes } from "react";
-import { markName } from "../agentRow";
+import { markName, markWords } from "../agentRow";
 import { statusText } from "../agentStatus";
 import { useInterfaceTranslation } from "../i18n/client";
 import { cn } from "../lib/utils";
 import type { TaskState } from "../sessionWork";
-import type { ChildProgress, ChildWork } from "../snapshot";
+import type { ChildProgress, ChildWork, RowMark } from "../snapshot";
 import { StatusMark } from "./status-mark";
 import { Hint } from "./ui/tooltip";
+
+/**
+ * The state a task is drawn in: work in progress only while its agent's row
+ * draws a ring; a task the label left in progress on a stopped row is work
+ * left, as its row says (status-marks D-17, B9, B34).
+ */
+export function shownTaskState(state: TaskState, mark: RowMark | null): TaskState {
+  return state === "working" && mark !== "going" && mark !== "waiting" ? "unfinished" : state;
+}
 
 /**
  * A task's mark, the row's marks (status-marks D-23, B34): a finished task's
  * `✓`, a task in progress the ring its agent's row draws (dashed while the row
  * waits), a question or a block the operator's `!`, and an empty slot for work
- * left (its name says 일 남음) and for a task a pull request holds, whose PR
- * mark says the state. Each says its state in its hint and accessible name.
+ * left and for a task a pull request holds, whose name's small word or PR mark
+ * says the state. Each drawn mark says its state in its hint and accessible
+ * name with the row's words; an empty slot says nothing a screen reader would
+ * hear twice.
  */
 export function TaskMark({ state, waiting = false }: { state: TaskState; waiting?: boolean }) {
   const { t } = useInterfaceTranslation();
-  const turn = state === "question" || state === "blocked";
-  const name = turn ? `${markName(t, "turn")} · ${statusText(t, state === "blocked" ? "error" : "question")}` : t(`sessionWork.${state}`);
+  if (state === "unfinished" || state === "review" || state === "ci_failed") return <span aria-hidden="true" data-task-state={state} className="flex size-(--size-icon-sm) shrink-0" />;
+  const ring: RowMark = waiting ? "waiting" : "going";
+  const name = state === "question" || state === "blocked" ? `${markName(t, "turn")} · ${statusText(t, state === "blocked" ? "error" : "question")}`
+    : state === "working" ? markWords(t, { mark: ring, status_code: waiting ? "waiting" : "working" })
+      : t("sessionWork.done");
   return <Hint label={name}><span role="img" aria-label={name} data-task-state={state} className="flex size-(--size-icon-sm) shrink-0 items-center justify-center">
-    {state === "done" ? <CheckIcon aria-hidden="true" className="size-(--size-icon-sm) text-success" /> : turn ? <StatusMark mark="turn" /> : state === "working" ? <StatusMark mark={waiting ? "waiting" : "going"} /> : null}
+    {state === "done" ? <CheckIcon aria-hidden="true" className="size-(--size-icon-sm) text-success" /> : state === "working" ? <StatusMark mark={ring} /> : <StatusMark mark="turn" />}
   </span></Hint>;
 }
 
-/** A task's name, with `일 남음` after it in small text while work is left (B34). */
-export function TaskName({ state, name, className, ...rest }: { state: TaskState; name: string } & HTMLAttributes<HTMLSpanElement>) {
+/**
+ * A task's name, with its state in small text after it where its slot is
+ * empty and no PR mark beside it says it (B34): `일 남음` while work is left,
+ * and a pull request's state on a task of a request whose PR mark hangs on
+ * its first task (`prShown` false).
+ */
+export function TaskName({ state, name, prShown, className, ...rest }: { state: TaskState; name: string; prShown: boolean } & HTMLAttributes<HTMLSpanElement>) {
   const { t } = useInterfaceTranslation();
+  const word = state === "unfinished" ? statusText(t, "unfinished") : (state === "review" || state === "ci_failed") && !prShown ? t(`sessionWork.${state}`) : null;
   return <span className={cn("min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]", className)} {...rest}>
     {name}
-    {state === "unfinished" ? <span className="ml-xs text-micro text-muted-foreground" data-task-left="true">{statusText(t, "unfinished")}</span> : null}
+    {word ? <span className="ml-xs text-micro text-muted-foreground" data-task-word={state}>{word}</span> : null}
   </span>;
 }
 

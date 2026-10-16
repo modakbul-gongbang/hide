@@ -2,6 +2,7 @@ import type { HTMLAttributes } from "react";
 import { MoonIcon } from "lucide-react";
 import { cn } from "../lib/utils";
 import type { RowMark } from "../snapshot";
+import { Hint } from "./ui/tooltip";
 
 /**
  * An agent's status mark: whose move is next, one size on every surface that
@@ -12,12 +13,13 @@ import type { RowMark } from "../snapshot";
  * read the turn as finished), and quiet keeps its slot empty so titles line up.
  * An agent Hide put to sleep keeps a grey moon, the one shape outside the four
  * (status-marks D-21). Each shape carries its own colour; a caller's class dims
- * a read turn.
+ * a read turn. A surface with no second line passes `label`, the mark's words,
+ * so its hover and accessible name tell a waiting ring from a working one (B36).
  */
-export function StatusMark({ mark, className, ...rest }: { mark: RowMark } & HTMLAttributes<HTMLSpanElement>) {
-  return (
+export function StatusMark({ mark, label, className, ...rest }: { mark: RowMark; label?: string } & HTMLAttributes<HTMLSpanElement>) {
+  const shape = (
     <span
-      aria-hidden="true"
+      {...(label ? { role: "img", "aria-label": label } : { "aria-hidden": true })}
       data-mark={mark}
       className={cn("inline-flex size-(--size-agent-mark) shrink-0 items-center justify-center", className)}
       {...rest}
@@ -39,4 +41,5 @@ export function StatusMark({ mark, className, ...rest }: { mark: RowMark } & HTM
       ) : null}
     </span>
   );
+  return label ? <Hint label={label}>{shape}</Hint> : shape;
 }

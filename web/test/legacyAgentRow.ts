@@ -9,8 +9,8 @@ export function legacyAgentRow(agent: Input): AgentRow {
   const needs = agent.group === "needs_you";
   const attention = needs || Boolean(agent.unread);
   // The mark the core would draw when a fixture names none (docs/status-model.md, The mark).
-  const mark: RowMark = agent.mark ?? (needs || (asking && !agent.delegated) ? "turn" : agent.activity === "working" || agent.wait ? "going" : agent.group === "done" ? "unread" : "quiet");
-  const chipKind = mark === "turn" ? "warning" : mark === "going" ? "working" : mark === "done" ? "success" : mark === "unread" ? "news" : asking ? "warning" : "subtle";
+  const mark: RowMark = agent.mark ?? (needs || (asking && !agent.delegated) ? "turn" : agent.activity === "working" ? "going" : agent.wait ? "waiting" : agent.group === "done" ? "unread" : "quiet");
+  const chipKind = mark === "turn" ? "warning" : mark === "going" || mark === "waiting" ? "working" : mark === "done" ? "success" : mark === "unread" ? "news" : asking ? "warning" : "subtle";
   const chip: StatusTone = { kind: chipKind, read: asking && !needs && !agent.emphasized };
   const markTone: StatusTone = { kind: mark === "quiet" ? "subtle" : chipKind, read: mark === "turn" && chip.read };
   const bucket = needs || agent.group === "done" ? "turn" : agent.wait ? "delegating" : agent.group === "working" ? "working" : "resting";

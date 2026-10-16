@@ -72,7 +72,7 @@ export function taskList(tasks: ProjectTasksScope | null | undefined, rows: Read
   // One group per project, the projects that ask first, then in the order their first task stands (B6).
   const order: (Workspace | null)[] = [];
   for (const { project } of entries) if (!order.includes(project)) order.push(project);
-  const asks = (project: Workspace | null) => open.some((entry) => entry.project === project && entry.card.state === "needs_you");
+  const asks = (project: Workspace | null) => open.some((entry) => entry.project === project && groupOf(entry.card.state) === "needs_you");
   const sorted = [...order.filter(asks), ...order.filter((project) => !asks(project))];
   const groups = sorted.map((project) => {
     const mine = (list: TaskEntry[]) => list.filter((entry) => entry.project === project);

@@ -445,7 +445,7 @@ fn a_row_waits_on_its_running_checks_and_their_end_is_news() {
         (&waiting["group"], &waiting["mark"], &waiting["status_code"]),
         (
             &serde_json::json!("working"),
-            &serde_json::json!("going"),
+            &serde_json::json!("waiting"),
             &serde_json::json!("waiting")
         )
     );
@@ -562,7 +562,7 @@ fn the_end_of_checks_is_news_once_and_a_row_read_after_it_stays_read() {
     let mut pull_request = checks_pull_request();
     pull_request.work.running_checks = 2;
     runtime.ingest_github(checks_github(&pull_request, false));
-    assert_eq!(row(&runtime)["mark"], "going");
+    assert_eq!(row(&runtime)["mark"], "waiting");
     let checkout_id = runtime
         .snapshot()
         .navigator

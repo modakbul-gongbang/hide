@@ -6,7 +6,7 @@ import { agentProductName } from "./agentAdapters";
 import { deviceConnected, readsHere } from "./devices";
 import { Button } from "./components/ui/button";
 import { PrMark } from "./components/pr-mark";
-import { ChildProgressHead, TaskMark, TaskName } from "./components/task-progress";
+import { ChildProgressHead, shownTaskState, TaskMark, TaskName } from "./components/task-progress";
 import { Hint } from "./components/ui/tooltip";
 import { formatDateTime } from "./i18n/format";
 import { requireInterfaceLanguage } from "./i18n/locale";
@@ -18,8 +18,8 @@ import { cardLine, cardOfPane, cardQuestion, everyAgent, itemToken } from "./ove
 import { destinationOf } from "./overviewBacklog";
 import { ageWords } from "./overviewLens";
 import { machineName } from "./screenMachine";
-import { catalogWorkspaces } from "./snapshot";
-import type { AgentStatusCode, MissedWork, SessionRecord as RecordValue, WorkOutput, WorkRequest, WorkSession } from "./snapshot";
+import { catalogWorkspaces, localDeviceId } from "./snapshot";
+import type { AgentStatusCode, MissedWork, RowMark, SessionRecord as RecordValue, WorkOutput, WorkRequest, WorkSession } from "./snapshot";
 import { statusText } from "./agentStatus";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -246,13 +246,17 @@ function Work({ record, descendants = NO_RECORDS, words, actions, head = false }
   const list = useMemo(() => checklist(head ? record : { ...record, missed: [] }, descendants), [head, record, descendants]);
   const received = record.requests.some((request) => request.author === "parent");
   const label = t(received ? "sessionWork.received" : "sessionWork.words");
+  // The ring a task in progress draws is its live row's (B34); an ended session has none.
+  const rest = useShellStore((state) => state.rest);
+  const agents = useShellStore((state) => state.agents);
+  const mark = useMemo(() => [...everyAgent(rest, agents).values()].find((row) => row.session_id === record.session.session_id && (row.device_id ?? localDeviceId(rest)) === record.session.device_id)?.mark ?? null, [rest, agents, record.session]);
   const nothing = !list.groups.length && !(words && list.otherWords.length) && !list.otherMissed.length && !list.now;
   return <section className={head ? "mt-md" : "mt-xs"} data-record-work="true">
     {head ? <SectionHead aside={<WordsButton label={label} />}>{t("sessionWork.tasks")} {list.total ? <Count>{list.done}/{list.total}</Count> : null}</SectionHead> : list.total ? <div className="flex items-center gap-xs px-xs pt-xs"><span className="font-medium text-subtle-foreground">{t("sessionWork.tasks")}</span><Count>{list.done}/{list.total}</Count></div> : null}
     {nothing ? <p className="text-micro text-muted-foreground">{t("sessionWork.empty")}</p> : null}
     {list.groups.map((group) => <div key={group.id ?? "outside"}>
       {group.goal ? <GoalLine goal={group.goal} at={group.at} /> : null}
-      {group.tasks.map((item) => <TaskRow key={item.task.id} item={item} session={record.session} cwd={record.cwd} words={words} waiting={record.state === "waiting"} actions={actions} />)}
+      {group.tasks.map((item) => <TaskRow key={item.task.id} item={item} session={record.session} cwd={record.cwd} words={words} mark={mark} actions={actions} />)}
     </div>)}
     {list.otherMissed.length || (words && list.otherWords.length) || list.now ? <OtherWork list={list} words={words} actions={actions} /> : null}
     {head && !list.now ? <LastWords session={record.session} /> : null}
@@ -285,13 +289,14 @@ function GoalLine({ goal, at }: { goal: string; at: number }) {
   return <h4 className="mt-sm mb-xs min-w-0 whitespace-normal text-micro font-medium text-subtle-foreground [overflow-wrap:anywhere]" title={goal}>{goal} · <time dateTime={new Date(at).toISOString()}>{time}</time></h4>;
 }
 
-function TaskRow({ item, session, cwd, words, waiting, actions }: { item: ChecklistTask; session: WorkSession; cwd: string | null; words: boolean; waiting: boolean; actions: Actions }) {
+function TaskRow({ item, session, cwd, words, mark, actions }: { item: ChecklistTask; session: WorkSession; cwd: string | null; words: boolean; mark: RowMark | null; actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const { task, state } = item;
+  const { task } = item;
+  const state = shownTaskState(item.state, mark);
   return <div className="py-xxs" data-record-task={task.id}>
     <div className="flex min-w-0 items-start gap-xs">
-      <TaskMark state={state} waiting={waiting} />
-      <TaskName state={state} name={task.name} className={state === "done" ? "text-subtle-foreground" : "font-medium"} />
+      <TaskMark state={state} waiting={mark === "waiting"} />
+      <TaskName state={state} name={task.name} prShown={item.prs.length > 0} className={state === "done" ? "text-subtle-foreground" : "font-medium"} />
       {item.prs.map((output) => <button key={output.url} type="button" data-record-task-pr={output.number} className={cn(ROW, "shrink-0 px-xxs hover:bg-accent")} aria-label={[`#${output.number} ${t(PR_LOOK[outputPrState(output.state)].word)}`, output.title, staleHint(output, t("common.unavailable"))].filter(Boolean).join(" · ")} title={output.title} onClick={() => actions.openRecordedOutput(output)}><PrMark state={outputPrState(output.state)} number={output.number} stale={output.stale} /></button>)}
     </div>
     {words ? item.words.map((request) => <Bubble key={request.offset} request={request} />) : null}

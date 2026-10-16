@@ -5,10 +5,9 @@ import { deviceScope } from "./agentScope";
 import { AgentRowMark } from "./AgentRowMark";
 import { useAgentLogosShown } from "./agentLogoMode";
 import { agentProductName } from "./agentAdapters";
-import { backgroundTail, forkLabel, leadWord, lineParts, markTone, rowDimmed, rowLine, stateLine, type LineParts } from "./agentRow";
-import { statusText } from "./agentStatus";
+import { backgroundTail, forkLabel, leadWord, lineParts, markTone, markWords, rowDimmed, rowLine, rowSentence, stateLine, type LineParts } from "./agentRow";
 import { AgentForkMark } from "./components/fork-mark";
-import { askWhat, DescendantMark, TreeChevron, TreeRails, type TreePlace } from "./components/agent-tree";
+import { askParts, DescendantMark, TreeChevron, TreeRails, type TreePlace } from "./components/agent-tree";
 import { childrenOf } from "./components/agent-tree-popover";
 import { Elapsed } from "./components/elapsed";
 import { AgentPrMark, useAgentStaleness } from "./components/pr-mark";
@@ -324,7 +323,10 @@ function TaskRow({ entry, family, open, selected, number, showProject, disabled,
   const go = () => { if (!disabled) actions.openListedAgent(agent.pane_id); };
   const record = session ? () => actions.openSessionRecord(session) : null;
   const toggle = () => actions.toggleSessionTree(agent.pane_id);
-  const name = [agent.identity_label, forkLabel(t, agent), agentProductName(agent.agent_kind), t(`taskLens.state.${card.state}`), hideAiWords(t, agent.hide_ai)].filter(Boolean).join(", ");
+  // The row's own mark words, as the sidebar row says them (status-marks B3, B33); a fold's rows say the fold.
+  const words = card.state === "resting" || card.state === "cleanup" ? t(`taskLens.state.${card.state}`) : markWords(t, agent);
+  const sentence = rowSentence(t, agent);
+  const name = [agent.identity_label, forkLabel(t, agent), agentProductName(agent.agent_kind), words, hideAiWords(t, agent.hide_ai), sentence].filter(Boolean).join(", ");
   return (
     <li className={cn("group/task relative flex min-w-0 items-stretch rounded-xs pr-xs", selected ? "bg-selected" : "hover:bg-accent focus-within:bg-accent", rowDimmed(agent) && "opacity-(--opacity-dimmed)")}
       data-task-row={agent.pane_id} data-task-state={card.state} data-selected={selected ? "true" : undefined} onClick={go}>
@@ -332,7 +334,7 @@ function TaskRow({ entry, family, open, selected, number, showProject, disabled,
       <div className="flex min-w-0 flex-1 flex-col gap-xxs py-xs pl-xs">
         <div className="flex min-h-(--size-sidebar-line) min-w-0 items-center gap-xs">
           <button type="button" data-task-focus="row" disabled={disabled} aria-current={selected ? "true" : undefined} aria-expanded={open ?? undefined} aria-label={name}
-            title={[agent.identity_label, agentProductName(agent.agent_kind)].filter(Boolean).join("\n")}
+            title={[agent.identity_label, agentProductName(agent.agent_kind), words, sentence].filter(Boolean).join("\n")}
             onClick={(event) => { event.stopPropagation(); go(); }}
             onKeyDown={(event) => rowKey(event, open, toggle, record)}
             className="flex min-w-0 flex-1 items-center gap-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50">
@@ -400,7 +402,7 @@ function SecondLine({ entry, showProject }: { entry: TaskEntry; showProject: boo
   const { agent, card, project } = entry;
   const ask = card.state === "needs_you" ? agent.state.ask : null;
   const turn = card.state === "needs_you" && !ask ? agent.hide_ai?.turn : undefined;
-  const parts: LineParts | null = ask ? { lead: null, text: askWhat(t, ask.verb, ask.what), tail: null } : turn ? { lead: null, text: homeTurnLine(t, turn), tail: null } : card.state === "resting" && !agent.state.session.unfinished ? null : agentLineParts(t, agent);
+  const parts: LineParts | null = ask ? askParts(t, ask) : turn ? { lead: null, text: homeTurnLine(t, turn), tail: null } : card.state === "resting" && !agent.state.session.unfinished ? null : agentLineParts(t, agent);
   if (!parts && !(showProject && project)) return null;
   return (
     <div className={cn(indent, "flex min-w-0 items-baseline gap-xs text-micro")} data-task-line={card.state}>
@@ -455,8 +457,8 @@ function ChildRow({ parent, child, depth, place, open, selected, disabled, actio
       <div className="flex min-w-0 flex-1 flex-col gap-xxs py-xs pl-xs">
         <div className="flex min-h-(--size-sidebar-line) min-w-0 items-center gap-xs">
           <button type="button" data-task-focus="row" disabled={disabled} aria-current={selected ? "true" : undefined} aria-expanded={open ?? undefined}
-            aria-label={[child.identity_label, forkLabel(t, child), agentProductName(child.agent_kind), statusText(t, child.status_code), child.state.branch_badge, device].filter(Boolean).join(", ")}
-            title={[child.identity_label, agentProductName(child.agent_kind)].filter(Boolean).join("\n")}
+            aria-label={[child.identity_label, forkLabel(t, child), agentProductName(child.agent_kind), markWords(t, child), rowSentence(t, child), child.state.branch_badge, device].filter(Boolean).join(", ")}
+            title={[child.identity_label, agentProductName(child.agent_kind), markWords(t, child), rowSentence(t, child)].filter(Boolean).join("\n")}
             onClick={(event) => { event.stopPropagation(); go(); }}
             onKeyDown={(event) => rowKey(event, open, toggle, record)}
             className="flex min-w-0 flex-1 items-center gap-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50">
@@ -480,7 +482,7 @@ function ChildLine({ child }: { child: AgentRow }) {
   const { t } = useInterfaceTranslation();
   const indent = detailIndent(useAgentLogosShown());
   const ask = child.state.session.group === "needs_you" ? child.state.ask : null;
-  const parts: LineParts | null = ask ? { lead: null, text: askWhat(t, ask.verb, ask.what), tail: null } : agentLineParts(t, child);
+  const parts: LineParts | null = ask ? askParts(t, ask) : agentLineParts(t, child);
   if (!parts) return null;
   return <div className={cn(indent, "flex min-w-0 text-micro", ask ? "text-warning" : "text-subtle-foreground")} data-task-line={ask ? "ask" : "label"}><RowLineText parts={parts} className="min-w-0 flex-1" title={partsTitle(parts)} /></div>;
 }

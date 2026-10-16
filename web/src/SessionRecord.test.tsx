@@ -75,9 +75,10 @@ it("draws the PRs first, then the checklist with its count, a task's PR on its l
     expect(text(container.querySelector("[data-record-work] h3"))).toBe("Assigned work 1/2");
     const tasks = Array.from(container.querySelectorAll("[data-record-task]"));
     expect(tasks.map((row) => row.getAttribute("data-record-task"))).toEqual(["t1", "t2"]);
-    expect(tasks.map((row) => row.querySelector("[data-task-state]")?.getAttribute("aria-label"))).toEqual(["Done", "Review pending"]);
+    expect(tasks.map((row) => row.querySelector("[data-task-state]")?.getAttribute("aria-label"))).toEqual(["Done", null]);
     expect(text(tasks[1]!.querySelector("[data-record-task-pr]"))).toBe("#" + "1100");
-    // The state is an icon and its name, never a word on the line.
+    // A PR-bound task's slot is empty and its PR mark says the state, never a word on the line.
+    expect(tasks[1]!.querySelector("[data-record-task-pr]")?.getAttribute("aria-label")).toMatch(/^#1100 /);
     expect(text(tasks[1]!)).not.toContain("Review pending");
     expect(container.querySelector("[data-record-verdict]")).toBeNull();
   } finally { await unmount(); }

@@ -1432,7 +1432,7 @@ fn a_blocked_grandchild_raises_its_lineage_root_once_and_never_itself() {
 }
 
 // sidebar-agent-status B1-B4, D-01: a root that is quiet itself while a
-// descendant works is waiting on it: a Working row with the hollow ring,
+// descendant works is waiting on it: a Working row with the dashed ring,
 // never Done and never Needs You, until no descendant works. A descendant
 // that asks waits on the root, so the root does not wait on it. Its own
 // question or its own work outranks the waiting state.
@@ -1450,7 +1450,7 @@ fn a_quiet_root_waits_in_working_while_a_descendant_works_and_not_on_one_that_as
     let root = agent_row(&runtime, "w1:p1");
     assert!(root.wait == Some(crate::model::AgentWait::Children));
     assert_eq!(root.group, "working", "a waiting root is not Done");
-    assert_eq!(root.mark, crate::agent_state::tally::RowMark::Going);
+    assert_eq!(root.mark, crate::agent_state::tally::RowMark::Waiting);
     assert_eq!(root.status_code, crate::model::AgentStatusCode::Waiting);
     assert!(!root.emphasized);
     assert_eq!(root.descendant_counts.working, 1);
