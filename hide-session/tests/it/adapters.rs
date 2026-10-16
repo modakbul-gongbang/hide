@@ -4484,6 +4484,16 @@ mod antigravity {
         let other_step = "a9c0e2f4-0000-4000-8000-00000000000c";
         native.conversation(other_step, "", "2026-10-03 01:04:00+00:00");
         steps(other_step, 3);
+        // A fork of a longer conversation, or a new one that grew past the
+        // source, lands in the same checkout first.
+        let longer = "a9c0e2f4-0000-4000-8000-000000000010";
+        native.conversation(longer, "", "2026-10-03 01:04:30+00:00");
+        steps(longer, 50);
+        assert_eq!(
+            forked().unwrap(),
+            None,
+            "a row past the source's steps is not its fork"
+        );
         // agy stamps the fork with the node's clock, which may be behind the
         // core's, and the source may take a step while agy writes it.
         let fork = "a9c0e2f4-0000-4000-8000-00000000000d";
@@ -4495,6 +4505,16 @@ mod antigravity {
         native.conversation(second, "", "2026-10-03 01:06:00+00:00");
         steps(second, 7);
         assert_eq!(forked().unwrap_err(), "antigravity_fork_ambiguous");
+        let oversized = hide_session::antigravity::ForkMark {
+            known: vec![AGY_ID.to_owned(); 257],
+            steps: 7,
+        };
+        assert_eq!(
+            hide_session::antigravity::forked(native.home.path(), AGY_ID, &cwd, &oversized)
+                .unwrap_err()
+                .to_string(),
+            "antigravity_fork_mark_invalid"
+        );
         assert_eq!(
             hide_session::antigravity::fork_mark(
                 native.home.path(),

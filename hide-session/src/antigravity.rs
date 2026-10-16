@@ -194,6 +194,53 @@ pub(crate) fn row(home: &Path, id: &str) -> Result<Option<Row>> {
     }
 }
 
+/// An index read that may succeed on a later pass: agy holds or is
+/// rewriting its index, or the read ran out of its work budget.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct IndexBusy;
+
+/// The checkout agy's index places conversation `id` in, for a reader that
+/// goes on without one: `None` while there is no index, no row for `id`, or a
+/// row whose workspace Hide cannot place, since none of those changes by
+/// reading again; [`IndexBusy`] only for a read that may succeed next time.
+pub(crate) fn checkout(home: &Path, id: &str) -> std::result::Result<Option<PathBuf>, IndexBusy> {
+    let found = crate::sqlite::with_read(
+        home,
+        FOLDER,
+        &home.join(FOLDER).join(DATABASE),
+        &REASONS,
+        SQL_STEPS,
+        |db| {
+            db.query_row(
+                &format!(
+                    "SELECT {COLUMNS} FROM conversation_summaries \
+                     WHERE conversation_id = ?1 AND app_data_dir = '{APP}'"
+                ),
+                rusqlite::params![id, COLUMN_LIMIT_BYTES],
+                read_row,
+            )
+            .optional()
+        },
+    );
+    match found {
+        Ok(Ok(columns)) => Ok(columns.and_then(to_row).map(|row| row.cwd)),
+        Ok(Err(_)) => Err(IndexBusy),
+        Err(reason)
+            if [
+                REASONS.busy,
+                REASONS.unreadable,
+                REASONS.changed,
+                REASONS.work,
+            ]
+            .contains(&reason.as_str()) =>
+        {
+            Err(IndexBusy)
+        }
+        // Missing, a link or not a regular file: no index Hide reads.
+        Err(_) => Ok(None),
+    }
+}
+
 /// The newest conversation the operator started in `cwd` (canonical),
 /// among the newest rows the index holds.
 fn newest_root(home: &Path, cwd: &Path) -> Result<Option<Row>> {
@@ -239,15 +286,23 @@ pub fn fork_mark(home: &Path, source: &str, cwd: &Path) -> Result<ForkMark> {
 
 /// The conversation agy's `/fork` made from `source` in `cwd` (canonical)
 /// after [`fork_mark`] answered `mark`: `/fork` writes a new root row in the
-/// same checkout holding at least the source's steps, and no transcript
-/// until its next prompt. `None` while no such row is written; more than one
+/// same checkout holding the source's steps at that moment, between the
+/// mark's count and the source's count now, and no transcript until its next
+/// prompt; a new conversation or another fork with more steps is not it. `None` while no such row is written; more than one
 /// is refused, since Hide could not tell which one is its fork.
 pub fn forked(home: &Path, source: &str, cwd: &Path, mark: &ForkMark) -> Result<Option<String>> {
+    // A mark lists at most the rows [`fork_mark`] reads; a longer one did
+    // not come from it.
+    if mark.known.len() > SEARCH_ROWS as usize {
+        return Err(anyhow!("antigravity_fork_mark_invalid"));
+    }
     let rows = with_index(home, |db| -> rusqlite::Result<_> {
         let mut statement = db.prepare(&format!(
             "SELECT {COLUMNS} FROM conversation_summaries \
              WHERE app_data_dir = '{APP}' AND coalesce(parent_conversation_id, '') = '' \
-             AND conversation_id != ?3 AND step_count >= ?4 \
+             AND conversation_id != ?3 \
+             AND step_count BETWEEN ?4 AND (SELECT step_count FROM conversation_summaries \
+                 WHERE conversation_id = ?3 AND app_data_dir = '{APP}') \
              ORDER BY last_modified_time DESC LIMIT ?1"
         ))?;
         statement

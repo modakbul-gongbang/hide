@@ -348,13 +348,9 @@ pub fn read(
         // not place yet is still counted, under no project until it does. An
         // index that cannot be read now (agy holding it) refuses the read,
         // which the next pass repeats, rather than losing the project.
-        let row = match crate::antigravity::row(home, id) {
-            Ok(row) => row,
-            // No index yet: agy has placed no conversation anywhere.
-            Err(error) if error.to_string() == "session_file_missing" => None,
-            Err(_) => return Err(Refusal::Database),
-        };
-        let cwd = row.and_then(|row| row.cwd.to_str().map(str::to_owned));
+        let cwd = crate::antigravity::checkout(home, id)
+            .map_err(|crate::antigravity::IndexBusy| Refusal::Database)?
+            .and_then(|cwd| cwd.to_str().map(str::to_owned));
         records::antigravity_context(&mut checkpoint.context, id, cwd);
     }
     if summary.as_ref().is_some_and(|s| s.is_child()) {
