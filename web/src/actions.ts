@@ -2535,10 +2535,11 @@ export function createActions(send: DispatchFn) {
     openBrowser(url: string, workspace?: ViewWorkspace, areaId?: string, besideDisplay?: string, openerPane?: string) {
       const target = workspace ?? frontViewWorkspace();
       if (!target) return diagnostic("browser_open: no Workspace in front");
-      // The keyboard goes with a page the operator opened; a New tab's
-      // address field takes it as it mounts, and a page's own new tab
-      // leaves it with the page that asked.
-      const follows = url !== "" && !besideDisplay;
+      // The keyboard goes with a page a terminal's link opened, as with the
+      // link's file; an open from a row, a card, the palette or a page's own
+      // new tab leaves it where it was, and a New tab's address field takes
+      // it as it mounts.
+      const follows = openerPane !== undefined && url !== "" && !besideDisplay;
       dispatch({
         schema_version: 2,
         kind: "browser_open",
