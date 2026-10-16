@@ -23,7 +23,14 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
   // then menu, zoom and close) over its terminal. B2 moves the child trigger
   // into the same second-row overlay as the core band.
   // with the one band a pane carries overlaid at the top (D-14, D-43; B20, B21).
-  function pane(id, {path = [], mark = '○', tone = '$--agent-working', provider: kind = 'codex', title, forked, pr, children, counts = {}, disconnected = false, summary = '작업 상태 칩과 팝업을 연결하는 중', band, terminal}) {
+  // The task chip (web/src/PaneTaskChip.tsx, PRD task-split-checklist D-05):
+  // `<done>/<tasks>` from one task, before the PR chip; child progress never
+  // rides it. Open draws the ring the pinned or hovered chip carries.
+  const taskChip = (id, tasks, open = false) => frame(id, `Tasks ${tasks}`, {height:18,layout:'horizontal',gap:'$--spacing-xxs',padding:[0,'$--spacing-xs'],alignItems:'center',cornerRadius:'$--radius-xs',fill:'$--background',stroke:open ? '$--ring' : '$--border',strokeWidth:1,strokeAlignment:'inner'}, [
+    icon(`${id}-g`, 'list-checks', {size:12,fill:open ? '$--foreground' : '$--muted-foreground'}),
+    text(`${id}-n`, tasks, {size:'$--text-micro',fill:open ? '$--foreground' : '$--muted-foreground',mono:true}),
+  ]);
+  function pane(id, {path = [], mark = '○', tone = '$--agent-working', provider: kind = 'codex', title, forked, tasks, pr, children, counts = {}, disconnected = false, summary = '작업 상태 칩과 팝업을 연결하는 중', band, terminal}) {
     const parts = band ? ['raised'].filter(key=>counts[key]) : Object.keys(counts).filter(key=>counts[key]);
     const tree = children ? [themedXref(`${id}-tree`, 'ath-tree-button', 'Child states', {fill:'$--background'}, {
       'ath-tb-tree':{enabled:!disconnected && parts.length===0},'ath-tb-counts':{enabled:parts.length>0},
@@ -36,6 +43,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
       provider(`${id}-provider`, kind),
       caption(`${id}-title`, title, '$--foreground'),
       ...(forked ? [icon(`${id}-fork`, 'git-fork', {size:12,fill:'$--subtle-foreground'})] : []),
+      ...(tasks ? [taskChip(`${id}-tasks`, tasks.count, tasks.open)] : []),
       ...(pr ? [prChip(`${id}-pr`, pr)] : []),
       frame(`${id}-sp`, 'Spacer', {width:'fill_container',height:1}, []),
       icon(`${id}-zoom`, 'maximize-2', {size:12,fill:'$--subtle-foreground'}),
@@ -82,5 +90,45 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
       caption(`${id}-rule`,'승인은 label 줄이 없으면 "권한 요청에서 멈춤". 답변의 대기는 부모가 못 받은 시간. 초안은 초안이 걸린 부모를 연다. 띠는 PTY 크기를 바꾸지 않는다.'),
     ]);
   }
-  return {headerBoard};
+  // The task chip and its checklist (PRD task-split-checklist B9-B14): a chip
+  // from one task, none without a task or with Agent summaries off, and the
+  // list the pointer, the keyboard's focus or ⇧⌘L opens under it.
+  function taskBoard(suffix) {
+    const id=`tsc-ph-board-${suffix}`;
+    const labeled = (key, label, children) => frame(`${id}-sec-${key}`, label, {width:'fill_container',layout:'vertical',gap:8}, [caption(`${id}-sec-${key}-label`, label, '$--subtle-foreground', {weight:'600'}), ...children]);
+    // One request's tasks share one state (B5): four in review behind its PR.
+    const GLYPH = {review:['◐','$--success']};
+    const item = (key, state, name, pr) => frame(`${id}-pop-${key}`, name, {width:'fill_container',layout:'horizontal',gap:'$--spacing-xs',alignItems:'start',padding:[2,0]}, [
+      caption(`${id}-pop-${key}-g`, GLYPH[state][0], GLYPH[state][1], {weight:'600'}),
+      caption(`${id}-pop-${key}-n`, name, state === 'done' ? '$--subtle-foreground' : '$--foreground', {width:'fill_container'}),
+      ...(pr ? [prChip(`${id}-pop-${key}-pr`, pr)] : []),
+    ]);
+    const segments = kinds => frame(`${id}-pop-seg`, 'Child segments', {layout:'horizontal',gap:'$--spacing-xxs',alignItems:'center'},
+      kinds.map((kind, index) => frame(`${id}-pop-seg-${index}`, kind, {width:20,height:4,cornerRadius:2,fill:kind === 'done' ? '$--success' : '$--agent-working'}, [])));
+    const list = frame(`${id}-pop`, 'Task list', {width:340,layout:'vertical',gap:0,fill:'$--popover',stroke:'$--border',strokeWidth:1,strokeAlignment:'inner',cornerRadius:'$--radius-md'}, [
+      frame(`${id}-pop-body`, 'Tasks', {width:'fill_container',layout:'vertical',gap:2,padding:['$--spacing-sm','$--spacing-sm',0,'$--spacing-sm']}, [
+        frame(`${id}-pop-h`, 'Heading', {width:'fill_container',layout:'horizontal',gap:'$--spacing-xs',alignItems:'center',padding:[0,0,4,0]}, [caption(`${id}-pop-h-t`, '시킨 일', '$--subtle-foreground', {weight:'500'}), text(`${id}-pop-h-n`, '0/4', {size:'$--text-micro',fill:'$--muted-foreground',mono:true})]),
+        item('t0', 'review', 'README의 HTML 태그가 보이게 하기', {number:1233,state:'mergeable'}),
+        item('t1', 'review', '댓글 + 마크 위치 맞추기'),
+        item('t2', 'review', 'HTML 페이지에서 댓글이 동작하게 하기'),
+        item('t3', 'review', '드래그한 영역 남겨두기'),
+        frame(`${id}-pop-kids`, 'Children progress', {width:'fill_container',layout:'horizontal',gap:'$--spacing-xs',alignItems:'center',padding:[6,0,0,0]}, [caption(`${id}-pop-kids-t`, '자식 일', '$--subtle-foreground'), text(`${id}-pop-kids-n`, '4/5', {size:'$--text-micro',fill:'$--muted-foreground',mono:true}), segments(['done','done','working','done','done'])]),
+        frame(`${id}-pop-line`, 'Current line', {width:'fill_container',layout:'horizontal',gap:'$--spacing-xs',alignItems:'center',padding:[6,0,0,0]}, [icon(`${id}-pop-line-g`, 'loader-circle', {size:12,fill:'$--agent-working'}), caption(`${id}-pop-line-t`, '파일 페이지 댓글 PR 검증 중', '$--muted-foreground', {width:'fill_container'})]),
+      ]),
+      frame(`${id}-pop-foot`, 'Open record', {width:'fill_container',layout:'horizontal',alignItems:'center',padding:['$--spacing-xs','$--spacing-sm'],stroke:'$--border',strokeWidth:{top:1},strokeAlignment:'inner'}, [
+        caption(`${id}-pop-open`, '기록 열기', '$--foreground', {width:'fill_container'}),
+        frame(`${id}-pop-kbd`, 'Shortcut', {height:18,layout:'horizontal',alignItems:'center',padding:[0,5],cornerRadius:'$--radius-xs',stroke:'$--border',strokeWidth:1,strokeAlignment:'inner'}, [text(`${id}-pop-kbd-t`, '⇧⌘L', {size:'$--text-micro',fill:'$--subtle-foreground'})]),
+      ]),
+    ]);
+    return frame(id,'Pane task chip states',{width:761,layout:'vertical',gap:20,padding:[0,0,24,0],fill:'$--background'},[
+      labeled('one','One task: the chip alone, done over tasks',[pane(`${id}-one`,{provider:'codex',title:'README 번역 정리',tasks:{count:'0/1'}})]),
+      labeled('split','A request split into four, with a PR and children: the chip counts tasks only; the children keep their own row',[pane(`${id}-split`,{mark:'●',provider:'claude',title:'Pre-launch bugfix pass for File views',tasks:{count:'0/4'},pr:{number:1233,state:'mergeable'},children:5,counts:{working:1,result:4},summary:'파일 페이지 댓글 기능 구현 · 작업 중'})]),
+      labeled('none','No task, or Agent summaries off: no chip',[pane(`${id}-none`,{title:'아침 점검 위임',children:2,counts:{working:2},summary:'두 자식이 점검하는 중'})]),
+      labeled('open','The list under the chip: tasks with the request\'s PR once, children\'s progress, the current line and 기록 열기 (⇧⌘L pins it, Esc closes a pinned list)',[
+        pane(`${id}-open`,{mark:'●',provider:'claude',title:'Pre-launch bugfix pass for File views',tasks:{count:'0/4',open:true},pr:{number:1233,state:'mergeable'},terminal:'● 머지 가능한 건 바로 머지했어요.'}),
+        list,
+      ]),
+    ]);
+  }
+  return {headerBoard,taskBoard};
 }
