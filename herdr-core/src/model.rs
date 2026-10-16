@@ -4681,12 +4681,45 @@ pub struct ReviewRequest {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewAsk {
+    /// The question that tells was not answered, so the pull request may or
+    /// may not have been asked of the account or its team. A pull request
+    /// starts here and leaves it only when an answer places it.
     #[default]
+    Unknown,
+    /// Asked of neither the account nor a team of it.
     None,
     /// Asked of the account itself.
     Direct,
     /// Asked of a team the account is in and not of the account.
     Team,
+}
+
+/// A pull request's place in its base branch's merge queue, as far as GitHub
+/// has said.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "state", content = "position")]
+pub enum MergeQueuePlace {
+    /// The queue question was not answered. A pull request starts here.
+    #[default]
+    Unknown,
+    NotQueued,
+    /// From 1.
+    At(u32),
+}
+
+/// The questions a project's pull request read asks beside the list itself
+/// (issue #1189). The list alone decides whether the read succeeds; one of
+/// these failing leaves the judgments derived from it unknown.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtraQuery {
+    /// The signed-in account (`gh api user`): which pull requests are mine.
+    Account,
+    /// The review requests made to the account (`gh pr list --search
+    /// review-requested:@me`): which are asked of me or my team.
+    ReviewRequests,
+    /// The merge queue place and review request time (`gh api graphql`).
+    MergeQueue,
 }
 
 /// The GitHub values the Work tab's PRs list and the card read beyond the
@@ -4695,8 +4728,8 @@ pub enum ReviewAsk {
 pub struct PullRequestWork {
     pub author: Option<String>,
     pub author_is_bot: bool,
-    /// The signed-in account wrote it.
-    pub mine: bool,
+    /// The signed-in account wrote it; `None` while the account is unknown.
+    pub mine: Option<bool>,
     pub merge_state: MergeState,
     pub review_requests: Vec<ReviewRequest>,
     pub asked_of_me: ReviewAsk,
@@ -4704,9 +4737,8 @@ pub struct PullRequestWork {
     /// are still running: the second line's `✗ <name>` and `CI · N`.
     pub failed_checks: Vec<PrFailedCheck>,
     pub pending_checks: u32,
-    /// Its place in the base branch's merge queue, from 1; absent when it is
-    /// not queued.
-    pub queue_position: Option<u32>,
+    /// Its place in the base branch's merge queue.
+    pub queue: MergeQueuePlace,
     /// When the latest review request on it was made, which `리뷰 · N시간째`
     /// counts from.
     pub review_requested_at_unix_ms: Option<u64>,
@@ -4770,6 +4802,11 @@ pub struct GithubStatusSnapshot {
     /// The card's one allowed sentence: gh missing, logged out, or the exact
     /// failure. Absent when the lookup is healthy.
     pub unavailable_reason: Option<String>,
+    /// The extra questions of the last read that failed while the pull request
+    /// list was read: the list is current and the judgments derived from these
+    /// are unknown (issue #1189).
+    #[serde(default)]
+    pub unread_queries: Vec<ExtraQuery>,
 }
 
 /// One repository's pull requests as `gh` reported them.
