@@ -326,14 +326,16 @@ export type MergeState = "unknown" | "clean" | "has_hooks" | "unstable" | "dirty
 export type PullRequestWork = {
   author: string | null;
   author_is_bot: boolean;
-  /** The signed-in account wrote it. */
-  mine: boolean;
+  /** The signed-in account wrote it; null while the account could not be read. */
+  mine: boolean | null;
   merge_state: MergeState;
   review_requests: { kind: "user" | "team"; name: string }[];
-  asked_of_me: "none" | "direct" | "team";
+  /** `unknown` while the question that tells could not be answered. */
+  asked_of_me: "unknown" | "none" | "direct" | "team";
   failed_checks: { name: string; url: string | null }[];
   pending_checks: number;
-  queue_position: number | null;
+  /** Its place in the base branch's merge queue; `unknown` while the queue could not be read. */
+  queue: { state: "unknown" | "not_queued" } | { state: "at"; position: number };
   review_requested_at_unix_ms: number | null;
 };
 
@@ -377,7 +379,12 @@ export type GithubStatus = {
   stale: boolean;
   last_success_at_unix_ms: number | null;
   unavailable_reason: string | null;
+  /** The extra questions of the last read that went unanswered while the pull request list was read (`ExtraQuery`). */
+  unread_queries?: ExtraQuery[];
 };
+
+/** A question the pull request read asks beside the list: the signed-in account, the review requests, the merge queue. */
+export type ExtraQuery = "account" | "review_requests" | "merge_queue";
 
 export type IssueReference = { repository: string; number: number };
 

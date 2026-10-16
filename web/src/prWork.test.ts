@@ -3,10 +3,12 @@
 // decided the groups; this only gathers them and words how reading stands.
 
 import { describe, expect, it } from "vitest";
-import { hasPullRequests, prListModel, prReading } from "./prWork";
+import { hasPullRequests, prListModel, prReading, readingWarning } from "./prWork";
+import { initializeInterfaceI18n } from "./i18n/instance";
 import type { PrBoard } from "./agentScope";
 import type { GithubStatus, Workspace } from "./snapshot";
 
+const t = initializeInterfaceI18n("en").getFixedT(null, "translation");
 const status = (over: Partial<GithubStatus>): GithubStatus => ({ available: true, ...over }) as GithubStatus;
 
 function project(id: string, github: Partial<GithubStatus>, board: PrBoard, numbers: number[]): Workspace {
@@ -47,7 +49,41 @@ describe("prReading", () => {
 
   it("keeps the last values and says how old they are when the last read failed", () => {
     const board = { rows: [], groups: [], needs_you: 0 };
-    expect(prReading([project("a", { last_success_at_unix_ms: 4 * 60_000, stale: true }, board, [])], NOW)).toEqual({ state: "stale", minutes: 6 });
+    expect(prReading([project("a", { last_success_at_unix_ms: 4 * 60_000, stale: true }, board, [])], NOW)).toEqual({ state: "stale", minutes: 6, unread: [] });
+  });
+
+  it("is partial, not stale, when the list was read and an extra question was not answered", () => {
+    const board = { rows: [], groups: [], needs_you: 0 };
+    const read = { last_success_at_unix_ms: 4 * 60_000 };
+    expect(prReading([project("a", { ...read, unread_queries: ["merge_queue"] }, board, [])], NOW)).toEqual({ state: "partial", unread: ["merge_queue"] });
+    // Two projects name the questions once each, in the order the core asks them.
+    expect(prReading([project("a", { ...read, unread_queries: ["merge_queue"] }, board, []), project("b", { ...read, unread_queries: ["account", "merge_queue"] }, board, [])], NOW)).toEqual({ state: "partial", unread: ["account", "merge_queue"] });
+  });
+
+  it("keeps naming the unanswered questions beside a failed read", () => {
+    const board = { rows: [], groups: [], needs_you: 0 };
+    expect(prReading([project("a", { last_success_at_unix_ms: 4 * 60_000, stale: true, unread_queries: ["review_requests"] }, board, [])], NOW)).toEqual({ state: "stale", minutes: 6, unread: ["review_requests"] });
+  });
+});
+
+describe("readingWarning", () => {
+  it("is quiet while GitHub reads whole, before an answer and when gh is refused", () => {
+    expect(readingWarning({ state: "ready" }, t)).toBeNull();
+    expect(readingWarning({ state: "reading" }, t)).toBeNull();
+    expect(readingWarning({ state: "blocked", category: "not_installed" }, t)).toBeNull();
+  });
+
+  it("names each unanswered question in plain words", () => {
+    expect(readingWarning({ state: "partial", unread: ["account"] }, t)).toBe("GitHub read incomplete · could not read the signed-in account");
+    expect(readingWarning({ state: "partial", unread: ["review_requests"] }, t)).toBe("GitHub read incomplete · could not read review requests");
+    expect(readingWarning({ state: "partial", unread: ["merge_queue"] }, t)).toBe("GitHub read incomplete · could not read the merge queue");
+    expect(readingWarning({ state: "partial", unread: ["account", "review_requests", "merge_queue"] }, t)).toBe("GitHub read incomplete · could not read the signed-in account, review requests, the merge queue");
+  });
+
+  it("keeps how old a failed read's list is, and adds the questions it also lacks", () => {
+    expect(readingWarning({ state: "stale", minutes: 6, unread: [] }, t)).toBe("GitHub read failed · value from 6 min ago");
+    expect(readingWarning({ state: "stale", minutes: null, unread: [] }, t)).toBe("GitHub read failed · last value");
+    expect(readingWarning({ state: "stale", minutes: 6, unread: ["merge_queue"] }, t)).toBe("GitHub read failed · value from 6 min ago · could not read the merge queue");
   });
 });
 
