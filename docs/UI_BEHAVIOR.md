@@ -59,7 +59,7 @@ Each icon's hint names the tool and its scope and ends with its chord (`Memory �
 A short rule between PRs and Files marks where the Project's tools end and the checkout's begin (PRD work-tab-pr-lens D-37); it is derived from each tool's scope, so a tool of the other scope moves it.
 The lane header names the tool, then its scope behind one small icon, a folder for the Project (Memory, PRs) and a branch for the checkout (Files, Changes), in the scope text's colour; the icon is decoration, and the accessible name stays the hint's `name · scope`.
 While the lane does not show Files, its icon carries a badge counting the views open, also given as its accessible description; Memory's carries a dot while its Project has questions waiting, and PRs' a warning-coloured number counting the PRs tool's Needs You rows (folded rows not counted, a session's Needs You never).
-While the 보기 slot holds something, a fifth button stands above Memory with the mark of what it holds, a pull request or a record (see The 보기 slot).
+While the 보기 slot holds something, a fifth button stands above Memory with the mark of what it holds, a pull request as its PR mark in its state's icon and colour or a record as a page, and one short rule under it sets it apart from the tools (see The 보기 slot).
 The rail's `…` menu holds Toggle File Tree with its chord, Pin or Unpin, and Expand.
 A Workspace seen for the first time shows Agent Views alone, its lane closed.
 The lane's header names its tool and scope, `Memory · <project>`, `PRs · all of <project>`, `Files · <checkout>` and `Changes · <checkout>`, with Pin, Expand and Close at its right; a new checkout in front renames the Files and Changes scopes and leaves Memory and PRs as they are.
@@ -935,7 +935,7 @@ A hidden list draws no rows, the elapsed clock updates only its own text, and th
 
 The lane has one 보기 slot per window, which holds a pull request's card or a session's record and belongs to no checkout and no Agent tab, so changing either leaves it as it was (PRD sidebar-task-lens D-50, B48).
 Whatever opens a card or a record opens it there, and the Workspace in front, its Agent tab and the keyboard stay (B14, B15, B50); no `PR #N` or record tab appears in Files.
-Its head reads `←`, the item's mark and name (`PR #N · <project>` or `기록 · <title>`), `↗` (GitHub) on a card, and `✕` (B47).
+Its head reads `←`, the item's mark and name (`PR #N · <project>` or `기록 · <title>`), `↗` (GitHub) on a card, and `✕` (B47); a card's mark is its PR mark, in its state's icon and colour, here and on the rail.
 Opening another item puts it in front, and `←` steps back through the ones opened before, at most 20, the oldest leaving first; `✕` empties the slot and the lane goes back to the tool it showed, or closes when it had none.
 While the slot holds something, the rail carries a fifth button above Memory with its mark, pressed while the lane draws the slot; calling a tool turns the lane to that tool and the button stays, so pressing it comes back to the slot (B46).
 A changed file pressed on a card opens its diff in the checkout's Files and the lane turns to Files, the slot staying on the rail (B49).
