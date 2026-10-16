@@ -367,6 +367,7 @@ pub fn allowed(arguments: &[&str]) -> bool {
     arguments == ["auth", "status"]
         || is_conditional_read(arguments)
         || is_pull_digest_read(arguments)
+        || is_checks_verdict_read(arguments)
         || matches!(
             arguments,
             ["pr", "list", "--state", "open", "--limit", PULL_REQUEST_LIMIT, "--json", OPEN_CHECK_FIELDS]
@@ -468,6 +469,68 @@ pub fn pull_digest_arguments(repository: &str) -> Option<Vec<String>> {
     ])
 }
 
+/// The result a commit's check runs add up to, in the words the PR mark uses,
+/// by the same rule as the core's `rollup_checks`: any failed run fails it,
+/// else any unfinished run leaves it pending.
+pub const CHECK_RUNS_VERDICT_JQ: &str = "[.check_runs[]|if .status!=\"completed\" then \"pending\" elif (.conclusion|IN(\"failure\",\"timed_out\",\"cancelled\",\"action_required\",\"startup_failure\",\"stale\")) then \"failed\" elif (.conclusion|IN(\"success\",\"neutral\",\"skipped\")) then \"passing\" else \"unknown\" end]|if any(.==\"failed\") then \"failed\" elif any(.==\"pending\") then \"pending\" elif any(.==\"unknown\") then \"unknown\" elif length==0 then \"none\" else \"passing\" end";
+
+/// The same for a commit's combined status (a commit with no statuses reports
+/// `pending` with a count of zero, which is no result).
+pub const COMMIT_STATUS_VERDICT_JQ: &str = "if .total_count==0 then \"none\" else (.state|if .==\"success\" then \"passing\" elif .==\"pending\" then \"pending\" elif IN(\"failure\",\"error\") then \"failed\" else \"unknown\" end) end";
+
+/// Which of a commit's two check lists a verdict read is of.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChecksList {
+    CheckRuns,
+    Status,
+}
+
+/// `gh api --jq VERDICT repos/OWNER/NAME/commits/SHA/(check-runs?per_page=100|status)`:
+/// asked after a list's entity tag moved, to learn whether the result the
+/// mark shows moved, and not only one job of many.
+pub fn checks_verdict_arguments(
+    repository: &str,
+    commit: &str,
+    list: ChecksList,
+) -> Option<Vec<String>> {
+    if !is_repository(repository) || !is_commit(commit) {
+        return None;
+    }
+    let (filter, tail) = match list {
+        ChecksList::CheckRuns => (CHECK_RUNS_VERDICT_JQ, CHECK_RUNS_TAIL),
+        ChecksList::Status => (COMMIT_STATUS_VERDICT_JQ, "status"),
+    };
+    Some(vec![
+        "api".to_owned(),
+        "--jq".to_owned(),
+        filter.to_owned(),
+        format!("repos/{repository}/commits/{commit}/{tail}"),
+    ])
+}
+
+/// The check runs list as the poll reads it: a hundred a page, so a commit
+/// with many jobs is not cut at GitHub's default thirty.
+pub const CHECK_RUNS_TAIL: &str = "check-runs?per_page=100";
+
+fn is_checks_verdict_read(arguments: &[&str]) -> bool {
+    let ["api", "--jq", filter, endpoint] = arguments else {
+        return false;
+    };
+    let Some((repository, rest)) = endpoint
+        .strip_prefix("repos/")
+        .and_then(|rest| rest.split_once("/commits/"))
+    else {
+        return false;
+    };
+    let Some((commit, list)) = rest.split_once('/') else {
+        return false;
+    };
+    is_repository(repository)
+        && is_commit(commit)
+        && ((list == CHECK_RUNS_TAIL && *filter == CHECK_RUNS_VERDICT_JQ)
+            || (list == "status" && *filter == COMMIT_STATUS_VERDICT_JQ))
+}
+
 fn is_pull_digest_read(arguments: &[&str]) -> bool {
     matches!(arguments, ["api", "--jq", PULL_DIGEST_JQ, endpoint]
         if endpoint.strip_prefix("repos/")
@@ -505,7 +568,7 @@ pub fn is_conditional_endpoint(endpoint: &str) -> bool {
             .strip_prefix("commits/")
             .and_then(|tail| tail.split_once('/'))
             .is_some_and(|(commit, list)| {
-                is_commit(commit) && (list == "check-runs" || list == "status")
+                is_commit(commit) && (list == CHECK_RUNS_TAIL || list == "status")
             })
 }
 
@@ -1046,7 +1109,7 @@ mod tests {
     fn a_conditional_read_is_a_list_of_one_repository_with_an_optional_plain_etag() {
         const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
         let pulls = "repos/acme/app/pulls?state=open&per_page=100";
-        let runs = format!("repos/acme/app/commits/{COMMIT}/check-runs");
+        let runs = format!("repos/acme/app/commits/{COMMIT}/check-runs?per_page=100");
         let status = format!("repos/acme/app/commits/{COMMIT}/status");
         for endpoint in [pulls, runs.as_str(), status.as_str()] {
             for etag in [None, Some("W/\"abc123\""), Some("\"abc-1.2:3_4\"")] {
@@ -1145,6 +1208,30 @@ mod tests {
             "--jq",
             PULL_DIGEST_JQ,
             pulls
+        ]));
+    }
+
+    #[test]
+    fn a_checks_verdict_read_is_one_commit_list_with_its_own_fixed_filter() {
+        const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+        for list in [ChecksList::CheckRuns, ChecksList::Status] {
+            let arguments = checks_verdict_arguments("acme/app", COMMIT, list).expect("a commit");
+            let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
+            assert!(allowed(&borrowed), "{borrowed:?}");
+        }
+        assert!(checks_verdict_arguments("acme/app", "main", ChecksList::Status).is_none());
+        assert!(checks_verdict_arguments("../app", COMMIT, ChecksList::Status).is_none());
+        // A filter belongs to its own list, and no other filter is run.
+        let runs = format!("repos/acme/app/commits/{COMMIT}/check-runs?per_page=100");
+        let status = format!("repos/acme/app/commits/{COMMIT}/status");
+        assert!(!allowed(&["api", "--jq", COMMIT_STATUS_VERDICT_JQ, &runs]));
+        assert!(!allowed(&["api", "--jq", CHECK_RUNS_VERDICT_JQ, &status]));
+        assert!(!allowed(&["api", "--jq", ".check_runs", &runs]));
+        assert!(!allowed(&[
+            "api",
+            "--jq",
+            CHECK_RUNS_VERDICT_JQ,
+            "repos/acme/app/commits/main/check-runs?per_page=100"
         ]));
     }
 }

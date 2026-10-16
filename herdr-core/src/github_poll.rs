@@ -23,7 +23,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use hide_node_link::gh::{GhAnswer, conditional_read_arguments, pull_digest_arguments};
+use hide_node_link::gh::{
+    CHECK_RUNS_TAIL, ChecksList, GhAnswer, checks_verdict_arguments, conditional_read_arguments,
+    pull_digest_arguments,
+};
 use hide_node_link::protocol::Call;
 
 use crate::model::GithubFailureCategory;
@@ -190,6 +193,13 @@ pub(crate) struct PollState {
     /// a comment, a label or a review that moves the list's tag asks nothing.
     /// At most `POLL_PROJECT_LIMIT` entries, kept for the last request's projects.
     digests: HashMap<String, u64>,
+    /// What each watched checks list last added up to (`passing`, `pending`,
+    /// `failed`, `unknown` or `none`), by endpoint; at most one per endpoint of
+    /// the last request.
+    verdicts: HashMap<String, &'static str>,
+    /// The result a head commit's two lists add up to, by project path and
+    /// head, which is what the mark shows: only a move here asks a read.
+    combined: HashMap<(String, String), &'static str>,
     /// The projects waiting out a failure, at most `POLL_PROJECT_LIMIT`.
     pauses: HashMap<String, Pause>,
     /// Polling is stopped until this unix second: the rate limit's floor.
@@ -215,6 +225,15 @@ pub(crate) fn pass(
     state.tags.retain(|endpoint, _| wanted.contains(endpoint));
     let watched = |path: &String| request.projects.iter().any(|project| &project.path == path);
     state.digests.retain(|path, _| watched(path));
+    state
+        .verdicts
+        .retain(|endpoint, _| wanted.contains(endpoint));
+    state.combined.retain(|(path, head), _| {
+        request
+            .projects
+            .iter()
+            .any(|project| &project.path == path && project.heads.contains(head))
+    });
     state.pauses.retain(|path, _| watched(path));
     let mut answer = PollAnswer::default();
     if let Some(until) = state.rate_until {
@@ -278,9 +297,23 @@ pub(crate) fn pass(
                                 "project": project.path,
                             }));
                         }
-                    } else if moved && known.is_some() {
-                        changed = true;
-                        causes.push("checks");
+                    } else if moved {
+                        // One job of many finishing moves the list's tag and
+                        // not the result the mark shows; read what it adds up to.
+                        let list = if endpoint.ends_with("/status") {
+                            ChecksList::Status
+                        } else {
+                            ChecksList::CheckRuns
+                        };
+                        match checks_verdict(ask, &project.repository, &endpoint, list) {
+                            Ok(verdict) => {
+                                state.verdicts.insert(endpoint.clone(), verdict);
+                            }
+                            Err(refused) => {
+                                failure = Some(failure_kind(refused.category));
+                                break;
+                            }
+                        }
                     }
                     state.tags.insert(endpoint, tag);
                     if let (Some(limit), Some(remaining), Some(reset)) =
@@ -307,6 +340,27 @@ pub(crate) fn pass(
                 Err(refused) => {
                     failure = Some(failure_kind(refused.category));
                     break;
+                }
+            }
+        }
+        if failure.is_none() {
+            for head in &project.heads {
+                let key = (project.path.clone(), head.clone());
+                let result = combine(
+                    state
+                        .verdicts
+                        .get(&checks_endpoint(project, head, ChecksList::CheckRuns)),
+                    state
+                        .verdicts
+                        .get(&checks_endpoint(project, head, ChecksList::Status)),
+                );
+                if state
+                    .combined
+                    .insert(key, result)
+                    .is_some_and(|before| before != result)
+                {
+                    changed = true;
+                    causes.push("checks");
                 }
             }
         }
@@ -377,10 +431,59 @@ fn endpoints(project: &PollProject) -> Vec<String> {
     let repository = &project.repository;
     let mut endpoints = vec![format!("repos/{repository}/pulls?state=open&per_page=100")];
     for head in &project.heads {
-        endpoints.push(format!("repos/{repository}/commits/{head}/check-runs"));
-        endpoints.push(format!("repos/{repository}/commits/{head}/status"));
+        endpoints.push(checks_endpoint(project, head, ChecksList::CheckRuns));
+        endpoints.push(checks_endpoint(project, head, ChecksList::Status));
     }
     endpoints
+}
+
+fn checks_endpoint(project: &PollProject, head: &str, list: ChecksList) -> String {
+    let repository = &project.repository;
+    match list {
+        ChecksList::CheckRuns => format!("repos/{repository}/commits/{head}/{CHECK_RUNS_TAIL}"),
+        ChecksList::Status => format!("repos/{repository}/commits/{head}/status"),
+    }
+}
+
+/// What one checks list adds up to, from the one word `gh` prints.
+fn checks_verdict(
+    ask: Ask<'_>,
+    repository: &str,
+    endpoint: &str,
+    list: ChecksList,
+) -> Result<&'static str, AskFailure> {
+    let unreadable = |reason: &str| AskFailure {
+        category: GithubFailureCategory::NetworkOrRateLimit,
+        reason: reason.to_owned(),
+    };
+    let commit = endpoint
+        .split("/commits/")
+        .nth(1)
+        .and_then(|rest| rest.split('/').next())
+        .ok_or_else(|| unreadable("endpoint_refused"))?;
+    let arguments = checks_verdict_arguments(repository, commit, list)
+        .ok_or_else(|| unreadable("endpoint_refused"))?;
+    match ask(&arguments)?.trim() {
+        "passing" => Ok("passing"),
+        "pending" => Ok("pending"),
+        "failed" => Ok("failed"),
+        "unknown" => Ok("unknown"),
+        "none" => Ok("none"),
+        _ => Err(unreadable("verdict_unreadable")),
+    }
+}
+
+/// The result a commit's check runs and statuses add up to, as the core's
+/// rollup does: a failure first, then anything unfinished, then anything
+/// unrecognised.
+fn combine(runs: Option<&&'static str>, status: Option<&&'static str>) -> &'static str {
+    let both = [runs.copied(), status.copied()];
+    for word in ["failed", "pending", "unknown", "passing"] {
+        if both.contains(&Some(word)) {
+            return word;
+        }
+    }
+    "none"
 }
 
 fn is_list(endpoint: &str) -> bool {
@@ -543,7 +646,9 @@ mod tests {
                 })
                 .map(|(_, queue)| queue);
             queue.and_then(VecDeque::pop_front).unwrap_or_else(|| {
-                if digest {
+                if digest && endpoint.contains("/commits/") {
+                    Ok("passing\n".to_owned())
+                } else if digest {
                     digest_of(&[(1, "aaaa", false)])
                 } else {
                     not_modified()
@@ -727,10 +832,6 @@ mod tests {
     #[test]
     fn a_pending_checks_commit_is_watched_through_its_runs_and_its_status() {
         let script = Script::new();
-        script.will("/app/commits", ok("runs-1"));
-        script.will("/app/commits", ok("status-1"));
-        script.will("/app/commits", ok("runs-2"));
-        script.will("/app/commits", ok("status-1"));
         let mut state = PollState::default();
         let now = Instant::now();
         let request = request(vec![project("/app", &[HEAD])]);
@@ -739,12 +840,84 @@ mod tests {
             script.asked_endpoints(),
             vec![
                 "repos/acme/app/pulls?state=open&per_page=100".to_owned(),
-                format!("repos/acme/app/commits/{HEAD}/check-runs"),
+                format!("repos/acme/app/commits/{HEAD}/check-runs?per_page=100"),
                 format!("repos/acme/app/commits/{HEAD}/status"),
             ]
         );
-        let answer = run(&mut state, &script, &request, now, 1060);
-        assert_eq!(answer.changed, vec!["/app".to_owned()]);
+    }
+
+    /// One pass over a project with one pending head, the runs list's tag moving
+    /// and the runs list adding up to `after`, after a first pass that added up
+    /// to `before`.
+    fn checks_answer(before: &str, after: &str) -> Vec<String> {
+        let script = Script::new();
+        script.will("/app/commits", ok("runs-1"));
+        script.will("/app/commits", ok("status-1"));
+        script.will("/app/commits", ok("runs-2"));
+        script.will("digest:check-runs", Ok(format!("{before}\n")));
+        script.will("digest:check-runs", Ok(format!("{after}\n")));
+        script.will("digest:/status", Ok("none\n".to_owned()));
+        let mut state = PollState::default();
+        let now = Instant::now();
+        let request = request(vec![project("/app", &[HEAD])]);
+        run(&mut state, &script, &request, now, 1000);
+        run(&mut state, &script, &request, now, 1060).changed
+    }
+
+    #[test]
+    fn one_job_finishing_while_others_are_pending_asks_nothing() {
+        assert!(checks_answer("pending", "pending").is_empty());
+    }
+
+    #[test]
+    fn the_last_job_finishing_asks_one_read_and_so_does_a_failure() {
+        assert_eq!(checks_answer("pending", "passing"), ["/app"]);
+        assert_eq!(checks_answer("pending", "failed"), ["/app"]);
+        assert_eq!(
+            checks_answer("failed", "pending"),
+            ["/app"],
+            "a re-run starting"
+        );
+        assert!(checks_answer("passing", "passing").is_empty());
+    }
+
+    #[test]
+    fn a_status_and_runs_that_add_up_to_the_same_mark_ask_nothing() {
+        // Runs pass while a status stays failed: the mark stays failed.
+        let script = Script::new();
+        script.will("/app/commits", ok("runs-1"));
+        script.will("/app/commits", ok("status-1"));
+        script.will("/app/commits", ok("runs-2"));
+        script.will("digest:check-runs", Ok("failed\n".to_owned()));
+        script.will("digest:check-runs", Ok("passing\n".to_owned()));
+        script.will("digest:/status", Ok("failed\n".to_owned()));
+        let mut state = PollState::default();
+        let now = Instant::now();
+        let request = request(vec![project("/app", &[HEAD])]);
+        run(&mut state, &script, &request, now, 1000);
+        assert!(
+            run(&mut state, &script, &request, now, 1060)
+                .changed
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_verdict_that_cannot_be_read_is_a_failure_and_no_baseline_is_kept() {
+        let script = Script::new();
+        script.will("/app/commits", ok("runs-1"));
+        script.will("digest:check-runs", Ok("maybe\n".to_owned()));
+        let mut state = PollState::default();
+        let answer = run(
+            &mut state,
+            &script,
+            &request(vec![project("/app", &[HEAD])]),
+            Instant::now(),
+            1000,
+        );
+        assert!(answer.changed.is_empty());
+        assert_eq!(state.pauses["/app"].kind, "network_or_rate_limit");
+        assert!(state.combined.is_empty());
     }
 
     #[test]
