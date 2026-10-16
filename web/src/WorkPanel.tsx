@@ -8,7 +8,7 @@ import { useInterfaceTranslation } from "./i18n/client";
 import { cn } from "./lib/utils";
 import { boardProjects } from "./navigation";
 import { PrList } from "./PrList";
-import { prListModel, type PrScopeProject } from "./prWork";
+import { prListModel, readingWarning, type PrScopeProject } from "./prWork";
 import { sessionsModel } from "./sessionPanel";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -53,7 +53,7 @@ export function WorkPanel({ actions }: { actions: Actions }) {
         <header className="flex shrink-0 flex-col gap-sm border-b border-border px-md py-sm" data-work-header="true">
           <span className="truncate text-caption font-medium" title={label}>{label}</span>
           <div className="flex min-w-0 flex-wrap items-center gap-xs">
-            {hasPrs ? <LensSwitch lens={lens} sessionsNeed={sessionsNeed} prsNeed={prs.needsYou.length} stale={prs.reading.state === "stale" ? prs.reading.minutes : undefined} actions={actions} /> : null}
+            {hasPrs ? <LensSwitch lens={lens} sessionsNeed={sessionsNeed} prsNeed={prs.needsYou.length} warning={readingWarning(prs.reading, t)} actions={actions} /> : null}
           </div>
           {project && front ? (
             <div className="flex min-w-0 gap-xs" data-work-scope="true">
@@ -75,9 +75,10 @@ export function WorkPanel({ actions }: { actions: Actions }) {
 /**
  * `Sessions | PRs` with no numbers: a warning dot where that basis has
  * something for the operator, named for assistive tools as `PRs · Needs You 4`
- * (B3), and ⚠ on PRs while its last read failed (B43).
+ * (B3), and ⚠ on PRs while its last read failed or left an extra question
+ * unanswered (B43), its hint saying which.
  */
-function LensSwitch({ lens, sessionsNeed, prsNeed, stale, actions }: { lens: WorkLens; sessionsNeed: number; prsNeed: number; stale: number | null | undefined; actions: Actions }) {
+function LensSwitch({ lens, sessionsNeed, prsNeed, warning, actions }: { lens: WorkLens; sessionsNeed: number; prsNeed: number; warning: string | null; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const entries: { id: WorkLens; need: number }[] = [{ id: "sessions", need: sessionsNeed }, { id: "prs", need: prsNeed }];
   return (
@@ -85,8 +86,7 @@ function LensSwitch({ lens, sessionsNeed, prsNeed, stale, actions }: { lens: Wor
       {entries.map(({ id, need }) => {
         const name = t(`work.lens.${id}`);
         const label = need > 0 ? t("work.lens.needsYou", { lens: name, count: need }) : name;
-        const warn = id === "prs" && stale !== undefined;
-        const staleText = warn ? (stale === null ? t("work.lens.staleNow") : t("work.lens.stale", { minutes: stale })) : null;
+        const staleText = id === "prs" ? warning : null;
         return (
           <button key={id} type="button" aria-pressed={lens === id} aria-label={staleText ? `${label} · ${staleText}` : label} data-work-lens={id}
             className={cn("flex min-w-0 flex-1 items-center justify-center gap-xs rounded-xs px-sm py-xxs text-caption outline-none focus-visible:ring-1 focus-visible:ring-ring", lens === id ? "bg-background font-medium text-foreground" : "text-subtle-foreground hover:text-foreground")}
