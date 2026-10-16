@@ -23,9 +23,13 @@ export type CdpPage = {
   workspace: string;
   area_id: string;
   id: string;
+  /** A page of the file partition: only a comment capability reaches it (`BROWSER_DISPLAYS.md`, Comment mode). */
+  local?: boolean;
   contents: { id: number; debugger: PageDebugger; isDestroyed(): boolean; getURL(): string; getTitle(): string };
 };
 export type CdpScope = { workspace: string; area_id: string; display_id?: string };
+/** What a capability is for. None is an agent's; `comment` is the operator's Comment mode, held by hided alone. */
+export type CdpPurpose = "comment";
 export type CdpAction = { action: "open" | "close" | "select"; url?: string; display_id?: string; request_id: string };
 export type CdpActionResult = { view_id: string; area_id: string | null; load: number | null };
 export type CdpRetirement = { contentsId: number; reason: "closed" | "evicted" | "replaced" | "window_closed" };
@@ -40,7 +44,7 @@ type Options = {
   /** Wall clock is a platform boundary; protocol/server timers stay native. */
   now?: () => number;
 };
-type Capability = { path: string; scope: CdpScope; incarnation: number; generations: Map<string, number> };
+type Capability = { path: string; scope: CdpScope; purpose?: CdpPurpose; incarnation: number; generations: Map<string, number> };
 type Command = { id: number; method: string; params: Json; sessionId?: string };
 type Session = { id: string; targetId: string; kind: "page" | "tab" | "iframe"; lease: Lease; nativeId?: string; parent?: Session; browserParent?: string; flattened: boolean };
 type Lease = {
@@ -100,6 +104,15 @@ const MAX_INTENT_AGE_MS = 9 * 60_000;
 const MUTATIONS = new Set(["Target.createTarget", "Target.closeTarget", "Target.activateTarget", "Target.attachToTarget", "Target.attachToBrowserTarget", "Target.detachFromTarget", "Page.close", "Page.bringToFront"]);
 const REQUEST_TIMEOUT_MS = 10_000;
 const PAGE_DOMAINS = new Set(["Accessibility", "Animation", "Audits", "CSS", "DOM", "DOMSnapshot", "Debugger", "Emulation", "Fetch", "Input", "Inspector", "Log", "Network", "Overlay", "Page", "Performance", "PerformanceTimeline", "Profiler", "Runtime", "Schema", "Security"]);
+// A comment capability reaches a local file page, so it carries only what the
+// comment session sends (`hided/src/browser_page/comment.rs`, `page.rs` attach)
+// and the events it reads. Anything else, navigation, Fetch, Network, Input,
+// new targets, is refused for it, and its evaluations run in an isolated world.
+const COMMENT_METHODS = new Set([
+  "Target.getTargets", "Target.attachToTarget", "Page.enable", "Page.getFrameTree", "Page.createIsolatedWorld",
+  "Runtime.enable", "Runtime.addBinding", "Runtime.evaluate", "Page.captureScreenshot",
+]);
+const COMMENT_EVENTS = new Set(["Runtime.bindingCalled", "Page.frameNavigated", "Page.navigatedWithinDocument", "Inspector.detached"]);
 const SCOPED_BROWSER_METHODS = new Set(["Browser.getVersion", "Target.getTargets", "Target.getTargetInfo", "Target.getBrowserContexts", "Target.attachToTarget", "Target.detachFromTarget"]);
 // These act on the shared Chromium session or the host filesystem, even when
 // sent through a page debugger. They never reach Electron.
@@ -140,6 +153,15 @@ export function parseBrowserControlResult(value: unknown): CdpActionResult | nul
   if (!identifier(view_id) || area_id !== undefined && area_id !== null && !identifier(area_id)
     || load !== undefined && load !== null && (!Number.isSafeInteger(load) || (load as number) < 0)) return null;
   return { view_id, area_id: (area_id ?? null) as string | null, load: (load ?? null) as number | null };
+}
+function fileAddress(value: string): boolean {
+  try { return new URL(value).protocol === "file:"; }
+  catch { return false; }
+}
+/** The purpose a `/connect` names: none, `comment` (for one display), or invalid (null). */
+function purposeOf(value: unknown, scope: CdpScope): CdpPurpose | undefined | null {
+  if (!object(value) || value.purpose === undefined) return undefined;
+  return value.purpose === "comment" && scope.display_id ? "comment" : null;
 }
 function scopeOf(value: unknown): CdpScope | null {
   if (!object(value) || typeof value.workspace !== "string" || value.workspace.length > 8192 || !/^[^\0]+\0[^\0]+$/.test(value.workspace)) return null;
@@ -253,9 +275,12 @@ export class BrowserCdpGateway {
   private eligible(capability: Capability): readonly CdpPage[] {
     const scope = capability.scope;
     if (this.options.incarnation(scope) !== capability.incarnation) { this.revoke(capability); return []; }
-    const scoped = this.options.pages().filter((page) => page.workspace === scope.workspace && page.area_id === scope.area_id && (!scope.display_id || page.id === scope.display_id) && !page.contents.isDestroyed());
-    if (scoped.some((page) => capability.generations.has(page.id) && !cdpAddress(page.contents.getURL()))) { this.revoke(capability); return []; }
-    const pages = scoped.filter((page) => cdpAddress(page.contents.getURL()));
+    const comment = capability.purpose === "comment";
+    // A local file page exists only for a comment capability; for any other it is absent, as it always was.
+    const scoped = this.options.pages().filter((page) => page.workspace === scope.workspace && page.area_id === scope.area_id && (!scope.display_id || page.id === scope.display_id) && !page.contents.isDestroyed() && (comment || !page.local));
+    const reachable = (page: CdpPage) => page.local ? fileAddress(page.contents.getURL()) : cdpAddress(page.contents.getURL());
+    if (scoped.some((page) => capability.generations.has(page.id) && !reachable(page))) { this.revoke(capability); return []; }
+    const pages = scoped.filter(reachable);
     for (const page of pages) {
       const generation = capability.generations.get(page.id);
       if (generation !== undefined && generation !== page.contents.id || generation === undefined && capability.generations.size >= MAX_SESSIONS) { this.revoke(capability); return []; }
@@ -319,17 +344,20 @@ export class BrowserCdpGateway {
       }
       if (path === "/connect" && request.method === "POST") {
         if (!sameToken(request.headers.authorization ?? "", `Bearer ${this.controlToken}`)) { this.reply(response, 401, { error: "Unauthorized" }); return; }
-        const scope = scopeOf(await this.body(request));
+        const body = await this.body(request);
+        const scope = scopeOf(body);
         if (!scope) { this.reply(response, 400, { error: "Invalid scope" }); return; }
+        const purpose = purposeOf(body, scope);
+        if (purpose === null) { this.reply(response, 400, { error: "Invalid purpose" }); return; }
         const incarnation = this.options.incarnation(scope);
         if (incarnation === null || !Number.isSafeInteger(incarnation) || incarnation < 0) { this.reply(response, 409, { error: "Workspace area is no longer authorized" }); return; }
         if (this.stopped || !this.available) { this.reply(response, 503, { error: "Desktop is not attached" }); return; }
-        let existing = [...this.capabilities.values()].find((item) => JSON.stringify(item.scope) === JSON.stringify(scope));
+        let existing = [...this.capabilities.values()].find((item) => JSON.stringify(item.scope) === JSON.stringify(scope) && item.purpose === purpose);
         if (existing) { this.eligible(existing); if (!this.capabilities.has(existing.path)) existing = undefined; }
         if (!existing && this.capabilities.size >= MAX_CAPABILITIES) { this.reply(response, 429, { error: "Capability limit exceeded" }); return; }
-        const capability: Capability = existing ?? { path: `/cdp/${secret()}`, scope, incarnation, generations: new Map() };
+        const capability: Capability = existing ?? { path: `/cdp/${secret()}`, scope, ...(purpose ? { purpose } : {}), incarnation, generations: new Map() };
         const pages = this.eligible(capability);
-        if (scope.display_id && pages.length === 0) { this.reply(response, 409, { error: "Display has no eligible HTTP(S) browser target; native files are unsupported" }); return; }
+        if (scope.display_id && pages.length === 0) { this.reply(response, 409, { error: purpose ? "Display has no eligible browser target" : "Display has no eligible HTTP(S) browser target; native files are unsupported" }); return; }
         this.capabilities.set(capability.path, capability);
         this.reply(response, 200, { cdp_http_url: `${this.endpoint}${capability.path}`, browser_ws_url: this.browserUrl(capability), ...(scope.display_id ? { display_id: scope.display_id } : {}) });
         return;
@@ -339,7 +367,9 @@ export class BrowserCdpGateway {
       const { capability, suffix } = resolved;
       this.eligible(capability);
       if (!this.capabilities.has(capability.path)) { this.reply(response, 404, { error: "Not found" }); return; }
-      if (suffix === "/json/version" || suffix === "/json/version/") this.reply(response, 200, { Browser: `Chrome/${this.options.chromeVersion}`, "Protocol-Version": "1.3", webSocketDebuggerUrl: this.browserUrl(capability) });
+      // A comment capability is dialed at its browser socket by hided; it has no discovery.
+      if (capability.purpose === "comment") this.reply(response, 404, { error: "Not found" });
+      else if (suffix === "/json/version" || suffix === "/json/version/") this.reply(response, 200, { Browser: `Chrome/${this.options.chromeVersion}`, "Protocol-Version": "1.3", webSocketDebuggerUrl: this.browserUrl(capability) });
       else if (["/json", "/json/", "/json/list", "/json/list/"].includes(suffix)) this.reply(response, 200, this.eligible(capability).map((page) => ({ ...this.info(page), id: targetId(page), webSocketDebuggerUrl: `${this.endpoint.replace("http:", "ws:")}${capability.path}/devtools/page/${targetId(page)}` })));
       else this.reply(response, 404, { error: "Not found" });
     } catch (error) {
@@ -680,6 +710,7 @@ export class BrowserCdpGateway {
     if (Date.now() >= deadline) throw new ProtocolError("CDP request timed out");
     const { method, params } = command;
     if (session) this.getSession(client, session.id);
+    if (client.capability.purpose === "comment") this.commentGate(method, params);
     if (command.sessionId && client.browserSessions.has(command.sessionId) && !SCOPED_BROWSER_METHODS.has(method)) throw new ProtocolError("Command is outside the scoped browser session boundary");
     const requestId = intentId ?? `${Date.now()}-${secret().slice(0, 32)}`;
     if (method.startsWith("Target.")) return this.target(client, method, params, session, depth, requestId,
@@ -710,6 +741,11 @@ export class BrowserCdpGateway {
     }
     if (method === "Page.printToPDF" && params.transferMode === "ReturnAsStream") throw new ProtocolError("Filesystem streams are not available");
     return this.native(session, method, params, deadline);
+  }
+  /** What a comment capability may send; the evaluation must name a world, never the page's own. */
+  private commentGate(method: string, params: Json): void {
+    if (!COMMENT_METHODS.has(method)) throw new ProtocolError("Command is outside the comment boundary");
+    if (method === "Runtime.evaluate" && typeof params.contextId !== "number") throw new ProtocolError("A comment evaluates only in its own world");
   }
   private async perform(client: Client, action: CdpAction, deadline: number): Promise<CdpActionResult> {
     if (Date.now() >= deadline) throw new CdpActionUncertain();
@@ -949,7 +985,7 @@ export class BrowserCdpGateway {
         void this.native(lease.root, "Target.detachFromTarget", { sessionId: params.sessionId }).catch(() => this.release(lease));
         return;
       }
-      if (typeof info.url === "string" && info.url.toLowerCase().startsWith("file:")) { this.revoke(client.capability); return; }
+      if (typeof info.url === "string" && info.url.toLowerCase().startsWith("file:") && client.capability.purpose !== "comment") { this.revoke(client.capability); return; }
       if (info.type === "page") {
         if ([...client.sessions.values()].some((session) => session.lease === lease && session.nativeId === params.sessionId)) return;
         const index = lease.pageAttaches.findIndex((intent) => intent.targetId === info.targetId);
@@ -959,7 +995,7 @@ export class BrowserCdpGateway {
       }
       let depth = 0;
       for (let ancestor: Session | undefined = parent; ancestor; ancestor = ancestor.parent) depth++;
-      if (info.type !== "iframe" || this.sessionCount(client) >= MAX_SESSIONS || depth >= 8) {
+      if (info.type !== "iframe" || client.capability.purpose === "comment" || this.sessionCount(client) >= MAX_SESSIONS || depth >= 8) {
         void this.native(parent, "Target.detachFromTarget", { sessionId: params.sessionId }).catch(() => this.release(lease));
         return;
       }
@@ -971,6 +1007,7 @@ export class BrowserCdpGateway {
       const child = [...client.sessions.values()].find((session) => session.lease === lease && session.nativeId === params.sessionId);
       if (child) this.retireSession(child);
     } else if (client.sessions.has(parent.id) && (!parent.browserParent || client.browserSessions.has(parent.browserParent))
-      && !method.startsWith("Target.") && !method.startsWith("Browser.")) this.event(client, method, this.nativePayload(lease, method, params), parent);
+      && !method.startsWith("Target.") && !method.startsWith("Browser.")
+      && (client.capability.purpose !== "comment" || COMMENT_EVENTS.has(method))) this.event(client, method, this.nativePayload(lease, method, params), parent);
   }
 }
