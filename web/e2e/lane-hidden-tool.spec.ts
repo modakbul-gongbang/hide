@@ -4,7 +4,7 @@ import path from "node:path";
 import { fixtureExecutable } from "./platform-fixture";
 import { runInPane, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { enterWorkspace, showTool } from "./wire";
+import { enterWorkspace, screenshot, showTool } from "./wire";
 
 // The files tool stays mounted under another lane tool, out of sight. Nothing
 // drawn in it shows through: a selected view tab draws its close button
@@ -40,6 +40,7 @@ test("the files tool kept under another tool shows nothing through it", async ({
     await expect(close).toHaveCSS("visibility", "visible");
     await expect(hidden).toHaveCSS("visibility", "hidden");
     await expect(hidden).toHaveCSS("opacity", "0");
+    await screenshot(page, "lane-hidden-tool-prs");
 
     await showTool(page, "files");
     await expect(close).toBeVisible();
