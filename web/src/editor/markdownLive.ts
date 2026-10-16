@@ -8,11 +8,16 @@
 // hashes, emphasis and code delimiters, link syntax and its URL, quote
 // prefixes, list indentation and the code fences. A line whose selection
 // touches it keeps its source, which is how the operator edits the markup.
+//
+// An HTML block, an inline `<img>` and a Markdown image are drawn as what they
+// say; the plan only names their source (`html`, `image`), and the plugin
+// sanitizes and loads it. Other inline HTML (`<br>`, `<kbd>`, `<sub>`) stays
+// source.
 
 import type { SyntaxNode, Tree } from "@lezer/common";
 import type { Text } from "@codemirror/state";
 
-export type LiveKind = "hide" | "bullet" | "checkbox" | "heading" | "codeBlock" | "fenceLine" | "quote" | "link" | "codeInline";
+export type LiveKind = "hide" | "bullet" | "checkbox" | "heading" | "codeBlock" | "fenceLine" | "quote" | "link" | "codeInline" | "html" | "image";
 
 export type LiveRange = {
   from: number;
@@ -22,6 +27,13 @@ export type LiveRange = {
   level?: number;
   /** Task checkbox state. */
   checked?: boolean;
+  /** `html`: the source to draw, and whether it takes whole lines (an HTML block) or sits in a line (a tag). */
+  html?: string;
+  block?: boolean;
+  /** `image`: a Markdown image's source address, alt text and title. */
+  src?: string;
+  alt?: string;
+  title?: string;
 };
 
 /** The Live view's whole-document byte bound: above
@@ -46,6 +58,7 @@ export function markdownLivePlan(tree: Tree, doc: Text, selection: { from: numbe
     const line = doc.lineAt(pos);
     return overlaps(line.from, line.to);
   };
+  const lineSpanTouched = (from: number, to: number) => overlaps(doc.lineAt(from).from, doc.lineAt(to).to);
 
   tree.iterate({
     enter: (ref) => {
@@ -142,6 +155,35 @@ export function markdownLivePlan(tree: Tree, doc: Text, selection: { from: numbe
         return;
       }
 
+      if (name === "HTMLBlock") {
+        // A block inside a quote or a list item shares its lines with that
+        // container's marks, so only a top-level block is drawn.
+        if (parent === "Document") {
+          const first = doc.lineAt(node.from);
+          const last = doc.lineAt(node.to);
+          if (doc.sliceString(first.from, node.from).trim() === "" && !overlaps(first.from, last.to)) {
+            ranges.push({ from: first.from, to: last.to, kind: "html", block: true, html: doc.sliceString(node.from, node.to) });
+          }
+        }
+        return false;
+      }
+
+      if (name === "HTMLTag") {
+        const tag = doc.sliceString(node.from, node.to);
+        if (/^<img[\s/>]/i.test(tag) && !lineSpanTouched(node.from, node.to)) {
+          ranges.push({ from: node.from, to: node.to, kind: "html", block: false, html: tag });
+        }
+        return;
+      }
+
+      if (name === "Image") {
+        if (!lineSpanTouched(node.from, node.to)) {
+          const image = imageParts(node, doc);
+          if (image) ranges.push({ from: node.from, to: node.to, kind: "image", ...image });
+        }
+        return false;
+      }
+
       if (name === "Link") {
         if (!overlaps(node.from, node.to)) {
           for (let child = node.firstChild; child; child = child.nextSibling) {
@@ -168,6 +210,28 @@ function enclosing(node: SyntaxNode, name: string): { from: number; to: number }
     current = current.parent;
   }
   return null;
+}
+
+/** A Markdown image's address, alt text and title, or null when it has no address. */
+function imageParts(node: SyntaxNode, doc: Text): { src: string; alt: string; title?: string } | null {
+  const marks: SyntaxNode[] = [];
+  let url: SyntaxNode | null = null;
+  let title: SyntaxNode | null = null;
+  for (let child = node.firstChild; child; child = child.nextSibling) {
+    if (child.name === "LinkMark") marks.push(child);
+    else if (child.name === "URL") url = child;
+    else if (child.name === "LinkTitle") title = child;
+  }
+  const open = marks[0];
+  const close = marks[1];
+  if (!url || !open || !close || close.from < open.to) return null;
+  const strip = (text: string) => (text.startsWith("<") && text.endsWith(">") ? text.slice(1, -1) : text);
+  const quoted = title ? doc.sliceString(title.from, title.to).slice(1, -1) : undefined;
+  return {
+    src: strip(doc.sliceString(url.from, url.to)),
+    alt: doc.sliceString(open.to, close.from),
+    ...(quoted ? { title: quoted } : {}),
+  };
 }
 
 /** The link's visible text: the range between `[` and `]`, the first two of

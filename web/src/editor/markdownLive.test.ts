@@ -79,3 +79,61 @@ describe("markdown live plan", () => {
     expect(MARKDOWN_LIVE_BYTE_LIMIT).toBe(256 * 1024);
   });
 });
+
+describe("markdown live plan: HTML and images", () => {
+  const html = (source: string, selection = 0) =>
+    plan(source, selection)
+      .filter((range) => range.kind === "html" || range.kind === "image")
+      .map((range) => ({ kind: range.kind, block: range.block, text: range.html ?? range.src }));
+
+  it("draws a top-level HTML block over its whole lines", () => {
+    expect(html(`${AWAY}<p align="center">\n  <img src="a.png">\n</p>\n`)).toEqual([
+      { kind: "html", block: true, text: '<p align="center">\n  <img src="a.png">\n</p>' },
+    ]);
+  });
+
+  it("shows the block's source while the selection is anywhere in it, edges included", () => {
+    const source = `intro\n\n<p>\nhi\n</p>\n\nafter`;
+    expect(html(source, source.indexOf("hi"))).toEqual([]);
+    expect(html(source, source.indexOf("<p>"))).toEqual([]);
+    expect(html(source, source.indexOf("</p>") + 4)).toEqual([]);
+    expect(html(source, 0)).toHaveLength(1);
+  });
+
+  it("leaves a block inside a quote or a list item as source", () => {
+    expect(html(`${AWAY}> <p>a</p>`)).toEqual([]);
+    expect(html(`${AWAY}- item\n\n  <p>a</p>`)).toEqual([]);
+  });
+
+  it("draws a Markdown image with its address, alt text and title", () => {
+    expect(plan(`${AWAY}![the logo](docs/a.png "Logo")`).filter((range) => range.kind === "image")).toMatchObject([
+      { src: "docs/a.png", alt: "the logo", title: "Logo" },
+    ]);
+    expect(plan(`${AWAY}![x](<my file.png>)`).filter((range) => range.kind === "image")).toMatchObject([{ src: "my file.png", alt: "x" }]);
+  });
+
+  it("reveals an image's source while the caret is on its line", () => {
+    const source = "intro ![a](b.png) end\n\nother";
+    expect(html(source, 3)).toEqual([]);
+    expect(html(source, source.indexOf("other"))).toEqual([{ kind: "image", block: undefined, text: "b.png" }]);
+  });
+
+  it("draws an inline <img> tag and leaves other inline HTML as source", () => {
+    expect(html(`${AWAY}a <img src="x.png" width="20"> b <kbd>k</kbd> c<br>d`)).toEqual([
+      { kind: "html", block: false, text: '<img src="x.png" width="20">' },
+    ]);
+  });
+
+  it("draws an image inside a link without touching the link's own marks", () => {
+    const ranges = shown(`${AWAY}[![badge](b.svg)](https://x.dev)`);
+    expect(ranges).toContain("image:![badge](b.svg)");
+    expect(ranges).toContain("hide:https://x.dev");
+  });
+
+  it("never reveals anything for a read-only text with no selection", () => {
+    const source = "![a](b.png)\n\n<p>x</p>";
+    const doc = Text.of(source.split("\n"));
+    const nowhere = markdownLivePlan(markdown.parse(source), doc, { from: -1, to: -1 });
+    expect(nowhere.map((range) => range.kind)).toEqual(["image", "html"]);
+  });
+});
