@@ -283,7 +283,7 @@ impl Ledger {
                 || !letter.recipient.valid()
                 || !matches!(
                     letter.kind.as_str(),
-                    "request" | "block" | "report" | "reply" | "watch"
+                    "request" | "block" | "report" | "progress" | "reply" | "watch"
                 )
                 || letter.body.len() > BODY_LIMIT
                 || letter.body.trim().is_empty()

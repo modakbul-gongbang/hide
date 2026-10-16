@@ -1589,7 +1589,8 @@
                         "values": [
                             "request",
                             "block",
-                            "report"
+                            "report",
+                            "progress"
                         ]
                     }
                 }
@@ -1850,7 +1851,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:303916961363f3bd60bb93ebea0832127465086e579fd464ac818e77ccf54dbe",
+    "digest": "sha256:20cc24c65b032dd1a90a8da8edaa44df383a7492b3b2032e815403a205ab8ca9",
     "envelopes": {
         "agent": {
             "answer": "value",
