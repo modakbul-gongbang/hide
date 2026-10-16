@@ -463,6 +463,8 @@ fn answer(run: &runner::Run) -> Result<AiResponse, AiError> {
             // session usage reader counts; counting it here too would count
             // it twice.
             models: Vec::new(),
+            // agy's result names no thinking count.
+            thinking_tokens: None,
         },
     })
 }
