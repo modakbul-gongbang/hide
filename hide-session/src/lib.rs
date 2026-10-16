@@ -26,6 +26,7 @@ use std::fs::{self, File, Metadata};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+pub mod antigravity;
 mod catalog;
 mod claude_attachment;
 mod conversation_cursor;
@@ -149,6 +150,7 @@ pub fn session_root(home: &Path, agent: Agent) -> Option<PathBuf> {
         Agent::Pi => Some(home.join(PI_SESSIONS)),
         Agent::Omp => Some(home.join(OMP_SESSIONS)),
         Agent::Cursor => Some(home.join(cursor::SESSIONS)),
+        Agent::Antigravity => Some(home.join(antigravity::SESSIONS)),
         Agent::OpenCode => None,
     }
 }
@@ -276,6 +278,7 @@ pub enum Agent {
     Cursor,
     #[serde(rename = "opencode")]
     OpenCode,
+    Antigravity,
 }
 
 impl Agent {
@@ -296,6 +299,7 @@ impl Agent {
             Self::Omp => hide_agent_adapter::SessionFormat::Omp,
             Self::Cursor => hide_agent_adapter::SessionFormat::Cursor,
             Self::OpenCode => hide_agent_adapter::SessionFormat::OpenCode,
+            Self::Antigravity => hide_agent_adapter::SessionFormat::Antigravity,
         }
     }
 
@@ -308,6 +312,7 @@ impl Agent {
             hide_agent_adapter::SessionFormat::Omp => Self::Omp,
             hide_agent_adapter::SessionFormat::Cursor => Self::Cursor,
             hide_agent_adapter::SessionFormat::OpenCode => Self::OpenCode,
+            hide_agent_adapter::SessionFormat::Antigravity => Self::Antigravity,
         }
     }
 
@@ -879,7 +884,7 @@ impl SessionLocator {
             SessionIdentity::Id(id) => match agent {
                 Agent::Claude => self.claude_path_for_id(cwd, id, budget),
                 Agent::Codex => self.codex_path_for_id(id, budget),
-                Agent::Grok | Agent::Pi | Agent::Omp | Agent::Cursor => {
+                Agent::Grok | Agent::Pi | Agent::Omp | Agent::Cursor | Agent::Antigravity => {
                     native_file::locate(&self.home, agent, Some(identity), cwd, budget)
                 }
                 Agent::OpenCode => Err(SessionError::UnsupportedSessionKind),
@@ -944,7 +949,7 @@ impl SessionLocator {
                 budget,
             )?)),
             Agent::Codex => self.newest_codex_session(cwd, budget),
-            Agent::Grok | Agent::Pi | Agent::Omp | Agent::Cursor => {
+            Agent::Grok | Agent::Pi | Agent::Omp | Agent::Cursor | Agent::Antigravity => {
                 native_file::locate(&self.home, agent, None, Some(cwd), budget).map(Some)
             }
             Agent::OpenCode => Err(SessionError::UnsupportedSessionKind),
@@ -1446,6 +1451,20 @@ pub(crate) fn parse_events_followed(
                 parser: Some(turns::native::omp),
                 wake: None,
                 human_starts_turn: true,
+                large: None,
+            },
+            found,
+            following,
+        ),
+        Agent::Antigravity => parse_lines_at(
+            contents,
+            base_offset,
+            |item, _| antigravity::parse_line(item),
+            links::antigravity_line,
+            Turns {
+                parser: None,
+                wake: None,
+                human_starts_turn: false,
                 large: None,
             },
             found,

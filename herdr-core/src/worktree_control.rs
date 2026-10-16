@@ -932,6 +932,9 @@ pub struct PendingAgentStart {
     pub(crate) resume_reference: Option<crate::sidebar::SessionAgentSessionPayload>,
     pub(crate) codex_daemon: crate::codex_launch::CodexDaemon,
     pub(crate) shell: crate::agent_start::ShellStart,
+    /// The worktree this task made, which an agent that asks for folder
+    /// trust is told to trust before it starts there.
+    pub(crate) made_worktree: Option<String>,
 }
 
 /// How starting the chosen agent in a task's created pane ended.
@@ -1073,7 +1076,13 @@ fn launch_with_prompt_checked(
         resume_scope,
         resume_reference,
         shell,
+        made_worktree,
     } = start;
+    if let Some(path) = made_worktree.as_deref()
+        && let Err(reason) = crate::agent_start::trust_worktree(agent_node, &kind, path)
+    {
+        return TaskAgentOutcome::Failed(reason);
+    }
     if hide_agent_adapter::adapter(&kind)
         .filter(|adapter| {
             adapter
@@ -3652,6 +3661,7 @@ mod tests {
             }),
             codex_daemon: Default::default(),
             shell: crate::agent_start::ShellStart::Plain,
+            made_worktree: None,
         };
         let server = server(vec![]);
         assert_eq!(
@@ -3731,6 +3741,7 @@ mod tests {
                     args,
                     codex_daemon: crate::codex_launch::CodexDaemon::Unsupported,
                     shell: crate::agent_start::ShellStart::Plain,
+                    made_worktree: None,
                 },
             );
             assert!(
@@ -3771,6 +3782,7 @@ mod tests {
                 args: Vec::new(),
                 codex_daemon: crate::codex_launch::CodexDaemon::Unknown,
                 shell: crate::agent_start::ShellStart::Plain,
+                made_worktree: None,
             },
         );
         let TaskAgentOutcome::Failed(reason) = outcome else {
@@ -3810,6 +3822,7 @@ mod tests {
                 args: Vec::new(),
                 codex_daemon: Default::default(),
                 shell: crate::agent_start::ShellStart::Plain,
+                made_worktree: None,
             },
         );
         assert_eq!(
@@ -3846,6 +3859,7 @@ mod tests {
                 args: Vec::new(),
                 codex_daemon: crate::codex_launch::CodexDaemon::Present,
                 shell: crate::agent_start::ShellStart::Plain,
+                made_worktree: None,
             },
         );
         assert!(matches!(outcome, TaskAgentOutcome::Started), "{outcome:?}");
@@ -3878,6 +3892,7 @@ mod tests {
                 args: vec!["--model".into(), "opus".into()],
                 codex_daemon: Default::default(),
                 shell: crate::agent_start::ShellStart::Plain,
+                made_worktree: None,
             },
         );
         assert!(matches!(outcome, TaskAgentOutcome::Started), "{outcome:?}");
@@ -3912,6 +3927,7 @@ mod tests {
                 args: Vec::new(),
                 codex_daemon: Default::default(),
                 shell: crate::agent_start::ShellStart::Plain,
+                made_worktree: None,
             },
         );
         let TaskAgentOutcome::Failed(message) = outcome else {
@@ -3941,6 +3957,7 @@ mod tests {
                 args: Vec::new(),
                 codex_daemon: Default::default(),
                 shell: crate::agent_start::ShellStart::Plain,
+                made_worktree: None,
             },
         );
         let TaskAgentOutcome::Failed(message) = outcome else {
@@ -3971,6 +3988,7 @@ mod tests {
                 args: Vec::new(),
                 codex_daemon: Default::default(),
                 shell: crate::agent_start::ShellStart::Plain,
+                made_worktree: None,
             },
         );
         let TaskAgentOutcome::Failed(message) = outcome else {

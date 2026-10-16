@@ -40,6 +40,7 @@ LANES = (
     "checks",
     "os-contract",
     "os-contract-macos",
+    "agy-contract",
     "windows-check",
     "windows-e2e",
     "windows-desktop",
@@ -69,6 +70,10 @@ OS_CRATES = {
 # The OS contract's macOS leg tests only these two, so only a change to one of
 # them plans it; the others reach it through the nightly.
 OS_CONTRACT_CRATES = {"hide-herdr-client", "hide-platform"}
+# The crates whose agy tests the agy contract runs on Linux and Windows: the
+# agent table, the hook and trust writer, the install kit, the conversation
+# readers and the Hide AI backend (`agy-contract.yml`).
+AGY_CRATES = {"hide-agent-adapter", "hide-agent-hooks", "hide-ai", "hide-kit", "hide-session"}
 # `windows-desktop` is among them because the desktop app starts hided
 # through `hide connect` there, the system's processes and local stream.
 OS_LANES = ("os-contract", "windows-check", "windows-e2e", "windows-desktop")
@@ -79,9 +84,15 @@ OS_LANES = ("os-contract", "windows-check", "windows-e2e", "windows-desktop")
 # nothing else can. Web code and web specs do not reach it.
 MAILBOX_CRATES = {"herdr-core", "hided", "hide-agent-hooks", "hide-host"}
 
+# The desktop suite drives the web shell and the daemon inside the app, so
+# every web shell file and every crate `hided` links plans `desktop-e2e`
+# beside `web-e2e`: a desktop spec that asserts what the shell or the core
+# shows breaks on main's full run otherwise (#1106 and #1147 did, issue #1288).
+#
 # Web files the desktop host imports or drives through native input: the host
 # bridge, the shortcut registry the menu is built from, the store and
-# snapshot, terminal input, and the focus and area code chords move.
+# snapshot, terminal input, and the focus and area code chords move. What they
+# do differs by system, so they also plan the Windows suites.
 SHARED_WEB = (
     "web/src/host.ts",
     "web/src/revealExternal.ts",
@@ -106,7 +117,7 @@ SHARED_WEB = (
     "web/src/App.tsx",
     "web/src/main.tsx",
 )
-SHARED_WEB_LANES = ("checks", "desktop-e2e", "windows-e2e", "windows-desktop")
+SHARED_WEB_LANES = ("windows-e2e", "windows-desktop")
 
 # Files a lane outside their own directory reads: a change to one also plans
 # that lane, and the Rust crates whose tests read it. An entry ending in `/`
@@ -140,7 +151,7 @@ READERS = (
     ("contracts/snapshot-wire-enums.json", {"rust", "checks"}, {"herdr-core"}),
     # hide-agent-adapter's contract test; web/src/agentAdapters.ts imports it
     # into the shell, which plans what a web shell file plans.
-    ("contracts/agent-adapters.json", {"rust", "checks", "web-e2e"}, {"hide-agent-adapter"}),
+    ("contracts/agent-adapters.json", {"rust", "checks", "web-e2e", "desktop-e2e"}, {"hide-agent-adapter"}),
     # hided's `cli_contract` test.
     ("contracts/hide-cli.json", {"rust"}, {"hided"}),
     # hide-agent-adapter's contract test.
@@ -241,6 +252,8 @@ NAMED_LANES = (
     (".github/workflows/web-e2e.yml", {"web-e2e", "windows-e2e"}),
     (".github/workflows/desktop-e2e.yml", {"desktop-e2e", "windows-desktop"}),
     (".github/workflows/os-contract.yml", {"os-contract", "os-contract-macos"}),
+    (".github/workflows/agy-contract.yml", {"agy-contract"}),
+    ("scripts/install-agy.sh", {"agy-contract"}),
     (".github/workflows/remote-mailbox.yml", {"remote-mailbox"}),
     (".github/workflows/package.yml", set()),
     (".github/workflows/release.yml", set()),
@@ -324,15 +337,18 @@ def classify(path, status, crates, root):
         packages = reverse_closure(crates, crate["name"])
         # Every crate compiles into the Windows workspace `windows check` builds.
         lanes = {"rust", "windows-check"}
-        # Every end-to-end lane drives hided, so a crate it links reaches them.
+        # Every end-to-end lane drives hided, so a crate it links reaches the
+        # web suite on Linux and the desktop suite on macOS.
         if "hided" in packages:
-            lanes.add("web-e2e")
+            lanes.update(("web-e2e", "desktop-e2e"))
         if packages & MAILBOX_CRATES:
             lanes.add("remote-mailbox")
         if crate["name"] in OS_CRATES:
             lanes.update(OS_LANES)
         if crate["name"] in OS_CONTRACT_CRATES:
             lanes.add("os-contract-macos")
+        if crate["name"] in AGY_CRATES:
+            lanes.add("agy-contract")
         return lanes, f"crate {crate['name']}: {path}", packages
     if parts[0] == "web" and len(parts) > 1:
         if parts[1] == "e2e" and len(parts) == 3 and path.name.endswith(".spec.ts"):
@@ -342,8 +358,12 @@ def classify(path, status, crates, root):
             if status == "D" or "@platform" in spec.read_text(encoding="utf-8"):
                 lanes.add("windows-e2e")
             return lanes, f"web e2e spec: {path}", set()
-        if parts[1] in ("src", "public") or path.as_posix() in ("web/index.html", "web/mobile.html"):
-            lanes = {"checks", "web-e2e"}
+        if path.as_posix() == "web/mobile.html" or parts[1:3] == ("public", "m"):
+            # The phone page and its assets: hided serves them at `/m/`, and
+            # the app never loads them.
+            return {"checks", "web-e2e"}, f"phone page: {path}", set()
+        if parts[1] in ("src", "public") or path.as_posix() == "web/index.html":
+            lanes = {"checks", "web-e2e", "desktop-e2e"}
             if path.as_posix() in SHARED_WEB:
                 lanes.update(SHARED_WEB_LANES)
                 return lanes, f"web shared with the desktop host: {path}", set()

@@ -50,7 +50,7 @@ fn home(agent: Agent) -> tempfile::TempDir {
             &fixtures().join("codex-0.160.0"),
             &home.path().join(".codex"),
         ),
-        Agent::Grok | Agent::Pi | Agent::Omp | Agent::Cursor => {
+        Agent::Grok | Agent::Pi | Agent::Omp | Agent::Cursor | Agent::Antigravity => {
             unreachable!("Native file fixtures bind their cwd to an owned checkout")
         }
         Agent::OpenCode => {
@@ -77,6 +77,7 @@ fn request(agent: Agent) -> LabelTranscriptRequest {
         Agent::Omp => "omp-native-a",
         Agent::Cursor => "a1b2c3d4-0000-4000-8000-000000000001",
         Agent::OpenCode => "ses_0a1b2c3d4e5f60718293a4b5c6",
+        Agent::Antigravity => AGY_ID,
     };
     LabelTranscriptRequest {
         agent,
@@ -4285,4 +4286,264 @@ fn original_turn_rejects_a_same_id_file_replacement_before_preview_and_accepts_a
         read_work_turn(home.path(), &request).unwrap_err(),
         "work_turn_changed"
     );
+}
+
+const AGY_ID: &str = "a9c0e2f4-0000-4000-8000-000000000008";
+
+mod antigravity {
+    use super::*;
+    use hide_session::{SessionIdentity, SessionLocator};
+    use std::fs;
+
+    /// A subagent agy started from the fixture's conversation.
+    const CHILD: &str = "a9c0e2f4-0000-4000-8000-000000000009";
+
+    struct Native {
+        home: tempfile::TempDir,
+        cwd: PathBuf,
+        request: LabelTranscriptRequest,
+    }
+
+    impl Native {
+        fn new() -> Self {
+            let home = tempfile::tempdir().unwrap();
+            let cwd = home.path().join("checkout 1");
+            fs::create_dir(&cwd).unwrap();
+            let cwd = fs::canonicalize(cwd).unwrap();
+            let folder = home.path().join(".gemini/antigravity-cli");
+            fs::create_dir_all(&folder).unwrap();
+            let database =
+                rusqlite::Connection::open(folder.join("conversation_summaries.db")).unwrap();
+            database
+                .execute_batch(
+                    &fs::read_to_string(fixtures().join("antigravity-1.3.6/summaries.sql"))
+                        .unwrap(),
+                )
+                .unwrap();
+            drop(database);
+            let native = Self {
+                request: LabelTranscriptRequest {
+                    cwd: Some(cwd.display().to_string()),
+                    ..request(Agent::Antigravity)
+                },
+                home,
+                cwd,
+            };
+            native.conversation(AGY_ID, "", "2026-10-03 01:02:09+00:00");
+            native
+        }
+
+        /// agy writes a conversation's transcript, its store and its index row.
+        fn conversation(&self, id: &str, parent: &str, modified: &str) {
+            let transcript = hide_session::antigravity::transcript(self.home.path(), id);
+            fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+            fs::copy(
+                fixtures().join("antigravity-1.3.6/transcript_full.jsonl"),
+                &transcript,
+            )
+            .unwrap();
+            let folder = self.home.path().join(".gemini/antigravity-cli");
+            fs::create_dir_all(folder.join("conversations")).unwrap();
+            fs::write(folder.join("conversations").join(format!("{id}.db")), b"").unwrap();
+            // agy's spelling: `file:///work/repo`, or on Windows
+            // `file:///C:/work/repo`.
+            let wire = hide_platform::path::to_wire(&self.cwd).unwrap();
+            let slash = if wire.starts_with('/') { "" } else { "/" };
+            let uri = format!("file://{slash}{}", wire.replace(' ', "%20"));
+            rusqlite::Connection::open(folder.join("conversation_summaries.db"))
+                .unwrap()
+                .execute(
+                    "INSERT INTO conversation_summaries (conversation_id, title, last_modified_time, \
+                     workspace_uris, parent_conversation_id, last_user_input_time, app_data_dir) \
+                     VALUES (?1, '요청 보기 만들기', ?3, ?2, ?4, ?3, 'antigravity-cli')",
+                    rusqlite::params![id, serde_json::json!([uri]).to_string(), modified, parent],
+                )
+                .unwrap();
+        }
+
+        fn route(&self, id: &str, cwd: &Path) -> Result<(), String> {
+            hide_session::session_activity::read(
+                self.home.path(),
+                &hide_session::session_activity::SessionActivityRequest {
+                    agent: Agent::Antigravity,
+                    reference_kind: "id".into(),
+                    reference_value: id.into(),
+                    cwd: cwd.to_str().map(str::to_owned),
+                    exact_route: true,
+                    expected_id: None,
+                },
+            )
+            .map(|_| ())
+        }
+    }
+
+    #[test]
+    fn native_history_has_the_shared_conversation_facts() {
+        let native = Native::new();
+        let transcript = read(native.home.path(), &native.request).unwrap();
+        assert_eq!(transcript.title.as_deref(), Some("요청 보기 만들기"));
+        let people: Vec<_> = transcript
+            .events
+            .iter()
+            .filter(|event| event.kind == LabelEventKind::Human)
+            .collect();
+        assert_eq!(people.len(), 1, "what a hook gave agy is no one's request");
+        assert_eq!(people[0].text, "요청 보기를 만들어줘\n긴 요청의 둘째 줄");
+        assert_eq!(people[0].at_unix_ms, START);
+        let replies: Vec<_> = transcript
+            .events
+            .iter()
+            .filter(|event| event.kind == LabelEventKind::Assistant)
+            .collect();
+        assert_eq!(replies.len(), 1, "a tool call step is no answer");
+        assert!(replies[0].text.starts_with("PR을 열었습니다"));
+        assert_eq!(replies[0].at_unix_ms, START + 129_000);
+        assert_eq!(sighted(&transcript, 12).unwrap().at_unix_ms, START + 30_000);
+        assert!(sighted(&transcript, 99).is_none());
+        assert_eq!(
+            transcript.confirmed.native_session_id.as_deref(),
+            Some(AGY_ID)
+        );
+    }
+
+    #[test]
+    fn a_subagents_conversation_is_never_an_operators_session() {
+        let native = Native::new();
+        native.conversation(CHILD, AGY_ID, "2026-10-03 01:03:00+00:00");
+        let child = LabelTranscriptRequest {
+            reference_value: CHILD.into(),
+            ..native.request.clone()
+        };
+        assert!(read(native.home.path(), &child).is_err());
+        // The newest conversation in the checkout is the subagent's; a pane
+        // with no reported session still reads its operator's.
+        let located = SessionLocator::new(native.home.path())
+            .locate("pane", Agent::Antigravity, None, native.cwd.to_str())
+            .unwrap();
+        assert_eq!(
+            located,
+            hide_session::antigravity::transcript(native.home.path(), AGY_ID)
+        );
+    }
+
+    #[test]
+    fn a_conversation_routes_only_from_its_own_checkout_while_agy_keeps_it() {
+        let native = Native::new();
+        native.route(AGY_ID, &native.cwd).unwrap();
+        let other = native.home.path().join("other");
+        fs::create_dir(&other).unwrap();
+        assert!(native.route(AGY_ID, &other).is_err());
+        fs::remove_file(
+            native
+                .home
+                .path()
+                .join(".gemini/antigravity-cli/conversations")
+                .join(format!("{AGY_ID}.db")),
+        )
+        .unwrap();
+        assert_eq!(
+            native.route(AGY_ID, &native.cwd).unwrap_err(),
+            "session_route_missing"
+        );
+    }
+
+    #[test]
+    fn a_fork_is_the_one_new_root_conversation_at_the_source_step_in_its_checkout() {
+        let native = Native::new();
+        let cwd = hide_platform::fs::identity::canonical(&native.cwd).unwrap();
+        let index = rusqlite::Connection::open(
+            native
+                .home
+                .path()
+                .join(".gemini/antigravity-cli/conversation_summaries.db"),
+        )
+        .unwrap();
+        let steps = |id: &str, count: i64| {
+            index
+                .execute(
+                    "UPDATE conversation_summaries SET step_count = ?2 WHERE conversation_id = ?1",
+                    rusqlite::params![id, count],
+                )
+                .unwrap();
+        };
+        steps(AGY_ID, 7);
+        let older = "a9c0e2f4-0000-4000-8000-00000000000b";
+        native.conversation(older, "", "2026-10-03 01:02:30+00:00");
+        steps(older, 7);
+        let mark = hide_session::antigravity::fork_mark(native.home.path(), AGY_ID, &cwd).unwrap();
+        assert_eq!(mark.steps, 7);
+        let forked = || {
+            hide_session::antigravity::forked(native.home.path(), AGY_ID, &cwd, &mark)
+                .map_err(|error| error.to_string())
+        };
+        assert_eq!(
+            forked().unwrap(),
+            None,
+            "neither the source nor a conversation already there is the fork"
+        );
+        let other_step = "a9c0e2f4-0000-4000-8000-00000000000c";
+        native.conversation(other_step, "", "2026-10-03 01:04:00+00:00");
+        steps(other_step, 3);
+        // A fork of a longer conversation, or a new one that grew past the
+        // source, lands in the same checkout first.
+        let longer = "a9c0e2f4-0000-4000-8000-000000000010";
+        native.conversation(longer, "", "2026-10-03 01:04:30+00:00");
+        steps(longer, 50);
+        assert_eq!(
+            forked().unwrap(),
+            None,
+            "a row past the source's steps is not its fork"
+        );
+        // agy stamps the fork with the node's clock, which may be behind the
+        // core's, and the source may take a step while agy writes it.
+        let fork = "a9c0e2f4-0000-4000-8000-00000000000d";
+        native.conversation(fork, "", "2026-10-01 00:00:00+00:00");
+        steps(fork, 7);
+        steps(AGY_ID, 8);
+        assert_eq!(forked().unwrap().as_deref(), Some(fork));
+        let second = "a9c0e2f4-0000-4000-8000-00000000000e";
+        native.conversation(second, "", "2026-10-03 01:06:00+00:00");
+        steps(second, 7);
+        assert_eq!(forked().unwrap_err(), "antigravity_fork_ambiguous");
+        let oversized = hide_session::antigravity::ForkMark {
+            known: vec![AGY_ID.to_owned(); 257],
+            steps: 7,
+        };
+        assert_eq!(
+            hide_session::antigravity::forked(native.home.path(), AGY_ID, &cwd, &oversized)
+                .unwrap_err()
+                .to_string(),
+            "antigravity_fork_mark_invalid"
+        );
+        assert_eq!(
+            hide_session::antigravity::fork_mark(
+                native.home.path(),
+                "a9c0e2f4-0000-4000-8000-00000000000f",
+                &cwd
+            )
+            .unwrap_err()
+            .to_string(),
+            "session_route_missing"
+        );
+    }
+
+    #[test]
+    fn a_reported_conversation_the_index_does_not_hold_is_refused() {
+        let native = Native::new();
+        let missing = "a9c0e2f4-0000-4000-8000-00000000000a";
+        let transcript = hide_session::antigravity::transcript(native.home.path(), missing);
+        fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        fs::copy(
+            fixtures().join("antigravity-1.3.6/transcript_full.jsonl"),
+            &transcript,
+        )
+        .unwrap();
+        let located = SessionLocator::new(native.home.path()).locate(
+            "pane",
+            Agent::Antigravity,
+            Some(&SessionIdentity::id(missing)),
+            native.cwd.to_str(),
+        );
+        assert!(located.is_err());
+    }
 }

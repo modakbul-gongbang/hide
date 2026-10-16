@@ -2,13 +2,15 @@
 //! lane-files-checkout-views D-03, D-09, D-11, D-16, D-19).
 //!
 //! The checkout owns the Views, their split and their selection, whichever
-//! Agent tab is in front. A tab remembers one View, the one it last put in
-//! front, and gets it back when the tab appears on screen after not being on
-//! it. The bookmark never moves the area in use or the keyboard.
+//! Agent tab is in front. A tab remembers one View, the one the operator last
+//! had in front on it, and gets it back when the tab appears on screen after
+//! not being on it. The bookmark never moves the area in use or the keyboard.
+//! On the Workspace in front, an agent changes what is in front only from
+//! the pane the operator is in.
 
 use super::workspace_view::WorkspaceKey;
 use super::*;
-use crate::workspace_control::{Action, Caller};
+use crate::workspace_control::Caller;
 
 /// What the pass saw of a Workspace it has had in front: the Agent tabs that
 /// were on screen and the View in front of the area in use.
@@ -18,9 +20,9 @@ pub(super) struct Seen {
     front: Option<String>,
 }
 
-/// The selection a background caller must leave as it found it (PRD
-/// lane-files-checkout-views B7): the area in use, the View in front of each
-/// area and the editor's active tab.
+/// The selection a caller outside the operator's pane must leave as it found
+/// it (PRD lane-files-checkout-views B7): the area in use, the View in front
+/// of each area and the editor's active tab.
 pub(super) struct Kept {
     key: WorkspaceKey,
     editor_active: Option<String>,
@@ -134,9 +136,45 @@ impl Runtime {
             .and_then(|tab| tab.id.clone())
     }
 
-    /// The tab of a caller who is not looking at the Workspace's front: a
-    /// pane of an Agent tab other than the active one. A checkout caller and
-    /// the active tab's panes are in front (D-04, D-10).
+    /// Whether a Workspace command's caller leaves the selection as it found
+    /// it. On the Workspace in front, every caller but the pane the operator
+    /// is in does: another pane of the same tab, and a shell bound only to
+    /// the checkout, which no pane vouches for. On a Workspace not on screen,
+    /// a pane of a tab other than its active one does (B7); the active tab's
+    /// panes and a checkout shell change what only that Workspace shows, so
+    /// a page they open is in front and can be driven (D-04, D-10). A
+    /// window's browser gateway never does: a page a CDP client creates
+    /// loads only in front.
+    pub(super) fn caller_stays_behind(&self, key: &WorkspaceKey, caller_id: &str) -> bool {
+        let on_screen = self.front_workspace_key().as_ref() == Some(key);
+        match Caller::parse(caller_id) {
+            Caller::Checkout { gateway: true, .. } => false,
+            Caller::Checkout { .. } => on_screen,
+            Caller::Pane(pane_id) if on_screen => self.operator_pane(&key.0) != Some(pane_id),
+            Caller::Pane(_) => self.background_caller_tab(key, caller_id).is_some(),
+        }
+    }
+
+    /// The pane the operator is in on `device`, the device in front: this
+    /// machine's selected pane, or the pane a device's Herdr has focused,
+    /// which the shell draws focused and follows (`remoteView` in
+    /// `web/src/remote.ts`).
+    fn operator_pane(&self, device: &str) -> Option<&str> {
+        if device == self.node.as_str() {
+            return self.snapshot.terminal.pane_id.as_deref();
+        }
+        self.snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == device)
+            .and_then(|status| status.session.as_ref())
+            .and_then(|session| session.focused_pane_id.as_deref())
+    }
+
+    /// The tab of a caller that is not looking at the Workspace's front: a
+    /// pane of an Agent tab other than the active one. A checkout and the
+    /// active tab's panes are in front (D-04, D-10).
     pub(super) fn background_caller_tab(
         &self,
         key: &WorkspaceKey,
@@ -162,8 +200,8 @@ impl Runtime {
         }
     }
 
-    /// Puts the selection back after a background caller's open: the new View
-    /// stays where it landed, in no area's front and never in the keyboard's.
+    /// Puts the selection back after a background open: the new View stays
+    /// where it landed, in no area's front and never in the keyboard's.
     pub(super) fn restore_front(&mut self, kept: Kept) {
         self.snapshot.editor.active_tab_id = kept.editor_active;
         let outcome = self.change_view_layout(&kept.key, |layout, stamp| {
@@ -195,24 +233,6 @@ impl Runtime {
         }
     }
 
-    /// The View a tab's agent opened or selected is the tab's bookmark, in
-    /// front or not (D-16).
-    pub(super) fn note_caller_view(
-        &mut self,
-        key: &WorkspaceKey,
-        caller_id: &str,
-        action: &Action,
-        view_id: &str,
-    ) {
-        if !opens_or_selects(action) {
-            return;
-        }
-        let Some(tab) = self.control_caller_tab(key, caller_id) else {
-            return;
-        };
-        self.record_tab_view(key, &tab, view_id);
-    }
-
     pub(super) fn record_tab_view(&mut self, key: &WorkspaceKey, tab: &str, view_id: &str) {
         let Some(store) = self.workspace_views.as_mut() else {
             return;
@@ -240,24 +260,4 @@ impl Runtime {
         }
         changed | reads_dropped
     }
-}
-
-pub(super) fn opens_or_selects(action: &Action) -> bool {
-    matches!(
-        action,
-        Action::OpenFile { .. }
-            | Action::OpenDiff { .. }
-            | Action::OpenBrowser { .. }
-            | Action::Select { .. }
-    )
-}
-
-pub(super) fn action_reveals(action: &Action) -> bool {
-    matches!(
-        action,
-        Action::OpenFile { reveal: true, .. }
-            | Action::OpenDiff { reveal: true, .. }
-            | Action::OpenBrowser { reveal: true, .. }
-            | Action::Select { reveal: true, .. }
-    )
 }

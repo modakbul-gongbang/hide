@@ -104,6 +104,42 @@ fn a_row_carries_its_weekly_figure_and_whether_it_is_past_the_limit() {
     assert!(row(&runtime, "claude").past_limit, "86 is past 80");
 }
 
+/// Herdr and the usage rows name agy `agy`, Hide AI names it `antigravity`:
+/// its row carries the figure agy's `/usage` gave, as Claude's does.
+#[test]
+fn an_agy_row_carries_the_weekly_figure_its_usage_row_holds() {
+    let mut runtime = runtime();
+    runtime.ingest_ai_settings(hide_ai::AiSettings::default(), None);
+    runtime.ingest_background_ai(ready_read(&["claude", "antigravity"]));
+    let reset = next_week_ms();
+    runtime.ingest_usage(vec![weekly("agy", Some(42.0), reset)]);
+
+    let figure = row(&runtime, "antigravity")
+        .weekly
+        .expect("agy has a figure");
+    assert_eq!(figure.used_percent, 42.0);
+    assert_eq!(figure.resets_at_ms, Some(reset / 1_000 * 1_000));
+}
+
+/// A paused order reads every agent in it with no window attached, agy by
+/// the name its usage row carries.
+#[test]
+fn a_paused_order_with_agy_reads_agys_usage_row_headless() {
+    let mut runtime = runtime();
+    runtime.ingest_ai_settings(hide_ai::AiSettings::default(), None);
+    runtime.ingest_background_ai(ready_read(&["claude", "antigravity"]));
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"provider": "claude"}))));
+    assert!(runtime.dispatch_json(&ai_event(
+        serde_json::json!({"fallback_add": "antigravity"})
+    )));
+    runtime.ingest_usage(vec![
+        weekly("claude", Some(93.0), next_week_ms()),
+        weekly("agy", Some(96.0), next_week_ms()),
+    ]);
+    assert!(runtime.usage_paused());
+    assert_eq!(runtime.usage_activity().required, ["claude", "agy"]);
+}
+
 /// B4: Runs on past the limit is a refusal that names the agent answering.
 #[test]
 fn runs_on_past_the_limit_names_the_fallback_that_answers() {

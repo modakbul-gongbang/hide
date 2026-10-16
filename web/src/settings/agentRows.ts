@@ -36,7 +36,7 @@ export function supportedAgents(agents: readonly KitAgent[] | undefined): KitAge
  * Whether the machine has the agent: its program was found (D-07, B9). An
  * agent the operator switched on, whose program then went away, keeps its row
  * and its switch so it can be turned off. An agent that is on only because
- * Claude Code and Codex are on by default is not kept: its program is not
+ * Claude Code, Codex and agy are on by default is not kept: its program is not
  * there, so it is not installed (`chosen` is the record holding the
  * operator's own choice).
  */

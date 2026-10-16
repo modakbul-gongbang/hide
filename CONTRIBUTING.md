@@ -81,7 +81,7 @@ Use [docs/README.md](docs/README.md) to find current guides and distinguish hist
 Run the same required lanes CI runs.
 These are the local equivalents; the remote `verify` result still depends on the actual CI run.
 CI's `plan` job picks the lanes a pull request needs from the paths it changes, and `verify` requires exactly those; a push to main and the nightly run every lane, and [docs/TESTING.md](docs/TESTING.md#which-lanes-a-pull-request-runs) owns the rules.
-Across its lanes CI runs the Rust suite, the unit suites, the invariant checks, the whole web end-to-end (four shards, dealt by recorded durations: `scripts/web-e2e-shard.py`) and the remote mailbox lane on Linux, where the Herdr schema comparison, the web end-to-end and the mailbox lane use the pinned release's Linux asset; on macOS, the platform hide ships on, only the Electron end-to-end (`desktop e2e`, for a change to the desktop app or the web code it drives) and the OS contract's macOS leg (for a change to `hide-platform` or `hide-herdr-client`), while the nightly runs the web end-to-end, the remote mailbox lane and the rest of the OS contract there; and on Windows `windows check` (compile, daemon and unit suites), `windows e2e` (the browser `@platform` tests) and `windows desktop` (the Electron app's `@platform` tests).
+Across its lanes CI runs the Rust suite, the unit suites, the invariant checks, the whole web end-to-end (four shards, dealt by recorded durations: `scripts/web-e2e-shard.py`) and the remote mailbox lane on Linux, where the Herdr schema comparison, the web end-to-end and the mailbox lane use the pinned release's Linux asset; on macOS, the platform hide ships on, only the Electron end-to-end (`desktop e2e`, for a change to what the app runs: the desktop host, the web shell or a crate) and the OS contract's macOS leg (for a change to `hide-platform` or `hide-herdr-client`), while the nightly runs the web end-to-end, the remote mailbox lane and the rest of the OS contract there; and on Windows `windows check` (compile, daemon and unit suites), `windows e2e` (the browser `@platform` tests) and `windows desktop` (the Electron app's `@platform` tests).
 `.github/workflows/pr.yml` says why; `nightly.yml` configures the `@platform` web tests on macOS and Windows, the full desktop suite on macOS, the desktop `@platform` tests on Linux and Windows, the remote mailbox lane on macOS, the performance lane on macOS and package checks on all three, and calls `verify` with every lane, where a test fails the nightly only when it fails its retry too.
 Read the executed jobs and their skips before claiming an OS is verified; a configured matrix is not execution evidence.
 
@@ -350,7 +350,7 @@ There it also builds the macOS archive and runs the packaged app's own specs on 
 ## Bundled Herdr runtime
 
 The version and digest of the Herdr binary the app ships are pinned in `contracts/herdr-bundle.json` and nowhere else.
-`scripts/bump-herdr.sh <version>` moves the pin after verifying the release asset; a weekly workflow proposes that bump as a pull request when a new stable Herdr release appears.
+`scripts/bump-herdr.sh <version>` moves the pin after verifying the release asset; a daily workflow proposes that bump as a pull request when a new stable Herdr release appears.
 It never merges, because three Herdr behaviors the core relies on are covered by fixtures this repository wrote, not by Herdr's own tests.
 
 ## License of contributions

@@ -17,6 +17,7 @@ pub enum ForkableAgent {
     Pi,
     Omp,
     OpenCode,
+    Antigravity,
 }
 
 impl ForkableAgent {
@@ -28,6 +29,7 @@ impl ForkableAgent {
             hide_agent_adapter::LaunchDialect::Pi => Some(Self::Pi),
             hide_agent_adapter::LaunchDialect::Omp => Some(Self::Omp),
             hide_agent_adapter::LaunchDialect::OpenCode => Some(Self::OpenCode),
+            hide_agent_adapter::LaunchDialect::Antigravity => Some(Self::Antigravity),
             hide_agent_adapter::LaunchDialect::Cursor => None,
         }
     }
@@ -55,6 +57,12 @@ impl ForkableAgent {
                     .herdr
                     .name
             }
+            Self::Antigravity => {
+                hide_agent_adapter::LaunchDialect::Antigravity
+                    .adapter()
+                    .herdr
+                    .name
+            }
         }
     }
 
@@ -73,6 +81,9 @@ impl ForkableAgent {
             Self::Pi | Self::Omp => vec!["--fork".to_owned(), session_id.to_owned()],
             // OpenCode 1.18.30 `--help`: `--fork` forks the session `-s` names.
             Self::OpenCode => vec!["-s".to_owned(), session_id.to_owned(), "--fork".to_owned()],
+            // agy 1.4.0 forks only through its `/fork` command, typed once
+            // the resumed conversation is up (`live::fork_antigravity`).
+            Self::Antigravity => vec!["--conversation".to_owned(), session_id.to_owned()],
         }
     }
 }

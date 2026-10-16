@@ -19,12 +19,12 @@ use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
 use hide_agent_adapter::HookDialect;
-use hide_agent_hooks::basic;
 use hide_agent_hooks::counters::{self, Change, Reporter, SubagentInput};
 use hide_agent_hooks::diagnosis::Diagnosis;
 use hide_agent_hooks::guidance::{self, GuidanceAgent};
 use hide_agent_hooks::report;
 use hide_agent_hooks::runtime::{AgentRuntime, HookEvent, hook_stdout};
+use hide_agent_hooks::{antigravity, basic};
 use hide_platform::process::{OwnedChild, OwnerWatch};
 
 const PROMPT_BUDGET: Duration = Duration::from_millis(1_850);
@@ -68,6 +68,9 @@ fn main() -> ExitCode {
             if cursor_permission_hook(&arguments) {
                 print_line(basic::CURSOR_ALLOW);
             }
+            if antigravity_tool_hook(&arguments) {
+                print_line(antigravity::ASK);
+            }
             return ExitCode::SUCCESS;
         }
         Err(_) => return ExitCode::from(2),
@@ -80,7 +83,11 @@ fn main() -> ExitCode {
             if let Some(agent) = argument_value("--runtime", &arguments)
                 .and_then(|value| GuidanceAgent::from_id(&value))
             {
-                run_basic_hook(agent, &arguments, started);
+                if agent == GuidanceAgent::Antigravity {
+                    run_antigravity_hook(&arguments, started);
+                } else {
+                    run_basic_hook(agent, &arguments, started);
+                }
                 return ExitCode::SUCCESS;
             }
             // An entry an earlier build wrote for an agent Hide no longer
@@ -160,6 +167,8 @@ fn usage() -> String {
      hide-agent-hooks hook --runtime <grok|cursor> \
      --event <SessionStart|PreToolUse|SubagentStart|SubagentStop|Stop> \
      [--source <install marker>]\n       \
+     hide-agent-hooks hook --runtime antigravity \
+     --event <SessionStart|UserPromptSubmit|PreToolUse|Stop> [--source <install marker>]\n       \
      hide-agent-hooks <opencode|pi|omp> <start|prompt|confirm|tool|subagents>\n       \
      hide-agent-hooks doctor [--json]"
         .to_owned()
@@ -174,6 +183,14 @@ fn cursor_permission_hook(arguments: &[String]) -> bool {
             .and_then(|value| HookEvent::parse(&value))
             .is_some_and(basic::cursor_permission_event)
         && !inside_grok()
+}
+
+/// Whether this is agy's tool hook, whose every answer but a refusal must be
+/// agy's ask: agy refuses a call whose hook fails or prints what it cannot read.
+fn antigravity_tool_hook(arguments: &[String]) -> bool {
+    argument_value("--runtime", arguments).and_then(|value| GuidanceAgent::from_id(&value))
+        == Some(GuidanceAgent::Antigravity)
+        && argument_value("--event", arguments).as_deref() == Some(HookEvent::PreToolUse.name())
 }
 
 fn inside_grok() -> bool {
@@ -228,6 +245,225 @@ fn run_basic_hook(agent: GuidanceAgent, arguments: &[String], started: Instant) 
         print_line(&answer);
     }
     let _ = std::panic::catch_unwind(|| count_basic(dialect, event, started));
+}
+
+/// agy's hook (PRD antigravity-first-class; `hide_agent_hooks::antigravity`):
+/// the guidance and the Memory index when a conversation starts, the prompt's
+/// Memory cards and the pane's letters on a prompt's first model call, the
+/// guards on a tool call and the subagent count. A tool call is answered on
+/// every path, since agy refuses one whose hook exits nonzero, prints what it
+/// cannot read, times out or is missing, and
+/// nothing here ends the hook with another code.
+fn run_antigravity_hook(arguments: &[String], started: Instant) {
+    let Some(event) =
+        argument_value("--event", arguments).and_then(|value| HookEvent::parse(&value))
+    else {
+        return;
+    };
+    if event == HookEvent::PreToolUse {
+        let refusal = std::panic::catch_unwind(|| {
+            guard_refusal(
+                HookDialect::Antigravity,
+                GuidanceAgent::Antigravity.id(),
+                started,
+            )
+        })
+        .unwrap_or_else(|_| {
+            guard_failed(arguments, "panic");
+            None
+        });
+        print_line(&refusal.map_or_else(
+            || antigravity::ASK.to_owned(),
+            |reason| antigravity::deny(&reason),
+        ));
+        return;
+    }
+    let _ = std::panic::catch_unwind(|| antigravity_event(event, started));
+}
+
+/// agy's non-tool events, each reading the payload once.
+fn antigravity_event(event: HookEvent, started: Instant) {
+    let Some(home) = home_directory() else { return };
+    let Some((payload, truncated)) = read_stdin_before_deadline(started + PROMPT_PAYLOAD_BUDGET)
+    else {
+        return;
+    };
+    let Some(conversation) = antigravity::Event::read(&payload, truncated).conversation else {
+        return;
+    };
+    let runtime = GuidanceAgent::Antigravity.id();
+    // A subagent's conversation opens with its parent's message, which agy
+    // writes as it starts it; the start waits a moment for that line.
+    let parent_wait = if event == HookEvent::SessionStart {
+        Duration::from_millis(300)
+    } else {
+        Duration::ZERO
+    };
+    let parent = antigravity::root_of(&home, &conversation, Instant::now() + parent_wait);
+    let reporter = |session| Reporter {
+        agent: Some(runtime),
+        session: Some(session),
+    };
+    match (event, parent.as_deref()) {
+        // A subagent gets nothing of the pane's: no guidance, no Memory and
+        // no letter, which are the pane's own session's. Its start and end,
+        // a nested subagent's too, are counted under the pane's own
+        // conversation, the session Herdr reports for the pane.
+        (HookEvent::SessionStart, Some(parent)) => report_count(
+            &home,
+            event,
+            Change::Started(Some(&conversation)),
+            reporter(parent),
+            true,
+        ),
+        (HookEvent::Stop, Some(parent)) => report_count(
+            &home,
+            event,
+            Change::Stopped(Some(&conversation)),
+            reporter(parent),
+            true,
+        ),
+        (_, Some(_)) => {}
+        (HookEvent::SessionStart, None) => {
+            let memory_deadline = started + hide_agent_hooks::memory::MEMORY_BUDGET;
+            let (index, workspace) = std::thread::scope(|scope| {
+                let probing = std::thread::Builder::new()
+                    .name("hide-hook-workspace".to_owned())
+                    .spawn_scoped(scope, workspace_context::live_context);
+                let index = antigravity_memory(
+                    &home,
+                    HookEvent::SessionStart,
+                    &conversation,
+                    None,
+                    memory_deadline,
+                );
+                let workspace = match probing {
+                    Ok(probe) => probe.join().ok().flatten(),
+                    Err(_) => workspace_context::live_context(),
+                };
+                (index, workspace)
+            });
+            let mut context = guidance::session_context(workspace.as_deref());
+            if let Some(index) = index {
+                context.push_str(
+                    "
+
+",
+                );
+                context.push_str(&index);
+            }
+            if let Some(answer) = antigravity::inject(&context) {
+                print_line(&answer);
+            }
+            report_count(
+                &home,
+                event,
+                Change::SessionStarted,
+                reporter(&conversation),
+                true,
+            );
+        }
+        // Every model call of a turn runs `PreInvocation`; the prompt's
+        // first is the prompt hook, and the others ask for nothing.
+        (HookEvent::UserPromptSubmit, None) => {
+            if antigravity::Event::read(&payload, truncated).invocation == Some(0) {
+                antigravity_prompt(&home, &conversation, started);
+            }
+        }
+        (HookEvent::Stop, None) => {
+            report_count(&home, event, Change::None, reporter(&conversation), true)
+        }
+        (HookEvent::PreToolUse | HookEvent::SubagentStart | HookEvent::SubagentStop, None) => {}
+    }
+}
+
+/// The prompt's Memory cards and the pane's waiting letters, asked at once,
+/// injected as one system message; a letter is confirmed only after that
+/// answer reached agy.
+fn antigravity_prompt(home: &std::path::Path, conversation: &str, started: Instant) {
+    let memory_deadline = started + hide_agent_hooks::memory::MEMORY_BUDGET;
+    let delivery_deadline = started + INTAKE_BUDGET;
+    let prompt = antigravity::last_prompt(home, conversation);
+    let (cards, intake) = std::thread::scope(|scope| {
+        let asking = std::thread::Builder::new()
+            .name("hide-hook-memory".to_owned())
+            .spawn_scoped(scope, || {
+                antigravity_memory(
+                    home,
+                    HookEvent::UserPromptSubmit,
+                    conversation,
+                    prompt.clone(),
+                    memory_deadline,
+                )
+            });
+        let intake = hide_agent_hooks::delivery::pull(
+            delivery_deadline,
+            &hide_agent_hooks::delivery::Prompt {
+                digest: None,
+                session: Some(conversation.to_owned()),
+            },
+        )
+        .unwrap_or_else(|failure| {
+            hide_agent_hooks::delivery::diagnose_failure(home, &failure);
+            None
+        });
+        let cards = match asking {
+            Ok(asked) => asked.join().unwrap_or_else(|_| {
+                hide_agent_hooks::memory::record_panic(home);
+                None
+            }),
+            Err(_) => None,
+        };
+        (cards, intake)
+    });
+    let mut context = cards.unwrap_or_default();
+    if let Some(intake) = &intake {
+        context.push_str(&intake.context);
+    }
+    let Some(answer) = antigravity::inject(&context) else {
+        return;
+    };
+    let answer = if cfg!(windows) {
+        hide_agent_hooks::runtime::ascii_json(&answer)
+    } else {
+        answer
+    };
+    let mut stdout = std::io::stdout().lock();
+    let flushed = writeln!(stdout, "{answer}")
+        .and_then(|_| stdout.flush())
+        .is_ok();
+    drop(stdout);
+    if let Some(intake) = intake.filter(|intake| !intake.ids.is_empty()) {
+        if flushed {
+            if let Err(failure) = hide_agent_hooks::delivery::confirm(&intake, delivery_deadline) {
+                hide_agent_hooks::delivery::diagnose_failure(home, &failure);
+            }
+        } else {
+            hide_agent_hooks::delivery::diagnose(home, "stdout");
+        }
+    }
+}
+
+/// Memory's context for agy's `event` in `conversation`, the session agy's
+/// transcript, and so Memory's receipts, know it by.
+fn antigravity_memory(
+    home: &std::path::Path,
+    event: HookEvent,
+    conversation: &str,
+    prompt: Option<String>,
+    deadline: Instant,
+) -> Option<String> {
+    hide_agent_hooks::memory::memory_context_until(
+        hide_agent_hooks::memory::MemoryRequest {
+            runtime_id: GuidanceAgent::Antigravity.id(),
+            event,
+            prompt,
+            session_id: Some(conversation.to_owned()),
+        },
+        home,
+        deadline,
+    )
+    .context
 }
 
 /// The count a Grok or Cursor event makes. Grok's `Stop` names the

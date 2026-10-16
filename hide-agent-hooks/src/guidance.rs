@@ -1,6 +1,6 @@
 //! Hide's hook for the agents beyond Claude Code and Codex whose official
 //! documentation gives command hooks: Cursor and Grok (issue #517, PRD
-//! grok-cursor-hooks).
+//! grok-cursor-hooks), and agy (PRD antigravity-first-class).
 //!
 //! Claude Code and Codex are instrumented: their hooks count subagents,
 //! read Project Memory and pull letters (`install`, `runtime`). Cursor and
@@ -33,6 +33,14 @@
 //! | Factory Droid (retired) | `~/.factory/hooks.json`, else the `hooks` key of `settings.json` | `SessionStart[{hooks[{type, command, timeout s}]}]` |
 //! | Cursor | `~/.cursor/hooks.json` | `{version 1, hooks.<camelCase event>[{command, timeout s, matcher?}]}` |
 //! | Grok | `~/.grok/hooks/hide.json`, Hide's own | `hooks.<Event>[{matcher?, hooks[{type, command, timeout s}]}]` |
+//! | agy | `~/.gemini/config/hooks.json`, the `hide` block | `hide.<Event>[{type, command, timeout s}]`, `hide.PreToolUse[{matcher, hooks[...]}]` |
+//!
+//! agy is not of the basic tier: its `SessionStart` and `PreInvocation`
+//! answers put text into the conversation and its `PreToolUse` refuses a
+//! call, so its hook carries the guidance, Memory and the letters as well
+//! (`crate::antigravity`). Its file is the shared one agy reads beside the
+//! operator's and Herdr's blocks; Hide's block is the top-level key `hide`
+//! and nothing else of the file is Hide's.
 //! | Augment (retired) | `~/.augment/settings.json` | `hooks.SessionStart[{hooks[{type, command, timeout ms}]}]` |
 //! | Junie (retired) | `~/.junie/config.json` | `hooks.SessionStart[{hooks[{type, command, timeout s, async}]}]` |
 //! | Copilot CLI (retired) | `~/.copilot/hooks/hide-guidance.json`, Hide's own | `{version 1, hooks.sessionStart[{type, bash, powershell, timeoutSec}]}` |
@@ -83,10 +91,11 @@ pub enum GuidanceAgent {
     Augment,
     Junie,
     Grok,
+    Antigravity,
 }
 
 impl GuidanceAgent {
-    pub const ALL: [GuidanceAgent; 9] = [
+    pub const ALL: [GuidanceAgent; 10] = [
         Self::Gemini,
         Self::Qwen,
         Self::Droid,
@@ -96,6 +105,7 @@ impl GuidanceAgent {
         Self::Augment,
         Self::Junie,
         Self::Grok,
+        Self::Antigravity,
     ];
 
     /// The stable identifier: the agent's adapter id, and the `--runtime` of
@@ -111,11 +121,12 @@ impl GuidanceAgent {
             Self::Augment => "augment",
             Self::Junie => "junie",
             Self::Grok => hide_agent_adapter::AgentId::Grok.adapter().id,
+            Self::Antigravity => hide_agent_adapter::AgentId::Antigravity.adapter().id,
         }
     }
 
     /// The agents Hide still writes a hook for, in Settings order.
-    pub const LIVE: [GuidanceAgent; 2] = [Self::Grok, Self::Cursor];
+    pub const LIVE: [GuidanceAgent; 3] = [Self::Grok, Self::Cursor, Self::Antigravity];
 
     /// The agents whose hook an earlier build wrote and this one only removes.
     pub fn is_retired(self) -> bool {
@@ -129,6 +140,7 @@ impl GuidanceAgent {
         match hide_agent_adapter::adapter(id)?.hook {
             HookInstall::Guidance(GuidanceDialect::Cursor) => Some(Self::Cursor),
             HookInstall::Guidance(GuidanceDialect::Grok) => Some(Self::Grok),
+            HookInstall::Guidance(GuidanceDialect::Antigravity) => Some(Self::Antigravity),
             _ => None,
         }
     }
@@ -139,6 +151,7 @@ impl GuidanceAgent {
         match self {
             Self::Cursor => Some(hide_agent_adapter::HookDialect::Cursor),
             Self::Grok => Some(hide_agent_adapter::HookDialect::Grok),
+            Self::Antigravity => Some(hide_agent_adapter::HookDialect::Antigravity),
             _ => None,
         }
     }
@@ -172,12 +185,30 @@ impl GuidanceAgent {
             Slot::new(HookEvent::SubagentStop, "SubagentStop", None),
             Slot::new(HookEvent::Stop, "Stop", None),
         ];
+        // agy's events: the first prompt of a conversation, every model call
+        // (the helper reads it as the prompt hook), the tool call and the
+        // turn's end. The matcher is a regular expression on the whole tool
+        // name: the shell, the file tools the guardrails judge and the
+        // question a Factory worker is refused (agy 1.3.6's CLI toolset).
+        const ANTIGRAVITY: &[Slot] = &[
+            Slot::new(HookEvent::SessionStart, "SessionStart", None),
+            Slot::new(HookEvent::UserPromptSubmit, "PreInvocation", None),
+            Slot::new(
+                HookEvent::PreToolUse,
+                "PreToolUse",
+                Some(
+                    "run_command|view_file|write_to_file|replace_file_content|multi_replace_file_content|ask_question",
+                ),
+            ),
+            Slot::new(HookEvent::Stop, "Stop", None),
+        ];
         const CAMEL_SESSION_START: &[Slot] =
             &[Slot::new(HookEvent::SessionStart, "sessionStart", None)];
         const SESSION_START: &[Slot] = &[Slot::new(HookEvent::SessionStart, "SessionStart", None)];
         match self {
             Self::Cursor => CURSOR,
             Self::Grok => GROK,
+            Self::Antigravity => ANTIGRAVITY,
             Self::Copilot => CAMEL_SESSION_START,
             Self::Gemini | Self::Qwen | Self::Droid | Self::Kiro | Self::Augment | Self::Junie => {
                 SESSION_START
@@ -205,6 +236,8 @@ impl GuidanceAgent {
     }
 
     /// The folder whose presence means the agent is set up for this account.
+    /// agy makes `~/.gemini/config` on its first run, and Herdr's integration
+    /// needs it too; `~/.gemini` alone is also the retired Gemini CLI's.
     pub fn home_directory(self, home: &Path) -> PathBuf {
         match self {
             Self::Gemini => home.join(".gemini"),
@@ -216,6 +249,7 @@ impl GuidanceAgent {
             Self::Augment => home.join(".augment"),
             Self::Junie => home.join(".junie"),
             Self::Grok => home.join(".grok"),
+            Self::Antigravity => home.join(".gemini").join("config"),
         }
     }
 
@@ -224,10 +258,17 @@ impl GuidanceAgent {
     /// PowerShell on Windows: Grok's hooks guide says so and its source picks
     /// PowerShell 7, then Windows PowerShell (`xai-grok-config/src/shell.rs`),
     /// and the Cursor CLI's own bundle runs it inside a PowerShell pipeline
-    /// (`docs/agent-hooks.md`, Installing). The retired agents' documentation
-    /// names no Windows shell, so a guard written for one would be a guess.
+    /// (`docs/agent-hooks.md`, Installing). agy's guide, embedded in its
+    /// binary, runs a hook's command through `cmd /c` on Windows. The retired
+    /// agents' documentation names no Windows shell, so a guard written for
+    /// one would be a guess.
     pub fn supported_here(self) -> Result<(), &'static str> {
-        if cfg!(windows) && !matches!(self, Self::Copilot | Self::Grok | Self::Cursor) {
+        if cfg!(windows)
+            && !matches!(
+                self,
+                Self::Copilot | Self::Grok | Self::Cursor | Self::Antigravity
+            )
+        {
             return Err("its documentation does not say which shell runs a hook on Windows");
         }
         Ok(())
@@ -278,6 +319,25 @@ impl GuidanceAgent {
             // Grok merges every `~/.grok/hooks/*.json`, so Hide's is a file of
             // its own beside Herdr's and Orca's.
             Self::Grok => Layout::event_map(folder.join("hooks").join("hide.json"), true),
+            // agy reads one global `hooks.json` whose top-level keys are
+            // named blocks; Herdr's is `herdr`, Hide's is `hide`. Hide creates
+            // the file when agy has none and deletes it again only when
+            // nothing is left in it.
+            Self::Antigravity => Layout {
+                path: folder.join("hooks.json"),
+                shape: Shape::NamedBlock { block: "hide" },
+                own_file: true,
+            },
+        }
+    }
+
+    /// How the helper's path is quoted in this agent's command on this
+    /// system, and read back from it.
+    fn quoting(self) -> Quoting {
+        if cfg!(windows) && self == Self::Antigravity {
+            Quoting::Cmd
+        } else {
+            Quoting::NATIVE
         }
     }
 }
@@ -330,6 +390,9 @@ enum Shape {
     /// `{"version": 1, "hooks": {"<camelCaseEvent>": [entry]}}`, Cursor's
     /// own file.
     Cursor,
+    /// `{"<block>": {"<Event>": [entry]}, ...}`: agy's named blocks, of
+    /// which `block` is Hide's.
+    NamedBlock { block: &'static str },
 }
 
 impl Layout {
@@ -383,6 +446,7 @@ pub fn stdout(agent: GuidanceAgent, context: &str) -> Option<String> {
         }
         GuidanceAgent::Cursor => json!({ "additional_context": context }).to_string(),
         GuidanceAgent::Kiro => context.to_owned(),
+        GuidanceAgent::Antigravity => return crate::antigravity::inject(context),
         GuidanceAgent::Grok => return None,
     })
 }
@@ -479,10 +543,42 @@ fn cursor_powershell_command(helper: &Path, event: HookEvent) -> String {
     }
 }
 
+/// agy's tool command on macOS and Linux. agy refuses a tool call whose hook
+/// fails, so the ask answer is printed by the command itself
+/// when the helper is gone and when it ends without answering (a binary that
+/// cannot run, a crash): the helper prints its one line last and exits 0 on
+/// every path it reaches, so a failed run has printed nothing.
+fn antigravity_tool_command(helper: &Path) -> String {
+    let quoted = Quoting::Posix.quote(&helper.display().to_string());
+    let arguments = arguments(GuidanceAgent::Antigravity, HookEvent::PreToolUse);
+    let ask = Quoting::Posix.quote(crate::antigravity::ASK);
+    format!(
+        "if [ -x {quoted} ]; then {quoted} {arguments} || printf '%s\\n' {ask}; else printf '%s\\n' {ask}; fi"
+    )
+}
+
+/// agy's command on Windows, which agy hands to `cmd /c`: it runs the helper
+/// while it is there and, for a tool call, answers ask itself when it is
+/// gone or fails, as [`antigravity_tool_command`] does.
+fn cmd_command(helper: &Path, agent: GuidanceAgent, event: HookEvent) -> String {
+    let quoted = Quoting::Cmd.quote(&helper.display().to_string());
+    let run = format!("{quoted} {}", arguments(agent, event));
+    if event == HookEvent::PreToolUse {
+        let ask = crate::antigravity::ASK;
+        format!("if exist {quoted} ({run} || echo {ask}) else (echo {ask})")
+    } else {
+        format!("if exist {quoted} ({run})")
+    }
+}
+
 /// The entry Hide writes for `slot`.
 fn entry(agent: GuidanceAgent, helper: &Path, slot: &Slot) -> Value {
     let event = slot.event;
-    let command = if cfg!(windows) && agent == GuidanceAgent::Cursor {
+    let command = if cfg!(windows) && agent == GuidanceAgent::Antigravity {
+        cmd_command(helper, agent, event)
+    } else if agent == GuidanceAgent::Antigravity && event == HookEvent::PreToolUse {
+        antigravity_tool_command(helper)
+    } else if cfg!(windows) && agent == GuidanceAgent::Cursor {
         cursor_powershell_command(helper, event)
     } else if cfg!(windows) {
         powershell_command(helper, agent, event)
@@ -554,6 +650,22 @@ fn entry(agent: GuidanceAgent, helper: &Path, slot: &Slot) -> Value {
             "action": { "type": "command", "command": command },
             "timeout": TIMEOUT_SECONDS,
         }),
+        // agy's tool events take a group with the matcher, as in its own
+        // examples; the other events take the handler itself. Its timeout
+        // counts seconds, and a tool hook it kills at the timeout refuses the
+        // call, so the helper's own budgets end far inside it.
+        GuidanceAgent::Antigravity if slot.matcher.is_some() => json!({
+            "hooks": [{
+                "type": "command",
+                "command": command,
+                "timeout": TIMEOUT_SECONDS,
+            }],
+        }),
+        GuidanceAgent::Antigravity => json!({
+            "type": "command",
+            "command": command,
+            "timeout": TIMEOUT_SECONDS,
+        }),
     };
     if let (Some(matcher), Some(object)) = (slot.matcher, value.as_object_mut()) {
         object.insert("matcher".to_owned(), Value::from(matcher));
@@ -582,6 +694,19 @@ fn entries<'a>(
         .as_object_mut()
         .ok_or_else(|| failure_shape(path, "the document is not a JSON object"))?;
     let container: &mut Map<String, Value> = match &layout.shape {
+        Shape::NamedBlock { block } => {
+            let slot = if create {
+                root.entry(*block)
+                    .or_insert_with(|| Value::Object(Map::new()))
+            } else {
+                match root.get_mut(*block) {
+                    Some(slot) => slot,
+                    None => return Ok(None),
+                }
+            };
+            slot.as_object_mut()
+                .ok_or_else(|| failure_shape(path, &format!("\"{block}\" is not an object")))?
+        }
         Shape::Kiro => {
             let slot = if create {
                 root.entry("hooks")
@@ -655,14 +780,14 @@ fn entry_marker_version(entry: &Value) -> Option<u32> {
 }
 
 /// The helper path in the first entry Hide owns.
-fn entry_helper(entry: &Value) -> Option<String> {
+fn entry_helper(agent: GuidanceAgent, entry: &Value) -> Option<String> {
     let mut found = Vec::new();
     strings(entry, &mut found);
     found
         .into_iter()
         .filter(|text| text.contains(GUIDANCE_SOURCE_NAME))
         .find_map(|text| {
-            Quoting::NATIVE.first_quoted(text).or_else(|| {
+            agent.quoting().first_quoted(text).or_else(|| {
                 // Cursor's plain form: the helper's path, then its arguments.
                 text.split_whitespace()
                     .next()
@@ -732,7 +857,7 @@ pub fn status(agent: GuidanceAgent, home: &Path) -> HookStatus {
             Some(version) => lowest = Some(lowest.map_or(version, |best| best.min(version))),
             None => missing_event = true,
         }
-        helper = helper.or_else(|| owned(found).find_map(entry_helper));
+        helper = helper.or_else(|| owned(found).find_map(|entry| entry_helper(agent, entry)));
     }
     let Some(version) = lowest else {
         return HookStatus::NotInstalled;
@@ -761,7 +886,7 @@ pub fn installed_helper_path(agent: GuidanceAgent, home: &Path) -> Option<String
     let mut document = read_document(&layout.path).ok()??;
     for slot in agent.slots() {
         if let Some(found) = entries(&mut document, &layout, slot.key, false).ok()?
-            && let Some(helper) = owned(found).find_map(entry_helper)
+            && let Some(helper) = owned(found).find_map(|entry| entry_helper(agent, entry))
         {
             return Some(helper);
         }
@@ -793,7 +918,7 @@ pub fn matches_install(agent: GuidanceAgent, home: &Path, helper: &Path) -> bool
 
 fn blank_document(layout: &Layout) -> Value {
     match layout.shape {
-        Shape::EventMap { .. } => Value::Object(Map::new()),
+        Shape::EventMap { .. } | Shape::NamedBlock { .. } => Value::Object(Map::new()),
         Shape::Copilot | Shape::Cursor => json!({ "version": 1 }),
         Shape::Kiro => json!({ "version": "v1" }),
     }
@@ -818,7 +943,18 @@ pub fn install(
             path: agent.config_path(home).display().to_string(),
             detail: why.to_owned(),
         })?;
-    install_any(agent, home, helper)
+    if agent.quoting() == Quoting::Cmd && !Quoting::cmd_safe(&helper.display().to_string()) {
+        return Err(InstallFailure::UnexpectedShape {
+            path: agent.config_path(home).display().to_string(),
+            detail: "the helper's path holds a character cmd would read inside its quotes"
+                .to_owned(),
+        });
+    }
+    let outcome = install_any(agent, home, helper)?;
+    if agent == GuidanceAgent::Antigravity {
+        crate::antigravity_trust::prepare_read_only(home)?;
+    }
+    Ok(outcome)
 }
 
 /// [`install`] without the retirement and system checks; the tests use it to
@@ -915,6 +1051,14 @@ pub fn remove(agent: GuidanceAgent, home: &Path) -> Result<RemoveOutcome, Instal
         total.removed_entries += outcome.removed_entries;
         total.preserved_entries += outcome.preserved_entries;
     }
+    // Switching agy off also takes out the folder trust Hide added (D-08)
+    // and Hide AI's folder for agy (D-09).
+    if agent == GuidanceAgent::Antigravity {
+        let forgotten = crate::antigravity_trust::forget_all(home)?;
+        let removed = crate::antigravity_trust::remove_read_only(home)?;
+        total.changed |= forgotten > 0 || removed;
+        total.removed_entries += forgotten;
+    }
     Ok(total)
 }
 
@@ -994,6 +1138,15 @@ fn drop_empty(document: &mut Value, layout: &Layout, key: &str) {
         Shape::Kiro => {
             root.shift_remove("hooks");
         }
+        Shape::NamedBlock { block } => {
+            if let Some(events) = root.get_mut(*block).and_then(Value::as_object_mut) {
+                events.shift_remove(key);
+                // A block Hide emptied is Hide's scaffolding too.
+                if events.is_empty() {
+                    root.shift_remove(*block);
+                }
+            }
+        }
     }
 }
 
@@ -1008,7 +1161,7 @@ fn only_scaffolding(document: &Value, layout: &Layout) -> bool {
             .and_then(Value::as_object)
             .is_none_or(Map::is_empty),
         Shape::Kiro => !root.contains_key("hooks"),
-        Shape::EventMap { .. } => root.is_empty(),
+        Shape::EventMap { .. } | Shape::NamedBlock { .. } => root.is_empty(),
     };
     hooks_empty && root.keys().all(|key| key == "version" || key == "hooks")
 }

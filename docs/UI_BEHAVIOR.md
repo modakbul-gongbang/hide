@@ -143,12 +143,14 @@ Tabs close only from their own close control or menu; closing a tab's only pane 
 An unavailable or retired keyboard target never falls through to closing a different pane or a whole tab.
 When a connected pane selects, splits, moves, or closes a View through `hide view`, the same View layout rules apply to that pane's Workspace even while another Workspace is in front.
 These commands do not move the keyboard target; a close that would lose the last View of an unsaved document reports the refusal and keeps the draft.
-`hide file open` and `hide diff open` put the calling pane's file or changed-file diff into its own Workspace without selecting that Workspace by default.
-An explicit local `--reveal` brings that Workspace and the opened View forward and opens the lane on Files.
-Without it, an open or `hide view select` from the pane of the front Workspace's active tab opens the lane on Files as a click does, the tree staying on when it showed alone; from a background tab or another Workspace the lane stays as it is and the Files icon's badge counts the new view.
+`hide file open` and `hide diff open` put the calling pane's file or changed-file diff into its own Workspace and never select that Workspace or another tab.
+Only an agent in the pane the operator is in, the selected pane of the front Workspace, changes what the operator sees: its open or `hide view select` brings the View to the front and opens the lane on Files as a click does, the tree staying on when it showed alone.
+Another pane of that Workspace, of the same tab or another, adds its View to the checkout's list and leaves the selection, the active area, the keyboard, the lane and the tab on screen as they were, and the Files icon's badge counts the new view (see File Views per checkout).
+A Workspace not on screen is not what the operator sees: there, an agent in its active tab brings its View to that Workspace's front, so a page it opens loads and can be driven, and an agent in another tab adds its View behind.
+A shell bound only to the checkout, which no pane vouches for (a pane Hide has not connected yet, or a command run with its pane reference removed), counts as another pane on the Workspace on screen and as the active tab on one that is not.
+The desktop window's browser gateway, creating a page for a CDP client, brings its page forward, since a page loads only in front.
+No option brings a View forward from another pane; the operator does that.
 A browser page's own new target, bound to its area, does not open the lane.
-A pane of an Agent tab that is not the Workspace's active tab, calling `hide file open`, `hide diff open`, `hide browser open` or `hide view select` without `--reveal`, adds its View to the checkout's list and leaves the selection, the active area, the keyboard and the lane as they were (see File Views per checkout).
-Called from the active tab, or with no pane at all (a checkout-bound caller, which has no tab), the View comes to the front in the lane, opened as any open opens it, and the active tab remembers it; with `--reveal` it comes to the front and both the active tab and the calling tab remember it.
 `hide view split`, `move` and `close` apply to the checkout's list, from any tab, including a tab that is not on screen.
 
 ### Agent areas
@@ -263,7 +265,7 @@ When the last view closes, the lane stays on Files with the tree across it if th
 
 The checkout owns the Files View list, its split, its selected Views and its active area, whichever Agent tab is in front.
 Every tab sees the same list.
-Each Agent tab remembers one View, the one it last put in front, as its bookmark.
+Each Agent tab remembers one View, the one the operator last had in front on it, as its bookmark.
 The lane, its tool, pin, tree and widths, and document editing and saving remain shared by the Workspace.
 A tab with no bookmark changes nothing when it appears, and the files tool shows the list as it stands.
 
@@ -273,17 +275,18 @@ A bookmarked View that has closed is ignored, and a tab with no bookmark leaves 
 The tab strip, sidebar, palette, tab cycle and a confirmed Herdr or device switch follow this rule.
 Moving ordinary focus among tabs already shown in Agent areas changes nothing in the lane.
 
-A tab's bookmark follows the front View while that tab is on screen, whether the operator selected a View, an agent open brought one forward, or `--reveal` did.
-It also takes the View that tab's own agent opens, even when that View does not come to the front.
+A tab's bookmark follows the front View while that tab is on screen, whether the operator selected a View or the agent in the operator's pane brought one forward.
+A View another pane opens behind the front is no tab's bookmark, so going to that pane's tab later shows what the operator last had there.
 Closing a tab drops its bookmark and keeps its Views in the list.
 Putting the lane away or closing it preserves its documents, unsaved text and save state.
 Closing the last View leaves the files tool on the tree when the tree is on, and closes the lane otherwise.
 
-A pane caller's file, diff or browser open and View actions are made for its actual Agent tab.
-From a pane of the active tab, or from a caller with no pane (a checkout-bound caller, which has no tab), the View comes to the front, its area becomes the active one and the lane is called to Files.
-From a pane of any other tab, without `--reveal`, the View is added at the end of the area it lands in; the selection, the active area, the keyboard and the lane stay as they were, the Files icon's badge counts it, and that tab remembers it.
-Selecting that tab later brings the View to the front.
-`--reveal` brings the View to the front, opens the lane on Files and makes the calling tab the one on screen and the one that remembers it; a caller without a pane and a GUI action act for the active tab.
+From the pane the operator is in, a file, diff or browser open or a select brings the View to the front, its area becomes the active one and the lane is called to Files.
+From another pane of the Workspace on screen, of the same tab or another, the View is added at the end of the area it lands in; the selection, the active area, the keyboard, the lane and the tab on screen stay as they were, and the Files icon's badge counts it.
+On a Workspace not on screen, the agent in its active tab brings the View to that Workspace's front and an agent in another tab adds it behind; neither moves the screen or calls the lane.
+A shell bound only to the checkout counts as another pane there; the browser gateway's new page comes to the front of its area, where it loads.
+The operator brings it forward from the strip; selecting the caller's tab does not.
+A GUI action, such as a click on a terminal link, acts for the operator as before.
 A file read remains bound to the original tab and native session: a closed, moved or replaced caller is refused rather than falling back to the operator's tab.
 
 Matching checkout and path documents use one shared buffer, and the same address opened from two tabs is one page.
@@ -442,7 +445,7 @@ A plain shell, and an agent pane whose session is not known yet, keeps the plain
 Over a narrow window the record shows in the lane floating over the panes (`web/src/PaneHeaderBand.tsx`, `PaneRecordButton`).
 The provider logo is drawn on a pane's own header, and in the heads and places that are about the agent or its provider itself: the start picker, Settings, the footer's usage chips and the Usage pages, the session record's head, the tree popover's head, the last-words popover's head, the phone's detail head, the Memory tab's Hide AI chip, the Factory card, the first-run tiles, and the corner of an agent-opened View tab's kind mark ([View openers and comments](#view-openers-and-comments)).
 The sidebar's 프로젝트 and 태스크 rows and the Agent tabs draw it only by the operator's choice or while ⌥ is held ([Agent logo view mode](#agent-logo-view-mode)); ⌘K and the recent-pane list, the link sessions, a session record's children and the phone's list lead with the status mark alone in both modes (PRD agent-mark-quiet).
-A pane header draws exactly one logo, the pane's own agent, for each of the seven supported agents: Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, the same logo Settings and the first-run choice draw.
+A pane header draws exactly one logo, the pane's own agent, for each of the eight supported agents: Claude Code, Codex, Grok, OpenCode, Pi, omp, Cursor and Antigravity, the same logo Settings and the first-run choice draw (Antigravity's is its monogram until an official mark is bundled, `docs/BRAND.md`).
 A row without a logo names its agent by product name (`Claude Code`, `Codex`, the adapter's label, never the raw kind) in its hover hint and its accessible name, and the pane header's logo and title say it the same way.
 Only a plain shell and an agent Hide does not support draw the neutral `>_`.
 A logo drawn dark on a transparent ground (Grok, Cursor) sits on the light plate so it stays visible on the dark theme; the others are drawn as published ([BRAND.md](BRAND.md#third-party-agent-marks)).
@@ -506,6 +509,7 @@ A wheel over the pane moves a drag selection with the text it covers: the pane h
 A pane whose agent sleeps (PRD agent-sleep) shows its state in place of the terminal, which stays hidden until the agent is back because the shell under it is not what the operator was talking to: Sleeping with the last progress line and Wake agent; Waking… with how old the resumed conversation is; or `Couldn’t resume this conversation` with the core's plain reason, Retry, and Start new session.
 The core band reads Sleeping, Waking or the resume failure, and typed input to the pane goes nowhere.
 Opening the pane's tab by a committed move (a row, a tab, a checkout, a relation) wakes it in the same pane with its conversation; a Recent Panels preview does not, and neither does a click inside the tab already on screen.
+Wake agent, Retry and Start new session take a mouse click as they take Enter: everything a pane draws over its terminal (these bodies, the reconnect caption, the attachment refusal, the header band) lies above every layer the terminal's renderer draws, so a click there never reaches the terminal (`web/src/terminals.ts` gives each terminal its own stacking context).
 The pane menu offers Sleep agent on an agent pane that is awake on this machine, or on the machine the window runs on when that machine's core runs on another machine, disabled with the core's reason when the agent is working, waiting for the operator, of another kind, or has no conversation Herdr reported; a device's pane offers none.
 Fork agent and Fork agent to the side follow it in the same group (PRD fork-operator-root): both are offered on a local agent pane whose conversation Herdr reported (`fork.available`) and send `fork_pane` with the placement, which starts that conversation again as a new session the operator owns; on an agent that has a fork command but has not reported its conversation yet both are drawn disabled with the core's reason, and on a shell, an agent with no fork command or a device's pane there is neither.
 Fork agent opens the fork in a new tab immediately right of the source's tab in its Agent area, or at the end when the source's tab has closed meanwhile; Fork agent to the side splits the source's tab and puts the fork to the right of the source.
@@ -1813,7 +1817,7 @@ Opened while Settings is up, it takes Settings' place: Settings closes and the t
 Under the text are the target, the agent kind and the model menus, a `⏎` keycap and `시작`; Enter or `시작` sends one `agent_start_in_checkout` with a fresh request id, the text as the agent's first instruction, handed to the CLI as its own argument (ARCHITECTURE.md, the first prompt).
 The target defaults to what is in front: the checkout of the Workspace in front (a worktree when that is it), a project's main checkout while the Overview is filtered to that project, and the front device's Home while the Overview with no project chip or Settings is; a device's surface in front makes that device the target's.
 The target menu lists the front device's Home and checkouts, then each other device's Home and checkouts prefixed with its name, with a separator between devices and a check on the chosen item; a device that is not connected is listed disabled with `연결 안 됨`.
-The kind menu holds Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor with their provider marks; the model menu is `CLI 기본값` then the chosen kind's catalog, and changing the kind takes that kind's list and the model last chosen for it.
+The kind menu holds Claude Code, Codex, Grok, OpenCode, Pi, omp, Cursor and Antigravity with their provider marks; the model menu is `CLI 기본값` then the chosen kind's catalog (Antigravity's from `agy models`, started with `--model`), and changing the kind takes that kind's list and the model last chosen for it.
 While the catalog is being read or cannot be read, the model menu shows the remembered model or `CLI 기본값`, is disabled, and gives the reason in its tooltip; starting is never held back by it.
 Every supported agent start, here or in a dialog, is remembered by the core with its model, `CLI 기본값` included, so the next open preselects that kind and its model with no `recent` mark; the target is not remembered and follows what is in front on every open.
 Escape or a press outside closes the panel and keeps the text for the next open; a start that goes clears it.
@@ -1827,10 +1831,10 @@ Settings > Agents > Starting work has no default agent of its own.
 
 Web owner: `web/src/components/usage.tsx`, `web/src/components/usage-history.tsx`, `web/src/components/usage-history-table.tsx`, `web/src/components/usage-amount.tsx`, `web/src/UsageOverview.tsx`, `web/src/usageHistory.ts`, `web/src/usage.ts`, `web/src/settings/UsageTab.tsx`.
 The core owns account windows and shared preferences (`usage`, `ui_state.usage`); all limits refer to the core's own node, even with a remote device in front.
-The declaration lists all seven agents; only agents with a declared limit source appear in the footer and popover.
+The declaration lists all eight agents; only agents with a declared limit source appear in the footer and popover.
 
 The footer draws up to three pinned account windows at its left edge, and the View menu, Help and Settings at its right edge.
-Defaults pin each supported agent's weekly window.
+Defaults pin the weekly window of each agent that is on by default and reports one (Claude Code and Codex), leaving a slot for the operator's own pin.
 Each chip shows the agent mark and its rounded percent, naming the window when the agent has multiple visible chips.
 A numberless not-started or expired chip always names its window.
 Each chip has its own accessible name with agent, window and value.
@@ -2110,7 +2114,7 @@ The second, Phone, is the push to a paired phone, the dropdown Settings > Mobile
 ### Usage
 
 Usage follows Notifications in the App group, with a gauge mark and the localized Usage title.
-The page walks the shared adapter declaration so all seven agents appear even before a read.
+The page walks the shared adapter declaration so all eight agents appear even before a read.
 An agent with limit support has one card: its mark and name with Hide, then a row for each declared account window with its current value and a pin switch.
 A window the account reports as not offered has no row or switch.
 When a fresh reading explicitly marks a window not offered or unreadable, the core removes its saved pin so an invisible row cannot hold a chip slot; loading, failed and retained readings preserve choices.
@@ -2203,7 +2207,7 @@ A move is one dialog over Settings whose body turns with the move, and every for
 The dialog only asks; the supervisor's `core_move` frame says where the move is, so a window that closed it and opens Settings again finds the same form, and a request another move holds is answered `다른 이동이 진행 중이에요`.
 In Korean the particle after the machine's name follows its last sound, as Korean reads the name (`Mac mini로` but `집으로`, `web/src/i18n/koParticle.ts`).
 
-Settings > Agents shows the seven agents Hide supports, Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, in that order, for one machine at a time (PRD settings-cleanup B8 to B20, B67).
+Settings > Agents shows the eight agents Hide supports, Claude Code, Codex, Grok, OpenCode, Pi, omp, Cursor and Antigravity, in that order, for one machine at a time (PRD settings-cleanup B8 to B20, B67).
 With a device registered, a switch at the top chooses This Mac or a device and the list below is that machine's; with none there is no switch.
 A device that cannot be reached shows one line and Try again in place of its list; a machine whose kit cannot run says why above a list it may still have.
 `Installed N` lists the agents whose program is found on the machine ([agent-hooks.md: Installed means the program is found](agent-hooks.md#installed-means-the-program-is-found)), or that are on and whose program went away, so they can still be switched off; a folder an agent creates does not count.
@@ -2212,9 +2216,9 @@ An agent installed where Hide has nothing to attach to on that machine's system 
 `Not installed N` is a folded list of the rest, each with its official mark, its name and `Install ↗`, which opens the vendor's installation guide (`web/src/settings/agentRows.ts`); an agent with no program has no switch.
 A row is the agent's official mark (the same in light and dark), its name and a switch, with no line about what the switch puts there; `Docs ↗` to the kit's skills page for the agent shows only while the row is hovered or has keyboard focus, and always on a screen with no hover.
 The switch is that machine's: turning an agent on installs its skill and hook and the Herdr integration there, turning it off takes out only what Hide installed (docs/agent-hooks.md), and an agent that is off wears no status.
-A Claude Code, Codex, Grok, Pi or omp row that is on, whose sessions Hide counts from their session files, says one of two things: `N sessions` for its sessions running on that machine now, or `Ready` when it is set up and has none; a sleeping agent is not running and is not counted.
+A Claude Code, Codex, Grok, Pi, omp, Cursor or Antigravity row that is on, whose sessions Hide counts from their session files, says one of two things: `N sessions` for its sessions running on that machine now, or `Ready` when it is set up and has none; a sleeping agent is not running and is not counted.
 The count is all the row says about sessions: it lists none and does not say whether Hide hears each one, because a session that runs without Hide is fixed from its own pane header (docs/status-model.md).
-Grok and Cursor wear a `Basic` chip (`기본`, `基础`, `基本`), on or off; Claude Code, Codex, OpenCode, Pi and omp have both prompt intake and spawn refusal and wear no chip.
+Grok and Cursor wear a `Basic` chip (`기본`, `基础`, `基本`), on or off; Claude Code, Codex, OpenCode, Pi, omp and Antigravity have both prompt intake and spawn refusal and wear no chip.
 Every other agent's row shows no status, on or off.
 The chip opens a popover with every feature of the kit's feature table, grouped under Herdr basics, session reading and multi-agent collaboration, with a heading, `✓ Works` or `– Not available` rather than color alone.
 The chip, headings and feature text wrap within the popover in every interface language.
@@ -2233,6 +2237,8 @@ Its Basic chip and existing guidance and spawn-guard facts remain, and it offers
 Archive resume sends the selected source path to the core, which decides whether the native reader requires that exact file proof before starting.
 OpenCode has native titles, Sleep and Fork from its database reader beside letters, Memory, subagents and the spawn guard from Hide's plugin; an unanswered native `question` enters the existing question state with its text and choices even with summaries off.
 Its question keeps the existing Answer tag in the pane header, as omp's does.
+Antigravity has titles from agy's conversation index, Sleep, Fork (Hide opens the same conversation in a new pane with `agy --conversation <id>` and types `/fork` there, refused in a folder agy does not trust, where the new pane would open on agy's trust question; a read of agy's index that meets agy writing it is read again, up to 20 reads in a row inside the fork's 30 s wait; a fork that still fails closes its pane like any agent's failed fork, logged as `pane.fork_failed`, and leaves the conversation `/fork` made in agy's history, since agy 1.4.0 has no command that deletes one) and its conversation from its transcript, beside guidance, letters, Memory, subagents and the spawn guard from Hide's `hide` block; its row wears no Basic chip, so no feature popover opens for it, and the bell it does not ring yet is named in [agent-hooks.md](agent-hooks.md#antigravity-hides-hook-block).
+Its tool-permission question reaches Needs You as an approval, as Herdr 0.9.3 reports it (seen 2026-10-16); its folder-trust question is unmeasured ([agent-hooks.md](agent-hooks.md#antigravity-hides-hook-block)).
 Escape closes the popover and focus returns to the chip.
 A part that failed, was removed or is outdated shows one line on that agent's row naming it (`Hook: Removed`, `Plugin: Outdated: …` for OpenCode's hook piece, `Herdr integration: Failed: …`) with Reinstall, only while the agent is on; a hook the operator removed stays removed until Reinstall or switching the agent off and on.
 An agent that is on and found whose hook Hide could not put in says why in one muted line without Reinstall, since nothing is broken: its program has not created its configuration folder yet, a file of that name is not Hide's, or Hide does not write that hook on this system (`Plugin: OpenCode has not created ~/.config/opencode yet; …`).
@@ -2241,9 +2247,9 @@ There is no row or switch for Codex per pane, no per-agent CLI group (that is Hi
 Idle agents (`Sleep after`) and Starting work (`Link the issue in pull requests`) follow the list.
 
 The first-run agent choice is the first step of the first-run wizard (see First run below), PRD agent-adapters-onboarding and PRD first-run-onboarding, shown when this Mac's kit has never run.
-It lists the seven agents Hide supports, Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor in that order, as tiles in a grid, each with the agent's own mark (or a two-letter monogram where no official mark is bundled, `docs/BRAND.md`) and its state: the agents installed here are on and show a check, an agent not installed is dimmed, has no switch and links its official install page (`Install ↗`), an agent installed on a system where Hide has nothing to attach to yet (the kit's `unsupported_system`) is dimmed and says `Not on Windows yet` with that system's name, with no switch, no install link and no entry under `What changes` (D-25, B49), and a tile is a switch (`role="switch"`) pressed with Space or Enter.
+It lists the eight agents Hide supports, Claude Code, Codex, Grok, OpenCode, Pi, omp, Cursor and Antigravity in that order, as tiles in a grid, each with the agent's own mark (or a two-letter monogram where no official mark is bundled, `docs/BRAND.md`) and its state: the agents installed here are on and show a check, an agent not installed is dimmed, has no switch and links its official install page (`Install ↗`), an agent installed on a system where Hide has nothing to attach to yet (the kit's `unsupported_system`) is dimmed and says `Not on Windows yet` with that system's name, with no switch, no install link and no entry under `What changes` (D-25, B49), and a tile is a switch (`role="switch"`) pressed with Space or Enter.
 Claude Code and Codex are on when they are installed; every other installed agent is on too, since the operator chose the full set, and `Continue` installs what is left on.
-Under each name the tile says what Hide knows: `Checking…`, then `Ready` or `Not signed in` for the agents whose sign-in Hide checks (Claude Code, Codex, Grok and Pi), and `Installed` for OpenCode, omp and Cursor, whose sign-in Hide cannot read (`tileStatus` in `web/src/firstRun.ts`).
+Under each name the tile says what Hide knows: `Checking…`, then `Ready` or `Not signed in` for the agents whose sign-in Hide checks (Claude Code, Codex, Grok, Pi and Antigravity; Antigravity says `Installed` until Hide AI's folder for it is made, because Hide reads agy's sign-in only once that folder is ready), and `Installed` for OpenCode, omp and Cursor, whose sign-in Hide cannot read (`tileStatus` in `web/src/firstRun.ts`).
 With no agent installed, one line says so and links Claude Code's and Codex's install pages, and Continue still goes on.
 One sentence above the tiles says that Hide adds its own entries to each agent turned on and changes nothing before Continue, and `What changes` opens the list of what Continue writes for each agent left on (its hook file, skill, plugin or extension, and Herdr integration, at the places the kit reports, with the account home written as `~` on every system) and the `hide` command's link; the list follows each flip (B11, D-26).
 `Continue` is the only button and the only way on: Escape, a click outside and a close button do nothing, so a stray key cannot finish a choice that leaves Claude Code and Codex off with no hooks; with every tile off, Continue installs nothing and moves on.

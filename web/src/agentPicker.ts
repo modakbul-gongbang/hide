@@ -55,7 +55,9 @@ export type ModelCatalog =
 const lastLists = new Map<ProviderKind, readonly string[]>();
 
 export function catalogFor(ai: BackgroundAi | undefined, kind: ProviderKind): ModelCatalog {
-  const provider: AiProvider | undefined = ai?.providers.find((row) => row.id === kind);
+  // A start names the agent as Herdr does (`agy`); its Hide AI row is joined by the kit's adapter id (`antigravity`).
+  const agent = AGENT_ADAPTERS.find((row) => row.can_start && row.herdr_kind === kind)?.id;
+  const provider: AiProvider | undefined = ai?.providers.find((row) => row.agent === agent);
   if (provider && provider.models.length > 0) {
     lastLists.set(kind, provider.models);
     return { state: "ready", models: provider.models };

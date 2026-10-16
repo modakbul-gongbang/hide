@@ -78,7 +78,22 @@ test("hide browser from a device pane reads and clicks its page, and fails like 
     await expect.poll(() => liveBridges(bridge).length, { timeout: 60_000 }).toBe(1);
     await expect.poll(() => appliedFor(daemonLog, "ssh-browser"), { timeout: 120_000 }).toBe(true);
 
-    const opened = await deviceCli(remote, run, bridge, ["browser", "open", `http://localhost:${port}/device.html`, "--reveal", "--wait"], "device-open");
+    // The operator goes to the device, so its agent's page opens in front:
+    // from a pane the operator is not in it would only join the list behind.
+    await page.evaluate(async ({ port, token }) => {
+      await new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+        const timer = setTimeout(() => reject(new Error("device focus timed out")), 10_000);
+        ws.onerror = () => { clearTimeout(timer); reject(new Error("device focus socket failed")); };
+        ws.onopen = () => ws.send(JSON.stringify({ token, schema_version: 2 }));
+        ws.onmessage = () => {
+          ws.send(JSON.stringify({ schema_version: 2, kind: "focus_device", payload: { device_id: "ssh-browser" } }));
+          clearTimeout(timer); ws.close(); resolve();
+        };
+      });
+    }, { port: state.port, token: state.token });
+    await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen"), { timeout: 20_000 }).toContain("ssh-browser");
+    const opened = await deviceCli(remote, run, bridge, ["browser", "open", `http://localhost:${port}/device.html`, "--wait"], "device-open");
     expect(opened.status, opened.out).toBe(0);
     const display = (lastJson(opened.out).result as { view_id: string }).view_id;
     const snapshot = await deviceCli(remote, run, bridge, ["browser", "snapshot", display], "device-snapshot");

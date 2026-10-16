@@ -48,6 +48,23 @@ test("⌘K Start an agent… starts an agent in the checkout in front with the c
     await expect(panel.locator("[data-start-submit]")).toHaveText("Start");
     await screenshot(page, "start-panel-open");
 
+    // The kind list draws each agent's mark beside its name, as a menu item does (issue 1279).
+    await panel.locator("[data-agent-kind]").click();
+    const codex = await page.locator('[data-agent-kind-option="codex"]').evaluate((option) => {
+      const mark = option.querySelector("[data-agent-mark]")!.getBoundingClientRect();
+      const walker = document.createTreeWalker(option, NodeFilter.SHOW_TEXT);
+      let text = walker.nextNode();
+      while (text && !text.textContent?.trim()) text = walker.nextNode();
+      const range = document.createRange();
+      range.selectNodeContents(text!);
+      const name = range.getBoundingClientRect();
+      return { beside: name.left >= mark.right, oneLine: name.top < mark.bottom && mark.top < name.bottom };
+    });
+    expect(codex).toEqual({ beside: true, oneLine: true });
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-agent-kind-option]")).toHaveCount(0);
+    await expect(panel).toBeVisible();
+
     // B27: the model menu is the chosen kind's catalog; B28 waits for it (Claude's is its aliases).
     const model = panel.locator("[data-agent-model-kind]");
     await expect(model).toBeEnabled({ timeout: 20_000 });

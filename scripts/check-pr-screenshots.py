@@ -32,7 +32,8 @@ SCREEN_PATHS = ("web/src/", "site/", "design/")
 # Tests and snapshots change no screen.
 NOT_A_SCREEN = ("*.test.ts", "*.test.tsx", "*.test.mjs", "*/__snapshots__/*", "web/src/**/test-utils*", "web/src/**/*.d.ts")
 
-IMAGE = re.compile(r'!\[[^\]]*\]\(\s*<?([^)\s>]+)>?[^)]*\)|<img\b[^>]*?\bsrc\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
+# An attribute's quoted value may hold `>`, as an alt such as "Settings > Agents" does.
+IMAGE = re.compile(r'!\[[^\]]*\]\(\s*<?([^)\s>]+)>?[^)]*\)|<img\b(?:[^>"\']|"[^"]*"|\'[^\']*\')*?\bsrc\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
 EXEMPTION = re.compile(r'^\s*(?:스크린샷 없음|No screenshot)\s*:\s*(\S.*)$', re.IGNORECASE | re.MULTILINE)
 COMMENT = re.compile(r'<!--.*?-->', re.DOTALL)
 

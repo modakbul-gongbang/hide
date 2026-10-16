@@ -30,6 +30,7 @@ fn root_suffix(agent: Agent) -> &'static str {
         Agent::Pi => crate::PI_SESSIONS,
         Agent::Omp => crate::OMP_SESSIONS,
         Agent::Cursor => crate::cursor::SESSIONS,
+        Agent::Antigravity => crate::antigravity::SESSIONS,
         _ => unreachable!("native-file policy requires a native-file format"),
     }
 }
@@ -235,6 +236,8 @@ pub(crate) fn inside_root(
     }
     if agent == Agent::Cursor {
         crate::cursor::checked_path(home, path).map_err(|_| RootRefusal::Outside)
+    } else if agent == Agent::Antigravity {
+        crate::antigravity::checked_path(home, path)
     } else {
         checked_path(home, agent, path)
     }
@@ -294,6 +297,8 @@ pub(crate) fn directory_of(agent: Agent, path: &Path) -> Option<&Path> {
         path.parent().and_then(Path::parent)
     } else if agent == Agent::Grok {
         crate::grok::group_of(path)
+    } else if agent == Agent::Antigravity {
+        crate::antigravity::directory_of(path)
     } else {
         path.parent()
     }
@@ -305,6 +310,10 @@ pub(crate) fn header(agent: Agent, path: &Path) -> Result<Header> {
 }
 
 fn header_budgeted(agent: Agent, path: &Path, remaining: &mut u64) -> Result<Header> {
+    if agent == Agent::Antigravity {
+        // The index row, not the transcript, names the conversation's checkout.
+        return crate::antigravity::header(path);
+    }
     if agent == Agent::Grok {
         let mut read = 0;
         let summary = crate::grok::summary(path, &mut read);
@@ -389,6 +398,9 @@ pub(crate) fn confirm_route(
     if agent == Agent::Cursor {
         return crate::cursor::confirm_route(home, path, id, cwd)
             .map_err(|error| anyhow!(error.to_string()));
+    }
+    if agent == Agent::Antigravity {
+        return crate::antigravity::confirm_route(home, path, id, cwd);
     }
     let expected =
         inside_root(home, agent, path).map_err(|_| anyhow!("session_route_unconfirmed"))?;
@@ -517,6 +529,9 @@ pub(crate) fn locate(
 ) -> crate::Result<PathBuf> {
     if agent == Agent::Cursor {
         return crate::cursor::locate(home, identity, cwd, budget);
+    }
+    if agent == Agent::Antigravity {
+        return crate::antigravity::locate(home, identity, cwd, budget);
     }
     let cwd = cwd.ok_or(SessionError::CwdUnavailable)?;
     if let Some(SessionIdentity::Path(path)) = identity {
