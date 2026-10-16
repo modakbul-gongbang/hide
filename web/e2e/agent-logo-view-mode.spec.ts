@@ -6,13 +6,13 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, enterWorkspace, screenshot, showTool } from "./wire";
+import { countSent, enterWorkspace, openTaskFolds, screenshot, showTasks } from "./wire";
 
 const trigger = (page: Page) => page.locator("[data-view-menu-trigger]");
 const menu = (page: Page) => page.locator("[data-view-menu]");
 const item = (page: Page, mode: "shown" | "hidden") => page.locator(`[data-view-item="${mode}"]`);
 const sidebarRow = (page: Page) => page.locator("[data-sidebar] li[data-pane]").first();
-const marks = (page: Page) => page.locator("[data-sidebar] li[data-pane] [data-agent-mark], [data-tab] [data-agent-mark], aside[data-lane] [data-agent-mark]");
+const marks = (page: Page) => page.locator("[data-sidebar] li[data-pane] [data-agent-mark], [data-tab] [data-agent-mark], [data-task-row] [data-agent-mark]");
 const box = async (locator: Locator) => (await locator.boundingBox())!;
 
 async function open(page: Page, daemon: Daemon) {
@@ -28,13 +28,12 @@ async function choose(page: Page, mode: "shown" | "hidden") {
   await expect(menu(page)).toHaveCount(0);
 }
 
-test("hidden by default, a menu that checks the core's value, and logos that return in the sidebar, the tab and Sessions", async ({ page }) => {
+test("hidden by default, a menu that checks the core's value, and logos that return in the sidebar, the tab and the 태스크 list", async ({ page }) => {
   const herdr = await startHerdr();
   const daemon = await startHided(herdr, "agent-logo-menu");
   const sent = countSent(page);
   try {
     await open(page, daemon);
-    await showTool(page, "work");
     await expect(sidebarRow(page)).toBeVisible();
     // B4: nothing draws a logo until it is chosen.
     await expect(marks(page)).toHaveCount(0);
@@ -61,7 +60,6 @@ test("hidden by default, a menu that checks the core's value, and logos that ret
     expect(sent.get("agent_logo_mode_set")).toBe(1);
     await expect(sidebarRow(page).locator("[data-agent-mark]")).toHaveCount(1);
     await expect(page.locator("[data-tab] [data-agent-mark]").first()).toBeVisible();
-    await expect(page.locator("aside[data-lane] [data-session-focus] [data-agent-mark]").first()).toBeVisible();
     const status = await box(sidebarRow(page).locator("[data-agent-status-mark]"));
     const logo = await box(sidebarRow(page).locator("[data-agent-mark]"));
     const title = await box(sidebarRow(page).locator("[data-agent-title]"));
@@ -74,10 +72,15 @@ test("hidden by default, a menu that checks the core's value, and logos that ret
     await expect(item(page, "shown")).toHaveAttribute("aria-checked", "true");
     await screenshot(page, "view-menu-shown");
     await page.keyboard.press("Escape");
+    // The sidebar's 태스크 list draws it on every task row as well (PRD sidebar-task-lens B8).
+    const tasks = await showTasks(page);
+    await openTaskFolds(page);
+    await expect(tasks.locator("[data-task-row] [data-agent-mark]").first()).toBeVisible();
 
     // B8: hiding takes every logo away again.
     await choose(page, "hidden");
     await expect(marks(page)).toHaveCount(0);
+    await page.locator('[data-sidebar-lens-option="projects"]').click();
     expect((await box(sidebarRow(page))).height).toBe(hiddenRow.height);
   } finally { daemon.stop(); herdr.stop(); }
 });

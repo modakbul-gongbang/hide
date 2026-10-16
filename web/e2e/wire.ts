@@ -98,6 +98,22 @@ export async function showTool(page: Page, tool: LaneTool): Promise<void> {
   await expect(page.locator(`aside[data-lane="${tool}"]`)).toBeVisible();
 }
 
+/** Turns the sidebar to its 태스크 list (PRD sidebar-task-lens B1) and waits for the core's task scope. */
+export async function showTasks(page: Page): Promise<Locator> {
+  const option = page.locator('[data-sidebar-lens-option="tasks"]');
+  if ((await option.getAttribute("aria-pressed")) !== "true") await option.click();
+  await expect(page.locator('[data-sidebar-lens="tasks"]')).toBeVisible();
+  const list = page.locator("[data-task-lens]");
+  await expect(list.locator("[data-task-count]")).toBeVisible({ timeout: 20_000 });
+  return list;
+}
+
+/** Opens every 쉬는 중 and 정리할 것 fold of the 태스크 list, so a resting task's row is drawn (B5). */
+export async function openTaskFolds(page: Page): Promise<void> {
+  const folded = page.locator('[data-task-fold] > button[aria-expanded="false"]');
+  while ((await folded.count()) > 0) await folded.first().click();
+}
+
 /** Shows or hides the right lane from the Workspace path's menu (B20). */
 export async function chooseLane(page: Page): Promise<void> {
   await page.locator("[data-workspace-location]").click({ button: "right" });
