@@ -141,8 +141,8 @@ test("an area dragged on an image reaches its agent with a screenshot of that ar
     const field = page.locator("[data-view-note-field]");
     await expect(field).toBeFocused();
     // The picked area stays outlined while its note is open.
-    await expect(sheet.locator("[data-view-area-outline]")).toHaveCount(1);
     await screenshot(page, "comment-image-area-note-open");
+    await expect(sheet.locator("[data-view-area-outline]")).toHaveCount(1);
     await field.fill("Crop the owl tighter.");
     await page.keyboard.press("ControlOrMeta+Enter");
     await expect(page.locator('[data-view-region-pin="1"]')).toBeVisible();

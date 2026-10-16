@@ -158,8 +158,8 @@ test("Comment on a page: the operator picks an element in the page and its agent
   await expect(field).toBeFocused();
   await expect(shell.locator(`[data-browser-still="${display}"]`)).toBeVisible();
   // The picked place stays outlined over the still while its note is open.
-  await expect(note.locator("[data-view-area-outline]")).toHaveCount(1);
   await screenshot(shell, "comment-page-area-note-open");
+  await expect(note.locator("[data-view-area-outline]")).toHaveCount(1);
   await shell.keyboard.type("Make the button one size smaller.");
   await shell.keyboard.press("ControlOrMeta+Enter");
   await expect(note).toHaveCount(0);
