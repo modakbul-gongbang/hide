@@ -55,6 +55,17 @@ impl ProviderId {
         PROVIDERS.iter().copied().find(|provider| provider.0 == id)
     }
 
+    /// The provider that runs the install kit's agent `agent` (its adapter
+    /// id, [`ProviderDescriptor::agent`]), `None` for an agent Hide AI does
+    /// not run. The ids differ where the kit and Herdr name an agent apart,
+    /// as `antigravity` and `agy` do.
+    pub fn for_agent(agent: &str) -> Option<Self> {
+        PROVIDERS
+            .iter()
+            .copied()
+            .find(|provider| provider.descriptor().agent == agent)
+    }
+
     /// Whether this agent's sign-in can be checked without a request
     /// ([`ProviderDescriptor::login_probe`]).
     pub fn login_probe(self) -> bool {

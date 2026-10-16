@@ -45,14 +45,16 @@ impl Runtime {
     /// agent with no figure, or one whose window has reset, has no reading
     /// and is never held back (D-07).
     fn weekly_readings(&self) -> BTreeMap<ProviderId, UsageReading> {
+        // The usage rows are keyed by the agent's Herdr name, the provider
+        // by the kit's adapter id; `agy` and `antigravity` are one agent.
         hide_agent_adapter::ADAPTERS
             .iter()
-            .filter_map(|row| ProviderId::from_id(row.herdr.name))
-            .filter_map(|provider| {
+            .filter_map(|row| {
+                let provider = ProviderId::for_agent(row.id)?;
                 let (used_percent, resets_at_s) = self
                     .snapshot
                     .usage
-                    .weekly_reading(provider.as_str(), unix_milliseconds() / 1000)?;
+                    .weekly_reading(row.herdr.name, unix_milliseconds() / 1000)?;
                 Some((
                     provider,
                     UsageReading {
