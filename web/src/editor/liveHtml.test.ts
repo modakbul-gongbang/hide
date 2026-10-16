@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { imageTarget, resolveInCheckout, sanitizeHtml } from "./liveHtml";
+import { hasVisibleHtml, imageTarget, resolveInCheckout, sanitizeHtml } from "./liveHtml";
 
 const base = { docPath: "/work/repo/docs/guide/README.md", root: "/work/repo" };
 
@@ -41,6 +41,9 @@ describe("sanitizeHtml", () => {
     expect(clean('<a href="javascript:alert(1)">a</a>')).not.toMatch(/href/);
     expect(clean('<a href="JaVaScRiPt:alert(1)">a</a>')).not.toMatch(/href/);
     expect(clean('<a href="file:///etc/passwd">a</a>')).not.toMatch(/href/);
+    expect(clean('<a href="s3:bucket/key">a</a>')).not.toMatch(/href/);
+    expect(clean('<a href="a1:x">a</a>')).not.toMatch(/href/);
+    expect(clean('<a href="vbscript:x">a</a>')).not.toMatch(/href/);
     expect(clean('<a href="data:text/html,<script>alert(1)</script>">a</a>')).not.toMatch(/href/);
   });
 
@@ -62,6 +65,13 @@ describe("imageTarget", () => {
     expect(imageTarget("../../../../etc/x.png", base)).toEqual({ kind: "refused", reason: "outside_checkout" });
     expect(imageTarget("../../../repo-other/x.png", base)).toEqual({ kind: "refused", reason: "outside_checkout" });
     expect(imageTarget("../../a.png", base)).toEqual({ kind: "file", path: "/work/repo/a.png", mime: "image/png" });
+  });
+
+  it("refuses a backslash, an encoded one and a control character, which climb out on a Windows host", () => {
+    for (const src of ["..\\..\\..\\x.png", "..%5C..%5C..%5Cx.png", "..%5cx.png", "a\\b.png", "a%00.png", "a%0A.png"]) {
+      expect(imageTarget(src, base), src).toEqual({ kind: "refused", reason: "outside_checkout" });
+    }
+    expect(imageTarget("%2e%2e/%2e%2e/%2e%2e/x.png", base)).toEqual({ kind: "refused", reason: "outside_checkout" });
   });
 
   it("refuses a relative path when the text has no file, and a file that is not an image type", () => {
@@ -86,5 +96,15 @@ describe("resolveInCheckout", () => {
     expect(resolveInCheckout("../../LICENSE", base)).toBe("/work/repo/LICENSE");
     expect(resolveInCheckout("../../../LICENSE", base)).toBeNull();
     expect(resolveInCheckout("#install", base)).toBeNull();
+  });
+});
+
+describe("hasVisibleHtml", () => {
+  it("is false for a block that cleans to nothing, so it stays source", () => {
+    for (const html of ['<div align="center">', "</div>", '<p align="center">', "<br>", "<script>x</script>"]) {
+      expect(hasVisibleHtml(html), html).toBe(false);
+    }
+    expect(hasVisibleHtml("<p>hi</p>")).toBe(true);
+    expect(hasVisibleHtml('<img src="a.png">')).toBe(true);
   });
 });

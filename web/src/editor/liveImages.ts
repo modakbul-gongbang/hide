@@ -22,12 +22,19 @@ export type FileRead = (path: string, source: FileSource, limit: number) => Prom
 /** The read an image View uses, bounded to `limit` bytes plus one so an oversize file is told by its total. */
 export const readImageFile: FileRead = (path, source, limit) => requestFileBytesWithTotal(path, { offset: 0, length: limit + 1 }, source);
 
+/** Reasons a read failed that a later draw may not fail with. */
+const TRANSIENT = new Set(["superseded", "relay_busy", "not_connected"]);
+
 export class LiveImages {
   private readonly loaded = new Map<string, Promise<string | null>>();
   private readonly urls: string[] = [];
   private bytes = 0;
   private disposed = false;
   private warned = new Set<string>();
+  // hided runs two device reads per client at once and ends the oldest when a
+  // third arrives, and other views of the window share those two, so this
+  // view holds one read at a time.
+  private queue: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly read: FileRead,
@@ -44,7 +51,7 @@ export class LiveImages {
       this.warn("images", `markdown live: more than ${LIVE_IMAGE_LIMITS.images} images in one document, the rest show their alt text`);
       return Promise.resolve(null);
     }
-    const pending = this.fetch(target, source);
+    const pending = target.kind === "file" ? this.enqueue(() => this.fetch(target, source, key)) : this.fetch(target, source, key);
     this.loaded.set(key, pending);
     return pending;
   }
@@ -55,7 +62,13 @@ export class LiveImages {
     this.loaded.clear();
   }
 
-  private async fetch(target: Exclude<ImageTarget, { kind: "refused" }>, source: FileSource): Promise<string | null> {
+  private enqueue<T>(run: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(run, run);
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
+
+  private async fetch(target: Exclude<ImageTarget, { kind: "refused" }>, source: FileSource, key: string): Promise<string | null> {
     if (target.kind === "remote") return target.url;
     if (target.kind === "data") return this.charge(target.url.length) ? target.url : null;
     try {
@@ -75,7 +88,11 @@ export class LiveImages {
     } catch (error) {
       // A missing or refused file is the document's own broken link; the
       // widget shows its alt text, and the reason goes to the log.
-      this.warn(target.path, `markdown live: image ${target.path} not read: ${error instanceof Error ? error.message : "read_failed"}`);
+      const reason = error instanceof Error ? error.message : "read_failed";
+      this.warn(target.path, `markdown live: image ${target.path} not read: ${reason}`);
+      // A busy or absent connection, or a file that is not there yet, may
+      // read next time; only a definite refusal is kept.
+      if (TRANSIENT.has(reason) || reason === "read_failed") this.loaded.delete(key);
       return null;
     }
   }

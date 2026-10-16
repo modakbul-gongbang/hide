@@ -28,7 +28,7 @@ const ATTRIBUTES = ["href", "src", "alt", "title", "width", "height", "align", "
 
 // Anything else with a scheme (`javascript:`, `vbscript:`, `file:`, `ftp:`) is
 // dropped; a path with no scheme and a `#fragment` stay.
-const LINK_URI = /^(?:(?:https?|mailto):|[^a-z]|[a-z+.-]+(?:[^a-z+.:-]|$))/i;
+const LINK_URI = /^(?:(?:https?|mailto):|[^a-z]|[a-z][a-z0-9+.-]*(?:[^a-z0-9+.:-]|$))/i;
 
 let purifier: ReturnType<typeof DOMPurify> | null = null;
 
@@ -60,6 +60,24 @@ export function sanitizeHtml(html: string): { fragment: DocumentFragment; images
   }
   const visible = (fragment.textContent ?? "").trim() !== "" || fragment.querySelector("img, hr") !== null;
   return visible ? { fragment, images } : null;
+}
+
+const drawable = new Map<string, boolean>();
+const DRAWABLE_CAP = 512;
+
+/**
+ * Whether `html` leaves something to draw once cleaned. A block that leaves
+ * nothing (a bare `<div align="center">`, a `</div>`, a comment) stays source,
+ * so this is asked while the decorations are planned; the answer is kept by
+ * source text so a keystroke elsewhere does not clean the same block again.
+ */
+export function hasVisibleHtml(html: string): boolean {
+  const known = drawable.get(html);
+  if (known !== undefined) return known;
+  if (drawable.size >= DRAWABLE_CAP) drawable.clear();
+  const visible = sanitizeHtml(html) !== null;
+  drawable.set(html, visible);
+  return visible;
 }
 
 /** Where an image may be read from, or why it may not be. */
@@ -122,6 +140,10 @@ export function resolveInCheckout(reference: string, base: ImageBase): string | 
   } catch {
     return null;
   }
+  // A backslash is a separator on a Windows host, and `normalize` only knows
+  // `/`, so `..\..\x` would climb out there; a control character names nothing.
+  // eslint-disable-next-line no-control-regex
+  if (/[\\\u0000-\u001f]/.test(decoded)) return null;
   const root = base.root.replace(/\/+$/, "");
   const folder = base.docPath.slice(0, base.docPath.lastIndexOf("/"));
   const joined = decoded.startsWith("/") ? `${root}${decoded}` : `${folder}/${decoded}`;

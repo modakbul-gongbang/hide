@@ -64,5 +64,43 @@ describe("LiveImages", () => {
     cache.dispose();
     release();
     expect(await late).toBeNull();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:1");
+  });
+
+  it("revokes every URL it made when it is disposed", async () => {
+    const { cache } = images(async () => ({ bytes: new Uint8Array(7), total: 7 }));
+    await cache.load(file("/r/a.png"), null);
+    vi.mocked(URL.revokeObjectURL).mockClear();
+    cache.dispose();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:7");
+  });
+
+  it("holds one file read at a time", async () => {
+    let running = 0;
+    let most = 0;
+    const { cache } = images(async () => {
+      running += 1;
+      most = Math.max(most, running);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      running -= 1;
+      return { bytes: new Uint8Array(1), total: 1 };
+    });
+    await Promise.all(["a", "b", "c", "d"].map((name) => cache.load(file(`/r/${name}.png`), null)));
+    expect(most).toBe(1);
+  });
+
+  it("reads again after a read that a busy connection ended, and keeps a definite refusal", async () => {
+    let reason = "superseded";
+    const read = vi.fn<FileRead>(async () => {
+      throw new Error(reason);
+    });
+    const { cache } = images(read);
+    expect(await cache.load(file("/r/a.png"), null)).toBeNull();
+    expect(await cache.load(file("/r/a.png"), null)).toBeNull();
+    expect(read).toHaveBeenCalledTimes(2);
+    reason = "outside_checkout";
+    await cache.load(file("/r/b.png"), null);
+    await cache.load(file("/r/b.png"), null);
+    expect(read).toHaveBeenCalledTimes(3);
   });
 });

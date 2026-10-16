@@ -13,7 +13,7 @@ import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } fr
 import type { FileSource } from "../fileBytes";
 import { translate } from "../i18n/client";
 import { useShellStore } from "../store";
-import { imageTarget, resolveInCheckout, sanitizeHtml, type ImageBase } from "./liveHtml";
+import { hasVisibleHtml, imageTarget, resolveInCheckout, sanitizeHtml, type ImageBase } from "./liveHtml";
 import { LiveImages, readImageFile } from "./liveImages";
 import { markdownLivePlan, MARKDOWN_LIVE_BYTE_LIMIT } from "./markdownLive";
 
@@ -158,10 +158,8 @@ class HtmlWidget extends WidgetType {
     const root: HTMLElement = document.createElement(this.block ? "div" : "span");
     root.className = this.block ? "cm-md-html cm-md-html-block" : "cm-md-html";
     const clean = sanitizeHtml(this.html);
-    if (!clean) {
-      root.textContent = this.html;
-      return root;
-    }
+    // The plan only draws a block that has something to show.
+    if (!clean) return root;
     root.append(clean.fragment);
     for (const { element, src } of clean.images) drawImage(element, src, this.drawing, view);
     const anchorOf = (event: Event) => (event.target instanceof Element ? event.target.closest("a") : null);
@@ -175,10 +173,12 @@ class HtmlWidget extends WidgetType {
       event.stopPropagation();
       openLink(anchor, this.drawing.files);
     });
-    // A link never navigates the page itself.
-    root.addEventListener("click", (event) => {
-      if (anchorOf(event)) event.preventDefault();
-    });
+    // A link never navigates the page itself, whichever button pressed it.
+    for (const type of ["click", "auxclick"]) {
+      root.addEventListener(type, (event) => {
+        if (anchorOf(event)) event.preventDefault();
+      });
+    }
     return root;
   }
   ignoreEvent(): boolean {
@@ -274,6 +274,7 @@ function build(state: EditorState, reveal: boolean, drawing: Drawing): Decoratio
         ranges.push(Decoration.mark({ class: "cm-md-code-inline" }).range(range.from, range.to));
         break;
       case "html":
+        if (!hasVisibleHtml(range.html ?? "")) break;
         ranges.push(
           Decoration.replace({ widget: new HtmlWidget(range.html ?? "", range.block === true, key, drawing), block: range.block === true }).range(
             range.from,

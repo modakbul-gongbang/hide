@@ -286,6 +286,7 @@ export function CodeMirrorEditor({
       const limit = bodyEditor.state.doc.length;
       bodyEditor.dispatch({
         selection: { anchor: Math.min(place.anchor, limit), head: Math.min(place.head, limit) },
+        userEvent: "select",
         effects: EditorView.scrollIntoView(Math.min(place.top, limit), { y: "start" }),
       });
     }
@@ -298,7 +299,7 @@ export function CodeMirrorEditor({
       if (!asked) return;
       const target = frontEditor && asked.line <= frontLines ? frontEditor : bodyEditor;
       const offset = lineOffset(target.state.doc, target === bodyEditor ? asked.line - frontLines : asked.line, asked.column);
-      target.dispatch({ selection: { anchor: offset }, effects: EditorView.scrollIntoView(offset, { y: "center" }) });
+      target.dispatch({ selection: { anchor: offset }, userEvent: "select", effects: EditorView.scrollIntoView(offset, { y: "center" }) });
     };
     goToLine();
     const stopLines = onLineRequest(goToLine);
