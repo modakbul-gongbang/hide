@@ -178,7 +178,8 @@ it.each(["parent", "child", "descendant"] as const)("preserves topology but repl
     expect(document.querySelector('[data-agent-tree="parent"]')).not.toBeNull();
     if (scope === "child") {
       const child = document.querySelector('[data-agent-child="working"]')!;
-      expect(child.getAttribute("aria-label")).toContain("Mac mini is not connected");
+      // Its line names the device and says it is disconnected (status-marks B16).
+      expect(child.getAttribute("aria-label")).toContain("mini disconnected");
       expect(child.getAttribute("aria-label")).not.toContain("Working");
     }
   } finally { await unmount(); }

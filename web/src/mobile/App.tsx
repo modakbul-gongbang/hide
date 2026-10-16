@@ -2,7 +2,8 @@
 // B30, B38): pairing, the refused and unpaired guidance, and the list; the
 // detail is `Detail.tsx`. Every value comes from the store the socket writes.
 
-import { BellIcon, ChevronRightIcon, LaptopIcon, Loader2Icon, MoonIcon, PlusIcon, XIcon } from "lucide-react";
+import { BellIcon, ChevronRightIcon, LaptopIcon, Loader2Icon, PlusIcon, XIcon } from "lucide-react";
+import { StatusMark } from "../components/status-mark";
 import { useEffect, useState } from "react";
 import { useElapsed } from "../components/elapsed";
 import { useInterfaceTranslation } from "../i18n/translator";
@@ -190,8 +191,9 @@ function SleepingRow({ session }: { session: PhoneSleepingSession }) {
   return (
     <li className="flex min-h-(--size-touch-target) flex-col gap-xs py-md" data-phone-sleeping={session.sleep_id}>
       <div className="flex min-w-0 items-center gap-sm">
-        <span className="flex size-(--size-agent-mark) shrink-0 items-center justify-center"><MoonIcon aria-label={caption} className="size-(--size-status-mark) text-muted-foreground" /></span>
-        <span className="min-w-0 flex-1 truncate text-title text-subtle-foreground">{session.title}<span className="sr-only">, {agentProductName(session.agent_kind)}</span></span>
+        {/* No mark, dimmed, its state on the line below (status-marks D-05, B16). */}
+        <span className="flex size-(--size-agent-mark) shrink-0 items-center justify-center opacity-(--opacity-dimmed)"><StatusMark mark="quiet" /></span>
+        <span className="min-w-0 flex-1 truncate text-title text-subtle-foreground opacity-(--opacity-dimmed)">{session.title}<span className="sr-only">, {agentProductName(session.agent_kind)}</span></span>
       </div>
       <div className={`flex min-w-0 items-center justify-between gap-sm ${LIST_INSET}`}>
         <span className="min-w-0 break-words text-subhead text-muted-foreground" role={failed ? "status" : undefined}>

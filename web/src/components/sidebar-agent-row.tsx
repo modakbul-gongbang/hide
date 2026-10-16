@@ -137,9 +137,12 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   const branch = branchShown ? branchChip(agent) : null;
   const attention = agent.state.attention;
   const unreachable = remote !== null && !remote.reachable;
+  // A row on a device that is not connected shows what Hide last knew of it,
+  // which may be long over: it draws no mark, and its line says why (status-marks B16).
+  const offline = unreachable ? t("agents.line.disconnected", { device: remote.label }) : null;
   const titleTone = agent.state.title_emphasized || (selected && agent.state.selection_emphasizes_title) ? "text-foreground" : "text-subtle-foreground";
   // The mark's state and word ride the row's hint, which the mark sits inside (B3).
-  const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, agentProductName(agent.agent_kind), markWords(t, agent), agent.detail?.trim(), place].filter(Boolean).join("\n");
+  const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, agentProductName(agent.agent_kind), offline ?? markWords(t, agent), offline ? null : agent.detail?.trim(), place].filter(Boolean).join("\n");
   const staleness = ask ? undefined : agentPrStaleness;
   const folded = tree ? tree.open !== true : true;
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -180,7 +183,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           ref={main}
           type="button"
           disabled={unreachable}
-          aria-label={[rowAccessibleName(t, agent, device ?? remote?.label ?? null), forkLabel(t, agent), closing ? t("agents.closingName") : null, place].filter(Boolean).join(", ")}
+          aria-label={[offline ? [agent.identity_label, remote?.label, agentProductName(agent.agent_kind), offline].filter(Boolean).join(", ") : rowAccessibleName(t, agent, device ?? remote?.label ?? null), forkLabel(t, agent), closing ? t("agents.closingName") : null, place].filter(Boolean).join(", ")}
           aria-current={selected ? "true" : undefined}
           aria-expanded={tree && tree.open !== null && !tree.popover ? tree.open : undefined}
           data-agent-open={agent.pane_id}
@@ -225,7 +228,11 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
             {/* Every row ends in the fold slot, so every time ends on one column (sidebar-readability D-3). */}
             <FoldLane />
           </span>
-          {ask && agent.state.ask ? <span aria-hidden="true" className="pointer-events-none flex min-w-0 leading-(--size-sidebar-line-detail)"><AskLine ask={agent.state.ask} className="flex-1" /></span> : ask && agent.hide_ai?.turn && !(line && agent.status_code === "error") ? (
+          {offline ? (
+            <span aria-hidden="true" data-agent-line="disconnected" className="pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail) text-subtle-foreground">
+              {offline}
+            </span>
+          ) : ask && agent.state.ask ? <span aria-hidden="true" className="pointer-events-none flex min-w-0 leading-(--size-sidebar-line-detail)"><AskLine ask={agent.state.ask} className="flex-1" /></span> : ask && agent.hide_ai?.turn && !(line && agent.status_code === "error") ? (
             // What the row's home waits for, after the agent's own ask or block cause (PRD hide-ai-work-home D-14, D-16).
             <span aria-hidden="true" data-agent-home-turn={agent.hide_ai.turn.kind} className="pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail) text-warning">
               {homeTurnLine(t, agent.hide_ai.turn)}
@@ -240,9 +247,9 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
               {originLine(t, agent.hide_ai)}
             </span>
           ) : null}
-          {remote ? (
+          {remote && !offline ? (
             <span aria-hidden="true" data-agent-remote={remote.label} className="pointer-events-none flex min-w-0 pt-xxs">
-              <DeviceChip label={remote.reachable ? remote.label : `${remote.label} · ${t("devices.rail.notConnected")}`} />
+              <DeviceChip label={remote.label} />
             </span>
           ) : null}
           {place ? (

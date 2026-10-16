@@ -102,7 +102,7 @@ it("starts both device checkouts open and offers the same persisted fold (sessio
     expect(open(local.checkoutId)?.textContent).toContain("보관된 대화");
     expect(container.querySelector('[data-sleeping-session="sleep-ab-2"]')).toBeNull();
     const retained = container.querySelector('[data-sleeping-session="sleep-ab-1"]');
-    expect(retained?.textContent).toContain("Sleeping");
+    expect(retained?.textContent).toContain("Sleeping · wakes when opened");
     expect(retained?.querySelector("[data-pane], button")).toBeNull();
     expect(container.querySelector('[data-sidebar-mode="agents"]')).toBeNull();
     await act(async () => useShellStore.setState({ rest: { ...dormant, ui_state: { ...dormant.ui_state, session_collapsed_checkout_ids: [local.checkoutId] } } }));

@@ -307,7 +307,8 @@ function TreeItem({
   const device = child.device_id ?? remoteTargetOfPane(rest, child.pane_id) ?? localDeviceId(rest);
   const deviceLabel = child.device_label ?? machineName(rest?.navigator?.devices, device, t);
   const unavailable = !deviceConnected(rest, device);
-  const reason = unavailable ? rest?.status?.remote?.find((row) => row.target_id === device)?.message ?? t("devices.rail.notConnected") : null;
+  // A child on a device that is not connected draws no mark and says so on its line (status-marks B16).
+  const reason = unavailable ? t("agents.line.disconnected", { device: deviceLabel ?? device }) : null;
   // A draft's Open goes to the parent holding it, which can sit on another device.
   const askDevice =
     ask === null || ask.open_pane_id === child.pane_id
@@ -328,7 +329,7 @@ function TreeItem({
       data-agent-child={child.pane_id}
       data-depth={line.depth}
       aria-label={[child.identity_label, agentProductName(child.agent_kind), reason ?? statusText(t, child.status_code), ask && !unavailable ? `${t(`agentSessions.verb.${ask.verb}`)}: ${askWhat(t, ask.verb, ask.what)}` : null, deviceLabel && device !== parentDevice ? deviceLabel : null].filter(Boolean).join(", ")}
-      className={cn("items-stretch gap-none py-none", ask && !unavailable && "ring-1 ring-inset ring-foreground")}
+      className={cn("items-stretch gap-none py-none", ask && !unavailable && "ring-1 ring-inset ring-foreground", unavailable && "opacity-(--opacity-dimmed)")}
     >
       <TreeRails place={place} />
       <TreeChevron name={child.identity_label} open={line.hasChildren ? line.open : null} onToggle={onToggle} hangs={line.depth > 1} popup={line.depth >= 2} data-tree-chevron={child.pane_id} />
