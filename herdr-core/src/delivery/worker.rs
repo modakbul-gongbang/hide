@@ -691,12 +691,12 @@ fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, boo
             let observed = target.as_ref().ok_or("agent_pane_required")?;
             let working_since =
                 (observed.status == "working").then_some(observed.entered_working_at_unix_ms);
-            Ok(json!(mailbox::tool_pull(
-                ledger,
-                actor,
-                working_since,
-                now
-            )?))
+            let intake = mailbox::tool_pull(ledger, actor, working_since, now)?;
+            // The handover is counted before the answer leaves, so a receipt
+            // that never comes cannot make the same letter ride every tool;
+            // the count moves nothing on screen.
+            mailbox::record_tool_handover(ledger, &intake);
+            return Ok((json!(intake), false));
         }
         command => mailbox::apply(
             ledger,

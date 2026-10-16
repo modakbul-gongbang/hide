@@ -211,6 +211,7 @@ pub(crate) fn send(
         answer_wait_ended: None,
         bell_line: None,
         immediate: false,
+        tool_handovers: 0,
         // A letter to a machine with a clock waits on that clock from now;
         // the store gives one to a machine a letter waits on.
         intake_from: ledger
@@ -511,6 +512,11 @@ pub(crate) fn tool_letters(kind: &str) -> bool {
 /// them over, confirmed by the script once the host wrote them. A kind that
 /// takes no letters at a tool event, a resting pane and a letter still
 /// waiting get nothing.
+/// How many times a tool event hands one letter over without a receipt
+/// before it waits for the next prompt or `hide inbox`, as a letter does
+/// after its three bells (PRD letters-to-busy-agents D-11).
+pub(crate) const TOOL_HANDOVERS: u8 = 3;
+
 pub(crate) fn tool_pull(
     ledger: &Ledger,
     actor: &Actor,
@@ -528,10 +534,26 @@ pub(crate) fn tool_pull(
             letter.recipient.same_identity(actor)
                 && letter.state == State::Pending
                 && letter.within_deadline(&ledger.node_clocks, now)
+                && letter.tool_handovers < TOOL_HANDOVERS
                 && super::doorbell::Patience::of(letter).due(working_since, now)
         })
         .collect();
     Ok(render(due))
+}
+
+/// Counts the handover of the letters `intake` carries, so that a letter
+/// whose receipt never comes is handed over at most [`TOOL_HANDOVERS`] times.
+pub(crate) fn record_tool_handover(ledger: &mut Ledger, intake: &Intake) -> bool {
+    let mut changed = false;
+    for letter in ledger
+        .letters
+        .iter_mut()
+        .filter(|letter| intake.ids.contains(&letter.id))
+    {
+        letter.tool_handovers = letter.tool_handovers.saturating_add(1);
+        changed = true;
+    }
+    changed
 }
 
 /// The letter bodies for the turn Hide's bell opened.
@@ -1117,6 +1139,17 @@ mod tests {
                     .iter()
                     .all(|letter| letter.state == State::Pending)
             );
+            // Handed over three times without a receipt, a letter waits for
+            // the next prompt; its batch-mate still goes.
+            for _ in 0..TOOL_HANDOVERS {
+                let intake = tool_pull(&ledger, &recipient, Some(1000), 1001).unwrap();
+                assert!(record_tool_handover(&mut ledger, &intake), "{kind}");
+            }
+            assert_eq!(ledger.letters[1].tool_handovers, TOOL_HANDOVERS);
+            assert!(pull(&ledger, Some(1000), 1001).is_empty(), "{kind}: spent");
+            assert_eq!(pull(&ledger, Some(1000), 1000 + wait), ids[..1], "{kind}");
+            let none = tool_pull(&ledger, &recipient, Some(1000), 1001).unwrap();
+            assert!(!record_tool_handover(&mut ledger, &none), "{kind}");
             // A letter past its deadline is not handed over.
             ledger.letters[1].created_at_unix_ms = 0;
             assert!(pull(&ledger, Some(1000), 61 * 60_000).is_empty(), "{kind}");

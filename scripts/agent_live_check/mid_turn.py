@@ -14,6 +14,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import shlex
@@ -339,14 +340,21 @@ def send_letter(runtime, pane, intent, body, now):
     args = [str(runtime.hide), "request", "send", pane, "--intent", intent, "--kind", "report", "--body", body]
     if now:
         args.append("--now")
-    code, output, err = runtime.owner.run(args, env=environment, check=False)
-    try:
-        answer = json.loads(output)
-    except ValueError:
-        answer = {"exit": code, "stdout": output[:200], "stderr": err[:200]}
-    if answer.get("ok") is not True:
-        raise ProcessError("private_mailbox_send_refused:" + json.dumps(answer)[:200])
-    return answer["result"]["id"]
+    # Herdr reports the pane working before it knows the agent's native session, and a letter needs that identity:
+    # the send is asked again until the core has it, for at most 60 seconds.
+    deadline = time.time() + 60
+    while True:
+        code, output, err = runtime.owner.run(args, env=environment, check=False)
+        try:
+            answer = json.loads(output)
+        except ValueError:
+            answer = {"exit": code, "stdout": output[:200], "stderr": err[:200]}
+        if answer.get("ok") is True:
+            return answer["result"]["id"]
+        if answer.get("reason") != "native_identity_required" or time.time() >= deadline:
+            raise ProcessError("private_mailbox_send_refused:" + json.dumps(answer)[:200])
+        if runtime.owner.cancelled.wait(1):
+            raise ProcessError("run_cancelled")
 
 
 def observe_letter(probe, letter_id, marker, seconds, run):
@@ -428,6 +436,17 @@ def observe_letter(probe, letter_id, marker, seconds, run):
     return row
 
 
+def script_version(agent_home, kind):
+    """The version the installed plugin or extension sends the helper, from its marker line; a stale one answers `{}`."""
+    path = {"opencode": ".config/opencode/plugins/hide.js", "pi": ".pi/agent/extensions/hide.ts",
+            "omp": ".omp/agent/extensions/hide.ts"}[kind]
+    first = (agent_home / path).read_text(encoding="utf-8").splitlines()[0]
+    match = re.search(r"@(\d+) sha256=", first)
+    if not match:
+        raise ProcessError(f"script_marker_missing: {path}")
+    return int(match.group(1))
+
+
 def cost(runtime, probe, samples, run):
     """Wall time of one hook call with no letter waiting, from the controller, per docs/PERFORMANCE_TESTING.md."""
     kind = probe.recipe["kind"]
@@ -447,7 +466,7 @@ def cost(runtime, probe, samples, run):
                    "cwd": str(probe.cwd)}
     elif kind in ("opencode", "pi", "omp"):
         argv = [str(real), kind, "letters"]
-        payload = {"session_id": session, "version": 3 if kind == "opencode" else 5, "working": 0, "done": 0,
+        payload = {"session_id": session, "version": script_version(probe.agent_home, kind), "working": 0, "done": 0,
                    "lost": 0, "first": False, "letters": [], "guard_only": False}
     else:
         return {"skipped": "bell_target_pays_nothing_at_a_tool"}

@@ -1005,6 +1005,7 @@ mod tests {
             bell_line: None,
             intake_from: None,
             immediate: false,
+            tool_handovers: 0,
         }
     }
 

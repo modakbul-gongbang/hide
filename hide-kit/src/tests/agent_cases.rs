@@ -925,10 +925,7 @@ fn grok_gets_its_own_hook_file_beside_the_others_and_only_inside_its_own_folder(
         assert!(command.contains("--runtime grok"), "{command}");
         assert!(command.contains(&format!("--event {event}")), "{command}");
     }
-    assert_eq!(
-        written["hooks"]["PreToolUse"][0]["matcher"],
-        "Bash|ask_user_question|exit_plan_mode|Read|Edit|Write|read_file|search_replace|write"
-    );
+    assert!(written["hooks"]["PreToolUse"][0].get("matcher").is_none());
     assert_eq!(
         std::fs::read(fixture.home().join(".grok/hooks/herdr.json")).unwrap(),
         herdr

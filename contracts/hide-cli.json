@@ -693,6 +693,13 @@
                         "state": {
                             "$ref": "#/definitions/State"
                         },
+                        "tool_handovers": {
+                            "default": 0,
+                            "description": "How many tool events handed the letter over while its recipient worked (PRD letters-to-busy-agents D-11): a handover is confirmed by the script once the host kept it, and after three unconfirmed ones the letter waits for the next prompt or `hide inbox`, as it does after three bells.",
+                            "format": "uint8",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
                         "waiting_answer": {
                             "type": "boolean"
                         },
@@ -729,7 +736,8 @@
                         "answer_wait_ended",
                         "bell_line",
                         "intake_from",
-                        "immediate"
+                        "immediate",
+                        "tool_handovers"
                     ],
                     "type": "object"
                 },
@@ -1003,6 +1011,13 @@
                 "state": {
                     "$ref": "#/definitions/State"
                 },
+                "tool_handovers": {
+                    "default": 0,
+                    "description": "How many tool events handed the letter over while its recipient worked (PRD letters-to-busy-agents D-11): a handover is confirmed by the script once the host kept it, and after three unconfirmed ones the letter waits for the next prompt or `hide inbox`, as it does after three bells.",
+                    "format": "uint8",
+                    "minimum": 0.0,
+                    "type": "integer"
+                },
                 "waiting_answer": {
                     "type": "boolean"
                 },
@@ -1039,7 +1054,8 @@
                 "answer_wait_ended",
                 "bell_line",
                 "intake_from",
-                "immediate"
+                "immediate",
+                "tool_handovers"
             ],
             "title": "Letter",
             "type": "object"
@@ -1878,7 +1894,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:4c528b1d82d8a13c7ffbd9c6fd8cca487dae90be6c92d41816676fc942057024",
+    "digest": "sha256:435510802d8bc78c0b93c20e4fb1ea2d85bbd3349dcff3474588c679af29a56d",
     "envelopes": {
         "agent": {
             "answer": "value",

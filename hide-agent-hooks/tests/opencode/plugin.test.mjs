@@ -194,29 +194,65 @@ test("a tool result while the root session works carries the letters due, confir
   assert.equal(result.output.match(/<\s*\/?\s*system-reminder/gi).length, 2, result.output);
   assert.deepEqual(result, { title: "cat", output: result.output, metadata: {} });
   // Nothing is confirmed before OpenCode stored the completed tool part.
-  const part = (sessionID, callID, state) => ({ event: { type: "message.part.updated", properties: { sessionID, part: { type: "tool", sessionID, callID, state } } } });
-  await hooks.event(part("ses_root", "call_1", { status: "running" }));
-  await hooks.event(part("ses_root", "call_other", { status: "completed", output: result.output }));
-  // A child session's call with the same id, and a stored output another plugin stripped the letters from, confirm nothing.
-  await hooks.event(part("ses_child", "call_1", { status: "completed", output: result.output }));
-  await hooks.event(part("ses_root", "call_1", { status: "completed", output: "RESULT" }));
+  await hooks.event(toolPart("ses_root", "call_1", { status: "running" }));
+  await hooks.event(toolPart("ses_root", "call_other", { status: "completed", output: result.output }));
+  // A child session's call with the same id confirms nothing.
+  await hooks.event(toolPart("ses_child", "call_1", { status: "completed", output: result.output }));
   await sleep(100);
   assert.equal(calls().filter((c) => c.operation === "confirm").length, 0);
-  await hooks.event(part("ses_root", "call_1", { status: "completed", output: result.output }));
-  const [confirm] = await until("confirm");
-  assert.deepEqual(confirm.input, { session_id: "ses_root", letters: ["letter-5"] });
-
-  // A burst of tool calls asks once: the next result in the interval is left alone.
+  // While the receipt is open the next result asks nothing: the letters are not written twice.
   const next = { title: "ls", output: "NEXT", metadata: {} };
   await hooks["tool.execute.after"]({ tool: "bash", sessionID: "ses_root", callID: "call_2" }, next);
   assert.equal(next.output, "NEXT");
+  await sleep(100);
+  assert.equal(calls().filter((c) => c.operation === "letters").length, 1);
+  await hooks.event(toolPart("ses_root", "call_1", { status: "completed", output: result.output }));
+  const [confirm] = await until("confirm");
+  assert.deepEqual(confirm.input, { session_id: "ses_root", letters: ["letter-5"] });
+  await sleep(300);
+
+  // Once Hide took the letter the next result asks again, and a letter Hide already took is never written twice.
+  const later = { title: "ls", output: "LATER", metadata: {} };
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "ses_root", callID: "call_3" }, later);
+  await until("letters", 2);
+  assert.equal(later.output, "LATER");
   // A child session's result never asks.
   await hooks.event({ event: sample("session.created.child") });
   const child = { title: "ls", output: "CHILD", metadata: {} };
-  await hooks["tool.execute.after"]({ tool: "bash", sessionID: sample("session.created.child").properties.info.id, callID: "call_3" }, child);
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: sample("session.created.child").properties.info.id, callID: "call_4" }, child);
   assert.equal(child.output, "CHILD");
   await sleep(100);
-  assert.equal(calls().filter((c) => c.operation === "letters").length, 1);
+  assert.equal(calls().filter((c) => c.operation === "letters").length, 2);
+});
+
+/** OpenCode's report that the tool part of `callID` in `sessionID` reached `state`. */
+function toolPart(sessionID, callID, state) {
+  return { event: { type: "message.part.updated", properties: { sessionID, part: { type: "tool", sessionID, callID, state } } } };
+}
+
+test("a tool result OpenCode stored without Hide's text leaves its letters pending, and the next result carries them again", async () => {
+  answer({
+    start: { context: "" },
+    prompt: { context: "", letters: [] },
+    letters: { context: "Hide letter letter-5 from lead (claude) [request]\nBODY-5", letters: ["letter-5"] },
+    confirm: { confirmed: ["letter-5"] },
+    subagents: { reported: true },
+  });
+  const hooks = await plugin();
+  await hooks.event({ event: sample("session.created") });
+  await prompt(hooks);
+  const result = { title: "cat", output: "RESULT", metadata: {} };
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "ses_root", callID: "call_1" }, result);
+  await until("letters");
+  assert.match(result.output, /letter-5/);
+  // A later plugin rewrote the result: Hide's text is gone, so the model never read the letter.
+  await hooks.event(toolPart("ses_root", "call_1", { status: "completed", output: "RESULT" }));
+  await sleep(100);
+  assert.equal(calls().filter((c) => c.operation === "confirm").length, 0);
+  const again = { title: "ls", output: "AGAIN", metadata: {} };
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "ses_root", callID: "call_2" }, again);
+  await until("letters", 2);
+  assert.match(again.output, /^AGAIN\n\n<system-reminder>\nHide letter letter-5/);
 });
 
 test("a tool result is left as it is when nothing is due, when the helper fails, and when the session is not the pane's root", async () => {

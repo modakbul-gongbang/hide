@@ -4,8 +4,10 @@
 // stdout all cross Windows as they will on an operator's machine.
 //
 // `tests/it/windows_scripts.rs` writes the file and runs this once per agent
-// with HIDE_SCRIPT and HIDE_SCRIPT_AGENT set; it prints one JSON line, the
-// texts the script added to its session's prompts, for the test to read.
+// with HIDE_SCRIPT and HIDE_SCRIPT_AGENT set; it prints one JSON line for the
+// test to read: the texts the script added to its session's prompts, and the
+// tool result it answered while the session worked, which asks the helper for
+// the letters due and goes on unchanged when the ask brings none.
 
 import { readFileSync } from "node:fs";
 import { win32 } from "node:path";
@@ -39,8 +41,10 @@ async function opencode() {
     added.push(...output.parts.slice(1).map((part) => part.text));
     await sleep(1000);
   }
+  const result = { title: "cat", output: "RESULT", metadata: {} };
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: root.id, callID: "call_1" }, result);
   await hooks.dispose();
-  return added;
+  return { prompts: added, tool_result: result.output };
 }
 
 async function extension() {
@@ -77,10 +81,13 @@ async function extension() {
     if (typeof result?.message?.content === "string") added.push(result.message.content);
     await sleep(1000);
   }
+  const tool = { ...sample("tool_result.bash").event, content: [{ type: "text", text: "RESULT" }] };
+  const result = await emit("tool_result", tool, context("tool_result.bash"));
   await emit("session_shutdown", sample("session_shutdown").event, context("session_shutdown"));
-  return added;
+  // The extension answers nothing for a result it leaves as it is.
+  return { prompts: added, tool_result: result === undefined ? tool.content[0].text : JSON.stringify(result) };
 }
 
-const added = AGENT === "opencode" ? await opencode() : await extension();
+const answered = AGENT === "opencode" ? await opencode() : await extension();
 // A helper call the script gave up on may still be closing; the answer is complete without it.
-process.stdout.write(`${JSON.stringify(added)}\n`, () => process.exit(0));
+process.stdout.write(`${JSON.stringify(answered)}\n`, () => process.exit(0));

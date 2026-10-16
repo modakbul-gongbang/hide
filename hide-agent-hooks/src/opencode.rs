@@ -16,7 +16,7 @@ pub const PLUGIN: PluginFile = PluginFile {
     agent: "OpenCode",
     noun: "plugin",
     source_name: "hide-opencode-plugin",
-    version: 4,
+    version: 5,
     config: &[".config", "opencode"],
     folder: "plugins",
     file_name: "hide.js",

@@ -85,6 +85,13 @@ pub struct Letter {
     /// next save, and the letter then waits as any other.
     #[serde(default)]
     pub immediate: bool,
+    /// How many tool events handed the letter over while its recipient
+    /// worked (PRD letters-to-busy-agents D-11): a handover is confirmed by
+    /// the script once the host kept it, and after three unconfirmed ones
+    /// the letter waits for the next prompt or `hide inbox`, as it does
+    /// after three bells.
+    #[serde(default)]
+    pub tool_handovers: u8,
 }
 
 /// How long one machine other than this core's own has been reachable, which

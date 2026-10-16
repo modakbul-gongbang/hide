@@ -25,7 +25,6 @@ const COUNT_BUDGET_MS = 2000;
 // calls asks once per interval, so the cost per tool stays bounded, and a letter that is due waits at most this
 // much longer.
 const LETTERS_BUDGET_MS = 1500;
-const LETTERS_ASK_INTERVAL_MS = 10 * 1000;
 const OUTPUT_LIMIT = 64 * 1024;
 // Far inside the helper's 256 KiB input, so a pasted log never costs a prompt its letters.
 const PROMPT_TEXT_LIMIT = 32 * 1024;
@@ -359,36 +358,52 @@ async function onPrompt(state, event, ctx) {
   return { message: { customType: CUSTOM_TYPE, content: text, display: false, details: { hide: id } } };
 }
 
-/** Forgets letters whose write never came, and makes room for `key`; a letter left out stays pending in Hide. */
-function holdPending(state, key, entry) {
-  const now = Date.now();
+/** Forgets the writes and replies that never came; the letters they carried stay pending in Hide and come again. */
+function forgetStale(state, now) {
   for (const [name, old] of state.pending) {
     if (now - old.at > PENDING_AGE_MS) state.pending.delete(name);
   }
-  // A letter left out stays pending in Hide and reaches the next prompt, and guidance left out comes again.
+  state.written = state.written.filter((entry) => now - entry.at <= PENDING_AGE_MS);
+}
+
+/** Makes room for `key`; a letter left out stays pending in Hide and reaches the next ask, and guidance left out comes again. */
+function holdPending(state, key, entry) {
+  const now = Date.now();
+  forgetStale(state, now);
   if (state.pending.size >= PENDING_LIMIT) state.pending.delete(state.pending.keys().next().value);
   state.pending.set(key, { ...entry, at: now });
 }
 
+/** Whether letters this session handed over still wait for their receipt, the host's write or Hide's confirmation. */
+function handoverOpen(state) {
+  forgetStale(state, Date.now());
+  if (state.confirming.size > 0) return true;
+  for (const entry of [...state.pending.values(), ...state.written]) {
+    if (entry.letters.length > 0) return true;
+  }
+  return false;
+}
+
 /**
  * The letters due while the pane's agent works, added to the tool's result so the agent reads them before its next
- * step (PRD letters-to-busy-agents D-02); confirmed as a prompt's letters are, once the host has written the reply
- * that follows (`message_end` can still replace the tool result itself). Only the pane's own agent asks, at most once
- * per interval, and a letter handed over and not yet confirmed is not added again.
+ * step (PRD letters-to-busy-agents D-02); confirmed as a prompt's letters are, once the host has written the result
+ * with Hide's text still in it and then the reply that follows (`message_end` can still replace the result itself).
+ * Only the pane's own agent asks, at every tool result (a `--now` letter goes at the next one, D-05), except while
+ * letters it handed over still wait for their receipt: those are not added twice, and the receipt comes with the
+ * reply, before the next result.
  */
 async function onToolResult(state, event, ctx) {
   if (!root(ctx) || typeof event?.toolCallId !== "string") return undefined;
   const session = sessionFile(ctx);
   if (!session) return undefined;
-  const now = Date.now();
-  if (now - state.askedAt < LETTERS_ASK_INTERVAL_MS) return undefined;
-  state.askedAt = now;
+  if (handoverOpen(state)) return undefined;
   const answer = await helper(state, "letters", { session_id: session, native_session: nativeSession(ctx) }, LETTERS_BUDGET_MS);
   if (typeof answer?.context !== "string" || !answer.context) return undefined;
   const letters = Array.isArray(answer.letters) ? answer.letters.filter((letter) => typeof letter === "string") : [];
-  if (letters.some((letter) => handed(state, letter))) return undefined;
-  if (letters.length > 0) holdPending(state, event.toolCallId, { session, letters });
+  // A letter Hide already took is never added twice.
+  if (letters.some((letter) => state.confirmed.has(letter))) return undefined;
   const text = `<system-reminder>\n${answer.context.replace(REMINDER_TAG, "<\u200b$1")}\n</system-reminder>`;
+  if (letters.length > 0) holdPending(state, event.toolCallId, { session, letters, text });
   const content = [...(Array.isArray(event.content) ? event.content : []), { type: "text", text }];
   // Replacing the content alone drops a tool's structured result: it is returned with it.
   return event.structuredContent === undefined ? { content } : { content, structuredContent: event.structuredContent };
@@ -410,12 +425,14 @@ function onMessageEnd(state, event, ctx) {
     return;
   }
   if (message?.role === "toolResult") {
-    // The host finished the tool result carrying the letters; the reply after it proves it was kept and read.
+    // The host finished the tool result carrying the letters; the reply after it proves it was kept and read. A
+    // result a later handler replaced without Hide's text never reached the model: its letters stay pending in Hide
+    // and ride the next ask.
     const id = message.toolCallId;
     const pending = typeof id === "string" ? state.pending.get(id) : null;
     if (pending) {
       state.pending.delete(id);
-      state.written.push(pending);
+      if (kept(message.content, pending.text)) state.written.push(pending);
     }
     return;
   }
@@ -426,13 +443,9 @@ function onMessageEnd(state, event, ctx) {
   confirmWritten(state, written);
 }
 
-/** Whether `letter` was handed over by this session and its receipt is still open or already given. */
-function handed(state, letter) {
-  if (state.confirmed.has(letter) || state.confirming.has(letter)) return true;
-  for (const entry of [...state.pending.values(), ...state.written]) {
-    if (entry.letters.includes(letter)) return true;
-  }
-  return false;
+/** Whether a finished tool result's `content` still carries Hide's `text`. */
+function kept(content, text) {
+  return Array.isArray(content) && content.some((part) => part?.type === "text" && typeof part.text === "string" && part.text.includes(text));
 }
 
 /** Confirms the letters of the written messages once each; a letter Hide did not take rides the next ask again. */
@@ -535,7 +548,6 @@ export default function hide(pi) {
     guided: new Set(),
     memoryStarted: new Set(),
     pending: new Map(),
-    askedAt: 0,
     written: [],
     confirmed: new Set(),
     confirming: new Set(),
