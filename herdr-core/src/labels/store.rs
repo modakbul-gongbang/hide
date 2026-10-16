@@ -10,7 +10,10 @@
 //! Labels are the provider's short summaries, positions are byte offsets and
 //! file identities, turns are hashes; the only conversation text is each
 //! local pane's last request and reply, capped (`facts`, PRD overview-request-view
-//! B31). Device records remain in memory only. A file
+//! B31). A device's records remain in memory, except for [`DeviceMark`]: the
+//! session proof, the hashes of the turns already analyzed and the label the
+//! model wrote, which keep a restart from asking about the same turns again
+//! and from losing the label. A file
 //! that cannot be read starts empty with a diagnostic (B21); nothing in it is
 //! shown until the pane's current session reference proves it.
 
@@ -224,11 +227,157 @@ impl PaneRecord {
     }
 }
 
+/// The most panes of one device whose analyzed turns are kept, and the most
+/// devices; a record beyond either is dropped, newest first kept.
+const DEVICE_MARK_PANES: usize = 512;
+const DEVICE_MARK_DEVICES: usize = 64;
+
+/// What a device pane keeps on disk, and nothing else: which session it ran
+/// (a hash token), which turns were analyzed (hashes), how the last one ended
+/// and the label the model wrote (its goal and line, capped). No request or
+/// reply of the conversation, no fact, no path. A restart restores these so a
+/// turn that was already analyzed is not paid for again and its label is
+/// still there.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+struct DeviceMark {
+    owner: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    proven_reference: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    analysis_turn_start: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    analysis_turn_end: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    end: Option<LabelEnd>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    goal: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    line: String,
+    #[serde(default)]
+    changed_unix_ms: u64,
+}
+
+impl DeviceMark {
+    /// The mark of a record, or `None` when it has no proven session or no
+    /// analyzed turn: nothing there would spare a request.
+    fn of(record: &PaneRecord) -> Option<Self> {
+        let owner = record.owner.clone()?;
+        if record.analysis_turn_start.is_none() && record.analysis_turn_end.is_none() {
+            return None;
+        }
+        Some(Self {
+            owner,
+            proven_reference: record.proven_reference.clone(),
+            analysis_turn_start: record.analysis_turn_start,
+            analysis_turn_end: record.analysis_turn_end,
+            end: record.end,
+            goal: record.goal.clone(),
+            line: record.line.clone(),
+            changed_unix_ms: record.changed_unix_ms,
+        })
+    }
+
+    /// What decides a request, without the time that only orders the cap:
+    /// the worker moves `changed_unix_ms` on every state change of the pane,
+    /// and a state change alone must not rewrite the file.
+    fn proof(&self) -> impl PartialEq + '_ {
+        (
+            &self.owner,
+            &self.proven_reference,
+            self.analysis_turn_start,
+            self.analysis_turn_end,
+            self.end,
+            &self.goal,
+            &self.line,
+        )
+    }
+
+    fn into_record(self) -> PaneRecord {
+        PaneRecord {
+            owner: Some(self.owner),
+            proven_reference: self.proven_reference,
+            analysis_turn_start: self.analysis_turn_start,
+            analysis_turn_end: self.analysis_turn_end,
+            end: self.end,
+            goal: self.goal,
+            line: self.line,
+            changed_unix_ms: self.changed_unix_ms,
+            ..PaneRecord::default()
+        }
+    }
+}
+
+type DeviceMarks = BTreeMap<String, BTreeMap<String, DeviceMark>>;
+
+/// The marks of the device targets among `targets`, each device's newest
+/// panes first up to the cap, and how many the caps left out; a device with
+/// none is left out.
+fn device_marks<'a>(
+    targets: impl Iterator<Item = (&'a String, &'a BTreeMap<String, PaneRecord>)>,
+) -> (DeviceMarks, usize) {
+    let prefix = super::device_target("");
+    let mut dropped = 0;
+    let mut devices: Vec<_> = targets
+        .filter(|(target, _)| target.starts_with(&prefix))
+        .filter_map(|(target, records)| {
+            let mut marks: Vec<_> = records
+                .iter()
+                .filter_map(|(pane, record)| Some((pane.clone(), DeviceMark::of(record)?)))
+                .collect();
+            if marks.is_empty() {
+                return None;
+            }
+            marks.sort_by_key(|(_, mark)| std::cmp::Reverse(mark.changed_unix_ms));
+            dropped += marks.len().saturating_sub(DEVICE_MARK_PANES);
+            marks.truncate(DEVICE_MARK_PANES);
+            let newest = marks[0].1.changed_unix_ms;
+            Some((newest, target.clone(), marks))
+        })
+        .collect();
+    devices.sort_by_key(|(newest, ..)| std::cmp::Reverse(*newest));
+    dropped += devices
+        .iter()
+        .skip(DEVICE_MARK_DEVICES)
+        .map(|(.., marks)| marks.len())
+        .sum::<usize>();
+    devices.truncate(DEVICE_MARK_DEVICES);
+    let marks = devices
+        .into_iter()
+        .map(|(_, target, marks)| (target, marks.into_iter().collect()))
+        .collect();
+    (marks, dropped)
+}
+
+/// Whether two sets of one device's marks hold the same proofs.
+fn same_proofs(a: &BTreeMap<String, DeviceMark>, b: &BTreeMap<String, DeviceMark>) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|((pane_a, a), (pane_b, b))| pane_a == pane_b && a.proof() == b.proof())
+}
+
+/// One device target's marks, to tell whether a save changed what is written.
+fn device_marks_of(
+    targets: &BTreeMap<String, BTreeMap<String, PaneRecord>>,
+    key: &str,
+) -> BTreeMap<String, DeviceMark> {
+    device_marks(targets.get_key_value(key).into_iter())
+        .0
+        .remove(key)
+        .unwrap_or_default()
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct LabelsFile {
     version: u32,
     #[serde(default)]
     targets: BTreeMap<String, BTreeMap<String, PaneRecord>>,
+    /// Each device's [`DeviceMark`]s, the only thing of a device that is
+    /// written. Read as raw values so that one entry this build cannot read
+    /// (a word a newer build wrote) is dropped alone and never takes the
+    /// local records of the whole file with it.
+    #[serde(default, skip_serializing)]
+    devices: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
     /// Another machine's records a core move carried here (PRD
     /// core-host-node-move B4): taken into memory for that machine's worker
     /// once, and never written again, so they stay memory-only as every
@@ -320,6 +469,55 @@ impl LabelStore {
         // Older versions wrote device facts here. Do not restore them,
         // and the save below removes those records from the existing file.
         targets.retain(|target, _| target == node);
+        // A device comes back as its marks only: the session it ran and the
+        // turns already analyzed.
+        let device_prefix = super::device_target("");
+        let mut devices = file.devices;
+        devices.retain(|target, _| target.starts_with(&device_prefix));
+        let (mut unreadable, mut dropped) = (0usize, 0usize);
+        let mut restored: Vec<_> = devices
+            .into_iter()
+            .map(|(target, raw)| {
+                let mut marks: Vec<(String, DeviceMark)> = raw
+                    .into_iter()
+                    .filter_map(|(pane, value)| match serde_json::from_value(value) {
+                        Ok(mark) => Some((pane, mark)),
+                        Err(_) => {
+                            unreadable += 1;
+                            None
+                        }
+                    })
+                    .collect();
+                marks.sort_by_key(|(_, mark)| std::cmp::Reverse(mark.changed_unix_ms));
+                dropped += marks.len().saturating_sub(DEVICE_MARK_PANES);
+                marks.truncate(DEVICE_MARK_PANES);
+                (target, marks)
+            })
+            .filter(|(_, marks)| !marks.is_empty())
+            .collect();
+        restored.sort_by_key(|(_, marks)| std::cmp::Reverse(marks[0].1.changed_unix_ms));
+        dropped += restored
+            .iter()
+            .skip(DEVICE_MARK_DEVICES)
+            .map(|(_, marks)| marks.len())
+            .sum::<usize>();
+        for (target, marks) in restored.into_iter().take(DEVICE_MARK_DEVICES) {
+            targets.insert(
+                target,
+                marks
+                    .into_iter()
+                    .map(|(pane, mark)| (pane, mark.into_record()))
+                    .collect(),
+            );
+        }
+        if unreadable > 0 || dropped > 0 {
+            crate::diagnostic!(json!({
+                "component": "labels",
+                "kind": "store.device_marks_dropped",
+                "unreadable": unreadable,
+                "over_cap": dropped,
+            }));
+        }
         let moved = file.moved.len();
         targets.extend(
             file.moved
@@ -343,6 +541,7 @@ impl LabelStore {
             file: Arc::new(Mutex::new(LabelsFile {
                 version: SCHEMA_VERSION,
                 targets,
+                devices: BTreeMap::new(),
                 moved: BTreeMap::new(),
             })),
             saver: Mutex::new(None),
@@ -361,6 +560,7 @@ impl LabelStore {
             file: Arc::new(Mutex::new(LabelsFile {
                 version: SCHEMA_VERSION,
                 targets: BTreeMap::new(),
+                devices: BTreeMap::new(),
                 moved: BTreeMap::new(),
             })),
             saver: Mutex::new(None),
@@ -383,17 +583,23 @@ impl LabelStore {
         serde_json::to_value(self.target(key)).map_err(|error| error.to_string())
     }
 
-    /// Replaces a worker's records. Only this machine's records reach disk;
-    /// a device's conversation stays available to its worker in memory.
+    /// Replaces a worker's records. This machine's records reach disk; a
+    /// device's conversation stays available to its worker in memory, and
+    /// only its [`DeviceMark`]s are written, when they change.
     pub(crate) fn save_target(&self, key: &str, records: &BTreeMap<String, PaneRecord>) {
-        {
+        let write = {
             let mut file = self.lock();
             if file.targets.get(key) == Some(records) {
                 return;
             }
+            let marks_before = (key != self.node).then(|| device_marks_of(&file.targets, key));
             file.targets.insert(key.to_owned(), records.clone());
-        }
-        if key == self.node {
+            key == self.node
+                || marks_before.is_some_and(|before| {
+                    !same_proofs(&before, &device_marks_of(&file.targets, key))
+                })
+        };
+        if write {
             self.save_later();
         }
     }
@@ -514,6 +720,16 @@ fn write_store(path: &Path, node: &str, writing: &Mutex<()>, file: &Mutex<Labels
         struct LocalFile<'a> {
             version: u32,
             targets: BTreeMap<&'a str, &'a BTreeMap<String, PaneRecord>>,
+            #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+            devices: DeviceMarks,
+        }
+        let (devices, dropped) = device_marks(file.targets.iter());
+        if dropped > 0 {
+            crate::diagnostic!(json!({
+                "component": "labels",
+                "kind": "store.device_marks_capped",
+                "dropped": dropped,
+            }));
         }
         serde_json::to_vec(&LocalFile {
             version: SCHEMA_VERSION,
@@ -523,6 +739,7 @@ fn write_store(path: &Path, node: &str, writing: &Mutex<()>, file: &Mutex<Labels
                 .filter(|(target, _)| target.as_str() == node)
                 .map(|(target, records)| (target.as_str(), records))
                 .collect(),
+            devices,
         })
     };
     let bytes = match encoded {
@@ -607,6 +824,156 @@ mod tests {
         assert_eq!(reopened.target(LOCAL_TARGET), local);
         assert!(reopened.target("device:mini").is_empty());
         assert_eq!(store.target("device:mini"), remote);
+    }
+
+    fn analyzed(owner: &str, start: u64, end: u64, changed: u64) -> PaneRecord {
+        PaneRecord {
+            analysis_turn_start: Some(start),
+            analysis_turn_end: Some(end),
+            changed_unix_ms: changed,
+            ..record(owner)
+        }
+    }
+
+    /// A restart must not ask the model about a device turn twice, and the
+    /// device's conversation and labels still never reach disk.
+    #[test]
+    fn a_device_keeps_only_its_session_proof_and_analyzed_turns_across_a_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LabelStore::open(Some(root.path()), None, LOCAL_TARGET);
+        let mut device = analyzed("remote-owner", 7, 9, 5);
+        device.proven_reference = Some("v1:path".to_owned());
+        device.end = Some(LabelEnd::Question);
+        device.line = "private remote line".to_owned();
+        device.facts = serde_json::from_value(json!({
+            "reply": {"text":"private remote reply", "at_unix_ms":3}
+        }))
+        .unwrap();
+        store.save_target(
+            "device:mini",
+            &BTreeMap::from([("w2:p1".to_owned(), device)]),
+        );
+        store.flush();
+        let disk = std::fs::read_to_string(root.path().join(LABELS_FILE)).unwrap();
+        // The conversation does not reach disk; the label is the model's own
+        // words.
+        assert!(!disk.contains("private remote reply"), "{disk}");
+
+        let reopened = LabelStore::open(Some(root.path()), None, LOCAL_TARGET);
+        let restored = &reopened.target("device:mini")["w2:p1"];
+        assert_eq!(restored.owner.as_deref(), Some("remote-owner"));
+        assert_eq!(restored.proven_reference.as_deref(), Some("v1:path"));
+        assert_eq!(
+            (restored.analysis_turn_start, restored.analysis_turn_end),
+            (Some(7), Some(9))
+        );
+        // The label the model wrote survives with how the turn ended.
+        assert_eq!(restored.end, Some(LabelEnd::Question));
+        assert_eq!(restored.goal.as_deref(), Some("라벨 저장소 확인"));
+        assert_eq!(restored.line, "private remote line");
+        assert_eq!(restored.facts, SessionFacts::default());
+    }
+
+    /// A save that moves only what stays in memory writes nothing, so the
+    /// per-state-change saves of a device do not become disk writes.
+    #[test]
+    fn a_device_save_that_changes_no_mark_does_not_write() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LabelStore::open(Some(root.path()), None, LOCAL_TARGET);
+        let mut device = analyzed("remote-owner", 7, 9, 5);
+        store.save_target(
+            "device:mini",
+            &BTreeMap::from([("w2:p1".to_owned(), device.clone())]),
+        );
+        store.flush();
+        let path = root.path().join(LABELS_FILE);
+        std::fs::remove_file(&path).unwrap();
+        // The worker moves both on every state change of the pane.
+        device.state_change_seq = 99;
+        device.changed_unix_ms += 1_000;
+        // The conversation is not a mark either.
+        device.facts = serde_json::from_value(json!({
+            "reply": {"text":"a reply the file does not hold", "at_unix_ms":3}
+        }))
+        .unwrap();
+        store.save_target(
+            "device:mini",
+            &BTreeMap::from([("w2:p1".to_owned(), device.clone())]),
+        );
+        store.flush();
+        assert!(!path.exists(), "an unchanged mark rewrote the file");
+        // A new label is one, and is written.
+        device.line = "a new line".to_owned();
+        store.save_target(
+            "device:mini",
+            &BTreeMap::from([("w2:p1".to_owned(), device)]),
+        );
+        store.flush();
+        let disk = std::fs::read_to_string(&path).unwrap();
+        assert!(disk.contains("a new line"), "{disk}");
+        assert!(!disk.contains("a reply the file does not hold"), "{disk}");
+    }
+
+    #[test]
+    fn the_marks_of_a_device_are_capped_and_keep_the_newest_panes() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LabelStore::open(Some(root.path()), None, LOCAL_TARGET);
+        let records: BTreeMap<_, _> = (0..DEVICE_MARK_PANES as u64 + 10)
+            .map(|index| (format!("w{index}:p1"), analyzed("o", 1, 1, index + 1)))
+            .collect();
+        store.save_target("device:mini", &records);
+        store.flush();
+        let reopened = LabelStore::open(Some(root.path()), None, LOCAL_TARGET);
+        let kept = reopened.target("device:mini");
+        assert_eq!(kept.len(), DEVICE_MARK_PANES);
+        assert!(kept.contains_key(&format!("w{}:p1", DEVICE_MARK_PANES as u64 + 9)));
+        assert!(!kept.contains_key("w0:p1"));
+    }
+
+    /// One mark this build cannot read (a word a newer build wrote) is
+    /// dropped alone; it must not reset the whole file, whose local records
+    /// are what keep a restart from asking about every pane again.
+    #[test]
+    fn an_unreadable_device_mark_is_dropped_alone_and_the_local_records_stay() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join(LABELS_FILE),
+            serde_json::to_vec(&json!({"version":1,
+                "targets":{LOCAL_TARGET:{"w1:p1":record("local-owner")}},
+                "devices":{"device:mini":{
+                    "w2:p1":{"owner":"o","analysis_turn_end":9,"end":"a_word_from_the_future"},
+                    "w2:p2":{"owner":"o","analysis_turn_end":10}}}}))
+            .unwrap(),
+        )
+        .unwrap();
+        let store = LabelStore::open(Some(root.path()), None, LOCAL_TARGET);
+        assert_eq!(store.target(LOCAL_TARGET)["w1:p1"], record("local-owner"));
+        let kept = store.target("device:mini");
+        assert_eq!(kept.keys().collect::<Vec<_>>(), vec!["w2:p2"]);
+    }
+
+    #[test]
+    fn the_devices_kept_are_capped_and_the_newest_stay() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LabelStore::open(Some(root.path()), None, LOCAL_TARGET);
+        for index in 0..DEVICE_MARK_DEVICES as u64 + 3 {
+            store.save_target(
+                &format!("device:{index}"),
+                &BTreeMap::from([("w1:p1".to_owned(), analyzed("o", 1, 1, index + 1))]),
+            );
+        }
+        store.flush();
+        let reopened = LabelStore::open(Some(root.path()), None, LOCAL_TARGET);
+        let kept = (0..DEVICE_MARK_DEVICES as u64 + 3)
+            .filter(|index| !reopened.target(&format!("device:{index}")).is_empty())
+            .count();
+        assert_eq!(kept, DEVICE_MARK_DEVICES);
+        assert!(reopened.target("device:0").is_empty());
+        assert!(
+            !reopened
+                .target(&format!("device:{}", DEVICE_MARK_DEVICES + 2))
+                .is_empty()
+        );
     }
 
     #[test]

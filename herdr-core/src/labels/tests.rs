@@ -930,6 +930,99 @@ fn a_restart_restores_the_label_with_no_read_and_no_request() {
     assert_eq!(harness.backend.calls(), 1);
 }
 
+/// A device's conversation and labels stay in memory, so a restart used to
+/// forget which of its turns were analyzed and asked the model about the same
+/// turns again (75 of 375 label requests in one log window). What reaches
+/// disk is the session proof and the analyzed turns' hashes, which spares the
+/// request; the label is made again at the pane's next turn.
+#[test]
+fn a_restart_does_not_ask_again_about_a_device_turn_it_already_analyzed() {
+    let harness = Harness::new();
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[("user", "재시작 전 기기 요청"), ("assistant", "완료")],
+    );
+    harness.backend.answer("기기에서 붙은 작업", "done", "");
+    let idle = agent(&path, "idle", 5);
+    let source = || {
+        let node: Arc<dyn crate::node_access::NodeLink> = Arc::new(hide_node::Local::new(Some(
+            harness.home.path().to_path_buf(),
+        )));
+        Arc::new(super::NodeTranscripts::new(Box::new(move || {
+            Ok(Arc::clone(&node))
+        })))
+    };
+    {
+        let store = harness.store();
+        let (mut worker, woken) =
+            harness.spawn(Arc::clone(&store), "device:mini", "d.sock", source());
+        observe(&mut worker, &idle);
+        settle(&mut worker, &woken);
+        assert!(shown(&worker, &idle).is_some());
+        store.flush();
+    }
+    assert_eq!(harness.backend.calls(), 1);
+    let disk = std::fs::read_to_string(harness.state.path().join("labels.json")).unwrap();
+    // The label the model wrote is kept; the conversation it came from is not.
+    assert!(disk.contains("기기에서 붙은 작업"), "{disk}");
+    assert!(!disk.contains("재시작 전 기기 요청"), "{disk}");
+
+    let (mut worker, woken) = harness.spawn(harness.store(), "device:mini", "d.sock", source());
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        task(shown(&worker, &idle)).as_deref(),
+        Some("기기에서 붙은 작업"),
+        "the label did not come back with the restart"
+    );
+    assert_eq!(
+        harness.backend.calls(),
+        1,
+        "the analyzed turn was asked again"
+    );
+}
+
+/// A restored mark proves one session. Another session in the same pane
+/// after the restart is a new conversation, and its first turn is asked.
+#[test]
+fn a_restored_device_mark_does_not_spare_another_session_in_the_same_pane() {
+    let harness = Harness::new();
+    let first = harness.session(
+        "a",
+        "native-a",
+        &[("user", "첫 세션 요청"), ("assistant", "완료")],
+    );
+    let other = harness.session(
+        "b",
+        "native-b",
+        &[("user", "다른 세션 요청"), ("assistant", "완료")],
+    );
+    harness.backend.answer("기기의 첫 작업", "done", "");
+    harness.backend.answer("기기의 다른 작업", "done", "");
+    let source = || {
+        let node: Arc<dyn crate::node_access::NodeLink> = Arc::new(hide_node::Local::new(Some(
+            harness.home.path().to_path_buf(),
+        )));
+        Arc::new(super::NodeTranscripts::new(Box::new(move || {
+            Ok(Arc::clone(&node))
+        })))
+    };
+    {
+        let store = harness.store();
+        let (mut worker, woken) =
+            harness.spawn(Arc::clone(&store), "device:mini", "d.sock", source());
+        observe(&mut worker, &agent(&first, "idle", 5));
+        settle(&mut worker, &woken);
+        store.flush();
+    }
+    assert_eq!(harness.backend.calls(), 1);
+    let (mut worker, woken) = harness.spawn(harness.store(), "device:mini", "d.sock", source());
+    observe(&mut worker, &agent(&other, "idle", 5));
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 2, "another session was spared");
+}
+
 #[test]
 fn an_imported_label_shows_only_for_the_session_it_was_proven_for() {
     let harness = Harness::new();
