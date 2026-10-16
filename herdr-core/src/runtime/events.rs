@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 
+use super::documents::CloseAfter;
 use super::*;
 
 #[derive(Debug, Deserialize)]
@@ -3216,7 +3217,7 @@ impl Runtime {
             }
             Event::FileClose(payload) => {
                 if let Some(pending_save) = payload.pending_save {
-                    self.start_file_save_then_close(payload.tab_id, pending_save)
+                    self.start_file_save_then_close(payload.tab_id, pending_save, None)
                 } else {
                     self.close_file_tab_now(&payload.tab_id)
                 }
@@ -3285,7 +3286,7 @@ impl Runtime {
                 }
                 true
             }
-            Event::FileSave(payload) => self.request_file_save(payload, false),
+            Event::FileSave(payload) => self.request_file_save(payload, CloseAfter::Nothing),
             Event::FileConflict(payload) => {
                 let tab_id = match payload.tab_id {
                     Some(tab_id) if self.file_document_open(&tab_id) => tab_id,

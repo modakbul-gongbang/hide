@@ -1,3 +1,5 @@
+use super::documents::CloseAfter;
+use super::workspace_view::WorkspaceKey;
 use super::*;
 
 pub(super) enum PreparedFileTab {
@@ -192,11 +194,13 @@ impl Runtime {
     }
 
     /// A close that waits on its save: the tab closes when the save lands
-    /// and the draft matches what was written.
+    /// and the draft matches what was written, and then the lane of `lane`
+    /// when that close left it nothing to show (`close_emptied_lane`).
     pub(super) fn start_file_save_then_close(
         &mut self,
         close_tab_id: String,
         payload: FileSavePayload,
+        lane: Option<WorkspaceKey>,
     ) -> bool {
         if payload.tab_id != close_tab_id {
             self.set_error(
@@ -206,7 +210,7 @@ impl Runtime {
             );
             return true;
         }
-        self.request_file_save(payload, true)
+        self.request_file_save(payload, CloseAfter::Document { lane })
     }
 
     pub(super) fn prepare_file_tab(

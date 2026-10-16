@@ -499,11 +499,11 @@ export function createActions(send: DispatchFn) {
   /**
    * The keyboard follows what the operator opened into the view that shows
    * it once the core places it (B20), so ⌘W, ⌘S and typing act on that file
-   * rather than on the tree, row or palette it was opened from.
+   * rather than on the tree, row, palette or terminal it was opened from.
+   * `workspace` names where the open lands when it is not the front one.
    */
-  const followOpen = (path: string, kind: "file" | "diff", committed: boolean | null = null) => {
-    const front = frontViewWorkspace();
-    if (front) ui().setViewFocusRequest({ workspace: workspaceKey(front), opened: { path, kind, committed } });
+  const followOpen = (path: string, kind: "file" | "diff", committed: boolean | null = null, workspace = frontViewWorkspace()) => {
+    if (workspace) ui().setViewFocusRequest({ workspace: workspaceKey(workspace), opened: { path, kind, committed } });
   };
 
   /**
@@ -2600,6 +2600,7 @@ export function createActions(send: DispatchFn) {
           return;
         }
         if (found.kind === "file" && line !== null) requestLine([path, found.real], line, column);
+        if (found.kind === "file") followOpen(path, "file", null, here ?? { device_id: deviceId, path: owner.checkout.path });
         if (here) {
           dispatch({
             schema_version: 2,
