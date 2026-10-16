@@ -6,8 +6,9 @@ import { runInPane, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot, showTool } from "./wire";
 
-// CLI background Views: each Agent tab owns its list and selected View.
-// The operator's B presentation stays intact while A opens behind it.
+// CLI background Views: the checkout owns one list, and each Agent tab only
+// remembers the View it last put in front. An agent in a tab the operator is
+// not looking at adds its View to the list and moves nothing.
 
 test.describe.configure({ timeout: 180_000 });
 test.use({ actionTimeout: 15_000 });
@@ -45,7 +46,7 @@ function savedAgentTabs(daemon: Daemon): string[] {
   return tabs;
 }
 
-test("an Agent tab gets back the View it had in front, and an agent in another tab opens its View behind the operator's", async ({ page }) => {
+test("an Agent tab gets back the View it had in front, and an agent in another tab adds its View behind the operator's", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const herdr = await startHerdr({ agents: false });
   let daemon: Daemon | null = null;
@@ -72,16 +73,16 @@ test("an Agent tab gets back the View it had in front, and an agent in another t
     await hideFrom(herdr, daemon, firstPane, ["file", "open", "a.md"], 1);
     await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
 
-    // Tab 2 is shown for the first time, so it starts with no Views: the
-    // pinned lane stays and shows the tree alone (PRD right-lane B12, B15),
-    // and its own agent opens b.md.
+    // Tab 2 is shown for the first time, so it has no bookmark and the
+    // checkout's list stays as it is (PRD lane-files-checkout-views B1, B3);
+    // its own agent opens b.md, which comes to the front and is its bookmark.
     await agentTab(page, second).click();
     await expect(agentTab(page, second)).toHaveAttribute("aria-selected", "true");
-    await expect(viewTabs(page)).toHaveCount(0);
-    await expect(page.locator('[data-lane-tree="only"]')).toBeVisible();
+    await expect(viewTabs(page)).toHaveCount(1);
+    await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
     await hideFrom(herdr, daemon, secondPane, ["file", "open", "b.md"], 2);
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
-    await expect(viewTabs(page)).toHaveCount(1);
+    await expect(viewTabs(page)).toHaveCount(2);
 
     // B1, B2: back and forth, one tab click each, and the page sends no
     // View action of its own after the switch.
@@ -90,30 +91,30 @@ test("an Agent tab gets back the View it had in front, and an agent in another t
     await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
     await agentTab(page, second).click();
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
-    await expect(viewTabs(page)).toHaveCount(1);
+    await expect(viewTabs(page)).toHaveCount(2);
     expect(sent.get("view_layout") ?? 0).toBe(viewActions);
     await screenshot(page, "view-bookmarks-tab-2-front");
     await agentTab(page, first).click();
     await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
     await screenshot(page, "view-bookmarks-tab-1-front");
 
-    // B12: while the operator is on tab 2, tab 1's agent opens c.md. The
-    // screen and strip stay on B's b.md; tab 1 alone gets c.md.
+    // B7: while the operator is on tab 2, tab 1's agent opens c.md. It joins
+    // the strip behind the operator's b.md and moves nothing; tab 1 remembers it.
     await agentTab(page, second).click();
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
     await hideFrom(herdr, daemon, firstPane, ["file", "open", "c.md"], 3);
-    await expect(viewTabs(page)).toHaveCount(1);
-    await expect(viewTabs(page).filter({ hasText: "c.md" })).toHaveCount(0);
+    await expect(viewTabs(page)).toHaveCount(3);
+    await expect(viewTabs(page).filter({ hasText: "c.md" })).toHaveCount(1);
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
     await screenshot(page, "view-bookmarks-agent-open-behind");
     await agentTab(page, first).click();
     await expect(front(page)).toHaveAttribute("aria-label", /\/c\.md/);
-    await expect(viewTabs(page)).toHaveCount(2);
+    await expect(viewTabs(page)).toHaveCount(3);
     await agentTab(page, second).click();
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
 
-    // B18: the bookmarks are in the file and survive a daemon restart.
-    await expect.poll(() => fs.readFileSync(path.join(daemon!.stateDir, "workspace-views.json"), "utf8")).toContain("view_presentations");
+    // B14: the list and the bookmarks are in the file and survive a daemon restart.
+    await expect.poll(() => fs.readFileSync(path.join(daemon!.stateDir, "workspace-views.json"), "utf8")).toContain("tab_views");
     await expect.poll(() => savedAgentTabs(daemon!)).toContain(second);
     daemon = await daemon.restart();
     await page.goto("about:blank");

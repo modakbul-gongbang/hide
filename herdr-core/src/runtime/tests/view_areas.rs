@@ -379,15 +379,15 @@ fn open_to_the_side_uses_the_neighbour_or_a_new_area_to_the_right() {
 }
 
 /// B18, B19, contract 2: a split past the area cap and an open past the
-/// tab's view cap are refused with a reason, and the tree stays as it was.
+/// checkout's view cap are refused with a reason, and the tree stays as it was.
 #[test]
 fn a_split_or_an_open_past_the_caps_is_refused_and_changes_nothing() {
-    use crate::view_layout::{DisplayKind, Edge, Layout, MAX_TAB_VIEWS};
+    use crate::view_layout::{DisplayKind, Edge, Layout, MAX_VIEW_DISPLAYS};
     let (mut runtime, checkout_id, directory) = views_runtime("view-caps");
     let root = directory.to_string_lossy().into_owned();
     // Six areas, three splits deep, holding the display cap between them.
     let mut full = Layout::default();
-    for index in 0..MAX_TAB_VIEWS - 5 {
+    for index in 0..MAX_VIEW_DISPLAYS - 5 {
         let shown = full.new_display(
             &format!("{root}/f{index}.md"),
             DisplayKind::File,
@@ -413,7 +413,7 @@ fn a_split_or_an_open_past_the_caps_is_refused_and_changes_nothing() {
         .entry(crate::node::TEST_NODE, &root)
         .layout = full;
     let before = tree(&mut runtime);
-    assert_eq!(before.display_count, MAX_TAB_VIEWS);
+    assert_eq!(before.display_count, MAX_VIEW_DISPLAYS);
     let tabs = runtime.snapshot.editor.tabs.clone();
 
     let first = areas(&before)[0].2[0].id.clone();
@@ -440,7 +440,7 @@ fn a_split_or_an_open_past_the_caps_is_refused_and_changes_nothing() {
     assert_eq!(refused.kind, "view_layout.display_limit");
     assert_eq!(
         refused.message,
-        "This tab has 16 views open. Close a view to open another."
+        "This Workspace has 32 views open. Close a view to open another."
     );
     assert_eq!(tree(&mut runtime), before);
     assert_eq!(runtime.snapshot.editor.tabs, tabs, "nothing was read");
@@ -465,13 +465,13 @@ fn fill(runtime: &mut Runtime, directory: &Path, count: usize) {
         .layout = layout;
 }
 
-/// B19: at its 16 views nothing adds a 17th to the tab when none of them
+/// B19: at its 32 views nothing adds a 33rd to the checkout when none of them
 /// can close. Reopen Closed, a created file and a revealed file are refused
 /// with the reason before anything is read or made, and the closed file
 /// stays reopenable.
 #[test]
 fn at_the_display_cap_a_reopen_a_created_file_or_a_reveal_is_refused() {
-    use crate::view_layout::MAX_TAB_VIEWS;
+    use crate::view_layout::MAX_VIEW_DISPLAYS;
     let (mut runtime, checkout_id, directory) = views_runtime("view-cap-origins");
     files(&directory, &["closed.md"]);
     open(
@@ -487,9 +487,9 @@ fn at_the_display_cap_a_reopen_a_created_file_or_a_reveal_is_refused() {
         serde_json::json!({"tab_id": closed}),
     ));
     assert_eq!(runtime.snapshot.recent_closed.count, 1);
-    fill(&mut runtime, &directory, MAX_TAB_VIEWS);
+    fill(&mut runtime, &directory, MAX_VIEW_DISPLAYS);
     let before = tree(&mut runtime);
-    assert_eq!(before.display_count, MAX_TAB_VIEWS);
+    assert_eq!(before.display_count, MAX_VIEW_DISPLAYS);
     let tabs = runtime.snapshot.editor.tabs.clone();
 
     for (kind, payload) in [
@@ -524,12 +524,12 @@ fn at_the_display_cap_a_reopen_a_created_file_or_a_reveal_is_refused() {
     );
 }
 
-/// B19: a file that lands after the tab filled, here a Reopen Closed
-/// admitted at 15 views, is refused with the reason as it lands rather than
-/// making a 17th view; nothing is opened and the file stays reopenable.
+/// B19: a file that lands after the checkout filled, here a Reopen Closed
+/// admitted at 31 views, is refused with the reason as it lands rather than
+/// making a 33rd view; nothing is opened and the file stays reopenable.
 #[test]
 fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() {
-    use crate::view_layout::{DisplayKind, MAX_TAB_VIEWS};
+    use crate::view_layout::{DisplayKind, MAX_VIEW_DISPLAYS};
     let (runtime, checkout_id, directory) = views_runtime("view-cap-landing");
     let shared = SharedRuntime::new(runtime);
     shared
@@ -553,7 +553,7 @@ fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() 
             "file_close",
             serde_json::json!({"tab_id": notes}),
         ));
-        fill(&mut runtime, &directory, MAX_TAB_VIEWS - 1);
+        fill(&mut runtime, &directory, MAX_VIEW_DISPLAYS - 1);
         runtime.dispatch_json(&explorer_event("reopen_closed", serde_json::json!({})));
         assert_eq!(runtime.snapshot.status.last_error, None);
         assert!(runtime.snapshot.recent_closed.restoring);
@@ -579,7 +579,7 @@ fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() 
     let mut runtime = shared.lock().unwrap();
     let refused = runtime.snapshot.status.last_error.clone().unwrap();
     assert_eq!(refused.kind, "view_layout.display_limit");
-    assert_eq!(tree(&mut runtime).display_count, MAX_TAB_VIEWS);
+    assert_eq!(tree(&mut runtime).display_count, MAX_VIEW_DISPLAYS);
     assert!(
         runtime.snapshot.editor.tabs.is_empty(),
         "nothing was opened"
@@ -598,9 +598,9 @@ fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() 
 /// log, and shows once a view is closed.
 #[test]
 fn a_document_the_full_views_cannot_hold_shows_once_a_view_is_closed() {
-    use crate::view_layout::MAX_TAB_VIEWS;
+    use crate::view_layout::MAX_VIEW_DISPLAYS;
     let (mut runtime, checkout_id, directory) = views_runtime("view-cap-reconcile");
-    fill(&mut runtime, &directory, MAX_TAB_VIEWS);
+    fill(&mut runtime, &directory, MAX_VIEW_DISPLAYS);
     let path = directory.join("notes.md").to_string_lossy().into_owned();
     runtime.insert_diff_tab("workspace:order", &checkout_id, &path, false, false);
     let shown = |runtime: &mut Runtime| {
@@ -619,7 +619,7 @@ fn a_document_the_full_views_cannot_hold_shows_once_a_view_is_closed() {
     };
 
     let full = tree(&mut runtime);
-    assert_eq!(full.display_count, MAX_TAB_VIEWS);
+    assert_eq!(full.display_count, MAX_VIEW_DISPLAYS);
     assert!(!shown(&mut runtime));
     layout(&mut runtime, serde_json::json!({"tool": "changes"}));
     assert_eq!(reported(&runtime), 1, "reported once, not on every pass");
@@ -630,7 +630,7 @@ fn a_document_the_full_views_cannot_hold_shows_once_a_view_is_closed() {
         serde_json::json!({"action": "close", "display_id": first}),
     ));
     assert!(shown(&mut runtime));
-    assert_eq!(tree(&mut runtime).display_count, MAX_TAB_VIEWS);
+    assert_eq!(tree(&mut runtime).display_count, MAX_VIEW_DISPLAYS);
 }
 
 /// Engineering principle 11: a split sent twice splits once.
@@ -2089,7 +2089,7 @@ fn a_pull_request_card_opens_in_the_detail_slot_and_never_as_a_view() {
     )));
     assert!(runtime.dispatch_json(&explorer_event("detail_back", serde_json::json!({}))));
     assert_eq!(runtime.snapshot.ui_state.detail.items, vec![item(42)]);
-    // A changed file opened from the card shows in this tab's Files, and the
+    // A changed file opened from the card shows in the checkout's Files, and the
     // card keeps its rail slot to come back to (B49).
     open(
         &mut runtime,

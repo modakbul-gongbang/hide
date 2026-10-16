@@ -2885,13 +2885,13 @@ fn what_each_machine_shows_survives_the_move_and_the_move_back() -> Result<()> {
                 .as_array()
                 .into_iter()
                 .flatten()
-                .any(|view| view["owner"].is_string()
-                    && view["presentations"]
+                .any(|view| view["layout"]["root"]["area"]["displays"]
+                    .as_array()
+                    .is_some_and(|displays| !displays.is_empty())
+                    && view["bookmarks"]
                         .as_object()
-                        .is_some_and(|presentations| presentations
-                            .values()
-                            .any(|parked| parked["layout"] != view["layout"]))),
-            "the move fixture must compare distinct current and parked tab presentations: {kept_before:#}"
+                        .is_some_and(|bookmarks| !bookmarks.is_empty())),
+            "the move fixture must keep one View and a tab bookmark to it: {kept_before:#}"
         );
         let shown_after = wait_for("the window as it was, through the new core", || {
             let shown = window_shows(&fixture, TARGET_NODE)?;
@@ -3309,7 +3309,7 @@ fn kept_per_machine(dir: &std::path::Path, own: &str) -> Result<Value> {
             .into_iter()
             .flatten()
             .filter(|row| row["device_id"].as_str().and_then(|device| machine_of(device, own).ok()) == Some(machine))
-            .map(|row| unqualified(&json!({"path": row["path"], "tool": row["tool"], "pinned": row["pinned"], "tree": row["tree"], "layout": row["layout"], "agent_layout": row["agent_layout"], "bookmarks": row["view_bookmarks"], "owner": row["view_owner"], "presentations": row["view_presentations"], "next_id": row["view_next_id"]})))
+            .map(|row| unqualified(&json!({"path": row["path"], "tool": row["tool"], "pinned": row["pinned"], "tree": row["tree"], "layout": row["view_layout"], "agent_layout": row["agent_layout"], "bookmarks": row["tab_views"]})))
             .collect();
         let label_records: serde_json::Map<String, Value> = labels["targets"]
             .as_object()

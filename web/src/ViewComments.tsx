@@ -61,7 +61,7 @@ export function useViewFeedback(): ViewFeedback | undefined {
 
 // --- the opener's mark (B1-B7) ----------------------------------------------------
 
-/** The 10 px logo an agent-opened View tab wears on its kind mark's lower right; a press goes to the agent's pane (B5, B6). */
+/** The 14 px logo an agent-opened View tab wears after its file name; a press goes to the agent's pane (B5, B6). */
 export function OpenerMark({ opener, actions }: { opener: ViewOpener; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const product = agentProductName(opener.provider);
@@ -79,7 +79,7 @@ export function OpenerMark({ opener, actions }: { opener: ViewOpener; actions: A
         data-view-opener={opener.pane_id ?? "closed"}
         data-view-opener-kind={opener.provider}
         className={cn(
-          "absolute -right-(--size-hairline) -bottom-(--size-hairline) flex size-(--size-view-opener-mark) items-center justify-center rounded-xs bg-inherit outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          "flex size-(--size-view-opener-mark) shrink-0 items-center justify-center rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring",
           closed ? "cursor-default opacity-[var(--opacity-dimmed)] grayscale" : "cursor-pointer",
         )}
         onPointerDown={(event) => event.stopPropagation()}

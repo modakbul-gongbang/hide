@@ -88,47 +88,7 @@ fn delegated_inbound_caller_can_manage_background_views() {
 }
 
 #[test]
-fn inbound_waiting_caller_cannot_allocate_a_private_view() {
-    let t = tree();
-    let (mut runtime, _requests, _views) =
-        device_in_front(crate::model::LinkOrigin::Inbound, &t.main);
-    let names = (1..=65).map(|n| format!("t{n}")).collect::<Vec<_>>();
-    let names = names.iter().map(String::as_str).collect::<Vec<_>>();
-    runtime.ingest_remote_session(NODE, Ok(focused_on(&t.main, &names, "t1")));
-    runtime.sync_workspace_view();
-    let caller = format!("remote:{NODE}:pane:t65");
-    let context = runtime
-        .workspace_control_query(NODE, &caller, crate::workspace_control::Query::Info)
-        .unwrap()
-        .context;
-    let before = runtime.workspace_views.as_ref().unwrap().views.clone();
-    let generation = runtime.workspace_views.as_ref().unwrap().generation;
-    let refused = runtime
-        .workspace_control_action(
-            NODE,
-            &caller,
-            &context,
-            &format!("{}-waiting-browser", unix_milliseconds()),
-            crate::workspace_control::Action::OpenBrowser {
-                url: "https://example.test/waiting".to_owned(),
-                reveal: false,
-                area_id: None,
-                new_target: false,
-            },
-            Ok(None),
-        )
-        .unwrap_err();
-    assert_eq!(refused.reason, "view_limit");
-    assert_eq!(runtime.workspace_views.as_ref().unwrap().views, before);
-    assert_eq!(
-        runtime.workspace_views.as_ref().unwrap().generation,
-        generation
-    );
-    assert!(runtime.snapshot.browser_views.is_empty());
-}
-
-#[test]
-fn authoritative_final_node_tab_close_retires_its_private_page() {
+fn authoritative_final_node_tab_close_keeps_its_page_and_drops_its_bookmark() {
     let t = tree();
     let (mut runtime, _requests, _views) =
         device_in_front(crate::model::LinkOrigin::Inbound, &t.main);
@@ -173,7 +133,7 @@ fn authoritative_final_node_tab_close_retires_its_private_page() {
     assert_eq!(
         runtime.workspace_views.as_ref().unwrap().views,
         before,
-        "an unanswered session preserves the saved presentation"
+        "an unanswered session preserves the saved bookmarks"
     );
     runtime.snapshot.status.remote[0].session = Some(saved_session);
     let ready = runtime.snapshot.status.remote[0].catalog.clone();
@@ -221,11 +181,18 @@ fn authoritative_final_node_tab_close_retires_its_private_page() {
         .views
         .get(NODE, &t.main)
         .unwrap();
-    assert!(entry.view_owner.is_none());
-    assert!(entry.view_presentations.is_empty());
-    assert_eq!(entry.layout.display_count(), 0);
+    assert_eq!(
+        entry.layout.display_count(),
+        1,
+        "the page stays in the list"
+    );
+    assert_eq!(
+        entry.view_bookmarks.of("t1"),
+        None,
+        "the tab took its bookmark"
+    );
     assert_eq!(entry.agent_layout.tree.display_count(), 0);
-    assert!(runtime.snapshot.browser_views.is_empty());
+    assert_eq!(runtime.snapshot.browser_views.len(), 1);
 }
 
 /// `origin`'s device with one Workspace of tabs `t1` and `t2` in front, its

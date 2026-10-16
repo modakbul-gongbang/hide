@@ -437,7 +437,7 @@ fn with_tabs(runtime: &mut Runtime, directory: &Path) {
 }
 
 /// D-04, B8: choosing another Agent tab keeps the Workspace's document open
-/// for the tab that showed it, which shows it again on return; without View
+/// as the checkout's one list; without View
 /// areas the terminal takes the canvas back.
 #[test]
 fn a_terminal_tab_choice_keeps_the_workspace_document_only_with_separate_areas() {
@@ -456,9 +456,9 @@ fn a_terminal_tab_choice_keeps_the_workspace_document_only_with_separate_areas()
 
         if separate {
             assert_eq!(
-                active_label(&runtime),
-                None,
-                "a tab not shown before has no Views"
+                active_label(&runtime).as_deref(),
+                Some("notes.md"),
+                "the checkout's list is the same for every tab"
             );
             assert_eq!(
                 runtime.snapshot.editor.tabs.len(),
@@ -484,7 +484,7 @@ fn a_terminal_tab_choice_keeps_the_workspace_document_only_with_separate_areas()
 /// explicit file open opens the lane on the files tool, numbers that call
 /// and lands the file in it; a session update, and an agent or tab chosen
 /// from anywhere, move no lane state the core keeps; a tab not shown before
-/// has no Views of its own.
+/// sees the checkout's one list.
 #[test]
 fn a_file_open_opens_the_files_lane_and_an_agent_choice_moves_no_lane_state() {
     let (runtime, checkout_id, directory) = strip_checkout("area-intent");
@@ -523,9 +523,9 @@ fn a_file_open_opens_the_files_lane_and_an_agent_choice_moves_no_lane_state() {
         "an agent choice moves no lane state and calls nothing"
     );
     assert_eq!(
-        active_label(&runtime),
-        None,
-        "a tab not shown before has no Views"
+        active_label(&runtime).as_deref(),
+        Some("notes.md"),
+        "a tab not shown before sees the checkout's one list"
     );
     layout(&mut runtime, serde_json::json!({"pinned": true}));
     runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1"));

@@ -311,8 +311,6 @@ pub enum LayoutError {
     AreaLimit,
     DepthLimit,
     DisplayLimit,
-    /// A View tab's own cap (`view_layout::MAX_TAB_VIEWS`), below the tree's.
-    TabDisplayLimit,
     NothingToSplit,
     InvalidRatio,
 }

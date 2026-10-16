@@ -697,7 +697,7 @@ test("a drag or a tab menu begun on one Workspace ends when another client moves
     await choose(page, "fixture");
     await expect.poll(() => shape(page)).toBe("@(a.txt >c.txt)");
     await showTool(page, "files");
-    const betaLayout = () => JSON.stringify(storedWorkspace(stack.daemon, betaRoot)?.layout ?? null);
+    const betaLayout = () => JSON.stringify(storedWorkspace(stack.daemon, betaRoot)?.view_layout ?? null);
     await expect.poll(betaLayout).toContain("b2.txt");
     const stored = betaLayout();
     const changes = () => viewEvents(stack).filter((event) => event.payload.action !== "focus" && event.payload.action !== "focus_area").length;
@@ -1070,9 +1070,9 @@ test("at six view areas every split is refused with its reason, in the menu and 
   } finally { stopStack(stack); }
 });
 
-test("a tab holds at most sixteen views: opening one more closes its view looked at longest ago, and opening a shown file still moves to it", async ({ page }) => {
+test("a checkout holds at most thirty-two views: opening one more closes its view looked at longest ago, and opening a shown file still moves to it", async ({ page }) => {
   await page.setViewportSize({ width: 2560 + RAIL, height: 1080 });
-  const files = Object.fromEntries(Array.from({ length: 17 }, (_, index) => [`f${String(index + 1).padStart(2, "0")}.txt`, `file ${index + 1}\n`]));
+  const files = Object.fromEntries(Array.from({ length: 33 }, (_, index) => [`f${String(index + 1).padStart(2, "0")}.txt`, `file ${index + 1}\n`]));
   const stack = await startStack(page, "s7-caps-views", files);
   try {
     // B19, contract 2. Seeded as a schema 2 file, the File Views column
@@ -1092,8 +1092,8 @@ test("a tab holds at most sixteen views: opening one more closes its view looked
             root: {
               area: {
                 id: "a1",
-                active: "d16",
-                displays: Array.from({ length: 16 }, (_, index) => ({
+                active: "d32",
+                displays: Array.from({ length: 32 }, (_, index) => ({
                   id: `d${index + 1}`,
                   path: `${stack.root}/f${String(index + 1).padStart(2, "0")}.txt`,
                   kind: "file",
@@ -1105,7 +1105,7 @@ test("a tab holds at most sixteen views: opening one more closes its view looked
               },
             },
             active_area: "a1",
-            next_id: 17,
+            next_id: 33,
           },
         },
       ],
@@ -1113,28 +1113,28 @@ test("a tab holds at most sixteen views: opening one more closes its view looked
     stack.daemon = await stack.daemon.restart((dir) => fs.writeFileSync(path.join(dir, "workspace-views.json"), JSON.stringify(seeded)));
     await page.goto("about:blank");
     await open(page, stack.daemon);
-    await expect(page.locator('[data-view-area-id] [role="tab"][data-view-state="open"]')).toHaveCount(16, { timeout: 30_000 });
+    await expect(page.locator('[data-view-area-id] [role="tab"][data-view-state="open"]')).toHaveCount(32, { timeout: 30_000 });
     await showTool(page, "files");
     // Explorer virtualizes this long list: reveal its last rows before clicking one.
     await page.getByRole("tree", { name: "Checkout files" }).hover();
     await page.mouse.wheel(0, 2000);
-    await explorerRow(page, stack, "f17.txt").click();
-    await expect(tab(page, "f17.txt")).toHaveAttribute("aria-selected", "true");
+    await explorerRow(page, stack, "f33.txt").click();
+    await expect(tab(page, "f33.txt")).toHaveAttribute("aria-selected", "true");
     await expect(tab(page, "f10.txt")).toHaveCount(0);
-    await expect(page.locator('[data-view-area-id] [role="tab"]')).toHaveCount(16);
+    await expect(page.locator('[data-view-area-id] [role="tab"]')).toHaveCount(32);
     await expect(page.locator("[data-notice]")).toHaveCount(0);
     await screenshot(page, "s7-caps-display-limit");
     await explorerRow(page, stack, "f12.txt").click();
     await expect(tab(page, "f12.txt")).toHaveAttribute("aria-selected", "true");
     await expect(page.locator("[data-notice]")).toHaveCount(0);
-    await expect(page.locator('[data-view-area-id] [role="tab"]')).toHaveCount(16);
+    await expect(page.locator('[data-view-area-id] [role="tab"]')).toHaveCount(32);
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
     stopStack(stack);
   }
 });
 
-type StoredWorkspace = { device_id: string; path: string; tool: string | null; pinned: boolean; tree: boolean; lane_width?: number; tree_width?: number; layout: unknown };
+type StoredWorkspace = { device_id: string; path: string; tool: string | null; pinned: boolean; tree: boolean; lane_width?: number; tree_width?: number; view_layout: unknown };
 
 /** This Workspace's entry in `workspace-views.json`, without the clock stamps a focus writes. */
 function storedWorkspace(daemon: Daemon, root: string): StoredWorkspace | null {
@@ -1165,7 +1165,7 @@ test("a window too narrow to dock opens the pinned lane over the agents with one
     await expect(divider).toHaveAttribute("aria-valuenow", "45");
     const workspace = page.locator("[data-workspace-screen]");
     await expect(workspace).toHaveAttribute("data-lane-shows", "files");
-    await expect.poll(() => (storedWorkspace(stack.daemon, stack.root)?.layout as { root?: { split?: { ratio?: number } } } | undefined)?.root?.split?.ratio).toBeCloseTo(0.45);
+    await expect.poll(() => (storedWorkspace(stack.daemon, stack.root)?.view_layout as { root?: { split?: { ratio?: number } } } | undefined)?.root?.split?.ratio).toBeCloseTo(0.45);
     const sentBefore = stack.events.filter((event) => event.kind === "workspace_view").length;
     const sidebar = (await boxOf(page.locator("[data-lane-row]"))).x;
 
@@ -1265,7 +1265,7 @@ test("a restart brings the View areas back as they were, and a file gone meanwhi
     expect(before).toBe("(a.txt >c.txt*) | (>b.txt) | @(d.txt >e.txt)");
     await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ tool: "files", pinned: true, tree: true });
     await expect
-      .poll(() => JSON.stringify(storedWorkspace(stack.daemon, stack.root)?.layout))
+      .poll(() => JSON.stringify(storedWorkspace(stack.daemon, stack.root)?.view_layout))
       .toMatch(/"ratio":0\.45.*"ratio":0\.55/);
     const panes = herdrIds(stack.herdr);
     await screenshot(page, "s7-restore-before");
@@ -1381,9 +1381,9 @@ test("a broken or unknown Views file is kept aside for Main and a fresh layout, 
     await screenshot(page, "s7-recover-migrated");
     await tab(page, "a.txt").click();
     await expect.poll(() => {
-      const stored = JSON.parse(fs.readFileSync(viewsFile(stack.daemon), "utf8")) as { schema_version: number; workspaces: { path: string; layout?: { root?: { area?: { displays?: { path: string; preview: boolean }[] } } } }[] };
+      const stored = JSON.parse(fs.readFileSync(viewsFile(stack.daemon), "utf8")) as { schema_version: number; workspaces: { path: string; view_layout?: { root?: { area?: { displays?: { path: string; preview: boolean }[] } } } }[] };
       const entry = stored.workspaces.find((candidate) => candidate.path === stack.root);
-      return { version: stored.schema_version, displays: entry?.layout?.root?.area?.displays?.map((display) => `${path.basename(display.path)}${display.preview ? "*" : ""}`) };
+      return { version: stored.schema_version, displays: entry?.view_layout?.root?.area?.displays?.map((display) => `${path.basename(display.path)}${display.preview ? "*" : ""}`) };
     }).toEqual({ version: 3, displays: ["a.txt", "b.txt", "c.txt*"] });
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
