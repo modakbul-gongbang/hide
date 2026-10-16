@@ -29,9 +29,10 @@ import sys
 
 from pull_requests import BASE, MERGE_IDENTITY, ROOT, Undecided, gh_json, git, latest_verify, merge_tree, verify_runs
 
-# Pairs grow with the square of the open pull requests: 100 is 4,950 merges, about
-# a minute of `git merge-tree`. More than that is a listing cut short, not an answer.
-OPEN_LIMIT = 100
+# Pairs grow with the square of the open pull requests. A pair took 46 ms when 20
+# pull requests' 190 pairs were merged on 2026-10-16, so 60 (1,770 pairs) stays
+# near a minute and a half; past that the design, not the limit, has to change.
+OPEN_LIMIT = 60
 # A stack this tall takes no new layer: each change to a layer runs `verify` again
 # on every layer above it.
 STACK_LIMIT = 3
