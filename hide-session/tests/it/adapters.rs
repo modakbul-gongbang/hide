@@ -4288,6 +4288,43 @@ fn original_turn_rejects_a_same_id_file_replacement_before_preview_and_accepts_a
     );
 }
 
+/// A Codex 0.163.0 session started with `/goal` (PRD
+/// label-goal-command-context D-04-D-06): Codex records the operator's
+/// objective in a `user_goal` message, adds its own `goal` reminder to
+/// every turn while the goal is active, and reports a cleared goal in another
+/// `user_goal` message that carries no words of the operator's.
+#[test]
+fn a_codex_goal_is_the_operators_request_and_its_turn_reminder_is_not() {
+    let home = tempfile::tempdir().unwrap();
+    copy_tree(
+        &fixtures().join("codex-0.163.0-goal"),
+        &home.path().join(".codex"),
+    );
+    let request = LabelTranscriptRequest {
+        reference_value: "0199a000-0000-7000-8000-0000000000b1".to_owned(),
+        ..request(Agent::Codex)
+    };
+    let transcript = read(home.path(), &request).unwrap();
+    let humans = transcript
+        .events
+        .iter()
+        .filter(|event| event.kind == LabelEventKind::Human)
+        .map(|event| event.text.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        humans,
+        ["출시 전 검수 리포트를 \"확실하게\" 정리해줘\n\n에이전트별로 나눠서"],
+        "the objective, unwrapped and decoded, is the one request"
+    );
+    assert!(
+        transcript
+            .events
+            .iter()
+            .all(|event| !event.text.contains("codex_internal_context")),
+        "neither Codex wrapper reaches the conversation as words"
+    );
+}
+
 const AGY_ID: &str = "a9c0e2f4-0000-4000-8000-000000000008";
 
 mod antigravity {
