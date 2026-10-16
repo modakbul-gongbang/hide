@@ -25,6 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { packager } from "@electron/packager";
+import { applyFuses, assertFuses } from "./fuses.mjs";
 import { APP_ID, buildInstallers } from "./installers.mjs";
 import { assertNotarized, developerIdOptions, macosSigning } from "./macos-signing.mjs";
 
@@ -255,7 +256,12 @@ const [outputDir] = await packager({
   // It is signed under the app's identifier here, since macOS keys
   // notification settings to it, so it is already signed when a Developer ID
   // signature seals the bundle around it, and that signature replaces this one.
-  afterCopyExtraResources: notificationHelper
+  afterCopyExtraResources: [
+    // The fuses first, before anything signs the bundle: flipping one changes the binary.
+    async ({ buildPath }) => {
+      await applyFuses(platform === "darwin" ? path.join(buildPath, "hide.app") : path.join(buildPath, platform === "win32" ? "hide.exe" : "hide"), { adHocSign: platform === "darwin" });
+    },
+    ...(notificationHelper
     ? [
         async ({ buildPath }) => {
           const target = path.join(buildPath, "hide.app", "Contents", "MacOS", path.basename(notificationHelper));
@@ -264,7 +270,8 @@ const [outputDir] = await packager({
           run("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", APP_BUNDLE_ID, "--timestamp=none", target], { stdio: "inherit" });
         },
       ]
-    : [],
+    : []),
+  ],
   ...(signing?.mode === "developer-id"
     ? developerIdOptions(signing, shipped.map(([name]) => name), path.join(resources, "entitlements"), { [path.basename(notificationHelper)]: APP_BUNDLE_ID })
     : {}),
@@ -274,6 +281,8 @@ const [outputDir] = await packager({
 // is inside it and is what ships; elsewhere the directory itself ships, with
 // the Electron executable at its top and the resources folder beside it.
 const bundle = platform === "darwin" ? path.join(outputDir, "hide.app") : outputDir;
+// What ships has the fuses, read back from the built app rather than trusted from the hook.
+await assertFuses(platform === "darwin" ? bundle : path.join(bundle, platform === "win32" ? "hide.exe" : "hide"));
 const bundledResources = platform === "darwin" ? path.join(bundle, "Contents", "Resources") : path.join(bundle, "resources");
 for (const [name] of shipped) {
   const file = path.join(bundledResources, name);

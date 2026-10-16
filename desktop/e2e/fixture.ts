@@ -14,6 +14,7 @@ import { aiSettingsFile } from "../../web/e2e/hided-fixture";
 import { ownUntilWorkerExit } from "../../web/e2e/worker-owned";
 import { endWindowsProcesses, fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv } from "../../web/e2e/platform-fixture";
 import { SHOW_INACTIVE_SWITCH } from "../src/main/launchSwitches";
+import { fusedElectron } from "./fused-electron";
 
 export const DESKTOP_DIR = path.resolve(__dirname, "..");
 export const REPO = path.resolve(DESKTOP_DIR, "..");
@@ -329,7 +330,8 @@ async function start(appDir: string, env: Record<string, string>, executablePath
   const report = path.join(focusReports.dir, `launch-${focusReports.apps.length + 1}.jsonl`);
   owner.launching++;
   try {
-    const app = await electron.launch({ executablePath, args: ["-r", FOCUS_GUARD, ...(!executablePath ? [appDir] : []), ...BACKGROUND_SWITCHES, `--hide-e2e-focus-report=${report}`], cwd: appDir, env });
+    // A packaged app is given as `executablePath`; otherwise the app folder runs on the fused copy of Electron.
+    const app = await electron.launch({ executablePath: executablePath ?? fusedElectron(), args: ["-r", FOCUS_GUARD, ...(!executablePath ? [appDir] : []), ...BACKGROUND_SWITCHES, `--hide-e2e-focus-report=${report}`], cwd: appDir, env });
     // Taken now: `app.process()` throws once the app is closed. The home
     // retains this handle beyond test teardown if closing the app fails.
     const child = app.process();
