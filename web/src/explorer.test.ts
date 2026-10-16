@@ -12,6 +12,8 @@ import {
   moveSelection,
   parentPath,
   parentSelection,
+  pasteRefusal,
+  pasteTarget,
   relativeTo,
   rowForPath,
   rowTitle,
@@ -317,7 +319,22 @@ describe("the chords the tree answers itself", () => {
     expect(treeCommandFor(press("KeyC", { meta: true, alt: true }), mac, "electron")).toBe("copy_path");
     expect(treeCommandFor(press("KeyC", { meta: true, alt: true, shift: true }), mac, "electron")).toBe("copy_relative_path");
     expect(treeCommandFor(press("Backspace", { meta: true }), mac, "electron")).toBe("move_to_trash");
-    expect(treeCommandFor(press("KeyC", { meta: true }), mac, "electron")).toBeNull();
+    expect(treeCommandFor(press("KeyC", { meta: true }), mac, "electron")).toBe("explorer_copy");
+  });
+
+  it("reads the clipboard as the system's own chords: ⌘X, ⌘C, ⌘V on a Mac, Ctrl+X, Ctrl+C, Ctrl+V on Windows and Linux, in a browser tab too", () => {
+    for (const host of ["electron", "browser"] as const) {
+      const mac = systemRegistry("mac");
+      expect(treeCommandFor(press("KeyX", { meta: true }), mac, host)).toBe("explorer_cut");
+      expect(treeCommandFor(press("KeyC", { meta: true }), mac, host)).toBe("explorer_copy");
+      expect(treeCommandFor(press("KeyV", { meta: true }), mac, host)).toBe("explorer_paste");
+      const pc = systemRegistry("pc");
+      expect(treeCommandFor(press("KeyX", { ctrl: true }), pc, host)).toBe("explorer_cut");
+      expect(treeCommandFor(press("KeyC", { ctrl: true }), pc, host)).toBe("explorer_copy");
+      expect(treeCommandFor(press("KeyV", { ctrl: true }), pc, host)).toBe("explorer_paste");
+    }
+    // A terminal's Ctrl+Shift+C on Windows and Linux is not the tree's.
+    expect(treeCommandFor(press("KeyC", { ctrl: true, shift: true }), systemRegistry("pc"), "electron")).toBeNull();
   });
 
   it("reads them on Windows and Linux as Alt+Shift+C, Alt+Shift+R and Delete", () => {
@@ -332,5 +349,32 @@ describe("the chords the tree answers itself", () => {
     expect(treeCommandFor(press("KeyU", { meta: true, shift: true }), bound, "electron")).toBe("copy_path");
     expect(treeCommandFor(press("KeyC", { meta: true, alt: true }), bound, "electron")).toBeNull();
     expect(treeCommandFor(press("KeyC", { meta: true, alt: true }), systemRegistry("mac"), "browser")).toBeNull();
+  });
+});
+
+describe("where a paste lands and what it refuses", () => {
+  it("pastes into the selected folder, the folder of a selected file, else the root", () => {
+    expect(pasteTarget({ path: `${ROOT}/src`, isDirectory: true }, ROOT)).toBe(`${ROOT}/src`);
+    expect(pasteTarget({ path: `${ROOT}/src/a.ts`, isDirectory: false }, ROOT)).toBe(`${ROOT}/src`);
+    expect(pasteTarget({ path: `${ROOT}/README.md`, isDirectory: false }, ROOT)).toBe(ROOT);
+    expect(pasteTarget(null, ROOT)).toBe(ROOT);
+  });
+
+  const held = (over: Partial<{ path: string; isDirectory: boolean; root: string; device: string }> = {}) => ({
+    path: `${ROOT}/src`,
+    isDirectory: true,
+    root: ROOT,
+    device: "local",
+    ...over,
+  });
+
+  it("refuses another checkout or device, and a folder into itself or below itself", () => {
+    expect(pasteRefusal(held(), `${ROOT}/docs`, ROOT, "local")).toBeNull();
+    expect(pasteRefusal(held({ isDirectory: false, path: `${ROOT}/a.ts` }), `${ROOT}/src`, ROOT, "local")).toBeNull();
+    expect(pasteRefusal(held({ root: "/checkout/other" }), `${ROOT}/docs`, ROOT, "local")).toBe("explorer.pasteOtherCheckout");
+    expect(pasteRefusal(held({ device: "studio" }), `${ROOT}/docs`, ROOT, "local")).toBe("explorer.pasteOtherCheckout");
+    expect(pasteRefusal(held(), `${ROOT}/src`, ROOT, "local")).toBe("explorer.pasteIntoItself");
+    expect(pasteRefusal(held(), `${ROOT}/src/nested`, ROOT, "local")).toBe("explorer.pasteIntoItself");
+    expect(pasteRefusal(held(), `${ROOT}/src-extra`, ROOT, "local")).toBeNull();
   });
 });

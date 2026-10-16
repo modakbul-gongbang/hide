@@ -1076,14 +1076,14 @@ Under the light theme a mark the theme draws differently on a light background t
 The same marks stand beside a file in ⌘P, on a View tab and on a History row.
 A changed file's name takes its status mark's color; a folder's name stays plain and its dot carries the state.
 
-The tree's context menu on a file row is Open to the side (and Open in Browser for an HTML file), a separator, the reveal, a separator, Copy Path and Copy Relative Path, a separator, Rename, a separator, Move to Trash.
+The tree's context menu on a file row is Open to the side (and Open in Browser for an HTML file), a separator, the reveal, a separator, Cut, Copy, Paste (only while the clipboard holds an item) and Duplicate, a separator, Copy Path and Copy Relative Path, a separator, Rename, a separator, Move to Trash.
 A folder row has New File and New Folder in place of the opens.
 Each item shows the chord that does the same, as the operator has it bound, at its end.
 The item set the menu offers is a presentation decision a test can check directly (`explorerMenuItems` in `web/src/explorer.ts`), not something the platform decides implicitly.
 
 The root row, the checkout's name above the tree, stands for the checkout's root.
-A right-click on it, or on the blank room under the last row, opens the root's menu: New File, New Folder, a separator, the reveal, a separator, Copy Path and Copy Relative Path.
-It never offers Rename or Move to Trash.
+A right-click on it, or on the blank room under the last row, opens the root's menu: New File, New Folder, a separator, the reveal, a separator, Paste (only while the clipboard holds an item), a separator, Copy Path and Copy Relative Path.
+It never offers Cut, Copy, Duplicate, Rename or Move to Trash.
 The room under the last row is one row tall and always there, so the root's menu can be reached however long the tree is.
 While the pointer or the keyboard is on the root row it shows three icon buttons beside Refresh, VS Code's pattern: New File and New Folder, which begin a name in the root as the menu items do, and Collapse All, which folds every open folder and is disabled while none is open.
 The buttons keep their place in the row whether they show or not, so the name never moves when they appear, and they show all the time where there is no hover.
@@ -1094,6 +1094,31 @@ Copy Path puts the item's whole path on the clipboard, in the checkout device's 
 They are registry commands (`copy_path`, `copy_relative_path`) listed in the shortcut sheet as Explorer only, rebound in Settings, Shortcuts, and answered by the tree rather than the window, so a terminal keeps those keys.
 A clipboard that refuses the write goes to the diagnostic log, and nothing else changes: neither command touches a file, so there is nothing to undo.
 Collapse All changes only the tree's expansion, which the next press on a folder restores.
+
+Cut, Copy, Paste and Duplicate work on one item, the selected row or the row the menu opened on.
+Cut and Copy (⌘X and ⌘C, Ctrl+X and Ctrl+C on Windows and Linux) put the item in the Explorer's own clipboard, which holds one item and names the checkout and device it came from; they never touch the system clipboard, so a text field's paste is unchanged.
+A cut item is drawn faded until it is pasted.
+Paste (⌘V, Ctrl+V) puts the item in the selected folder, in the folder of the selected file, or at the root when nothing is selected; the menu's Paste on a folder row pastes into that folder, on a file row into its folder.
+The folder a paste lands in opens, and the new item is selected.
+A copy is a new item and never replaces one: when the name is taken in the destination the host picks the next free `name copy.ext`, then `name copy 2.ext`, and so on (a folder `src` becomes `src copy`), so pasting a copy into its own folder and Duplicate give the same result.
+Duplicate is Copy and Paste in the item's own folder, with no chord.
+Pasting a cut item moves it (`path_move`) and empties the clipboard; pasting it into the folder it is in does nothing.
+A copy repeats on every paste.
+A folder is copied with everything under it, in one `path_copy` the checkout's host makes: it builds the copy in a hidden working folder inside the destination and renames it into place, so the copy appears whole or not at all, and a failed copy leaves nothing behind.
+A link, a socket or any other file that is not a plain file or folder refuses the whole copy with the name of what it met.
+One copy holds at most 5,000 items and 256 MiB; the host measures before it writes, and a copy past either is refused with nothing copied.
+A paste works inside one checkout of one device: pasting an item that came from another checkout, or another device, is refused with a line under the folder it was pasted into, and a folder cannot be pasted into itself or below itself.
+The failure line is the one a refused name uses; the core's reason is drawn under the folder the copy was pasted into.
+Cut, Copy, Paste and Duplicate are not undone inside the app, as a rename and a move are not: a copy only adds an item, so its undo is Move to Trash on the new item, which is selected when the paste lands, and the Trash restores it; a cut item pasted is moved back the way a drag moves it back.
+
+Files and folders dragged in from the operator's file manager are copied into the checkout.
+Dropping on a folder row puts them in that folder, on the root row or on the empty room under the rows puts them at the root, and the receiving row is highlighted as a drag inside the tree highlights its folder; a file row accepts nothing.
+Folders come with everything under them, and a name already used in the destination becomes `name copy.ext`, never a replacement.
+The window reads the bytes with the browser's file API and hands them over the connection it already has; a path from outside every registered checkout never reaches the core, and the same route serves a checkout on another device, whose helper writes the files into its own checkout.
+Each file is uploaded to hided's staging, as a terminal attachment is, and one `path_import` event names the staged files; hided is the only maker of the core's `path_import`, and the core reads the staged files itself and has the checkout's host write the items under a hidden working folder, so a drop lands whole or not at all.
+A drop holds at most 500 items, 20 MiB a file and 40 MiB in all; the window checks the counts and the sizes before it reads a byte, and a drop past a cap adds nothing and says so in the failure line under the folder it was dropped on.
+An upload that hided refuses, a file that cannot be read and an entry that disappears mid-drop end the same way.
+A drop is undone like a copy: it adds items, the first is selected, and Move to Trash takes them away.
 
 The reveal is one action, `reveal_external`, on Explorer rows, History rows, View tabs and sidebar project and checkout rows (`web/src/revealExternal.ts`).
 A History row's menu is Open to the side, a separator, then the reveal of the row's file.
@@ -2308,6 +2333,8 @@ Each exception has a dominant convention on Windows and Linux, or a chord the sy
 - Move to Trash in the Explorer is Delete, as in Windows Explorer and the Linux file managers.
 - Copy Relative Path is Alt+Shift+R: the rule would give it Copy Path's Alt+Shift+C, and VS Code's own chord for it is a two-step sequence (Ctrl+K, then Ctrl+Shift+C) that the registry cannot hold.
   A browser tab has neither path chord, because Chrome keeps ⌥⌘C (Inspect); the menu items work there.
+- Cut, Copy and Paste in the Explorer are the system's own clipboard chords: ⌘X, ⌘C and ⌘V on a Mac, Ctrl+X, Ctrl+C and Ctrl+V on Windows and Linux.
+  The tree answers them only while it holds the keyboard, so a terminal keeps ⌘C for its selection and Ctrl+C for the interrupt, and a text field keeps its own.
 - Inside a text field, a palette, a board or a document, no terminal holds the keyboard, so the system's own command key applies: ⌘↵ is Ctrl+Enter (send a form, open a ⌘P result to the side, open a pull request on GitHub), ⌘-click is Ctrl-click (a link, a pull request, an issue), and Ctrl+S saves the document in front as well as Ctrl+Shift+S.
   A file or diff View's comment chord ⇧⌘. is Ctrl+Shift+. there for the same reason ([View openers and comments](#view-openers-and-comments)).
 - Tab digits follow the rule (Ctrl+Shift+1-9, as in WezTerm): Windows Terminal, GNOME Terminal and the browsers each use a different modifier, so no convention outweighs the rule.
@@ -2392,6 +2419,9 @@ The sheet carries no row or explanation for a command the removed native app alo
 | Move to Trash (exception) | `⌘⌫` | `Delete` | `⌘⌫` | `Delete` |
 | Copy Path | `⌥⌘C` | `Alt+Shift+C` | none | none |
 | Copy Relative Path (exception) | `⌥⇧⌘C` | `Alt+Shift+R` | none | none |
+| Cut File or Folder (exception) | `⌘X` | `Ctrl+X` | `⌘X` | `Ctrl+X` |
+| Copy File or Folder (exception) | `⌘C` | `Ctrl+C` | `⌘C` | `Ctrl+C` |
+| Paste File or Folder (exception) | `⌘V` | `Ctrl+V` | `⌘V` | `Ctrl+V` |
 | Settings | `⌘,` | `Ctrl+Shift+,` | `⌥,` | `Ctrl+Shift+,` |
 | Keyboard shortcuts | `⌘/` | `Ctrl+Shift+/` | `⌘/` | `Ctrl+Shift+/` |
 

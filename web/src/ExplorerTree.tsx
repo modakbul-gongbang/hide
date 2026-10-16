@@ -21,6 +21,8 @@ import {
   moveSelection,
   parentPath,
   parentSelection,
+  pasteRefusal,
+  pasteTarget,
   rowAccessibilityLabel,
   relativeTo,
   rowForPath,
@@ -34,6 +36,7 @@ import { screenDeviceId } from "./screenMachine";
 import { changesFor, explorerContext, localDeviceId } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type ExplorerDraft } from "./ui";
+import { captureDrop, carriesOsFiles } from "./explorerDrop";
 import { drawnViews } from "./viewFocus";
 import { besideUnavailable } from "./viewLayout";
 import { expandedUnderRoot, watchedFolders } from "./watch";
@@ -139,6 +142,12 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
   const setSelection = useUiStore((s) => s.setExplorerSelection);
   const draft = useUiStore((s) => s.explorerDraft);
   const setDraft = useUiStore((s) => s.setExplorerDraft);
+  const clipboard = useUiStore((s) => s.explorerClipboard);
+  const setClipboard = useUiStore((s) => s.setExplorerClipboard);
+  const notice = useUiStore((s) => s.explorerNotice);
+  const setNotice = useUiStore((s) => s.setExplorerNotice);
+  // The folder a drag from the file manager would land in, drawn like the folder an in-tree drag is over.
+  const [osTarget, setOsTarget] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   // The filter narrows the rows to the files hided's index (the ⌘P source)
   // matched; it is page-local and leaves the core's expansion untouched.
@@ -274,9 +283,23 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
     pending.current.clear();
     setMenu(null);
     setDraft(null);
+    setNotice(null);
     setFilter("");
     pendingName.current = null;
-  }, [rootPath, setSelection, setDraft]);
+  }, [rootPath, setSelection, setDraft, setNotice]);
+
+  // A new change replaces the failure line the page drew for the last one.
+  useEffect(() => {
+    if (operation) setNotice(null);
+  }, [operation?.id, setNotice]);
+
+  // A copy or a drop hided refused at the checkout boundary is a failure line too.
+  useEffect(() => {
+    if (pathRefusal && (pathRefusal.kind === "path_copy" || pathRefusal.kind === "path_import")) {
+      // The reason is a code the operator cannot act on (the path left the checkout); the line says what did not happen.
+      setNotice({ path: pathRefusal.path, message: t(pathRefusal.kind === "path_copy" ? "explorer.copyRefused" : "explorer.dropFailed") });
+    }
+  }, [pathRefusal, setNotice, t]);
 
   const lastOperation = useRef<number | null>(null);
   useEffect(() => {
@@ -299,7 +322,11 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
     const folders = [parentPath(operation.path), parentPath(operation.destination)];
     refreshListings(folders);
     for (const folder of folders) pending.current.delete(folder);
-    if (operation.phase === "finished") setSelection(operation.destination);
+    if (operation.phase === "finished") {
+      setSelection(operation.destination);
+      // What a paste or a drop added is shown: the folder it landed in opens.
+      if (operation.kind === "path_copy" || operation.kind === "path_import") expand(parentPath(operation.destination));
+    }
     setRefreshTick((tick) => tick + 1);
   }, [operation, refreshListings, setSelection]);
 
@@ -361,6 +388,40 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
     setMenu(null);
   };
 
+  // Cut and Copy take the item the menu or the cursor names; Paste puts it in a
+  // folder of the same checkout. A cut item moves on paste (`path_move`), a copy
+  // is copied (`path_copy`) under the name the host picks when one is taken.
+  const takeItem = (row: ExplorerRow | null, mode: "copy" | "cut") => {
+    setMenu(null);
+    if (!row || !rootPath) return;
+    setNotice(null);
+    setClipboard({ mode, path: row.path, isDirectory: row.isDirectory, root: rootPath, device });
+  };
+
+  const pasteInto = (folder: string) => {
+    setMenu(null);
+    const held = useUiStore.getState().explorerClipboard;
+    if (!held || !rootPath) return;
+    setNotice(null);
+    const refusal = pasteRefusal(held, folder, rootPath, device);
+    if (refusal) {
+      setNotice({ path: folder, message: t(refusal) });
+      return;
+    }
+    if (held.mode === "copy") {
+      actions.copyEntry(held.path, folder);
+      return;
+    }
+    // A cut item pasted into the folder it is in has nowhere to go.
+    setClipboard(null);
+    if (parentPath(held.path) !== folder) actions.moveEntry(held.path, folder);
+  };
+
+  const duplicate = (row: ExplorerRow) => {
+    setMenu(null);
+    actions.copyEntry(row.path, parentPath(row.path));
+  };
+
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const row = rowForPath(rows, selection);
     // Move to Trash (⌘⌫, Delete on Windows and Linux) and the two path copies
@@ -372,6 +433,10 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
       event.preventDefault();
       if (command === "move_to_trash") {
         if (row) requestTrash(row);
+      } else if (command === "explorer_cut" || command === "explorer_copy") {
+        takeItem(row, command === "explorer_cut" ? "cut" : "copy");
+      } else if (command === "explorer_paste") {
+        if (rootPath) pasteInto(pasteTarget(row, rootPath));
       } else if (rootPath) {
         copyPathOf(row?.path ?? rootPath, command === "copy_relative_path");
       }
@@ -412,6 +477,40 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
     );
   }
 
+  // The system's own clipboard commands (the native Edit menu, a right-click
+  // menu of the browser) reach the focused tree as clipboard events when its
+  // keydown did not answer them; a name field inside the tree keeps its own.
+  const onClipboardEvent = (mode: "copy" | "cut" | "paste") => (event: React.ClipboardEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest("input, textarea")) return;
+    event.preventDefault();
+    const row = rowForPath(rows, selection);
+    if (mode === "paste") pasteInto(pasteTarget(row, rootPath));
+    else takeItem(row, mode);
+  };
+
+  // Files dragged in from the file manager land in the folder under the
+  // pointer, the root row, or the empty space (the root); a drag inside the
+  // tree is `moveEntry`'s and never reaches these.
+  const osDrag = (folder: string | null) => ({
+    onDragOver: (event: React.DragEvent<HTMLElement>) => {
+      if (dragPath.current || !carriesOsFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = folder === null ? "none" : "copy";
+      setOsTarget(folder);
+    },
+    onDrop: (event: React.DragEvent<HTMLElement>) => {
+      if (dragPath.current || !carriesOsFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setOsTarget(null);
+      if (folder !== null) actions.importDropped(folder, captureDrop(event.dataTransfer));
+    },
+  });
+  const leaveTree = (event: React.DragEvent<HTMLElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOsTarget(null);
+  };
+
   const refused = pathRefusal?.kind === "file_list" && pathRefusal.path === rootPath ? pathRefusal.reason : null;
   const rootListing = listings[rootPath];
   const rootUnavailable = unavailable?.root_path === rootPath ? unavailable : null;
@@ -425,7 +524,17 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
         : answer && rows.length === 0
           ? t("documents.noMatchingFiles")
           : null;
-  const failure = operation?.phase === "failed" && operation.message ? operation : null;
+  // The core's own failure, drawn under the row the change started from (a
+  // copy under the folder it was pasted into), or the line the page drew.
+  const operationFailure = operation?.phase === "failed" && operation.message ? operation : null;
+  const failure: { path: string; message: string } | null = notice
+    ? notice
+    : operationFailure && operationFailure.message
+      ? {
+          path: operationFailure.kind === "path_copy" ? parentPath(operationFailure.destination) : operationFailure.path,
+          message: operationFailure.message,
+        }
+      : null;
 
   const anchorTop = (path: string): number | null => {
     const index = shown.findIndex((entry) => (entry.kind === "entry" ? entry.row.path : entry.path) === path);
@@ -433,7 +542,8 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
     const item = virtualizer.getVirtualItems().find((virtual) => virtual.index === index);
     return item ? item.start : null;
   };
-  const failureTop = failure ? anchorTop(failure.path) ?? anchorTop(parentPath(failure.path)) ?? 0 : null;
+  // A failure under the root, or under a row the list has not drawn, stands above the rows.
+  const failureTop = failure ? anchorTop(failure.path) ?? (failure.path === rootPath ? null : anchorTop(parentPath(failure.path))) : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-explorer={rootPath}>
@@ -456,8 +566,11 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
         </p>
       ) : null}
       <div
-        className="group/root flex shrink-0 items-center gap-xs border-b border-border px-md py-xs text-caption text-subtle-foreground"
+        className={`group/root flex shrink-0 items-center gap-xs border-b border-border px-md py-xs text-caption text-subtle-foreground ${osTarget === rootPath ? "bg-secondary" : ""}`}
         data-explorer-root-row="true"
+        data-drop={osTarget === rootPath ? "true" : "false"}
+        {...osDrag(rootPath)}
+        onDragLeave={leaveTree}
         onContextMenu={(event) => {
           event.preventDefault();
           setMenu({ path: rootPath, isDirectory: true, x: event.clientX, y: event.clientY });
@@ -522,6 +635,11 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
           </Button>
         </Hint>
       </div>
+      {failure && failureTop === null ? (
+        <div className="border-b border-border px-md py-xs text-caption text-destructive" data-explorer-failure={failure.path}>
+          <span className="block truncate">{failure.message}</span>
+        </div>
+      ) : null}
       {refused ? (
         <div className="border-b border-border px-md py-sm text-caption text-destructive" data-explorer-refusal={refused}>
           {refused}
@@ -574,6 +692,11 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
           data-explorer-tree="true"
           onPointerDown={(event) => event.currentTarget.focus()}
           onKeyDown={onKeyDown}
+          onCopy={onClipboardEvent("copy")}
+          onCut={onClipboardEvent("cut")}
+          onPaste={onClipboardEvent("paste")}
+          {...osDrag(rootPath)}
+          onDragLeave={leaveTree}
           onContextMenu={(event) => {
             if (event.target !== event.currentTarget && (event.target as HTMLElement).closest("[data-explorer-row]")) return;
             event.preventDefault();
@@ -621,6 +744,9 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
                     event.preventDefault();
                     setMenu({ path: row.path, isDirectory: row.isDirectory, x: event.clientX, y: event.clientY });
                   }}
+                  cut={clipboard?.mode === "cut" && clipboard.root === rootPath && clipboard.path === row.path}
+                  osOver={osTarget === row.path}
+                  osDrag={osDrag(row.isDirectory ? row.path : null)}
                   onDragStart={(source) => beginDrag(row.path, source)}
                   onDrop={(from) => {
                     if (from && from !== row.path && !row.path.startsWith(`${from}/`)) actions.moveEntry(from, row.path);
@@ -659,6 +785,11 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
             actions.revealExternal(path);
           }}
           onCopyPath={copyPathOf}
+          canPaste={clipboard !== null}
+          onCut={(row) => takeItem(row, "cut")}
+          onCopy={(row) => takeItem(row, "copy")}
+          onPaste={(path, isDirectory) => pasteInto(isDirectory ? path : parentPath(path))}
+          onDuplicate={duplicate}
           onNewFile={beginCreate}
           onRename={beginRename}
           onTrash={requestTrash}
@@ -761,6 +892,11 @@ function ExplorerContextMenu({
   onOpenBrowser,
   onRevealExternal,
   onCopyPath,
+  canPaste,
+  onCut,
+  onCopy,
+  onPaste,
+  onDuplicate,
   onNewFile,
   onRename,
   onTrash,
@@ -776,6 +912,13 @@ function ExplorerContextMenu({
   onRevealExternal: (path: string) => void;
   /** The path (or the path below the checkout root) put on the clipboard. */
   onCopyPath: (path: string, relative: boolean) => void;
+  /** The Explorer's clipboard holds an item, so Paste is offered. */
+  canPaste: boolean;
+  onCut: (row: ExplorerRow) => void;
+  onCopy: (row: ExplorerRow) => void;
+  /** Paste into the folder the menu stands for, or the folder a file sits in. */
+  onPaste: (path: string, isDirectory: boolean) => void;
+  onDuplicate: (row: ExplorerRow) => void;
   onNewFile: (parent: string, kind: "file" | "folder") => void;
   onRename: (row: ExplorerRow) => void;
   onTrash: (row: ExplorerRow) => void;
@@ -791,6 +934,7 @@ function ExplorerContextMenu({
     reveal: revealHost(),
     device: explorerContext(useShellStore.getState().rest).device,
     node: screenDeviceId(useShellStore.getState().rest),
+    canPaste,
     chord: (id) => commandLabel(id),
   });
   return (
@@ -806,6 +950,10 @@ function ExplorerContextMenu({
         else if (row && id === "open-beside") onOpenBeside(row.path);
         else if (row && id === "open-browser") onOpenBrowser(row.path);
         else if (id === "reveal_external") onRevealExternal(menu.path);
+        else if (row && id === "cut") onCut(row);
+        else if (row && id === "copy") onCopy(row);
+        else if (id === "paste") onPaste(menu.path, menu.isDirectory);
+        else if (row && id === "duplicate") onDuplicate(row);
         else if (id === "copy_path") onCopyPath(menu.path, false);
         else if (id === "copy_relative_path") onCopyPath(menu.path, true);
         else if (row && id === "rename") onRename(row);
@@ -824,6 +972,9 @@ function ExplorerRowView({
   onOpen,
   onRefresh,
   onContextMenu,
+  cut,
+  osOver,
+  osDrag,
   onDragStart,
   onDrop,
 }: {
@@ -835,6 +986,12 @@ function ExplorerRowView({
   onOpen: (row: ExplorerRow, preview: boolean) => void;
   onRefresh: () => void;
   onContextMenu: (event: React.MouseEvent) => void;
+  /** The row's item is on the clipboard as a cut: drawn faded until it is pasted. */
+  cut: boolean;
+  /** Files from the file manager are over this folder. */
+  osOver: boolean;
+  /** What a drag from the file manager does here: a folder takes it, a file refuses it. */
+  osDrag: { onDragOver: (event: React.DragEvent<HTMLElement>) => void; onDrop: (event: React.DragEvent<HTMLElement>) => void };
   onDragStart: (source: HTMLElement) => void;
   onDrop: (from: string | null) => void;
 }) {
@@ -852,10 +1009,11 @@ function ExplorerRowView({
       data-explorer-row={row.path}
       data-selected={selected ? "true" : "false"}
       data-decoration={row.decoration?.status ?? ""}
-      data-drop={over ? "true" : "false"}
+      data-drop={over || osOver ? "true" : "false"}
+      data-cut={cut ? "true" : "false"}
       className={`absolute inset-x-0 flex cursor-default items-center gap-xs pr-md text-subhead text-foreground ${
         selected ? "bg-secondary" : "hover:bg-accent"
-      } ${over ? "bg-secondary" : ""}`}
+      } ${over || osOver ? "bg-secondary" : ""} ${cut ? "opacity-50" : ""}`}
       style={{
         top: 0,
         height: "var(--size-pane-child-row)",
@@ -876,13 +1034,21 @@ function ExplorerRowView({
         onDragStart(event.currentTarget);
       }}
       onDragOver={(event) => {
-        if (!row.isDirectory || !dragPath.current) return;
+        if (!dragPath.current) {
+          osDrag.onDragOver(event);
+          return;
+        }
+        if (!row.isDirectory) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
         setOver(true);
       }}
       onDragLeave={() => setOver(false)}
       onDrop={(event) => {
+        if (!dragPath.current && carriesOsFiles(event.dataTransfer)) {
+          osDrag.onDrop(event);
+          return;
+        }
         event.preventDefault();
         setOver(false);
         const from = dragPath.current ?? event.dataTransfer.getData("text/plain");

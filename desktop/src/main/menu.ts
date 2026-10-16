@@ -89,6 +89,9 @@ export const KEYBOARD_ONLY: readonly CommandId[] = [
   "move_to_trash",
   "copy_path",
   "copy_relative_path",
+  "explorer_cut",
+  "explorer_copy",
+  "explorer_paste",
   ...REGISTRY.map((command) => command.id).filter(isNumberedCommand),
 ];
 

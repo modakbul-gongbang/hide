@@ -28,7 +28,7 @@ describe("reveal_external (issue 324)", () => {
 describe("the Explorer's context menu", () => {
   /** Each item as the menu draws it: a separator line before it, then its label. */
   const drawn = (items: { label: string; separated?: boolean }[]) => items.flatMap((item) => [...(item.separated ? ["─"] : []), item.label]);
-  const base = { html: false, besideReason: null, reveal: { label: revealLabel("darwin") }, device: "local", node: "local", chord: () => "" };
+  const base = { html: false, besideReason: null, reveal: { label: revealLabel("darwin") }, device: "local", node: "local", canPaste: false, chord: () => "" };
   const file = { path: "/Users/example/repo/a.html" };
   const folder = { path: "/Users/example/repo/src" };
 
@@ -39,6 +39,10 @@ describe("the Explorer's context menu", () => {
       "─",
       "Reveal in Finder",
       "─",
+      "Cut",
+      "Copy",
+      "Duplicate",
+      "─",
       "Copy Path",
       "Copy Relative Path",
       "─",
@@ -46,12 +50,60 @@ describe("the Explorer's context menu", () => {
       "─",
       "Move to Trash",
     ]);
-    expect(drawn(explorerMenuItems({ ...base, isDirectory: true, row: folder }))).toEqual(["New File", "New Folder", "─", "Reveal in Finder", "─", "Copy Path", "Copy Relative Path", "─", "Rename", "─", "Move to Trash"]);
+    expect(drawn(explorerMenuItems({ ...base, isDirectory: true, row: folder }))).toEqual([
+      "New File",
+      "New Folder",
+      "─",
+      "Reveal in Finder",
+      "─",
+      "Cut",
+      "Copy",
+      "Duplicate",
+      "─",
+      "Copy Path",
+      "Copy Relative Path",
+      "─",
+      "Rename",
+      "─",
+      "Move to Trash",
+    ]);
   });
 
   it("offers the creations, the reveal and the path copies on the root, never a rename or a trash, and no reveal in a browser tab", () => {
     expect(drawn(explorerMenuItems({ ...base, isDirectory: true, row: null }))).toEqual(["New File", "New Folder", "─", "Reveal in Finder", "─", "Copy Path", "Copy Relative Path"]);
-    expect(drawn(explorerMenuItems({ ...base, reveal: null, isDirectory: false, row: file }))).toEqual(["Open to the side", "─", "Copy Path", "Copy Relative Path", "─", "Rename", "─", "Move to Trash"]);
+    expect(drawn(explorerMenuItems({ ...base, reveal: null, isDirectory: false, row: file }))).toEqual(["Open to the side", "─", "Cut", "Copy", "Duplicate", "─", "Copy Path", "Copy Relative Path", "─", "Rename", "─", "Move to Trash"]);
+  });
+
+  it("offers Paste, after Copy, only while the clipboard holds an item, and on the root too", () => {
+    expect(drawn(explorerMenuItems({ ...base, canPaste: true, isDirectory: false, row: file }))).toEqual([
+      "Open to the side",
+      "─",
+      "Reveal in Finder",
+      "─",
+      "Cut",
+      "Copy",
+      "Paste",
+      "Duplicate",
+      "─",
+      "Copy Path",
+      "Copy Relative Path",
+      "─",
+      "Rename",
+      "─",
+      "Move to Trash",
+    ]);
+    expect(drawn(explorerMenuItems({ ...base, canPaste: true, isDirectory: true, row: null }))).toEqual(["New File", "New Folder", "─", "Reveal in Finder", "─", "Paste", "─", "Copy Path", "Copy Relative Path"]);
+  });
+
+  it("shows each clipboard item's chord and none for Duplicate", () => {
+    const chords: Record<string, string> = { explorer_cut: "⌘X", explorer_copy: "⌘C", explorer_paste: "⌘V" };
+    const items = explorerMenuItems({ ...base, canPaste: true, isDirectory: false, row: file, chord: (id) => chords[id] ?? "" });
+    expect(items.filter((item) => ["cut", "copy", "paste", "duplicate"].includes(item.id)).map((item) => [item.id, item.shortcut])).toEqual([
+      ["cut", "⌘X"],
+      ["copy", "⌘C"],
+      ["paste", "⌘V"],
+      ["duplicate", undefined],
+    ]);
   });
 
   it("lists the reveal disabled with the reason on another device's tree", () => {

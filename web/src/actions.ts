@@ -77,6 +77,7 @@ import { SECRETARY_PROMPT, paneListed } from "./factory/secretary";
 import type { DispatchFn } from "./ws";
 import { closeShortcutPolicy, drawnViews, keyboardOwner, newTabPolicy } from "./viewFocus";
 import { zoomViewer } from "./viewers/viewerZoom";
+import { submitDrop, type CapturedDrop } from "./explorerDrop";
 import {
   activeDisplay,
   adjacentInOrder,
@@ -2717,6 +2718,21 @@ export function createActions(send: DispatchFn) {
       const here = explorerTarget();
       if (!here) return diagnostic("path_move: no focused checkout");
       dispatch({ schema_version: 2, kind: "path_move", payload: { ...here, path, destination } });
+    },
+
+    /** A paste of a copy, or Duplicate: one `path_copy` of `path` into the folder `destination`; the host names the copy when the name is taken. */
+    copyEntry(path: string, destination: string) {
+      const here = explorerTarget();
+      if (!here) return diagnostic("path_copy: no focused checkout");
+      ui().setExplorerNotice(null);
+      dispatch({ schema_version: 2, kind: "path_copy", payload: { ...here, path, destination } });
+    },
+
+    /** Files and folders dropped from the file manager into the folder `destination` (docs/UI_BEHAVIOR.md, Explorer). */
+    importDropped(destination: string, dropped: CapturedDrop) {
+      const here = explorerTarget();
+      if (!here) return diagnostic("path_import: no focused checkout");
+      void submitDrop(here, destination, dropped);
     },
 
     /** Opens the trash confirmation; nothing is dispatched until it is confirmed. */
