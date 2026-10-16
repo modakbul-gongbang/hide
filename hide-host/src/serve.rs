@@ -677,6 +677,21 @@ fn session_read<T: serde::Serialize>(
     )
 }
 
+/// A folder the core names for agy on this machine: its wire spelling, or
+/// the native one a checkout path Herdr reported keeps.
+fn antigravity_folder(path: &str) -> Option<PathBuf> {
+    hide_platform::path::from_wire(path)
+        .ok()
+        .or_else(|| Some(PathBuf::from(path)).filter(|path| path.is_absolute()))
+}
+
+/// The checkout an agy fork is looked for in, as agy's index names it.
+fn antigravity_fork_cwd(cwd: &str) -> HostResult<PathBuf> {
+    antigravity_folder(cwd)
+        .and_then(|cwd| hide_platform::fs::identity::canonical(&cwd).ok())
+        .ok_or_else(|| HostError::new(ErrorCode::InvalidPath, "session_route_cwd_unconfirmed"))
+}
+
 fn session_file_agent(home: &Path, path: &Path) -> HostResult<hide_session::Agent> {
     SESSION_FILE_AGENTS
         .iter()
@@ -1098,24 +1113,35 @@ pub fn handle_with_progress(
         Call::AgentInstalled { name } => {
             to_value(hide_ai::resolve_binary(Path::new(&name)).is_some())
         }
-        Call::AntigravityFork {
-            source,
-            cwd,
-            since_unix_s,
-        } => {
+        Call::AntigravityForkMark { source, cwd } => {
             let home = env.home("antigravity_fork_home_unavailable")?;
-            let cwd = hide_platform::fs::identity::canonical(Path::new(&cwd)).map_err(|_| {
-                HostError::new(ErrorCode::InvalidPath, "session_route_cwd_unconfirmed")
-            })?;
+            let cwd = antigravity_fork_cwd(&cwd)?;
+            let mark = hide_session::antigravity::fork_mark(Path::new(&home), &source, &cwd)
+                .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?;
+            to_value(crate::protocol::AntigravityForkMark {
+                known: mark.known,
+                steps: mark.steps,
+            })
+        }
+        Call::AntigravityFork { source, cwd, mark } => {
+            let home = env.home("antigravity_fork_home_unavailable")?;
+            let cwd = antigravity_fork_cwd(&cwd)?;
+            let mark = hide_session::antigravity::ForkMark {
+                known: mark.known,
+                steps: mark.steps,
+            };
             to_value(
-                hide_session::antigravity::forked(Path::new(&home), &source, &cwd, since_unix_s)
+                hide_session::antigravity::forked(Path::new(&home), &source, &cwd, &mark)
                     .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
             )
         }
         Call::AntigravityTrust { path, trusted } => {
             let home = env.home("antigravity_trust_home_unavailable")?;
             let home = Path::new(&home);
-            let folder = Path::new(&path);
+            let folder = antigravity_folder(&path).ok_or_else(|| {
+                HostError::new(ErrorCode::InvalidPath, "antigravity_trust_path_invalid")
+            })?;
+            let folder = folder.as_path();
             if trusted {
                 hide_agent_hooks::antigravity_trust::trust(home, folder)
             } else {

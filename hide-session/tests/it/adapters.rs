@@ -4450,6 +4450,7 @@ mod antigravity {
     #[test]
     fn a_fork_is_the_one_new_root_conversation_at_the_source_step_in_its_checkout() {
         let native = Native::new();
+        let cwd = hide_platform::fs::identity::canonical(&native.cwd).unwrap();
         let index = rusqlite::Connection::open(
             native
                 .home
@@ -4465,34 +4466,43 @@ mod antigravity {
                 )
                 .unwrap();
         };
-        // 2026-10-03 01:03:00 UTC, after the source was last written.
-        let since = 1_790_989_380;
-        let forked = |source: &str| {
-            hide_session::antigravity::forked(native.home.path(), source, &native.cwd, since)
-                .map_err(|error| error.to_string())
-        };
         steps(AGY_ID, 7);
-        assert_eq!(
-            forked(AGY_ID).unwrap(),
-            None,
-            "the source is never its own fork"
-        );
         let older = "a9c0e2f4-0000-4000-8000-00000000000b";
         native.conversation(older, "", "2026-10-03 01:02:30+00:00");
         steps(older, 7);
+        let mark = hide_session::antigravity::fork_mark(native.home.path(), AGY_ID, &cwd).unwrap();
+        assert_eq!(mark.steps, 7);
+        let forked = || {
+            hide_session::antigravity::forked(native.home.path(), AGY_ID, &cwd, &mark)
+                .map_err(|error| error.to_string())
+        };
+        assert_eq!(
+            forked().unwrap(),
+            None,
+            "neither the source nor a conversation already there is the fork"
+        );
         let other_step = "a9c0e2f4-0000-4000-8000-00000000000c";
         native.conversation(other_step, "", "2026-10-03 01:04:00+00:00");
         steps(other_step, 3);
+        // agy stamps the fork with the node's clock, which may be behind the
+        // core's, and the source may take a step while agy writes it.
         let fork = "a9c0e2f4-0000-4000-8000-00000000000d";
-        native.conversation(fork, "", "2026-10-03 01:05:00+00:00");
+        native.conversation(fork, "", "2026-10-01 00:00:00+00:00");
         steps(fork, 7);
-        assert_eq!(forked(AGY_ID).unwrap().as_deref(), Some(fork));
+        steps(AGY_ID, 8);
+        assert_eq!(forked().unwrap().as_deref(), Some(fork));
         let second = "a9c0e2f4-0000-4000-8000-00000000000e";
         native.conversation(second, "", "2026-10-03 01:06:00+00:00");
         steps(second, 7);
-        assert_eq!(forked(AGY_ID).unwrap_err(), "antigravity_fork_ambiguous");
+        assert_eq!(forked().unwrap_err(), "antigravity_fork_ambiguous");
         assert_eq!(
-            forked("a9c0e2f4-0000-4000-8000-00000000000f").unwrap_err(),
+            hide_session::antigravity::fork_mark(
+                native.home.path(),
+                "a9c0e2f4-0000-4000-8000-00000000000f",
+                &cwd
+            )
+            .unwrap_err()
+            .to_string(),
             "session_route_missing"
         );
     }

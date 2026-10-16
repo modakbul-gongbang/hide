@@ -137,13 +137,23 @@ use crate::error::HostError;
 /// language, which has no default (PRD ai-output-language D-02). A helper on
 /// 35 would refuse every request the core sends it, so it is refused at Hello
 /// and upgraded.
-/// 37: Antigravity CLI is a session format (`antigravity`), and two calls
-/// serve it (PRD antigravity-first-class D-07, D-08): `antigravity_fork`
-/// finds the conversation agy's `/fork` made, and `antigravity_trust`
-/// records or takes out agy's trust of a worktree Hide made. A helper on 36
+/// 37: Antigravity CLI is a session format (`antigravity`), and three calls
+/// serve it (PRD antigravity-first-class D-07, D-08): `antigravity_fork_mark`
+/// and `antigravity_fork` find the conversation agy's `/fork` made, and
+/// `antigravity_trust` records or takes out agy's trust of a worktree Hide made. A helper on 36
 /// could not read an agy session or start agy in a worktree without its trust
 /// question, so it is refused at Hello and upgraded.
 pub const PROTOCOL_VERSION: u32 = 37;
+
+/// What agy's index held in a checkout before Hide typed `/fork`
+/// ([`Call::AntigravityForkMark`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AntigravityForkMark {
+    /// The root conversations already in the checkout, newest first.
+    pub known: Vec<String>,
+    /// How many steps the source conversation had.
+    pub steps: i64,
+}
 
 /// How a pane's shell is started so that it marks its first prompt
 /// ([`Call::ShellIntegration`]): the command the pane runs, the shell and
@@ -495,13 +505,20 @@ pub enum Call {
     AgentInstalled {
         name: String,
     },
-    /// The conversation agy's `/fork` made from `source` in `cwd` since
-    /// `since_unix_s`, as an id, or `null` while agy has not written it
+    /// What agy's index holds in `cwd` before Hide types `/fork` into a
+    /// pane that resumed `source`, an [`AntigravityForkMark`]
+    /// (`hide_session::antigravity::fork_mark`).
+    AntigravityForkMark {
+        source: String,
+        cwd: String,
+    },
+    /// The conversation agy's `/fork` made from `source` in `cwd` after
+    /// `mark`, as an id, or `null` while agy has not written it
     /// (`hide_session::antigravity::forked`).
     AntigravityFork {
         source: String,
         cwd: String,
-        since_unix_s: u64,
+        mark: AntigravityForkMark,
     },
     /// Records (`trusted`) or takes out agy's trust of a worktree Hide made,
     /// in the node account's agy settings
@@ -820,6 +837,7 @@ impl Call {
             | Self::Git { .. }
             | Self::TerminateGroup { .. }
             | Self::AgentInstalled { .. }
+            | Self::AntigravityForkMark { .. }
             | Self::AntigravityFork { .. }
             | Self::AntigravityTrust { .. }
             | Self::ShellIntegration

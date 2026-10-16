@@ -101,10 +101,19 @@ pub(crate) fn antigravity_conversation(
                 id,
                 step_count,
                 modified,
-                serde_json::json!([format!("file://{}", cwd.display())]).to_string()
+                serde_json::json!([antigravity_uri(cwd)]).to_string()
             ],
         )
         .unwrap();
+}
+
+/// How agy names a workspace: `file:///Users/me/repo`, or on Windows
+/// `file:///C:/Users/me/repo`.
+#[cfg(test)]
+fn antigravity_uri(cwd: &std::path::Path) -> String {
+    let wire = hide_platform::path::to_wire(cwd).unwrap();
+    let slash = if wire.starts_with('/') { "" } else { "/" };
+    format!("file://{slash}{}", wire.replace(' ', "%20"))
 }
 
 /// The pinned Cursor CLI's ordinary route and independently encoded graph.

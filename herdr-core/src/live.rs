@@ -3431,12 +3431,18 @@ fn fork_antigravity(
         }
         thread::sleep(ANTIGRAVITY_FORK_POLL);
     }
-    // agy's index keeps whole seconds; a second back covers the one /fork
-    // lands in.
-    let since_unix_s = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |now| now.as_secs())
-        .saturating_sub(1);
+    // What the checkout holds before /fork, read on the pane's node, so the
+    // fork is the row that was not there: no clock is compared, and the
+    // source may move on while agy writes it.
+    let mark: hide_node_link::protocol::AntigravityForkMark = crate::node_access::call_as(
+        node,
+        hide_node_link::protocol::Call::AntigravityForkMark {
+            source: request.session_id.clone(),
+            cwd: cwd.to_owned(),
+        },
+        Duration::from_secs(5),
+    )
+    .map_err(|error| format!("agy's conversation to fork could not be read: {error}"))?;
     control_request(
         connector,
         "pane.send_input",
@@ -3449,7 +3455,7 @@ fn fork_antigravity(
             hide_node_link::protocol::Call::AntigravityFork {
                 source: request.session_id.clone(),
                 cwd: cwd.to_owned(),
-                since_unix_s,
+                mark: mark.clone(),
             },
             Duration::from_secs(5),
         )
@@ -4588,7 +4594,10 @@ mod tests {
     fn an_agy_fork_types_fork_once_and_reports_the_one_conversation_it_made() {
         let source = "a9c0e2f4-0000-4000-8000-000000000001";
         let fork = "a9c0e2f4-0000-4000-8000-000000000002";
-        for case in ["success", "ambiguous"] {
+        // `moved`: the node's clock is behind the core's, so agy stamps the
+        // fork's row in the past, and the source takes another step while
+        // agy writes it; the fork is still the one row that was not there.
+        for case in ["success", "ambiguous", "moved"] {
             let home = tempfile::tempdir().unwrap();
             let cwd = hide_platform::fs::identity::canonical(home.path()).unwrap();
             crate::fixture::antigravity_conversation(
@@ -4623,8 +4632,20 @@ mod tests {
                         &index_cwd,
                         fork,
                         4,
-                        None,
+                        (case == "moved").then_some("2026-10-01 00:00:00+00:00"),
                     );
+                    if case == "moved" {
+                        rusqlite::Connection::open(
+                            index_home.join(".gemini/antigravity-cli/conversation_summaries.db"),
+                        )
+                        .unwrap()
+                        .execute(
+                            "UPDATE conversation_summaries SET step_count = 5 \
+                             WHERE conversation_id = ?1",
+                            [source],
+                        )
+                        .unwrap();
+                    }
                     if case == "ambiguous" {
                         crate::fixture::antigravity_conversation(
                             &index_home,
@@ -4659,8 +4680,8 @@ mod tests {
             };
             let result = fork_antigravity(&herdr.connector(), &node, &request, "child-pane");
             let expected: &[&str] = match case {
-                "success" => {
-                    assert_eq!(result, Ok(()));
+                "success" | "moved" => {
+                    assert_eq!(result, Ok(()), "{case}");
                     &[
                         "pane.get",
                         "pane.get",

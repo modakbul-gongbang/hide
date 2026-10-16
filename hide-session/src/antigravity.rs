@@ -139,9 +139,10 @@ fn workspace(uris: &str) -> Option<PathBuf> {
         .filter(|path| path.is_absolute())
 }
 
-fn read_row(
-    row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<(String, Option<String>, String, Option<String>)> {
+/// One index row as [`COLUMNS`] selects it: id, workspace URIs, parent, title.
+type Columns = (String, Option<String>, String, Option<String>);
+
+fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Columns> {
     Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
 }
 
@@ -150,9 +151,7 @@ const COLUMNS: &str = "conversation_id, \
     coalesce(parent_conversation_id, ''), \
     CASE WHEN length(title) <= ?2 THEN title END";
 
-fn to_row(
-    (id, uris, parent, title): (String, Option<String>, String, Option<String>),
-) -> Option<Row> {
+fn to_row((id, uris, parent, title): Columns) -> Option<Row> {
     Some(Row {
         cwd: workspace(uris.as_deref()?)?,
         id,
@@ -198,30 +197,26 @@ pub(crate) fn row(home: &Path, id: &str) -> Result<Option<Row>> {
 /// The newest conversation the operator started in `cwd` (canonical),
 /// among the newest rows the index holds.
 fn newest_root(home: &Path, cwd: &Path) -> Result<Option<Row>> {
-    let rows = with_index(home, |db| -> rusqlite::Result<Vec<_>> {
-        let mut statement = db.prepare(&format!(
-            "SELECT {COLUMNS} FROM conversation_summaries \
-             WHERE app_data_dir = '{APP}' AND coalesce(parent_conversation_id, '') = '' \
-             ORDER BY last_modified_time DESC LIMIT ?1"
-        ))?;
-        statement
-            .query_map(rusqlite::params![SEARCH_ROWS, COLUMN_LIMIT_BYTES], read_row)?
-            .collect()
-    })?
-    .map_err(|_| anyhow!("antigravity_db_unreadable"))?;
-    Ok(rows.into_iter().filter_map(to_row).find(|row| {
-        valid_id(&row.id)
-            && hide_platform::fs::identity::canonical(&row.cwd).is_ok_and(|native| native == cwd)
-    }))
+    let rows = with_index(home, roots)?.map_err(|_| anyhow!("antigravity_db_unreadable"))?;
+    Ok(in_checkout(rows, cwd).next())
 }
 
-/// The conversation agy's `/fork` made from `source` in `cwd` (canonical):
-/// `/fork` writes a new root row in the same checkout holding the source's
-/// steps, and no transcript until its next prompt. `None` while no such row
-/// has been written since `since_unix_s`; more than one is refused, since
-/// Hide could not tell which one is its fork.
-pub fn forked(home: &Path, source: &str, cwd: &Path, since_unix_s: u64) -> Result<Option<String>> {
-    let found = with_index(home, |db| -> rusqlite::Result<_> {
+/// What agy's index holds in `cwd` (canonical) just before Hide types
+/// `/fork` into a pane that resumed `source`: the root conversations already
+/// there, newest first and at most [`SEARCH_ROWS`], and how many steps
+/// `source` has. [`forked`] then looks for the one root row that was not
+/// there, so neither the core's clock nor the source moving on afterwards
+/// can hide the fork.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ForkMark {
+    pub known: Vec<String>,
+    pub steps: i64,
+}
+
+/// [`ForkMark`] for `source` in `cwd`; `session_route_missing` when agy's
+/// index has no row for `source`.
+pub fn fork_mark(home: &Path, source: &str, cwd: &Path) -> Result<ForkMark> {
+    let (steps, rows) = with_index(home, |db| -> rusqlite::Result<_> {
         let steps: Option<i64> = db
             .query_row(
                 &format!(
@@ -232,41 +227,63 @@ pub fn forked(home: &Path, source: &str, cwd: &Path, since_unix_s: u64) -> Resul
                 |row| row.get(0),
             )
             .optional()?;
-        let Some(steps) = steps else {
-            return Ok(None);
-        };
+        Ok((steps, roots(db)?))
+    })?
+    .map_err(|_| anyhow!("antigravity_db_unreadable"))?;
+    let steps = steps.ok_or_else(|| anyhow!("session_route_missing"))?;
+    Ok(ForkMark {
+        known: in_checkout(rows, cwd).map(|row| row.id).collect(),
+        steps,
+    })
+}
+
+/// The conversation agy's `/fork` made from `source` in `cwd` (canonical)
+/// after [`fork_mark`] answered `mark`: `/fork` writes a new root row in the
+/// same checkout holding at least the source's steps, and no transcript
+/// until its next prompt. `None` while no such row is written; more than one
+/// is refused, since Hide could not tell which one is its fork.
+pub fn forked(home: &Path, source: &str, cwd: &Path, mark: &ForkMark) -> Result<Option<String>> {
+    let rows = with_index(home, |db| -> rusqlite::Result<_> {
         let mut statement = db.prepare(&format!(
             "SELECT {COLUMNS} FROM conversation_summaries \
              WHERE app_data_dir = '{APP}' AND coalesce(parent_conversation_id, '') = '' \
-             AND conversation_id != ?3 AND step_count = ?4 \
-             AND CAST(strftime('%s', last_modified_time) AS INTEGER) >= ?5 \
+             AND conversation_id != ?3 AND step_count >= ?4 \
              ORDER BY last_modified_time DESC LIMIT ?1"
         ))?;
-        let rows = statement
+        statement
             .query_map(
-                rusqlite::params![
-                    SEARCH_ROWS,
-                    COLUMN_LIMIT_BYTES,
-                    source,
-                    steps,
-                    i64::try_from(since_unix_s).unwrap_or(i64::MAX)
-                ],
+                rusqlite::params![SEARCH_ROWS, COLUMN_LIMIT_BYTES, source, mark.steps],
                 read_row,
             )?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(Some(rows))
+            .collect::<rusqlite::Result<Vec<_>>>()
     })?
-    .map_err(|_| anyhow!("antigravity_db_unreadable"))?
-    .ok_or_else(|| anyhow!("session_route_missing"))?;
-    let mut forks = found.into_iter().filter_map(to_row).filter(|row| {
-        valid_id(&row.id)
-            && hide_platform::fs::identity::canonical(&row.cwd).is_ok_and(|native| native == cwd)
-    });
+    .map_err(|_| anyhow!("antigravity_db_unreadable"))?;
+    let mut forks = in_checkout(rows, cwd).filter(|row| !mark.known.contains(&row.id));
     let fork = forks.next();
     if forks.next().is_some() {
         return Err(anyhow!("antigravity_fork_ambiguous"));
     }
     Ok(fork.map(|row| row.id))
+}
+
+/// The newest root rows of agy's index, at most [`SEARCH_ROWS`].
+fn roots(db: &Connection) -> rusqlite::Result<Vec<Columns>> {
+    let mut statement = db.prepare(&format!(
+        "SELECT {COLUMNS} FROM conversation_summaries \
+         WHERE app_data_dir = '{APP}' AND coalesce(parent_conversation_id, '') = '' \
+         ORDER BY last_modified_time DESC LIMIT ?1"
+    ))?;
+    statement
+        .query_map(rusqlite::params![SEARCH_ROWS, COLUMN_LIMIT_BYTES], read_row)?
+        .collect()
+}
+
+/// The rows of `rows` whose checkout is `cwd` (canonical).
+fn in_checkout(rows: Vec<Columns>, cwd: &Path) -> impl Iterator<Item = Row> + '_ {
+    rows.into_iter().filter_map(to_row).filter(move |row| {
+        valid_id(&row.id)
+            && hide_platform::fs::identity::canonical(&row.cwd).is_ok_and(|native| native == cwd)
+    })
 }
 
 /// The id and checkout of the conversation whose transcript is `path`,
