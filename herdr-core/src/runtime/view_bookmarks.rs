@@ -69,7 +69,7 @@ impl Runtime {
             return false;
         };
         let (shown, active) = self.agent_view_of(key);
-        // Most syncs see what the last one saw; those allocate nothing.
+        // Most syncs see what the last one saw; those skip the owned copies and the write.
         let front_now = store
             .views
             .get(&key.0, &key.1)

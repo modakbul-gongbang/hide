@@ -171,7 +171,7 @@ pub struct WorkspaceView {
     pub last_used_unix_ms: u64,
     /// The checkout's one View list, split and selection, whichever Agent tab
     /// is in front. Stored as `view_layout`: the keys earlier builds kept per
-    /// tab (`layout`, `view_owner`, `view_presentations`) are never read.
+    /// tab (a schema 3 file's `layout`, `view_owner`, `view_presentations`) are never read.
     #[serde(rename = "view_layout")]
     pub layout: Layout,
     pub agent_layout: crate::agent_layout::Layout,

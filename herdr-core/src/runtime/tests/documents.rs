@@ -1961,7 +1961,7 @@ fn a_coalesced_gui_read_cannot_replace_closed_new_tabs() {
 
 /// B15/D12: New tab churn cannot turn one held file read into an unbounded
 /// queue of GUI destinations, even though each replaces an existing slot:
-/// the tab's cap counts the destinations still waiting for the read.
+/// the checkout's cap counts the destinations still waiting for the read.
 #[test]
 fn a_coalesced_gui_read_refuses_a_destination_past_the_views_cap() {
     let f = Fixture::new();
