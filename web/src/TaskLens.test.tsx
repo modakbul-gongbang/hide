@@ -79,7 +79,7 @@ async function render(rest: SnapshotRest, agents: AgentRow[], focused: string | 
 const heads = (container: HTMLElement) => [...container.querySelectorAll("[data-task-group-head]")].map((head) => head.textContent);
 const rows = (container: HTMLElement) => [...container.querySelectorAll("[data-task-row]")].map((element) => element.getAttribute("data-task-row"));
 
-it("groups the device's tasks as Needs You, 막힘, 끝남 and 일하는 중, drops empty groups, names each row's project, and folds the resting and cleanup ones (B4, B5, B9)", async () => {
+it("groups the device's tasks as Needs You, 막힘, 끝남, 일하는 중 and 기다림, drops empty groups, names each row's project, and folds the resting and cleanup ones (B4, B5, B9)", async () => {
   const agents = [
     row("ask", { status_code: "question", state: undefined as never }, { group: "needs_you" }),
     row("stuck", {}, { line: "API 서버에 닿지 못해 멈춤" }),
@@ -88,9 +88,10 @@ it("groups the device's tasks as Needs You, 막힘, 끝남 and 일하는 중, dr
   agents[0] = { ...agents[0]!, state: { ...agents[0]!.state, ask: { verb: "answer", what: "새 언어로 다시 쓸까요?", more: 0 } } };
   const cards = [card("ask", "needs_you", "hide-main"), card("stuck", "blocked", "hide-main"), card("waits", "waiting", "site-main"), card("works", "working", "hide-main"), card("done", "done", "site-main"), card("rest", "resting", "hide-main"), card("clean", "cleanup", "hide-main")];
   const { container } = await render(snapshot(agents, cards), agents);
-  expect(heads(container)).toEqual(["Needs You1", "막힘1", "끝남1", "일하는 중2"]);
-  // A waiting task stands after the working one in its group, whatever the core's order.
+  expect(heads(container)).toEqual(["Needs You1", "막힘1", "끝남1", "일하는 중1", "기다림1"]);
+  // A waiting task stands in its own group under the working one, whatever the core's order, and 상태별 draws no band labels.
   expect(rows(container)).toEqual(["ask", "stuck", "done", "works", "waits"]);
+  expect(container.querySelector("[data-task-band]")).toBeNull();
   expect(container.querySelector("[data-task-count]")?.textContent).toBe("태스크 5");
   const line = (pane: string) => container.querySelector(`[data-task-row="${pane}"] [data-task-line]`);
   expect(line("ask")?.textContent).toBe("herdr-ide새 언어로 다시 쓸까요?");
@@ -106,13 +107,17 @@ it("groups the device's tasks as Needs You, 막힘, 끝남 and 일하는 중, dr
   expect(rows(container)).not.toContain("rest");
 });
 
-it("in 프로젝트별 draws one group per project, the asking project first, with no project name on the rows (B6)", async () => {
-  const agents = [row("a"), row("b", {}, { group: "needs_you" }), row("c")];
-  const cards = [card("a", "working", "hide-main"), card("b", "needs_you", "site-main"), card("c", "done", "hide-main")];
+it("in 프로젝트별 draws one group per project, the asking project first, each state's rows under a band label, with no project name on the rows (B6)", async () => {
+  const agents = [row("a"), row("b", {}, { group: "needs_you" }), row("c"), row("d")];
+  const cards = [card("a", "working", "hide-main"), card("b", "needs_you", "site-main"), card("c", "done", "hide-main"), card("d", "waiting", "hide-main")];
   const { container } = await render(snapshot(agents, cards, "project"), agents);
   expect([...container.querySelectorAll("[data-task-group]")].map((group) => group.getAttribute("data-task-group"))).toEqual(["site", "hide"]);
   expect(container.querySelector("[data-task-project]")).toBeNull();
-  expect(rows(container)).toEqual(["b", "c", "a"]);
+  expect(rows(container)).toEqual(["b", "c", "a", "d"]);
+  expect(heads(container)).toEqual(["siteNeeds You 1", "herdr-ide끝남 1일하는 중 1기다림 1"]);
+  const bands = (project: string) => [...container.querySelectorAll(`[data-task-group="${project}"] [data-task-band]`)].map((band) => band.textContent);
+  expect(bands("hide")).toEqual(["끝남", "일하는 중", "기다림"]);
+  expect(bands("site")).toEqual(["Needs You"]);
 });
 
 it("opens a task's pane on a press, its record on Space, and resolves it from the ⋯ menu (B12, B15, B18)", async () => {

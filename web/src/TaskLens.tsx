@@ -1,5 +1,5 @@
 import { ChevronDownIcon, ChevronRightIcon, EllipsisIcon, FileTextIcon, GitBranchIcon, PlusIcon, ServerIcon } from "lucide-react";
-import { memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { deviceScope } from "./agentScope";
 import { AgentRowMark } from "./AgentRowMark";
@@ -170,6 +170,7 @@ function NoProject({ actions }: { actions: Actions }) {
 const TaskGroups = memo(function TaskGroups({ list, view, byPane, agents, folds, focusedPane, disabled, actions }: {
   list: ReturnType<typeof taskList>; view: TaskView; byPane: ReadonlyMap<string, AgentRow>; agents: readonly AgentRow[]; folds: string[]; focusedPane: string | null; disabled: boolean; actions: Actions;
 }) {
+  const { t } = useInterfaceTranslation();
   const [shownAll, setShownAll] = useState<ReadonlySet<string>>(NO_PANES);
   // The resting and cleanup folds open in place for this page only (B5).
   const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(NO_PANES);
@@ -180,10 +181,10 @@ const TaskGroups = memo(function TaskGroups({ list, view, byPane, agents, folds,
     return next;
   });
   const treesOf = (entries: TaskEntry[]) => entries.map((entry) => ({ entry, lines: sessionTreeLines(entry.agent, byPane, opened, shownAll) }));
-  const sections = list.groups.map((group) => ({ group, trees: treesOf(group.entries), resting: openFolds.has(`rest:${group.key}`) ? treesOf(group.resting) : [], cleanup: openFolds.has(`cleanup:${group.key}`) ? treesOf(group.cleanup) : [] }));
+  const sections = list.groups.map((group) => ({ group, bands: group.bands.map((band) => ({ state: band.state, trees: treesOf(band.entries) })), resting: openFolds.has(`rest:${group.key}`) ? treesOf(group.resting) : [], cleanup: openFolds.has(`cleanup:${group.key}`) ? treesOf(group.cleanup) : [] }));
   const restingTrees = openFolds.has("rest:") ? treesOf(list.resting) : [];
   const cleanupTrees = openFolds.has("cleanup:") ? treesOf(list.cleanup) : [];
-  const drawn = new Set([...sections.flatMap(({ trees, resting, cleanup }) => [...trees, ...resting, ...cleanup]), ...restingTrees, ...cleanupTrees]
+  const drawn = new Set([...sections.flatMap(({ bands, resting, cleanup }) => [...bands.flatMap((band) => band.trees), ...resting, ...cleanup]), ...restingTrees, ...cleanupTrees]
     .flatMap(({ lines }) => lines.flatMap((line) => (line.kind === "agent" ? [line.row.agent.pane_id] : []))));
   const selected = sidebarFocusPane(focusedPane, agents, drawn);
   // The selected row comes into view when the row standing for the focus
@@ -203,10 +204,15 @@ const TaskGroups = memo(function TaskGroups({ list, view, byPane, agents, folds,
   ));
   return (
     <div ref={scroller} className={cn("min-h-0 flex-1 overflow-y-auto px-sm pb-md", disabled && "opacity-(--opacity-disabled)")} data-task-list="true" onKeyDown={moveFocus}>
-      {sections.map(({ group, trees, resting, cleanup }) => (
+      {sections.map(({ group, bands, resting, cleanup }) => (
         <section key={group.key} data-task-group={group.state ?? group.project?.id ?? ""} aria-label={groupName(group)}>
           <GroupHead group={group} />
-          <ul className="flex min-w-0 flex-col">{rows(trees)}</ul>
+          {bands.map((band) => (
+            <Fragment key={band.state}>
+              {view === "project" ? <BandHead state={band.state} /> : null}
+              <ul className="flex min-w-0 flex-col" aria-label={view === "project" ? t(`taskLens.group.${band.state}`) : undefined}>{rows(band.trees)}</ul>
+            </Fragment>
+          ))}
           {view === "project" ? <Folds group={group} resting={resting} cleanup={cleanup} open={openFolds} onToggle={toggleFold} rows={rows} /> : null}
         </section>
       ))}
@@ -217,6 +223,16 @@ const TaskGroups = memo(function TaskGroups({ list, view, byPane, agents, folds,
 
 function groupName(group: TaskGroup): string {
   return group.project?.label ?? group.state ?? "";
+}
+
+/** The small state label over each band of a 프로젝트별 group, where the rows change state (B6). */
+function BandHead({ state }: { state: TaskGroupState }) {
+  const { t } = useInterfaceTranslation();
+  return (
+    <div aria-hidden="true" data-task-band={state} className={cn("px-xs pt-xs pb-xxs text-micro text-muted-foreground", state === "needs_you" && "text-warning", state === "blocked" && "text-destructive")}>
+      {t(`taskLens.group.${state}`)}
+    </div>
+  );
 }
 
 /** A group's head: its state and count, or a project's name with its counts by state (B4, B6). */

@@ -907,11 +907,12 @@ A window starts on 프로젝트, and then the last list and view option chosen s
 
 The list follows the rail's front device, every project of it at once, and turns with the rail (B19).
 Its first line reads `태스크 N`, the open tasks, with a `상태별 | 프로젝트별` option at its right (B4, B6).
-상태별 groups the tasks as `Needs You`, `막힘`, `끝남` and `일하는 중`, the groups that want the operator's look above the one that needs nothing from them yet, each head with its count in the warning colour for Needs You and the danger colour for 막힘, empty groups not drawn, and every row naming its project before its second line.
+상태별 groups the tasks as `Needs You`, `막힘`, `끝남`, `일하는 중` and `기다림`, the groups that want the operator's look above the ones that need nothing from them yet, each head with its count in the warning colour for Needs You and the danger colour for 막힘, empty groups not drawn, and every row naming its project before its second line.
 막힘 is a task whose root agent errored (the core's `demand == "error"`), not a failed CI.
 Tasks that rest, those resolved included, fold into `쉬는 중 N ›`, and tasks whose pull requests all merged while a worktree remains into `정리할 것 N ›`, at the end; each opens in place and closes with `접기` (B5).
-프로젝트별 draws one group per project, the projects with a Needs You first, its head the project's name with its counts by state (`Needs You 1 · 끝남 1 · 일하는 중 2`), the same order inside and its own folds, and no project name on the rows.
-Inside a group Needs You stands longest-waiting first, 일하는 중 puts the tasks that work before those waiting on a descendant or an answer, and the others stand most recent first (B9).
+프로젝트별 draws one group per project, the projects with a Needs You first, its head the project's name with its counts by state (`Needs You 1 · 끝남 1 · 일하는 중 2 · 기다림 3`), the same order inside with a small state label over each band where the rows change state, its own folds, and no project name on the rows.
+기다림 is a task whose root agent waits on a descendant or an answer, apart from 일하는 중 so a band of hollow marks is not read as work.
+Inside a group Needs You stands longest-waiting first and the others most recent first (B9).
 
 A row is one task, its root agent; descendants are its children only, and a memory question, a pull request with no session, a delegated child and a Factory worker are never rows of their own (B7).
 Its first line is the status mark, the title, while folded one mark per child in that child's colour and `!N` in the warning colour when children ask, the PR mark and the elapsed time (B8, B10).
