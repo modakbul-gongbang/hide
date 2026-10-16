@@ -565,10 +565,10 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         spawn_guard: Some(HookDialect::Antigravity),
         subagent_counts: Some(HookDialect::Antigravity),
         memory: Some(HookDialect::Antigravity),
-        // Herdr 0.9.3 reads agy's permission and folder-trust dialogs as
-        // `idle` (no manifest rule for them), so a bell's Enter could answer
-        // a dialog; letters reach agy on its next prompt instead (PRD
-        // antigravity-first-class D-06).
+        // Herdr 0.9.3 reads agy's permission question as an approval, but
+        // its folder-trust question is unmeasured, and a bell's Enter into a
+        // dialog Herdr reads as `idle` would answer it; letters reach agy on
+        // its next prompt instead (PRD antigravity-first-class D-06).
         bell: false,
         session: Some(SessionFormat::Antigravity),
         sleep: Some(LaunchDialect::Antigravity),

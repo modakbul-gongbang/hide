@@ -470,7 +470,7 @@ Prove it on the real agent first, before any code, and pin what you measure with
 - Measure the hook failure matrix for the agent: a missing helper, a helper that is not executable, a crash, a non-zero exit, empty or malformed output, and a timeout.
   agy refuses the tool call on every one of them (measured 2026-10-16), so each case has a test that the installed command still answers (`guidance::tests::agys_tool_command_answers_allow_when_the_helper_is_gone_cannot_run_or_fails`).
 - Measure how the pinned Herdr reads the agent's permission and folder-trust prompts before relying on Needs You or the bell.
-  Herdr 0.9.3 read agy's as `idle` (2026-10-16), which is why agy has no bell.
+  On 2026-10-16 a probe outside the app read agy's permission question as `idle`, and the running app then showed Herdr 0.9.3 reading it as an approval; measure in the app, and its folder-trust question is still unmeasured, which is why agy has no bell.
 - Record the agent version every fact was proven on.
   agy moved from 1.3.6 to 1.4.0 on 2026-10-16, during the work, so every fact proven on 1.3.6 had to be proven again on 1.4.0.
 
@@ -598,9 +598,9 @@ Hide therefore adds the exact path of a worktree it made to that list before it 
 Every change holds one account lock and rewrites `settings.json` through the same lossless read as the hook files, so its other keys keep their bytes; a trust Hide cannot record keeps agy from starting there, and the caller gets the reason (B20).
 Hide AI's own folder for agy is trusted the same way ([AI_PROVIDERS.md](AI_PROVIDERS.md#antigravity)), and switching agy off removes it too.
 
-agy's tool-permission and folder-trust questions do not reach Needs You yet, and agy has no bell (D-06).
-Herdr 0.9.3 has no rule for those dialogs and reports the pane as idle while one is open, so the row reads as waiting, and an Enter from the bell could answer the dialog; a letter that arrives meanwhile reaches agy on its next prompt through `PreInvocation`.
-The gap closes when the pinned Herdr is a release whose agy manifest reads those dialogs as blocked: the bell and Needs You are then turned on for agy and this paragraph goes ([INSTALL.md](INSTALL.md#what-each-system-supports)).
+agy's tool-permission question reaches Needs You as an approval: Herdr 0.9.3 reports the pane as waiting on an approval while it is open (seen in the app on 2026-10-16; an earlier probe outside the app had read it as idle).
+Its folder-trust question has not been measured, and agy has no bell (D-06): an Enter from the bell into a dialog Herdr reads as idle would answer that dialog, and a letter that arrives meanwhile reaches agy on its next prompt through `PreInvocation`.
+The bell is turned on for agy once the pinned Herdr is shown to read the folder-trust question as blocked too, and this paragraph goes ([INSTALL.md](INSTALL.md#what-each-system-supports)).
 Claude Code's hook needs no silencing inside agy, because agy reads neither `CLAUDE.md` nor `~/.claude` hooks (D-22).
 
 ### Installed means the program is found
