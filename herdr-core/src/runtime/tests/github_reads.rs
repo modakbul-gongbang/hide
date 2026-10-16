@@ -912,6 +912,31 @@ fn a_printed_pull_request_is_owed_its_read_until_the_answer_lands() {
     assert!(!runtime.sighted_read_owed(&address), "the answer landed");
 }
 
+/// status-marks B14: a read that fails stops holding the turn that printed
+/// the address, so the row is not left in progress on an answer that never comes.
+#[test]
+fn a_failed_read_releases_the_printed_pull_request_it_owed() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![project_with_pane("a", "/tmp/a", "w1:p1")];
+    let start = Instant::now();
+    first_read(
+        &mut runtime,
+        vec![read_ok("/tmp/a", vec![pull_request_in("owner/a", 1)], 10)],
+        start,
+    );
+    let address = ("owner/a".to_owned(), 2);
+    runtime.read_sighted_pull_requests(&[sighted("w1:p1", "owner/a", 2)], (start, NOW_MS));
+    assert!(runtime.sighted_read_owed(&address));
+
+    runtime.ingest_github_answer(
+        GithubSnapshot {
+            projects: vec![read_failed("/tmp/a")],
+        },
+        true,
+    );
+    assert!(!runtime.sighted_read_owed(&address), "the read failed");
+}
+
 #[test]
 fn a_repositorys_first_pull_request_is_read_in_the_project_its_session_works_in() {
     let mut runtime = runtime();

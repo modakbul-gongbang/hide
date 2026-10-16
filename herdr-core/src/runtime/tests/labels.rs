@@ -422,40 +422,8 @@ fn a_row_waits_on_its_running_checks_and_their_end_is_news() {
         sighted_at_unix_ms: 5,
     }];
     let mut runtime = runtime_with_facts(facts, "done");
-    let mut pull_request = crate::model::PullRequestSnapshot {
-        closing_issues: Vec::new(),
-        title: "Request view".to_owned(),
-        checks: crate::model::PullRequestChecks::Pending,
-        number: 7,
-        head_branch: "prd/request-view".to_owned(),
-        base_branch: "main".to_owned(),
-        url: "https://github.com/acme/app/pull/7".to_owned(),
-        badge: crate::model::PullRequestBadge::Open,
-        review: None,
-        is_draft: false,
-        merged_at_unix_ms: None,
-        updated_at_unix_ms: Some(10),
-        created_at_unix_ms: Some(5),
-        closed_at_unix_ms: None,
-        head_oid: None,
-        cross_repository: false,
-        work: Default::default(),
-    };
-    let github = |pull_request: &crate::model::PullRequestSnapshot, stale: bool| {
-        crate::model::GithubSnapshot {
-            projects: vec![crate::model::GithubProjectSnapshot {
-                root_path: "/work/app".to_owned(),
-                status: crate::model::GithubStatusSnapshot {
-                    available: true,
-                    stale,
-                    ..Default::default()
-                },
-                pull_requests: vec![pull_request.clone()],
-                pull_requests_read: true,
-                ..Default::default()
-            }],
-        }
-    };
+    let mut pull_request = checks_pull_request();
+    let github = checks_github;
 
     // Only a required check that never reported: it may never run.
     runtime.ingest_github(github(&pull_request, false));
@@ -506,6 +474,142 @@ fn a_row_waits_on_its_running_checks_and_their_end_is_news() {
     assert_eq!(ended["state"]["line"]["mode"], "checks_failed");
     assert_eq!(ended["state"]["line"]["pull_request"], 7);
     assert!(runtime.checks_wait_projects().is_empty());
+}
+
+/// Pull request #7 of acme/app, its checks pending and none reported yet.
+fn checks_pull_request() -> crate::model::PullRequestSnapshot {
+    crate::model::PullRequestSnapshot {
+        closing_issues: Vec::new(),
+        title: "Request view".to_owned(),
+        checks: crate::model::PullRequestChecks::Pending,
+        number: 7,
+        head_branch: "prd/request-view".to_owned(),
+        base_branch: "main".to_owned(),
+        url: "https://github.com/acme/app/pull/7".to_owned(),
+        badge: crate::model::PullRequestBadge::Open,
+        review: None,
+        is_draft: false,
+        merged_at_unix_ms: None,
+        updated_at_unix_ms: Some(10),
+        created_at_unix_ms: Some(5),
+        closed_at_unix_ms: None,
+        head_oid: None,
+        cross_repository: false,
+        work: Default::default(),
+    }
+}
+
+/// GitHub's answer for acme/app holding `pull_request`, current or `stale`.
+fn checks_github(
+    pull_request: &crate::model::PullRequestSnapshot,
+    stale: bool,
+) -> crate::model::GithubSnapshot {
+    crate::model::GithubSnapshot {
+        projects: vec![crate::model::GithubProjectSnapshot {
+            root_path: "/work/app".to_owned(),
+            status: crate::model::GithubStatusSnapshot {
+                available: true,
+                stale,
+                ..Default::default()
+            },
+            pull_requests: vec![pull_request.clone()],
+            pull_requests_read: true,
+            ..Default::default()
+        }],
+    }
+}
+
+/// status-marks B13 with the read record (`checks_ended` in the read
+/// fingerprint): the end of checks the operator already saw the row wait on
+/// is news once, and a row read after it stays read across later passes.
+#[test]
+fn the_end_of_checks_is_news_once_and_a_row_read_after_it_stays_read() {
+    let mut facts = operator_asked("PR 올려줘");
+    facts.created_prs = vec![crate::labels::facts::CreatedPr {
+        repository: "acme/app".to_owned(),
+        number: 7,
+        sighted_at_unix_ms: 5,
+    }];
+    // A read needs the live connection that applies the operator's focus.
+    let mut runtime = live_runtime();
+    let records = [(
+        PANE.to_owned(),
+        PaneRecord {
+            owner: hide_session::label_reference_token("claude", "id", SESSION),
+            facts,
+            ..PaneRecord::default()
+        },
+    )];
+    runtime.set_label_overlay(LabelOverlay::of_records(
+        records.iter().map(|(pane, record)| (pane, record)),
+        true,
+        true,
+    ));
+    let tabs = ["w-order:t1", "w-order:t2"];
+    // Herdr's layout with `active` in front, the agent stopped in the first tab.
+    let herdr = |active: &str| {
+        let mut payload = tab_order_payload(CHECKOUT, &tabs, &tabs, active);
+        let agent: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({"agents": [{
+            "id": "worker", "pane_id": PANE, "agent": "claude",
+            "agent_status": "done", "state_change_seq": 4, "cwd": CHECKOUT,
+            "agent_session": {"kind": "id", "value": SESSION}
+        }]}))
+        .unwrap();
+        payload.agents.extend(agent.agents);
+        payload
+    };
+    runtime.ingest_session(Ok(herdr("w-order:t1")));
+    let mut pull_request = checks_pull_request();
+    pull_request.work.running_checks = 2;
+    runtime.ingest_github(checks_github(&pull_request, false));
+    assert_eq!(row(&runtime)["mark"], "going");
+    let checkout_id = runtime
+        .snapshot()
+        .navigator
+        .workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.checkouts)
+        .find(|checkout| {
+            checkout
+                .tabs
+                .iter()
+                .any(|tab| tab.id.as_deref() == Some("w-order:t1"))
+        })
+        .map(|checkout| checkout.id.clone())
+        .expect("the checkout");
+    // The operator moves to another tab and Herdr confirms it.
+    let leave = |runtime: &mut Runtime| {
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+        runtime.ingest_session(Ok(herdr("w-order:t2")));
+    };
+
+    // The operator looks at the waiting row, then moves on.
+    assert!(runtime.dispatch_json(&operator_focus_event(PANE)));
+    leave(&mut runtime);
+    assert_eq!(row(&runtime)["unread"].as_bool(), Some(false));
+
+    pull_request.checks = crate::model::PullRequestChecks::Failed;
+    pull_request.work.running_checks = 0;
+    runtime.ingest_github(checks_github(&pull_request, false));
+    let ended = row(&runtime);
+    assert_eq!(
+        (ended["unread"].as_bool(), &ended["mark"]),
+        (Some(true), &serde_json::json!("unread")),
+        "the end is news even though the row was read while it waited: {ended}"
+    );
+    assert_eq!(ended["state"]["line"]["mode"], "checks_failed");
+
+    // Read again: later answers and projections with the same end keep it read.
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
+    runtime.ingest_session(Ok(herdr("w-order:t1")));
+    assert!(runtime.dispatch_json(&operator_focus_event(PANE)));
+    leave(&mut runtime);
+    runtime.ingest_github(checks_github(&pull_request, false));
+    runtime.ingest_session(Ok(herdr("w-order:t2")));
+    runtime.refresh_checks_waits();
+    let read = row(&runtime);
+    assert_eq!(read["unread"].as_bool(), Some(false), "{read}");
+    assert_eq!(read["mark"], "quiet");
 }
 
 /// A fresh projection with one Codex agent on `SESSION` at `status` and

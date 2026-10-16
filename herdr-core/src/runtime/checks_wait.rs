@@ -37,6 +37,31 @@ impl Runtime {
     /// `agents` is every row the projection holds, so a pane it no longer
     /// lists leaves the memory.
     pub(super) fn lay_checks(&mut self, agents: &mut [SidebarAgentSnapshot]) {
+        // Most passes have nothing to wait on: no check runs, no read is owed
+        // and nothing ended unseen. They take no copy of the rows.
+        let pending = self.github.projects.iter().any(|project| {
+            project
+                .pull_requests
+                .iter()
+                .any(|pull_request| pull_request.checks == PullRequestChecks::Pending)
+        });
+        let owed = agents.iter().any(|row| {
+            row.row_facts.as_ref().is_some_and(|facts| {
+                facts
+                    .sighted_prs
+                    .iter()
+                    .any(|address| self.sighted_read_owed(address))
+            })
+        });
+        if !pending && !owed && self.checks_memory.awaited.is_empty() {
+            for row in agents.iter_mut() {
+                row.checks_wait = None;
+                row.checks_ended = None;
+            }
+            self.checks_memory.excluded.clear();
+            self.checks_memory.projects.clear();
+            return;
+        }
         let places: HashMap<String, (Option<String>, Option<String>, String)> = self
             .snapshot
             .navigator

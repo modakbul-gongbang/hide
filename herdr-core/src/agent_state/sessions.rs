@@ -68,7 +68,7 @@ pub struct Row {
     /// What the session is doing or has done (PRD B31); absent rather than
     /// invented. A Needs You row draws its `ask` instead.
     pub line: Option<String>,
-    /// The line is the remaining work of an unfinished turn (◐).
+    /// The line is the remaining work of an unfinished turn (`일 남음`).
     pub unfinished: bool,
 }
 
