@@ -1,4 +1,6 @@
 import { ArrowLeftIcon, ExternalLinkIcon, FileTextIcon, GitPullRequestIcon, XIcon } from "lucide-react";
+import { cn } from "./lib/utils";
+import { PR_LOOK } from "./prMark";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
@@ -43,10 +45,20 @@ function useItemTitle(item: DetailItem | null): string {
   });
 }
 
-/** The rail's mark for the slot (B46): the card's PR glyph or the record's. */
+/**
+ * The slot's mark in its head and on the rail (B46): a card's pull request
+ * drawn as its PR mark, in its state's icon and colour, so it is told from
+ * the PRs tool beside it; the record's page glyph. A pull request the list
+ * no longer holds keeps the plain glyph in the caller's colour.
+ */
 export function DetailIcon({ item, className }: { item: DetailItem; className?: string }) {
-  const Icon = item.kind === "pull_request" ? GitPullRequestIcon : FileTextIcon;
-  return <Icon aria-hidden="true" className={className} />;
+  const state = useShellStore((s) => item.kind === "pull_request"
+    ? catalogWorkspaces(s.rest).find((row) => row.id === item.workspace_id)?.pull_requests?.find((row) => row.number === item.number)?.state ?? null
+    : null);
+  if (item.kind !== "pull_request") return <FileTextIcon aria-hidden="true" className={className} />;
+  const look = state ? PR_LOOK[state] : null;
+  const Icon = look?.icon ?? GitPullRequestIcon;
+  return <Icon aria-hidden="true" className={cn(className, look?.tone)} data-detail-mark={state ?? undefined} />;
 }
 
 export function useDetailTitle(): string {
