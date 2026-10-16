@@ -109,8 +109,19 @@ impl Runtime {
         }
         let marked: Vec<String> = self.github_polled.iter().cloned().collect();
         for path in marked {
-            if self.read_when_looked_at(&path, now) != LookRead::Later {
-                self.github_polled.remove(&path);
+            match self.read_when_looked_at(&path, now) {
+                LookRead::Later => {}
+                LookRead::Asked => {
+                    self.github_polled.remove(&path);
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "github",
+                        "kind": "poll.asked",
+                        "project": path,
+                    }));
+                }
+                LookRead::Never => {
+                    self.github_polled.remove(&path);
+                }
             }
         }
     }
