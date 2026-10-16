@@ -781,6 +781,7 @@ Native questions and plan waits are still read, and a pending native question st
 A label is shown only for the session it was proven for.
 The record keeps the provider's native session owner, proven from transcript metadata, and the Herdr reference it was proven under; the label is applied only while the pane's current provider and session reference equal that owner or that reference (`PaneRecord::proven_for`).
 A new session, a reused pane, a provider change and an A to B to A switch therefore show the provider's name and no question until the new session is proven, and returning to A restores A's label.
+A session whose file its agent has not written yet shows the provider's name and is read again on a bounded backoff, so its label arrives with its first message rather than with its first finished turn ([ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
 While a pane has no concrete reference, nothing is shown and the proof is kept for the reference's return.
 A read or analysis that lands after the pane's reference moved carries an older generation and is dropped, so a late answer for the old session never reaches a row.
 A restart restores a label with no read and no request when the pane's reference still proves it, and an entry the retired plugin left (`display-state.json`) is imported once on this Mac only when it had proven an owner, and is shown by the same rule.

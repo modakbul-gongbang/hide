@@ -55,6 +55,17 @@ const CONTEXT_READ_RETRY: Duration = Duration::from_millis(250);
 /// not connected) waits before it is tried again, so the pane catches up
 /// after a reconnect without waiting for its next state change (B14).
 const UNAVAILABLE_RETRY: Duration = Duration::from_secs(15);
+/// The waits before a read that failed for a reason that clears by itself is
+/// tried again: a transaction in flight, or a session file its agent has not
+/// written yet (Claude writes it with the first message). One entry per
+/// retry, so the list is also the cap; past it the pane waits for its next
+/// state change, which re-arms the schedule.
+pub(crate) const READ_RETRY_BACKOFF: [Duration; 4] = [
+    Duration::from_secs(15),
+    Duration::from_secs(30),
+    Duration::from_secs(60),
+    Duration::from_secs(120),
+];
 /// The most sighted pull requests waiting between two takes; a read that
 /// finds more keeps the newest.
 const SIGHTED_LIMIT: usize = 32;
@@ -213,6 +224,13 @@ struct ReadJob {
     request: LabelTranscriptRequest,
 }
 
+/// Whether a refused read says only that the session is not there yet. The
+/// reason code is the one `hide-session` gives a located file that is absent,
+/// on this machine and, through the helper, on a device.
+fn refusal_clears_by_itself(reason: &str) -> bool {
+    reason == "session_file_missing"
+}
+
 struct PaneState {
     agent: Agent,
     status: String,
@@ -228,8 +246,9 @@ struct PaneState {
     next_analysis_at: Option<Instant>,
     follow_up_at: Option<Instant>,
     follow_up_armed: bool,
-    /// One retry per transient read episode; a new state or success resets it.
-    pending_retried: bool,
+    /// Retries spent in this transient read episode, counted against
+    /// `READ_RETRY_BACKOFF`; a new state, a new session or a success resets it.
+    read_retries: u8,
     /// The last failure logged, so a repeating one is logged once.
     last_failure: Option<String>,
     /// When this worker began seeing the pane, and so its input (D-19).
@@ -241,6 +260,17 @@ struct PaneState {
     /// The skip reasons already logged, so a cap that holds on every read
     /// (more subagent files than one read takes) is logged once.
     skip_reasons_logged: std::collections::BTreeSet<String>,
+}
+
+impl PaneState {
+    /// Schedules the next read of a transient failure and says whether one
+    /// was left in `READ_RETRY_BACKOFF`.
+    fn retry_later(&mut self, now: Instant) -> bool {
+        let wait = READ_RETRY_BACKOFF.get(usize::from(self.read_retries));
+        self.follow_up_at = wait.map(|wait| now + *wait);
+        self.read_retries = self.read_retries.saturating_add(1);
+        wait.is_some()
+    }
 }
 
 pub(crate) struct LabelWorker {
@@ -447,7 +477,7 @@ impl LabelWorker {
                             follow_up_at: (resumable && agent.requires_native_file_proof())
                                 .then_some(now + FOLLOW_UP_READ),
                             follow_up_armed: status_moved,
-                            pending_retried: false,
+                            read_retries: 0,
                             last_failure: None,
                             input_observed_since_unix_ms: now_unix_ms,
                             claimed_submit: None,
@@ -466,7 +496,7 @@ impl LabelWorker {
                         pane.events_loaded = false;
                         pane.next_analysis_at = None;
                         pane.follow_up_at = None;
-                        pane.pending_retried = false;
+                        pane.read_retries = 0;
                         pane.needs_read = reference_token.is_some();
                         self.waiting.retain(|id| id != &observed.pane_id);
                         changed = true;
@@ -480,7 +510,7 @@ impl LabelWorker {
                         }));
                     }
                     if seq_moved || status_moved {
-                        pane.pending_retried = false;
+                        pane.read_retries = 0;
                         pane.needs_read |= reference_token.is_some();
                         pane.follow_up_armed = status == "working";
                     }
@@ -914,9 +944,7 @@ impl LabelWorker {
             }
             Err(ReadFailure::Pending(reason)) => {
                 let pane = self.panes.get_mut(pane_id).expect("checked above");
-                let capped = pane.pending_retried;
-                pane.follow_up_at = (!capped).then_some(now + UNAVAILABLE_RETRY);
-                pane.pending_retried = true;
+                let capped = !pane.retry_later(now);
                 self.log_failure(
                     pane_id,
                     if capped {
@@ -939,10 +967,12 @@ impl LabelWorker {
             }
             Err(ReadFailure::Refused(reason)) => {
                 self.log_failure(pane_id, "read.refused", &reason);
-                if let Some(pane) = self.panes.get_mut(pane_id)
-                    && pane.agent.requires_native_file_proof()
-                {
-                    pane.follow_up_at = Some(now + UNAVAILABLE_RETRY);
+                if let Some(pane) = self.panes.get_mut(pane_id) {
+                    if pane.agent.requires_native_file_proof() {
+                        pane.follow_up_at = Some(now + UNAVAILABLE_RETRY);
+                    } else if refusal_clears_by_itself(&reason) && !pane.retry_later(now) {
+                        self.log_failure(pane_id, "read.retry_capped", &reason);
+                    }
                 }
                 return self.invalidate_turn_read(pane_id);
             }
@@ -1191,7 +1221,7 @@ impl LabelWorker {
                 .extend(transcript.skipped_reasons.keys().cloned());
         }
         pane.last_failure = None;
-        pane.pending_retried = false;
+        pane.read_retries = 0;
         if from_start || transcript.rescanned.is_some() {
             pane.events.clear();
         }

@@ -1097,7 +1097,8 @@ A nonempty WAL requires its existing shared-memory index and normal locking; a c
 The reader holds the original source handles and records identities and change stamps for the main, companions and bounded ancestor chain; it closes the transaction and connection, validates every handle and name again, and only then returns the buffered result.
 A journal or concurrent source change refuses the read without repairing, copying or writing the provider's files.
 An OpenCode transaction or changing companion returns a typed pending read, which retains established session proof but clears current-turn authority.
-The label worker makes one reread after fifteen seconds; a second pending answer logs `read.retry_capped` and waits for a real state/reference change, while a successful read resets the allowance.
+The label worker rereads a pending answer, or a refusal whose session file is not there yet (`session_file_missing`), after 15, 30, 60 and 120 seconds (`READ_RETRY_BACKOFF`); the fifth failure logs `read.retry_capped` and waits for a real state/reference change, while a state change, a new reference or a successful read resets the allowance.
+The file is missing for a pane Herdr lists before its agent has written it (Claude writes it with the first message), so a child another agent started gets its label from the retry rather than from its first finished turn; a refusal of any other reason is not retried, and a native-file agent keeps its own fifteen-second retry.
 Definitive invalid-source refusals still revoke proof, and a changed requested owner never inherits it.
 OpenCode is referenced by id only; a path reference is refused feature-locally, and no path is ever turned into an id.
 A subagent's child session is never cataloged, read into the root conversation or titled as it; the link graph alone reads it, as its own line under its parent (`Owner::Recorded`).
