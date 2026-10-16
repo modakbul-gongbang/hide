@@ -439,10 +439,10 @@ fn guard_refusal(
         };
     }
     // Every shell call comes through here: this one search decides the rest.
-    if !guard::may_hold_launch(&payload) {
+    if !guard::may_hold_launch(payload) {
         return None;
     }
-    let call = guard::read_call(&payload, truncated, dialect)?;
+    let call = guard::read_call(payload, truncated, dialect)?;
     let launch = guard::find_launch(&call.command, &|name| std::env::var(name).ok())?;
     let home = home_directory()?;
     let program = workspace_context::cli_program()?;
