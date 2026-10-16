@@ -5,6 +5,7 @@
 
 mod adapter_contract;
 mod agy_binary;
+mod agy_hooks;
 mod bell_intake;
 mod claude_subagent_counts;
 mod codex_trust;
