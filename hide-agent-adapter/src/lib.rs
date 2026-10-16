@@ -261,11 +261,7 @@ impl LaunchDialect {
                 effort: &["-c", "model_reasoning_effort={}"],
                 efforts: &["minimal", "low", "medium", "high", "xhigh"],
             },
-            Self::Grok
-            | Self::OpenCode
-            | Self::Pi
-            | Self::Omp
-            | Self::Cursor => LaunchOptions {
+            Self::Grok | Self::OpenCode | Self::Pi | Self::Omp | Self::Cursor => LaunchOptions {
                 model: &[],
                 effort: &[],
                 efforts: &[],

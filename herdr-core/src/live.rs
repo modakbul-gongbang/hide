@@ -4887,7 +4887,11 @@ mod tests {
                 }
             };
             assert_eq!(herdr.methods(), expected, "{case}");
-            assert_eq!(node.left.load(std::sync::atomic::Ordering::SeqCst), 0, "{case}");
+            assert_eq!(
+                node.left.load(std::sync::atomic::Ordering::SeqCst),
+                0,
+                "{case}"
+            );
         }
     }
 
