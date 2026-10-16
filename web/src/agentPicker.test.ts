@@ -4,7 +4,9 @@ import type { AgentStartChoice, BackgroundAi } from "./snapshot";
 
 const START: AgentStartChoice = { kind: "codex", models: { claude: "opus", codex: "gpt-6-astra" } };
 
-const provider = (id: string, over: Record<string, unknown> = {}) => ({ id, label: id, state: "ready", headline: "", message: null, model: "", models: [], models_unavailable_reason: null, ...over });
+/** A Hide AI row; `agent` is the kit's adapter id, which differs from the id for Claude Code and agy. */
+const AGENT_OF: Record<string, string> = { claude: "claude-code", antigravity: "antigravity" };
+const provider = (id: string, over: Record<string, unknown> = {}) => ({ id, label: id, agent: AGENT_OF[id] ?? id, state: "ready", headline: "", message: null, model: "", models: [], models_unavailable_reason: null, ...over });
 const ai = (...providers: ReturnType<typeof provider>[]) => ({ provider: "claude", chosen: false, providers, unavailable_reason: null }) as unknown as BackgroundAi;
 
 beforeEach(forgetCatalogs);
@@ -36,6 +38,11 @@ describe("the model catalog (B28)", () => {
     const state = ai(provider("claude", { models: ["haiku", "sonnet"] }), provider("codex", { models: ["gpt-6-astra"] }));
     expect(catalogFor(state, "claude")).toEqual({ state: "ready", models: ["haiku", "sonnet"] });
     expect(catalogFor(state, "codex")).toEqual({ state: "ready", models: ["gpt-6-astra"] });
+  });
+
+  it("lists agy's models though Herdr names it agy and Hide AI antigravity", () => {
+    const state = ai(provider("antigravity", { models: ["gemini-3.8-flash-high", "claude-sonnet-4-6"] }));
+    expect(catalogFor(state, "agy")).toEqual({ state: "ready", models: ["gemini-3.8-flash-high", "claude-sonnet-4-6"] });
   });
 
   it("is loading before the catalog answered", () => {

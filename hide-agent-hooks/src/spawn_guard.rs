@@ -144,6 +144,29 @@ struct GrokPayload {
     cwd: Option<String>,
 }
 
+/// agy's payload: camelCase keys, the call under `toolCall` with its
+/// arguments in agy's own capitalized names (agy 1.3.6, measured).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AntigravityPayload {
+    conversation_id: Option<String>,
+    tool_call: Option<AntigravityCall>,
+}
+
+#[derive(Deserialize)]
+struct AntigravityCall {
+    name: Option<String>,
+    args: Option<AntigravityArgs>,
+}
+
+#[derive(Deserialize)]
+struct AntigravityArgs {
+    #[serde(rename = "CommandLine")]
+    command_line: Option<serde_json::Value>,
+    #[serde(rename = "Cwd")]
+    cwd: Option<String>,
+}
+
 /// A native question tool call. Its text is never sent to the guard or log.
 pub struct QuestionCall {
     pub session: String,
@@ -157,6 +180,7 @@ pub fn may_hold_question(payload: &[u8]) -> bool {
         b"request_user_input".as_slice(),
         b"ask_user_question".as_slice(),
         b"exit_plan_mode".as_slice(),
+        b"ask_question".as_slice(),
     ]
     .iter()
     .any(|tool| payload.windows(tool.len()).any(|window| window == *tool))
@@ -182,6 +206,14 @@ pub fn read_question(
         session_id: String,
     }
     let payload = match dialect {
+        HookDialect::Antigravity => serde_json::from_slice::<AntigravityPayload>(payload)
+            .ok()
+            .and_then(|payload| {
+                Some(QuestionPayload {
+                    tool_name: payload.tool_call?.name?,
+                    session_id: payload.conversation_id?,
+                })
+            })?,
         HookDialect::Grok => serde_json::from_slice::<GrokQuestionPayload>(payload)
             .ok()
             .map(|payload| QuestionPayload {
@@ -198,6 +230,7 @@ pub fn read_question(
         (HookDialect::Codex, "request_user_input_async") => "request_user_input_async",
         (HookDialect::Grok, "ask_user_question") => "ask_user_question",
         (HookDialect::Grok, "exit_plan_mode") => "exit_plan_mode",
+        (HookDialect::Antigravity, "ask_question") => "ask_question",
         _ => return None,
     };
     if payload.session_id.is_empty()
@@ -224,8 +257,9 @@ struct ToolInput {
 
 /// The shell call in a `PreToolUse` payload, in `dialect`'s shape: the shell
 /// tool is `Bash` in Claude Code and Codex, `run_terminal_command` in Grok
-/// (which a hook may also see as its alias `Bash`), and `Shell` in Cursor,
-/// whose call carries its own `working_directory`. A truncated or unreadable
+/// (which a hook may also see as its alias `Bash`), `Shell` in Cursor,
+/// whose call carries its own `working_directory`, and `run_command` in agy,
+/// whose call carries `CommandLine` and `Cwd`. A truncated or unreadable
 /// payload, another tool and a command that is not one string yield nothing,
 /// so the call runs.
 pub fn read_call(payload: &[u8], truncated: bool, dialect: HookDialect) -> Option<Call> {
@@ -236,6 +270,22 @@ pub fn read_call(payload: &[u8], truncated: bool, dialect: HookDialect) -> Optio
         // OpenCode's plugin and Pi's and omp's extension hand their helper the
         // command itself; no hook payload of theirs reaches this reader.
         HookDialect::OpenCode | HookDialect::Pi | HookDialect::Omp => return None,
+        HookDialect::Antigravity => {
+            let call = serde_json::from_slice::<AntigravityPayload>(payload)
+                .ok()?
+                .tool_call?;
+            if call.name.as_deref() != Some("run_command") {
+                return None;
+            }
+            let args = call.args?;
+            let serde_json::Value::String(command) = args.command_line? else {
+                return None;
+            };
+            return Some(Call {
+                command,
+                cwd: args.cwd.filter(|cwd| !cwd.is_empty()).map(PathBuf::from),
+            });
+        }
         HookDialect::Grok => {
             let payload: GrokPayload = serde_json::from_slice(payload).ok()?;
             (payload.tool_name, payload.tool_input, payload.cwd)
@@ -253,6 +303,7 @@ pub fn read_call(payload: &[u8], truncated: bool, dialect: HookDialect) -> Optio
         | HookDialect::Omp => &["Bash"][..],
         HookDialect::Grok => &["run_terminal_command", "Bash"][..],
         HookDialect::Cursor => &["Shell"][..],
+        HookDialect::Antigravity => &["run_command"][..],
     };
     if !tool.is_some_and(|tool| shell.contains(&tool.as_str())) {
         return None;

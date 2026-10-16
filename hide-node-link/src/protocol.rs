@@ -141,11 +141,33 @@ use crate::error::HostError;
 /// from the file manager (PRD prelaunch explorer-actions). A helper on 36
 /// would refuse them as unknown, so a paste or a drop on a device checkout
 /// could never land; it is refused at Hello and upgraded.
-/// 38: `LetterPull` carries `tool`, a hook's ask at a tool event for the
+/// 38: Antigravity CLI is a session format (`antigravity`), and three calls
+/// serve it (PRD antigravity-first-class D-07, D-08): `antigravity_fork_mark`
+/// and `antigravity_fork` find the conversation agy's `/fork` made, and
+/// `antigravity_trust` records or takes out agy's trust of a worktree Hide
+/// made. A helper on 37 could not read an agy session or start agy in a
+/// worktree without its trust question, so it is refused at Hello and
+/// upgraded.
+/// 39: the pull request card query also reads the head commit's checks and
+/// the reviews, for the card's timeline (PRD pr-card-and-session-record-
+/// redesign D-04). A helper on 38 allows only the query text it knows, so it
+/// would refuse every card read of a device project; it is refused at Hello
+/// and upgraded.
+/// 40: `LetterPull` carries `tool`, a hook's ask at a tool event for the
 /// letters due while the agent works (PRD letters-to-busy-agents D-02). A
-/// helper on 37 would drop the field and answer a prompt's letters, so it is
+/// helper on 39 would drop the field and answer a prompt's letters, so it is
 /// refused at Hello and upgraded.
-pub const PROTOCOL_VERSION: u32 = 38;
+pub const PROTOCOL_VERSION: u32 = 40;
+
+/// What agy's index held in a checkout before Hide typed `/fork`
+/// ([`Call::AntigravityForkMark`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AntigravityForkMark {
+    /// The root conversations already in the checkout, newest first.
+    pub known: Vec<String>,
+    /// How many steps the source conversation had.
+    pub steps: i64,
+}
 
 /// How a pane's shell is started so that it marks its first prompt
 /// ([`Call::ShellIntegration`]): the command the pane runs, the shell and
@@ -522,6 +544,28 @@ pub enum Call {
     AgentInstalled {
         name: String,
     },
+    /// What agy's index holds in `cwd` before Hide types `/fork` into a
+    /// pane that resumed `source`, an [`AntigravityForkMark`]
+    /// (`hide_session::antigravity::fork_mark`).
+    AntigravityForkMark {
+        source: String,
+        cwd: String,
+    },
+    /// The conversation agy's `/fork` made from `source` in `cwd` after
+    /// `mark`, as an id, or `null` while agy has not written it
+    /// (`hide_session::antigravity::forked`).
+    AntigravityFork {
+        source: String,
+        cwd: String,
+        mark: AntigravityForkMark,
+    },
+    /// Records (`trusted`) or takes out agy's trust of a worktree Hide made,
+    /// in the node account's agy settings
+    /// (`hide_agent_hooks::antigravity_trust`).
+    AntigravityTrust {
+        path: String,
+        trusted: bool,
+    },
     /// Writes Hide's shell integration under the node's home once and
     /// answers how a pane Hide makes for an agent starts the account's
     /// shell so it marks its first prompt (`hide_host::shell_integration`),
@@ -834,6 +878,9 @@ impl Call {
             | Self::Git { .. }
             | Self::TerminateGroup { .. }
             | Self::AgentInstalled { .. }
+            | Self::AntigravityForkMark { .. }
+            | Self::AntigravityFork { .. }
+            | Self::AntigravityTrust { .. }
             | Self::ShellIntegration
             | Self::ProcessStarts { .. }
             | Self::ProcessDescendants { .. }

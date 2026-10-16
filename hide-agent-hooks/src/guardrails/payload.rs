@@ -10,7 +10,10 @@
 //! with `path`, `search_replace` and `write` with `file_path`), OpenCode
 //! 1.18.30 (`read`, `edit`, `write` with `filePath`, `apply_patch` with
 //! `patchText`), Pi 1.0.4 and omp 18.7.0 (`read`, `edit`, `write` with
-//! `path`). A key another version renames reads as no path, and the call runs.
+//! `path`), agy 1.3.6 (`run_command` with `CommandLine` and `Cwd`,
+//! `view_file` with `AbsolutePath`, `write_to_file`, `replace_file_content`
+//! and `multi_replace_file_content` with `TargetFile`). A key another version
+//! renames reads as no path, and the call runs.
 
 use std::path::PathBuf;
 
@@ -28,10 +31,24 @@ pub struct ToolCall {
 }
 
 /// The shell tools by name, across runtimes.
-const SHELL_TOOLS: [&str; 4] = ["Bash", "run_terminal_command", "Shell", "bash"];
+const SHELL_TOOLS: [&str; 5] = [
+    "Bash",
+    "run_terminal_command",
+    "Shell",
+    "bash",
+    "run_command",
+];
+
+/// The keys agy's file writes carry their new text under, ahead of the
+/// call's name in agy's sorted payload.
+const AGY_WRITE_CONTENT_KEYS: [&str; 3] =
+    ["CodeContent", "ReplacementContent", "ReplacementChunks"];
+
+/// The keys a shell tool's input carries its command under.
+const COMMAND_KEYS: [&str; 2] = ["command", "CommandLine"];
 
 /// The tools that write a file by name, across runtimes.
-const WRITE_TOOLS: [&str; 12] = [
+const WRITE_TOOLS: [&str; 15] = [
     "Edit",
     "Write",
     "MultiEdit",
@@ -44,24 +61,29 @@ const WRITE_TOOLS: [&str; 12] = [
     "Delete",
     "EditNotebook",
     "multiedit",
+    "write_to_file",
+    "replace_file_content",
+    "multi_replace_file_content",
 ];
 
-const READ_TOOLS: [&str; 3] = ["Read", "read_file", "read"];
+const READ_TOOLS: [&str; 4] = ["Read", "read_file", "read", "view_file"];
 
 /// The keys a tool's input names its file under, across runtimes.
-const PATH_KEYS: [&str; 5] = [
+const PATH_KEYS: [&str; 7] = [
     "file_path",
     "path",
     "filePath",
     "notebook_path",
     "target_file",
+    "TargetFile",
+    "AbsolutePath",
 ];
 
 /// The keys a patch tool's input carries its text under.
 const PATCH_KEYS: [&str; 3] = ["command", "patchText", "patch"];
 
 /// The pre-tool payload of a command hook (Claude Code, Codex, Cursor,
-/// Grok). A payload cut at the read limit is
+/// Grok, agy). A payload cut at the read limit is
 /// read for its tool and path from the bytes that arrived.
 pub fn read_hook(payload: &[u8], truncated: bool, dialect: HookDialect) -> Option<ToolCall> {
     if truncated {
@@ -74,6 +96,14 @@ pub fn read_hook(payload: &[u8], truncated: bool, dialect: HookDialect) -> Optio
             value.get("toolInput"),
             value.get("cwd").and_then(Value::as_str),
         ),
+        // agy names no cwd beside the call: a shell call carries its own
+        // `Cwd`, and the conversation's workspace is the first of
+        // `workspacePaths`.
+        HookDialect::Antigravity => (
+            value.pointer("/toolCall/name").and_then(Value::as_str),
+            value.pointer("/toolCall/args"),
+            value.pointer("/workspacePaths/0").and_then(Value::as_str),
+        ),
         _ => (
             value.get("tool_name").and_then(Value::as_str),
             value.get("tool_input"),
@@ -81,7 +111,11 @@ pub fn read_hook(payload: &[u8], truncated: bool, dialect: HookDialect) -> Optio
         ),
     };
     let input_cwd = input
-        .and_then(|input| input.get("working_directory").or_else(|| input.get("cwd")))
+        .and_then(|input| {
+            ["working_directory", "cwd", "Cwd"]
+                .into_iter()
+                .find_map(|key| input.get(key))
+        })
         .and_then(Value::as_str);
     let workspace = value
         .get("workspace_roots")
@@ -101,8 +135,9 @@ pub fn read_hook(payload: &[u8], truncated: bool, dialect: HookDialect) -> Optio
 /// OpenCode, Pi and omp alike.
 pub fn action(tool: &str, input: &Value) -> Option<Action> {
     if SHELL_TOOLS.contains(&tool) {
-        return input
-            .get("command")
+        return COMMAND_KEYS
+            .iter()
+            .find_map(|key| input.get(*key))
             .and_then(Value::as_str)
             .map(|command| Action::Shell(command.to_owned()));
     }
@@ -156,9 +191,25 @@ pub fn patch_paths(patch: &str) -> Vec<String> {
 fn read_cut(payload: &[u8], dialect: HookDialect) -> Option<ToolCall> {
     let tool_key = match dialect {
         HookDialect::Grok => "toolName",
+        // agy sorts its keys, so the call's `name` follows its arguments: a
+        // payload cut inside a long `CodeContent` has lost the name and the
+        // `TargetFile` after it, and is judged as a write Hide cannot read.
+        HookDialect::Antigravity => "name",
         _ => "tool_name",
     };
-    let tool = string_after(payload, tool_key)?;
+    let Some(tool) = string_after(payload, tool_key) else {
+        let writes = dialect == HookDialect::Antigravity
+            && AGY_WRITE_CONTENT_KEYS.iter().any(|key| {
+                let needle = format!("\"{key}\"");
+                payload
+                    .windows(needle.len())
+                    .any(|window| window == needle.as_bytes())
+            });
+        return writes.then_some(ToolCall {
+            action: Action::UnreadWrite,
+            cwd: None,
+        });
+    };
     if SHELL_TOOLS.contains(&tool.as_str()) {
         return None;
     }
@@ -180,6 +231,7 @@ fn read_cut(payload: &[u8], dialect: HookDialect) -> Option<ToolCall> {
     Some(ToolCall {
         action,
         cwd: string_after(payload, "cwd")
+            .or_else(|| string_after(payload, "Cwd"))
             .filter(|cwd| !cwd.is_empty())
             .map(PathBuf::from),
     })

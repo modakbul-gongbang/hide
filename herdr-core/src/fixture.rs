@@ -67,6 +67,55 @@ pub(crate) fn grok_session(
     conversation
 }
 
+/// One root conversation row in agy 1.4.0's index at `step_count` steps,
+/// written at `modified` (SQLite time text; `None` is now), with the columns its readers
+/// look at; the index is made on the first call.
+#[cfg(test)]
+pub(crate) fn antigravity_conversation(
+    home: &std::path::Path,
+    cwd: &std::path::Path,
+    id: &str,
+    step_count: i64,
+    modified: Option<&str>,
+) {
+    let folder = home.join(".gemini/antigravity-cli");
+    std::fs::create_dir_all(folder.join("conversations")).unwrap();
+    std::fs::write(folder.join("conversations").join(format!("{id}.db")), b"").unwrap();
+    let index = rusqlite::Connection::open(folder.join("conversation_summaries.db")).unwrap();
+    index
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS conversation_summaries (conversation_id text PRIMARY KEY, \
+             title text NOT NULL DEFAULT '', step_count integer NOT NULL DEFAULT 0, \
+             last_modified_time datetime NOT NULL, workspace_uris text NOT NULL, \
+             parent_conversation_id text NOT NULL DEFAULT '', \
+             app_data_dir text NOT NULL DEFAULT '')",
+        )
+        .unwrap();
+    index
+        .execute(
+            "INSERT INTO conversation_summaries (conversation_id, title, step_count, \
+             last_modified_time, workspace_uris, app_data_dir) \
+             VALUES (?1, 'fork fixture', ?2, \
+             coalesce(?3, strftime('%Y-%m-%d %H:%M:%S+00:00', 'now')), ?4, 'antigravity-cli')",
+            rusqlite::params![
+                id,
+                step_count,
+                modified,
+                serde_json::json!([antigravity_uri(cwd)]).to_string()
+            ],
+        )
+        .unwrap();
+}
+
+/// How agy names a workspace: `file:///Users/me/repo`, or on Windows
+/// `file:///C:/Users/me/repo`.
+#[cfg(test)]
+fn antigravity_uri(cwd: &std::path::Path) -> String {
+    let wire = hide_platform::path::to_wire(cwd).unwrap();
+    let slash = if wire.starts_with('/') { "" } else { "/" };
+    format!("file://{slash}{}", wire.replace(' ', "%20"))
+}
+
 /// The pinned Cursor CLI's ordinary route and independently encoded graph.
 /// The fixture owns its writer; production readers never create these files.
 #[cfg(test)]

@@ -195,6 +195,7 @@ While an agent works its letters reach it at a tool event ([delivery.md](deliver
 Per tool result, OpenCode's plugin and the Pi and omp extension start one helper (`hide-agent-hooks <agent> letters`), which starts one sibling `hide inbox --hook --session <id> --tool`, a credential bootstrap and one typed hook request to the daemon; the core hands it to the delivery worker like a prompt pull, which reads the ledger it holds and renders at most five letters, with no subprocess and no network, and writes the ledger only when the pull's maintenance changed a letter.
 The scripts bound it: only the pane's root session asks, with a 1.5 second budget past which the result goes on unchanged, inside the cap of eight running helpers, and a result that comes while letters the script handed over wait for their receipt pays a map read and no helper.
 Grok's and Cursor's hook runs per tool call (their entries carry no matcher from `hide-guidance@6`); a call that runs adds the same `hide inbox` call inside the guard's 2.5 second budget, and a refused call adds nothing.
+agy's `PreInvocation` hook already runs per model call; a call after the prompt's first adds the same `hide inbox` call inside the prompt hook's 1.65 second budget.
 Claude Code and Codex pay nothing at a tool: their letters are typed by the doorbell, on its own thread, as at rest.
 Nothing here keeps state, runs a timer or publishes; the retained data is the throttled delivery diagnostic.
 
@@ -419,8 +420,11 @@ Record uptime, the restart time, and both sample windows in the run directory, a
   An event that arrives while one of them runs is applied at once, which the topology scenario's churning agents exercise.
 - Keep a publish's cost independent of the agent, tab and checkout counts when the catalog's inputs did not move (D-18).
   The catalog is rebuilt only on changed registrations, spaces or worktrees or its refresh window, the purpose mirror syncs only when that catalog or the unconfirmed created purposes changed, and a path is resolved by the node only when the set of paths asked changes (above), never by the core per publish; an agent status change repeats none of them.
+  A new pane's cwd read answers publish only when the read changed a cwd, the pane was shown at a sibling's cwd other than the one it confirms, or the publish before it was held for that pane (PRD grid-ahead-of-herdr D-12): a split or a new tab publishes once with a stand-in cwd and the answer that confirms that same cwd publishes nothing, where it repeated the whole publish before (21 of 21 answers at operator scale changed nothing).
   Measure a change to this at both scales of the topology scenario, idle and with its agent churn, against a baseline: idle CPU and RSS must not grow, and a status-change publish must not double when the agents do.
 - A drawn-ahead change adds one publish, a bounded line (`GEOMETRY_QUEUE_LIMIT`, `INPUT_HOLD_LIMIT_BYTES`) and one `pane_op.timing` record per operation, and nothing per frame or per tick.
+  A terminal's PTY is resized once per drawn layout change its rectangle takes part in, at the drawing, and once more only when Herdr's layout differs from the drawing (PRD grid-ahead-of-herdr D-03, D-04); nothing holds a grid for Herdr's confirmation, and nothing compares a held set per publish.
+  For a resized pane the record's `first_frame_ms` is the first frame after its resize went out and may precede `applied_ms`; a change that leaves a pane's grid where it was sends no resize and its record ends `incomplete`.
 - Announce once per burst and clear the `ChangeNotifier` (`herdr-core/src/handle.rs`) latch before taking the snapshot lock.
   Read-then-clear can swallow a concurrent change.
 - Size snapshot traffic by changes: rarely-changing revisioned `rest` and per-event scalars; terminal output never rides a snapshot (it goes from the node to the hub, see `docs/ARCHITECTURE.md`, The terminal path).

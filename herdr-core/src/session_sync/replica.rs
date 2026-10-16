@@ -887,6 +887,16 @@ impl SessionReplica {
         true
     }
 
+    /// The cwd the replica holds for a pane: the one Herdr announced or
+    /// confirmed, never a stand-in.
+    pub(crate) fn pane_cwd(&self, pane_id: &str) -> Option<&str> {
+        self.state
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == pane_id)
+            .and_then(|pane| pane.cwd.as_deref())
+    }
+
     pub(crate) fn ready_to_publish(&self) -> bool {
         self.pending_layouts.is_empty()
             && self.pending_workspace_closures.is_empty()

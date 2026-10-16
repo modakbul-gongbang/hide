@@ -8,10 +8,7 @@ use hide_kit::Feature;
 
 /// The kind Herdr names an agent by, from the kit adapter's id.
 fn herdr_kind(adapter: &hide_kit::AgentAdapter) -> &'static str {
-    match adapter.id {
-        "claude-code" => "claude",
-        id => id,
-    }
+    hide_agent_adapter::adapter(adapter.id).unwrap().herdr.name
 }
 
 #[test]
@@ -19,13 +16,16 @@ fn every_flag_of_the_table_is_what_the_cores_own_gates_do() {
     for adapter in hide_kit::agents::ADAPTERS {
         let kind = herdr_kind(adapter);
         // What instruments a session: a settings-file hook the core reads a
-        // runtime for, or a script file of Hide's the kit installs (OpenCode's
-        // plugin, Pi's and omp's extension).
+        // runtime for, a script file of Hide's the kit installs (OpenCode's
+        // plugin, Pi's and omp's extension), or a hook entry that answers the
+        // agent's prompt event (agy's `PreInvocation`).
+        let declared = hide_agent_adapter::adapter(adapter.id).unwrap();
         let hook = crate::agent_hooks::runtime_of(kind).is_some()
-            || matches!(adapter.hook, hide_kit::HookSupport::Plugin(_));
+            || matches!(adapter.hook, hide_kit::HookSupport::Plugin(_))
+            || matches!(adapter.hook, hide_kit::HookSupport::Guidance(agent)
+                if agent.dialect().is_some() && agent.dialect() == declared.prompt_hook);
         assert_eq!(adapter.supports(Feature::Letters), hook, "{kind}: letters");
         // Memory needs that hook and its own declaration.
-        let declared = hide_agent_adapter::adapter(adapter.id).unwrap();
         assert_eq!(
             adapter.supports(Feature::Memory),
             hook && declared.memory.is_some(),

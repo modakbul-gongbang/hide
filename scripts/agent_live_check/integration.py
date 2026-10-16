@@ -8,23 +8,39 @@ import re
 from .protection import (MAX_BACKUP_BYTES, ProtectionError, beneath, configuration_bytes, inventory_directory,
                          private_directory, stamp, write_private)
 
+# The folder each kind's Herdr integration writes under the install HOME.
+ROOTS = {"claude": ".claude", "codex": ".codex", "pi": ".pi/agent", "omp": ".omp/agent",
+         "opencode": ".config/opencode", "cursor": ".cursor", "grok": ".grok", "agy": ".gemini/config"}
+# Herdr names agy's integration `antigravity-cli` and marks its files and
+# reported sessions `antigravity_cli`; every other kind is its own name.
+TARGETS = {"agy": "antigravity-cli"}
+IDS = {"agy": "antigravity_cli"}
+# Kinds whose integration this tool places as project hooks per scene, which
+# cannot exclude the account's own global hooks.
+PROJECT_HOOKS = {"cursor": ".cursor/hooks.json", "agy": ".agents/hooks.json"}
+
+
+def integration_target(kind):
+    return TARGETS.get(kind, kind)
+
+
+def integration_id(kind):
+    return IDS.get(kind, kind)
+
 
 def prepare(runtime, recipe, overlay):
     if runtime.fixture_bin:
         return {"args": [], "artifacts": [], "sole_route": False, "synthetic": True}
     kind = recipe["kind"]
     home = runtime.probe / ("integration-" + recipe["id"])
-    relative = {"claude": ".claude", "codex": ".codex", "pi": ".pi/agent",
-                "omp": ".omp/agent", "opencode": ".config/opencode",
-                "cursor": ".cursor", "grok": ".grok"}[kind]
-    root = home / relative
+    root = home / ROOTS[kind]
     private_directory(root)
     # Only the install command has this disposable HOME. The authenticated
     # provider still uses operator HOME and its supported per-command roots.
     env = {**runtime.env, "HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config"),
            "XDG_DATA_HOME": str(home / "data"), "XDG_STATE_HOME": str(home / "state"),
            "XDG_CACHE_HOME": str(home / "cache")}
-    runtime.owner.run([str(runtime.herdr_bin), "integration", "install", kind], env=env, cwd=home)
+    runtime.owner.run([str(runtime.herdr_bin), "integration", "install", integration_target(kind)], env=env, cwd=home)
     artifacts, total, pending, visited = [], 0, [root], 0
     while pending:
         file = pending.pop()
@@ -48,7 +64,7 @@ def prepare(runtime, recipe, overlay):
             raise ProtectionError("generated_integration_missing", path=file)
         original, content = value
         total += original.size
-        version = re.search(rb"HERDR_INTEGRATION_ID=(" + kind.encode() + rb"(?:-[a-z0-9-]+)?)\r?\n[^\n]*HERDR_INTEGRATION_VERSION=([0-9]+)", content)
+        version = re.search(rb"HERDR_INTEGRATION_ID=(" + integration_id(kind).encode() + rb"(?:-[a-z0-9-]+)?)\r?\n[^\n]*HERDR_INTEGRATION_VERSION=([0-9]+)", content)
         artifacts.append({"file": file, "content": content, "stamp": original,
                           "cohort": "generated", "integration_id": version[1].decode() if version else None,
                           "version": int(version[2]) if version else None})
@@ -65,7 +81,7 @@ def prepare(runtime, recipe, overlay):
         destination = Path(overlay["env"]["XDG_CONFIG_HOME"]) / "opencode"
     elif kind == "grok":
         destination = Path(overlay["env"]["GROK_HOME"])
-    # Cursor's documented project hooks use the installer's absolute command
+    # Cursor's and agy's project hooks use the installer's absolute command
     # path. They are placed per scene by project_args, never in operator HOME.
     if destination:
         if not beneath(destination, runtime.probe):
@@ -81,14 +97,14 @@ def prepare(runtime, recipe, overlay):
     copied_config = kind == "opencode" and any(
         item["source"].endswith(("/opencode.json", "/opencode.jsonc")) for item in overlay["copies"])
     return {"args": args, "artifacts": artifacts, "root": root,
-            "sole_route": kind != "cursor" and not copied_config, "synthetic": False,
+            "sole_route": kind not in PROJECT_HOOKS and not copied_config, "synthetic": False,
             "route_reason": "copied_configuration_may_load_external_plugins" if copied_config
-                            else "global_hooks_not_excluded" if kind == "cursor" else "isolated_configuration"}
+                            else "global_hooks_not_excluded" if kind in PROJECT_HOOKS else "isolated_configuration"}
 
 
 def project_args(plan, recipe, cwd):
-    if recipe["kind"] == "cursor" and not plan["synthetic"]:
-        destination = cwd / ".cursor/hooks.json"
+    if recipe["kind"] in PROJECT_HOOKS and not plan["synthetic"]:
+        destination = cwd / PROJECT_HOOKS[recipe["kind"]]
         if not destination.exists():
             private_directory(destination.parent)
             write_private(destination, (plan["root"] / "hooks.json").read_bytes())
@@ -136,7 +152,7 @@ def provenance(probe, recipe, plan, current=None):
             for item in plan["artifacts"] if item["version"] is not None]
     changes = plan.get("integrity_changes", {})
     session = current.get("agent_session") if current else None
-    native = bool(session and session.get("source") == "herdr:" + recipe["kind"])
+    native = bool(session and session.get("source") == "herdr:" + integration_id(recipe["kind"]))
     versions = {row["version"] for row in rows}
     loaded = native and plan["sole_route"] and len(versions) == 1 and not changes
     return {"status": "integrity_unproven" if changes else

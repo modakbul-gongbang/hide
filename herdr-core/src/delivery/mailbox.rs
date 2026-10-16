@@ -1110,7 +1110,7 @@ mod tests {
     #[test]
     fn a_tool_event_hands_a_working_agent_the_letters_due_and_a_bell_target_none() {
         let wait = super::super::doorbell::MID_TURN_WAIT_MS;
-        for kind in ["opencode", "pi", "omp", "grok", "cursor"] {
+        for kind in ["opencode", "pi", "omp", "grok", "cursor", "antigravity"] {
             assert!(tool_letters(kind), "{kind}");
             let mut ledger = Ledger::default();
             let mut recipient = actor("recipient");

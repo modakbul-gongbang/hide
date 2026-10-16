@@ -3230,6 +3230,8 @@ fn a_task_agent_start_reports_apart_from_the_creation_it_follows() {
             shell: crate::agent_start::ShellStart::Integrated {
                 program: "zsh".into(),
             },
+            // An agent started in a checkout Hide did not make trusts nothing.
+            made_worktree: None,
         })
     );
     // An acknowledgement while the agent is still starting keeps the slot.

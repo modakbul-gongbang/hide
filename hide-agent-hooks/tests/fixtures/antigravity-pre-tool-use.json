@@ -1,0 +1,18 @@
+{
+  "artifactDirectoryPath": "/home/me/.gemini/antigravity-cli/brain/a9c0e2f4-0000-4000-8000-000000000008",
+  "conversationId": "a9c0e2f4-0000-4000-8000-000000000008",
+  "modelName": "gemini-3.8-flash-low",
+  "stepIdx": 4,
+  "toolCall": {
+    "args": {
+      "CommandLine": "npm test",
+      "Cwd": "/work/project",
+      "WaitMsBeforeAsync": 5000,
+      "toolAction": "Running tests",
+      "toolSummary": "Run npm test"
+    },
+    "name": "run_command"
+  },
+  "transcriptPath": "/home/me/.gemini/antigravity-cli/brain/a9c0e2f4-0000-4000-8000-000000000008/.system_generated/logs/transcript_full.jsonl",
+  "workspacePaths": ["/work/project"]
+}

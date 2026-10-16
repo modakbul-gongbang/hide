@@ -40,8 +40,6 @@ PLACEHOLDER = "/kit path/it's/hide-agent-hooks"
 CLAUDE_EVENTS = ("SessionStart", "UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop", "PreToolUse")
 CLAUDE_MATCHER = "Bash|AskUserQuestion|ExitPlanMode|Edit|Write|MultiEdit|NotebookEdit|Read"
 CODEX_MATCHER = "Bash|request_user_input|request_user_input_async|apply_patch|Edit|Write"
-GROK_MATCHER = "Bash|ask_user_question|exit_plan_mode|Read|Edit|Write|read_file|search_replace|write"
-CURSOR_MATCHER = "Shell|Read|Write|Delete"
 # Approval-free flags per agent, so a tool call never waits on a menu the
 # doorbell would refuse to type over (PRD D-09). Each is the agent's own
 # documented switch, read from its --help on 2026-10-17.
@@ -83,7 +81,7 @@ def helper_wrapper(runtime, calls):
             f"d={shlex.quote(str(calls))}\n"
             'n="$(/bin/date +%s)-$$"\n'
             'printf \'%s\\n\' "$*" > "$d/$n.args"\n'
-            f'/usr/bin/tee "$d/$n.in" | {shlex.quote(str(real))} "$@" | /usr/bin/tee "$d/$n.out"\n')
+            f'/usr/bin/tee "$d/$n.in" | {shlex.quote(str(real))} "$@" 2> "$d/$n.err" | /usr/bin/tee "$d/$n.out"\n')
     replace_private(target, text.encode())
     target.chmod(0o700)
     return target
@@ -130,19 +128,19 @@ def install_hooks(runtime, recipe, integration, overlay, helper, cwd):
             replace_private(config, text.encode())
         return [merge_hooks(home / "hooks.json", groups), config]
     if kind == "grok":
-        groups = [(event, posix_entry(helper, f"hook --runtime grok --event {event} --source hide-guidance@5"))
+        # No matcher from hide-guidance@6: every tool call reaches the hook.
+        groups = [(event, posix_entry(helper, f"hook --runtime grok --event {event} --source hide-guidance@6"))
                   for event in ("SessionStart", "PreToolUse", "SubagentStart", "SubagentStop", "Stop")]
-        groups[1][1]["matcher"] = GROK_MATCHER
         return [merge_hooks(Path(overlay["env"]["GROK_HOME"]) / "hooks/hide.json", groups)]
     if kind == "cursor":
         path = cwd / ".cursor/hooks.json"
         document = json.loads(path.read_text()) if path.is_file() else {"version": 1, "hooks": {}}
         hooks = document.setdefault("hooks", {})
         hooks.setdefault("sessionStart", []).append(
-            {"command": f"{helper} hook --runtime cursor --event SessionStart --source hide-guidance@5", "timeout": 8})
+            {"command": f"{helper} hook --runtime cursor --event SessionStart --source hide-guidance@6", "timeout": 8})
+        # No matcher from hide-guidance@6: every tool call reaches the hook.
         hooks.setdefault("preToolUse", []).append(
-            {"command": f"{helper} hook --runtime cursor --event PreToolUse --source hide-guidance@5", "timeout": 8,
-             "matcher": CURSOR_MATCHER})
+            {"command": f"{helper} hook --runtime cursor --event PreToolUse --source hide-guidance@6", "timeout": 8})
         private_directory(path.parent)
         replace_private(path, (json.dumps(document, indent=2) + "\n").encode())
         return [path]
@@ -259,7 +257,9 @@ class Probe:
                     continue
                 cleaned.append(value)
             cleaned = [v for i, v in enumerate(cleaned) if v != "--sandbox" and (i == 0 or cleaned[i - 1] != "--sandbox")]
-            native = cleaned + ["--ask-for-approval", "never", "--sandbox", "workspace-write"]
+            # The recipe's low reasoning effort answered DONE without one tool call (gpt-6-luna, 2026-10-17); medium runs the job.
+            native = [v.replace('model_reasoning_effort="low"', 'model_reasoning_effort="medium"') for v in cleaned]
+            native += ["--ask-for-approval", "never", "--sandbox", "workspace-write"]
         code, output, err = runtime.command(["agent", "start", "live-" + recipe["id"] + "-rest", "--kind", recipe["kind"],
                                              "--pane", self.pane, "--timeout", "5000", "--", *native],
                                             check=False, seconds=10)
@@ -369,6 +369,9 @@ def observe_letter(probe, letter_id, marker, seconds, run):
     while time.monotonic() < end:
         agent = runtime.agent(probe.pane) or {}
         status = agent.get("agent_status")
+        # Each change of Herdr's status for the pane, with when it came: a flip to idle restarts the mid-turn wait.
+        if not row["samples"] or row["samples"][-1][1] != status:
+            row["samples"].append((round(time.time() - sent, 1), status))
         if status == "working":
             row["working_seen"] = True
         elif row["working_seen"] and status in ("idle", "done") and turn_ended_at is None:

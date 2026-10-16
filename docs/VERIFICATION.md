@@ -63,6 +63,18 @@ Manual QA covers what a spec cannot reach yet, and the pull request's Evidence s
   Run `pnpm --dir desktop e2e --grep-invert @needs-focus` locally, and leave the focus tests and repeated runs (`--repeat-each`) to CI.
 - A relaunch that attaches to a running daemon swaps its page within tens of milliseconds, which Playwright can miss; use `relaunch()` from `desktop/e2e/fixture.ts`, which reads the window through the main process.
 
+## Probing a real agent
+
+A probe runs the agent the operator signed in, on the operator's account, so it can reach the operator's files and the vendor.
+
+- Never run a real agent with a changed `HOME`.
+  agy lost its keychain sign-in that way and opened a Google sign-in window in the operator's browser on every run (2026-10-16); isolate with the real `HOME` and a scratch working folder instead.
+- Never pass an agent's skip-permissions flag in a probe.
+  With agy's `--dangerously-skip-permissions` its model opened files outside the scratch folder and sent them to the vendor (2026-10-16).
+- A capture hook records the names of environment variables, never their values.
+  A capture once wrote a key's value into its record (2026-10-16).
+- Back up every file of the agent's the probe may write and restore it byte for byte afterwards.
+
 ## Manual native QA
 
 Read [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#2-identify-the-build-and-protect-the-operator) sections 2 and 3 first; they own isolation and the foreground boundary, and this section adds the tools.

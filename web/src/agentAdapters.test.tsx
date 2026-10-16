@@ -6,9 +6,10 @@ import { afterAll, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { AGENT_ADAPTERS, agentAdapter, agentProductName } from "./agentAdapters";
+import manifest from "./assets/agents/manifest.json";
 import { PROVIDER_KINDS } from "./agentPicker";
 import { TooltipProvider } from "./components/ui/tooltip";
-import { LinkSessions } from "./LinkSessions";
+import { LinkTimeline } from "./LinkSessions";
 import { disarmKeyTarget } from "./keyTarget";
 import { resumeProvider } from "./linkPanel";
 import { AgentHead } from "./mobile/parts";
@@ -34,10 +35,13 @@ it.each([
   expect(resumeProvider(kind)).toBe(canonical);
 });
 
-it.each(AGENT_ADAPTERS.map((row) => [row.id, row.herdr_kind]))("draws the logo of %s, never the neutral mark", (id, herdrKind) => {
+// An agent with no licensed mark draws its monogram (manifest `monogram`, PRD antigravity-first-class B30).
+const MONOGRAMS = new Set(manifest.monogram.map((row) => row.id));
+it.each(AGENT_ADAPTERS.map((row) => [row.id, row.herdr_kind]))("draws the logo or monogram of %s, never the neutral mark", (id, herdrKind) => {
   const markup = renderToStaticMarkup(<AgentMark kind={herdrKind} />);
   expect(markup).toContain(`data-agent-mark="${herdrKind}"`);
-  expect(markup).toContain("<img");
+  if (MONOGRAMS.has(id)) expect(markup).toContain(">AN<");
+  else expect(markup).toContain("<img");
   expect(renderToStaticMarkup(<AgentMark kind={` ${id.toUpperCase()} `} />)).toContain(`data-agent-mark="${herdrKind}"`);
 });
 
@@ -75,12 +79,12 @@ it("resumes OpenCode by its proven session id", () => {
   expect(resumeProvider(" OPENCODE ")).toBe("opencode");
 });
 
-it("derives all seven supported phone starts and the existing default from the generated projection", () => {
+it("derives all eight supported phone starts and the existing default from the generated projection", () => {
   expect(START_KINDS).toEqual([
     { id: "claude", label: "Claude" }, { id: "codex", label: "Codex" },
     { id: "grok", label: "Grok" }, { id: "opencode", label: "OpenCode" },
     { id: "pi", label: "Pi" }, { id: "omp", label: "omp" },
-    { id: "cursor", label: "Cursor" },
+    { id: "cursor", label: "Cursor" }, { id: "agy", label: "Antigravity" },
   ]);
   expect(START_KINDS.map((row) => row.id)).toEqual(PROVIDER_KINDS);
   expect(START_KINDS).toEqual(AGENT_ADAPTERS.filter((row) => row.can_start).map((row) => ({ id: row.herdr_kind, label: row.picker_label })));
@@ -88,7 +92,7 @@ it("derives all seven supported phone starts and the existing default from the g
   expect(agentAdapter("future-agent")).toBeUndefined();
 });
 
-it.each([[" CLAUDE_CODE ", "claude", "Claude Code"], [" CODEX ", "codex", "Codex"], [" GROK ", "grok", "Grok"], [" PI ", "pi", "Pi"], [" OMP ", "omp", "omp"], [" CURSOR ", "cursor", "Cursor"], [" OPENCODE ", "opencode", "OpenCode"]])("dispatches a canonical resume from the actual %s session button", async (kind, canonical, product) => {
+it.each([[" CLAUDE_CODE ", "claude", "Claude Code"], [" CODEX ", "codex", "Codex"], [" GROK ", "grok", "Grok"], [" PI ", "pi", "Pi"], [" OMP ", "omp", "omp"], [" CURSOR ", "cursor", "Cursor"], [" OPENCODE ", "opencode", "OpenCode"], [" AGY ", "agy", "Antigravity"]])("dispatches a canonical resume from the actual %s session button", async (kind, canonical, product) => {
   const saved = useShellStore.getState();
   const checkout = { id: "checkout", workspace_id: "project", path: "/project/task", branch: "task", exists: true } as Checkout;
   const project = { id: "project", device_id: "local", path: "/project", label: "Project", checkouts: [checkout] } as Workspace;
@@ -108,10 +112,10 @@ it.each([[" CLAUDE_CODE ", "claude", "Claude Code"], [" CODEX ", "codex", "Codex
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   try {
     useShellStore.setState({ rest: { navigator: { workspaces: [project], devices: [{ agent_scope: emptyScope(), id: "local", kind: "local", label: "Local", state: "local", message: null, ssh_alias: null, agent_count: 0, test: null }] } } });
-    await act(async () => root.render(<TooltipProvider><LinkSessions panel={panel} project={project} branchOf={() => "task"} onRetry={() => undefined} empty={null} actions={actions} /></TooltipProvider>));
+    await act(async () => root.render(<TooltipProvider><LinkTimeline panel={panel} project={project} pr={null} milestones={[]} branchOf={() => "task"} onRetry={() => undefined} actions={actions} /></TooltipProvider>));
     // The row draws no provider logo and names the product instead (agent-mark-quiet B7, B11).
     expect(container.querySelector("[data-agent-mark]")).toBeNull();
-    expect(container.querySelector("[data-link-agent]")?.textContent).toBe(product);
+    expect(container.querySelector("[data-session-row-line]")?.textContent).toBe(`${product} · Done`);
     const button = container.querySelector<HTMLButtonElement>('[data-link-button="resume"]');
     expect(button).not.toBeNull();
     expect(button?.getAttribute("aria-disabled")).not.toBe("true");

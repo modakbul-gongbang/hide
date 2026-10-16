@@ -24,6 +24,10 @@ fn every_declared_source_has_samples_covering_its_declared_windows() {
                     CAPTURED_AT,
                 ),
             ],
+            LimitSource::AntigravityUsage => vec![(
+                include_str!("../../../tests/fixtures/usage/antigravity/usage-1.4.0.json").into(),
+                1_792_100_000,
+            )],
         };
         let readings: Vec<_> = samples
             .iter()
@@ -293,5 +297,50 @@ fn cost_fallback_is_signed_out_never_zero() {
             CAPTURED_AT
         ),
         Err(Cause::SignedOut)
+    );
+}
+#[test]
+fn agys_gemini_bucket_is_the_weekly_window_and_other_groups_are_scoped() {
+    let reading = parse(
+        LimitSource::AntigravityUsage,
+        include_str!("../../../tests/fixtures/usage/antigravity/usage-1.4.0.json"),
+        1_792_100_000,
+    )
+    .unwrap();
+    assert_eq!(
+        outcome(&reading, WindowKind::Weekly),
+        &WindowOutcome::Open {
+            used_percent: 25.0,
+            resets_at_s: 1_792_730_677
+        }
+    );
+    assert_eq!(
+        outcome(&reading, WindowKind::FiveHour),
+        &WindowOutcome::NotOffered
+    );
+    let scoped = reading
+        .windows
+        .iter()
+        .find(|w| w.scope != Scope::All)
+        .unwrap();
+    assert_eq!(
+        (&scoped.scope, &scoped.outcome),
+        (
+            &Scope::Model {
+                label: "Claude and GPT models".into()
+            },
+            &WindowOutcome::Open {
+                used_percent: 0.0,
+                resets_at_s: 1_792_736_514
+            }
+        )
+    );
+    assert_eq!(
+        parse(
+            LimitSource::AntigravityUsage,
+            r#"{"command":{"data":{}}}"#,
+            0
+        ),
+        Err(Cause::FormatChanged)
     );
 }

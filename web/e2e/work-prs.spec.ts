@@ -60,8 +60,8 @@ async function openWork(page: Page, fn: (stack: { gh: { bin: string; state: stri
 /** The card in the lane's 보기 slot (PRD sidebar-task-lens D-50). */
 const cardOf = (page: Page, number: number) => page.locator(`aside[data-lane="detail"] [data-pr-card="${number}"]`);
 
-/** Opens one of the card's folded lines (B36); the card keeps it open while the app runs. */
-async function unfold(card: Locator, section: "body" | "files" | "links"): Promise<void> {
+/** Opens the card's folded files line (B36); the card keeps it open while the app runs. */
+async function unfold(card: Locator, section: "files"): Promise<void> {
   const toggle = card.locator(`[data-pr-card-toggle="${section}"]`);
   if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
@@ -226,10 +226,14 @@ test("the card opens in the 보기 slot and Merge goes out on the head it showed
     await card.locator('[data-pr-card-menu="31"]').click();
     await expect(page.getByRole("menuitem")).toHaveText(["Assign", "Create new issue", "Copy branch name"]);
     await page.keyboard.press("Escape");
-    // The four steps fill to review for a pull request that can merge (B34).
-    await expect(card.locator("[data-pr-card-steps]")).toHaveAttribute("data-pr-card-steps", "3");
+    // The timeline holds the pull request's milestones oldest first, with no
+    // session yet (PRD pr-card-and-session-record-redesign B4, B5); the body
+    // is open under its heading chips (B12, B13).
+    await expect(card.locator("[data-timeline-milestone]").first()).toHaveAttribute("data-timeline-milestone", "opened");
+    await expect(card.locator("[data-timeline-now]")).toBeVisible();
     await expect(card.locator("[data-pr-card-files]")).toHaveAttribute("data-pr-card-files", "3", { timeout: 30_000 });
     await expect(card.locator("[data-pr-card-outline]")).toBeVisible();
+    await expect(card.locator("[data-pr-card-markdown]")).toBeVisible();
     await unfold(card, "files");
     await expect(card.locator("[data-pr-card-generated]")).toBeVisible();
     await screenshot(page, "work-pr-card-light");
@@ -341,9 +345,10 @@ test("a merged pull request opens its card and draws its parts, with no Merge", 
     await expect(card).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('[data-lane-tool="detail"] [data-detail-mark]')).toHaveAttribute("data-detail-mark", "merged");
     await expect(card.locator("[data-pr-card-files]")).toBeVisible({ timeout: 30_000 });
-    await expect(card.locator("[data-pr-card-steps]")).toHaveAttribute("data-pr-card-steps", "4");
-    await unfold(card, "body");
-    await expect(card.locator("[data-pr-card-preview]")).toBeVisible();
+    // A merged pull request's timeline ends on `머지됨` with no now row (B6).
+    await expect(card.locator("[data-timeline-milestone]").last()).toHaveAttribute("data-timeline-milestone", "merged");
+    await expect(card.locator("[data-timeline-now]")).toHaveCount(0);
+    await expect(card.locator("[data-pr-card-markdown]")).toBeVisible();
     await expect(card.locator("[data-pr-card-merge]")).toHaveCount(0);
     // A finished pull request's ⋯ keeps only the branch name to copy (D-28).
     await card.locator('[data-pr-card-menu="37"]').click();

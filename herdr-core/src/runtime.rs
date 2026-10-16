@@ -456,9 +456,6 @@ struct WaitingExplorerChange {
     request: ExplorerRequest,
 }
 
-/// Pull request summaries kept for their head commit (D-29).
-const PR_SUMMARY_CACHE_LIMIT: usize = 64;
-
 /// How many Explorer changes wait behind the running one. A drag and the
 /// keys that follow it queue one or two; past this the newest is refused.
 const EXPLORER_QUEUE_LIMIT: usize = 4;
@@ -1405,13 +1402,6 @@ pub struct Runtime {
     /// The creation requests keys are sent against before Herdr names their
     /// pane (PRD instant-pane-topology D-11); the node holds the keys.
     input_requests: terminal_input::InputRequests,
-    /// Panes of a tab drawn ahead of Herdr, whose PTY keeps its size until
-    /// Herdr confirms (PRD instant-pane-topology D-08). Recomputed with every
-    /// session overlay, so it never outlives the predictions behind it.
-    grid_held_panes: HashSet<String>,
-    /// Held panes whose view reported a size meanwhile; it is sent once when
-    /// the hold ends.
-    held_resizes: HashSet<String>,
     /// A pane close that waited in its tab's line, by close key: the place
     /// it held there, which orders its drawing among the line's other
     /// predictions. Pruned to the live closes on each insert.
@@ -1620,11 +1610,6 @@ pub struct Runtime {
     /// Each checkout's Local issue number, for a project that reads Local
     /// issues; `sync_issues` fills it from the same chain a GitHub link uses.
     local_issue_links: BTreeMap<String, u32>,
-    /// The summary hide-ai made of a pull request at a head commit, kept for
-    /// that head (D-29). In memory, capped at [`PR_SUMMARY_CACHE_LIMIT`].
-    pr_summaries: BTreeMap<(String, u32), (String, String)>,
-    /// Summaries being asked for now, so one head is asked once.
-    pr_summaries_asked: BTreeSet<(String, u32, String)>,
     /// The one running GitHub search and the one waiting behind it
     /// (`issues::GithubSearchWork`).
     github_search: issues::GithubSearchWork,
@@ -2155,8 +2140,6 @@ impl Runtime {
             confirmed_pane_layout_signatures: HashMap::new(),
             op_timings: op_timing::OpTimings::default(),
             input_requests: terminal_input::InputRequests::default(),
-            grid_held_panes: HashSet::new(),
-            held_resizes: HashSet::new(),
             drawn_closes: HashMap::new(),
             confirmed_layouts: HashMap::new(),
             close_line_places: HashMap::new(),
@@ -2249,8 +2232,6 @@ impl Runtime {
             local_issues_save_pending: false,
             local_issues_save_active: false,
             local_issue_links: BTreeMap::new(),
-            pr_summaries: BTreeMap::new(),
-            pr_summaries_asked: BTreeSet::new(),
             github_search: issues::GithubSearchWork::default(),
             pr_link_checkout: None,
             task_agent_launch: None,

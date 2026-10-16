@@ -19,6 +19,7 @@ pub enum AgentId {
     Pi,
     Omp,
     Cursor,
+    Antigravity,
 }
 
 impl AgentId {
@@ -41,10 +42,11 @@ pub enum HookDialect {
     Cursor,
     Pi,
     Omp,
+    Antigravity,
 }
 
 impl HookDialect {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::ClaudeCode,
         Self::Codex,
         Self::OpenCode,
@@ -52,6 +54,7 @@ impl HookDialect {
         Self::Cursor,
         Self::Pi,
         Self::Omp,
+        Self::Antigravity,
     ];
 
     pub const fn adapter(self) -> &'static AgentAdapter {
@@ -63,6 +66,7 @@ impl HookDialect {
             Self::Cursor => AgentId::Cursor.adapter(),
             Self::Pi => AgentId::Pi.adapter(),
             Self::Omp => AgentId::Omp.adapter(),
+            Self::Antigravity => AgentId::Antigravity.adapter(),
         }
     }
 }
@@ -74,13 +78,18 @@ impl HookDialect {
 pub enum GuidanceDialect {
     Cursor,
     Grok,
+    /// agy's `hide` block in `~/.gemini/config/hooks.json`, beside Herdr's
+    /// and the operator's blocks: the collaboration tier through a command
+    /// hook, since agy's `injectSteps` put text into a prompt and its
+    /// `PreToolUse` refuses a call.
+    Antigravity,
 }
 
 impl GuidanceDialect {
     /// Whether the file's session-start entry adds Hide's guidance to the
     /// agent's context. Grok discards what a session-start hook prints.
     pub const fn prints_guidance(self) -> bool {
-        matches!(self, Self::Cursor)
+        matches!(self, Self::Cursor | Self::Antigravity)
     }
 }
 
@@ -110,6 +119,7 @@ pub enum SessionFormat {
     Omp,
     Cursor,
     OpenCode,
+    Antigravity,
 }
 
 impl SessionFormat {
@@ -122,6 +132,7 @@ impl SessionFormat {
             Self::Omp => AgentId::Omp.adapter(),
             Self::Cursor => AgentId::Cursor.adapter(),
             Self::OpenCode => AgentId::OpenCode.adapter(),
+            Self::Antigravity => AgentId::Antigravity.adapter(),
         }
     }
 
@@ -151,21 +162,30 @@ impl SessionFormat {
     pub const fn has_session_file(self) -> bool {
         matches!(
             self,
-            Self::Claude | Self::Codex | Self::Grok | Self::Pi | Self::Omp | Self::Cursor
+            Self::Claude
+                | Self::Codex
+                | Self::Grok
+                | Self::Pi
+                | Self::Omp
+                | Self::Cursor
+                | Self::Antigravity
         )
     }
 
     pub const fn is_jsonl(self) -> bool {
         matches!(
             self,
-            Self::Claude | Self::Codex | Self::Grok | Self::Pi | Self::Omp
+            Self::Claude | Self::Codex | Self::Grok | Self::Pi | Self::Omp | Self::Antigravity
         )
     }
 
     /// Native file metadata and the default CLI resolver must agree before
     /// a transcript can authorize a read or a lifecycle effect.
     pub const fn requires_native_file_proof(self) -> bool {
-        matches!(self, Self::Grok | Self::Pi | Self::Omp | Self::Cursor)
+        matches!(
+            self,
+            Self::Grok | Self::Pi | Self::Omp | Self::Cursor | Self::Antigravity
+        )
     }
 
     /// The native reader proves the session's owner and checkout before a
@@ -177,10 +197,12 @@ impl SessionFormat {
     }
 
     /// The reported reference a native proof takes: OpenCode names a session
-    /// by its id in OpenCode's database, a file reader by the file's path.
+    /// by its id in OpenCode's database, and Herdr's agy integration reports
+    /// the conversation id, whose transcript the reader finds by it; a file
+    /// reader names the file's path.
     pub const fn proof_reference_kind(self) -> &'static str {
         match self {
-            Self::OpenCode => "id",
+            Self::OpenCode | Self::Antigravity => "id",
             Self::Claude | Self::Codex | Self::Grok | Self::Pi | Self::Omp | Self::Cursor => "path",
         }
     }
@@ -200,6 +222,7 @@ pub enum LaunchDialect {
     Pi,
     Omp,
     Cursor,
+    Antigravity,
 }
 
 impl LaunchDialect {
@@ -212,14 +235,22 @@ impl LaunchDialect {
             Self::Pi => AgentId::Pi.adapter(),
             Self::Omp => AgentId::Omp.adapter(),
             Self::Cursor => AgentId::Cursor.adapter(),
+            Self::Antigravity => AgentId::Antigravity.adapter(),
         }
     }
 
     /// How the CLI takes a model and a reasoning effort at launch; `{}` is
-    /// replaced by the value. Verified against Claude Code 2.1 and Codex 0.160;
-    /// the other agents declare neither, so a start of theirs takes none.
+    /// replaced by the value. Verified against Claude Code 2.1 and Codex 0.160,
+    /// and agy 1.4.0's model (`--model`, listed by `agy models`, which Hide
+    /// AI's agy backend reads and passes too); the other agents declare
+    /// neither, so a start of theirs takes none.
     pub const fn options(self) -> LaunchOptions {
         match self {
+            Self::Antigravity => LaunchOptions {
+                model: &["--model", "{}"],
+                effort: &[],
+                efforts: &[],
+            },
             Self::Claude => LaunchOptions {
                 model: &["--model", "{}"],
                 effort: &["--effort", "{}"],
@@ -239,10 +270,13 @@ impl LaunchDialect {
     }
 
     /// The first interactive prompt is an argument, held by the native CLI
-    /// through startup questions. OpenCode's positional argument is a project.
+    /// through startup questions. OpenCode's positional argument is a project;
+    /// agy takes the prompt of an interactive session only through `-i`
+    /// (`--prompt-interactive`), a bare argument being refused.
     pub const fn prompt_flag(self) -> &'static str {
         match self {
             Self::OpenCode => "--prompt",
+            Self::Antigravity => "-i",
             _ => "--",
         }
     }
@@ -254,16 +288,34 @@ impl LaunchDialect {
     }
 
     pub const fn closes_pane_when_sleeping(self) -> bool {
-        !matches!(self, Self::Claude | Self::Codex)
+        !matches!(self, Self::Claude | Self::Codex | Self::Antigravity)
+    }
+
+    /// Whether the agent asks before it works in a folder it has not been
+    /// told to trust, so Hide records that trust for a worktree it made
+    /// before it starts the agent there: agy's trust question would otherwise
+    /// hold a started prompt (PRD antigravity-first-class D-08).
+    pub const fn trusts_worktrees(self) -> bool {
+        matches!(self, Self::Antigravity)
+    }
+
+    /// Whether an agent that has reported no conversation yet can still
+    /// sleep, waking as a new one in the same pane: agy reports its
+    /// conversation only once its first prompt is sent (PRD
+    /// antigravity-first-class D-10).
+    pub const fn sleeps_without_session(self) -> bool {
+        matches!(self, Self::Antigravity)
     }
 
     /// Whether the agent, resumed with its `resume_flag`, tells Herdr which
     /// session it runs. Cursor's `sessionStart` hook is Herdr's only source
     /// for that, and Cursor CLI 2026.10.01 does not run it on `--resume`
     /// (issue 938), so the pane that resumed it has no session in Herdr
-    /// until whoever started the resume says which one it resumed.
+    /// until whoever started the resume says which one it resumed. agy 1.3.6
+    /// reports its conversation from `PreInvocation`, which runs only once the
+    /// next prompt is sent, so a resumed agy pane waits for the operator too.
     pub const fn resume_reports_session(self) -> bool {
-        !matches!(self, Self::Cursor)
+        !matches!(self, Self::Cursor | Self::Antigravity)
     }
 
     /// The native selector prefix, independent of whether this build has
@@ -274,6 +326,7 @@ impl LaunchDialect {
             Self::Pi => "--session",
             Self::OpenCode => "-s",
             Self::Claude | Self::Grok | Self::Omp | Self::Cursor => "--resume",
+            Self::Antigravity => "--conversation",
         }
     }
 }
@@ -341,11 +394,21 @@ pub enum FindDialect {
 pub enum SkillLocation {
     Shared,
     Claude,
+    /// The agent's own global skill folder, which it alone reads: agy's model
+    /// gets neither `~/.agents/skills` nor `~/.claude/skills`, and of agy's
+    /// own folders only `~/.gemini/config/skills` (agy 1.4.0, measured: its
+    /// documented `~/.gemini/antigravity-cli/skills` is listed by `/skills`
+    /// but not given to the model).
+    Antigravity,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct HerdrIntegration {
+    /// The agent kind Herdr reports the agent's panes as.
     pub name: &'static str,
+    /// The `herdr integration install <target>` name, which is the kind for
+    /// every agent but agy (kind `agy`, target `antigravity-cli`).
+    pub target: &'static str,
     pub folder: &'static [&'static str],
 }
 

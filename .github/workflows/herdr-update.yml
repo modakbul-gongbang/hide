@@ -1,14 +1,16 @@
 name: herdr pin update
 
 # GitHub delivers no event across repository boundaries, so an upstream Herdr
-# release cannot trigger this. It polls instead, and can be run by hand.
+# release cannot trigger this. It polls instead, daily, and can be run by hand.
+# Herdr has shipped stable releases on consecutive days (v0.9.4 on 2026-10-13,
+# v0.9.5 on 2026-10-14); a weekly poll left the pin a week behind one of them.
 #
 # This repository is public, so GitHub disables a scheduled workflow after 60
 # days with no repository activity. If this job stops appearing, re-enable it
 # in the Actions tab rather than looking for a bug here.
 on:
   schedule:
-    - cron: "17 6 * * 1"
+    - cron: "17 6 * * *"
   workflow_dispatch:
 
 permissions:
@@ -43,7 +45,7 @@ jobs:
           # A preview pin reports "0.8.2-preview.<date>-<sha>": newer than the
           # 0.8.2 stable it was cut after, older than a 0.8.3 stable. Comparing
           # only the numeric prefix, and proposing only a strictly newer
-          # stable, is what stops a weekly proposal to move back to 0.8.2.
+          # stable, is what stops a daily proposal to move back to 0.8.2.
           pinned_numeric=${pinned%%-*}
           highest=$(printf '%s\n%s\n' "$pinned_numeric" "$latest" | sort -V | tail -n 1)
           if [ "$latest_tag" = "$pinned_tag" ] || [ "$highest" = "$pinned_numeric" ]; then
@@ -87,7 +89,7 @@ jobs:
         run: |
           set -euo pipefail
           zsh scripts/bump-herdr.sh --repo herdrdev/herdr "${{ steps.upstream.outputs.latest_tag }}" \
-            --keep-binary "$RUNNER_TEMP/herdr"
+            --keep-binary "$RUNNER_TEMP/herdr" | tee "$RUNNER_TEMP/bump.json"
 
       - name: Check the API schema against the candidate CLI
         if: steps.existing.outputs.proceed == 'true'
@@ -107,9 +109,19 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install cargo-nextest
+        if: steps.existing.outputs.proceed == 'true'
+        # The suite runs as every other Rust lane does: nextest's `ci`
+        # profile retries a failed test once (docs/TESTING.md, "Flaky tests").
+        # Under plain `cargo test` one timing-bound unit test failing on a
+        # loaded runner (2026-10-16, a_read_after_a_failure_ends_the_wait_as_a_timeout)
+        # stopped the proposal with nothing about Herdr in it.
+        timeout-minutes: 3
+        run: bash scripts/install-nextest.sh
+
       - name: Run the Rust suite against the candidate
         if: steps.existing.outputs.proceed == 'true'
-        run: bash scripts/verify-cargo.sh test
+        run: bash scripts/verify-cargo.sh nextest --profile ci --workspace
 
       - name: Open the pull request
         if: steps.existing.outputs.proceed == 'true'
@@ -123,14 +135,18 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
-          git add \
-            contracts/herdr-bundle.json \
-            contracts/herdr-api.schema.json \
-            desktop/resources/THIRD_PARTY_NOTICES/herdr-APACHE-2.0.txt \
-            README.md \
-            docs/INSTALL.md
+          # The branch may exist from a run that pushed it and then failed to
+          # open the pull request (2026-10-16: Actions had no permission to
+          # create one). This job is the only writer of herdr-bump/*, and a
+          # branch without an open PR is its own earlier output, so the push
+          # replaces it rather than stopping on non-fast-forward.
+          # The documents are the ones the bump rewrote, as it reports them:
+          # a second list here once left AGENTS.md and contracts/README.md
+          # quoting the old pin.
+          mapfile -t documents < <(jq -er '.documents[].document' "$RUNNER_TEMP/bump.json")
+          git add contracts/herdr-bundle.json contracts/herdr-api.schema.json "${documents[@]}"
           git commit -m "build: move the bundled Herdr pin to v${latest}"
-          git push --set-upstream origin "$branch"
+          git push --force --set-upstream origin "$branch"
           cat > "$RUNNER_TEMP/pr-body.md" <<BODY
           Moves the pinned Herdr runtime from v${pinned} to v${latest}.
 

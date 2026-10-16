@@ -33,9 +33,8 @@
 //! question parts without settling it ([`TurnTracker::fold_unsettled`]).
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 
 use sha2::{Digest, Sha256};
@@ -51,7 +50,6 @@ use crate::{
 };
 
 /// How long a read waits for OpenCode's own write to finish.
-const BUSY_WAIT: Duration = Duration::from_millis(50);
 /// The most messages one read takes; a longer session is read over several.
 const MESSAGES_PER_READ: i64 = 200;
 /// Bounds header visits and payload queries even for empty or skipped parts.
@@ -78,79 +76,29 @@ pub(crate) fn database_path(home: &Path) -> PathBuf {
     home.join(".local/share/opencode/opencode.db")
 }
 
-/// One bounded read, buffered until its source and companions are proven
-/// unchanged. The VFS forbids writes even if the provider removes a WAL
-/// between admission and SQLite opening it. A checkpointed main is read
-/// without asking SQLite to create companions; a live WAL retains locking.
+/// One bounded read of OpenCode's database ([`crate::sqlite::with_read`]).
 pub(crate) fn with_read<T>(home: &Path, read: impl FnOnce(&Connection) -> T) -> Result<T, String> {
-    let path = database_path(home);
-    let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            "session_file_missing".to_owned()
-        } else {
-            "opencode_db_unreadable".to_owned()
-        }
-    })?;
-    if metadata.file_type().is_symlink() {
-        return Err("label_session_linked".to_owned());
-    }
-    if !metadata.is_file() {
-        return Err("label_session_not_regular".to_owned());
-    }
-    // Resolve OS aliases such as macOS /var before SQLite's NOFOLLOW check.
-    // The final database symlink was refused above.
-    let path = crate::native_file::checked_path_under(home, ".local/share/opencode", &path)
-        .map_err(|_| "opencode_db_unreadable".to_owned())?;
-    let gate = crate::sqlite::read_gate(&path).map_err(str::to_owned)?;
-    let _read_guard = gate.try_lock().map_err(|error| match error {
-        std::sync::TryLockError::WouldBlock => "opencode_db_busy".to_owned(),
-        std::sync::TryLockError::Poisoned(_) => "opencode_db_unreadable".to_owned(),
-    })?;
-    // Drop order matters: Source's raw handles close before this gate opens.
-    let source = crate::sqlite::Source::admit(home, &path).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::WouldBlock {
-            "opencode_db_busy".to_owned()
-        } else {
-            "opencode_db_unreadable".to_owned()
-        }
-    })?;
-    let connection = crate::sqlite::open_readonly(
-        &crate::sqlite::read_uri(&path, !source.checkpointed_wal).map_err(str::to_owned)?,
-        OpenFlags::SQLITE_OPEN_READ_ONLY
-            | OpenFlags::SQLITE_OPEN_NO_MUTEX
-            | OpenFlags::SQLITE_OPEN_URI
-            | OpenFlags::from_bits_retain(rusqlite::ffi::SQLITE_OPEN_NOFOLLOW),
+    crate::sqlite::with_read(
+        home,
+        ".local/share/opencode",
+        &database_path(home),
+        &REASONS,
+        SQL_STEPS_PER_READ,
+        read,
     )
-    .map_err(|error| refusal(&error))?;
-    connection
-        .busy_timeout(BUSY_WAIT)
-        .map_err(|error| refusal(&error))?;
-    work_budget(&connection);
-    connection
-        .execute_batch("BEGIN")
-        .map_err(|error| refusal(&error))?;
-    let result = read(&connection);
-    connection
-        .execute_batch("ROLLBACK")
-        .map_err(|error| refusal(&error))?;
-    connection.close().map_err(|(_, error)| refusal(&error))?;
-    source
-        .validate()
-        .map_err(|_| "opencode_db_changed".to_owned())?;
-    Ok(result)
 }
+
+const REASONS: crate::sqlite::Reasons = crate::sqlite::Reasons {
+    busy: "opencode_db_busy",
+    unreadable: "opencode_db_unreadable",
+    changed: "opencode_db_changed",
+    work: "opencode_db_work_capacity",
+};
 
 /// Gives `connection` a fresh SQL work cap of [`SQL_STEPS_PER_READ`]: once
 /// per read, and once per session the catalog proves on one connection.
 fn work_budget(connection: &Connection) {
-    let mut sql_steps = 0;
-    connection.progress_handler(
-        1_000,
-        Some(move || {
-            sql_steps += 1_000;
-            sql_steps >= SQL_STEPS_PER_READ
-        }),
-    );
+    crate::sqlite::work_budget(connection, SQL_STEPS_PER_READ);
 }
 
 /// The session a proof found, as its own row states it.
@@ -1033,11 +981,5 @@ impl Read {
 /// A database refusal as a stable reason code: a lock OpenCode holds is a
 /// read to skip, anything else a database Hide cannot read.
 fn refusal(error: &rusqlite::Error) -> String {
-    match error.sqlite_error_code() {
-        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked) => {
-            "opencode_db_busy".to_owned()
-        }
-        Some(rusqlite::ErrorCode::OperationInterrupted) => "opencode_db_work_capacity".to_owned(),
-        _ => "opencode_db_unreadable".to_owned(),
-    }
+    crate::sqlite::refusal(&REASONS, error)
 }

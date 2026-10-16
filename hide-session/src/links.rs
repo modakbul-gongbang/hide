@@ -338,6 +338,14 @@ pub(crate) fn grok_line(item: &Value, _offset: u64, links: &mut LinkAccumulator)
     }
 }
 
+/// agy keeps its owner and cwd in its conversation index, which the link
+/// reader proves beside the file; a step says only when it was written.
+pub(crate) fn antigravity_line(item: &Value, _offset: u64, links: &mut LinkAccumulator) {
+    if let Ok(at) = crate::timestamp_ms(item.get("created_at")) {
+        links.activity(at);
+    }
+}
+
 /// Codex: what one record says about links.
 pub(crate) fn codex_line(item: &Value, _offset: u64, links: &mut LinkAccumulator) {
     links.sidechain_line = links.facts.subagent;

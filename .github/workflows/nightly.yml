@@ -25,7 +25,9 @@
 # A hand run picks `lane`: `all`, or one system's web and desktop suites, so
 # checking Windows does not occupy the macOS runners (one full dispatch used 7
 # macOS jobs for 65 minutes); `macos` also runs the performance lane. `verify`
-# and `package` run for `all` only.
+# and `package` run for `all` only. `agy` runs only the agy contract, signed in
+# when the key is set, on all three systems, so a branch can check it by hand
+# (`gh workflow run nightly.yml --ref <branch> -f lane=agy`).
 # The schedule runs everything. A lane left out is skipped, and the failure
 # report ignores a skipped job.
 #
@@ -46,7 +48,7 @@ on:
       lane:
         description: Which system's suites to run by hand
         type: choice
-        options: [all, linux, macos, windows]
+        options: [all, linux, macos, windows, agy]
         default: all
 
 permissions:
@@ -65,7 +67,7 @@ jobs:
   # on Linux and Windows, the packages, and a runner image that changed.
   web-e2e-macos:
     name: web e2e (macOS @platform)
-    if: ${{ inputs.lane != 'linux' && inputs.lane != 'windows' }}
+    if: ${{ inputs.lane != 'linux' && inputs.lane != 'windows' && inputs.lane != 'agy' }}
     uses: ./.github/workflows/web-e2e.yml
     permissions:
       contents: read
@@ -79,7 +81,7 @@ jobs:
 
   web-e2e-windows:
     name: web e2e (Windows @platform)
-    if: ${{ inputs.lane != 'linux' && inputs.lane != 'macos' }}
+    if: ${{ inputs.lane != 'linux' && inputs.lane != 'macos' && inputs.lane != 'agy' }}
     uses: ./.github/workflows/web-e2e.yml
     permissions:
       contents: read
@@ -96,7 +98,7 @@ jobs:
   # `verify` below, which plans every lane.
   remote-mailbox-macos:
     name: remote mailbox (macOS)
-    if: ${{ inputs.lane != 'linux' && inputs.lane != 'windows' }}
+    if: ${{ inputs.lane != 'linux' && inputs.lane != 'windows' && inputs.lane != 'agy' }}
     uses: ./.github/workflows/remote-mailbox.yml
     permissions:
       contents: read
@@ -104,6 +106,21 @@ jobs:
     with:
       runner: macos-15
       herdr-platform: macos-aarch64
+
+  # The agy contract on all three systems (one system's on that system's hand
+  # run), and the signed-in check when the CI account's key is set; a pull
+  # request runs only its Windows leg.
+  agy-contract-all:
+    name: agy contract
+    uses: ./.github/workflows/agy-contract.yml
+    permissions:
+      contents: read
+      issues: write
+    with:
+      systems: ${{ inputs.lane == 'linux' && '["linux"]' || inputs.lane == 'macos' && '["macos"]' || inputs.lane == 'windows' && '["windows"]' || '["linux","macos","windows"]' }}
+      live: true
+    secrets:
+      HIDE_AGY_API_KEY: ${{ secrets.HIDE_AGY_API_KEY }}
 
   # The whole desktop suite runs on macOS, the system the desktop app is written
   # against. Linux and Windows run only the tests tagged `@platform`: what the
@@ -113,6 +130,7 @@ jobs:
   # accelerators). A test that checks no such difference stays on macOS.
   desktop-e2e:
     name: desktop e2e (${{ matrix.system }} ${{ matrix.system == 'macos' && 'full' || '@platform' }})
+    if: ${{ inputs.lane != 'agy' }}
     strategy:
       fail-fast: false
       matrix:
@@ -136,7 +154,7 @@ jobs:
   # check is annotated as a failed measurement, which the report files.
   perf:
     name: performance (macOS)
-    if: ${{ inputs.lane != 'linux' && inputs.lane != 'windows' }}
+    if: ${{ inputs.lane != 'linux' && inputs.lane != 'windows' && inputs.lane != 'agy' }}
     uses: ./.github/workflows/perf.yml
 
   verify:
@@ -160,7 +178,7 @@ jobs:
 
   report:
     name: nightly report
-    needs: [web-e2e-macos, web-e2e-windows, remote-mailbox-macos, desktop-e2e, perf, verify, package]
+    needs: [web-e2e-macos, web-e2e-windows, remote-mailbox-macos, agy-contract-all, desktop-e2e, perf, verify, package]
     if: ${{ always() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10

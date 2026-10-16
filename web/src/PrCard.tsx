@@ -1,22 +1,18 @@
-import { ChevronDownIcon, ChevronRightIcon, EllipsisIcon, ExternalLinkIcon, SparklesIcon, SquareTerminalIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { ChevronDownIcon, ChevronRightIcon, EllipsisIcon, ExternalLinkIcon, SquareTerminalIcon, TriangleAlertIcon } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Actions } from "./actions";
-import { lineTone, markTone, rowLine } from "./agentRow";
-import { agentProductName } from "./agentAdapters";
-import { Elapsed } from "./components/elapsed";
-import { PrMark } from "./components/pr-mark";
-import { StatusMark } from "./components/status-mark";
 import { Button } from "./components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
 import { Hint } from "./components/ui/tooltip";
+import { PrMark } from "./components/pr-mark";
+import { StateBox, type StateBoxTone } from "./components/state-box";
 import { useInterfaceTranslation } from "./i18n/client";
-import type { MessageKey } from "./i18n/catalogs";
 import { cn } from "./lib/utils";
-import { LinkSessions } from "./LinkSessions";
+import { LinkTimeline } from "./LinkSessions";
 import { renderMarkdown } from "./mobile/markdown";
 import { boardProjects } from "./navigation";
-import { bodyOutline, bodyPreview, confirmHolds, defaultMethod, fileOpen, mergeWhy, prFacts, primaryAction, prSteps, splitFiles, type Confirmed, type PrFact, type PrimaryAction, type PrStep, type StepNote } from "./prCardModel";
-import { linkHandlers, PrLinks, type LinkHandlers } from "./PrLinks";
+import { confirmHolds, defaultMethod, fileOpen, mergeWhy, milestones, prFacts, primaryAction, splitFiles, type Confirmed, type PrFact, type PrimaryAction } from "./prCardModel";
+import { PrLinks } from "./PrLinks";
 import { ReasonLine } from "./prReason";
 import { staleLabel, staleness } from "./prMark";
 import { findPrEntry, opensCard, type PrEntry } from "./prWork";
@@ -27,33 +23,33 @@ import { useUiStore } from "./ui";
 import { useRequestViewDemand } from "./requestViewDemand";
 
 // A pull request's decision card (PRD work-tab-pr-lens D-06, D-21, D-22;
-// PRD sidebar-task-lens D-28, D-35, D-36, B32-B37): the body of the lane's
-// 보기 slot, under the slot's own head (←, `PR #N · <project>`, ↗, ✕). A
-// one-line head and its meta line, the decision box holding the case's word,
-// facts, blockers and button, the four steps, the session that made it, and
-// the body, the changed files and the links folded into one line each. The
-// head, the box and the steps are drawn from the list's own values, so they
-// stand while the card reads its body, files and review threads; each of
-// those is a part with its own placeholder, failure and retry.
-
-type Section = "body" | "files" | "links";
+// PRD sidebar-task-lens D-28, B32, B33, B37; PRD pr-card-and-session-record-
+// redesign D-01 to D-10, D-15): the body of the lane's 보기 slot, under the
+// slot's own head (←, `PR #N · <project>`, ↗, ✕). From the top: a one-line
+// head with its meta line and its issue and worktree line, the decision box
+// holding the case's word, facts, blockers and button, the 타임라인 of the
+// sessions that made or worked on it and the pull request's own milestones
+// oldest first, the changed files folded into one line, and the body as
+// Markdown under a sticky row of its `##` headings. The head, the box and
+// the milestones are drawn from the list's own values, so they stand while
+// the card reads its body, files and review threads; each of those is a
+// part with its own placeholder, failure and retry.
 
 /**
- * The folded lines the operator opened, per card. The card leaves the screen
- * when a changed file turns the lane to Files, and the 보기 slot brings it
- * back as it was left (B49); the page keeps it while it runs, never stored.
+ * Whether the operator opened the files line, per card. The card leaves the
+ * screen when a changed file turns the lane to Files, and the 보기 slot
+ * brings it back as it was left (B49); the page keeps it while it runs,
+ * never stored.
  */
-const OPENED = new Map<string, ReadonlySet<Section>>();
-/** As many cards as the slot steps back through (`DETAIL_HISTORY_LIMIT`); past it the least recently changed card forgets its sections. */
+const OPENED = new Map<string, boolean>();
+/** As many cards as the slot steps back through (`DETAIL_HISTORY_LIMIT`); past it the least recently changed card forgets its line. */
 const OPENED_LIMIT = 20;
 
-function useSections(key: string): [ReadonlySet<Section>, (section: Section) => void] {
-  const [open, setOpen] = useState<ReadonlySet<Section>>(() => OPENED.get(key) ?? new Set());
-  useEffect(() => setOpen(OPENED.get(key) ?? new Set()), [key]);
-  const toggle = (section: Section) => {
-    const next = new Set(open);
-    if (next.has(section)) next.delete(section);
-    else next.add(section);
+function useFilesOpen(key: string): [boolean, () => void] {
+  const [open, setOpen] = useState(() => OPENED.get(key) ?? false);
+  useEffect(() => setOpen(OPENED.get(key) ?? false), [key]);
+  const toggle = () => {
+    const next = !open;
     OPENED.delete(key);
     OPENED.set(key, next);
     if (OPENED.size > OPENED_LIMIT) OPENED.delete(OPENED.keys().next().value!);
@@ -82,12 +78,13 @@ export function PrCardView({ workspaceId, number, actions }: { workspaceId: stri
   const record = useShellStore((state) => state.linkPanel);
   const devices = useShellStore((state) => state.rest?.navigator?.devices);
   const live = useShellStore((state) => state.connection === "live");
-  const [open, toggle] = useSections(`${workspaceId}#${number}`);
+  const [filesOpen, toggleFiles] = useFilesOpen(`${workspaceId}#${number}`);
   const projectId = project?.id ?? null;
   const updatedAt = pr?.updated_at_unix_ms ?? null;
   const checks = pr?.checks ?? null;
   // The card's own parts are read again when its pull request moved (B44);
-  // the core reads them on the event that opened the slot.
+  // the core reads them on the event that opened the slot. The check and
+  // review times of the timeline ride on the same read (D-15).
   const reads = project ? opensCard(project, devices) : false;
   useEffect(() => {
     if (live && projectId && reads) actions.readPrCard(projectId, number);
@@ -100,21 +97,17 @@ export function PrCardView({ workspaceId, number, actions }: { workspaceId: stri
     actions.openLinks(projectId, { kind: "pr", number });
     return () => actions.closeLinks();
   }, [actions, projectId, number]);
-  const handlers = useMemo(() => linkHandlers(actions), [actions]);
+  const scroller = useRef<HTMLElement>(null);
   if (!project) return <p className="p-lg text-caption text-muted-foreground" data-pr-card-missing={number}>{t("work.card.unlisted", { number })}</p>;
   const panel: LinkPanel | null = record && record.workspace_id === project.id && record.target.kind === "pr" && record.target.number === number ? record : null;
   return (
-    <article aria-label={t("work.card.aria", { number })} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-background text-foreground" data-pr-card={number} data-pr-card-project={project.id} data-pr-card-head={card?.head ?? undefined}>
+    <article ref={scroller} aria-label={t("work.card.aria", { number })} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto text-foreground" data-pr-card={number} data-pr-card-project={project.id} data-pr-card-head={card?.head ?? undefined}>
       <div className="flex w-full flex-col gap-md p-md">
-        {pr ? <Head project={project} pr={pr} entry={entry} card={card} actions={actions} /> : <p className="text-caption text-muted-foreground" data-pr-card-unlisted={number}>{t("work.card.unlisted", { number })}</p>}
+        {pr ? <Head project={project} pr={pr} entry={entry} card={card} panel={panel} actions={actions} /> : <p className="text-caption text-muted-foreground" data-pr-card-unlisted={number}>{t("work.card.unlisted", { number })}</p>}
         {pr ? <DecisionBox project={project} pr={pr} entry={entry} card={card} actions={actions} /> : null}
-        {pr ? <Steps pr={pr} entry={entry} /> : null}
-        {pr && entry ? <MadeBy entry={entry} actions={actions} /> : null}
-        <div className="flex flex-col">
-          {pr ? <BodyRow card={card} actions={actions} projectId={project.id} number={number} open={open.has("body")} onToggle={() => toggle("body")} /> : null}
-          {pr ? <FilesRow pr={pr} project={project} card={card} actions={actions} open={open.has("files")} onToggle={() => toggle("files")} /> : null}
-          <LinksRow project={project} pr={pr} entry={entry} panel={panel} handlers={handlers} actions={actions} number={number} open={open.has("links")} onToggle={() => toggle("links")} />
-        </div>
+        <Timeline project={project} pr={pr} card={card} panel={panel} number={number} actions={actions} />
+        {pr ? <FilesRow pr={pr} project={project} card={card} actions={actions} open={filesOpen} onToggle={toggleFiles} /> : null}
+        {pr ? <Body card={card} actions={actions} projectId={project.id} number={number} scroller={scroller} /> : null}
       </div>
     </article>
   );
@@ -122,8 +115,12 @@ export function PrCardView({ workspaceId, number, actions }: { workspaceId: stri
 
 // --- head ---------------------------------------------------------------------
 
-/** One line of mark, number, title and author, the Workspace button, then `branch → base · files · +/-` (B32). */
-function Head({ project, pr, entry, card, actions }: { project: Workspace; pr: PullRequest; entry: PrEntry | null; card: PrCard | null; actions: Actions }) {
+/**
+ * One line of mark, number, title and author, the Workspace button, then
+ * `branch → base · files · +/-` (B32), then the issue and the worktree of
+ * the branch in one quiet line (D-04, B2).
+ */
+function Head({ project, pr, entry, card, panel, actions }: { project: Workspace; pr: PullRequest; entry: PrEntry | null; card: PrCard | null; panel: LinkPanel | null; actions: Actions }) {
   const { t, i18n } = useInterfaceTranslation();
   const checkoutId = entry?.row.checkout_ids[0] ?? entry?.row.checkout_id ?? null;
   const checkout = checkoutId ? project.checkouts.find((row) => row.id === checkoutId && row.exists) ?? null : null;
@@ -133,6 +130,9 @@ function Head({ project, pr, entry, card, actions }: { project: Workspace; pr: P
   const removed = files?.reduce((sum, file) => sum + file.deletions, 0) ?? 0;
   const stale = staleness(project.checkouts.find((row) => row.github)?.github);
   const staleText = staleLabel(stale, t, requireInterfaceLanguage(i18n.language));
+  const local = project.tasks?.source?.kind === "local";
+  const worktree = checkout?.is_worktree === true && checkout.is_primary !== true;
+  const merged = pr.state === "merged" || pr.state === "closed";
   return (
     <header className="flex flex-col gap-xs" data-pr-card-header="true">
       <div className="flex min-w-0 items-start gap-sm">
@@ -157,6 +157,7 @@ function Head({ project, pr, entry, card, actions }: { project: Workspace; pr: P
         {files ? <><span aria-hidden="true">·</span><span className="font-sans" data-pr-card-files={card?.files_total ?? files.length}>{t("work.card.files", { count: card?.files_total ?? files.length })}</span><span aria-hidden="true">·</span><span className="text-pr-mergeable">+{added}</span><span className="text-pr-failed">−{removed}</span></> : null}
         {staleText ? <Hint label={staleText}><span role="img" aria-label={staleText} className="inline-flex text-warning" data-pr-card-stale="true"><TriangleAlertIcon aria-hidden="true" className="size-(--size-icon-sm)" /></span></Hint> : null}
       </p>
+      <PrLinks number={pr.number} issue={entry?.row.issue ?? null} checkout={checkout} linkable={!merged && !entry?.row.issue && (!local || worktree)} record={panel} project={project} actions={actions} />
     </header>
   );
 }
@@ -184,13 +185,14 @@ function CardMenu({ project, pr, entry }: { project: Workspace; pr: PullRequest;
 
 // --- decision box ----------------------------------------------------------------
 
-/** The box's edge says the case: green to merge, red when blocked, amber when it waits on the operator. */
-function boxTone(entry: PrEntry | null): string {
-  if (!entry) return "border-border";
-  if (entry.reason.kind === "merge") return "border-pr-mergeable";
-  if (entry.row.group === "blocked" || entry.reason.kind === "failed" || entry.reason.kind === "conflict") return "border-pr-failed";
-  if (entry.row.group === "needs_you") return "border-warning";
-  return "border-border";
+/** The box's edge says the case: green to merge, red when blocked, amber when it waits on the operator, purple once merged. */
+function boxTone(pr: PullRequest, entry: PrEntry | null): StateBoxTone {
+  if (pr.state === "merged") return "merged";
+  if (!entry) return "quiet";
+  if (entry.reason.kind === "merge") return "merge";
+  if (entry.row.group === "blocked" || entry.reason.kind === "failed" || entry.reason.kind === "conflict") return "failed";
+  if (entry.row.group === "needs_you") return "attention";
+  return "quiet";
 }
 
 function factText(fact: PrFact, t: ReturnType<typeof useInterfaceTranslation>["t"]): string {
@@ -217,28 +219,21 @@ function factText(fact: PrFact, t: ReturnType<typeof useInterfaceTranslation>["t
 }
 
 /**
- * The decision box (B33): the case's word and reason as the list row says
- * them, its button at the right, one line of facts, what blocks it, and
- * hide-ai's summary while it is on; the merge confirmation and the last
- * write's line stay inside it.
+ * The decision box (B33, D-01): the case's word and reason as the list row
+ * says them, its button at the right, one line of facts and what blocks it;
+ * the merge confirmation and the last write's line stay inside it.
  */
 function DecisionBox({ project, pr, entry, card, actions }: { project: Workspace; pr: PullRequest; entry: PrEntry | null; card: PrCard | null; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const facts = prFacts(pr);
   return (
-    <section className={cn("flex flex-col gap-sm rounded-md border bg-card px-md py-sm", boxTone(entry))} data-pr-card-reason={entry?.reason.kind} data-pr-card-group={entry?.row.group}>
+    <StateBox tone={boxTone(pr, entry)} data-pr-card-reason={entry?.reason.kind} data-pr-card-group={entry?.row.group}>
       <Buttons project={project} pr={pr} entry={entry} card={card} actions={actions}>
         {entry ? <ReasonLine reason={entry.reason} group={entry.row.group} noAgent={entry.row.group === "blocked"} className="min-w-0 flex-1 whitespace-normal text-caption font-medium" /> : <span className="flex-1" />}
       </Buttons>
       {facts.length > 0 ? <p className="text-micro text-muted-foreground" data-pr-card-fact-line="true">{facts.map((fact) => factText(fact, t)).join(" · ")}</p> : null}
       <Blocked pr={pr} entry={entry} card={card} actions={actions} projectId={project.id} />
-      {card?.summary ? (
-        <p className="flex flex-col gap-xxs text-caption text-foreground" data-pr-card-summary="true">
-          <span className="inline-flex items-center gap-xxs text-micro text-subtle-foreground"><SparklesIcon aria-hidden="true" className="size-(--size-icon-sm)" />{t("work.card.aiSummary")}</span>
-          <span className="whitespace-pre-line break-words">{card.summary}</span>
-        </p>
-      ) : null}
-    </section>
+    </StateBox>
   );
 }
 
@@ -387,106 +382,31 @@ function review(project: Workspace, pr: PullRequest) {
   useUiStore.getState().setWorkspaceDialog({ kind: "pr_delegate", workspaceId: project.id, prNumber: pr.number, intent: "review" });
 }
 
-// --- steps ----------------------------------------------------------------------
+// --- timeline ------------------------------------------------------------------
 
-const STEP_BAR: Record<PrStep["state"], string> = { done: "bg-success", active: "bg-pr-pending", failed: "bg-pr-failed", empty: "bg-border" };
-const STEP_LABEL: Record<PrStep["id"], MessageKey> = { work: "work.card.step.work", pr: "work.card.step.pr", review: "work.card.step.review", merge: "work.card.step.merge" };
-
-function noteText(note: StepNote, t: ReturnType<typeof useInterfaceTranslation>["t"]): string {
-  switch (note.kind) {
-    case "agent":
-      return note.name;
-    case "external":
-      return t("work.card.note.external");
-    case "draft":
-      return t("work.card.note.draft");
-    case "checks_passing":
-      return t("work.card.fact.checksPassing");
-    case "checks_running":
-      return t("work.card.why.ci", { count: note.count });
-    case "checks_failed":
-      return t("work.card.note.failed", { count: note.count });
-    case "approved":
-      return t("board.review.approved");
-    case "changes":
-      return t("board.review.changes");
-    case "review_waiting":
-      return t("work.card.note.reviewWaiting");
-    case "asked_of_me":
-      return t("work.card.note.askedOfMe");
-    case "no_reviewer":
-      return t("work.card.note.noReviewer");
-    case "merged":
-      return t("work.card.note.merged");
-    case "queued":
-      return t("work.card.note.queued", { position: note.count });
-    case "closed":
-      return t("work.card.note.closed");
-  }
-}
-
-/** `작업 · PR · 검토 · 머지` (B34): a display, not a button; each step says who worked, the checks or the review under its label. */
-function Steps({ pr, entry }: { pr: PullRequest; entry: PrEntry | null }) {
+/**
+ * 타임라인 (D-03, D-05, D-06, B3-B10): the sessions that made or worked on
+ * the pull request and its milestones, oldest first, with `세션 N` at the
+ * head's right. The milestones come from the list and the card's own read;
+ * the sessions from the link record, whose spinner, failure, fold and empty
+ * line keep their rules inside the section.
+ */
+function Timeline({ project, pr, card, panel, number, actions }: { project: Workspace; pr: PullRequest | null; card: PrCard | null; panel: LinkPanel | null; number: number; actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const agent = entry?.agents[0] ?? null;
-  const steps = prSteps(pr, agent ? agentProductName(agent.agent_kind) : null, entry?.reason.kind ?? null);
+  const holder: LinkPanel = panel ?? { workspace_id: project.id, target: { kind: "pr", number }, loading: true, failure: null, pr: null, prs: [], sessions: [], total: 0 };
+  const rows = useMemo(() => (pr ? milestones(pr, card) : []), [pr, card]);
   return (
-    <ol className="grid grid-cols-4 gap-sm" aria-label={t("work.card.steps")} data-pr-card-steps={steps.filter((step) => step.state === "done").length}>
-      {steps.map((step) => {
-        const note = step.note ? noteText(step.note, t) : null;
-        return (
-          <li key={step.id} className="flex min-w-0 flex-col gap-xxs" aria-label={[t(STEP_LABEL[step.id]), t(`work.card.stepState.${step.state}`), note].filter(Boolean).join(", ")} data-pr-card-step={step.id} data-state={step.state}>
-            <span aria-hidden="true" className={cn("h-(--size-hairline) rounded-full", STEP_BAR[step.state])} />
-            <span aria-hidden="true" className="truncate text-micro font-medium text-foreground">{t(STEP_LABEL[step.id])}</span>
-            {note ? <span aria-hidden="true" className={cn("truncate text-micro", step.state === "failed" ? "text-pr-failed" : "text-muted-foreground")}>{note}</span> : null}
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
-// --- the session that made it -----------------------------------------------------
-
-/** The pull request's agent as one line (B35): its mark, `만든 세션 · <agent> · <when>`, its last words or its question, and `pane으로`. */
-function MadeBy({ entry, actions }: { entry: PrEntry; actions: Actions }) {
-  const { t } = useInterfaceTranslation();
-  const agent = entry.agents[0];
-  if (!agent) return null;
-  const said = rowLine(agent);
-  const asking = entry.reason.kind === "reply";
-  const text = (asking ? entry.reason.text : null) ?? said?.text ?? null;
-  return (
-    <section className="flex min-w-0 items-start gap-sm border-t border-border pt-sm" data-pr-card-agent={agent.pane_id}>
-      <StatusMark symbol={agent.symbol} className={cn("mt-xxs", markTone(agent))} />
-      <div className="flex min-w-0 flex-1 flex-col gap-xxs">
-        <p className="flex min-w-0 items-center gap-xs text-micro text-muted-foreground">
-          <span className="min-w-0 truncate" title={agent.identity_label}>{t("work.card.made", { agent: agentProductName(agent.agent_kind) })}</span>
-          <span aria-hidden="true">·</span>
-          <Elapsed since={agent.state.request_since} className="shrink-0" />
-        </p>
-        {text ? <p className={cn("line-clamp-2 whitespace-pre-line break-words text-caption", asking ? "text-warning" : said ? lineTone(said, agent) : "text-foreground")} data-pr-card-agent-text={asking ? "ask" : "said"}>{text}</p> : null}
-      </div>
-      <Button variant="outline" size="sm" className="shrink-0" onClick={() => actions.openAgent(agent.pane_id)} data-pr-card-to-pane={agent.pane_id}>{t("work.card.toPane")}</Button>
+    <section className="flex flex-col gap-xs" aria-label={t("work.card.timeline")} data-pr-card-timeline="true">
+      <h3 className="flex min-h-(--size-control-sm) items-center gap-xs text-caption font-medium text-foreground">
+        <span>{t("work.card.timeline")}</span>
+        {holder.loading ? null : <span className="ml-auto text-micro font-normal text-muted-foreground" data-pr-card-sessions={holder.total}>{t("links.sessionsCount", { count: holder.total })}</span>}
+      </h3>
+      <LinkTimeline panel={holder} project={project} pr={pr} milestones={rows} branchOf={() => pr?.head_branch ?? null} onRetry={() => actions.openLinks(project.id, { kind: "pr", number })} actions={actions} />
     </section>
   );
 }
 
-// --- folded rows --------------------------------------------------------------------
-
-/** One folded line that opens in place (B36): its name at the left, what it holds at the right. */
-function FoldRow({ name, summary, open, onToggle, section, children }: { name: string; summary: ReactNode; open: boolean; onToggle: () => void; section: Section; children: ReactNode }) {
-  return (
-    <section className="flex flex-col border-t border-border" aria-label={name} data-pr-card-row={section} data-open={open ? "true" : undefined}>
-      <button type="button" aria-expanded={open} onClick={onToggle} className="flex min-h-(--size-control) w-full min-w-0 items-center gap-xs rounded-xs py-xs text-left text-caption outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring" data-pr-card-toggle={section}>
-        {open ? <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" /> : <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" />}
-        <span className="shrink-0 text-foreground">{name}</span>
-        <span className="flex min-w-0 flex-1 items-center justify-end gap-xs text-micro text-muted-foreground">{summary}</span>
-      </button>
-      {open ? <div className="flex flex-col gap-sm pb-sm pl-md">{children}</div> : null}
-    </section>
-  );
-}
+// --- folded files --------------------------------------------------------------------
 
 /** A card part that has not been read, or could not be (B37). */
 function PartState({ part, card, actions, projectId, number }: { part: "body" | "files" | "threads"; card: PrCard | null; actions: Actions; projectId: string; number: number }) {
@@ -504,40 +424,12 @@ function PartState({ part, card, actions, projectId, number }: { part: "body" | 
   return <span className="block h-(--size-control) rounded-sm bg-muted" role="status" aria-label={t("work.card.part.pending")} data-pr-card-part={part} data-pr-card-part-state="pending" />;
 }
 
-/** A folded line's summary while its part is not read: `읽지 못함` once a read failed, else nothing. */
-function partSummary(part: "body" | "files", card: PrCard | null, t: ReturnType<typeof useInterfaceTranslation>["t"]): ReactNode {
-  return card?.failed.includes(part) ? <span className="text-warning" data-pr-card-part-summary={part}>{t("work.card.part.failed")}</span> : null;
-}
-
-/** 본문 (B36): the `##` headings at the right; opened, the preview and the whole body as Markdown. */
-function BodyRow({ card, actions, projectId, number, open, onToggle }: { card: PrCard | null; actions: Actions; projectId: string; number: number; open: boolean; onToggle: () => void }) {
-  const { t } = useInterfaceTranslation();
-  const [whole, setWhole] = useState(false);
-  const body = card?.body ?? null;
-  const outline = useMemo(() => (body === null ? [] : bodyOutline(body)), [body]);
-  const summary = body === null ? partSummary("body", card, t) : outline.length > 0 ? <span className="min-w-0 truncate" data-pr-card-outline="true">{outline.join(" · ")}</span> : null;
-  return (
-    <FoldRow name={t("work.card.body")} summary={summary} open={open} onToggle={onToggle} section="body">
-      <div className="flex flex-col gap-xs" data-pr-card-body={whole ? "open" : "folded"}>
-        {body === null ? <PartState part="body" card={card} actions={actions} projectId={projectId} number={number} /> : body.trim() === "" ? <p className="text-caption text-muted-foreground">{t("work.card.noBody")}</p> : (
-          <>
-            {whole ? <div className="flex flex-col gap-sm text-caption" data-pr-card-markdown="true">{renderMarkdown(body)}</div> : <p className="line-clamp-3 whitespace-pre-line break-words text-caption text-subtle-foreground" data-pr-card-preview="true">{bodyPreview(body)}</p>}
-            <Button variant="ghost" size="sm" className="w-fit" aria-expanded={whole} onClick={() => setWhole(!whole)}>
-              {whole ? <ChevronDownIcon aria-hidden="true" /> : <ChevronRightIcon aria-hidden="true" />}
-              {whole ? t("work.card.bodyHide") : t("work.card.bodyShow")}
-            </Button>
-          </>
-        )}
-      </div>
-    </FoldRow>
-  );
-}
-
 /**
- * 바뀐 파일 N (B36, B49): +/- at the right; opened, the files with generated
- * ones folded into one line. A file opens as D-27 says: the diff in this
- * checkout's Files, where the lane turns while the 보기 slot stays on the
- * rail, or GitHub's files page.
+ * 바뀐 파일 N (B11, B36, B49): one folded line between the timeline and the
+ * body, +/- at the right; opened, the files with generated ones folded into
+ * one line. A file opens as D-27 says: the diff in this checkout's Files,
+ * where the lane turns while the 보기 slot stays on the rail, or GitHub's
+ * files page.
  */
 function FilesRow({ pr, project, card, actions, open, onToggle }: { pr: PullRequest; project: Workspace; card: PrCard | null; actions: Actions; open: boolean; onToggle: () => void }) {
   const { t } = useInterfaceTranslation();
@@ -554,25 +446,34 @@ function FilesRow({ pr, project, card, actions, open, onToggle }: { pr: PullRequ
     else actions.openPullRequest(target.url, project.device_id, true);
   };
   const name = files === null ? t("work.card.changedFiles") : t("work.card.filesCount", { count: card?.files_total ?? files.length });
-  const summary = files === null ? partSummary("files", card, t) : <><span className="font-mono text-pr-mergeable">+{added}</span><span className="font-mono text-pr-failed">−{removed}</span></>;
+  const summary = files === null ? (card?.failed.includes("files") ? <span className="text-warning" data-pr-card-part-summary="files">{t("work.card.part.failed")}</span> : null) : <><span className="font-mono text-pr-mergeable">+{added}</span><span className="font-mono text-pr-failed">−{removed}</span></>;
   return (
-    <FoldRow name={name} summary={summary} open={open} onToggle={onToggle} section="files">
-      {files === null ? <PartState part="files" card={card} actions={actions} projectId={project.id} number={pr.number} /> : (
-        <ul className="flex flex-col" role="list" data-pr-card-files-section="true">
-          {split.shown.map((file) => <FileRow key={file.path} file={file} onOpen={() => openFile(file.path)} />)}
-          {split.generated > 0 ? (
-            <li>
-              <button type="button" aria-expanded={generatedOpen} onClick={() => setGeneratedOpen(!generatedOpen)} className="flex w-full items-center gap-xs rounded-xs py-xs text-left text-caption text-muted-foreground outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring" data-pr-card-generated={split.generated}>
-                {generatedOpen ? <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />}
-                {t("work.card.generated", { count: split.generated })}
-              </button>
-            </li>
-          ) : null}
-          {generatedOpen ? files.filter((file) => file.generated).map((file) => <FileRow key={file.path} file={file} onOpen={() => openFile(file.path)} />) : null}
-          {card && card.files_total > files.length ? <li className="py-xs text-micro text-muted-foreground">{t("work.card.filesMore", { shown: files.length, total: card.files_total })}</li> : null}
-        </ul>
-      )}
-    </FoldRow>
+    <section className="flex flex-col border-t border-border" aria-label={name} data-pr-card-row="files" data-open={open ? "true" : undefined}>
+      <button type="button" aria-expanded={open} onClick={onToggle} className="flex min-h-(--size-control) w-full min-w-0 items-center gap-xs rounded-xs py-xs text-left text-caption outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring" data-pr-card-toggle="files">
+        {open ? <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" /> : <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" />}
+        <span className="shrink-0 font-medium text-foreground">{name}</span>
+        <span className="flex min-w-0 flex-1 items-center justify-end gap-xs text-micro text-muted-foreground">{summary}</span>
+      </button>
+      {open ? (
+        <div className="flex flex-col gap-sm pb-sm pl-md">
+          {files === null ? <PartState part="files" card={card} actions={actions} projectId={project.id} number={pr.number} /> : (
+            <ul className="flex flex-col" role="list" data-pr-card-files-section="true">
+              {split.shown.map((file) => <FileRow key={file.path} file={file} onOpen={() => openFile(file.path)} />)}
+              {split.generated > 0 ? (
+                <li>
+                  <button type="button" aria-expanded={generatedOpen} onClick={() => setGeneratedOpen(!generatedOpen)} className="flex w-full items-center gap-xs rounded-xs py-xs text-left text-caption text-muted-foreground outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring" data-pr-card-generated={split.generated}>
+                    {generatedOpen ? <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />}
+                    {t("work.card.generated", { count: split.generated })}
+                  </button>
+                </li>
+              ) : null}
+              {generatedOpen ? files.filter((file) => file.generated).map((file) => <FileRow key={file.path} file={file} onOpen={() => openFile(file.path)} />) : null}
+              {card && card.files_total > files.length ? <li className="py-xs text-micro text-muted-foreground">{t("work.card.filesMore", { shown: files.length, total: card.files_total })}</li> : null}
+            </ul>
+          )}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -588,30 +489,71 @@ function FileRow({ file, onOpen }: { file: NonNullable<PrCard["files"]>[number];
   );
 }
 
+// --- body ----------------------------------------------------------------------------
+
 /**
- * 연결 (B36): `이슈 · 워크트리 · 세션` at the right; opened, the issue (or
- * `이슈 잇기`), the worktrees and the sessions with `대화 보기` and `이어서 하기`.
+ * 본문 (D-02, B12, B13): never folded. Under the section head a row of the
+ * body's `##` headings sticks to the top of the card while the body scrolls
+ * under it; a chip scrolls to its heading, and the chip of the heading last
+ * passed is pressed. A body with no heading has no row, an empty body reads
+ * `본문 없음`, and a body that could not be read says so with a retry for
+ * that part alone.
  */
-function LinksRow({ project, pr, entry, panel, handlers, actions, number, open, onToggle }: { project: Workspace; pr: PullRequest | null; entry: PrEntry | null; panel: LinkPanel | null; handlers: LinkHandlers; actions: Actions; number: number; open: boolean; onToggle: () => void }) {
+function Body({ card, actions, projectId, number, scroller }: { card: PrCard | null; actions: Actions; projectId: string; number: number; scroller: React.RefObject<HTMLElement | null> }) {
   const { t } = useInterfaceTranslation();
-  const [linking, setLinking] = useState(false);
-  const holder: LinkPanel = panel ?? { workspace_id: project.id, target: { kind: "pr", number }, loading: true, failure: null, pr: null, prs: [], sessions: [], total: 0 };
-  const checkoutId = entry?.row.checkout_id ?? null;
-  const checkout = checkoutId ? project.checkouts.find((row) => row.id === checkoutId && row.exists) ?? null : null;
-  const local = project.tasks?.source?.kind === "local";
-  const worktree = checkout?.is_worktree === true && checkout.is_primary !== true;
-  const merged = pr ? pr.state === "merged" || pr.state === "closed" : true;
-  const linkable = !merged && !entry?.row.issue && (!local || worktree);
-  // The summary counts what the open line lists: the record's worktrees with the board's checkout, and its sessions.
-  const issue = entry?.row.issue?.label ?? null;
-  const trees = new Set([...(panel?.pr?.worktrees ?? []), ...(checkout ? [checkout.path] : [])]).size;
-  const parts = [issue ? t("work.card.links.issue", { label: issue }) : t("work.card.links.noIssue"), ...(trees > 0 ? [t("work.card.links.worktrees", { n: trees })] : []), ...(panel && !panel.loading ? [t("work.card.links.sessions", { n: panel.total })] : [])];
+  const body = card?.body ?? null;
+  const content = useRef<HTMLDivElement>(null);
+  const [current, setCurrent] = useState(0);
+  // The `##` headings the renderer drew, in the body's order: the chips are read
+  // from them, so a `##` the renderer did not draw, inside an HTML comment, gets
+  // no chip, and a heading with no text (an image alone) gets none either (B12).
+  const headings = () => Array.from(content.current?.querySelectorAll<HTMLElement>("[data-markdown-heading='2']") ?? []);
+  const [outline, setOutline] = useState<{ at: number; text: string }[]>([]);
+  useLayoutEffect(() => {
+    setOutline(headings().flatMap((heading, at) => { const text = heading.textContent?.trim() ?? ""; return text ? [{ at, text }] : []; }));
+  }, [body]);
+  useLayoutEffect(() => {
+    const root = scroller.current;
+    if (!root || outline.length === 0) return;
+    const chips = root.querySelector<HTMLElement>("[data-pr-card-outline]");
+    const read = () => {
+      const edge = (chips?.getBoundingClientRect().bottom ?? root.getBoundingClientRect().top) + 1;
+      const drawn = headings();
+      let passed = 0;
+      outline.forEach((chip, index) => {
+        if ((drawn[chip.at]?.getBoundingClientRect().top ?? Infinity) <= edge) passed = index;
+      });
+      setCurrent(passed);
+    };
+    read();
+    root.addEventListener("scroll", read, { passive: true });
+    return () => root.removeEventListener("scroll", read);
+  }, [outline, scroller]);
+  const jump = (index: number) => {
+    const chip = outline[index];
+    const heading = chip ? headings()[chip.at] : undefined;
+    const root = scroller.current;
+    if (!heading || !root) return;
+    const chips = root.querySelector<HTMLElement>("[data-pr-card-outline]");
+    const offset = heading.getBoundingClientRect().top - root.getBoundingClientRect().top - (chips?.getBoundingClientRect().height ?? 0);
+    root.scrollTo({ top: root.scrollTop + offset });
+    setCurrent(index);
+  };
   return (
-    <FoldRow name={t("links.connections")} summary={<span className="min-w-0 truncate" data-pr-card-links-summary="true">{parts.join(" · ")}</span>} open={open} onToggle={onToggle} section="links">
-      <div className="flex flex-col gap-md" data-pr-card-sessions="true">
-        <PrLinks number={number} issue={entry?.row.issue ?? null} checkout={checkout} linkable={linkable} record={panel} project={project} handlers={handlers} linking={linking} onLinking={setLinking} />
-        <LinkSessions panel={holder} project={project} branchOf={() => pr?.head_branch ?? null} onRetry={() => actions.openLinks(project.id, { kind: "pr", number })} empty={<p className="text-caption text-muted-foreground" data-link-none="true">{t("links.noSessions")}</p>} actions={actions} />
+    <section className="flex flex-col border-t border-border" aria-label={t("work.card.body")} data-pr-card-row="body">
+      <h3 className="flex min-h-(--size-control) items-center text-caption font-medium text-foreground">{t("work.card.body")}</h3>
+      {outline.length > 0 ? (
+        <nav aria-label={t("work.card.outline")} className="sticky top-none z-10 flex flex-wrap gap-xxs bg-background py-xs" data-pr-card-outline="true">
+          {outline.map((chip, index) => (
+            <button key={`${chip.at}:${chip.text}`} type="button" aria-pressed={index === current} className={cn("rounded-full border border-border px-sm text-micro outline-none focus-visible:ring-1 focus-visible:ring-ring", index === current ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground")} onClick={() => jump(index)} data-pr-card-outline-chip={index}>
+              {chip.text}
+            </button>
+          ))}
+        </nav>
+      ) : null}
+      <div ref={content} className="flex flex-col gap-sm pb-md text-caption" data-pr-card-body={body === null ? "unread" : body.trim() === "" ? "empty" : "open"}>
+        {body === null ? <PartState part="body" card={card} actions={actions} projectId={projectId} number={number} /> : body.trim() === "" ? <p className="text-caption text-muted-foreground">{t("work.card.noBody")}</p> : <div className="flex flex-col gap-sm" data-pr-card-markdown="true">{renderMarkdown(body)}</div>}
       </div>
-    </FoldRow>
+    </section>
   );
 }

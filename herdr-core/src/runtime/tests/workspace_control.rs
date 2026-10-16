@@ -344,7 +344,6 @@ fn background_view_commands_preserve_front_focus_and_retried_split_converges() {
                 &action_id("wrong-workspace"),
                 Action::Select {
                     view_id: view_id.clone(),
-                    reveal: false,
                     expected_browser_area: None,
                 },
                 Ok(None),
@@ -443,8 +442,16 @@ fn close_of_an_already_closed_view_returns_a_no_change_result() {
     );
 }
 
+/// Puts the operator in `pane_id` of `checkout_id`, the Workspace in front.
+fn operator_in(runtime: &mut Runtime, workspace_id: &str, checkout_id: &str, pane_id: &str) {
+    runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.to_owned());
+    runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.to_owned());
+    runtime.select_terminal_pane(Some(pane_id.to_owned()));
+    runtime.sync_workspace_view();
+}
+
 #[test]
-fn selecting_a_hidden_view_reveals_only_when_requested() {
+fn a_select_calls_the_lane_only_from_the_pane_the_operator_is_in() {
     let (mut runtime, _dir) = caller_fixture();
     runtime.sync_agent_lineage_layouts();
     let key = (crate::node::TEST_NODE, "/checkouts/b");
@@ -455,59 +462,76 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
         .views
         .entry(key.0, key.1)
         .layout;
-    let display = layout.new_browser_display("https://example.org", 1);
-    let view_id = display.id.clone();
-    layout.insert("a1", display, 1).unwrap();
+    let first = layout.new_browser_display("https://example.org", 1);
+    let first_id = first.id.clone();
+    layout.insert("a1", first, 1).unwrap();
+    let second = layout.new_browser_display("https://example.net", 2);
+    let second_id = second.id.clone();
+    layout.insert("a1", second, 2).unwrap();
     let expected = runtime
         .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
         .unwrap()
         .context;
-    let before = runtime.snapshot.navigator.focused_workspace_id.clone();
+    let select = |view_id: &str| Action::Select {
+        view_id: view_id.to_owned(),
+        expected_browser_area: None,
+    };
     let called = |runtime: &Runtime| runtime.workspace_views.as_ref().unwrap().lane_calls;
+    let in_front = |runtime: &Runtime| {
+        runtime
+            .view_layout_of(&(key.0.to_owned(), key.1.to_owned()))
+            .and_then(|layout| layout.active_area().active.clone())
+    };
+    operator_in(&mut runtime, "workspace-a", "checkout-a", "pane-a");
     runtime
         .workspace_control_action(
             crate::node::TEST_NODE,
             "pane-b",
             &expected,
-            &action_id("select-hidden"),
-            Action::Select {
-                view_id: view_id.clone(),
-                reveal: false,
-                expected_browser_area: None,
-            },
-            Ok(None),
-        )
-        .unwrap();
-    assert_eq!(runtime.snapshot.navigator.focused_workspace_id, before);
-    assert!(
-        !views_of(&runtime, key),
-        "right-lane B17: a background select leaves the caller's lane as it was"
-    );
-    assert_eq!(called(&runtime), 0, "a background select calls no lane");
-    runtime
-        .workspace_control_action(
-            crate::node::TEST_NODE,
-            "pane-b",
-            &expected,
-            &action_id("select-reveal"),
-            Action::Select {
-                view_id,
-                reveal: true,
-                expected_browser_area: None,
-            },
+            &action_id("select-elsewhere"),
+            select(&first_id),
             Ok(None),
         )
         .unwrap();
     assert_eq!(
         runtime.snapshot.navigator.focused_workspace_id.as_deref(),
-        Some("workspace-b"),
-        "{:?}",
-        runtime.snapshot.status.last_error
+        Some("workspace-a"),
+        "the operator stays where they are"
     );
-    assert!(views_of(&runtime, key), "a reveal opens the files lane");
+    assert_eq!(
+        in_front(&runtime).as_deref(),
+        Some(first_id.as_str()),
+        "a Workspace not on screen shows what its agent selected, which it can then drive"
+    );
+    assert!(
+        !views_of(&runtime, key),
+        "right-lane B17: a select from another pane leaves the caller's lane as it was"
+    );
+    assert_eq!(
+        called(&runtime),
+        0,
+        "a select from another pane calls no lane"
+    );
+
+    operator_in(&mut runtime, "workspace-b", "checkout-b", "pane-b");
+    runtime
+        .workspace_control_action(
+            crate::node::TEST_NODE,
+            "pane-b",
+            &expected,
+            &action_id("select-operator"),
+            select(&second_id),
+            Ok(None),
+        )
+        .unwrap();
+    assert_eq!(in_front(&runtime).as_deref(), Some(second_id.as_str()));
+    assert!(
+        views_of(&runtime, key),
+        "a select from the operator's pane opens the files lane"
+    );
     // The shell shows a called lane over the terminals; a call from the CLI
     // reaches it only as this count rising (PRD right-lane B1, B16).
-    assert_eq!(called(&runtime), 1, "a reveal calls the lane");
+    assert_eq!(called(&runtime), 1, "the operator's pane calls the lane");
     let numbered = runtime
         .workspace_views
         .as_ref()
@@ -552,7 +576,6 @@ fn file_open_reads_outside_the_runtime_then_places_once_in_the_callers_workspace
     let action = Action::OpenFile {
         path: path.to_string_lossy().into_owned(),
         beside: false,
-        reveal: false,
     };
     let id = action_id("file-open");
     let ActionPreparation::Read(source) = runtime
@@ -591,40 +614,6 @@ fn file_open_reads_outside_the_runtime_then_places_once_in_the_callers_workspace
         panic!("retry should return its recorded result without rereading")
     };
     assert_eq!(retried, first);
-
-    let reveal = Action::OpenFile {
-        path: path.to_string_lossy().into_owned(),
-        beside: false,
-        reveal: true,
-    };
-    let reveal_id = action_id("reveal-open-file");
-    let ActionPreparation::Read(source) = runtime
-        .workspace_control_prepare_action(
-            crate::node::TEST_NODE,
-            "pane-b",
-            &expected,
-            &reveal_id,
-            &reveal,
-        )
-        .unwrap()
-    else {
-        panic!("a new intent checks its source")
-    };
-    let material = source.read().unwrap();
-    runtime
-        .workspace_control_action(
-            crate::node::TEST_NODE,
-            "pane-b",
-            &expected,
-            &reveal_id,
-            reveal,
-            Ok(Some(material)),
-        )
-        .unwrap();
-    assert_eq!(
-        runtime.snapshot.navigator.focused_workspace_id.as_deref(),
-        Some("workspace-b")
-    );
 }
 
 #[test]
@@ -637,7 +626,6 @@ fn browser_load_status_tracks_the_current_load_and_retry_does_not_reload() {
     let before = runtime.snapshot.navigator.focused_workspace_id.clone();
     let action = Action::OpenBrowser {
         url: "https://example.test/page".into(),
-        reveal: false,
         area_id: None,
         new_target: false,
     };
@@ -764,7 +752,6 @@ fn browser_new_target_uses_the_named_area_and_duplicate_intent_converges() {
         serde_json::to_value((&runtime.snapshot.navigator, &runtime.snapshot.ui_state)).unwrap();
     let action = Action::OpenBrowser {
         url: "https://example.test/page".into(),
-        reveal: false,
         area_id: Some("a1".into()),
         new_target: true,
     };
@@ -852,7 +839,6 @@ fn browser_explicit_area_dedupes_only_within_that_area() {
     let key = (expected.device_id.clone(), expected.checkout_path.clone());
     let action = Action::OpenBrowser {
         url: "https://example.test/other".into(),
-        reveal: false,
         area_id: Some("a1".into()),
         new_target: false,
     };
@@ -900,7 +886,7 @@ fn legacy_browser_open_keeps_global_dedupe_and_active_area_insertion() {
     let (existing, _, other_area) = seed_browser_areas(&mut runtime, &expected);
     let key = (expected.device_id.clone(), expected.checkout_path.clone());
     let fresh: Action = serde_json::from_value(serde_json::json!({
-        "action": "open_browser", "url": "https://example.test/fresh", "reveal": false,
+        "action": "open_browser", "url": "https://example.test/fresh",
     }))
     .unwrap();
     let inserted = runtime
@@ -915,7 +901,7 @@ fn legacy_browser_open_keeps_global_dedupe_and_active_area_insertion() {
         .unwrap();
     assert_eq!(inserted.area_id.as_deref(), Some(other_area.as_str()));
     let duplicate: Action = serde_json::from_value(serde_json::json!({
-        "action": "open_browser", "url": "https://example.test/page", "reveal": false,
+        "action": "open_browser", "url": "https://example.test/page",
     }))
     .unwrap();
     let reused = runtime
@@ -946,7 +932,6 @@ fn browser_unknown_area_refuses_without_mutating_empty_or_existing_views() {
         }
         let action = Action::OpenBrowser {
             url: "https://example.test/page".into(),
-            reveal: true,
             area_id: Some("missing-area".into()),
             new_target: true,
         };
@@ -1009,7 +994,6 @@ fn browser_area_removed_during_file_read_refuses_without_mutation() {
     std::fs::write(&path, "<title>Inside</title>").unwrap();
     let action = Action::OpenBrowser {
         url: format!("file://{}", path.display()),
-        reveal: true,
         area_id: Some(other_area.clone()),
         new_target: true,
     };
@@ -1077,7 +1061,6 @@ fn scoped_browser_close_and_select_refuse_a_page_moved_after_prepare() {
         } else {
             Action::Select {
                 view_id: view_id.clone(),
-                reveal: true,
                 expected_browser_area: Some(copied_view.area_id),
             }
         };
@@ -1169,7 +1152,6 @@ fn scoped_browser_close_and_select_refuse_a_document_in_the_named_area() {
         } else {
             Action::Select {
                 view_id,
-                reveal: true,
                 expected_browser_area: Some("a1".into()),
             }
         };
@@ -1217,7 +1199,6 @@ fn browser_scope_is_part_of_retry_identity_and_closed_target_replays_its_receipt
     let (view_id, _, other_area) = seed_browser_areas(&mut runtime, &expected);
     let selected_action = Action::Select {
         view_id: view_id.clone(),
-        reveal: false,
         expected_browser_area: Some("a1".into()),
     };
     let select_id = action_id("scoped-select");
@@ -1257,7 +1238,6 @@ fn browser_scope_is_part_of_retry_identity_and_closed_target_replays_its_receipt
                     &select_id,
                     Action::Select {
                         view_id: view_id.clone(),
-                        reveal: false,
                         expected_browser_area
                     },
                     Ok(None),
@@ -1389,7 +1369,6 @@ fn browser_file_source_is_confined_to_the_calling_checkout() {
     std::fs::write(&outside, "<title>Outside</title>").unwrap();
     let action = Action::OpenBrowser {
         url: format!("file://{}", outside.display()),
-        reveal: false,
         area_id: None,
         new_target: false,
     };
@@ -1410,7 +1389,6 @@ fn browser_file_source_is_confined_to_the_calling_checkout() {
     std::fs::write(&inside, "<title>Inside</title>").unwrap();
     let action = Action::OpenBrowser {
         url: format!("file://{}", inside.display()),
-        reveal: false,
         area_id: None,
         new_target: false,
     };
@@ -1475,7 +1453,6 @@ fn diff_open_requires_a_real_working_tree_change() {
     let action = Action::OpenDiff {
         path: path.to_string_lossy().into_owned(),
         beside: false,
-        reveal: false,
     };
     let clean_id = action_id("clean");
     let ActionPreparation::Read(source) = runtime
@@ -1695,7 +1672,6 @@ fn checkout_callers_in_one_checkout_keep_separate_retry_records() {
             &request_id,
             Action::OpenBrowser {
                 url: "http://localhost:3000".into(),
-                reveal: false,
                 area_id: None,
                 new_target: false,
             },
@@ -1714,7 +1690,6 @@ fn checkout_callers_in_one_checkout_keep_separate_retry_records() {
             &request_id,
             Action::Select {
                 view_id: opened.view_id.clone(),
-                reveal: false,
                 expected_browser_area: None,
             },
             Ok(None),

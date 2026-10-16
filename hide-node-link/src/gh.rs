@@ -202,6 +202,11 @@ pub fn pr_facts_query(repository: &str) -> Option<String> {
 /// unresolved review threads, and what the repository lets a merge be.
 pub const CARD_FILE_LIMIT: usize = 100;
 pub const CARD_THREAD_LIMIT: usize = 50;
+/// The head commit's check runs and the reviews the card reads for its timeline
+/// (PRD pr-card-and-session-record-redesign D-15): the latest completed check
+/// and the latest decisive review.
+pub const CARD_CHECK_LIMIT: usize = 100;
+pub const CARD_REVIEW_LIMIT: usize = 50;
 
 pub fn pr_card_query(repository: &str, number: u32) -> Option<String> {
     if !is_repository(repository) {
@@ -209,7 +214,7 @@ pub fn pr_card_query(repository: &str, number: u32) -> Option<String> {
     }
     let (owner, name) = repository.split_once('/')?;
     Some(format!(
-        "query=query HidePrCard {{ repository(owner:\"{owner}\",name:\"{name}\") {{ mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission defaultBranchRef {{ name }} mergeQueue {{ id }} attributes: object(expression:\"HEAD:.gitattributes\") {{ ... on Blob {{ text }} }} pullRequest(number:{number}) {{ headRefOid baseRefName body files(first:{CARD_FILE_LIMIT}) {{ totalCount nodes {{ path additions deletions }} }} reviewThreads(first:{CARD_THREAD_LIMIT}) {{ nodes {{ isResolved path line comments(first:1) {{ nodes {{ author {{ login }} body }} }} }} }} }} }} }}"
+        "query=query HidePrCard {{ repository(owner:\"{owner}\",name:\"{name}\") {{ mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission defaultBranchRef {{ name }} mergeQueue {{ id }} attributes: object(expression:\"HEAD:.gitattributes\") {{ ... on Blob {{ text }} }} pullRequest(number:{number}) {{ headRefOid baseRefName body files(first:{CARD_FILE_LIMIT}) {{ totalCount nodes {{ path additions deletions }} }} reviewThreads(first:{CARD_THREAD_LIMIT}) {{ nodes {{ isResolved path line comments(first:1) {{ nodes {{ author {{ login }} body }} }} }} }} commits(last:1) {{ nodes {{ commit {{ statusCheckRollup {{ contexts(last:{CARD_CHECK_LIMIT}) {{ nodes {{ __typename ... on CheckRun {{ status conclusion completedAt }} ... on StatusContext {{ state createdAt }} }} }} }} }} }} }} reviews(last:{CARD_REVIEW_LIMIT}) {{ nodes {{ state submittedAt }} }} }} }} }}"
     ))
 }
 

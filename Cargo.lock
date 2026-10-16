@@ -1216,6 +1216,7 @@ name = "hide-agent-hooks"
 version = "0.1.0"
 dependencies = [
  "hide-agent-adapter",
+ "hide-ai",
  "hide-herdr-client",
  "hide-memory",
  "hide-platform",
@@ -1264,6 +1265,7 @@ dependencies = [
 name = "hide-herdr-client"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "hide-platform",
  "serde",
  "serde_json",
@@ -1793,9 +1795,9 @@ dependencies = [
 
 [[package]]
 name = "jsonschema"
-version = "0.58.1"
+version = "0.58.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a083dc3204bad08c6654f3648b2e840668d843044605df8850b16d2b24d307f"
+checksum = "f622c574a29fb3034a0a90645afee194dfedc75fc124228801b6e77041075bd1"
 dependencies = [
  "ahash",
  "bytecount",
@@ -2699,9 +2701,9 @@ dependencies = [
 
 [[package]]
 name = "russh"
-version = "0.63.3"
+version = "0.64.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "036204edbd199552a5b3832f63c60dcdf395dc44c7f06b4af1c0e8139cc11bce"
+checksum = "ba61e87b9ec9a39a59a6bbed4c0b8ff7fb07073405b24a767a1f2c8560ac8f58"
 dependencies = [
  "aes",
  "bitflags 2.13.2",

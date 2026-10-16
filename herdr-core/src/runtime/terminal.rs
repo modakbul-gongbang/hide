@@ -293,7 +293,6 @@ impl Runtime {
                 .control(TerminalControl::Forget { pane: pane_id });
         }
         self.reconcile_attachment_target();
-        self.held_resizes.retain(|pane_id| keep(pane_id));
         self.wheel_before_attach.retain(|pane_id, _| keep(pane_id));
         self.viewport_scrolls.retain(|pane_id, _| keep(pane_id));
         self.panes_scroll_held.retain(|pane_id| keep(pane_id));
@@ -454,7 +453,6 @@ impl Runtime {
             transport_exit_category: state.exit_category.clone(),
             transport_retry_decision: state.retry_decision.clone(),
             scroll_held_elsewhere: self.panes_scroll_held.contains(pane_id),
-            grid_held: self.grid_held_panes.contains(pane_id),
         }
     }
     pub(super) fn sync_transport_projection(&mut self, pane_id: &str) {
@@ -1488,13 +1486,17 @@ impl Runtime {
         }
         true
     }
-    /// Starts waiting for `pane_id`'s next frame on record `id`; its node
-    /// reports when that frame reaches the screen.
-    pub(super) fn await_op_frame(&mut self, id: &str, pane_id: &str, after_applied: bool) {
-        self.op_timings.await_frame(id, pane_id, after_applied);
-        self.terminals.control(TerminalControl::WatchFrame {
-            pane: pane_id.to_owned(),
-        });
+    /// Names the pane whose first frame ends record `id`. A created pane's
+    /// node watches for its next frame now; a resized pane's node is asked
+    /// when its resize goes out (`send_terminal_size`), since a frame before
+    /// that shows the old grid.
+    pub(super) fn await_op_frame(&mut self, id: &str, pane_id: &str, after_resize: bool) {
+        self.op_timings.await_frame(id, pane_id, after_resize);
+        if !after_resize {
+            self.terminals.control(TerminalControl::WatchFrame {
+                pane: pane_id.to_owned(),
+            });
+        }
     }
 
     /// Asks the pane's node to attach it, with the size the pane last had, and
@@ -1699,9 +1701,8 @@ impl Runtime {
                 let at = Instant::now()
                     .checked_sub(std::time::Duration::from_millis(age))
                     .unwrap_or_else(Instant::now);
-                // A grid change counts only a frame after Herdr applied it;
-                // one before that leaves the record waiting, and its node is
-                // asked to watch again when the layout applies it.
+                // A grid change's record counts only a frame after its
+                // resize went out; a frame before that is another watch's.
                 self.op_timings.note_frame(&pane, at);
                 false
             }

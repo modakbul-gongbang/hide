@@ -862,8 +862,16 @@ impl Runtime {
                 if read.merge.is_some() {
                     card.merge = read.merge;
                 }
+                card.checks_completed_at_unix_ms = read.checks_completed_at;
+                card.review_at_unix_ms = read.review_at;
+                if !read.times_unread.is_empty() {
+                    // The card is drawn without the times; only the log says why (B21).
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "pull_requests", "kind": "pr_card.times_unread",
+                        "project": workspace_id, "pr": number, "parts": read.times_unread,
+                    }));
+                }
                 card.failed = read.failed;
-                self.settle_pr_summary(workspace_id, number);
             }
             Err(message) => {
                 crate::diagnostic!(serde_json::json!({
@@ -1072,151 +1080,5 @@ impl Runtime {
             pr_number: number,
             look_again: false,
         });
-    }
-}
-
-impl Runtime {
-    /// Whether a card asks hide-ai for a summary now: Hide AI is on with an
-    /// agent chosen, the `PR 요약` switch is on, and the usage limit has not
-    /// stopped every agent of the order (B37, B38).
-    fn pr_summary_active(&self) -> bool {
-        self.ai_settings
-            .as_ref()
-            .is_some_and(|settings| settings.pr_summary)
-            && self.ai_active()
-            && !self.usage_paused()
-    }
-
-    /// Shows the summary kept for the card's head, or asks for one: once per
-    /// head, only when the parts it is made from have been read (D-29).
-    fn settle_pr_summary(&mut self, workspace_id: &str, number: u32) {
-        let Some(card) = self.existing_pr_card(workspace_id, number) else {
-            return;
-        };
-        let Some(head) = card.head.clone() else {
-            card.summary = None;
-            return;
-        };
-        let ready = card.body.is_some() && card.files.is_some();
-        let key = (workspace_id.to_owned(), number);
-        if !self.pr_summary_active() {
-            if let Some(card) = self.existing_pr_card(workspace_id, number) {
-                card.summary = None;
-            }
-            return;
-        }
-        let kept = self
-            .pr_summaries
-            .get(&key)
-            .filter(|(kept_head, _)| *kept_head == head)
-            .map(|(_, text)| text.clone());
-        if let Some(card) = self.existing_pr_card(workspace_id, number) {
-            card.summary = kept.clone();
-        }
-        let asked = (workspace_id.to_owned(), number, head.clone());
-        if kept.is_some() || !ready || self.pr_summaries_asked.contains(&asked) {
-            return;
-        }
-        let Ok((_, _, pull_request)) = self.listed_pull_request(workspace_id, number) else {
-            return;
-        };
-        let Some(card) = self.existing_pr_card(workspace_id, number) else {
-            return;
-        };
-        let input = crate::ai::PrSummaryInput {
-            title: pull_request.title.clone(),
-            body: card.body.clone().unwrap_or_default(),
-            files: card
-                .files
-                .iter()
-                .flatten()
-                .map(|file| (file.path.clone(), file.additions, file.deletions))
-                .collect(),
-            failed_checks: pull_request
-                .work
-                .failed_checks
-                .iter()
-                .map(|check| check.name.clone())
-                .collect(),
-            pending_checks: pull_request.work.pending_checks,
-        };
-        let Some(settings) = self.ai_settings.clone() else {
-            return;
-        };
-        self.pr_summaries_asked.insert(asked);
-        let (node, gate, usage) = (self.own_node(), self.usage_gate(), self.ai_usage());
-        let language = self.output_language();
-        let subject = format!("{workspace_id}#{number}");
-        let (answered, asked_head) = (workspace_id.to_owned(), head.clone());
-        let head_for_failure = head.clone();
-        let spawned = self.spawn_issue_worker(
-            "pr-summary",
-            move || {
-                crate::ai::summarize_pull_request(
-                    &node, &settings, &gate, &usage, &subject, &head, &input, language,
-                )
-            },
-            move |runtime, answer| {
-                runtime.ingest_pr_summary(&answered, number, &asked_head, answer)
-            },
-        );
-        if let Err(message) = spawned {
-            self.ingest_pr_summary(workspace_id, number, &head_for_failure, Err(message));
-        }
-    }
-
-    pub(crate) fn ingest_pr_summary(
-        &mut self,
-        workspace_id: &str,
-        number: u32,
-        head: &str,
-        answer: Result<String, String>,
-    ) -> bool {
-        self.pr_summaries_asked
-            .remove(&(workspace_id.to_owned(), number, head.to_owned()));
-        match answer {
-            Ok(text) => {
-                let key = (workspace_id.to_owned(), number);
-                if !self.pr_summaries.contains_key(&key)
-                    && self.pr_summaries.len() >= PR_SUMMARY_CACHE_LIMIT
-                    && let Some(first_key) = self.pr_summaries.keys().next().cloned()
-                {
-                    self.pr_summaries.remove(&first_key);
-                }
-                self.pr_summaries
-                    .insert(key, (head.to_owned(), text.clone()));
-                if !self.pr_summary_active() {
-                    return false;
-                }
-                match self.existing_pr_card(workspace_id, number) {
-                    Some(card) if card.head.as_deref() == Some(head) => {
-                        card.summary = Some(text);
-                        true
-                    }
-                    _ => false,
-                }
-            }
-            Err(reason) => {
-                // The part is simply absent (B37); the reason is for the log.
-                crate::diagnostic!(serde_json::json!({
-                    "component": "pull_requests", "kind": "pr_summary.failed",
-                    "project": workspace_id, "pr": number, "reason": reason,
-                }));
-                false
-            }
-        }
-    }
-
-    /// Takes the summaries off every card when the switch, Hide AI or the
-    /// agent choice no longer allows them.
-    pub(super) fn drop_pr_summaries_if_inactive(&mut self) -> bool {
-        if self.pr_summary_active() {
-            return false;
-        }
-        let mut dropped = false;
-        for card in &mut self.snapshot.pr_work.cards {
-            dropped |= card.summary.take().is_some();
-        }
-        dropped
     }
 }

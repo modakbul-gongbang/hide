@@ -66,5 +66,10 @@
       "note": "the artwork the app already bundles for the provider; kept"
     }
   ],
-  "monogram": []
+  "monogram": [
+    {
+      "id": "antigravity",
+      "reason": "no official Antigravity mark with a confirmed license yet (PRD antigravity-first-class D-15); the tile draws the label's monogram"
+    }
+  ]
 }

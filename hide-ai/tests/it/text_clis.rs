@@ -574,3 +574,177 @@ fn a_raised_cancel_token_stops_the_child_and_reports_cancelled() {
     });
     assert_eq!(outcome.unwrap_err(), AiError::Cancelled);
 }
+
+// ---- Antigravity CLI (agy) ----
+
+/// agy is run with a `PATH` that finds nothing, so its stand-in names its
+/// interpreter by the absolute path of the program itself (a version
+/// manager's `python3` is a script that needs `PATH`).
+fn agy_fake(rules: Value) -> Fake {
+    let found = std::process::Command::new("python3")
+        .args(["-c", "import sys; print(sys.executable)"])
+        .output()
+        .expect("python3 runs the stand-in");
+    let python = String::from_utf8(found.stdout).unwrap().trim().to_owned();
+    let fake = Fake::new(
+        "agy",
+        json!({"rules": rules, "env_keys": ["PATH", "AGY_CLI_DISABLE_AUTO_UPDATE", "HOME"]}),
+    );
+    let body = std::fs::read_to_string(&fake.binary).unwrap().replacen(
+        "#!/usr/bin/env python3",
+        &format!("#!{python}"),
+        1,
+    );
+    std::fs::write(&fake.binary, body).unwrap();
+    fake
+}
+
+/// A home where agy has signed in and the kit has made Hide AI's folder,
+/// trusted as agy spells it.
+fn agy_home(trusted: bool) -> (tempfile::TempDir, PathBuf) {
+    let home = tempfile::tempdir().unwrap();
+    let folder = hide_ai::read_only_workspace(home.path());
+    std::fs::create_dir_all(folder.join(".agents")).unwrap();
+    std::fs::write(
+        hide_ai::read_only_hooks_file(&folder),
+        hide_ai::READ_ONLY_HOOKS,
+    )
+    .unwrap();
+    let canonical = hide_platform::fs::identity::canonical(&folder).unwrap();
+    let settings = home.path().join(".gemini/antigravity-cli/settings.json");
+    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    let list = if trusted {
+        json!([canonical])
+    } else {
+        json!([])
+    };
+    std::fs::write(&settings, json!({"trustedWorkspaces": list}).to_string()).unwrap();
+    (home, canonical)
+}
+
+fn agy_stream(response: &str, tool_state: Option<&str>) -> String {
+    let mut lines = vec![json!({"event": "init", "conversation_id": "c1"}).to_string()];
+    if let Some(state) = tool_state {
+        lines.push(
+            json!({"event": "step_update", "step_update": {"step_type": "tool", "state": state}})
+                .to_string(),
+        );
+    }
+    lines.push(
+        json!({"event": "result", "result": {"status": "SUCCESS", "response": response,
+            "usage": {"input_tokens": 12, "output_tokens": 4}}})
+        .to_string(),
+    );
+    lines.join("\n") + "\n"
+}
+
+#[test]
+fn agy_answers_in_its_trusted_folder_with_the_prompt_on_stdin_and_no_program_on_path() {
+    let fake = agy_fake(
+        json!([{ "when": ["stream-json"], "stdout": agy_stream("{\"summary\":\"ok\"}", Some("ERROR")) }]),
+    );
+    let (home, folder) = agy_home(true);
+    let backend =
+        hide_ai::AntigravityCliBackend::with_home(fake.config(""), Some(home.path().to_path_buf()));
+    let response = backend.execute(&request(), &CancelToken::new()).unwrap();
+    assert_eq!(response.value, json!({"summary": "ok"}));
+    assert_eq!(response.usage.input_tokens, Some(12));
+
+    let start = fake.last();
+    assert_eq!(Path::new(start["cwd"].as_str().unwrap()), folder);
+    assert_transcript_not_in_argv(&start);
+    let args = argv(&start);
+    assert!(
+        args.windows(2)
+            .any(|p| p == ["--input-format", "stream-json"]),
+        "{args:?}"
+    );
+    assert!(!args.iter().any(|arg| arg == "--json-schema"), "{args:?}");
+    let message: Value = serde_json::from_str(start["stdin"].as_str().unwrap().trim()).unwrap();
+    let content = message["message"]["content"].as_str().unwrap();
+    assert!(content.contains("secret-transcript-marker"));
+    assert_names_the_language(content);
+    // No browser opener and no hook shell can be found, and agy never updates itself here.
+    let path = start["env"]["PATH"].as_str().unwrap();
+    assert!(!Path::new(path).exists(), "{path}");
+    assert_eq!(start["env"]["AGY_CLI_DISABLE_AUTO_UPDATE"], "1");
+}
+
+#[test]
+fn agy_is_not_started_until_its_folder_is_trusted_and_a_tool_that_ran_refuses_the_answer() {
+    let fake = agy_fake(
+        json!([{ "when": ["stream-json"], "stdout": agy_stream("{\"summary\":\"ok\"}", Some("DONE")) }]),
+    );
+    let (untrusted, _) = agy_home(false);
+    let backend = hide_ai::AntigravityCliBackend::with_home(
+        fake.config(""),
+        Some(untrusted.path().to_path_buf()),
+    );
+    assert_eq!(
+        backend.availability(),
+        Availability::Unsupported {
+            reason: "antigravity_read_only_untrusted".to_owned()
+        }
+    );
+    assert_eq!(
+        backend
+            .execute(&request(), &CancelToken::new())
+            .unwrap_err(),
+        AiError::Unsupported("antigravity_read_only_untrusted".to_owned())
+    );
+    assert!(
+        fake.starts().is_empty(),
+        "nothing ran before the folder was trusted"
+    );
+    let (home, _) = agy_home(true);
+    let backend =
+        hide_ai::AntigravityCliBackend::with_home(fake.config(""), Some(home.path().to_path_buf()));
+    assert_eq!(
+        backend
+            .execute(&request(), &CancelToken::new())
+            .unwrap_err(),
+        AiError::InvalidOutput("antigravity_tool_ran".to_owned())
+    );
+}
+
+#[test]
+fn agy_is_ready_from_its_model_list_and_its_usage_is_the_whole_frame() {
+    let usage = json!({"status": "SUCCESS", "response": "", "command": {"name": "usage", "data": {"groups": []}}}).to_string();
+    let fake = agy_fake(json!([
+        { "when": ["models"], "stdout": "Fetching available models...\ngemini-3.8-flash-high\tGemini 3.8 Flash (High)\n" },
+        { "when": ["/usage"], "stdout": usage },
+    ]));
+    let (home, _) = agy_home(true);
+    let backend =
+        hide_ai::AntigravityCliBackend::with_home(fake.config(""), Some(home.path().to_path_buf()));
+    assert_eq!(backend.availability(), Availability::Ready);
+    assert_eq!(
+        backend.models(),
+        ModelCatalog::Offered(vec!["gemini-3.8-flash-high".to_owned()])
+    );
+    let text = backend.usage_text(&CancelToken::new()).unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&text).unwrap()["command"]["name"],
+        "usage"
+    );
+
+    let logged_out = agy_fake(json!([{ "stderr": "Error: authentication failed\n", "exit": 1 }]));
+    let backend = hide_ai::AntigravityCliBackend::with_home(
+        logged_out.config(""),
+        Some(home.path().to_path_buf()),
+    );
+    assert_eq!(backend.availability(), Availability::NeedsLogin);
+    assert_eq!(
+        backend.usage_text(&CancelToken::new()).unwrap_err(),
+        hide_ai::UsageError::NotAuthenticated
+    );
+    // A home where agy never signed in starts nothing: a signed-out agy would ask to sign in.
+    let never = tempfile::tempdir().unwrap();
+    let backend = hide_ai::AntigravityCliBackend::with_home(
+        logged_out.config(""),
+        Some(never.path().to_path_buf()),
+    );
+    let before = logged_out.starts().len();
+    assert_eq!(backend.availability(), Availability::NeedsLogin);
+    assert_eq!(logged_out.starts().len(), before);
+}
