@@ -208,7 +208,8 @@ it("draws each task's row mark and line as the sidebar does, counts no folded ch
   expect(said("waits")).toBe("대기 · CI · PR #58");
   // The row's name and hover say the mark as the sidebar does (B3, B33).
   const named = (pane: string) => at(pane).querySelector('[data-task-focus="row"]')!;
-  expect(named("waits").getAttribute("aria-label")).toContain("진행 중 · 대기, 대기 · CI · PR #58");
+  expect(named("waits").getAttribute("aria-label")).toContain("진행 중 · 대기");
+  expect(named("waits").getAttribute("title")).toContain("대기 · CI · PR #58");
   expect(named("waits").getAttribute("title")).toContain("진행 중 · 대기");
   expect(named("left").getAttribute("aria-label")).toContain("읽을 것 · 일 남음");
   expect(said("left")).toBe("일 남음 · 테스트 환경 연결 남음");

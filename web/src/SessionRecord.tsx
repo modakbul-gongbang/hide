@@ -12,7 +12,7 @@ import { formatDateTime } from "./i18n/format";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { useInterfaceTranslation } from "./i18n/client";
 import { cn } from "./lib/utils";
-import { checklist, orderedOutputs, outputPrState, recordTitle, recordTree, sessionPlace, workKey, type Checklist, type ChecklistTask } from "./sessionWork";
+import { checklist, orderedOutputs, outputPrState, recordTitle, recordTree, sessionOfAgentOn, sessionPlace, workKey, type Checklist, type ChecklistTask } from "./sessionWork";
 import { boardProjects } from "./navigation";
 import { cardLine, cardOfPane, cardQuestion, everyAgent, itemToken } from "./overviewTasks";
 import { destinationOf } from "./overviewBacklog";
@@ -247,9 +247,16 @@ function Work({ record, descendants = NO_RECORDS, words, actions, head = false }
   const received = record.requests.some((request) => request.author === "parent");
   const label = t(received ? "sessionWork.received" : "sessionWork.words");
   // The ring a task in progress draws is its live row's (B34); an ended session has none.
-  const rest = useShellStore((state) => state.rest);
-  const agents = useShellStore((state) => state.agents);
-  const mark = useMemo(() => [...everyAgent(rest, agents).values()].find((row) => row.session_id === record.session.session_id && (row.device_id ?? localDeviceId(rest)) === record.session.device_id)?.mark ?? null, [rest, agents, record.session]);
+  // A primitive, so a snapshot that moves nothing of this mark leaves the checklist alone.
+  const mark = useShellStore((state) => {
+    const key = workKey(record.session);
+    const localId = localDeviceId(state.rest);
+    for (const row of everyAgent(state.rest, state.agents).values()) {
+      const session = sessionOfAgentOn(row, localId);
+      if (session && workKey(session) === key) return row.mark;
+    }
+    return null;
+  });
   const nothing = !list.groups.length && !(words && list.otherWords.length) && !list.otherMissed.length && !list.now;
   return <section className={head ? "mt-md" : "mt-xs"} data-record-work="true">
     {head ? <SectionHead aside={<WordsButton label={label} />}>{t("sessionWork.tasks")} {list.total ? <Count>{list.done}/{list.total}</Count> : null}</SectionHead> : list.total ? <div className="flex items-center gap-xs px-xs pt-xs"><span className="font-medium text-subtle-foreground">{t("sessionWork.tasks")}</span><Count>{list.done}/{list.total}</Count></div> : null}
@@ -295,7 +302,7 @@ function TaskRow({ item, session, cwd, words, mark, actions }: { item: Checklist
   const state = shownTaskState(item.state, mark);
   return <div className="py-xxs" data-record-task={task.id}>
     <div className="flex min-w-0 items-start gap-xs">
-      <TaskMark state={state} waiting={mark === "waiting"} />
+      <TaskMark state={state} mark={mark} />
       <TaskName state={state} name={task.name} prShown={item.prs.length > 0} className={state === "done" ? "text-subtle-foreground" : "font-medium"} />
       {item.prs.map((output) => <button key={output.url} type="button" data-record-task-pr={output.number} className={cn(ROW, "shrink-0 px-xxs hover:bg-accent")} aria-label={[`#${output.number} ${t(PR_LOOK[outputPrState(output.state)].word)}`, output.title, staleHint(output, t("common.unavailable"))].filter(Boolean).join(" · ")} title={output.title} onClick={() => actions.openRecordedOutput(output)}><PrMark state={outputPrState(output.state)} number={output.number} stale={output.stale} /></button>)}
     </div>

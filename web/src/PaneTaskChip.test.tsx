@@ -199,6 +199,16 @@ it("keeps judged tasks without an error while no provider can answer, and draws 
   } finally { await off.unmount(); }
 });
 
+it("draws a task left in progress on a stopped row as work left, with no ring", async () => {
+  const view = await mount([progress([{ ...task("task-3", "가"), end: "waiting" }])]);
+  try {
+    useShellStore.setState({ agents: [{ ...agent(), mark: "quiet" }] });
+    await act(async () => view.chip()!.focus());
+    const item = view.list()!.querySelector("[data-task-list-item]")!;
+    expect([item.querySelector("[data-task-state]")?.getAttribute("data-task-state"), item.querySelector("[data-mark]"), item.querySelector("[data-task-word]")?.textContent]).toEqual(["unfinished", null, "Unfinished"]);
+  } finally { await view.unmount(); }
+});
+
 it("draws no current line when the agent has none rather than a placeholder", async () => {
   const view = await mount([progress([task("task-3", "가")])], { line: null });
   try {

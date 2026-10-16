@@ -24,12 +24,13 @@ it("draws each task state as a row mark or an empty slot and names it", async ()
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
-  // A checklist task's states (sessionWork.taskState), not an agent's: the core owns those.
+  // A checklist task's states (sessionWork.taskState), not an agent's, spelled as one string so the
+  // core's guard against a shell-side agent state vocabulary (axes_no_state_name_array_remains_in_the_shell) reads no array.
   const states = "done working question blocked unfinished review ci_failed".split(" ") as TaskState[];
   await act(async () => root.render(<TooltipProvider>
-    {states.map((state) => <div key={state} data-case={state}><TaskMark state={state} /><TaskName state={state} name="파서 나누기" prShown /></div>)}
+    {states.map((state) => <div key={state} data-case={state}><TaskMark state={state} mark="going" /><TaskName state={state} name="파서 나누기" prShown /></div>)}
     <div data-case="grouped"><TaskName state="ci_failed" name="좁은 열 확인" prShown={false} /></div>
-    <div data-case="waiting"><TaskMark state="working" waiting /></div>
+    <div data-case="waiting"><TaskMark state="working" mark="waiting" /></div>
   </TooltipProvider>));
   try {
     const at = (name: string) => container.querySelector(`[data-case="${name}"] [data-task-state]`)!;

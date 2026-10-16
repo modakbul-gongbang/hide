@@ -1,6 +1,6 @@
 import { CheckIcon } from "lucide-react";
 import type { HTMLAttributes } from "react";
-import { markName, markWords } from "../agentRow";
+import { markName } from "../agentRow";
 import { statusText } from "../agentStatus";
 import { useInterfaceTranslation } from "../i18n/client";
 import { cn } from "../lib/utils";
@@ -27,12 +27,12 @@ export function shownTaskState(state: TaskState, mark: RowMark | null): TaskStat
  * name with the row's words; an empty slot says nothing a screen reader would
  * hear twice.
  */
-export function TaskMark({ state, waiting = false }: { state: TaskState; waiting?: boolean }) {
+export function TaskMark({ state, mark }: { state: TaskState; mark: RowMark | null }) {
   const { t } = useInterfaceTranslation();
   if (state === "unfinished" || state === "review" || state === "ci_failed") return <span aria-hidden="true" data-task-state={state} className="flex size-(--size-icon-sm) shrink-0" />;
-  const ring: RowMark = waiting ? "waiting" : "going";
+  const ring: RowMark = mark === "waiting" ? "waiting" : "going";
   const name = state === "question" || state === "blocked" ? `${markName(t, "turn")} · ${statusText(t, state === "blocked" ? "error" : "question")}`
-    : state === "working" ? markWords(t, { mark: ring, status_code: waiting ? "waiting" : "working" })
+    : state === "working" ? (ring === "waiting" ? `${markName(t, ring)} · ${statusText(t, "waiting")}` : markName(t, ring))
       : t("sessionWork.done");
   return <Hint label={name}><span role="img" aria-label={name} data-task-state={state} className="flex size-(--size-icon-sm) shrink-0 items-center justify-center">
     {state === "done" ? <CheckIcon aria-hidden="true" className="size-(--size-icon-sm) text-success" /> : state === "working" ? <StatusMark mark={ring} /> : <StatusMark mark="turn" />}

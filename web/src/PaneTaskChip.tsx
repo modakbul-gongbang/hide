@@ -150,7 +150,7 @@ function TaskList({ agent, progress, onRecord }: { agent: AgentRow; progress: Wo
             const state = shownTaskState(taskState(task, progress.outputs), agent.mark);
             return (
               <li key={task.id} className="flex min-w-0 items-start gap-xs py-xxs" data-task-list-item={task.id}>
-                <span className="mt-xxs flex"><TaskMark state={state} waiting={agent.mark === "waiting"} /></span>
+                <span className="mt-xxs flex"><TaskMark state={state} mark={agent.mark} /></span>
                 <TaskName state={state} name={task.name} prShown={prs.length > 0} className={state === "done" ? "text-subtle-foreground" : "text-foreground"} data-task-list-name="true" />
                 {prs.map((output) => {
                   const look = outputPrState(output.state);

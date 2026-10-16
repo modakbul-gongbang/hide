@@ -326,7 +326,8 @@ function TaskRow({ entry, family, open, selected, number, showProject, disabled,
   // The row's own mark words, as the sidebar row says them (status-marks B3, B33); a fold's rows say the fold.
   const words = card.state === "resting" || card.state === "cleanup" ? t(`taskLens.state.${card.state}`) : markWords(t, agent);
   const sentence = rowSentence(t, agent);
-  const name = [agent.identity_label, forkLabel(t, agent), agentProductName(agent.agent_kind), words, hideAiWords(t, agent.hide_ai), sentence].filter(Boolean).join(", ");
+  // The visible second line follows the button and is read after it, so the name leaves the sentence to it.
+  const name = [agent.identity_label, forkLabel(t, agent), agentProductName(agent.agent_kind), words, hideAiWords(t, agent.hide_ai)].filter(Boolean).join(", ");
   return (
     <li className={cn("group/task relative flex min-w-0 items-stretch rounded-xs pr-xs", selected ? "bg-selected" : "hover:bg-accent focus-within:bg-accent", rowDimmed(agent) && "opacity-(--opacity-dimmed)")}
       data-task-row={agent.pane_id} data-task-state={card.state} data-selected={selected ? "true" : undefined} onClick={go}>
@@ -457,7 +458,7 @@ function ChildRow({ parent, child, depth, place, open, selected, disabled, actio
       <div className="flex min-w-0 flex-1 flex-col gap-xxs py-xs pl-xs">
         <div className="flex min-h-(--size-sidebar-line) min-w-0 items-center gap-xs">
           <button type="button" data-task-focus="row" disabled={disabled} aria-current={selected ? "true" : undefined} aria-expanded={open ?? undefined}
-            aria-label={[child.identity_label, forkLabel(t, child), agentProductName(child.agent_kind), markWords(t, child), rowSentence(t, child), child.state.branch_badge, device].filter(Boolean).join(", ")}
+            aria-label={[child.identity_label, forkLabel(t, child), agentProductName(child.agent_kind), markWords(t, child), child.state.branch_badge, device].filter(Boolean).join(", ")}
             title={[child.identity_label, agentProductName(child.agent_kind), markWords(t, child), rowSentence(t, child)].filter(Boolean).join("\n")}
             onClick={(event) => { event.stopPropagation(); go(); }}
             onKeyDown={(event) => rowKey(event, open, toggle, record)}

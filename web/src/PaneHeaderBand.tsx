@@ -208,14 +208,16 @@ export function PaneRecordButton({ paneId, title, product, actions, children, pl
   const localId = useShellStore((s) => localDeviceId(s.rest));
   const session = agent ? sessionOfAgentOn(agent, localId) : null;
   if (!session) return <>{plain}</>;
+  // The mark's words ride the button's hint and name, which the mark sits inside (status-marks B36).
+  const words = agent ? markWords(t, agent) : null;
   return (
     // The button names the agent as the plain head does, then what a press
     // does; the hint reveals a title the head cuts short.
-    <Hint label={`${title}\n${product}\n${t("record.recordHint")}`} reveals>
+    <Hint label={[title, product, words, t("record.recordHint")].filter(Boolean).join("\n")} reveals>
       <button
         type="button"
         className="flex min-w-0 items-center gap-sm rounded-sm px-xxs -mx-xxs outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-        aria-label={`${title}, ${product}, ${t("record.recordHint")}`}
+        aria-label={[title, product, words, t("record.recordHint")].filter(Boolean).join(", ")}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => actions.togglePaneRecord(session)}
         data-pane-record={session.session_id}
