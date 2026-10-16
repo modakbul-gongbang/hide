@@ -633,10 +633,11 @@ fn a_front_tab_open_calls_the_lane_and_keeps_a_lone_tree() {
     );
 }
 
-/// B8: only the agent in the pane the operator is in brings its open forward.
-/// Another pane of the operator's own tab and a caller with no pane add theirs
-/// behind the operator's View, and the tab remembers only what the operator
-/// had in front on it.
+/// B8: on the Workspace in front only the agent in the pane the operator is in
+/// brings its open forward. Another pane of the operator's own tab adds its
+/// View behind the operator's, and the tab remembers only what the operator
+/// had in front on it. A caller with no pane, as the browser gateway is,
+/// still brings its page forward, where the page loads.
 #[test]
 fn only_the_operators_pane_brings_its_open_forward() {
     let (mut runtime, checkout, directory) = setup("operator-pane");
@@ -653,6 +654,16 @@ fn only_the_operators_pane_brings_its_open_forward() {
         false,
         "sibling-pane",
     );
+    runtime.sync_workspace_view();
+    assert_eq!(strip(&runtime, &directory), ["a.md", "b.md"]);
+    assert_eq!(
+        fronts(&runtime, &directory),
+        ["a.md"],
+        "the operator's View"
+    );
+    assert_eq!(calls(&runtime), before, "no lane call");
+    assert_eq!(bookmark(&runtime, &directory, TABS[0]), Some(a));
+
     let caller = checkout_caller_id("fixture", &directory.to_string_lossy());
     control(
         &mut runtime,
@@ -662,16 +673,9 @@ fn only_the_operators_pane_brings_its_open_forward() {
     );
     runtime.sync_workspace_view();
     assert_eq!(
-        strip(&runtime, &directory),
-        ["a.md", "b.md", "https://example.test/checkout"]
-    );
-    assert_eq!(
         fronts(&runtime, &directory),
-        ["a.md"],
-        "the operator's View"
+        ["https://example.test/checkout"]
     );
-    assert_eq!(calls(&runtime), before, "no lane call");
-    assert_eq!(bookmark(&runtime, &directory, TABS[0]), Some(a));
 
     let mine = control(
         &mut runtime,
@@ -683,7 +687,7 @@ fn only_the_operators_pane_brings_its_open_forward() {
     assert_eq!(fronts(&runtime, &directory), ["https://example.test/mine"]);
     assert!(
         calls(&runtime) > before,
-        "the operator's pane calls the lane"
+        "the operator's pane and the pane-less caller call the lane"
     );
     assert_eq!(
         bookmark(&runtime, &directory, TABS[0]),

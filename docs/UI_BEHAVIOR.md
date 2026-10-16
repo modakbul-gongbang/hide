@@ -144,7 +144,9 @@ When a connected pane selects, splits, moves, or closes a View through `hide vie
 These commands do not move the keyboard target; a close that would lose the last View of an unsaved document reports the refusal and keeps the draft.
 `hide file open` and `hide diff open` put the calling pane's file or changed-file diff into its own Workspace and never select that Workspace or another tab.
 Only an agent in the pane the operator is in, the selected pane of the front Workspace, changes what the operator sees: its open or `hide view select` brings the View to the front and opens the lane on Files as a click does, the tree staying on when it showed alone.
-Every other caller, another pane of the same tab, a pane of another tab or Workspace, or a caller with no pane at all (a checkout-bound caller), adds its View to the checkout's list and leaves the selection, the active area, the keyboard, the lane and the tab on screen as they were, and the Files icon's badge counts the new view (see File Views per checkout).
+Another pane of that Workspace, of the same tab or another, adds its View to the checkout's list and leaves the selection, the active area, the keyboard, the lane and the tab on screen as they were, and the Files icon's badge counts the new view (see File Views per checkout).
+A Workspace not on screen is not what the operator sees: there, an agent in its active tab brings its View to that Workspace's front, so a page it opens loads and can be driven, and an agent in another tab adds its View behind.
+A checkout-bound caller with no pane, such as the browser gateway creating a page for a CDP client, brings its View forward as before.
 No option brings a View forward from another pane; the operator does that.
 A browser page's own new target, bound to its area, does not open the lane.
 `hide view split`, `move` and `close` apply to the checkout's list, from any tab, including a tab that is not on screen.
@@ -278,7 +280,9 @@ Putting the lane away or closing it preserves its documents, unsaved text and sa
 Closing the last View leaves the files tool on the tree when the tree is on, and closes the lane otherwise.
 
 From the pane the operator is in, a file, diff or browser open or a select brings the View to the front, its area becomes the active one and the lane is called to Files.
-From any other caller, a pane of the same tab, of another tab or Workspace, or a caller with no pane, the View is added at the end of the area it lands in; the selection, the active area, the keyboard, the lane and the tab on screen stay as they were, and the Files icon's badge counts it.
+From another pane of the Workspace on screen, of the same tab or another, the View is added at the end of the area it lands in; the selection, the active area, the keyboard, the lane and the tab on screen stay as they were, and the Files icon's badge counts it.
+On a Workspace not on screen, the agent in its active tab brings the View to that Workspace's front and an agent in another tab adds it behind; neither moves the screen or calls the lane.
+A caller with no pane brings its View forward.
 The operator brings it forward from the strip; selecting the caller's tab does not.
 A GUI action, such as a click on a terminal link, acts for the operator as before.
 A file read remains bound to the original tab and native session: a closed, moved or replaced caller is refused rather than falling back to the operator's tab.

@@ -462,18 +462,26 @@ fn a_select_calls_the_lane_only_from_the_pane_the_operator_is_in() {
         .views
         .entry(key.0, key.1)
         .layout;
-    let display = layout.new_browser_display("https://example.org", 1);
-    let view_id = display.id.clone();
-    layout.insert("a1", display, 1).unwrap();
+    let first = layout.new_browser_display("https://example.org", 1);
+    let first_id = first.id.clone();
+    layout.insert("a1", first, 1).unwrap();
+    let second = layout.new_browser_display("https://example.net", 2);
+    let second_id = second.id.clone();
+    layout.insert("a1", second, 2).unwrap();
     let expected = runtime
         .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
         .unwrap()
         .context;
-    let select = Action::Select {
-        view_id,
+    let select = |view_id: &str| Action::Select {
+        view_id: view_id.to_owned(),
         expected_browser_area: None,
     };
     let called = |runtime: &Runtime| runtime.workspace_views.as_ref().unwrap().lane_calls;
+    let in_front = |runtime: &Runtime| {
+        runtime
+            .view_layout_of(&(key.0.to_owned(), key.1.to_owned()))
+            .and_then(|layout| layout.active_area().active.clone())
+    };
     operator_in(&mut runtime, "workspace-a", "checkout-a", "pane-a");
     runtime
         .workspace_control_action(
@@ -481,7 +489,7 @@ fn a_select_calls_the_lane_only_from_the_pane_the_operator_is_in() {
             "pane-b",
             &expected,
             &action_id("select-elsewhere"),
-            select.clone(),
+            select(&first_id),
             Ok(None),
         )
         .unwrap();
@@ -489,6 +497,11 @@ fn a_select_calls_the_lane_only_from_the_pane_the_operator_is_in() {
         runtime.snapshot.navigator.focused_workspace_id.as_deref(),
         Some("workspace-a"),
         "the operator stays where they are"
+    );
+    assert_eq!(
+        in_front(&runtime).as_deref(),
+        Some(first_id.as_str()),
+        "a Workspace not on screen shows what its agent selected, which it can then drive"
     );
     assert!(
         !views_of(&runtime, key),
@@ -507,10 +520,11 @@ fn a_select_calls_the_lane_only_from_the_pane_the_operator_is_in() {
             "pane-b",
             &expected,
             &action_id("select-operator"),
-            select,
+            select(&second_id),
             Ok(None),
         )
         .unwrap();
+    assert_eq!(in_front(&runtime).as_deref(), Some(second_id.as_str()));
     assert!(
         views_of(&runtime, key),
         "a select from the operator's pane opens the files lane"

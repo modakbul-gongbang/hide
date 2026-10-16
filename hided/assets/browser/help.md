@@ -87,7 +87,7 @@ The display stays on the operator's screen while you work, and an arrow cursor i
 It fades two seconds after the last action, lets clicks through, and never appears in a snapshot.
 No command moves the operator's mouse, changes which View is in front, or takes keyboard focus.
 Input and screenshots need the display to be its area's selected View: one behind another tab of its area fails `display_hidden`, and reading commands still work there.
-A page you open comes to the front only while the operator is in your pane; otherwise it lands behind what they see, and only the operator brings it forward.
+While the operator is looking at your checkout from another pane, a page you open lands behind what they see, and only the operator brings it forward.
 A selected View of a Workspace that is not in front takes input and screenshots like any other, though the operator does not see the action.
 
 ## When something fails

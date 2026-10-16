@@ -5,7 +5,8 @@
 //! Agent tab is in front. A tab remembers one View, the one the operator last
 //! had in front on it, and gets it back when the tab appears on screen after
 //! not being on it. The bookmark never moves the area in use or the keyboard.
-//! An agent changes what is in front only from the pane the operator is in.
+//! On the Workspace in front, an agent changes what is in front only from
+//! the pane the operator is in.
 
 use super::workspace_view::WorkspaceKey;
 use super::*;
@@ -135,16 +136,22 @@ impl Runtime {
             .and_then(|tab| tab.id.clone())
     }
 
-    /// Whether a Workspace command's caller is the pane the operator is in:
-    /// the selected pane of the Workspace in front. Another pane of the same
-    /// tab, a pane of another tab or checkout and a pane-less checkout caller
-    /// are not, so their opens and selects leave the screen as it was.
-    pub(super) fn operator_caller(&self, key: &WorkspaceKey, caller_id: &str) -> bool {
+    /// Whether a Workspace command's caller leaves the selection as it found
+    /// it. On the Workspace in front, every pane but the one the operator is
+    /// in does, another pane of the same tab included. On a Workspace not on
+    /// screen, a pane of a tab other than its active one does (B7); the
+    /// active tab's panes change what only that Workspace shows, so a page
+    /// they open is in front and can be driven. A pane-less checkout caller
+    /// never does: the browser gateway acts as one for the agent holding a
+    /// capability, and a page it creates loads only in front (D-04, D-10).
+    pub(super) fn caller_stays_behind(&self, key: &WorkspaceKey, caller_id: &str) -> bool {
         let Caller::Pane(pane_id) = Caller::parse(caller_id) else {
             return false;
         };
-        self.front_workspace_key().as_ref() == Some(key)
-            && self.operator_pane(&key.0) == Some(pane_id)
+        if self.front_workspace_key().as_ref() == Some(key) {
+            return self.operator_pane(&key.0) != Some(pane_id);
+        }
+        self.background_caller_tab(key, caller_id).is_some()
     }
 
     /// The pane the operator is in on `device`, the device in front: this
@@ -164,9 +171,9 @@ impl Runtime {
             .and_then(|session| session.focused_pane_id.as_deref())
     }
 
-    /// The tab of a GUI open asked in a pane that is not looking at the
-    /// Workspace's front: a pane of an Agent tab other than the active one.
-    /// A checkout and the active tab's panes are in front (D-04, D-10).
+    /// The tab of a caller that is not looking at the Workspace's front: a
+    /// pane of an Agent tab other than the active one. A checkout and the
+    /// active tab's panes are in front (D-04, D-10).
     pub(super) fn background_caller_tab(
         &self,
         key: &WorkspaceKey,

@@ -1439,7 +1439,7 @@ One request ID carries an action result for up to ten minutes, and the 128-resul
 The CLI returns the request ID on uncertain transport outcomes so the caller can retry that same action or inspect `hide view list`.
 File and working-diff opens resolve a caller-cwd path on the calling machine, then use the checkout's existing host channel to read a document or Git status off the core lock.
 The core rechecks the caller's checkout membership when it places the result into that checkout's View tree; a missing file, unavailable host, unchanged diff, or layout refusal has a request-scoped CLI outcome.
-No open moves the front Workspace, the visible tab or the keyboard pane; an open or select from the operator's own pane, the selected pane of the front Workspace (`operator_caller`), brings its View forward and opens that Workspace's lane on Files (`AreaIntent::Files`), raising `lane_called` so the page puts it up, and from any other caller the lane keeps its state.
+No open moves the front Workspace, the visible tab or the keyboard pane; an open or select from the operator's own pane, the selected pane of the front Workspace, brings its View forward and opens that Workspace's lane on Files (`AreaIntent::Files`), raising `lane_called` so the page puts it up, and from any other caller the lane keeps its state.
 `hide browser open` requires a connected desktop renderer and places a Browser View in the caller's checkout with the same bounded retry result as other actions.
 The core checks HTML paths against the caller device's checkout and reads them outside its lock through the consented host channel.
 The native host reports page load, completion, failure, and eviction with a load stamp; `hide view status` and `--wait` distinguish page state from View placement.
@@ -2308,7 +2308,11 @@ A tab that was on no Agent area and now is the active one gets its bookmarked di
 The lane's tool, pin, tree and widths stay checkout-wide, and ordinary focus among already shown Agent areas changes nothing in the list.
 
 Workspace control records the caller's actual tab and native session before an asynchronous read, validates them again at commit, and refuses stale identity without another-tab fallback.
-Only the pane the operator is in, the selected pane (`snapshot.terminal.pane_id`) of the front Workspace, is a foreground caller (`operator_caller`); another pane of the same tab, a pane of another tab or Workspace and a pane-less checkout caller are background callers, and no command option makes one foreground.
+`caller_stays_behind` decides who is a background caller.
+On the front Workspace, every pane but the one the operator is in (the selected pane, `snapshot.terminal.pane_id`, or a device's focused pane) is, another pane of the same tab included.
+On a Workspace not on screen, a pane of a tab other than its active one is (B7); the active tab's panes change only what that Workspace shows, so a page they open is selected and can be driven.
+A pane-less checkout caller never is, because the browser gateway acts as one for the agent holding a capability and a page it creates loads only in front.
+No command option makes a background caller foreground.
 A background command records the selection first (`keep_front`) and puts it back after the commit (`restore_front`): a new display stays at the end of the area it landed in, in no area's front, and the area in use, the keyboard and the editor's active tab are as they were.
 A command records no bookmark itself; the bookmark follows the front of the active tab (`track_view_bookmarks`), so only what the operator had in front is remembered.
 GUI events act for the active tab, and a GUI browser open asked in a pane records that pane's tab's bookmark.

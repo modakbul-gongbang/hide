@@ -28,8 +28,10 @@ Only checkouts in the current connected catalog contribute to that inventory; a 
   The core checks an HTML file against that checkout on its own device and reads it outside the core lock before placing its Browser View.
   The action result confirms View placement, while `hide view status <view-id>` returns `pending`, `loading`, `loaded`, `failed`, `disconnected`, or `unsupported` for its native page.
   `disconnected` means a native page existed for that load but was removed or its desktop renderer disconnected; `unsupported` means no desktop renderer was available for a pending page.
-  Only an open from the pane the operator is in, the selected pane of the front Workspace, brings the page to the front of its area and calls the lane.
-  Any other caller, another pane of the same tab, a pane of another tab or checkout, or a caller with no pane, adds its page to the checkout's one list, in the area it lands in and behind the one in front, and moves no tab, checkout or keyboard; the same address opened from two tabs is one page, so the operator's page and load stay unchanged.
+  On the checkout on screen, only an open from the pane the operator is in, the selected pane of the front Workspace, brings the page to the front of its area and calls the lane.
+  Another pane there, of the same tab or another, adds its page to the checkout's one list, in the area it lands in and behind the one in front, and moves no tab, checkout or keyboard; the same address opened from two tabs is one page, so the operator's page and load stay unchanged.
+  On a checkout not on screen, a pane of its active tab brings its page to the front of that checkout, where it loads and can be driven, and a pane of another tab adds it behind; neither calls the lane or moves the screen.
+  A caller with no pane, as the browser gateway is for a page a CDP client creates, brings its page forward, since a page loads only in front.
   A new page that is not in front can stay pending until it first appears.
   An agent reads the checkout's Views (`hide view list`, `hide view status`, select, close, `--wait`) from any of its tabs, even when its tab is not the Workspace's active tab and the Workspace was never in front: every caller sees the same list, so such a page is listed as `pending` rather than missing.
   `--wait` polls that state for at most ten seconds and returns a failure if the page fails, disconnects, or remains pending; it does not reveal a hidden View.
@@ -235,7 +237,7 @@ Same-origin frames and open shadow roots are read and acted on through the top d
 `changed` compares a snapshot of every frame taken before the action with one after it, read again after 0.7 and 1.2 seconds when nothing changed yet; clickable detection is capped in document order so a scroll alone never reads as a change.
 
 Input and screenshots go only to a display on screen, so the operator sees what an action does.
-A display that is not its area's selected View fails them at once with `display_hidden`, whose next step is to ask the operator to show it, since an agent outside the operator's pane cannot bring it forward; hided reads that from the core's view list when it opens the relay.
+A display that is not its area's selected View fails them at once with `display_hidden`, whose next step is to ask the operator to show it, since an agent that is not in the operator's pane cannot bring it forward on the checkout on screen; hided reads that from the core's view list when it opens the relay.
 That is hided's own rule, not Chromium's: a View the host hides still answers.
 A selected View of a Workspace that is not in front is not refused: the host hides it, yet the page still reports its document visible and Chromium answers input and screenshots within the step, so no input times out there and none waits to be delivered when the Workspace returns, and the operator does not see the action drawn.
 The page's own visibility is not the test either: a selected View in a window another app covers reads `hidden` and still takes input and screenshots.

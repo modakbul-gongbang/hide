@@ -377,14 +377,18 @@ impl Runtime {
             ) {
                 self.make_view_room(&key);
             }
-            // Only the agent in the pane the operator is in changes what
-            // the operator sees. Every other caller, another pane of the same
-            // tab and a pane-less checkout caller included, leaves the
-            // selection, the lane and every tab's bookmark as they were.
-            let kept = (!self.operator_caller(&key, pane_id)).then(|| self.keep_front(&key));
+            // On the Workspace in front only the agent in the pane the
+            // operator is in changes what they see; another pane, of the same
+            // tab or not, leaves the selection, the lane and every tab's
+            // bookmark as they were.
+            let kept = self
+                .caller_stays_behind(&key, pane_id)
+                .then(|| self.keep_front(&key));
             // An open the operator is looking at calls the lane as a click
             // does (PRD right-lane B17), and keeps a tree that showed alone.
-            let calls_lane = kept.is_none() && lane_call(&action);
+            let calls_lane = kept.is_none()
+                && self.front_workspace_key().as_ref() == Some(&key)
+                && lane_call(&action);
             let lone_tree = calls_lane && self.front_lone_tree().as_ref() == Some(&key);
             let mut applied =
                 self.apply_workspace_action(&key, &context, request_id, &action, material);
