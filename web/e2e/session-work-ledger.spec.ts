@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { continueFixtureTranscript, setFixtureLifecycle, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { FIRST_GOAL, MISSED, NEXT_GOAL, nextWork, seedFirstWork, workFixture, workRepositoryReady } from "./session-work-fixture";
-import { enterWorkspace, showProjectRow, showTasks } from "./wire";
+import { enterWorkspace, openTaskFolds, showProjectRow, showTasks } from "./wire";
 import { chord } from "./chords";
 
 test.describe.configure({ timeout: 180_000 });
@@ -42,12 +42,10 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await workRepositoryReady(daemon.stateDir);
     await enterWorkspace(page, "fixture");
-    const list = await showTasks(page);
     const first = Date.now();
     github.clock(first, first);
     const { session, child } = seedFirstWork(herdr, first);
-    const root = list.locator(`[data-task-row="${herdr.panes[0]}"]`);
-    await expect(root).toContainText(FIRST_GOAL, { timeout: 45_000 });
+    const root = await taskRow(page, herdr.panes[0], FIRST_GOAL);
     await root.hover();
     await page.locator(`[data-task-record="${herdr.panes[0]}"]`).click();
     const record = page.locator(RECORD);
@@ -118,12 +116,10 @@ test("@platform 백로그로 makes one title-only issue, a lost create response 
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await workRepositoryReady(daemon.stateDir);
     await enterWorkspace(page, "fixture");
-    const list = await showTasks(page);
     const first = Date.now();
     github.clock(first, first);
     const { session } = seedFirstWork(herdr, first);
-    const root = list.locator(`[data-task-row="${herdr.panes[0]}"]`);
-    await expect(root).toContainText(FIRST_GOAL, { timeout: 45_000 });
+    const root = await taskRow(page, herdr.panes[0], FIRST_GOAL);
     // 백로그로 creates only in the repository the ledger proved the session
     // started in, so wait for that proof as an operator's later press would.
     await expect.poll(() => originalRepository(daemon!.stateDir, session), { timeout: 30_000 }).toBe("acme/repo");
@@ -211,10 +207,23 @@ function createdIn(contexts: string): (string | null)[] {
     .filter((call) => call.args[0] === "issue" && call.args[1] === "create").map((call) => call.repository);
 }
 
+/**
+ * The 태스크 list row of `pane` once it says `goal`. An idle session rests
+ * under the folded 쉬는 중 (PRD sidebar-task-lens B5), so the fold is opened
+ * as soon as it is drawn; it stays open while the list is shown.
+ */
+async function taskRow(page: import("@playwright/test").Page, pane: string, goal: string) {
+  const list = await showTasks(page);
+  const root = list.locator(`[data-task-row="${pane}"]`);
+  await expect(root.or(list.locator('[data-task-fold="rest"]')).first()).toBeVisible({ timeout: 45_000 });
+  await openTaskFolds(page);
+  await expect(root).toContainText(goal, { timeout: 45_000 });
+  return root;
+}
+
 /** The record of the 태스크 list row of `pane`, once the row says `goal`, opened in the 보기 slot; returns its missed line. */
 async function openRecord(page: import("@playwright/test").Page, pane: string, goal: string) {
-  const root = (await showTasks(page)).locator(`[data-task-row="${pane}"]`);
-  await expect(root).toContainText(goal, { timeout: 45_000 });
+  const root = await taskRow(page, pane, goal);
   await root.hover();
   await page.locator(`[data-task-record="${pane}"]`).click();
   const missed = page.locator(RECORD).locator("[data-missed-work]", { hasText: MISSED });

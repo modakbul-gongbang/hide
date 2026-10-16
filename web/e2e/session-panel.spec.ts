@@ -84,9 +84,10 @@ test("the 태스크 list groups the device's tasks, folds children and resting o
     const tasks = await showTasks(page);
     const row = (pane: string) => tasks.locator(`[data-task-row="${pane}"]`);
     const group = (name: string) => tasks.locator(`[data-task-group="${name}"]`);
-    // B4, B7, B8: Needs You asks with the verb, the working parent stands for its child, unfinished work rests with its line.
-    await expect(group("needs_you").locator(`[data-task-row="${asking}"]`)).toContainText("Approve", { timeout: 30_000 });
-    await expect(group("needs_you").locator(`[data-task-row="${question}"]`)).toContainText("Answer", { timeout: 30_000 });
+    // B4, B7, B8: Needs You's second line is the question, the working parent stands for its child, unfinished work rests with its line.
+    const ask = (pane: string) => group("needs_you").locator(`[data-task-row="${pane}"] [data-task-line="needs_you"]`);
+    await expect(ask(asking)).toContainText("검증 명령을 승인해 주세요", { timeout: 30_000 });
+    await expect(ask(question)).toContainText(QUESTION, { timeout: 30_000 });
     await expect(group("working").locator(`[data-task-row="${parent}"]`)).toBeVisible();
     await expect(row(child)).toHaveCount(0);
     await expect(row(parent).locator("[data-task-children]")).toHaveAttribute("data-task-children", "1");
@@ -103,11 +104,11 @@ test("the 태스크 list groups the device's tasks, folds children and resting o
     await page.keyboard.press("Enter");
     await expect(page.locator(`[data-pane-view="${question}"]`)).toHaveAttribute("data-focused", "true");
     await expect(group("needs_you").locator(`[data-task-row="${question}"]`)).toHaveCount(0);
-    await expect(row(question)).not.toContainText("Answer");
+    await expect(row(question).locator('[data-task-line="needs_you"]')).toHaveCount(0);
     await row(asking).locator('[data-task-focus="row"]').click();
     await expect(page.locator(`[data-pane-view="${asking}"]`)).toHaveAttribute("data-focused", "true");
     await expect(row(asking)).toHaveAttribute("data-selected", "true");
-    await expect(group("needs_you").locator(`[data-task-row="${asking}"]`)).toContainText("Approve");
+    await expect(ask(asking)).toContainText("검증 명령을 승인해 주세요");
     // B12: Home reaches the first group head and the arrows the next row.
     await row(stopped).locator('[data-task-focus="row"]').focus();
     await page.keyboard.press("Home");
