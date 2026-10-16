@@ -38,6 +38,13 @@ const REASONS: crate::sqlite::Reasons = crate::sqlite::Reasons {
     work: "antigravity_db_work_capacity",
 };
 
+/// Whether an index read failed only because it met agy writing its index
+/// (agy held it, or it moved during the read), so a read a moment later can
+/// answer. A refusal for any other reason stays a refusal.
+pub fn index_in_motion(reason: &str) -> bool {
+    reason == REASONS.busy || reason == REASONS.changed
+}
+
 /// agy names a conversation by a lowercase UUID.
 pub fn valid_id(id: &str) -> bool {
     id.len() == 36

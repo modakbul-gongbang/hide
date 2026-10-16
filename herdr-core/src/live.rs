@@ -3531,6 +3531,36 @@ fn run_agent_fork_with_registration(
 /// conversation its `/fork` made.
 const ANTIGRAVITY_FORK_WAIT: Duration = Duration::from_secs(30);
 const ANTIGRAVITY_FORK_POLL: Duration = Duration::from_millis(250);
+/// How many index reads in a row may meet agy writing its index before the
+/// fork gives up on it: 5 s of polls, far past one agy write.
+const ANTIGRAVITY_INDEX_IN_MOTION_LIMIT: usize = 20;
+
+/// One read of agy's index on the pane's node, read again while it only met
+/// agy writing the index (`hide_session::antigravity::index_in_motion`). A
+/// read that answers is one consistent snapshot of the index, so it needs no
+/// second read to agree with; the wait ends at `deadline` or after
+/// [`ANTIGRAVITY_INDEX_IN_MOTION_LIMIT`] reads in a row, whichever is first.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code: bounded by count and deadline
+fn read_antigravity_index<T: serde::de::DeserializeOwned>(
+    node: &dyn crate::node_access::NodeLink,
+    call: impl Fn() -> hide_node_link::protocol::Call,
+    deadline: Instant,
+) -> Result<T, crate::node_access::LinkError> {
+    let mut in_motion = 0;
+    loop {
+        match crate::node_access::call_as(node, call(), Duration::from_secs(5)) {
+            Err(crate::node_access::LinkError::Refused(error))
+                if hide_session::antigravity::index_in_motion(&error.message)
+                    && in_motion + 1 < ANTIGRAVITY_INDEX_IN_MOTION_LIMIT
+                    && Instant::now() < deadline =>
+            {
+                in_motion += 1;
+                thread::sleep(ANTIGRAVITY_FORK_POLL);
+            }
+            answer => return answer,
+        }
+    }
+}
 
 /// agy forks only through its `/fork` command (agy 1.4.0, PRD
 /// antigravity-first-class D-07). The fork's pane resumed the source
@@ -3564,13 +3594,13 @@ fn fork_antigravity(
     // What the checkout holds before /fork, read on the pane's node, so the
     // fork is the row that was not there: no clock is compared, and the
     // source may move on while agy writes it.
-    let mark: hide_node_link::protocol::AntigravityForkMark = crate::node_access::call_as(
+    let mark: hide_node_link::protocol::AntigravityForkMark = read_antigravity_index(
         node,
-        hide_node_link::protocol::Call::AntigravityForkMark {
+        || hide_node_link::protocol::Call::AntigravityForkMark {
             source: request.session_id.clone(),
             cwd: cwd.to_owned(),
         },
-        Duration::from_secs(5),
+        Instant::now() + ANTIGRAVITY_FORK_WAIT,
     )
     .map_err(|error| format!("agy's conversation to fork could not be read: {error}"))?;
     control_request(
@@ -3580,14 +3610,14 @@ fn fork_antigravity(
     )?;
     let deadline = Instant::now() + ANTIGRAVITY_FORK_WAIT;
     let forked = loop {
-        let found: Option<String> = crate::node_access::call_as(
+        let found: Option<String> = read_antigravity_index(
             node,
-            hide_node_link::protocol::Call::AntigravityFork {
+            || hide_node_link::protocol::Call::AntigravityFork {
                 source: request.session_id.clone(),
                 cwd: cwd.to_owned(),
                 mark: mark.clone(),
             },
-            Duration::from_secs(5),
+            deadline,
         )
         .map_err(|error| format!("agy's fork could not be confirmed: {error}"))?;
         if let Some(id) = found {
@@ -4729,7 +4759,9 @@ mod tests {
         // agy writes it; the fork is still the one row that was not there.
         // `untrusted`: agy does not trust the checkout, so the resumed pane
         // would open on agy's trust question, which `/fork` must not answer.
-        for case in ["success", "ambiguous", "moved", "untrusted"] {
+        // `in-motion`: the first index reads meet agy writing its index
+        // (1 fork in 3 failed on a live agy 1.4.0) and are read again.
+        for case in ["success", "ambiguous", "moved", "untrusted", "in-motion"] {
             let home = tempfile::tempdir().unwrap();
             let cwd = hide_platform::fs::identity::canonical(home.path()).unwrap();
             if case != "untrusted" {
@@ -4748,7 +4780,10 @@ mod tests {
                 4,
                 Some("2026-10-03 01:00:00+00:00"),
             );
-            let node = hide_node::Local::new(Some(home.path().to_path_buf()));
+            let node = IndexInMotion {
+                inner: hide_node::Local::new(Some(home.path().to_path_buf())),
+                left: std::sync::atomic::AtomicUsize::new(if case == "in-motion" { 3 } else { 0 }),
+            };
             let index_home = home.path().to_path_buf();
             let index_cwd = cwd.clone();
             let statuses = Arc::new(Mutex::new(vec!["working", "idle"]));
@@ -4821,7 +4856,7 @@ mod tests {
             };
             let result = fork_antigravity(&herdr.connector(), &node, &request, "child-pane");
             let expected: &[&str] = match case {
-                "success" | "moved" => {
+                "success" | "moved" | "in-motion" => {
                     assert_eq!(result, Ok(()), "{case}");
                     &[
                         "pane.get",
@@ -4852,6 +4887,43 @@ mod tests {
                 }
             };
             assert_eq!(herdr.methods(), expected, "{case}");
+            assert_eq!(node.left.load(std::sync::atomic::Ordering::SeqCst), 0, "{case}");
+        }
+    }
+
+    /// A node whose next `left` agy index reads meet agy writing its index.
+    struct IndexInMotion {
+        inner: hide_node::Local,
+        left: std::sync::atomic::AtomicUsize,
+    }
+
+    impl crate::node_access::NodeLink for IndexInMotion {
+        fn call(
+            &self,
+            call: hide_node_link::protocol::Call,
+            timeout: Duration,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            if matches!(
+                call,
+                hide_node_link::protocol::Call::AntigravityForkMark { .. }
+                    | hide_node_link::protocol::Call::AntigravityFork { .. }
+            ) && self
+                .left
+                .try_update(
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                    |left| left.checked_sub(1),
+                )
+                .is_ok()
+            {
+                return Err(crate::node_access::LinkError::Refused(
+                    hide_node_link::HostError::new(
+                        hide_node_link::ErrorCode::Io,
+                        "antigravity_db_changed",
+                    ),
+                ));
+            }
+            self.inner.call(call, timeout)
         }
     }
 
