@@ -69,7 +69,8 @@ jobs:
       - name: agy's hook block, trust, skills, conversations and Hide AI backend
         # Install and removal in a fixture home, the hook commands (`cmd /c`
         # on Windows), the conversation readers against agy's recorded files,
-        # and the Hide AI backend against a stand-in agy.
+        # and, on Linux and macOS, the Hide AI backend against a stand-in agy
+        # (`hide-ai/tests/it/text_clis.rs` is Unix only).
         timeout-minutes: 10
         run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'test(/antigravity|agy/)'
       - name: Install agy

@@ -1,6 +1,6 @@
 // The first run on invented data (PRD first-run-onboarding B42): the shell's
 // real Sidebar and Home behind the real FirstRunWizard, start panel or
-// Settings sheet, over a synthetic This Mac with the seven agents and no
+// Settings sheet, over a synthetic This Mac with the eight agents and no
 // daemon. A desktop host stands in for the Electron bridge, so the steps and
 // the notification lines draw as the desktop app draws them, on the system
 // the query names; the scene's state is the step the core would keep and
