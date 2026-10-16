@@ -177,12 +177,13 @@ pub fn trust_worktree(home: &Path, folder: &Path) -> Result<(), InstallFailure> 
         path: folder.display().to_string(),
         detail: detail.to_owned(),
     };
-    if folder.components().any(|part| {
-        matches!(
-            part,
-            std::path::Component::CurDir | std::path::Component::ParentDir
-        )
-    }) {
+    // Read from the spelling itself: `components()` drops a `.` that is not
+    // the first name, and agy matches the entry as it is written.
+    if folder
+        .to_string_lossy()
+        .split(['/', std::path::MAIN_SEPARATOR])
+        .any(|name| name == "." || name == "..")
+    {
         return Err(refuse(
             "an agy worktree trust names its folder without . or ..",
         ));
@@ -416,6 +417,8 @@ mod tests {
             home.path().to_path_buf(),
             home.path().parent().unwrap().to_path_buf(),
             tree.join("..").join("repo-tree"),
+            home.path().join(".").join("repo-tree"),
+            tree.join("."),
             home.path().join("missing"),
         ] {
             assert!(
