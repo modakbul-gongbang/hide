@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ChevronRightIcon, LoaderCircleIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import { ChevronRightIcon, ChevronsDownUpIcon, FilePlusIcon, FolderPlusIcon, LoaderCircleIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { isHtmlFile } from "./browserViews";
@@ -22,9 +22,11 @@ import {
   parentPath,
   parentSelection,
   rowAccessibilityLabel,
+  relativeTo,
   rowForPath,
   rowTitle,
   selectionAfterRemoval,
+  treeCommandFor,
   type ExplorerRow,
   helperNeedsSettings,
 } from "./explorer";
@@ -37,7 +39,8 @@ import { besideUnavailable } from "./viewLayout";
 import { expandedUnderRoot, watchedFolders } from "./watch";
 import { workspaceViewOf } from "./workspace";
 import { hostKind, keySystem, revealHost } from "./host";
-import { chordEquals, chordFromEvent, defaultChord } from "./shortcuts";
+import { chordFromEvent, hostRegistry } from "./shortcuts";
+import { commandLabel } from "./shortcutLabels";
 import { useInterfaceTranslation } from "./i18n/client";
 
 // The Explorer tree (PRD B1, B3, B9, B10): a lazy tree over the focused
@@ -49,6 +52,9 @@ import { useInterfaceTranslation } from "./i18n/client";
 
 const EMPTY_PATHS: string[] = [];
 const EMPTY_ROWS: ExplorerRow[] = [];
+
+/** The root row's creation and fold buttons show on hover and focus, and always where there is no hover; they keep their place in the layout either way, so the name never moves when they appear. */
+const ROOT_CONTROL = "opacity-0 group-hover/root:opacity-100 group-focus-within/root:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100";
 
 /** One drawn row: an entry, or the inline name field the operator is editing. */
 type DisplayRow =
@@ -349,15 +355,26 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
     setMenu(null);
   };
 
+  const copyPathOf = (path: string, relative: boolean) => {
+    if (!rootPath) return;
+    actions.copyText(relative ? relativeTo(path, rootPath) : path, relative ? "relative path" : "path");
+    setMenu(null);
+  };
+
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const row = rowForPath(rows, selection);
-    // Move to Trash (⌘⌫, Delete on Windows and Linux) is the Explorer's own
-    // chord; the registry leaves it to the tree, because in a terminal ⌘⌫ is
-    // ^U (S2 passthrough).
-    const trash = defaultChord("move_to_trash", hostKind(), keySystem());
-    if (trash && chordEquals(chordFromEvent(event.nativeEvent), trash)) {
+    // Move to Trash (⌘⌫, Delete on Windows and Linux) and the two path copies
+    // are the Explorer's own chords: the registry leaves them to the tree,
+    // because in a terminal ⌘⌫ is ^U (S2 passthrough).
+    const registry = hostRegistry(useShellStore.getState().rest?.ui_state, hostKind(), keySystem()).registry;
+    const command = treeCommandFor(chordFromEvent(event.nativeEvent), registry, hostKind());
+    if (command) {
       event.preventDefault();
-      if (row) requestTrash(row);
+      if (command === "move_to_trash") {
+        if (row) requestTrash(row);
+      } else if (rootPath) {
+        copyPathOf(row?.path ?? rootPath, command === "copy_relative_path");
+      }
       return;
     }
     switch (event.key) {
@@ -438,7 +455,14 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
           {hint}
         </p>
       ) : null}
-      <div className="flex shrink-0 items-center gap-xs border-b border-border px-md py-xs text-caption text-subtle-foreground">
+      <div
+        className="group/root flex shrink-0 items-center gap-xs border-b border-border px-md py-xs text-caption text-subtle-foreground"
+        data-explorer-root-row="true"
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setMenu({ path: rootPath, isDirectory: true, x: event.clientX, y: event.clientY });
+        }}
+      >
         <Hint label={rootPath} reveals>
         <span className="min-w-0 flex-1 truncate" data-explorer-root="true">
           {baseName(rootPath)}
@@ -455,6 +479,31 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
             )}
           </Hint>
         ) : null}
+        {[
+          { id: "new-file", icon: <FilePlusIcon />, label: t("explorer.newFile"), disabled: false, run: () => beginCreate(rootPath, "file") },
+          { id: "new-folder", icon: <FolderPlusIcon />, label: t("explorer.newFolder"), disabled: false, run: () => beginCreate(rootPath, "folder") },
+          {
+            id: "collapse-all",
+            icon: <ChevronsDownUpIcon />,
+            label: t("explorer.collapseAll"),
+            disabled: !expandedUnderRoot(rootPath, expandedPaths).some((path) => path !== rootPath),
+            run: () => actions.setExpandedPaths(expandedPaths.includes(rootPath) ? [rootPath] : []),
+          },
+        ].map((control) => (
+          <Hint key={control.id} label={control.label}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className={`${ROOT_CONTROL} text-muted-foreground hover:bg-transparent hover:text-foreground`}
+              aria-label={control.label}
+              disabled={control.disabled}
+              data-explorer-root-action={control.id}
+              onClick={control.run}
+            >
+              {control.icon}
+            </Button>
+          </Hint>
+        ))}
         <Hint label={t("common.refresh")}>
           <Button
             variant="ghost"
@@ -531,7 +580,7 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
             setMenu({ path: rootPath, isDirectory: true, x: event.clientX, y: event.clientY });
           }}
         >
-          <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
+          <div className="relative w-full" style={{ height: `calc(${virtualizer.getTotalSize()}px + var(--size-pane-child-row))` }} data-explorer-tail="true">
             {virtualizer.getVirtualItems().map((virtualRow) => {
               const entry = shown[virtualRow.index];
               if (!entry) return null;
@@ -609,6 +658,7 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
             setMenu(null);
             actions.revealExternal(path);
           }}
+          onCopyPath={copyPathOf}
           onNewFile={beginCreate}
           onRename={beginRename}
           onTrash={requestTrash}
@@ -710,6 +760,7 @@ function ExplorerContextMenu({
   onOpenBeside,
   onOpenBrowser,
   onRevealExternal,
+  onCopyPath,
   onNewFile,
   onRename,
   onTrash,
@@ -723,6 +774,8 @@ function ExplorerContextMenu({
   onOpenBrowser: (path: string) => void;
   /** The file or folder selected in the OS file manager (issue 324). */
   onRevealExternal: (path: string) => void;
+  /** The path (or the path below the checkout root) put on the clipboard. */
+  onCopyPath: (path: string, relative: boolean) => void;
   onNewFile: (parent: string, kind: "file" | "folder") => void;
   onRename: (row: ExplorerRow) => void;
   onTrash: (row: ExplorerRow) => void;
@@ -738,6 +791,7 @@ function ExplorerContextMenu({
     reveal: revealHost(),
     device: explorerContext(useShellStore.getState().rest).device,
     node: screenDeviceId(useShellStore.getState().rest),
+    chord: (id) => commandLabel(id),
   });
   return (
     <EntryPointMenu
@@ -751,7 +805,9 @@ function ExplorerContextMenu({
         else if (id === "new-folder") onNewFile(menu.path, "folder");
         else if (row && id === "open-beside") onOpenBeside(row.path);
         else if (row && id === "open-browser") onOpenBrowser(row.path);
-        else if (row && id === "reveal_external") onRevealExternal(row.path);
+        else if (id === "reveal_external") onRevealExternal(menu.path);
+        else if (id === "copy_path") onCopyPath(menu.path, false);
+        else if (id === "copy_relative_path") onCopyPath(menu.path, true);
         else if (row && id === "rename") onRename(row);
         else if (row && id === "trash") onTrash(row);
       }}

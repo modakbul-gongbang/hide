@@ -16,7 +16,9 @@ import {
   rowForPath,
   rowTitle,
   selectionAfterRemoval,
+  treeCommandFor,
 } from "./explorer";
+import { effectiveRegistry, systemRegistry } from "./shortcuts";
 import type { ChangedFileStatus, ChangesSnapshot, DeviceHost } from "./snapshot";
 import type { DirectoryList } from "./store";
 
@@ -304,5 +306,31 @@ describe("a device listing that waits on Settings", () => {
     expect(helperNeedsSettings(host("connecting"))).toBe(false);
     expect(helperNeedsSettings(host("unavailable"))).toBe(false);
     expect(helperNeedsSettings(undefined)).toBe(false);
+  });
+});
+
+describe("the chords the tree answers itself", () => {
+  const press = (code: string, mods: { meta?: boolean; alt?: boolean; shift?: boolean; ctrl?: boolean } = {}) => ({ code, ...mods });
+
+  it("reads the path copies on a Mac as VS Code's chords and Move to Trash as ⌘⌫", () => {
+    const mac = systemRegistry("mac");
+    expect(treeCommandFor(press("KeyC", { meta: true, alt: true }), mac, "electron")).toBe("copy_path");
+    expect(treeCommandFor(press("KeyC", { meta: true, alt: true, shift: true }), mac, "electron")).toBe("copy_relative_path");
+    expect(treeCommandFor(press("Backspace", { meta: true }), mac, "electron")).toBe("move_to_trash");
+    expect(treeCommandFor(press("KeyC", { meta: true }), mac, "electron")).toBeNull();
+  });
+
+  it("reads them on Windows and Linux as Alt+Shift+C, Alt+Shift+R and Delete", () => {
+    const pc = systemRegistry("pc");
+    expect(treeCommandFor(press("KeyC", { alt: true, shift: true }), pc, "electron")).toBe("copy_path");
+    expect(treeCommandFor(press("KeyR", { alt: true, shift: true }), pc, "electron")).toBe("copy_relative_path");
+    expect(treeCommandFor(press("Delete"), pc, "electron")).toBe("move_to_trash");
+  });
+
+  it("follows the chord the operator bound, and has none in a browser tab until one is bound", () => {
+    const bound = effectiveRegistry({ copy_path: "cmd+shift+u" }, "electron", "mac").registry;
+    expect(treeCommandFor(press("KeyU", { meta: true, shift: true }), bound, "electron")).toBe("copy_path");
+    expect(treeCommandFor(press("KeyC", { meta: true, alt: true }), bound, "electron")).toBeNull();
+    expect(treeCommandFor(press("KeyC", { meta: true, alt: true }), systemRegistry("mac"), "browser")).toBeNull();
   });
 });

@@ -12,6 +12,8 @@ import { revealExternalEntry, type RevealHost } from "./revealExternal";
 import type { TFunction } from "i18next";
 import { translate } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
+import { chordEquals, hostChord, type Chord, type Command, type CommandId } from "./shortcuts";
+import type { HostKind } from "./host";
 
 /** The one Git slot a row carries: a letter for a file, a dot for a folder. */
 export type ExplorerDecoration = {
@@ -348,16 +350,18 @@ export function selectionAfterRemoval(rows: ExplorerRow[], path: string, rootPat
   return parentSelection(rows, path) ?? rootPath;
 }
 
-export type ExplorerMenuId = "new-file" | "new-folder" | "open-beside" | "open-browser" | "reveal_external" | "rename" | "trash";
+export type ExplorerMenuId = "new-file" | "new-folder" | "open-beside" | "open-browser" | "reveal_external" | "copy_path" | "copy_relative_path" | "rename" | "trash";
 
 /**
  * The tree's context menu (docs/UI_BEHAVIOR.md, Explorer file management): a
- * folder row's two creations, or a file row's opens, then the OS file
- * manager's reveal where the host has one, then Rename and Move to Trash.
- * The empty area below the rows (`row` null) stands for the root and offers
- * only the two creations.
+ * folder's two creations, or a file's opens, then the OS file manager's
+ * reveal where the host has one, the two path copies, then Rename and Move to
+ * Trash. The root row and the empty area below the rows (`row` null) stand
+ * for the checkout's root and offer the creations, the reveal and the two path
+ * copies, never a rename or a trash. `chord` reads a command's chord as the
+ * operator has it bound, so each item shows the key that does the same.
  */
-export function explorerMenuItems({ isDirectory, row, html, besideReason, reveal, device, node }: {
+export function explorerMenuItems({ isDirectory, row, html, besideReason, reveal, device, node, chord }: {
   isDirectory: boolean;
   row: Pick<ExplorerRow, "path"> | null;
   /** The file is HTML, which a browser display can show (issue 155). */
@@ -368,6 +372,8 @@ export function explorerMenuItems({ isDirectory, row, html, besideReason, reveal
   device: string;
   /** The core's own node id: the OS file manager reveals only its files. */
   node: string;
+  /** A command's chord as the operator reads it, "" when it has none. */
+  chord: (id: CommandId) => string;
 }): MenuEntry<ExplorerMenuId>[] {
   const items: MenuEntry<ExplorerMenuId>[] = [];
   if (isDirectory) {
@@ -377,10 +383,27 @@ export function explorerMenuItems({ isDirectory, row, html, besideReason, reveal
     items.push({ id: "open-beside", label: translate("history.openBeside"), unavailable: besideReason });
     if (html) items.push({ id: "open-browser", label: translate("explorer.openBrowser"), unavailable: null });
   }
-  if (!row) return items;
   const external = revealExternalEntry(reveal, device, node, translate, null, true);
   items.push(...external);
-  items.push({ id: "rename", label: translate("common.rename"), unavailable: null, ...(external.length ? { separated: true } : {}) });
-  items.push({ id: "trash", label: translate("explorer.moveToTrash"), unavailable: null, separated: true, destructive: true });
+  items.push({ id: "copy_path", label: translate("commands.copy_path"), unavailable: null, separated: true, shortcut: chord("copy_path") });
+  items.push({ id: "copy_relative_path", label: translate("commands.copy_relative_path"), unavailable: null, shortcut: chord("copy_relative_path") });
+  if (!row) return items;
+  items.push({ id: "rename", label: translate("common.rename"), unavailable: null, separated: true });
+  items.push({ id: "trash", label: translate("explorer.moveToTrash"), unavailable: null, separated: true, destructive: true, shortcut: chord("move_to_trash") });
   return items;
+}
+
+
+/** The commands the tree answers itself while it holds the keyboard: the window leaves their chords alone (`passthrough` in the registry), so a terminal keeps its keys. */
+export type TreeCommand = "move_to_trash" | "copy_path" | "copy_relative_path";
+const TREE_COMMANDS: readonly TreeCommand[] = ["move_to_trash", "copy_path", "copy_relative_path"];
+
+/** The tree command `chord` presses in `registry` on `host`, as the operator has it bound, or null. */
+export function treeCommandFor(chord: Chord, registry: readonly Command[], host: HostKind): TreeCommand | null {
+  for (const id of TREE_COMMANDS) {
+    const bound = registry.find((command) => command.id === id);
+    const mapped = bound ? hostChord(bound, host) : null;
+    if (mapped && chordEquals(mapped, chord)) return id;
+  }
+  return null;
 }

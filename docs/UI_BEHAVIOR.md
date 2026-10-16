@@ -1076,9 +1076,24 @@ Under the light theme a mark the theme draws differently on a light background t
 The same marks stand beside a file in ⌘P, on a View tab and on a History row.
 A changed file's name takes its status mark's color; a folder's name stays plain and its dot carries the state.
 
-The tree's context menu on a file row is Open to the side (and Open in Browser for an HTML file), a separator, the reveal, a separator, Rename, a separator, Move to Trash.
-A folder row has New File and New Folder in place of the opens; the empty area below the rows stands for the root and offers only the two creations.
+The tree's context menu on a file row is Open to the side (and Open in Browser for an HTML file), a separator, the reveal, a separator, Copy Path and Copy Relative Path, a separator, Rename, a separator, Move to Trash.
+A folder row has New File and New Folder in place of the opens.
+Each item shows the chord that does the same, as the operator has it bound, at its end.
 The item set the menu offers is a presentation decision a test can check directly (`explorerMenuItems` in `web/src/explorer.ts`), not something the platform decides implicitly.
+
+The root row, the checkout's name above the tree, stands for the checkout's root.
+A right-click on it, or on the blank room under the last row, opens the root's menu: New File, New Folder, a separator, the reveal, a separator, Copy Path and Copy Relative Path.
+It never offers Rename or Move to Trash.
+The room under the last row is one row tall and always there, so the root's menu can be reached however long the tree is.
+While the pointer or the keyboard is on the root row it shows three icon buttons beside Refresh, VS Code's pattern: New File and New Folder, which begin a name in the root as the menu items do, and Collapse All, which folds every open folder and is disabled while none is open.
+The buttons keep their place in the row whether they show or not, so the name never moves when they appear, and they show all the time where there is no hover.
+Refresh and the Git mark stay where they were.
+
+Copy Path puts the item's whole path on the clipboard, in the checkout device's own spelling, and Copy Relative Path the path below the checkout root (`.` for the root itself).
+⌥⌘C and ⇧⌥⌘C (Windows and Linux: Alt+Shift+C and Alt+Shift+R) do the same on the selected row, or on the root when none is selected, while the tree holds the keyboard.
+They are registry commands (`copy_path`, `copy_relative_path`) listed in the shortcut sheet as Explorer only, rebound in Settings, Shortcuts, and answered by the tree rather than the window, so a terminal keeps those keys.
+A clipboard that refuses the write goes to the diagnostic log, and nothing else changes: neither command touches a file, so there is nothing to undo.
+Collapse All changes only the tree's expansion, which the next press on a folder restores.
 
 The reveal is one action, `reveal_external`, on Explorer rows, History rows, View tabs and sidebar project and checkout rows (`web/src/revealExternal.ts`).
 A History row's menu is Open to the side, a separator, then the reveal of the row's file.
@@ -2291,6 +2306,8 @@ Each exception has a dominant convention on Windows and Linux, or a chord the sy
 - In a browser tab, Reopen closed tab is Ctrl+Alt+Shift+T: Chrome keeps Alt+Shift+T to focus its toolbar, which keyboard users rely on, and the macOS browser chord ⌥⇧T is those same keys there.
 - Not yet handled: a browser tab's area cycle is Alt+` and Alt+Shift+` on Windows and Linux (Chrome keeps Ctrl+Tab, as it keeps ⌃Tab on macOS), and stock GNOME and KDE take both to switch between an app's windows, so on those desktops the cycle reaches the page only once the desktop's keys are changed or the cycle is bound to another chord in Settings, Shortcuts.
 - Move to Trash in the Explorer is Delete, as in Windows Explorer and the Linux file managers.
+- Copy Relative Path is Alt+Shift+R: the rule would give it Copy Path's Alt+Shift+C, and VS Code's own chord for it is a two-step sequence (Ctrl+K, then Ctrl+Shift+C) that the registry cannot hold.
+  A browser tab has neither path chord, because Chrome keeps ⌥⌘C (Inspect); the menu items work there.
 - Inside a text field, a palette, a board or a document, no terminal holds the keyboard, so the system's own command key applies: ⌘↵ is Ctrl+Enter (send a form, open a ⌘P result to the side, open a pull request on GitHub), ⌘-click is Ctrl-click (a link, a pull request, an issue), and Ctrl+S saves the document in front as well as Ctrl+Shift+S.
   A file or diff View's comment chord ⇧⌘. is Ctrl+Shift+. there for the same reason ([View openers and comments](#view-openers-and-comments)).
 - Tab digits follow the rule (Ctrl+Shift+1-9, as in WezTerm): Windows Terminal, GNOME Terminal and the browsers each use a different modifier, so no convention outweighs the rule.
@@ -2373,6 +2390,8 @@ The sheet carries no row or explanation for a command the removed native app alo
 | Grow View area | none | none | none | none |
 | Shrink View area | none | none | none | none |
 | Move to Trash (exception) | `⌘⌫` | `Delete` | `⌘⌫` | `Delete` |
+| Copy Path (Explorer only) | `⌥⌘C` | `Alt+Shift+C` | none | none |
+| Copy Relative Path (Explorer only, exception) | `⇧⌥⌘C` | `Alt+Shift+R` | none | none |
 | Settings | `⌘,` | `Ctrl+Shift+,` | `⌥,` | `Ctrl+Shift+,` |
 | Keyboard shortcuts | `⌘/` | `Ctrl+Shift+/` | `⌘/` | `Ctrl+Shift+/` |
 

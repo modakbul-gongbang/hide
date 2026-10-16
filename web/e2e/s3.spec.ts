@@ -268,6 +268,69 @@ test("the Explorer lists a checkout, expands a folder and opens a preview tab", 
   }
 });
 
+test("the Explorer's root row creates, folds and copies paths, and a long tree keeps blank room to right-click", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, sent, lastSent } = fixture;
+  try {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(page.url()).origin });
+    const rootRow = page.locator("[data-explorer-root-row]");
+    const actionIds = ["new-file", "new-folder", "collapse-all"];
+
+    // The creation and fold buttons show when the pointer is on the row.
+    for (const id of actionIds) await expect(rootRow.locator(`[data-explorer-root-action="${id}"]`)).toHaveCSS("opacity", "0");
+    await rootRow.hover();
+    for (const id of actionIds.slice(0, 2)) await expect(rootRow.locator(`[data-explorer-root-action="${id}"]`)).toHaveCSS("opacity", "1");
+    await screenshot(page, "s3-explorer-root-hover");
+
+    // Collapse All stays off until a folder is open, then folds every folder.
+    await expect(rootRow.locator('[data-explorer-root-action="collapse-all"]')).toBeDisabled();
+    await page.locator(`[data-explorer-row="${repo}/src"]`).click();
+    await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toBeVisible();
+    await rootRow.hover();
+    await rootRow.locator('[data-explorer-root-action="collapse-all"]').click();
+    await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(0);
+    await expect(page.locator(`[data-explorer-row="${repo}/src"]`)).toBeVisible();
+
+    // New File on the root row opens the name field at the top of the root.
+    await rootRow.hover();
+    await rootRow.locator('[data-explorer-root-action="new-file"]').click();
+    await expect(page.locator('[data-explorer-draft="create"] input')).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    // A right-click on the root row opens the root's menu.
+    await rootRow.click({ button: "right" });
+    const menu = page.locator("[data-explorer-menu]");
+    await expect(menu).toHaveAttribute("data-explorer-menu", repo);
+    await expect(menu.locator("[data-menu-item]")).toHaveText(/^(New File|New Folder|Reveal.*|Show in File Manager|Copy Path.*|Copy Relative Path.*)$/);
+    await expect(menu.locator('[data-menu-item="rename"]')).toHaveCount(0);
+    await expect(menu.locator('[data-menu-item="trash"]')).toHaveCount(0);
+    await screenshot(page, "s3-explorer-root-menu");
+    await menu.locator('[data-menu-item="copy_path"]').click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(repo);
+
+    // A row's menu copies the path whole or below the checkout.
+    await page.locator(`[data-explorer-row="${repo}/README.md"]`).click({ button: "right" });
+    await expect(menu.locator('[data-menu-item="copy_path"]')).toBeVisible();
+    await screenshot(page, "s3-explorer-row-menu");
+    await menu.locator('[data-menu-item="copy_relative_path"]').click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("README.md");
+    expect(sent.get("path_rename") ?? 0).toBe(0);
+    expect(lastSent.get("path_trash")).toBeUndefined();
+
+    // Blank room under the last row is part of the tree, so the root's menu
+    // can always be reached; a pointer there is not on a row.
+    const tail = page.locator("[data-explorer-tail]");
+    const lastRow = page.locator("[data-explorer-row]").last();
+    const tailBox = (await tail.boundingBox())!;
+    const lastBox = (await lastRow.boundingBox())!;
+    expect(tailBox.y + tailBox.height).toBeGreaterThan(lastBox.y + lastBox.height);
+    await tail.click({ button: "right", position: { x: 20, y: tailBox.height - 4 } });
+    await expect(menu).toHaveAttribute("data-explorer-menu", repo);
+  } finally {
+    close(fixture);
+  }
+});
+
 test("the Explorer filter keeps matches under their folders and Escape restores the tree", async ({ page }) => {
   const fixture = await openCheckout(page);
   const { repo } = fixture;

@@ -101,6 +101,8 @@ describe("shortcut registry", () => {
       text_smaller: "⌘-",
       text_reset: "⌘0",
       move_to_trash: "⌘⌫",
+      copy_path: "⌥⌘C",
+      copy_relative_path: "⌥⇧⌘C",
       settings: "⌘,",
       shortcuts: "⌘/",
       // The area commands have no chord until the operator binds one (PRD cmdk-navigation D-05).
@@ -283,6 +285,7 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
         "toggle_lane_work", "toggle_lane_files", "toggle_lane_changes", "toggle_lane_memory",
         "focus_next_agent_area", "focus_previous_agent_area", "grow_agent_area", "shrink_agent_area",
         "focus_next_view_area", "focus_previous_view_area", "grow_view_area", "shrink_view_area",
+        "copy_path", "copy_relative_path",
       ].sort(),
     );
     for (const id of EDITABLE_PANE_COMMANDS) expect(REGISTRY.some((command) => command.id === id)).toBe(true);
@@ -429,6 +432,8 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
       text_smaller: "Ctrl+-",
       text_reset: "Ctrl+0",
       move_to_trash: "Delete",
+      copy_path: "Alt+Shift+C",
+      copy_relative_path: "Alt+Shift+R",
       settings: "Ctrl+Shift+,",
       shortcuts: "Ctrl+Shift+/",
       ...Object.fromEntries(AREA_COMMANDS.map((id) => [id, ""])),
@@ -545,7 +550,7 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
   it("refuses a desktop chord without Ctrl+Shift or Alt+Shift, one the system keeps, the Windows key, and a taken one", () => {
     expect(bindingProblem("split_right", { code: "KeyR", ctrl: true }, pc, "electron", "pc")).toEqual({ code: "modifier", modifier: "desktop_pc" });
     expect(bindingProblem("split_right", { code: "KeyR", alt: true }, pc, "electron", "pc")).toMatchObject({ code: "modifier" });
-    expect(bindingProblem("split_right", { code: "KeyR", alt: true, shift: true }, pc, "electron", "pc")).toBeNull();
+    expect(bindingProblem("split_right", { code: "KeyY", alt: true, shift: true }, pc, "electron", "pc")).toBeNull();
     // Ctrl+Alt+Shift stands for no macOS chord, so a set holding it would be refused on a Mac.
     expect(bindingProblem("split_right", { code: "KeyR", ctrl: true, alt: true, shift: true }, pc, "electron", "pc")).toMatchObject({ code: "modifier" });
     expect(bindingProblem("split_right", { code: "KeyD", alt: true, shift: true }, pc, "electron", "pc")).toEqual({ code: "conflict", chord: "Alt+Shift+D", commandId: "split_down" });
