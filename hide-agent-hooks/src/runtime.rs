@@ -282,8 +282,8 @@ impl AgentRuntime {
 
     /// The settings-file runtime that speaks `dialect`. OpenCode's, Pi's and
     /// omp's dialects are spoken by a script of Hide's in the agent's own
-    /// folder (`crate::plugin`), and Grok's and Cursor's hooks are written by
-    /// `crate::guidance`; none has a settings file.
+    /// folder (`crate::plugin`), and Grok's, Cursor's and agy's hooks are
+    /// written by `crate::guidance`; none has a settings file.
     pub const fn from_dialect(dialect: hide_agent_adapter::HookDialect) -> Option<Self> {
         match dialect {
             hide_agent_adapter::HookDialect::ClaudeCode => Some(Self::ClaudeCode),
@@ -292,7 +292,8 @@ impl AgentRuntime {
             | hide_agent_adapter::HookDialect::Grok
             | hide_agent_adapter::HookDialect::Cursor
             | hide_agent_adapter::HookDialect::Pi
-            | hide_agent_adapter::HookDialect::Omp => None,
+            | hide_agent_adapter::HookDialect::Omp
+            | hide_agent_adapter::HookDialect::Antigravity => None,
         }
     }
 

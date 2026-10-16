@@ -864,7 +864,7 @@ fn a_retired_agent_gets_no_new_hook_and_its_old_entry_comes_out() {
     }
     assert_eq!(
         GuidanceAgent::LIVE,
-        [GuidanceAgent::Grok, GuidanceAgent::Cursor]
+        [GuidanceAgent::Grok, GuidanceAgent::Cursor, GuidanceAgent::Antigravity]
     );
     assert!(!GuidanceAgent::is_retired_id("cursor"));
     assert!(!GuidanceAgent::is_retired_id("grok"));
