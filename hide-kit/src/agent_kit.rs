@@ -158,6 +158,14 @@ fn observe_guidance(target: &KitTarget, adapter: &AgentAdapter, agent: GuidanceA
                     "the hook runs {found}, not this build's {}",
                     wanted.display()
                 )),
+                // Hide AI's agy folder goes in with agy's hook, so a pass
+                // after it went missing or lost agy's trust writes it again.
+                Some(_)
+                    if agent == GuidanceAgent::Antigravity
+                        && hide_agent_hooks::antigravity_trust::read_only_due(&target.home) =>
+                {
+                    Observed::Stale("Hide AI's tool-free folder for agy is missing or untrusted".to_owned())
+                }
                 Some(_) if guidance::matches_install(agent, &target.home, &wanted) => {
                     Observed::Current
                 }
@@ -567,7 +575,7 @@ fn herdr_piece(
     let code = herdr_code(adapter);
     let recorded = record.contains_piece(&code);
     let listed = match herdr {
-        Some(Ok(statuses)) => statuses.of(integration.name),
+        Some(Ok(statuses)) => statuses.of(integration.target),
         _ => None,
     };
     let piece = |state, reason: Option<String>| PieceReport {
@@ -1024,11 +1032,11 @@ fn apply_herdr(
             }
             match &before {
                 Some(Ok(statuses))
-                    if statuses.of(integration.name) == Some(Integration::Missing) =>
+                    if statuses.of(integration.target) == Some(Integration::Missing) =>
                 {
                     *changed |= record.forget_piece(&code);
                 }
-                Some(Ok(_)) => match herdr_integration::uninstall(target, integration.name) {
+                Some(Ok(_)) => match herdr_integration::uninstall(target, integration.target) {
                     Ok(()) => {
                         *changed |= record.forget_piece(&code);
                         touched = true;
@@ -1061,7 +1069,7 @@ fn apply_herdr(
             continue;
         };
         let restore = scope.agent_on.contains(adapter.id);
-        let install_now = match statuses.of(integration.name) {
+        let install_now = match statuses.of(integration.target) {
             Some(Integration::Missing) => restore || (!recorded && record_readable),
             // Only what Hide installed is Hide's to bring up to date.
             Some(Integration::Outdated) => recorded,
@@ -1075,7 +1083,7 @@ fn apply_herdr(
         // after it, so the window another writer could land an entry in is
         // the one subprocess.
         let file_before = adapter.trusts_herdr_hook().then(|| read_hook_file(target));
-        match herdr_integration::install(target, integration.name) {
+        match herdr_integration::install(target, integration.target) {
             Ok(()) => {
                 let files = file_before.map(|before| HookFiles {
                     before,
@@ -1098,7 +1106,7 @@ fn apply_herdr(
     if let Some(Ok(statuses)) = &after {
         for (adapter, files) in installed_now {
             let integration = adapter.herdr;
-            if statuses.of(integration.name) == Some(Integration::Current) && record_readable {
+            if statuses.of(integration.target) == Some(Integration::Current) && record_readable {
                 *changed |= record.insert_piece(&herdr_code(adapter));
                 if let Some(files) = files {
                     *changed |= learn_herdr_hooks(record, adapter, files);
@@ -1211,10 +1219,10 @@ pub(crate) fn remove_herdr(target: &KitTarget, record: &Record) -> Vec<(String, 
                 Some(Err(reason)) => RemoveOutcome::Failed {
                     reason: reason.clone(),
                 },
-                Some(Ok(listed)) if listed.of(integration.name) == Some(Integration::Missing) => {
+                Some(Ok(listed)) if listed.of(integration.target) == Some(Integration::Missing) => {
                     RemoveOutcome::Absent
                 }
-                Some(Ok(_)) => match herdr_integration::uninstall(target, integration.name) {
+                Some(Ok(_)) => match herdr_integration::uninstall(target, integration.target) {
                     Ok(()) => RemoveOutcome::Removed,
                     Err(reason) => RemoveOutcome::Failed { reason },
                 },

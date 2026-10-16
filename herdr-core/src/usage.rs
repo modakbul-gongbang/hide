@@ -301,6 +301,9 @@ impl UsageDriver {
                         let root = match source {
                             LimitSource::ClaudeUsageText => paths.claude_cwd.clone(),
                             LimitSource::CodexUsage => paths.codex_home.clone(),
+                            // agy's `/usage` reads no workspace; it runs in
+                            // Hide's own folder as Claude's does.
+                            LimitSource::AntigravityUsage => paths.claude_cwd.clone(),
                         };
                         SourceRead::new(
                             row.herdr.name,
@@ -525,14 +528,14 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
     #[test]
-    fn registry_has_all_agents_but_only_two_distinct_limit_reads() {
+    fn registry_has_all_agents_but_only_three_distinct_limit_reads() {
         let rows = AgentUsage::initial_rows();
-        assert_eq!(rows.len(), 7);
+        assert_eq!(rows.len(), 8);
         assert_eq!(
             rows.iter()
                 .filter(|r| matches!(r.limits, Cell::Loading))
                 .count(),
-            2
+            3
         );
         for row in &rows {
             assert_eq!(
@@ -545,7 +548,7 @@ mod tests {
                 .iter()
                 .map(|r| r.usage.limit_sources().count())
                 .sum::<usize>(),
-            2
+            3
         );
     }
 }

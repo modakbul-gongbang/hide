@@ -26,14 +26,16 @@ export function agentLogo(id: string): string | null {
 
 /**
  * The agent a Herdr kind names, with its logo, for the mark on a pane, tab or
- * row. Null for a plain shell and for a kind Hide does not support, which draw
- * the neutral mark: a logo bundled for another reason (Hide AI's Gemini CLI)
- * does not make its name an agent.
+ * row; `logo` is null for an agent with no bundled mark, which draws the
+ * monogram of `label` (design 10). Null for a plain shell and for a kind Hide
+ * does not support, which draw the neutral mark: a logo bundled for another
+ * reason (Hide AI's Gemini CLI) does not make its name an agent.
  */
-export function agentMarkOf(kind: string | null | undefined): { id: string; logo: string; plated: boolean } | null {
+export function agentMarkOf(kind: string | null | undefined): { id: string; logo: string | null; label: string; plated: boolean } | null {
   const adapter = agentAdapter(kind ?? "");
-  const logo = adapter ? LOGOS[adapter.logo_id] : undefined;
-  return adapter && logo ? { id: adapter.herdr_kind, logo, plated: PLATED.has(adapter.logo_id) } : null;
+  if (!adapter) return null;
+  const logo = LOGOS[adapter.logo_id] ?? null;
+  return { id: adapter.herdr_kind, logo, label: adapter.label, plated: logo !== null && PLATED.has(adapter.logo_id) };
 }
 
 /** Up to two letters of a name: the monogram of an agent with no logo. */

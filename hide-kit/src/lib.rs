@@ -853,7 +853,7 @@ fn apply_scope(target: &KitTarget, scope: &Scope) -> KitReport {
         && let Some(failure) = codex_trust::ensure(
             target,
             // Herdr's entries only while Herdr says its integration is in place.
-            if applied.herdr_current(codex.herdr.name) {
+            if applied.herdr_current(codex.herdr.target) {
                 record.herdr_hook_entries(codex.id)
             } else {
                 &[]

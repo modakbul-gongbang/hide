@@ -1048,7 +1048,12 @@ impl LargeRecord {
         }
         let turn = match agent {
             // Grok's oversized records are read by its own scan.
-            Agent::OpenCode | Agent::Grok | Agent::Pi | Agent::Omp | Agent::Cursor => None,
+            Agent::OpenCode
+            | Agent::Grok
+            | Agent::Pi
+            | Agent::Omp
+            | Agent::Cursor
+            | Agent::Antigravity => None,
             Agent::Codex => self.codex(),
             Agent::Claude => self.claude(),
         };

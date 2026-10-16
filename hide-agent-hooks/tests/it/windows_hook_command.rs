@@ -399,3 +399,77 @@ fn grok_and_cursor_run_the_helper_through_the_powershell_they_start_only_while_i
         );
     }
 }
+
+/// agy hands its hook command to `cmd /c` on Windows (its hook contract:
+/// "run via `sh -c` on Unix, `cmd /c` on Windows"). Run here as cmd receives
+/// it, verbatim: with the helper gone, failing, or answering for itself, the
+/// command prints one line agy reads, and never allow.
+#[test]
+fn agys_cmd_tool_command_leaves_the_call_to_agy_when_the_helper_is_gone_or_fails() {
+    use std::os::windows::process::CommandExt;
+
+    use hide_agent_hooks::guidance::{self, GuidanceAgent};
+
+    let ask: Value = serde_json::json!({ "decision": "ask" });
+    let event = serde_json::json!({
+        "conversationId": "c",
+        "toolCall": { "name": "view_file", "args": { "AbsolutePath": "C:\\work\\README.md" } },
+    })
+    .to_string();
+    for case in ["gone", "fails", "answers"] {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        std::fs::create_dir_all(GuidanceAgent::Antigravity.home_directory(&home)).unwrap();
+        let helper = root
+            .path()
+            .join("Hide Kit (1) & co")
+            .join(HELPER_BINARY_NAME);
+        guidance::install(GuidanceAgent::Antigravity, &home, &helper).unwrap();
+        std::fs::create_dir_all(helper.parent().unwrap()).unwrap();
+        match case {
+            "gone" => {}
+            // A program that takes the helper's arguments as files it cannot
+            // open, says so on stderr and exits nonzero.
+            "fails" => {
+                std::fs::copy(r"C:\Windows\System32\findstr.exe", &helper).unwrap();
+            }
+            _ => {
+                std::fs::copy(env!("CARGO_BIN_EXE_hide-agent-hooks"), &helper).unwrap();
+            }
+        }
+        let document: Value = serde_json::from_str(
+            &std::fs::read_to_string(GuidanceAgent::Antigravity.config_path(&home)).unwrap(),
+        )
+        .unwrap();
+        let command = document["hide"]["PreToolUse"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        let mut child = Command::new("cmd.exe")
+            .raw_arg("/c")
+            .raw_arg(command)
+            .env(hide_platform::host::HOME_VARIABLE, &home)
+            .env_remove("HERDR_PANE_ID")
+            .env_remove("HIDE_CAP_REF")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(event.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{case}: {output:?}");
+        let text = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .collect();
+        assert_eq!(lines.len(), 1, "{case}: one answer line: {output:?}");
+        let answer: Value = serde_json::from_str(lines[0].trim()).unwrap_or(Value::Null);
+        assert_eq!(answer, ask, "{case}: {output:?}");
+    }
+}

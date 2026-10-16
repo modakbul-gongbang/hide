@@ -73,7 +73,7 @@ fn every_adapter_names_an_official_page_and_a_unique_id() {
         .filter(|adapter| adapter.default_on)
         .map(|adapter| adapter.id)
         .collect();
-    assert_eq!(defaults, ["claude-code", "codex"]);
+    assert_eq!(defaults, ["claude-code", "codex", "antigravity"]);
 }
 
 #[test]
@@ -616,11 +616,12 @@ fn a_program_on_the_login_shells_path_is_installed_and_the_shell_is_asked_again_
 fn a_machine_the_kit_has_never_touched_waits_for_the_first_choice_before_any_agent_gets_anything() {
     let fixture = Fixture::fresh();
     install(&fixture, "codex", ".codex");
+    install(&fixture, "agy", ".gemini/config");
 
     let report = apply(&fixture.target, &Scope::automatic());
 
     assert!(report.held_for_onboarding);
-    for id in ["claude-code", "codex"] {
+    for id in ["claude-code", "codex", "antigravity"] {
         let held = agent(&report, id);
         assert!(!held.enabled, "{held:?}");
         assert_eq!(held.skill.state, ComponentState::Off);
@@ -638,6 +639,7 @@ fn a_machine_the_kit_has_never_touched_waits_for_the_first_choice_before_any_age
             .exists()
     );
     assert!(!shared_skill(&fixture).exists());
+    assert!(!agy_hooks(&fixture).exists());
     // The CLI link and the retirement stage are not agents and are applied.
     assert_eq!(state(&report, ComponentId::Cli), ComponentState::Installed);
 
@@ -706,6 +708,35 @@ fn a_machine_with_a_record_keeps_what_it_had_when_this_build_arrives() {
     );
 }
 
+fn agy_hooks(fixture: &Fixture) -> std::path::PathBuf {
+    fixture.home().join(".gemini/config/hooks.json")
+}
+
+#[test]
+fn agy_is_on_by_default_where_its_program_is_found_and_gets_nothing_where_it_is_not() {
+    let fixture = Fixture::new();
+    // Gemini CLI's folder alone is not agy.
+    set_up(&fixture, ".gemini");
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    let agy = agent(&report, "antigravity");
+    assert!(agy.enabled, "{agy:?}");
+    assert_eq!(agy.availability, Availability::NotInstalled);
+    assert!(!agy_hooks(&fixture).exists());
+
+    install(&fixture, "agy", ".gemini/config");
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    let hook = agent(&report, "antigravity").hook.as_ref().unwrap();
+    assert_eq!(hook.state, ComponentState::Installed, "{hook:?}");
+    let block: Value =
+        serde_json::from_str(&std::fs::read_to_string(agy_hooks(&fixture)).unwrap()).unwrap();
+    assert!(block["hide"].is_object(), "{block}");
+    // On by default, not by the operator's choice.
+    assert!(!agent(&report, "antigravity").chosen);
+}
+
 #[test]
 fn cursor_gets_the_guidance_hook_with_the_switch_and_loses_it_with_it() {
     let file = ".cursor/hooks.json";
@@ -733,7 +764,7 @@ fn cursor_gets_the_guidance_hook_with_the_switch_and_loses_it_with_it() {
 }
 
 #[test]
-fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_and_cursor_are_partial()
+fn claude_code_and_codex_do_everything_opencode_pi_omp_and_antigravity_collaborate_and_grok_and_cursor_are_partial()
  {
     use crate::agents::Feature::{self, *};
     // The expected rows come from the PRDs and the hook research, not from
@@ -789,7 +820,7 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
         Start,
         Titles,
     ];
-    let expected: [(&str, &[Feature], bool); 7] = [
+    let expected: [(&str, &[Feature], bool); 8] = [
         ("claude-code", &Feature::ALL, false),
         ("codex", &Feature::ALL, false),
         (
@@ -821,6 +852,7 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
             ],
             true,
         ),
+        ("antigravity", &omp, false),
     ];
     assert_eq!(
         ADAPTERS.iter().map(|row| row.id).collect::<Vec<_>>(),
@@ -841,8 +873,9 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
 
 #[test]
 fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
-    // Letters and Memory come from the six-event hook or a script file of
-    // Hide's (OpenCode's plugin, Pi's and omp's extension),
+    // Letters and Memory come from the six-event hook, a script file of
+    // Hide's (OpenCode's plugin, Pi's and omp's extension) or agy's hook
+    // block, which answers its prompt event,
     // which the hook crate speaks a dialect for; the subagent count and the
     // spawn guard also come from Grok's and Cursor's own hook files. An agent
     // claiming them without a hook would be a popover that says more than
@@ -863,7 +896,11 @@ fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
             .count()
     );
     for row in ADAPTERS {
-        let instrumented = matches!(row.hook, HookSupport::Part(_) | HookSupport::Plugin(_));
+        let declared = hide_agent_adapter::adapter(row.id).unwrap();
+        // agy's hook entry answers its prompt event, so it carries letters.
+        let instrumented = matches!(row.hook, HookSupport::Part(_) | HookSupport::Plugin(_))
+            || matches!(row.hook, HookSupport::Guidance(agent)
+                if agent.dialect().is_some() && agent.dialect() == declared.prompt_hook);
         assert_eq!(
             row.supports(crate::agents::Feature::Letters),
             instrumented,
@@ -871,7 +908,6 @@ fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
             row.id
         );
         // Memory needs the hook too, and its own declaration.
-        let declared = hide_agent_adapter::adapter(row.id).unwrap();
         assert_eq!(
             row.supports(crate::agents::Feature::Memory),
             instrumented && declared.memory.is_some(),

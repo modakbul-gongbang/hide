@@ -40,6 +40,7 @@ LANES = (
     "checks",
     "os-contract",
     "os-contract-macos",
+    "agy-contract",
     "windows-check",
     "windows-e2e",
     "windows-desktop",
@@ -69,6 +70,10 @@ OS_CRATES = {
 # The OS contract's macOS leg tests only these two, so only a change to one of
 # them plans it; the others reach it through the nightly.
 OS_CONTRACT_CRATES = {"hide-herdr-client", "hide-platform"}
+# The crates whose agy tests the agy contract runs on Linux and Windows: the
+# agent table, the hook and trust writer, the install kit, the conversation
+# readers and the Hide AI backend (`agy-contract.yml`).
+AGY_CRATES = {"hide-agent-adapter", "hide-agent-hooks", "hide-ai", "hide-kit", "hide-session"}
 # `windows-desktop` is among them because the desktop app starts hided
 # through `hide connect` there, the system's processes and local stream.
 OS_LANES = ("os-contract", "windows-check", "windows-e2e", "windows-desktop")
@@ -247,6 +252,8 @@ NAMED_LANES = (
     (".github/workflows/web-e2e.yml", {"web-e2e", "windows-e2e"}),
     (".github/workflows/desktop-e2e.yml", {"desktop-e2e", "windows-desktop"}),
     (".github/workflows/os-contract.yml", {"os-contract", "os-contract-macos"}),
+    (".github/workflows/agy-contract.yml", {"agy-contract"}),
+    ("scripts/install-agy.sh", {"agy-contract"}),
     (".github/workflows/remote-mailbox.yml", {"remote-mailbox"}),
     (".github/workflows/package.yml", set()),
     (".github/workflows/release.yml", set()),
@@ -340,6 +347,8 @@ def classify(path, status, crates, root):
             lanes.update(OS_LANES)
         if crate["name"] in OS_CONTRACT_CRATES:
             lanes.add("os-contract-macos")
+        if crate["name"] in AGY_CRATES:
+            lanes.add("agy-contract")
         return lanes, f"crate {crate['name']}: {path}", packages
     if parts[0] == "web" and len(parts) > 1:
         if parts[1] == "e2e" and len(parts) == 3 and path.name.endswith(".spec.ts"):

@@ -34,14 +34,14 @@ describe("the agent picker (B27, B28)", () => {
   });
 
   it("names the CLI default when nothing is remembered and the catalog failed, still with the reason", () => {
-    withCatalog({ providers: [{ id: "codex", label: "Codex", state: "needs_login", headline: "", message: null, model: "", models: [], models_unavailable_reason: "Codex is not signed in" }] } as never);
+    withCatalog({ providers: [{ id: "codex", label: "Codex", agent: "codex", state: "needs_login", headline: "", message: null, model: "", models: [], models_unavailable_reason: "Codex is not signed in" }] } as never);
     const html = draw("codex", null);
     expect(html).toContain('data-agent-model=""');
     expect(html).toContain("data-agent-model-reason");
   });
 
   it("enables the model menu once the catalog lists the kind", () => {
-    withCatalog({ providers: [{ id: "claude", label: "Claude", state: "ready", headline: "", message: null, model: "", models: ["haiku", "opus"], models_unavailable_reason: null }] } as never);
+    withCatalog({ providers: [{ id: "claude", label: "Claude", agent: "claude-code", state: "ready", headline: "", message: null, model: "", models: ["haiku", "opus"], models_unavailable_reason: null }] } as never);
     const html = draw("claude", "opus");
     expect(html).not.toContain("data-agent-model-reason");
     expect(html).toContain('data-agent-model="opus"');

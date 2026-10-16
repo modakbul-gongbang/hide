@@ -417,7 +417,7 @@ export interface FactoryQuestionGuard {
   type: "factory_question_guard";
   request_id: WorkspaceRequestId;
   session: string;
-  runtime: "claude-code" | "codex" | "opencode" | "omp";
+  runtime: "claude-code" | "codex" | "opencode" | "omp" | "antigravity";
 }
 /**
  * One pane-scoped document or View transition. Repeating the same request ID and command returns its recorded result within the ten-minute retry window.
@@ -461,7 +461,7 @@ export interface MemoryHookAsk {
   type: "memory_hook";
   request_id: WorkspaceRequestId;
   event: "SessionStart" | "UserPromptSubmit";
-  runtime: "claude" | "codex" | "opencode" | "pi" | "omp";
+  runtime: "claude" | "codex" | "opencode" | "pi" | "omp" | "antigravity";
   session: string;
   prompt?: string;
 }
