@@ -49,8 +49,6 @@ PROTOCOL_CONSTANT = "PROTOCOL_VERSION"
 LOOKUPS_AT_ONCE = 8
 
 
-
-
 @dataclass(eq=False)
 class Pull:
     """An open pull request, or a branch that has none yet (`number` None)."""
@@ -69,6 +67,7 @@ class Pull:
     below: object = None
     depth: int = 1
     stray_base: bool = False
+    # The pull request merged with main, the commit its pairs are merged from.
     commit: object = field(default=None, repr=False)
 
     def __str__(self):
@@ -122,11 +121,15 @@ def kind(paths):
 
 
 def merge_with_main(main, pulls, repo=ROOT):
-    """Merge each pull request with main; one that conflicts keeps the paths instead of a commit."""
+    """Merge each pull request with main into a commit the pairs are merged from.
+
+    A conflict in code leaves no commit, since its code is not what will merge;
+    one in documents only still compares the code with the other pull requests.
+    """
     for pull in pulls:
         tree, conflicts = merge_tree(main, pull.head, repo)
-        if conflicts:
-            pull.conflicts_with_main = tuple(conflicts)
+        pull.conflicts_with_main = tuple(conflicts)
+        if conflicts and kind(conflicts) == "code":
             continue
         pull.commit = git("commit-tree", tree, "-p", main, "-p", pull.head, "-m", f"merge-order: {pull} with main",
                           cwd=repo, env=MERGE_IDENTITY).stdout.strip()
@@ -216,7 +219,7 @@ def verdict(target, other, pulls):
 
 def placement(target, pulls, pairs):
     """The target's code and documents-only conflicts, a verdict for each code one, and the one thing to do."""
-    if target.conflicts_with_main:
+    if target.conflicts_with_main and kind(target.conflicts_with_main) == "code":
         files = short(target.conflicts_with_main)
         if target.below is None:
             do = (f"{target} conflicts with main in {files}: git fetch origin {BASE} && git merge origin/{BASE}, "
@@ -244,6 +247,9 @@ def placement(target, pulls, pairs):
     if docs:
         do += (f" Documents or design only with {', '.join(str(other) for other, _ in docs)}: "
                "resolve that once, right before the merge.")
+    if target.conflicts_with_main:
+        when = "right before the merge" if target.below is None else f"once {target} is the bottom layer"
+        do += f" Documents or design only with main in {short(target.conflicts_with_main)}: merge main once, {when}."
     return {"code": code, "docs": docs, "do": do}
 
 

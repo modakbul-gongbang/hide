@@ -25,7 +25,7 @@ SPEC = importlib.util.spec_from_file_location("merge_order", Path(__file__).pare
 merge_order = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(merge_order)
 
-START = {"a.rs": "one\n", "b.rs": "one\n", "notes.md": "one\n", "Cargo.lock": "one\n"}
+START = {"a.rs": "one\n", "b.rs": "one\n", "notes.md": "one\n", "guide.md": "one\n", "Cargo.lock": "one\n"}
 
 
 class Fixture(unittest.TestCase):
@@ -83,9 +83,10 @@ class Conflicts(Fixture):
         p3 = self.pull(3, {"notes.md": "p3\n"})
         p4 = self.pull(4, {"a.rs": "p4\n"}, on=p1)
         p5 = self.pull(5, {"b.rs": "p5\n"})
+        p6 = self.pull(6, {"a.rs": "p6\n", "guide.md": "p6\n"})
         # #1 moves on after #4 branched from it; #4 takes that by merging #1, not as a conflict.
         p1.head = self.commit(p1.branch, {"a.rs": "p1 again\n"}, start=p1.head)
-        self.advance_main({"b.rs": "main\n"})
+        self.advance_main({"b.rs": "main\n", "guide.md": "main\n"})
         pairs = self.read()
 
         def between(a, b):
@@ -99,9 +100,12 @@ class Conflicts(Fixture):
         # #4 is a layer on #1: what they disagree on is the stack's own business.
         self.assertIsNone(between(p4, p1))
         self.assertEqual(between(p4, p2), "code")
-        # #5 conflicts with main itself, so it is reported once there and left out of the pairs.
+        # #5 conflicts with main itself in code, so it is reported once there and left out of the pairs.
         self.assertEqual(p5.conflicts_with_main, ("b.rs",))
         self.assertFalse(any(p5 in pair for pair in pairs))
+        # #6 conflicts with main in a document only, so its code is still compared.
+        self.assertEqual(p6.conflicts_with_main, ("guide.md",))
+        self.assertEqual(between(p6, p1), "code")
 
     def test_a_conflict_that_mixes_code_and_documents_counts_as_code(self):
         p1 = self.pull(1, {"a.rs": "p1\n", "notes.md": "p1\n"})
