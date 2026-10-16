@@ -46,7 +46,7 @@ describe("the agents of a machine (B8, B9, D-06)", () => {
     // Installed on a system Hide cannot attach to yet: listed with the installed ones, without a switch (B49).
     expect(agentInstalled(agent("codex", { availability: "unsupported_system", enabled: false }))).toBe(true);
     expect(agentUnsupportedHere(agent("codex", { availability: "unsupported_system" }))).toBe(true);
-    // On only because Claude Code and Codex are on by default (no recorded choice): not installed, and never Ready.
+    // On only because Claude Code, Codex and agy are on by default (no recorded choice): not installed, and never Ready.
     const byDefault = agent("codex", { availability: "not_installed", enabled: true, chosen: false, sessions: 0 });
     expect(agentInstalled(byDefault)).toBe(false);
     expect(agentInstalled(agent("codex", { availability: "not_installed", enabled: true }))).toBe(false);

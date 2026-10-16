@@ -558,7 +558,9 @@ pub const ADAPTERS: &[AgentAdapter] = &[
             target: "antigravity-cli",
             folder: &[".gemini", "config"],
         },
-        default_on: false,
+        // On by default like Claude Code and Codex: the operator's amendment
+        // to PRD antigravity-first-class B1/D-14 (2026-10-16).
+        default_on: true,
         prompt_hook: Some(HookDialect::Antigravity),
         spawn_guard: Some(HookDialect::Antigravity),
         subagent_counts: Some(HookDialect::Antigravity),

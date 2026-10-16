@@ -501,7 +501,8 @@ fn the_first_run_choice_is_asked_once_applied_everywhere_and_remembered_for_late
         vec![KitAction::Reinstall {
             components: Vec::new(),
             agents_on: vec!["claude-code".to_owned(), "codex".to_owned()],
-            agents_off: Vec::new(),
+            // agy is on by default and was not chosen, so the answer names it off.
+            agents_off: vec!["antigravity".to_owned()],
             codex_daemon_off: false,
         }]
     );
@@ -616,11 +617,11 @@ fn applying_with_nothing_chosen_answers_the_question_here_and_on_a_waiting_devic
     let off = |scope: &hide_kit::Scope| scope.agent_off.iter().cloned().collect::<Vec<_>>();
     let local = runtime.local_kit_pending.clone().unwrap();
     assert!(local.agent_on.is_empty());
-    assert_eq!(off(&local), ["claude-code", "codex"]);
+    assert_eq!(off(&local), ["antigravity", "claude-code", "codex"]);
     let Some(KitJob::Apply(device)) = runtime.device_kit_pending.get(DEVICE) else {
         panic!("the waiting device is sent the answer");
     };
-    assert_eq!(off(device), ["claude-code", "codex"]);
+    assert_eq!(off(device), ["antigravity", "claude-code", "codex"]);
 }
 
 /// A device that is not connected when Apply is pressed keeps waiting: the

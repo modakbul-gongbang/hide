@@ -54,7 +54,8 @@ test("omp is a row after Pi, and its switch installs Herdr's omp integration in 
     // B1, B5: the order of the supported agents, omp after Pi, off by default.
     await expect(list.locator("[data-agent-row]")).toHaveCount(8, { timeout: 60_000 });
     const rows = await list.locator("[data-agent-row]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-agent-row")));
-    const on = new Set(["claude-code", "codex"]);
+    // Claude Code, Codex and agy are on by default (agy by the operator's amendment to antigravity-first-class B1/D-14).
+    const on = new Set(["claude-code", "codex", "antigravity"]);
     expect(rows).toEqual(["claude-code", "codex", "grok", "opencode", "pi", "omp", "cursor", "antigravity"].map((id) => `${daemon.node}:${id}:${on.has(id) ? "on" : "off"}`));
     const off = list.locator(`[data-agent-switch="${daemon.node}:omp:off"]`);
     await expect(off).toBeVisible();

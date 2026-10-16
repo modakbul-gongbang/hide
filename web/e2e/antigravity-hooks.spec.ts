@@ -36,11 +36,11 @@ const operatorSkills = (home: string) => path.join(home, ".gemini", "antigravity
 const aiFolder = (home: string) => path.join(home, ".hide", "ai", "antigravity-read-only");
 
 /**
- * A private HOME with agy's folders and the operator's files above, and a kit record; `on` seeds the record so the
- * daemon's first pass switches agy on. `agy` is a copy of the fixture's agent shim on the fixture PATH, which is
- * the PATH the kit searches.
+ * A private HOME with agy's folders and the operator's files above, and a kit record; `chosen` is the operator's
+ * recorded choice for agy, and without one agy is on by default (the operator's amendment to B1/D-14). `agy` is a
+ * copy of the fixture's agent shim on the fixture PATH, which is the PATH the kit searches.
  */
-async function start(label: string, options: { on?: boolean } = {}): Promise<Stack> {
+async function start(label: string, options: { chosen?: boolean } = {}): Promise<Stack> {
   const herdr = await startHerdr();
   fs.copyFileSync(path.join(herdr.root, "bin", "claude"), path.join(herdr.root, "bin", "agy"));
   fs.chmodSync(path.join(herdr.root, "bin", "agy"), 0o755);
@@ -51,7 +51,7 @@ async function start(label: string, options: { on?: boolean } = {}): Promise<Sta
   fs.writeFileSync(settingsFile(home), JSON.stringify(OPERATOR_SETTINGS));
   fs.writeFileSync(path.join(operatorSkills(home), "mine", "SKILL.md"), OPERATOR_SKILL);
   fs.mkdirSync(path.join(home, ".hide", "kit"), { recursive: true });
-  fs.writeFileSync(path.join(home, ".hide", "kit", "installed.json"), JSON.stringify({ format: 1, installed: [], ...(options.on ? { agents: { antigravity: true } } : {}) }));
+  fs.writeFileSync(path.join(home, ".hide", "kit", "installed.json"), JSON.stringify({ format: 1, installed: [], ...(options.chosen === undefined ? {} : { agents: { antigravity: options.chosen } }) }));
   try {
     return { herdr, daemon: await startHided(herdr, label, home, {}, true), home };
   } catch (error) {
@@ -107,7 +107,7 @@ async function openAgents(page: Page, daemon: Daemon) {
 }
 
 test("the agy switch writes Hide's block, skill and Hide AI folder beside the operator's files and takes out only Hide's", async ({ page }) => {
-  const stack = await start("agy-switch");
+  const stack = await start("agy-switch", { chosen: false });
   const { daemon, home } = stack;
   const hook = watchHook(page);
   try {
@@ -151,7 +151,8 @@ test("the agy switch writes Hide's block, skill and Hide AI folder beside the op
 });
 
 test("the installed agy tool command refuses a direct agent start in agy's shape and allows every other call", async ({ page }) => {
-  const stack = await start("agy-guard", { on: true });
+  // No recorded choice: agy is on by default, and its block goes in on the first pass.
+  const stack = await start("agy-guard");
   const { herdr, home } = stack;
   try {
     await page.goto(`${stack.daemon.origin}/#token=${stack.daemon.token}`);
