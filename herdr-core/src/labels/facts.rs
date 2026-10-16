@@ -7,7 +7,7 @@
 //! stored rather than reading its conversation again (B31). The request and
 //! the reply are the conversation's own words, each cut to
 //! [`MAX_TEXT_BYTES`]; local records live in the private `labels.json`.
-//! Device records stay in memory and are read again after a daemon restart.
+//! Device records stay in memory, bar their marks: the session proof, the analyzed turns and the label (`store.rs`).
 //!
 //! Who sent a request is decided once per message and kept with its offset
 //! (D-19): the Hide letter envelope's sender; else the operator when Hide saw them

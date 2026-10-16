@@ -228,6 +228,7 @@ fn answer(run: &runner::Run) -> Result<AiResponse, AiError> {
             // Whether a Grok one-shot leaves a session file is not known, and
             // counting one that does would count it twice (PRD D-06).
             models: Vec::new(),
+            thinking_tokens: None,
         },
     })
 }

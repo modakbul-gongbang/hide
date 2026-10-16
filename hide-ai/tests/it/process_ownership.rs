@@ -76,6 +76,7 @@ fn request(n: usize) -> AiRequest {
         schema_version: "process.v1".into(),
         pick: None,
         output_language: None,
+        answer: hide_ai::AnswerMode::default(),
     }
 }
 

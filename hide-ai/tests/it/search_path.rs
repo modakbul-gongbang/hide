@@ -104,6 +104,7 @@ fn request() -> AiRequest {
         schema_version: "fixture.v1".into(),
         pick: None,
         output_language: None,
+        answer: hide_ai::AnswerMode::default(),
     }
 }
 

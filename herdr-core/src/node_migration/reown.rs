@@ -591,7 +591,10 @@ fn is_empty(value: &Value) -> bool {
 
 /// `labels.json` keeps only the owner's records on disk; a device's stay in
 /// memory, because a record holds the conversation it was made from
-/// (`labels/store.rs`). The old owner's records therefore travel one hop as
+/// (`labels/store.rs`), except for the `devices` marks (a session proof,
+/// the hashes of analyzed turns and the label), which this move drops: they only spare a
+/// request, and the new core makes the same turns' labels again. The old
+/// owner's records therefore travel one hop as
 /// `moved`, which the new core takes into memory for that machine and drops
 /// from disk by the save its open makes at once; the new owner's, which the source core held
 /// in memory and wrote to `moved` when it stopped, become its own.
@@ -599,6 +602,7 @@ fn reown_labels(value: &mut Value, change: &OwnerChange) -> Result<(), String> {
     let Some(object) = value.as_object_mut() else {
         return Err("the labels are not a map".to_owned());
     };
+    object.remove("devices");
     // A section this build does not know may name a machine; it stops the
     // move rather than travel unconverted (Q18).
     if let Some(key) = object
@@ -1740,6 +1744,22 @@ mod tests {
             json!(M),
             "the owner is unchanged"
         );
+    }
+
+    /// The marks a device pane keeps (`labels/store.rs`) are the writer's own
+    /// section: a move that refused them would fail on every machine that has
+    /// labelled a device pane.
+    #[test]
+    fn the_device_marks_of_the_labels_do_not_stop_a_move_and_are_dropped() {
+        let dir = macbook_folder();
+        let state = dir.path();
+        let mut labels = read(&state.join(LABELS));
+        labels["devices"] = json!({
+            format!("device:{ALIAS}"): {"w2:p1": {"owner": "v1:o", "analysis_turn_end": 9}}
+        });
+        std::fs::write(state.join(LABELS), serde_json::to_vec(&labels).unwrap()).unwrap();
+        reown(state, &forward(), &forward_ids()).unwrap();
+        assert!(read(&state.join(LABELS)).get("devices").is_none());
     }
 
     #[test]
