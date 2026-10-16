@@ -378,6 +378,9 @@ pub struct LinkPanelSnapshot {
 pub struct LinkSummariesSnapshot {
     pub projects: BTreeMap<String, ProjectLinkSummary>,
     pub filling: bool,
+    /// Each live pane session's tasks and children (PRD
+    /// task-split-checklist D-05, D-06); a session with no task is absent.
+    pub progress: Vec<ledger::WorkProgress>,
 }
 
 /// The most sessions a project's summary names chips for.

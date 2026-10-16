@@ -9,6 +9,7 @@ use super::analysis::{
     Analysis, AnalysisPhase, LabelEnd, LabelLimits, MIN_GOAL_CHARS, normalize_goal,
     normalize_text_field,
 };
+use crate::links::ledger::{MISSED_CHARS, NEW_TASK_LIMIT, TaskDecision};
 use anyhow::{Context, Result, anyhow};
 use hide_ai::{AiRequest, OutputLanguage, RequestId};
 use serde::Deserialize;
@@ -18,7 +19,7 @@ use std::time::Duration;
 pub(crate) const FEATURE_ID: &str = "context_label";
 /// Bumped whenever a prompt or a schema changes, so a log line can be read
 /// against the pair that produced it.
-pub(crate) const SCHEMA_VERSION: &str = "context_label.v13";
+pub(crate) const SCHEMA_VERSION: &str = "context_label.v14";
 /// Long enough for a provider that has to start a child process, short
 /// enough that a stuck turn does not hold the pane's slot for a whole event
 /// cycle series.
@@ -101,12 +102,20 @@ fn end_prompt(limits: LabelLimits) -> String {
         "5. done: it reported the requested work finished, and nothing is left waiting for a result. If it did not report the work finished, it is unfinished, not done. ",
         "For a conversation whose goal is null, still judge line and end from the actual turn. If it answered a plain greeting or a name question and asked for no next action, line is an empty string and end is done. Do not produce unfinished or 'waiting for instructions' because no work was assigned. ",
         "Do not classify a state Herdr already knows, such as an approval prompt. ",
-        "work is {\"task\":{\"kind\":\"new\",\"name\":\"task name\"}|{\"kind\":\"continue\",\"ids\":[\"task-id\"]}|{\"kind\":\"none\"},\"missed\":[],\"resolved\":[],\"output_task_id\":null}. ",
+        "work is {\"task\":{\"kind\":\"new\",\"names\":[\"task name\"]}|{\"kind\":\"continue\",\"ids\":[\"task-id\"]}|{\"kind\":\"none\"},\"missed\":[],\"resolved\":[],\"output_task_id\":null}. ",
         "Judge this human request as a task only when <work-author>true</work-author>: it is the request of the operator or of the parent that delegated the session, and letters from other agents are excluded. ",
-        "If a concrete new deliverable was asked for, new with a task name of at most 80 characters; if it continues existing work in <open-tasks>, continue with at most 2 real IDs; questions, explanations and progress checks are none. ",
+        "If a concrete new deliverable was asked for, new with names holding one task name of at most 80 characters per deliverable; if it continues existing work in <open-tasks>, continue with at most 2 real IDs; questions, explanations and progress checks are none. ",
+        "Task IDs that share the part before the first dot (task-12, task-12.2) are the tasks of one request: one of its IDs continues or reopens all of them, so name one ID per request. ",
         "<finished-tasks> are the newest finished tasks. A request that orders the agent to carry out the work of one of them again (run it again, redo, measure again, reinstall) is a task, never none: continue with that task's real ID, which reopens it. ",
         "A remark, a complaint, a doubt (\"this is confusing\", \"still slow\"), a question, an opinion, a proposal to discuss, an approval or a progress check is none even when it is about a finished task, and a different deliverable is new. ",
         "If work-author is false, task is none. Verifying, fixing bugs in, merging or installing the same work continues the existing task, open or finished. ",
+        "When one request asks for several independent deliverables (a numbered list or separate bullets that each have their own result), names holds one name per deliverable, at most 6, bundling any extras into the last name. ",
+        "Sub-steps, checks and details of the same deliverable are not separate tasks, and a request for one deliverable has exactly one name. ",
+        "A list of things to change, build, investigate or decide gives one name per list item that has its own result, even when the items share a theme or a screen; never merge them under one umbrella name. ",
+        "A list of questions, or replies that only approve or react to earlier proposals, is not a list of deliverables; when a list mixes deliverables with questions, the deliverables still get names and the questions get none. ",
+        "Take every name from what the operator wrote in this request, not from the assistant's reply or from other tasks. ",
+        "Questions, explanations, progress checks and short follow-ups stay none or continue. ",
+        "Never add a name for something the request does not ask for. ",
         "Put in missed only work outside the assigned work that nobody will take on once this session is closed. ",
         "problem is a breakage the agent reported finding somewhere unrelated to the assigned work; follow_up is a separate task or issue the agent proposed, making a deliverable other than the assigned one (another feature, fix or document), that nobody has taken yet. ",
         "Even when the agent calls it a follow-up, remaining work or a limitation, measuring, checking or verifying the assigned work's result again in the real app, in another environment or before release, the remaining part of the assigned work itself, and merging, installing, deploying or replacing the app are not missed, because the task judgment and PR and CI already own them. ",
@@ -154,7 +163,7 @@ fn end_schema(limits: LabelLimits) -> Value {
                 "type":"object","additionalProperties":false,"required":["task","missed","resolved","output_task_id"],
                 "properties":{
                     "task":{"oneOf":[
-                        {"type":"object","additionalProperties":false,"required":["kind","name"],"properties":{"kind":{"const":"new"},"name":{"type":"string","minLength":1,"maxLength":80}}},
+                        {"type":"object","additionalProperties":false,"required":["kind","names"],"properties":{"kind":{"const":"new"},"names":{"type":"array","minItems":1,"maxItems":NEW_TASK_LIMIT,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":80}}}},
                         {"type":"object","additionalProperties":false,"required":["kind","ids"],"properties":{"kind":{"const":"continue"},"ids":{"type":"array","minItems":1,"maxItems":2,"uniqueItems":true,"items":{"type":"string"}}}},
                         {"type":"object","additionalProperties":false,"required":["kind"],"properties":{"kind":{"const":"none"}}}
                     ]},
@@ -267,8 +276,11 @@ pub(crate) fn parse(
             )
         }
         AnalysisPhase::TurnEnd => {
-            let answer: EndAnswer =
+            let mut answer: EndAnswer =
                 serde_json::from_value(value).context("provider_invalid_analysis")?;
+            if let TaskDecision::New { names } = &mut answer.work.task {
+                *names = task_names(names)?;
+            }
             (
                 answer.goal,
                 answer.goal_changed,
@@ -311,6 +323,27 @@ pub(crate) fn parse(
     })
 }
 
+/// A new task's names as the ledger stores them: 1 to `NEW_TASK_LIMIT`, each
+/// one line of at most 80 characters, none repeated. A provider that broke
+/// the schema's bounds is refused rather than trimmed, so a judgment is never
+/// half kept.
+fn task_names(names: &[String]) -> Result<Vec<String>> {
+    if names.is_empty() || names.len() > NEW_TASK_LIMIT {
+        return Err(anyhow!("provider_invalid_task"));
+    }
+    let mut kept: Vec<String> = Vec::with_capacity(names.len());
+    for name in names {
+        let name = normalize_text_field(name, false)
+            .filter(|name| name.chars().count() <= MISSED_CHARS)
+            .ok_or_else(|| anyhow!("provider_invalid_task"))?;
+        if kept.contains(&name) {
+            return Err(anyhow!("provider_invalid_task"));
+        }
+        kept.push(name);
+    }
+    Ok(kept)
+}
+
 /// The same judgment over raw text, for tests, asked in Korean.
 #[cfg(test)]
 pub(crate) fn parse_text(phase: AnalysisPhase, raw: &str) -> Result<Analysis> {
@@ -323,4 +356,69 @@ pub(crate) fn parse_text(phase: AnalysisPhase, raw: &str) -> Result<Analysis> {
             json!({"task":{"kind":"none"},"missed":[],"resolved":[],"output_task_id":null});
     }
     parse(phase, OutputLanguage::Korean, value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn end_with(task: Value) -> Result<Analysis> {
+        parse_text(
+            AnalysisPhase::TurnEnd,
+            &json!({
+                "goal": "출시 전 버그 수정 묶음", "goal_changed": true, "line": "네 가지 수정 중", "end": "waiting",
+                "work": {"task": task, "missed": [], "resolved": [], "output_task_id": null},
+            })
+            .to_string(),
+        )
+    }
+
+    fn names(analysis: Analysis) -> Vec<String> {
+        match analysis.work.unwrap().task {
+            TaskDecision::New { names } => names,
+            other => panic!("not new: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_split_answer_keeps_its_names_in_order_trimmed() {
+        let analysis =
+            end_with(json!({"kind": "new", "names": [" README 태그 ", "댓글 위치", "HTML 댓글"]}))
+                .unwrap();
+        assert_eq!(names(analysis), ["README 태그", "댓글 위치", "HTML 댓글"]);
+    }
+
+    #[test]
+    fn an_answer_with_no_names_too_many_a_blank_a_long_or_a_repeated_one_is_refused() {
+        let long = "가".repeat(MISSED_CHARS + 1);
+        for task in [
+            json!({"kind": "new", "names": []}),
+            json!({"kind": "new", "names": ["1", "2", "3", "4", "5", "6", "7"]}),
+            json!({"kind": "new", "names": ["가", "  "]}),
+            json!({"kind": "new", "names": ["가", long]}),
+            json!({"kind": "new", "names": ["가", " 가"]}),
+            json!({"kind": "new", "names": ["가\n나"]}),
+        ] {
+            let failure = end_with(task.clone()).unwrap_err().to_string();
+            assert_eq!(failure, "provider_invalid_task", "{task}");
+        }
+        // The answer of an earlier schema names one task and is not read.
+        assert!(end_with(json!({"kind": "new", "name": "가"})).is_err());
+    }
+
+    #[test]
+    fn the_end_schema_asks_for_one_to_six_names_and_the_prompt_for_one_per_deliverable() {
+        let request = request(
+            AnalysisPhase::TurnEnd,
+            OutputLanguage::Korean,
+            "w1:p1",
+            "r".into(),
+            "",
+        );
+        let new = &request.output_schema["properties"]["work"]["properties"]["task"]["oneOf"][0];
+        assert_eq!(new["properties"]["names"]["minItems"], 1);
+        assert_eq!(new["properties"]["names"]["maxItems"], NEW_TASK_LIMIT);
+        assert!(request.system.contains("one name per deliverable"));
+        assert!(request.system.contains("not from the assistant's reply"));
+    }
 }

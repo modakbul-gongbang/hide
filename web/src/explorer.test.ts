@@ -346,8 +346,8 @@ describe("the chords the tree answers itself", () => {
   });
 
   it("follows the chord the operator bound, and has none in a browser tab until one is bound", () => {
-    const bound = effectiveRegistry({ copy_path: "cmd+shift+u" }, "electron", "mac").registry;
-    expect(treeCommandFor(press("KeyU", { meta: true, shift: true }), bound, "electron")).toBe("copy_path");
+    const bound = effectiveRegistry({ copy_path: "cmd+shift+y" }, "electron", "mac").registry;
+    expect(treeCommandFor(press("KeyY", { meta: true, shift: true }), bound, "electron")).toBe("copy_path");
     expect(treeCommandFor(press("KeyC", { meta: true, alt: true }), bound, "electron")).toBeNull();
     expect(treeCommandFor(press("KeyC", { meta: true, alt: true }), systemRegistry("mac"), "browser")).toBeNull();
   });

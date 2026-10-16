@@ -1839,6 +1839,8 @@ export type LinkSummaries = {
   }>;
   /** Session files are still being read for the first time. */
   filling: boolean;
+  /** Each live pane session's tasks and children; a session with no task is absent. */
+  progress?: WorkProgress[];
 };
 
 /** Native identity retained by the link record, including ended sessions. */
@@ -1852,7 +1854,15 @@ export type SessionRecord = {
   session: WorkSession; title: string; fallback_title: string; native_title: string | null; manual_title: string | null; state: string | null; last_end: WorkEnd | null;
   cwd: string | null; path: string | null; started_at_unix_ms: number | null; ended_at_unix_ms: number | null;
   chapters: { id: string; goal: string; at_unix_ms: number }[]; tasks: WorkTask[]; requests: WorkRequest[]; missed: MissedWork[]; outputs: WorkOutput[]; children: SessionRecord[];
+  /** How its direct children stand; absent without children. */
+  child_progress?: ChildProgress | null;
 };
+/** One direct child as its parent counts it (`contracts/snapshot-wire-enums.json`: `child_work`): by its own tasks, or with none by its last END; `unjudged` has neither. */
+export type ChildWork = "done" | "working" | "other" | "unjudged";
+/** One segment per direct child; `done` is null while any child is unjudged, never a false zero. */
+export type ChildProgress = { children: ChildWork[]; done: number | null };
+/** A live pane's chip and checklist: its tasks first asked first, their pull requests and its children. */
+export type WorkProgress = { session: WorkSession; done: number; total: number; tasks: WorkTask[]; outputs: WorkOutput[]; children: ChildProgress | null };
 export type SessionWorkSummary = { session: WorkSession; title: string; fallback_title: string; native_title: string | null; manual_title: string | null; cwd: string | null; ended_at_unix_ms: number | null; open_missed: number; subtree_open_missed: number; missed: MissedWork[] };
 export type SessionRecordSection = { session: WorkSession | null; loading: boolean; failure: string | null; record: SessionRecord | null };
 export type SessionWorkSearch = { query: string; loading: boolean; failure: string | null; results: { session: WorkSession; title: string; matched: string; at_unix_ms: number; cwd: string | null }[] };

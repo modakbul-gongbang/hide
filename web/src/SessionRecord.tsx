@@ -1,4 +1,4 @@
-import { ArrowLeftIcon, CheckIcon, ChevronRightIcon, CircleDotIcon, FlagIcon, HouseIcon, LoaderCircleIcon, MessageCircleIcon, UserIcon } from "lucide-react";
+import { ArrowLeftIcon, ChevronRightIcon, CircleDotIcon, FlagIcon, HouseIcon, LoaderCircleIcon, MessageCircleIcon, UserIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
@@ -6,12 +6,13 @@ import { agentProductName } from "./agentAdapters";
 import { deviceConnected, readsHere } from "./devices";
 import { Button } from "./components/ui/button";
 import { PrMark } from "./components/pr-mark";
+import { ChildProgressHead, TaskMark } from "./components/task-progress";
 import { Hint } from "./components/ui/tooltip";
 import { formatDateTime } from "./i18n/format";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { useInterfaceTranslation } from "./i18n/client";
 import { cn } from "./lib/utils";
-import { checklist, orderedOutputs, outputPrState, recordTitle, recordTree, sessionPlace, workKey, type Checklist, type ChecklistTask, type TaskState } from "./sessionWork";
+import { checklist, orderedOutputs, outputPrState, recordTitle, recordTree, sessionPlace, workKey, type Checklist, type ChecklistTask } from "./sessionWork";
 import { boardProjects } from "./navigation";
 import { cardLine, cardOfPane, cardQuestion, everyAgent, itemToken } from "./overviewTasks";
 import { destinationOf } from "./overviewBacklog";
@@ -28,8 +29,6 @@ import { PR_LOOK } from "./prMark";
 const ROW = "min-w-0 rounded-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-ring";
 /** Under a task's line: the icon column's width and its gap, so what hangs from a task lines up with its name. */
 const LANE = "pl-[calc(var(--size-icon-sm)+var(--spacing-xs))]";
-/** A task's mark: its colour is its state, and the state's name is in its hint and accessible name. */
-const GLYPH: Record<TaskState, string> = { done: "text-success", working: "text-agent-working", review: "text-success", ci_failed: "text-success", unfinished: "text-warning", blocked: "text-warning", question: "text-warning" };
 const FIRST_OPEN_REQUESTS = 5;
 
 /** `작업 → PR → 검토 → 머지` filled up to the task's stage (PRD overview-device-tasks B9). */
@@ -133,7 +132,7 @@ export function SessionRecord({ actions, target, frame }: { actions: Actions; ta
       {summaries
         ? <Work record={shown} descendants={descendants} words={words} actions={actions} head />
         : <Requests record={shown} />}
-      {shown.children.length ? <><SectionHead className="mt-md">{t("sessionWork.children")} <Count>{recordTree(shown).length - 1}</Count></SectionHead><Children record={shown} summaries={summaries} onOpen={(child) => frame.onTrail([...frame.trail, child.session])} /></> : null}
+      {shown.children.length ? <><SectionHead className="mt-md">{summaries && shown.child_progress ? <ChildProgressHead progress={shown.child_progress} /> : <>{t("sessionWork.children")} <Count>{recordTree(shown).length - 1}</Count></>}</SectionHead><Children record={shown} summaries={summaries} onOpen={(child) => frame.onTrail([...frame.trail, child.session])} /></> : null}
       <RecordWorktrees record={shown} />
     </div> : null}
   </div>;
@@ -284,14 +283,6 @@ function GoalLine({ goal, at }: { goal: string; at: number }) {
   const { i18n } = useInterfaceTranslation();
   const time = formatDateTime(requireInterfaceLanguage(i18n.language), at, { hour: "2-digit", minute: "2-digit", hour12: false });
   return <h4 className="mt-sm mb-xs min-w-0 whitespace-normal text-micro font-medium text-subtle-foreground [overflow-wrap:anywhere]" title={goal}>{goal} · <time dateTime={new Date(at).toISOString()}>{time}</time></h4>;
-}
-
-function TaskMark({ state }: { state: TaskState }) {
-  const { t } = useInterfaceTranslation();
-  const name = t(`sessionWork.${state}`);
-  return <Hint label={name}><span role="img" aria-label={name} data-task-state={state} className={cn("flex size-(--size-icon-sm) shrink-0 items-center justify-center", GLYPH[state])}>
-    {state === "done" ? <CheckIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : state === "blocked" ? <span aria-hidden="true">⛔</span> : state === "question" ? <span aria-hidden="true" className="font-semibold">?</span> : <span aria-hidden="true">◐</span>}
-  </span></Hint>;
 }
 
 function TaskRow({ item, session, cwd, words, actions }: { item: ChecklistTask; session: WorkSession; cwd: string | null; words: boolean; actions: Actions }) {

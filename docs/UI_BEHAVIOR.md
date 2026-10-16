@@ -429,7 +429,11 @@ The browser display's toolbar and its loading, load failed, and plain browser ta
 
 ### Agent panes and the Agents explorer
 
-A pane header is a quiet identity row: the ancestor path, the status mark, the agent's logo, title, the fork mark, the letters-waiting pill, the PR mark, the Not connected chip, and the retained overflow, zoom and close controls at the right end.
+A pane header is a quiet identity row: the ancestor path, the status mark, the agent's logo, title, the fork mark, the letters-waiting pill, the task chip, the PR mark, the Not connected chip, and the retained overflow, zoom and close controls at the right end.
+The task chip (PRD task-split-checklist D-05, D-06) is a checklist icon and `<done>/<tasks>` in figures, drawn from the pane session's first task (`0/1`) and never for a session with no task, whatever children it has, a plain shell, or with Agent summaries off; it carries no child count, and the second row with the child badge does not move it.
+The pointer on the chip or the keyboard's focus on it opens the checklist below the header, which never covers the header it belongs to and stays inside the window at narrow widths: `시킨 일 <done>/<total>`, each task's state mark and name (Korean wrapping between words) with a split request's PR marks once on its first task, `자식 일 <done>/<children>` with one segment per direct child (done green, working blue, the rest grey) or the plain `자식 N` while a child has no judgment, the agent's current line, and `기록 열기` with the chord, which opens the session record on the same task list.
+Leaving the chip and the list, or blurring the chip, closes it; a press on the chip or Show task list (⇧⌘U, Alt+Shift+U on Windows and Linux, remappable) pins the focused pane's list, and a second press, the chord again or Esc closes it; Esc on a pinned list stops there, so an agent CLI in the focused terminal is not interrupted, and opening the list never takes the keyboard from the terminal (`web/src/PaneTaskChip.tsx`).
+The chip, the list and the record follow the ledger in the same snapshot burst, and a chip whose count did not change is not redrawn.
 A plain shell keeps its terminal mark.
 On an agent pane whose session Hide knows, the status mark, the logo and the title are one button: under the pointer they light together with the hint `세션 기록 보기`, and a press shows that session's record in the lane's 보기 slot ([The 보기 slot](#the-보기-slot)), opening the lane when it is closed or put away, while the keyboard and the input cursor stay in the pane's terminal (PRD overview-device-tasks B22, sidebar-task-lens B15); the Overview's `lane에서 보기` lands the same way.
 A press while the lane already draws that record turns the lane back to its tool, and the fork mark and the PR mark keep their own presses outside the button (B23).
@@ -953,9 +957,9 @@ What to do now and the stage bar are the task's, its root's, so a child's record
 Pressing a child opens its record as the slot's next item with a `← <parent title>` chip, and the slot's ← comes back to the parent (PRD sidebar-task-lens B16).
 `PR N` heads every PR the session and all its descendants made, worst state first: the PR mark with its `#number`, the title (ellipsized, in full in its tooltip) and, for a descendant's PR, that descendant's name at the row's end; it opens the PR panel, and an issue the session made follows as an issue mark.
 A session with no outputs has neither the head nor the list.
-`시킨 일 2/3` heads the assigned work as a checklist, first-asked first, with the finished count over the total and no progress box: one task a line, its state an icon in its colour and nothing written (✓ done in a muted name, a blue ◐ working, a green ◐ review pending, a yellow ◐ left unfinished, blocked and your turn as their marks), the state's name in the icon's tooltip and accessible name, and the task's PRs as PR marks at the line's end, a failed CI being the mark's red.
+`시킨 일 2/3` heads the assigned work as a checklist, first-asked first (a request that asked for several deliverables lists one task each, in the request's order, and its tasks share one state), with the finished count over the total and no progress box: one task a line, its state an icon in its colour and nothing written (✓ done in a muted name, a blue ◐ working, a green ◐ review pending, a yellow ◐ left unfinished, blocked and your turn as their marks), the state's name in the icon's tooltip and accessible name, and the task's PRs as PR marks at the line's end, a failed CI being the mark's red.
 A goal title `목표 · 09:00` heads a chapter only when the record holds two or more goals; a task outside every chapter leads without one.
-A missed item sits directly under the task whose turn found it: open ones in the warning colour with `백로그로 · 무시`, and `공개` beside `백로그로` when the project's repository is public (`공개일 수 있음` while its visibility could not be read); there is no `이슈로` and no drafted form (B43).
+A missed item sits directly under the task whose turn found it, the first task of a split request: open ones in the warning colour with `백로그로 · 무시`, and `공개` beside `백로그로` when the project's repository is public (`공개일 수 있음` while its visibility could not be read); there is no `이슈로` and no drafted form (B43).
 `백로그로` makes the item at once, in the backlog of the project the session works in on the device it runs on: a GitHub issue titled with the missed sentence and nothing else, or a memo (B44).
 Meanwhile the line ends in `만드는 중`; once made it dims with `· 백로그 #N` (`· 백로그 L-N`), which opens the item in the Overview's 백로그, or, once started, its task in the sidebar's 태스크 list with its record.
 A failure leaves one line of why and `다시 시도`, and one missed item makes one issue however often it is pressed, a restart included (B45).
@@ -964,10 +968,11 @@ A missed item goes to the repository the session started in: when the project's 
 `무시` is as before; a session on a device the core dials, which keeps no backlog, has `무시` alone (B46).
 Closed ones are one muted line that says how they closed (`· 처리됨`, `· 무시함`) or their backlog number, with `되돌리기` or `다시 열기` while the pointer or focus is on the line.
 Missed work from a turn that was not a task, from a turn no longer in the record, and from a descendant (with that descendant's name) comes last.
-A speech-bubble icon button with no text sits at the right of the head, pressed state filled, named `내 말 보기` (`받은 요청 보기` when a parent made the requests): off by default, it adds each task's words as bubbles of up to two lines under the task, above its missed work, and the words that belong to no task under `그 밖의 말`, each behind a quiet person icon (a parent's words have none); a bubble that overflows opens to the whole text with `접기`.
+A speech-bubble icon button with no text sits at the right of the head, pressed state filled, named `내 말 보기` (`받은 요청 보기` when a parent made the requests): off by default, it adds each task's words as bubbles of up to two lines under the task, above its missed work (a split request's words, and the later requests that continued it, once under its first task), and the words that belong to no task under `그 밖의 말`, each behind a quiet person icon (a parent's words have none); a bubble that overflows opens to the whole text with `접기`.
 The button's state stays across records and Back while the app runs and is not stored.
 The newest request not yet judged shows as `지금` with a turning mark and its first line at the end of the checklist while the session works, whatever the button says, and leaves when it is judged or the session stops.
 Otherwise the record ends with `마지막 말`: the newest line of what the session's agent last reported, while its pane is still known (B17).
+The children's head reads `자식 일 4/5` with one segment per direct child (done green, working blue, other grey) when every direct child has a task or an END, and the plain `자식 N` otherwise, never a false zero; the children list under it is unchanged.
 A child opens to its own checklist by these rules, its PRs being in the list above and its missed work last in its parent's list; its row is the title and status only.
 At narrow Tools widths, Korean text in a task, a bubble and a missed item wraps between words; titles truncate with their full text in a tooltip.
 Untitled records use the same agent-name fallback as the 태스크 list, including with summaries Off and after the pane ends; native session ids remain identity keys.
@@ -2430,6 +2435,7 @@ The sheet carries no row or explanation for a command the removed native app alo
 | Split right | `⌘D` | `Ctrl+Shift+D` | `⌘D` | `Ctrl+Shift+D` |
 | Split down | `⇧⌘D` | `Alt+Shift+D` | `⇧⌘D` | `Alt+Shift+D` |
 | Zoom pane | `⇧⌘↩` | `Alt+Shift+Enter` | `⇧⌘↩` | `Alt+Shift+Enter` |
+| Show task list | `⇧⌘U` | `Alt+Shift+U` | `⇧⌘U` | `Alt+Shift+U` |
 | Close pane | `⇧⌘W` | `Alt+Shift+W` | `⌥⇧W` | `Alt+Shift+W` |
 | Larger text (exception) | `⌘=` | `Ctrl+=` | `⌘=` | `Ctrl+=` |
 | Smaller text (exception) | `⌘-` | `Ctrl+-` | `⌘-` | `Ctrl+-` |

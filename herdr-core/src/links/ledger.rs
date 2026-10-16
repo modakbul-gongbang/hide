@@ -9,10 +9,15 @@ pub const TASK_LIMIT: usize = 200;
 pub const MISSED_LIMIT: usize = 200;
 pub const NEW_MISSED_LIMIT: usize = 3;
 pub const MISSED_CHARS: usize = 80;
+/// Task groups one END may continue: a request's tasks form one group, so a
+/// split request counts once.
 pub const CONTINUED_TASK_LIMIT: usize = 2;
-/// How many finished tasks the END judgment is shown beside the open ones, newest first, so
-/// a request that asks for one of them again can continue it.
+/// How many finished requests the END judgment is shown beside the open tasks, newest first,
+/// each with all its tasks, so a request that asks for one of them again can continue it.
 pub const FINISHED_TASKS_IN_CONTEXT: usize = 3;
+/// Tasks one request can make: one per independent deliverable, the extras
+/// bundled into the last name (PRD task-split-checklist D-01, D-02).
+pub const NEW_TASK_LIMIT: usize = 6;
 pub const LEDGER_QUEUE_LIMIT: usize = 512;
 pub const SEARCH_LIMIT: usize = 50;
 pub const LEDGER_RPC_LIMIT: usize = 16;
@@ -190,6 +195,13 @@ pub struct WorkChapter {
     pub at_unix_ms: u64,
 }
 
+/// The group a task belongs to. The tasks one request made share its id
+/// `task-<offset>`: the first carries it, the rest are `task-<offset>.<n>`.
+/// A task written before requests split is a group of one.
+pub fn task_group(id: &str) -> &str {
+    id.split_once('.').map_or(id, |(group, _)| group)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkTask {
     pub id: String,
@@ -260,8 +272,9 @@ pub struct ResolvedMissedWork {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TaskDecision {
+    /// One name per independent deliverable of the request, in its order.
     New {
-        name: String,
+        names: Vec<String>,
     },
     Continue {
         ids: Vec<String>,
@@ -331,7 +344,7 @@ pub enum LedgerUpdate {
 pub struct LedgerContext {
     pub parent_name: Option<String>,
     pub open_tasks: Vec<WorkTask>,
-    /// The newest [`FINISHED_TASKS_IN_CONTEXT`] done tasks, last worked first.
+    /// The done tasks of the newest [`FINISHED_TASKS_IN_CONTEXT`] groups, last worked first.
     pub finished_tasks: Vec<WorkTask>,
     pub open_missed: Vec<MissedWork>,
 }
@@ -373,6 +386,116 @@ pub struct SessionRecord {
     pub missed: Vec<MissedWork>,
     pub outputs: Vec<WorkOutput>,
     pub children: Vec<SessionRecord>,
+    /// How its direct children stand; absent without children.
+    pub child_progress: Option<ChildProgress>,
+}
+
+/// How one direct child stands for its parent's `자식 일` (PRD
+/// task-split-checklist D-04). A child counts done by its own tasks, all done
+/// by the task rule, or, with no task, by its last END being Done.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChildWork {
+    Done,
+    Working,
+    Other,
+    /// Neither a task nor an END: no judgment says how it stands.
+    Unjudged,
+}
+
+/// One segment per direct child, in the record's order. `done` is absent
+/// while any child is unjudged, so a missing judgment never reads as not done.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ChildProgress {
+    pub children: Vec<ChildWork>,
+    pub done: Option<usize>,
+}
+
+impl ChildWork {
+    pub fn of(child: &SessionRecord) -> Self {
+        // A child at work is not done, whatever an earlier turn finished: its
+        // new request has no END yet (B8). Its state is what the label worker
+        // last read from its live pane. One never judged stays unjudged.
+        let judged = !child.tasks.is_empty() || child.last_end.is_some();
+        if judged && child.state.as_deref() == Some("working") {
+            return Self::Working;
+        }
+        if !child.tasks.is_empty() {
+            return if child.tasks.iter().all(|task| task.done) {
+                Self::Done
+            } else if child
+                .tasks
+                .iter()
+                .any(|task| matches!(task.end, LabelEnd::Working | LabelEnd::Waiting))
+            {
+                Self::Working
+            } else {
+                Self::Other
+            };
+        }
+        match child.last_end {
+            None => Self::Unjudged,
+            Some(LabelEnd::Done) => Self::Done,
+            Some(LabelEnd::Working | LabelEnd::Waiting) => Self::Working,
+            Some(_) => Self::Other,
+        }
+    }
+}
+
+impl ChildProgress {
+    pub fn of(children: &[SessionRecord]) -> Option<Self> {
+        if children.is_empty() {
+            return None;
+        }
+        let children = children.iter().map(ChildWork::of).collect::<Vec<_>>();
+        let done = (!children.contains(&ChildWork::Unjudged)).then(|| {
+            children
+                .iter()
+                .filter(|child| **child == ChildWork::Done)
+                .count()
+        });
+        Some(Self { children, done })
+    }
+}
+
+/// What a live pane's chip and checklist popover draw: its session's tasks
+/// with the pull requests assigned to them, the count of finished tasks, and
+/// its direct children's progress. Only a session with a task has one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct WorkProgress {
+    pub session: SessionIdentity,
+    pub done: usize,
+    pub total: usize,
+    /// First asked first.
+    pub tasks: Vec<WorkTask>,
+    /// The pull requests assigned to a task, as the record holds them.
+    pub outputs: Vec<WorkOutput>,
+    pub children: Option<ChildProgress>,
+}
+
+impl WorkProgress {
+    pub fn of(record: &SessionRecord) -> Option<Self> {
+        if record.tasks.is_empty() {
+            return None;
+        }
+        let mut tasks = record.tasks.clone();
+        // The record lists newest first; a request's tasks keep their order.
+        tasks.sort_by_key(|task| task.at_unix_ms);
+        let outputs = record
+            .outputs
+            .iter()
+            .filter(|output| output.kind == "pr" && output.task_id.is_some())
+            .cloned()
+            .collect();
+        Some(Self {
+            session: record.session.clone(),
+            done: tasks.iter().filter(|task| task.done).count(),
+            total: tasks.len(),
+            tasks,
+            outputs,
+            children: record.child_progress.clone(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]

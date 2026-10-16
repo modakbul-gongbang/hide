@@ -613,7 +613,7 @@ fn questions_stay_requests_and_summary_off_search_excludes_judgments() {
         1,
         TurnJudgment {
             task: TaskDecision::New {
-                name: "기록 화면".into(),
+                names: vec!["기록 화면".into()],
             },
             ..Default::default()
         },
@@ -661,7 +661,7 @@ fn turn_replay_and_status_undo_survive_restart() {
     chapter(&mut store);
     let judgment = TurnJudgment {
         task: TaskDecision::New {
-            name: "화면".into(),
+            names: vec!["화면".into()],
         },
         missed: vec![NewMissedWork {
             kind: MissedKind::Problem,
@@ -751,7 +751,7 @@ fn a_done_task_waits_for_every_assigned_pr_to_merge() {
         1,
         TurnJudgment {
             task: TaskDecision::New {
-                name: "첫 화면".into(),
+                names: vec!["첫 화면".into()],
             },
             ..Default::default()
         },
@@ -792,7 +792,9 @@ fn finish_task(store: &mut LinkStore, offset: u64, name: &str) {
         store,
         offset,
         TurnJudgment {
-            task: TaskDecision::New { name: name.into() },
+            task: TaskDecision::New {
+                names: vec![name.into()],
+            },
             ..Default::default()
         },
     );
@@ -886,6 +888,69 @@ fn the_judgment_is_shown_only_the_three_newest_finished_tasks() {
 }
 
 #[test]
+fn a_finished_split_request_is_one_candidate_and_asking_again_reopens_all_its_tasks() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    chapter(&mut store);
+    finish_task(&mut store, 1, "작업 1");
+    finish_task(&mut store, 2, "작업 2");
+    request(&mut store, 3, "세 가지 고쳐줘");
+    end(
+        &mut store,
+        3,
+        TurnJudgment {
+            task: TaskDecision::New {
+                names: vec!["가".into(), "나".into(), "다".into()],
+            },
+            ..Default::default()
+        },
+    );
+    finish_task(&mut store, 4, "작업 4");
+    // Three groups, not three tasks: the split request counts once and
+    // shows whole, so the oldest single task is the one left out.
+    let ids = |store: &LinkStore| {
+        store
+            .ledger_context(&session())
+            .unwrap()
+            .finished_tasks
+            .into_iter()
+            .map(|task| task.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        ids(&store),
+        ["task-4", "task-3", "task-3.2", "task-3.3", "task-2"]
+    );
+    request(&mut store, 5, "그 세 가지 다시 확인해줘");
+    store
+        .apply_ledger_update(&LedgerUpdate::TurnEnd {
+            session: session(),
+            offset: 5,
+            at_unix_ms: 5_500,
+            end: LabelEnd::Waiting,
+            work_author: true,
+            turn_witness: None,
+            judgment: TurnJudgment {
+                task: TaskDecision::Continue {
+                    ids: vec!["task-3.2".into()],
+                },
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    let context = store.ledger_context(&session()).unwrap();
+    assert_eq!(
+        context
+            .open_tasks
+            .iter()
+            .map(|task| task.id.as_str())
+            .collect::<Vec<_>>(),
+        ["task-3", "task-3.2", "task-3.3"]
+    );
+    assert_eq!(ids(&store), ["task-4", "task-2", "task-1"]);
+}
+
+#[test]
 fn request_retention_discards_the_oldest_and_keeps_recent_questions() {
     let directory = tempfile::tempdir().unwrap();
     let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
@@ -935,7 +1000,7 @@ fn an_off_or_failed_turn_remains_raw_after_restart_and_a_late_answer() {
         1,
         TurnJudgment {
             task: TaskDecision::New {
-                name: "과거 요청을 뒤늦게 묶으면 안 됨".into(),
+                names: vec!["과거 요청을 뒤늦게 묶으면 안 됨".into()],
             },
             missed: vec![NewMissedWork {
                 kind: MissedKind::Leftover,
@@ -1189,7 +1254,7 @@ fn a_mixed_device_tree_rolls_outputs_and_missed_items_into_the_spawn_task_and_op
         1,
         TurnJudgment {
             task: TaskDecision::New {
-                name: "기록 화면".into(),
+                names: vec!["기록 화면".into()],
             },
             ..Default::default()
         },
@@ -1259,7 +1324,7 @@ fn a_mixed_device_tree_rolls_outputs_and_missed_items_into_the_spawn_task_and_op
                 turn_witness: None,
                 judgment: TurnJudgment {
                     task: TaskDecision::New {
-                        name: "구현".into(),
+                        names: vec!["구현".into()],
                     },
                     missed: vec![NewMissedWork {
                         kind: MissedKind::Leftover,
@@ -1378,7 +1443,7 @@ fn late_parent_retracts_judgments_and_refuses_in_flight_operator_work() {
         1,
         TurnJudgment {
             task: TaskDecision::New {
-                name: "parent work".into(),
+                names: vec!["parent work".into()],
             },
             missed: vec![NewMissedWork {
                 kind: MissedKind::Problem,
@@ -1415,7 +1480,7 @@ fn late_parent_retracts_judgments_and_refuses_in_flight_operator_work() {
         3,
         TurnJudgment {
             task: TaskDecision::New {
-                name: "invalid work".into(),
+                names: vec!["invalid work".into()],
             },
             missed: vec![NewMissedWork {
                 kind: MissedKind::Problem,
@@ -1442,7 +1507,7 @@ fn late_parent_retracts_judgments_and_refuses_in_flight_operator_work() {
         3,
         TurnJudgment {
             task: TaskDecision::New {
-                name: "stale in-flight work".into(),
+                names: vec!["stale in-flight work".into()],
             },
             ..Default::default()
         },
@@ -1849,4 +1914,446 @@ fn unconfirmed_typed_items_are_kept_and_a_create_past_them_is_refused() {
         })
         .unwrap();
     assert!(reserve(&mut store, PENDING_BACKLOG_LIMIT).is_ok());
+}
+
+fn split(store: &mut LinkStore, offset: u64, names: &[&str]) {
+    request(store, offset, &names.join("\n"));
+    end(
+        store,
+        offset,
+        TurnJudgment {
+            task: TaskDecision::New {
+                names: names.iter().map(|name| (*name).to_owned()).collect(),
+            },
+            ..Default::default()
+        },
+    );
+}
+
+fn continue_with(
+    store: &mut LinkStore,
+    offset: u64,
+    ids: &[&str],
+    end: LabelEnd,
+) -> Result<(), String> {
+    request(store, offset, "머지해");
+    store.apply_ledger_update(&LedgerUpdate::TurnEnd {
+        session: session(),
+        offset,
+        at_unix_ms: offset * 1_000 + 500,
+        end,
+        work_author: true,
+        turn_witness: None,
+        judgment: TurnJudgment {
+            task: TaskDecision::Continue {
+                ids: ids.iter().map(|id| (*id).to_owned()).collect(),
+            },
+            ..Default::default()
+        },
+    })
+}
+
+fn task_rows(store: &LinkStore) -> Vec<(String, String, LabelEnd, bool)> {
+    let mut tasks = store.ledger_record(&session()).unwrap().tasks;
+    tasks.sort_by(|a, b| a.at_unix_ms.cmp(&b.at_unix_ms).then(a.id.cmp(&b.id)));
+    tasks
+        .into_iter()
+        .map(|task| (task.id, task.name, task.end, task.done))
+        .collect()
+}
+
+#[test]
+fn a_request_with_several_deliverables_is_one_group_of_tasks_in_its_order() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    chapter(&mut store);
+    split(&mut store, 3, &["README 태그", "댓글 위치", "HTML 댓글"]);
+    let record = store.ledger_record(&session()).unwrap();
+    // The record lists newest first; one request's tasks keep the request's order.
+    assert_eq!(
+        record
+            .tasks
+            .iter()
+            .map(|task| task.id.as_str())
+            .collect::<Vec<_>>(),
+        ["task-3", "task-3.2", "task-3.3"]
+    );
+    assert_eq!(
+        record
+            .tasks
+            .iter()
+            .map(|task| task.name.as_str())
+            .collect::<Vec<_>>(),
+        ["README 태그", "댓글 위치", "HTML 댓글"]
+    );
+    assert_eq!(
+        record.requests[0].task_ids,
+        ["task-3", "task-3.2", "task-3.3"]
+    );
+    let output_task: Option<String> = store
+        .connection
+        .query_row(
+            "SELECT output_task FROM ledger_turns WHERE offset=3",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        output_task.as_deref(),
+        Some("task-3"),
+        "a group's output names its first task"
+    );
+    // A request with one deliverable keeps the id every stored task has.
+    split(&mut store, 4, &["설치"]);
+    assert!(
+        store
+            .ledger_record(&session())
+            .unwrap()
+            .tasks
+            .iter()
+            .any(|task| task.id == "task-4")
+    );
+}
+
+#[test]
+fn continuing_one_task_of_a_group_moves_every_task_of_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    chapter(&mut store);
+    split(&mut store, 3, &["가", "나", "다"]);
+    split(&mut store, 4, &["라"]);
+    continue_with(&mut store, 5, &["task-3.2"], LabelEnd::Waiting).unwrap();
+    let rows = task_rows(&store);
+    assert!(
+        rows[..3]
+            .iter()
+            .all(|(_, _, end, done)| *end == LabelEnd::Waiting && !done),
+        "no task of the group is left in an older state: {rows:?}"
+    );
+    assert_eq!(rows[3].2, LabelEnd::Done, "another group does not move");
+    let asked = store
+        .ledger_record(&session())
+        .unwrap()
+        .requests
+        .into_iter()
+        .find(|request| request.offset == 5)
+        .unwrap();
+    assert_eq!(asked.task_ids, ["task-3", "task-3.2", "task-3.3"]);
+}
+
+#[test]
+fn two_ids_of_one_group_count_once_against_the_continue_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    chapter(&mut store);
+    split(&mut store, 1, &["가", "나"]);
+    split(&mut store, 2, &["다"]);
+    split(&mut store, 3, &["라"]);
+    continue_with(
+        &mut store,
+        4,
+        &["task-1", "task-1.2", "task-2"],
+        LabelEnd::Waiting,
+    )
+    .unwrap();
+    assert_eq!(
+        continue_with(
+            &mut store,
+            5,
+            &["task-1", "task-2", "task-3"],
+            LabelEnd::Waiting
+        ),
+        Err("ledger_task_capacity".to_owned())
+    );
+}
+
+#[test]
+fn a_group_turns_done_only_when_every_pull_request_of_any_task_is_merged() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    chapter(&mut store);
+    split(&mut store, 1, &["가", "나", "다"]);
+    assert!(
+        task_rows(&store).iter().all(|row| row.3),
+        "Done END with no PR"
+    );
+    store
+        .connection
+        .execute(
+            "INSERT INTO ledger_outputs VALUES('device-a','codex','session-a','pr','owner/repo',7, \
+        'Second item','https://github.com/owner/repo/pull/7','open',1200,1200,'task-1.2')",
+            [],
+        )
+        .unwrap();
+    assert!(
+        task_rows(&store).iter().all(|row| !row.3),
+        "an open PR on one task holds the whole group"
+    );
+    store
+        .connection
+        .execute("UPDATE ledger_outputs SET state='merged'", [])
+        .unwrap();
+    assert!(task_rows(&store).iter().all(|row| row.3));
+}
+
+#[test]
+fn a_judgment_whose_names_are_empty_repeated_or_too_many_stores_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    chapter(&mut store);
+    for (offset, names, code) in [
+        (1, vec![], "ledger_task_capacity"),
+        (2, vec!["가"; NEW_TASK_LIMIT + 1], "ledger_task_capacity"),
+        (3, vec!["가", " 가 "], "ledger_task_invalid"),
+        (4, vec!["가", " "], "ledger_task_invalid"),
+    ] {
+        request(&mut store, offset, "여러 일");
+        let result = store.apply_ledger_update(&LedgerUpdate::TurnEnd {
+            session: session(),
+            offset,
+            at_unix_ms: offset * 1_000 + 500,
+            end: LabelEnd::Done,
+            work_author: true,
+            turn_witness: None,
+            judgment: TurnJudgment {
+                task: TaskDecision::New {
+                    names: names.into_iter().map(str::to_owned).collect(),
+                },
+                ..Default::default()
+            },
+        });
+        assert_eq!(result, Err(code.to_owned()), "offset {offset}");
+    }
+    assert!(store.ledger_record(&session()).unwrap().tasks.is_empty());
+}
+
+#[test]
+fn a_replayed_end_keeps_one_group() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    chapter(&mut store);
+    split(&mut store, 1, &["가", "나"]);
+    split(&mut store, 1, &["가", "나", "다"]);
+    assert_eq!(task_rows(&store).len(), 2);
+}
+
+#[test]
+fn the_task_cap_counts_groups_and_drops_the_oldest_group_whole() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    chapter(&mut store);
+    for offset in 1..=TASK_LIMIT as u64 + 1 {
+        split(&mut store, offset, &["가", "나"]);
+    }
+    let ids = task_rows(&store)
+        .into_iter()
+        .map(|row| row.0)
+        .collect::<Vec<_>>();
+    assert_eq!(ids.len(), TASK_LIMIT * 2);
+    assert!(
+        !ids.iter().any(|id| task_group(id) == "task-1"),
+        "the oldest group left whole"
+    );
+    assert!(ids.contains(&"task-2".to_owned()) && ids.contains(&"task-2.2".to_owned()));
+}
+
+#[test]
+fn late_lineage_retracts_a_split_request_whole() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    chapter(&mut store);
+    split(&mut store, 1, &["가", "나", "다"]);
+    let tx = store.connection.transaction().unwrap();
+    retract_operator_work(&tx, &session()).unwrap();
+    tx.commit().unwrap();
+    let record = store.ledger_record(&session()).unwrap();
+    assert!(record.tasks.is_empty());
+    assert!(record.requests[0].task_ids.is_empty());
+}
+
+#[test]
+fn a_childs_progress_counts_its_own_tasks_or_its_last_end_and_hides_while_one_is_unjudged() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    chapter(&mut store);
+    split(&mut store, 1, &["부모 일"]);
+    let child = |id: &str| SessionIdentity {
+        device_id: "device-a".into(),
+        agent: "claude".into(),
+        session_id: id.into(),
+    };
+    let add = |store: &mut LinkStore, identity: &SessionIdentity, parent: &SessionIdentity| {
+        store
+            .apply_ledger_update(&LedgerUpdate::Requests {
+                session: identity.clone(),
+                cwd: "/repo".into(),
+                path: None,
+                requests: vec![RecordedRequest {
+                    offset: 1,
+                    at_unix_ms: 1_100,
+                    text: "부모가 준 일".into(),
+                    author: WorkAuthor::Parent,
+                    task_ids: vec![],
+                    chapter_id: None,
+                    judged: false,
+                }],
+            })
+            .unwrap();
+        store
+            .apply_parents(&[crate::links::ParentFact {
+                device_id: identity.device_id.clone(),
+                agent: identity.agent.clone(),
+                session_id: identity.session_id.clone(),
+                parent_device_id: parent.device_id.clone(),
+                parent_agent: parent.agent.clone(),
+                parent_session_id: parent.session_id.clone(),
+                parent_name: "parent".into(),
+            }])
+            .unwrap();
+        store
+            .apply_ledger_update(&LedgerUpdate::Chapter {
+                session: identity.clone(),
+                goal: "자식 일".into(),
+                at_unix_ms: 1_100,
+            })
+            .unwrap();
+    };
+    let judge =
+        |store: &mut LinkStore, identity: &SessionIdentity, end: LabelEnd, task: TaskDecision| {
+            store
+                .apply_ledger_update(&LedgerUpdate::TurnEnd {
+                    session: identity.clone(),
+                    offset: 1,
+                    at_unix_ms: 1_400,
+                    end,
+                    work_author: true,
+                    turn_witness: None,
+                    judgment: TurnJudgment {
+                        task,
+                        ..Default::default()
+                    },
+                })
+                .unwrap();
+        };
+    let new = || TaskDecision::New {
+        names: vec!["구현".into()],
+    };
+    let (done, working, plain, silent) = (
+        child("done"),
+        child("working"),
+        child("plain"),
+        child("silent"),
+    );
+    for identity in [&done, &working, &plain, &silent] {
+        add(&mut store, identity, &session());
+    }
+    // A grandchild under the finished child adds no count of its own.
+    let grandchild = child("grandchild");
+    add(&mut store, &grandchild, &done);
+    judge(&mut store, &grandchild, LabelEnd::Waiting, new());
+    judge(&mut store, &done, LabelEnd::Done, new());
+    judge(&mut store, &working, LabelEnd::Waiting, new());
+    // No task: its last END decides.
+    judge(&mut store, &plain, LabelEnd::Done, TaskDecision::None);
+    let progress = |store: &LinkStore| {
+        let record = store.ledger_record(&session()).unwrap();
+        let by = |identity: &SessionIdentity| {
+            let index = record
+                .children
+                .iter()
+                .position(|row| &row.session == identity)
+                .unwrap();
+            record.child_progress.as_ref().unwrap().children[index]
+        };
+        (
+            [by(&done), by(&working), by(&plain), by(&silent)],
+            record.child_progress.as_ref().unwrap().done,
+        )
+    };
+    let (states, fraction) = progress(&store);
+    // A grandchild that still works adds no count of the root's.
+    assert_eq!(
+        states,
+        [
+            ChildWork::Done,
+            ChildWork::Working,
+            ChildWork::Done,
+            ChildWork::Unjudged
+        ]
+    );
+    assert_eq!(
+        fraction, None,
+        "an unjudged child hides the fraction rather than counting it not done"
+    );
+    judge(&mut store, &silent, LabelEnd::Question, TaskDecision::None);
+    let (states, fraction) = progress(&store);
+    assert_eq!(states[3], ChildWork::Other);
+    assert_eq!(fraction, Some(2));
+    // Handed a new request, the finished child works again before any END
+    // judges it, so it no longer counts done, though a read of its file has
+    // stamped the session's last record time.
+    store
+        .connection
+        .execute("UPDATE sessions SET ended_at=9000 WHERE id='done'", [])
+        .unwrap();
+    store
+        .apply_ledger_update(&LedgerUpdate::Title {
+            session: done.clone(),
+            native_title: None,
+            manual_title: None,
+            state: "working".into(),
+        })
+        .unwrap();
+    let (states, fraction) = progress(&store);
+    assert_eq!(states[0], ChildWork::Working);
+    assert_eq!(fraction, Some(1));
+    // A new child at work before its first END is still unjudged: the head
+    // keeps the plain count rather than a fraction.
+    let fresh = child("fresh");
+    add(&mut store, &fresh, &session());
+    store
+        .apply_ledger_update(&LedgerUpdate::Title {
+            session: fresh.clone(),
+            native_title: None,
+            manual_title: None,
+            state: "working".into(),
+        })
+        .unwrap();
+    let record = store.ledger_record(&session()).unwrap();
+    let index = record
+        .children
+        .iter()
+        .position(|row| row.session == fresh)
+        .unwrap();
+    let progress = record.child_progress.unwrap();
+    assert_eq!(progress.children[index], ChildWork::Unjudged);
+    assert_eq!(progress.done, None);
+}
+
+#[test]
+fn a_pane_has_progress_only_once_its_session_has_a_task() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    assert_eq!(
+        store.ledger_progress(&session()).unwrap(),
+        None,
+        "a session the ledger never recorded"
+    );
+    request(&mut store, 1, "안녕");
+    chapter(&mut store);
+    end(&mut store, 1, TurnJudgment::default());
+    assert_eq!(store.ledger_progress(&session()).unwrap(), None);
+    split(&mut store, 2, &["가", "나"]);
+    continue_with(&mut store, 3, &["task-2"], LabelEnd::Waiting).unwrap();
+    let progress = store.ledger_progress(&session()).unwrap().unwrap();
+    assert_eq!((progress.done, progress.total), (0, 2));
+    assert_eq!(
+        progress
+            .tasks
+            .iter()
+            .map(|task| task.name.as_str())
+            .collect::<Vec<_>>(),
+        ["가", "나"]
+    );
+    assert_eq!(progress.children, None);
 }
