@@ -1304,6 +1304,14 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "github_request", payload: { workspace_id: workspaceId, refresh: false } });
     },
 
+    /**
+     * Says the operator is looking at this local Git project; the core reads it
+     * again when its last good answer is old, and shows no spinner for it.
+     */
+    lookAtProject(workspaceId: string) {
+      dispatch({ schema_version: 2, kind: "github_request", payload: { workspace_id: workspaceId, refresh: false, look: true } });
+    },
+
     /** Reads each of these local Git projects' GitHub answer again (General's GitHub row, Check again). */
     refreshGithub(workspaceIds: readonly string[]) {
       for (const workspaceId of workspaceIds) dispatch({ schema_version: 2, kind: "github_request", payload: { workspace_id: workspaceId, refresh: true } });

@@ -40,7 +40,11 @@ export function countSent(page: Page, last: Map<string, Record<string, unknown>>
           // The usage hints ride their own UI-state update, which the page
           // sends on its own schedule, not for an action; it is counted apart.
           const hint = event.kind === "ui_state_update" && ["usage_window_visible", "usage_popover_open"].some((field) => field in (event.payload ?? {}));
-          for (const key of hint ? ["ui_state_update.usage_hint"] : action ? [event.kind, action] : [event.kind]) {
+          // A look at the project in front (`web/src/githubLook.ts`) rides the
+          // GitHub request event on every focus, not for a screen's ask; it is
+          // counted apart so "nothing asked GitHub" still means no screen did.
+          const look = event.kind === "github_request" && event.payload?.look === true;
+          for (const key of hint ? ["ui_state_update.usage_hint"] : look ? ["github_request.look"] : action ? [event.kind, action] : [event.kind]) {
             counts.set(key, (counts.get(key) ?? 0) + 1);
             last.set(key, event.payload ?? {});
           }

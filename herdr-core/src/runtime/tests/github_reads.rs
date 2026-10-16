@@ -9,6 +9,7 @@ use crate::model::{
     ExtraQuery, GithubProjectSnapshot, GithubSnapshot, GithubStatusSnapshot, PullRequestBadge,
     PullRequestChecks, PullRequestSnapshot,
 };
+use crate::runtime::projects::{GithubClock, LookRead};
 use std::time::{Duration, Instant};
 
 fn git_project(id: &str, path: &str, branch: &str) -> WorkspaceSnapshot {
@@ -1263,4 +1264,229 @@ fn a_repository_gh_finds_no_remote_in_is_read_again_when_its_remotes_are_unknown
         seconds_until_asked_again(&mut runtime, "/tmp/a", now + Duration::from_secs(1)),
         Some(300)
     );
+}
+
+/// A project answered at `answered` and taken by the clock, ready to be
+/// looked at: the first read as `first_read` makes it.
+fn answered_project(runtime: &mut Runtime, path: &str, answered: Instant) {
+    runtime.snapshot.navigator.workspaces = vec![git_project("a", path, "main")];
+    first_read(
+        runtime,
+        vec![read_ok(
+            path,
+            vec![pull_request(1, "feature", PullRequestBadge::Open)],
+            10,
+        )],
+        answered,
+    );
+}
+
+/// The operator looking at a project reads it again once its last good
+/// answer is thirty seconds old, and not before: a burst of window focuses
+/// adds no read.
+#[test]
+fn a_look_reads_a_project_again_only_when_its_good_answer_is_thirty_seconds_old() {
+    let mut runtime = runtime();
+    let answered = Instant::now();
+    answered_project(&mut runtime, "/tmp/a", answered);
+    assert_eq!(generation_of(&runtime, "/tmp/a"), 0);
+
+    for seconds in [0, 1, 29] {
+        assert_eq!(
+            runtime.read_when_looked_at("/tmp/a", answered + Duration::from_secs(seconds)),
+            LookRead::Later,
+            "{seconds} s after the answer"
+        );
+        assert_eq!(generation_of(&runtime, "/tmp/a"), 0, "{seconds} s");
+    }
+    assert_eq!(
+        runtime.read_when_looked_at("/tmp/a", answered + Duration::from_secs(30)),
+        LookRead::Asked
+    );
+    assert_eq!(generation_of(&runtime, "/tmp/a"), 1);
+}
+
+/// The look's ask is the clock's: the project waits for that answer, so the
+/// next focus of a burst, however late, asks nothing until the answer lands
+/// and is thirty seconds old in its turn.
+#[test]
+fn a_look_never_asks_while_an_ask_is_out_and_waits_thirty_seconds_after_its_answer() {
+    let mut runtime = runtime();
+    let answered = Instant::now();
+    answered_project(&mut runtime, "/tmp/a", answered);
+    let looked = answered + Duration::from_secs(40);
+    assert_eq!(
+        runtime.read_when_looked_at("/tmp/a", looked),
+        LookRead::Asked
+    );
+    for seconds in [0, 1, 500] {
+        assert_eq!(
+            runtime.read_when_looked_at("/tmp/a", looked + Duration::from_secs(seconds)),
+            LookRead::Later
+        );
+    }
+    assert_eq!(
+        generation_of(&runtime, "/tmp/a"),
+        1,
+        "one ask for the burst"
+    );
+
+    // The answer has landed but the clock has not taken it: still out.
+    answer_all(&mut runtime);
+    assert_eq!(
+        runtime.read_when_looked_at("/tmp/a", looked + Duration::from_secs(501)),
+        LookRead::Later
+    );
+    let taken = looked + Duration::from_secs(502);
+    runtime.reread_stale_github(taken);
+    assert_eq!(
+        runtime.read_when_looked_at("/tmp/a", taken + Duration::from_secs(29)),
+        LookRead::Later
+    );
+    assert_eq!(
+        runtime.read_when_looked_at("/tmp/a", taken + Duration::from_secs(30)),
+        LookRead::Asked
+    );
+    assert_eq!(generation_of(&runtime, "/tmp/a"), 2);
+}
+
+/// A project in failure backoff keeps its own retry clock, and a repository
+/// answered "no GitHub remote" is never asked on a look.
+#[test]
+fn a_look_adds_nothing_to_a_failed_project_a_project_without_a_remote_or_an_unread_one() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![
+        git_project("a", "/tmp/a", "main"),
+        git_project("b", "/tmp/b", "main"),
+        git_project("c", "/tmp/c", "main"),
+    ];
+    let start = Instant::now();
+    runtime.reread_stale_github(start);
+    answer_with(&mut runtime, &["/tmp/a"]);
+    runtime.reread_stale_github(start + Duration::from_secs(1));
+    runtime
+        .github_clock
+        .insert("/tmp/c".to_owned(), GithubClock::NoRemote);
+    let later = start + Duration::from_secs(10_000);
+
+    let before = generations(&runtime);
+    assert_eq!(
+        runtime.read_when_looked_at("/tmp/a", later),
+        LookRead::Never
+    );
+    assert_eq!(
+        runtime.read_when_looked_at("/tmp/c", later),
+        LookRead::Never
+    );
+    assert_eq!(
+        runtime.read_when_looked_at("/tmp/not-read", later),
+        LookRead::Never
+    );
+    assert_eq!(generations(&runtime), before);
+    assert_eq!(
+        runtime.read_when_looked_at("/tmp/b", later),
+        LookRead::Asked,
+        "the project that worked is asked"
+    );
+}
+
+/// An answer that never took the project's pull requests (a failed list) is
+/// not a good answer to look past, even with its issues read.
+#[test]
+fn a_look_leaves_an_issues_only_failure_to_its_retry() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![git_project("a", "/tmp/a", "main")];
+    let start = Instant::now();
+    runtime.reread_stale_github(start);
+    let mut read = read_ok("/tmp/a", Vec::new(), 10);
+    read.issues_read = false;
+    runtime.ingest_github_answer(
+        GithubSnapshot {
+            projects: vec![read],
+        },
+        true,
+    );
+    runtime.reread_stale_github(start + Duration::from_secs(1));
+    assert_eq!(
+        runtime.read_when_looked_at("/tmp/a", start + Duration::from_secs(100)),
+        LookRead::Never
+    );
+}
+
+fn look_event(workspace_id: &str, refresh: bool) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION, "kind": "github_request",
+        "payload": {"workspace_id": workspace_id, "refresh": refresh, "look": true}
+    }))
+    .unwrap()
+}
+
+/// The event: a look at the project in front reads it again without setting
+/// `loading`, publishes nothing and raises no error; one at another project,
+/// a plain folder or an id the core does not know does nothing at all.
+#[test]
+fn a_look_event_reads_only_the_project_in_front_and_never_shows_a_spinner_or_an_error() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![
+        git_project("a", "/tmp/a", "main"),
+        git_project("b", "/tmp/b", "main"),
+        workspace("folder", "folder", "/tmp/folder", Vec::new()),
+    ];
+    runtime.snapshot.navigator.focused_checkout_id = Some("a-checkout".to_owned());
+    // Answered a minute ago, as the clock saw it.
+    let answered = Instant::now() - Duration::from_secs(60);
+    first_read(
+        &mut runtime,
+        vec![
+            read_ok("/tmp/a", Vec::new(), 10),
+            read_ok("/tmp/b", Vec::new(), 10),
+        ],
+        answered,
+    );
+    runtime.apply_pull_requests();
+    let error = runtime.snapshot.status.last_error.clone();
+
+    for other in ["b", "folder", "unknown"] {
+        assert!(!runtime.dispatch_json(&look_event(other, false)), "{other}");
+        assert_eq!(
+            generations(&runtime),
+            vec![("/tmp/a".to_owned(), 0), ("/tmp/b".to_owned(), 0)],
+            "{other}"
+        );
+    }
+    assert!(
+        !runtime.dispatch_json(&look_event("a", false)),
+        "a look publishes nothing by itself"
+    );
+    assert_eq!(
+        generations(&runtime),
+        vec![("/tmp/a".to_owned(), 1), ("/tmp/b".to_owned(), 0)]
+    );
+    assert!(
+        !row_loading(&runtime, 0),
+        "no spinner on a project with an answer"
+    );
+    assert!(!runtime.dispatch_json(&look_event("a", false)));
+    assert_eq!(generation_of(&runtime, "/tmp/a"), 1, "the ask is out");
+    assert_eq!(
+        runtime.snapshot.status.last_error, error,
+        "no error is raised"
+    );
+}
+
+/// A request that asks for a refresh is a refresh, look or not.
+#[test]
+fn a_request_that_is_a_refresh_and_a_look_is_a_refresh() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![git_project("a", "/tmp/a", "main")];
+    runtime.snapshot.navigator.focused_checkout_id = Some("a-checkout".to_owned());
+    first_read(
+        &mut runtime,
+        vec![read_ok("/tmp/a", Vec::new(), 10)],
+        Instant::now(),
+    );
+    runtime.apply_pull_requests();
+    assert!(runtime.dispatch_json(&look_event("a", true)));
+    assert_eq!(generation_of(&runtime, "/tmp/a"), 1);
+    assert!(row_loading(&runtime, 0), "a refresh keeps its spinner");
 }
