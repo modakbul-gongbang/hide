@@ -283,6 +283,12 @@ fn context() -> ClosedContext {
         tab_index: 0,
         agent_area: Some(("a1".into(), 0)),
         replacement_shell: true,
+        replacement_in_tab: false,
+    }
+}
+fn closed_tab() -> CloseCaptureTarget {
+    CloseCaptureTarget::Tab {
+        tab_id: "w1:t1".into(),
     }
 }
 fn tab(id: &str) -> Value {
@@ -307,8 +313,14 @@ fn replacement_creation_failure_sends_no_close() {
         "tab.create" => Err(("fixture_create_refused".into(), "private diagnostic".into())),
         other => panic!("unexpected effect {other}"),
     });
-    let error =
-        prepare_close_replacement(&herdr.connector(), "intent", &context(), true).unwrap_err();
+    let error = prepare_close_replacement(
+        &herdr.connector(),
+        "intent",
+        &context(),
+        &closed_tab(),
+        true,
+    )
+    .unwrap_err();
     assert!(error.contains("fixture_create_refused"));
     assert_eq!(herdr.methods(), ["session.snapshot", "tab.create"]);
 }
@@ -340,7 +352,7 @@ fn replacement_retry_after_close_refusal_adopts_its_shell_without_another_create
     );
     let connector = herdr.connector();
     assert_eq!(
-        prepare_close_replacement(&connector, "intent", &context(), true)
+        prepare_close_replacement(&connector, "intent", &context(), &closed_tab(), true)
             .unwrap()
             .0,
         "w1:t2"
@@ -359,7 +371,7 @@ fn replacement_retry_after_close_refusal_adopts_its_shell_without_another_create
     };
     assert!(run_close_effect(&connector, &close).is_err());
     assert_eq!(
-        prepare_close_replacement(&connector, "intent", &context(), false)
+        prepare_close_replacement(&connector, "intent", &context(), &closed_tab(), false)
             .unwrap()
             .0,
         "w1:t2"
@@ -418,8 +430,14 @@ fn replacement_shell_is_placed_at_its_checkout_while_herdr_still_names_the_serve
         }}),
         other => panic!("unexpected {other}"),
     });
-    let (tab_id, payload) =
-        prepare_close_replacement(&herdr.connector(), "intent", &context(), true).unwrap();
+    let (tab_id, payload) = prepare_close_replacement(
+        &herdr.connector(),
+        "intent",
+        &context(),
+        &closed_tab(),
+        true,
+    )
+    .unwrap();
     assert_eq!(tab_id, "w1:t2");
     let cwd = |pane: &str| {
         payload
@@ -438,8 +456,14 @@ fn reuse_only_retry_cannot_create_when_its_shell_disappears_before_worker_reads(
         "session.snapshot" => snapshot(false),
         other => panic!("reuse-only retry must not send {other}"),
     });
-    let error =
-        prepare_close_replacement(&herdr.connector(), "intent", &context(), false).unwrap_err();
+    let error = prepare_close_replacement(
+        &herdr.connector(),
+        "intent",
+        &context(),
+        &closed_tab(),
+        false,
+    )
+    .unwrap_err();
     assert!(error.contains("disappeared"));
     assert_eq!(herdr.methods(), ["session.snapshot"]);
 }
@@ -493,4 +517,158 @@ fn malformed_create_ack_is_recovered_by_its_marker_without_repeating_the_effect(
             "layout.export"
         ]
     );
+}
+
+fn named_tab_context() -> ClosedContext {
+    ClosedContext {
+        replacement_in_tab: true,
+        ..context()
+    }
+}
+fn closing_agent() -> CloseCaptureTarget {
+    CloseCaptureTarget::Pane {
+        pane_id: "w1:p1".into(),
+    }
+}
+/// The named tab w1:t1 as Herdr reads it: the agent's pane, and once split
+/// the shell beside it, whose folder Herdr still names as the server's.
+fn named_tab_snapshot(shell: bool) -> Value {
+    let pane = |id: &str, cwd: &str| {
+        json!({"workspace_id":"w1","tab_id":"w1:t1","pane_id":id,"terminal_id":format!("{id}-terminal"),
+            "focused":false,"revision":0,"agent_status":"idle","cwd":cwd})
+    };
+    let rect = |x: u32, width: u32| json!({"x":x,"y":0,"width":width,"height":60});
+    let (panes, layout_panes) = if shell {
+        (
+            json!([pane("w1:p1", "/tmp"), pane("w1:p2", "/srv/herdr-server")]),
+            json!([{"pane_id":"w1:p1","focused":true,"rect":rect(0, 60)},
+                {"pane_id":"w1:p2","focused":false,"rect":rect(60, 60)}]),
+        )
+    } else {
+        (
+            json!([pane("w1:p1", "/tmp")]),
+            json!([{"pane_id":"w1:p1","focused":true,"rect":rect(0, 120)}]),
+        )
+    };
+    let mut value = snapshot(false);
+    value["snapshot"]["panes"] = panes;
+    value["snapshot"]["layouts"] = json!([{"workspace_id":"w1","tab_id":"w1:t1","zoomed":false,
+        "area":rect(0, 120),"focused_pane_id":"w1:p1","panes":layout_panes,"splits":[]}]);
+    value
+}
+fn named_tab_export(shell: bool) -> Value {
+    let agent = json!({"type":"pane","pane_id":"w1:p1","cwd":"/tmp","env":{}});
+    let root = if shell {
+        json!({"type":"split","direction":"right","ratio":0.5,"first":agent,
+            "second":{"type":"pane","pane_id":"w1:p2","cwd":"/tmp","env":{(REOPEN_INTENT_ENV):"intent:close-replacement"}}})
+    } else {
+        agent
+    };
+    json!({"type":"layout_export","layout":{"workspace_id":"w1","tab_id":"w1:t1","zoomed":false,
+        "focused_pane_id":"w1:p1","root":root}})
+}
+
+/// A named tab's last agent leaves a shell in the same tab: split beside
+/// the closing pane at the checkout, unfocused, with the close's marker; a
+/// refused close keeps it, and the retry adopts it instead of making another.
+#[test]
+fn a_named_tabs_shell_is_split_into_its_tab_and_a_retry_adopts_it() {
+    let mut split = false;
+    let herdr = FakeHerdr::start_with_errors(
+        "named-tab-shell",
+        move |method, params| match method {
+            "layout.export" => Ok(named_tab_export(split)),
+            "pane.split" => {
+                assert!(!split, "the shell is made once");
+                assert_eq!(params["target_pane_id"], "w1:p1");
+                assert_eq!(params["cwd"], "/tmp");
+                assert_eq!(params["focus"], false);
+                assert_eq!(params["env"][REOPEN_INTENT_ENV], "intent:close-replacement");
+                split = true;
+                Ok(
+                    json!({"type":"pane_info","pane":{"pane_id":"w1:p2","terminal_id":"w1:p2-terminal",
+                "workspace_id":"w1","tab_id":"w1:t1","focused":false,"agent_status":"idle","revision":1}}),
+                )
+            }
+            "session.snapshot" => Ok(named_tab_snapshot(split)),
+            "pane.close" => Err(("fixture_close_refused".into(), "private diagnostic".into())),
+            other => panic!("unexpected effect {other}"),
+        },
+    );
+    let connector = herdr.connector();
+    let (shell, payload) = prepare_close_replacement(
+        &connector,
+        "intent",
+        &named_tab_context(),
+        &closing_agent(),
+        true,
+    )
+    .unwrap();
+    assert_eq!(shell, "w1:p2");
+    let cwd = |pane: &str| {
+        payload
+            .panes
+            .iter()
+            .find(|candidate| candidate.pane_id == pane)
+            .and_then(|candidate| candidate.cwd.clone())
+    };
+    assert_eq!(
+        cwd("w1:p2").as_deref(),
+        Some("/tmp"),
+        "placed at its checkout"
+    );
+    let close = CloseEffectRequest {
+        safety: None,
+        failed_terminals: Vec::new(),
+        retain_for_reopen: true,
+        allow_replacement_create: true,
+        key: "intent".into(),
+        connection_generation: 0,
+        target: closing_agent(),
+        replacement: Some(named_tab_context()),
+    };
+    assert!(run_close_effect(&connector, &close).is_err());
+    let (adopted, _) = prepare_close_replacement(
+        &connector,
+        "intent",
+        &named_tab_context(),
+        &closing_agent(),
+        false,
+    )
+    .unwrap();
+    assert_eq!(adopted, "w1:p2");
+    let count = |name: &str| {
+        herdr
+            .methods()
+            .iter()
+            .filter(|method| *method == name)
+            .count()
+    };
+    assert_eq!(
+        (
+            count("pane.split"),
+            count("pane.close"),
+            count("tab.create")
+        ),
+        (1, 1, 0)
+    );
+}
+
+#[test]
+fn a_named_tab_whose_shell_cannot_be_made_closes_nothing() {
+    let herdr = FakeHerdr::start_with_errors("named-tab-refused", |method, _| match method {
+        "layout.export" => Ok(named_tab_export(false)),
+        "pane.split" => Err(("fixture_split_refused".into(), "private diagnostic".into())),
+        other => panic!("unexpected effect {other}"),
+    });
+    let error = prepare_close_replacement(
+        &herdr.connector(),
+        "intent",
+        &named_tab_context(),
+        &closing_agent(),
+        true,
+    )
+    .unwrap_err();
+    assert!(error.contains("fixture_split_refused"));
+    assert_eq!(herdr.methods(), ["layout.export", "pane.split"]);
 }

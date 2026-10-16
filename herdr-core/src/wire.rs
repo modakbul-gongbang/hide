@@ -1118,6 +1118,24 @@ pub(crate) fn replacement_tab_params(
         env: env.into_iter().collect(),
     })
 }
+/// The shell a named tab keeps, split beside its closing last pane: no focus,
+/// since the close moves the keyboard itself, and the intent marker in `env`.
+pub(crate) fn replacement_pane_params(
+    pane: &str,
+    cwd: &str,
+    env: std::collections::BTreeMap<String, String>,
+) -> Result<Value, String> {
+    params(req::PaneSplitParams {
+        target_pane_id: Some(pane.into()),
+        direction: req::SplitDirection::Right,
+        cwd: Some(herdr_param(cwd)),
+        focus: false,
+        env: env.into_iter().collect(),
+        ratio: None,
+        right_click: req::PaneRightClickTarget::Herdr,
+        workspace_id: None,
+    })
+}
 pub(crate) fn worktree_create_params(
     cwd: &str,
     branch: &str,

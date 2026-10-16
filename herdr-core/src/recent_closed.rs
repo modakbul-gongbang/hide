@@ -28,8 +28,15 @@ pub struct ClosedContext {
     pub tab_index: usize,
     /// Hide-owned area and insertion position, independent of Herdr order.
     pub agent_area: Option<(String, usize)>,
-    /// The primary workspace needs a shell before its last tab can close.
+    /// A shell is made before the close: a new tab when the primary
+    /// workspace's last tab closes, or a pane in the closing tab when
+    /// `replacement_in_tab` says so.
     pub replacement_shell: bool,
+    /// The shell goes into the closing tab beside its last agent, so the tab
+    /// and the name the operator gave it stay (docs/UI_BEHAVIOR.md, Agent
+    /// areas). Set only together with `replacement_shell`.
+    #[serde(default)]
+    pub replacement_in_tab: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

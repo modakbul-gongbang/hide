@@ -1910,10 +1910,8 @@ fn sidebar_tab_naming<S: serde::Serializer>(
         manual_name: Option<&'a str>,
         number: u32,
     }
-    let raw = naming.raw.trim();
-    let numeric = automatic_tab_number(raw).is_some();
     SidebarName {
-        manual_name: (!raw.is_empty() && !numeric).then_some(raw),
+        manual_name: naming.manual_name(),
         number: naming.number,
     }
     .serialize(serializer)
@@ -2061,6 +2059,16 @@ pub struct TabNaming {
     pub processes: BTreeMap<String, String>,
     pub raw: String,
     pub automatic: String,
+}
+
+impl TabNaming {
+    /// The name the tab was given, never an automatic `Tab N`: what makes a
+    /// tab named, for the sidebar's tab line and for the tab staying when its
+    /// last agent leaves (docs/UI_BEHAVIOR.md, Agent areas).
+    pub fn manual_name(&self) -> Option<&str> {
+        let raw = self.raw.trim();
+        (!raw.is_empty() && automatic_tab_number(raw).is_none()).then_some(raw)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

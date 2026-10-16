@@ -1135,12 +1135,13 @@ fn run_close_effects(context: &LiveContext, effects: Vec<CloseEffectRequest>) {
                 context.api_connector.as_ref(),
                 &effect.key,
                 replacement,
+                &effect.target,
                 effect.allow_replacement_create,
             )
-            .and_then(|(tab_id, payload)| {
+            .and_then(|(shell, payload)| {
                 let runtime = context.runtime.upgrade().ok_or("runtime stopped")?;
                 let mut guard = runtime.lock().map_err(|_| "runtime unavailable")?;
-                guard.ingest_close_replacement(&effect, &tab_id, payload)?;
+                guard.ingest_close_replacement(&effect, &shell, payload)?;
                 context.notifier.notify();
                 Ok(())
             })
@@ -1226,12 +1227,23 @@ fn capture_close_item(
     Ok(CloseCaptureOutcome { item })
 }
 
+/// Makes, or on a retry finds by its marker, the shell a close needs first,
+/// and answers it with a fresh session that holds it: a new tab in the
+/// primary workspace, or a pane in the closing tab beside the pane `target`
+/// closes when `replacement_in_tab`.
 fn prepare_close_replacement(
     connector: &dyn ApiConnector,
     key: &str,
     context: &ClosedContext,
+    target: &CloseCaptureTarget,
     allow_create: bool,
 ) -> Result<(String, SessionSnapshotPayload), String> {
+    if context.replacement_in_tab {
+        let CloseCaptureTarget::Pane { pane_id } = target else {
+            return Err("a shell inside the tab needs the pane it stands beside".into());
+        };
+        return prepare_shell_in_tab(connector, key, context, pane_id, allow_create);
+    }
     let started = Instant::now();
     let snapshot =
         fetch_session_with_connector(connector).map_err(|error| error.message().to_owned())?;
@@ -1299,6 +1311,57 @@ fn prepare_close_replacement(
     }
     place_replacement_at_its_checkout(&mut snapshot, &tab_id, &context.checkout_path);
     Ok((tab_id, snapshot))
+}
+
+/// The shell a named tab keeps when its last agent pane closes: split from
+/// that pane at the checkout, unfocused, and stamped with the close's marker,
+/// which is the only proof a retry adopts it by.
+fn prepare_shell_in_tab(
+    connector: &dyn ApiConnector,
+    key: &str,
+    context: &ClosedContext,
+    closing_pane: &str,
+    allow_create: bool,
+) -> Result<(String, SessionSnapshotPayload), String> {
+    let layout = export_reopen_layout(connector, key, &context.tab_id)?;
+    let marker = reopen_intent_marker(key, ReopenIntentStage::CloseReplacement);
+    let mut owned = Vec::new();
+    pane_ids_with_reopen_marker(&layout.root, &marker, &mut owned);
+    if owned.len() > 1 {
+        return Err("multiple shells carry the same close intent".into());
+    }
+    let pane_id = match owned.pop() {
+        Some(id) => id,
+        None if !allow_create => {
+            return Err("The replacement shell disappeared; retry to make another".into());
+        }
+        None => wire::split_pane(reopen_request(
+            connector,
+            &format!("herdr-core:{key}:replacement"),
+            "pane.split",
+            wire::replacement_pane_params(
+                closing_pane,
+                &context.checkout_path,
+                reopen_intent_env(key, ReopenIntentStage::CloseReplacement),
+            )?,
+        )?)?,
+    };
+    let mut snapshot =
+        fetch_session_with_connector(connector).map_err(|error| error.message().to_owned())?;
+    if !snapshot.layouts.iter().any(|layout| {
+        layout.tab_id == context.tab_id && layout.panes.iter().any(|pane| pane.pane_id == pane_id)
+    }) {
+        return Err("replacement shell is not confirmed in its tab".into());
+    }
+    // As for a new tab's shell (below), its folder is the one it was made at.
+    if let Some(pane) = snapshot
+        .panes
+        .iter_mut()
+        .find(|pane| pane.pane_id == pane_id)
+    {
+        pane.cwd = Some(context.checkout_path.clone());
+    }
+    Ok((pane_id, snapshot))
 }
 
 /// Herdr reads a new pane's cwd off its process, which still has the
@@ -4637,6 +4700,7 @@ mod tests {
             tab_index: 0,
             agent_area: None,
             replacement_shell: false,
+            replacement_in_tab: false,
         };
         let pane = ClosedPane {
             pane_id: "closed".into(),
@@ -4714,6 +4778,7 @@ mod tests {
             tab_index: 0,
             agent_area: None,
             replacement_shell: false,
+            replacement_in_tab: false,
         };
         let error = repair_incomplete_tab_layout(
             &LocalSocketConnector::new("/tmp/hide-reopen-over-count-must-not-connect.sock"),
@@ -4822,6 +4887,7 @@ mod tests {
             tab_index: 0,
             agent_area: None,
             replacement_shell: false,
+            replacement_in_tab: false,
         };
         let pane = ClosedPane {
             pane_id: "w1:p2".into(),
@@ -4953,6 +5019,7 @@ mod tests {
             tab_index: 0,
             agent_area: None,
             replacement_shell: false,
+            replacement_in_tab: false,
         };
         let layout_root = ClosedLayoutNode::Split {
             direction: crate::recent_closed::ClosedSplitDirection::Right,
@@ -5068,6 +5135,7 @@ mod tests {
             tab_index: 0,
             agent_area: None,
             replacement_shell: false,
+            replacement_in_tab: false,
         };
         let root = ClosedLayoutNode::Split {
             direction: crate::recent_closed::ClosedSplitDirection::Right,
