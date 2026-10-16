@@ -1090,7 +1090,7 @@ The buttons keep their place in the row whether they show or not, so the name ne
 Refresh and the Git mark stay where they were.
 
 Copy Path puts the item's whole path on the clipboard, in the checkout device's own spelling, and Copy Relative Path the path below the checkout root (`.` for the root itself).
-⌥⌘C and ⇧⌥⌘C (Windows and Linux: Alt+Shift+C and Alt+Shift+R) do the same on the selected row, or on the root when none is selected, while the tree holds the keyboard.
+⌥⌘C and ⌥⇧⌘C (Windows and Linux: Alt+Shift+C and Alt+Shift+R) do the same on the selected row, or on the root when none is selected, while the tree holds the keyboard.
 They are registry commands (`copy_path`, `copy_relative_path`) listed in the shortcut sheet as Explorer only, rebound in Settings, Shortcuts, and answered by the tree rather than the window, so a terminal keeps those keys.
 A clipboard that refuses the write goes to the diagnostic log, and nothing else changes: neither command touches a file, so there is nothing to undo.
 Collapse All changes only the tree's expansion, which the next press on a folder restores.
@@ -2390,8 +2390,8 @@ The sheet carries no row or explanation for a command the removed native app alo
 | Grow View area | none | none | none | none |
 | Shrink View area | none | none | none | none |
 | Move to Trash (exception) | `⌘⌫` | `Delete` | `⌘⌫` | `Delete` |
-| Copy Path (Explorer only) | `⌥⌘C` | `Alt+Shift+C` | none | none |
-| Copy Relative Path (Explorer only, exception) | `⇧⌥⌘C` | `Alt+Shift+R` | none | none |
+| Copy Path | `⌥⌘C` | `Alt+Shift+C` | none | none |
+| Copy Relative Path (exception) | `⌥⇧⌘C` | `Alt+Shift+R` | none | none |
 | Settings | `⌘,` | `Ctrl+Shift+,` | `⌥,` | `Ctrl+Shift+,` |
 | Keyboard shortcuts | `⌘/` | `Ctrl+Shift+/` | `⌘/` | `Ctrl+Shift+/` |
 
