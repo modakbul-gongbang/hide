@@ -3550,30 +3550,17 @@ impl Runtime {
                 if previous.is_none() {
                     self.persist_ui_state();
                 }
-                // A pane whose tab is drawn ahead of Herdr keeps its PTY size
-                // until Herdr confirms the layout; the size is sent then
-                // (PRD instant-pane-topology D-08). One waiting for its first
-                // size gets it now, since there is no PTY size to keep.
-                let attached = self
-                    .terminal_states
-                    .get(&payload.pane_id)
-                    .is_some_and(|state| {
-                        matches!(
-                            state.state.as_str(),
-                            "starting" | "controlling" | "observing"
-                        )
-                    });
-                if self.grid_held_panes.contains(&payload.pane_id) && attached {
-                    if previous != Some(size) {
-                        self.held_resizes.insert(payload.pane_id);
-                    }
-                    return false;
-                }
+                // The grid follows the drawn rectangle the moment the view
+                // reports it, whether or not Herdr has confirmed the layout
+                // behind it (PRD grid-ahead-of-herdr D-03): the PTY size is
+                // the controller's, so a size sent on a prediction is right
+                // whenever the prediction is, and a layout Herdr draws
+                // differently makes the view report once more.
                 // The node asks Herdr for a new view's whole screen itself
                 // when its grid did not change, so an unchanged size goes
                 // nowhere.
                 if previous != Some(size) {
-                    self.send_terminal_size(&payload.pane_id, false);
+                    self.send_terminal_size(&payload.pane_id);
                 }
                 false
             }
@@ -4237,10 +4224,10 @@ impl Event {
 impl Runtime {
     /// Sends the size the pane's view last reported to its node, which
     /// resizes its session (an observer attaches again once the size
-    /// settles) and records `terminal.resize_settled`. `force` sends it even
-    /// when the session already has it: a size held while the layout was
-    /// drawn ahead.
-    pub(super) fn send_terminal_size(&mut self, pane_id: &str, force: bool) {
+    /// settles) and records `terminal.resize_settled`. An operation whose
+    /// record waits for this pane's first frame after its resize starts
+    /// watching now (PRD grid-ahead-of-herdr D-06).
+    pub(super) fn send_terminal_size(&mut self, pane_id: &str) {
         let Some(&(rows, cols)) = self.terminal_sizes.get(pane_id) else {
             return;
         };
@@ -4248,7 +4235,12 @@ impl Runtime {
             .control(hide_node_link::terminal::TerminalControl::Resize {
                 pane: pane_id.to_owned(),
                 size: hide_node_link::terminal::GridSize { rows, cols },
-                force,
             });
+        if self.op_timings.resize_sent(pane_id) {
+            self.terminals
+                .control(hide_node_link::terminal::TerminalControl::WatchFrame {
+                    pane: pane_id.to_owned(),
+                });
+        }
     }
 }

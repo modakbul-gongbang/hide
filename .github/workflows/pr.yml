@@ -71,8 +71,9 @@ name: verify
 
 on:
   pull_request:
-    # `ready_for_review` starts the run that plans and runs the lanes.
-    types: [opened, synchronize, reopened, ready_for_review]
+    # `ready_for_review` starts the run that plans and runs the lanes; `edited`
+    # reruns the body's checks (`policy` alone when the last green run stands).
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   push:
     branches: [main]
   # nightly.yml runs every lane on main once a day.
@@ -81,7 +82,9 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request replaces that pull request's run. Main's runs
+# A new push to a pull request replaces that pull request's run; a body edit
+# waits for it instead, since the lanes it would cancel are the ones its plan
+# reuses. Main's runs
 # are not cancelled once they start: each merge's full run is the net under the
 # lanes a plan left out. GitHub keeps one pending run per group, so in a burst
 # of merges a newer run replaces the pending one and checks their combined
@@ -89,7 +92,7 @@ permissions:
 # a push run's place.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'edited' }}
 
 jobs:
   plan:
@@ -139,6 +142,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The merge commit and the base it merges into, for the paths a
+          # pull request changes.
+          fetch-depth: 2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -157,6 +164,16 @@ jobs:
           zsh scripts/check-herdr-pin-single-source.sh
           python3 scripts/check-core-touches-no-machine.py
           python3 scripts/check-ai-prompt-language.py
+
+      # Reads the pull request's body, which no merge result carries, so it is
+      # the one policy check `premerge-check.py` does not repeat.
+      - name: A pull request that changes a screen shows it
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+          python3 scripts/check-pr-screenshots.py --pr-body "$RUNNER_TEMP/pr-body.md" --range HEAD^1..HEAD
 
   rust:
     name: rust workspace

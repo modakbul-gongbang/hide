@@ -1402,13 +1402,6 @@ pub struct Runtime {
     /// The creation requests keys are sent against before Herdr names their
     /// pane (PRD instant-pane-topology D-11); the node holds the keys.
     input_requests: terminal_input::InputRequests,
-    /// Panes of a tab drawn ahead of Herdr, whose PTY keeps its size until
-    /// Herdr confirms (PRD instant-pane-topology D-08). Recomputed with every
-    /// session overlay, so it never outlives the predictions behind it.
-    grid_held_panes: HashSet<String>,
-    /// Held panes whose view reported a size meanwhile; it is sent once when
-    /// the hold ends.
-    held_resizes: HashSet<String>,
     /// A pane close that waited in its tab's line, by close key: the place
     /// it held there, which orders its drawing among the line's other
     /// predictions. Pruned to the live closes on each insert.
@@ -2147,8 +2140,6 @@ impl Runtime {
             confirmed_pane_layout_signatures: HashMap::new(),
             op_timings: op_timing::OpTimings::default(),
             input_requests: terminal_input::InputRequests::default(),
-            grid_held_panes: HashSet::new(),
-            held_resizes: HashSet::new(),
             drawn_closes: HashMap::new(),
             confirmed_layouts: HashMap::new(),
             close_line_places: HashMap::new(),
