@@ -947,6 +947,35 @@ async fn explorer_paths_are_checked_against_the_registered_checkout() {
     assert_eq!(refused["payload"]["kind"], "path_trash");
     assert_eq!(refused["payload"]["reason"], "outside_checkout");
 
+    // A copy names the item and the folder it lands in on the same line a move
+    // does: a folder outside every checkout is refused.
+    let refused = send_event_expecting(
+        &mut socket,
+        "path_copy",
+        json!({"root": checkout_path, "path": file_path, "destination": notes_path}),
+        never,
+    )
+    .await;
+    assert_eq!(refused["payload"]["kind"], "path_copy");
+    assert_eq!(refused["payload"]["reason"], "outside_checkout");
+
+    // A drop from the file manager is judged on the same line, before any
+    // upload is read: its destination outside every checkout is refused.
+    let refused = send_event_expecting(
+        &mut socket,
+        "path_import",
+        json!({
+            "request_id": "01234567-0123-0123-0123-0123456789ab",
+            "root": checkout_path,
+            "destination": notes_path,
+            "items": [{"path": "dir", "directory": true}],
+        }),
+        never,
+    )
+    .await;
+    assert_eq!(refused["payload"]["kind"], "path_import");
+    assert_eq!(refused["payload"]["reason"], "outside_checkout");
+
     // The root a change names has to be one of the registered ones.
     let unregistered_root = wire(&home.join("projects"));
     let refused = send_event_expecting(
@@ -1615,6 +1644,50 @@ async fn attachment_stages_over_the_cap_and_unknown_commits_are_refused() {
     )
     .await;
     assert_eq!(refused["payload"]["reason"], "invalid_request_id");
+    running.stop();
+}
+
+#[tokio::test]
+async fn a_drop_names_only_uploads_hided_staged_and_shapes_it_can_forward() {
+    let (_dir, running) = start().await;
+    let mut socket = live_socket(&running).await;
+    let request_id = "01234567-0123-0123-0123-0123456789ab";
+    let refusal = |frame: &Value| frame["type"] == "attachment_refused";
+    let drop = |items: Value| json!({"request_id": request_id, "root": "/nowhere", "destination": "/nowhere", "items": items});
+
+    // An upload id that was never opened names no file.
+    let refused = send_event_expecting(
+        &mut socket,
+        "path_import",
+        drop(json!([{"path": "a.txt", "directory": false, "stage": "never-staged"}])),
+        refusal,
+    )
+    .await;
+    // The destination is judged first, so a daemon with no such checkout
+    // refuses it; either way nothing reaches the core.
+    assert!(
+        refused["type"] == "path_refused" || refused["payload"]["reason"] == "unknown_stage",
+        "{refused}"
+    );
+
+    // Shapes the page never sends are refused before anything else is read.
+    for items in [
+        json!([]),
+        json!([{"path": "../escape", "directory": true}]),
+        json!([{"path": "a/../b", "directory": true}]),
+        json!([{"path": "", "directory": true}]),
+        json!([{"path": "dir", "directory": true, "stage": "s1"}]),
+        json!([{"path": "a.txt", "directory": false}]),
+    ] {
+        let refused =
+            send_event_expecting(&mut socket, "path_import", drop(items.clone()), refusal).await;
+        assert_eq!(refused["type"], "attachment_refused", "{items}");
+        assert!(
+            ["invalid_item", "too_many_files"]
+                .contains(&refused["payload"]["reason"].as_str().unwrap()),
+            "{items}: {refused}"
+        );
+    }
     running.stop();
 }
 

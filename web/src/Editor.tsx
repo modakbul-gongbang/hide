@@ -428,6 +428,7 @@ function FileBody({
         held={hold === "held"}
         onDraft={(contents) => draftEdited(tab.id, contents, actions)}
         onSave={() => actions.saveFile(tab.id)}
+        onOpenPath={(path) => actions.openFile(path, false)}
         comments={{ display, workspace, actions }}
       />
     </div>

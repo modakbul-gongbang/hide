@@ -15,14 +15,14 @@ import path from "node:path";
 import { initGithubRepository } from "./github-remote";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
-import { fakeGh, git, head, moveHead, skewCardHead, writes } from "./work-prs-fixture";
+import { fakeGh, git, head, moveHead, skewCardHead, writes, type ExtraQuery } from "./work-prs-fixture";
 import { chord } from "./chords";
 import { chooseTheme, countSent, screenshot, showProjectRow, showTool } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 
 /** A project on a private Herdr and hided with the fake `gh`, the PRs tool open. */
-async function openWork(page: Page, fn: (stack: { gh: { bin: string; state: string }; work: Locator; sent: Map<string, number>; last: Map<string, Record<string, unknown>> }) => Promise<void>): Promise<void> {
+async function openWork(page: Page, fn: (stack: { gh: { bin: string; state: string }; work: Locator; sent: Map<string, number>; last: Map<string, Record<string, unknown>> }) => Promise<void>, options: { failing?: ExtraQuery[]; teamAsk?: boolean } = {}): Promise<void> {
   await page.setViewportSize({ width: 1600, height: 1000 });
   const herdr = await startHerdr();
   let daemon: Awaited<ReturnType<typeof startHided>> | null = null;
@@ -40,7 +40,7 @@ async function openWork(page: Page, fn: (stack: { gh: { bin: string; state: stri
     git(repo, ["remote", "set-head", "origin", "main"]);
     herdr.run(["workspace", "create", "--cwd", repo, "--label", "repo", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
 
-    const gh = fakeGh(herdr.root);
+    const gh = fakeGh(herdr.root, options);
     daemon = await startHided(herdr, "work-prs", undefined, { PATH: `${gh.bin}${path.delimiter}${herdr.fixturePath}` });
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
@@ -93,6 +93,117 @@ test("the PRs tool groups by whose move it is and says why on each row", async (
     await expect(reason(34)).toHaveAttribute("data-pr-reason", "conflict");
     await screenshot(page, "work-prs-light");
   });
+});
+
+/** The groups the PRs tool draws and the pull requests in each, in the order drawn. */
+async function groupsOf(work: Locator): Promise<Record<string, string[]>> {
+  // Everything after Blocked starts folded (B7); a group opens from its header.
+  for (const group of ["waiting", "drafts", "bots", "merged"]) {
+    const section = work.locator(`[data-pr-group="${group}"]`);
+    if ((await section.count()) > 0 && (await section.getAttribute("data-folded")) === "true") await section.locator('[data-pr-focus="group"]').click();
+  }
+  return work.locator("[data-pr-group]").evaluateAll((sections) =>
+    Object.fromEntries(sections.map((section) => [section.getAttribute("data-pr-group")!, [...section.querySelectorAll("[data-pr]")].map((row) => row.getAttribute("data-pr")!).sort()])),
+  );
+}
+
+// Issue #1189: the pull request list alone decides whether a project's read
+// succeeds. A question beside it that fails leaves the judgments derived from
+// it unknown, the list stays, and the ⚠ in the PRs tool's head says which question it was.
+const UNREAD = '[data-prs-header] [data-prs-stale="true"]';
+const warning = (work: Locator) => work.locator(UNREAD);
+/** The ⚠ says `text` in its tooltip, and its accessible name; the lane is captured with the tooltip open, cropped so no pane or terminal prompt is in it. */
+async function warnsWith(page: Page, work: Locator, text: string, name: string): Promise<void> {
+  await expect(warning(work)).toHaveAttribute("aria-label", text);
+  await warning(work).hover();
+  await expect(page.locator('[data-slot="tooltip-content"]')).toContainText(text);
+  const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
+  if (!dir) return;
+  // The tooltip slides in: capture after it has settled.
+  for (let frame = 0; frame < 20; frame += 1) await page.evaluate(() => new Promise((done) => requestAnimationFrame(done)));
+  const box = (await work.boundingBox())!;
+  const tip = (await page.locator('[data-slot="tooltip-content"]').boundingBox())!;
+  const right = Math.max(box.x + box.width, tip.x + tip.width);
+  await page.screenshot({ path: path.join(dir, `${name}.png`), clip: { x: box.x, y: Math.min(box.y, tip.y), width: right - box.x, height: box.height } });
+}
+
+/** The reason a row says, by its kind and words. */
+const reasonOf = (work: Locator, number: number) => work.locator(`[data-pr="${number}"] [data-pr-reason]`).first();
+
+test("an unreadable account keeps the list and leaves every pull request's owner unjudged", async ({ page }) => {
+  await openWork(
+    page,
+    async ({ work }) => {
+      // Nobody can be said to be the author: the four open ones wait, plain.
+      expect(Object.keys(await groupsOf(work))).toEqual(["waiting", "drafts", "bots", "merged"]);
+      expect((await groupsOf(work)).waiting).toEqual(["31", "32", "33", "34"]);
+      for (const number of [31, 32, 33, 34]) {
+        await expect(reasonOf(work, number)).toHaveAttribute("data-pr-reason", "unjudged");
+        await expect(reasonOf(work, number)).toContainText("Not judged · can't tell if it is yours");
+      }
+      // What the list alone decides is still decided: a draft, a bot's, a merged one.
+      expect((await groupsOf(work)).drafts).toEqual(["35"]);
+      expect((await groupsOf(work)).bots).toEqual(["36"]);
+      expect((await groupsOf(work)).merged).toEqual(["37"]);
+      // Nothing is asked of the operator, so the rail's PRs icon carries no number.
+      await expect(page.locator('[data-lane-tool="prs"] [data-lane-prs-count]')).toHaveCount(0);
+      await warnsWith(page, work, "GitHub read incomplete · could not read the signed-in account", "work-prs-unread-account-light");
+    },
+    { failing: ["account"] },
+  );
+});
+
+test("unreadable review requests keep the list and judge a team's ask only as unknown", async ({ page }) => {
+  await openWork(
+    page,
+    async ({ work }) => {
+      // The request list still names the account on 33, and nobody on the others, so only the team's ask is unknown.
+      expect(Object.keys(await groupsOf(work))).toEqual(["needs_you", "blocked", "waiting", "drafts", "bots", "merged"]);
+      expect((await groupsOf(work)).needs_you).toEqual(["31", "32", "33"]);
+      await expect(reasonOf(work, 33)).toHaveAttribute("data-pr-reason", "review");
+      expect((await groupsOf(work)).waiting).toEqual(["38"]);
+      await expect(reasonOf(work, 38)).toHaveAttribute("data-pr-reason", "unjudged");
+      await expect(reasonOf(work, 38)).toContainText("Not judged · can't tell if a review was asked of you");
+      await warnsWith(page, work, "GitHub read incomplete · could not read review requests", "work-prs-unread-review-requests-light");
+    },
+    { failing: ["review_requests"], teamAsk: true },
+  );
+});
+
+test("an unreadable merge queue keeps the list and holds back only the pull requests a queue could hold", async ({ page }) => {
+  await openWork(
+    page,
+    async ({ work }) => {
+      const groups = await groupsOf(work);
+      // 31 (clean) and 32 (behind) could be queued; 33 is a review, 34 a conflict.
+      expect(groups.needs_you).toEqual(["33"]);
+      expect(groups.blocked).toEqual(["34"]);
+      expect(groups.waiting).toEqual(["31", "32"]);
+      for (const number of [31, 32]) {
+        await expect(reasonOf(work, number)).toHaveAttribute("data-pr-reason", "unjudged");
+        await expect(reasonOf(work, number)).toContainText("Not judged · can't tell if it is in the merge queue");
+      }
+      await expect(page.locator('[data-lane-tool="prs"] [data-lane-prs-count]')).toHaveText("1");
+      await warnsWith(page, work, "GitHub read incomplete · could not read the merge queue", "work-prs-unread-merge-queue-light");
+    },
+    { failing: ["merge_queue"] },
+  );
+});
+
+test("all three extra questions failing still lists every pull request and names all three", async ({ page }) => {
+  await openWork(
+    page,
+    async ({ work }) => {
+      const groups = await groupsOf(work);
+      expect(Object.keys(groups)).toEqual(["waiting", "drafts", "bots", "merged"]);
+      expect(groups.waiting).toEqual(["31", "32", "33", "34", "38"]);
+      await expect(reasonOf(work, 31)).toContainText("Not judged · can't tell if it is yours");
+      // Plain Waiting says nothing of whose move it is, so the rail's PRs icon carries no number.
+      await expect(page.locator('[data-lane-tool="prs"] [data-lane-prs-count]')).toHaveCount(0);
+      await warnsWith(page, work, "GitHub read incomplete · could not read the signed-in account, review requests, the merge queue", "work-prs-unread-all-light");
+    },
+    { failing: ["account", "review_requests", "merge_queue"], teamAsk: true },
+  );
 });
 
 test("the card opens in the 보기 slot and Merge goes out on the head it showed", async ({ page }) => {

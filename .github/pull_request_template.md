@@ -2,6 +2,7 @@
 리뷰어가 읽는 순서대로 씁니다: 무엇이 바뀌었나 -> 내가 무엇을 판단해야 하나 -> 이미 증명된 것은 무엇인가.
 위 세 섹션을 합쳐 40줄 안쪽, 불릿 한 줄에 사실 하나(120자 이내). 변경의 크기에 맞춰 짧게 쓰고, 넘치는 것은 접힌 블록으로.
 해당 없는 줄과 섹션은 "N/A"로 메우지 말고 지우세요. 게이트 목록은 CONTRIBUTING.md에 있습니다.
+PR 제목은 커밋과 같은 `<type>: <영어 명령형 문장>` 형식으로 씁니다. 예: `fix: keep a named tab when its last agent closes` (type 목록은 CONTRIBUTING.md, Commit messages and attribution).
 -->
 
 Closes #<!-- 이 PR이 끝내는 이슈 번호. 큰 이슈의 조각이면 그 조각의 하위 이슈를 닫습니다. 닫는 이슈가 없으면 이 줄을 지우세요. 닫지 않는 언급은 hide가 이슈에 잇지 않습니다. -->

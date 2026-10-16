@@ -327,6 +327,12 @@ export function installKeyboard(actions: Actions): () => void {
       case "settings":
         return actions.openSettings();
       case "move_to_trash":
+      case "copy_path":
+      case "copy_relative_path":
+      case "explorer_cut":
+      case "explorer_copy":
+      case "explorer_paste":
+        // The Explorer's own chords: the tree answers them while it holds the keyboard.
         return;
       default: {
         const never: never = id;

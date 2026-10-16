@@ -131,6 +131,11 @@ export type CommandId =
   | "find_in_pane"
   | "save_file"
   | "move_to_trash"
+  | "copy_path"
+  | "copy_relative_path"
+  | "explorer_cut"
+  | "explorer_copy"
+  | "explorer_paste"
   | "split_right"
   | "split_down"
   | "toggle_zoom"
@@ -291,6 +296,13 @@ export const REGISTRY: readonly Command[] = [
   { id: "grow_view_area", title: "Grow View area", group: "Panes", browser: null, electron: null, moved: false },
   { id: "shrink_view_area", title: "Shrink View area", group: "Panes", browser: null, electron: null, moved: false },
   { id: "move_to_trash", title: "Move to Trash", group: "Panes", browser: { code: "Backspace", meta: true }, electron: { code: "Backspace", meta: true }, moved: false, passthrough: "explorer_terminal_clears_line" },
+  // The Explorer's two path copies, VS Code's chords. Chrome keeps ⌥⌘C (Inspect), so a browser tab has no chord; the tree answers them, as it does Move to Trash, so a terminal keeps its keys.
+  { id: "copy_path", title: "Copy Path", group: "Panes", browser: null, electron: { code: "KeyC", meta: true, alt: true }, moved: false, passthrough: "explorer" },
+  { id: "copy_relative_path", title: "Copy Relative Path", group: "Panes", browser: null, electron: { code: "KeyC", meta: true, alt: true, shift: true }, moved: false, passthrough: "explorer" },
+  // The tree's clipboard, the system's own chords: the tree answers them while it holds the keyboard, so a terminal keeps ⌘C (copy a selection) and ⌘V (paste). Fixed, as the text fields' chords are.
+  { id: "explorer_cut", title: "Cut File or Folder", group: "Panes", browser: { code: "KeyX", meta: true }, electron: { code: "KeyX", meta: true }, moved: false, passthrough: "explorer" },
+  { id: "explorer_copy", title: "Copy File or Folder", group: "Panes", browser: { code: "KeyC", meta: true }, electron: { code: "KeyC", meta: true }, moved: false, passthrough: "explorer" },
+  { id: "explorer_paste", title: "Paste File or Folder", group: "Panes", browser: { code: "KeyV", meta: true }, electron: { code: "KeyV", meta: true }, moved: false, passthrough: "explorer" },
   { id: "settings", title: "Settings", group: "Help", browser: { code: "Comma", alt: true }, electron: { code: "Comma", meta: true }, moved: true },
   { id: "shortcuts", title: "Keyboard shortcuts", group: "Help", browser: { code: "Slash", meta: true }, electron: { code: "Slash", meta: true }, moved: false },
 ];
@@ -326,6 +338,15 @@ export const PC_KEYS: Readonly<Partial<Record<CommandId, { chord?: Chord; browse
   // Windows Explorer and the Linux file managers move a file to the Recycle
   // Bin or Trash with Delete.
   move_to_trash: { chord: { code: "Delete" }, passthrough: "explorer" },
+  // The rule would give Copy Relative Path the same Alt+Shift+C as Copy Path,
+  // VS Code's own chord for it is a two-step sequence this registry cannot
+  // hold, and Alt+Shift+R opens the PRs tool (PRD sidebar-task-lens B25), so
+  // it takes the free Alt+Shift+H.
+  copy_relative_path: { chord: { code: "KeyH", alt: true, shift: true }, passthrough: "explorer" },
+  // A terminal copies with Ctrl+Shift+C there, so Ctrl+C, X and V are free for the tree, as in every file manager.
+  explorer_cut: { chord: { code: "KeyX", ctrl: true }, passthrough: "explorer" },
+  explorer_copy: { chord: { code: "KeyC", ctrl: true }, passthrough: "explorer" },
+  explorer_paste: { chord: { code: "KeyV", ctrl: true }, passthrough: "explorer" },
 };
 
 /** Chords Chrome or the system keeps for itself, per system; a browser chord using one is a registry error. */
@@ -459,6 +480,8 @@ export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
   "text_smaller",
   "text_reset",
   ...AREA_COMMANDS,
+  "copy_path",
+  "copy_relative_path",
 ];
 
 /**

@@ -337,6 +337,27 @@ impl Runtime {
         true
     }
 
+    /// The operator closed a view of `key`'s files tool (B12): when none is
+    /// left and the tree is off, the lane closes rather than fill itself
+    /// with a tree the operator did not turn on, and keeps Files as its last
+    /// tool for the reopen. A tree the operator turned on stays across the
+    /// lane. The displays of a document that just closed leave first.
+    pub(super) fn close_emptied_lane(&mut self, key: &WorkspaceKey) {
+        self.reconcile_view_displays();
+        let Some(entry) = self
+            .workspace_views
+            .as_mut()
+            .and_then(|store| store.views.get_mut(&key.0, &key.1))
+        else {
+            return;
+        };
+        if !entry.shows_files() || entry.tree || entry.layout.display_count() > 0 {
+            return;
+        }
+        entry.set_tool(None);
+        self.persist_workspace_views();
+    }
+
     pub(super) fn front_workspace_key(&self) -> Option<WorkspaceKey> {
         let (workspace_id, checkout_id) = self.front_checkout()?;
         self.workspace_key(workspace_id, checkout_id)

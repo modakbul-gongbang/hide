@@ -7,7 +7,7 @@ import { bodyOutline, bodyPreview, confirmHolds, fileOpen, mergeWhy, prFacts, pr
 import type { PrCard, PullRequest } from "./snapshot";
 
 const pr = (over: Omit<Partial<PullRequest>, "work"> & { work?: Record<string, unknown> }): PullRequest =>
-  ({ number: 7, url: "https://github.com/acme/repo/pull/7", head_branch: "feat/x", base_branch: "main", is_draft: false, ...over, work: { merge_state: "clean", pending_checks: 0, ...over.work } }) as unknown as PullRequest;
+  ({ number: 7, url: "https://github.com/acme/repo/pull/7", head_branch: "feat/x", base_branch: "main", is_draft: false, ...over, work: { merge_state: "clean", pending_checks: 0, queue: { state: "not_queued" }, ...over.work } }) as unknown as PullRequest;
 
 const card = (merge: Partial<NonNullable<PrCard["merge"]>> | null): PrCard => ({ merge: merge === null ? null : { can_merge: true, methods: ["merge"], queue: false, ...merge } }) as unknown as PrCard;
 

@@ -702,7 +702,9 @@ fn pr_board_follows_the_record_s_live_session_and_tracks_github_and_issue_change
         "head_branch":"feature","base_branch":"main","badge":"open","checks":"failed","is_draft":false,
         "closing_issues":[{"repository":"acme/app","number":7}]
     })).unwrap();
-    pr.work.mine = true;
+    pr.work.mine = Some(true);
+    pr.work.asked_of_me = crate::model::ReviewAsk::None;
+    pr.work.queue = crate::model::MergeQueuePlace::NotQueued;
     pr.work.merge_state = crate::model::MergeState::Blocked;
     // The record says the maker's session worked on the branch; the maker
     // is in another checkout and still working there.
@@ -780,7 +782,9 @@ fn a_working_agent_turns_stalled_and_a_quiet_pull_request_old_with_the_clock_alo
         "head_branch":"feature","base_branch":"main","badge":"open","checks":"passing","is_draft":false,
         "closing_issues":[], "updated_at_unix_ms": 1_000_000
     })).unwrap();
-    pr.work.mine = true;
+    pr.work.mine = Some(true);
+    pr.work.asked_of_me = crate::model::ReviewAsk::None;
+    pr.work.queue = crate::model::MergeQueuePlace::NotQueued;
     pr.work.merge_state = crate::model::MergeState::Clean;
     pr.work.sessions = vec!["s-maker".into()];
     let mut agents = rows();

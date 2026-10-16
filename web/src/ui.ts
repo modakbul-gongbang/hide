@@ -170,6 +170,18 @@ export type ExplorerDraft = {
   initial: string;
 };
 
+/** What ⌘X or ⌘C took in the Explorer, until a paste (a cut) or the next cut or copy replaces it. It names the checkout it came from, because a paste works inside one checkout only. */
+export type ExplorerClipboard = {
+  mode: "copy" | "cut";
+  path: string;
+  isDirectory: boolean;
+  root: string;
+  device: string;
+};
+
+/** A failure the page itself found - a paste across checkouts, a drop past a cap or one hided refused - drawn in the Explorer's failure line under `path`, a folder. The core's own failures arrive in `explorer_operation`. */
+export type ExplorerNotice = { path: string; message: string };
+
 /** The trash confirmation: what is about to move, and the row the tree selects
  * once it is gone. */
 export type PendingTrash = {
@@ -236,6 +248,10 @@ type UiStore = {
   explorerDraft: ExplorerDraft | null;
   /** The trash confirmation the Explorer is showing, or null. */
   pendingTrash: PendingTrash | null;
+  /** The item the Explorer cut or copied, or null. */
+  explorerClipboard: ExplorerClipboard | null;
+  /** The failure line the page itself drew for the Explorer, or null. */
+  explorerNotice: ExplorerNotice | null;
   overlay: Overlay;
   projectSettingsTarget: ProjectSettingsTarget | null;
   projectSettingsReturnFocus: HTMLElement | null;
@@ -309,6 +325,8 @@ type UiStore = {
   setDrawnLane: (drawn: DrawnLane) => void;
   setExplorerDraft: (draft: ExplorerDraft | null) => void;
   setPendingTrash: (trash: PendingTrash | null) => void;
+  setExplorerClipboard: (clipboard: ExplorerClipboard | null) => void;
+  setExplorerNotice: (notice: ExplorerNotice | null) => void;
   openOverlay: (overlay: Overlay) => void;
   /** The overlay ⌘K replaced when it opened, so Settings in front reads as a screen with nothing to relate to (PRD cmdk-navigation B7). */
   searchOver: Overlay;
@@ -367,6 +385,8 @@ export const useUiStore = create<UiStore>((set, get) => ({
   drawnLane: { mode: "closed", tool: null },
   explorerDraft: null,
   pendingTrash: null,
+  explorerClipboard: null,
+  explorerNotice: null,
   overlay: "none",
   projectSettingsTarget: null,
   projectSettingsReturnFocus: null,
@@ -417,6 +437,8 @@ export const useUiStore = create<UiStore>((set, get) => ({
   },
   setExplorerDraft: (explorerDraft) => set({ explorerDraft }),
   setPendingTrash: (pendingTrash) => set({ pendingTrash }),
+  setExplorerClipboard: (explorerClipboard) => set({ explorerClipboard }),
+  setExplorerNotice: (explorerNotice) => set({ explorerNotice }),
   searchOver: "none",
   openOverlay: (overlay) => set((state) => (overlay === "search" ? { overlay, searchOver: state.overlay, searchReturnFocus: document.activeElement instanceof HTMLElement ? document.activeElement : null } : { overlay })),
   closeOverlay: (overlay) => {

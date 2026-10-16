@@ -5,7 +5,9 @@
 // is one line over the pane, and hided's reason codes become that line here.
 
 import type { TFunction } from "i18next";
+import { dropRefusalText } from "./explorerDropText";
 import { useShellStore } from "./store";
+import { useUiStore } from "./ui";
 import type { DispatchFn } from "./ws";
 
 /** One binary upload frame carries at most this many bytes. */
@@ -33,6 +35,37 @@ function rememberPane(requestId: string, paneId: string): void {
 
 export function configureAttachments(value: Sender): void {
   sender = value;
+}
+
+/** The Explorer folder each drop batch lands in, so a refusal is drawn under it. Capped like `paneByRequest`. */
+const folderByDrop = new Map<string, string>();
+
+export function rememberDrop(batch: string, folder: string): void {
+  folderByDrop.set(batch, folder);
+  while (folderByDrop.size > MAX_TRACKED_REQUESTS) {
+    const oldest = folderByDrop.keys().next().value;
+    if (oldest === undefined) break;
+    folderByDrop.delete(oldest);
+  }
+}
+
+/** Uploads one dropped file to hided's staging under `stage`; false when there is no connection to send on. */
+export function stageFile(stage: string, file: AttachmentInput): boolean {
+  if (!sender) return false;
+  sender.dispatch({
+    schema_version: 2,
+    kind: "attachment_stage",
+    payload: { request_id: stage, name: file.name, size: file.bytes.byteLength, clipboard: false },
+  });
+  sendChunks(stage, file.bytes);
+  return true;
+}
+
+/** Commits a staged drop: hided answers a refusal, or the core's operation settles. False when there is no connection. */
+export function sendPathImport(payload: Record<string, unknown>): boolean {
+  if (!sender) return false;
+  sender.dispatch({ schema_version: 2, kind: "path_import", payload });
+  return true;
 }
 
 /** The one-line text a refusal reason becomes. */
@@ -66,6 +99,12 @@ export function refusalText(reason: string, t: TFunction<"translation">): string
 }
 
 export function receiveAttachmentRefusal(payload: { request_id: string; reason: string }): void {
+  for (const [batch, folder] of folderByDrop) {
+    if (payload.request_id !== batch && !payload.request_id.startsWith(`${batch}-`)) continue;
+    folderByDrop.delete(batch);
+    useUiStore.getState().setExplorerNotice({ path: folder, message: dropRefusalText(payload.reason) });
+    return;
+  }
   const paneId = paneByRequest.get(payload.request_id);
   for (const key of [...paneByRequest.keys()]) {
     if (key === payload.request_id || key.startsWith(`${payload.request_id}-`)) paneByRequest.delete(key);

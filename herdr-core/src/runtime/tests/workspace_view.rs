@@ -688,10 +688,10 @@ fn a_closed_lane_keeps_the_tool_it_last_showed_across_a_restart() {
 
 /// PRD right-lane B12: the files lane opened with no view opens nothing in
 /// it (the shell draws the tree alone); a file picked there opens beside the
-/// tree, which stays on; and closing the last view keeps the lane on the
-/// files tool, where the tree shows whether or not it is on.
+/// tree, which stays on; and with the tree turned off, closing the last view
+/// closes the lane, keeping Files to reopen on.
 #[test]
-fn the_files_lane_opens_with_no_view_and_stays_on_when_the_last_view_closes() {
+fn the_files_lane_opens_with_no_view_and_closes_with_its_last_view_when_the_tree_is_off() {
     let (runtime, checkout_id, directory) = strip_checkout("views-empty");
     let mut runtime = with_new_views(runtime, "views-empty");
     layout(&mut runtime, serde_json::json!({"tool": "files"}));
@@ -719,10 +719,10 @@ fn the_files_lane_opens_with_no_view_and_stays_on_when_the_last_view_closes() {
     close_only_display(&mut runtime);
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
     assert_eq!(
-        (view.tool, view.layout.display_count),
-        (Some(Tool::Files), 0)
+        (view.tool, view.last_tool, view.layout.display_count),
+        (None, Some(Tool::Files), 0)
     );
-    assert!(runtime.snapshot.ui_state.right_panel_visible);
+    assert!(!runtime.snapshot.ui_state.right_panel_visible);
 }
 
 /// PRD right-lane B12, B16: only a file opened while the files tool shows the
@@ -755,8 +755,7 @@ fn a_file_opened_from_a_closed_lane_or_another_tool_leaves_the_tree_off() {
 fn an_open_asked_from_the_lone_tree_keeps_the_tree_whatever_it_opens() {
     let (runtime, checkout_id, directory) = strip_checkout("lone-tree");
     let mut runtime = with_new_views(runtime, "lone-tree");
-    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
-    close_only_display(&mut runtime);
+    layout(&mut runtime, serde_json::json!({"tool": "files"}));
     assert_eq!(lane(&runtime), (Some(Tool::Files), false, false));
     let page = |url: &str| {
         explorer_event(
@@ -1388,37 +1387,80 @@ fn workspace_lane_calls_forget_evicted_workspaces() {
     assert_eq!(store.lane_called.get(&last), Some(&store.lane_calls));
 }
 
-/// PRD right-lane B12: closing the last view keeps the lane open on the
-/// files tool, pinned or not, with that state saved.
+/// PRD right-lane B12: closing the last view, a file's or a page's, pinned
+/// or not, keeps the lane on the files tool when the operator turned the
+/// tree on, and otherwise closes it with Files kept to reopen on; either
+/// way the pin and the tree stay, with that state saved.
 #[test]
-fn closing_the_last_view_keeps_the_lane_on_the_files_tool() {
+fn closing_the_last_view_closes_the_lane_unless_the_tree_is_on() {
     for pinned in [true, false] {
         for browser in [true, false] {
-            let (runtime, checkout_id, directory) = strip_checkout("last-view-lane");
-            let (_views, state) = views_path("last-view-lane");
-            let mut runtime = with_views(runtime, &state);
-            with_tabs(&mut runtime, &directory);
-            if browser {
-                runtime.dispatch_json(&explorer_event(
-                    "browser_open",
-                    serde_json::json!({"url": "about:blank"}),
-                ));
-            } else {
-                open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+            for tree in [true, false] {
+                let (runtime, checkout_id, directory) = strip_checkout("last-view-lane");
+                let (_views, state) = views_path("last-view-lane");
+                let mut runtime = with_views(runtime, &state);
+                with_tabs(&mut runtime, &directory);
+                if browser {
+                    runtime.dispatch_json(&explorer_event(
+                        "browser_open",
+                        serde_json::json!({"url": "about:blank"}),
+                    ));
+                } else {
+                    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+                }
+                layout(
+                    &mut runtime,
+                    serde_json::json!({"pinned": pinned, "tree": tree}),
+                );
+                assert_eq!(lane(&runtime), (Some(Tool::Files), pinned, tree));
+                close_only_display(&mut runtime);
+                let stays = tree.then_some(Tool::Files);
+                let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+                assert_eq!(
+                    (view.layout.display_count, view.tool, view.last_tool),
+                    (0, stays, Some(Tool::Files)),
+                    "pinned {pinned}, page {browser}, tree {tree}"
+                );
+                assert_eq!(lane(&runtime), (stays, pinned, tree));
+                let (saved, _) = crate::workspace_views::load(&state, 0);
+                let saved = saved.get(&view.device_id, &view.path).unwrap();
+                assert_eq!(
+                    (saved.tool, saved.pinned, saved.tree),
+                    (stays, pinned, tree)
+                );
             }
-            layout(&mut runtime, serde_json::json!({"pinned": pinned}));
-            assert_eq!(lane(&runtime), (Some(Tool::Files), pinned, false));
-            close_only_display(&mut runtime);
-            let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-            assert_eq!(
-                (view.layout.display_count, view.tool, view.pinned),
-                (0, Some(Tool::Files), pinned)
-            );
-            let (saved, _) = crate::workspace_views::load(&state, 0);
-            let saved = saved.get(&view.device_id, &view.path).unwrap();
-            assert_eq!((saved.tool, saved.pinned), (Some(Tool::Files), pinned));
         }
     }
+}
+
+/// PRD right-lane B12: only the last view closing closes the lane; a close
+/// that leaves another view keeps it on the files tool.
+#[test]
+fn a_close_that_leaves_a_view_keeps_the_lane_open() {
+    let (runtime, checkout_id, directory) = strip_checkout("one-of-two-views");
+    let mut runtime = with_new_views(runtime, "one-of-two-views");
+    std::fs::write(directory.join("other.md"), "# Other\n").expect("fixture");
+    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+    open(&mut runtime, &checkout_id, &directory.join("other.md"));
+    assert_eq!(lane(&runtime), (Some(Tool::Files), false, false));
+    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+    assert_eq!(view.layout.display_count, 2);
+    let workspace = serde_json::json!({"device_id": view.device_id, "path": view.path});
+    let crate::model::ViewNodeSnapshot::Area(area) = &view.layout.root else {
+        panic!("both files open in the one area");
+    };
+    let first = area.displays[0].id.clone();
+    runtime.dispatch_json(&explorer_event(
+        "view_layout",
+        serde_json::json!({"workspace": workspace, "action": "close", "display_id": first}),
+    ));
+    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+    assert_eq!(
+        (view.tool, view.layout.display_count),
+        (Some(Tool::Files), 1)
+    );
+    close_only_display(&mut runtime);
+    assert_eq!(lane(&runtime), (None, false, false));
 }
 
 /// B20: width acknowledgements identify the accepted intent, including a

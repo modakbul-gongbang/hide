@@ -8,6 +8,44 @@ use crate::error::{ErrorCode, HostError, HostResult};
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Changed {}
 
+/// What a copy made: the name its top-level item took in the destination
+/// folder, which the host chose because the wanted one may have been taken
+/// (`name copy.ext`, `name copy 2.ext`).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Copied {
+    pub name: String,
+}
+
+/// What a dropped set of files made: the name each top-level item took, in
+/// the order the request listed them.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Imported {
+    pub names: Vec<String>,
+}
+
+/// One file or folder of a drop, below the folder it lands in.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ImportEntry {
+    /// The wire spelling of a path below the destination: `/` between names.
+    pub path: String,
+    pub directory: bool,
+    /// The file's bytes, base64 encoded for the JSON line; empty for a folder.
+    #[serde(default)]
+    pub data: String,
+}
+
+/// Items and bytes one copy may hold. A copy is refused whole past either,
+/// before the first byte is written.
+pub const COPY_MAX_ITEMS: usize = 5_000;
+pub const COPY_MAX_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Items and bytes one drop from the file manager may hold, and the bytes of
+/// one file in it: the page uploads them to hided's staging, which holds
+/// 20 MiB per file and 40 MiB per batch (`hided/src/attachments.rs`).
+pub const IMPORT_MAX_ITEMS: usize = 500;
+pub const IMPORT_MAX_BYTES: u64 = 40 * 1024 * 1024;
+pub const IMPORT_MAX_FILE_BYTES: u64 = 20 * 1024 * 1024;
+
 /// A name a creation or a rename may carry: one component, and not one of the
 /// shapes that would name a different path.
 pub fn valid_name(name: &str) -> HostResult<&str> {

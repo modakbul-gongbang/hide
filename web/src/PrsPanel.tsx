@@ -6,7 +6,7 @@ import { frontDeviceId } from "./devices";
 import { useInterfaceTranslation } from "./i18n/client";
 import { boardProjects } from "./navigation";
 import { PrList } from "./PrList";
-import { prListModel, type PrListModel, type PrScopeProject } from "./prWork";
+import { prListModel, readingWarning, type PrListModel, type PrScopeProject } from "./prWork";
 import { useRequestViewDemand } from "./requestViewDemand";
 import { catalogWorkspaces, frontCheckout, type AgentRow, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
@@ -58,8 +58,8 @@ export function PrsPanel({ actions }: { actions: Actions }) {
   const { project, front, only, model } = useMemo(() => prsScope(rest, agents, Date.now()), [rest, agents]);
   // The board's GitHub reads follow what is on screen.
   useRequestViewDemand(actions, live);
-  const stale = model.reading.state === "stale" ? model.reading.minutes : undefined;
-  const staleText = stale === undefined ? null : stale === null ? t("work.lens.staleNow") : t("work.lens.stale", { minutes: stale });
+  // ⚠ while the last read failed or left a question beside the list unanswered, its hint saying which (work-tab-pr-lens B43).
+  const staleText = readingWarning(model.reading, t);
   if (model.projects === 0 && model.reading.state !== "blocked") {
     return <p className="px-md py-sm text-caption text-muted-foreground" data-prs-view="no-remote">{t("prs.noRemote")}</p>;
   }

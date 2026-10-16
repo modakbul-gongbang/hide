@@ -6,7 +6,8 @@
 
 import { scopeOccurrences, type PrBoard, type PrGroupId, type PrReason } from "./agentScope";
 import { readsHere } from "./devices";
-import type { AgentRow, Device, GithubStatus, PullRequest, Workspace } from "./snapshot";
+import type { TFunction } from "i18next";
+import type { AgentRow, Device, ExtraQuery, GithubStatus, PullRequest, Workspace } from "./snapshot";
 
 /** One listed pull request: the core's row with everything it names. */
 export type PrEntry = {
@@ -37,8 +38,10 @@ export type PrReading =
   | { state: "blocked"; category: "not_installed" | "not_logged_in" }
   /** No project of the scope has been answered yet. */
   | { state: "reading" }
-  /** The last read failed; the list keeps the last values, `minutes` old. */
-  | { state: "stale"; minutes: number | null }
+  /** The last read failed; the list keeps the last values, `minutes` old, and `unread` names the extra questions that were also unanswered. */
+  | { state: "stale"; minutes: number | null; unread: ExtraQuery[] }
+  /** The list was read and current, but the extra questions in `unread` were not answered, so what depends on them is unknown. */
+  | { state: "partial"; unread: ExtraQuery[] }
   | { state: "ready" };
 
 export type PrListModel = {
@@ -63,6 +66,21 @@ function projectStatuses(workspace: Workspace): GithubStatus[] {
   return workspace.checkouts.flatMap((checkout) => (checkout.github ? [checkout.github] : []));
 }
 
+const EXTRA_QUERIES: readonly ExtraQuery[] = ["account", "review_requests", "merge_queue"];
+
+/**
+ * The warning in the PRs tool while GitHub reading is not whole, or null when
+ * it is: a failed read says how old the list is, and either state names the
+ * extra questions that were not answered, in plain words.
+ */
+export function readingWarning(reading: PrReading, t: TFunction<"translation">): string | null {
+  if (reading.state !== "stale" && reading.state !== "partial") return null;
+  const names = reading.unread.map((query) => t(`work.lens.query.${query}`)).join(", ");
+  if (reading.state === "partial") return t("work.lens.partial", { names });
+  const age = reading.minutes === null ? t("work.lens.staleNow") : t("work.lens.stale", { minutes: reading.minutes });
+  return names ? `${age} · ${t("work.lens.unread", { names })}` : age;
+}
+
 /**
  * Where GitHub reading stands over `projects`: a refusal of `gh` itself
  * speaks first, then a read that has not answered, then a failed read that
@@ -75,9 +93,12 @@ export function prReading(projects: readonly Workspace[], now: number): PrReadin
   if (refusal && answered.length === 0) return { state: "blocked", category: refusal.failure_category as "not_installed" | "not_logged_in" };
   if (answered.length === 0) return { state: "reading" };
   const failed = answered.some((status) => status.stale === true || (status.unavailable_reason != null && !status.available));
-  if (!failed) return { state: "ready" };
-  const oldest = Math.min(...answered.map((status) => status.last_success_at_unix_ms!));
-  return { state: "stale", minutes: Math.max(0, Math.floor((now - oldest) / 60_000)) };
+  const unread = EXTRA_QUERIES.filter((query) => answered.some((status) => status.unread_queries?.includes(query)));
+  if (failed) {
+    const oldest = Math.min(...answered.map((status) => status.last_success_at_unix_ms!));
+    return { state: "stale", minutes: Math.max(0, Math.floor((now - oldest) / 60_000)), unread };
+  }
+  return unread.length > 0 ? { state: "partial", unread } : { state: "ready" };
 }
 
 /**

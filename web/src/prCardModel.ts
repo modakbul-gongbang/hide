@@ -206,7 +206,7 @@ export type PrStep = { id: "work" | "pr" | "review" | "merge"; state: StepState;
  */
 export function prSteps(pr: PullRequest, worker: string | null, reason: PrReason["kind"] | null): PrStep[] {
   const work = pr.work;
-  const who: StepNote | null = worker ? { kind: "agent", name: worker } : work && !work.mine ? { kind: "external" } : null;
+  const who: StepNote | null = worker ? { kind: "agent", name: worker } : work?.mine === false ? { kind: "external" } : null;
   const steps: PrStep[] = [{ id: "work", state: "done", note: who }];
   if (pr.state === "merged") {
     return [...steps, { id: "pr", state: "done", note: pr.checks === "passing" ? { kind: "checks_passing" } : null }, { id: "review", state: "done", note: pr.review === "approved" ? { kind: "approved" } : null }, { id: "merge", state: "done", note: { kind: "merged" } }];
@@ -227,11 +227,11 @@ export function prSteps(pr: PullRequest, worker: string | null, reason: PrReason
     else if (pr.review === "approved") review = { id: "review", state: "done", note: { kind: "approved" } };
     else if (work && MERGEABLE.includes(work.merge_state)) review = { id: "review", state: "done", note: null };
     else if (reason === "assign_reviewer") review = { id: "review", state: "active", note: { kind: "no_reviewer" } };
-    else if (work && work.asked_of_me !== "none") review = { id: "review", state: "active", note: { kind: "asked_of_me" } };
+    else if (work && (work.asked_of_me === "direct" || work.asked_of_me === "team")) review = { id: "review", state: "active", note: { kind: "asked_of_me" } };
     else review = { id: "review", state: "active", note: { kind: "review_waiting" } };
   }
   steps.push(review);
-  const queued = work?.queue_position ?? null;
+  const queued = work?.queue.state === "at" ? work.queue.position : null;
   steps.push(closed
     ? { id: "merge", state: "empty", note: { kind: "closed" } }
     : queued !== null && review.state === "done"

@@ -126,7 +126,7 @@ function Head({ project, pr, entry, card, actions }: { project: Workspace; pr: P
   const { t, i18n } = useInterfaceTranslation();
   const checkoutId = entry?.row.checkout_ids[0] ?? entry?.row.checkout_id ?? null;
   const checkout = checkoutId ? project.checkouts.find((row) => row.id === checkoutId && row.exists) ?? null : null;
-  const author = pr.work && !pr.work.mine ? pr.work.author : null;
+  const author = pr.work && pr.work.mine !== true ? pr.work.author : null;
   const files = card?.files ?? null;
   const added = files?.reduce((sum, file) => sum + file.additions, 0) ?? 0;
   const removed = files?.reduce((sum, file) => sum + file.deletions, 0) ?? 0;
@@ -278,7 +278,7 @@ function Buttons({ project, pr, entry, card, actions, children }: { project: Wor
   const agent = entry?.agents[0] ?? null;
   const method = picked ?? defaultMethod(card);
   const queue = card?.merge?.queue === true;
-  const queued = pr.work?.queue_position != null;
+  const queued = pr.work?.queue.state === "at";
   const why = mergeWhy(pr, card, working);
   const write = card?.write ?? null;
   const writing = write?.phase === "working";

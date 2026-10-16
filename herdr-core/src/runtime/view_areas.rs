@@ -2298,7 +2298,9 @@ impl Runtime {
     /// display goes when the document does, so a refused save keeps both.
     /// With neither, a last display of unsaved work is refused and nothing
     /// changes (contract 4.1): the web's frame may still have shown another
-    /// view of it, so a close it sent bare can never drop the text.
+    /// view of it, so a close it sent bare can never drop the text. A close
+    /// that leaves the files tool with no view and its tree off closes the
+    /// lane, once the save it waits on has landed (`close_emptied_lane`).
     fn close_view_display(
         &mut self,
         key: &WorkspaceKey,
@@ -2331,7 +2333,7 @@ impl Runtime {
             && !shared
         {
             if let Some(save) = pending_save {
-                return self.start_file_save_then_close(tab_id.clone(), save);
+                return self.start_file_save_then_close(tab_id.clone(), save, Some(key.clone()));
             }
             if !discard && self.document_kept(tab_id) {
                 let label = self
@@ -2347,7 +2349,9 @@ impl Runtime {
                 self.set_error("view_layout.unsaved", message, false);
                 return true;
             }
-            return self.close_file_tab_now(tab_id);
+            let changed = self.close_file_tab_now(tab_id);
+            self.close_emptied_lane(key);
+            return changed;
         }
         let _ = self.change_view_layout(key, |layout, _| {
             let removed = layout.remove(display_id).is_some();
@@ -2360,6 +2364,7 @@ impl Runtime {
         {
             self.cancel_document_read(&workspace_id, &checkout_id, &path);
         }
+        self.close_emptied_lane(key);
         true
     }
 

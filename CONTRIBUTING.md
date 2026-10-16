@@ -321,5 +321,25 @@ You keep the copyright in your contribution.
 ## Commit messages and attribution
 
 Write commits as project work: what changed in the product, code, or documentation, and why.
+Write a commit subject and a pull request title in English as `<type>: <sentence>`: a type from the table below, then one imperative sentence that says what the change does, starting in lowercase unless it starts with a name, with no closing period: `fix: keep a named tab when its last agent closes`.
+The pull request title takes the same form as the commits, because the merge commit carries it into main's history, where the type lets a reader see the kind of change before the sentence.
+Write them in English even when the request came in Korean; a Korean word the change puts on screen may appear in backticks, and the pull request body follows the template, in Korean.
+Pick the type by what the operator would notice; when a change does two things that both matter, make them two commits.
+
+| Type | The change |
+|---|---|
+| `feat` | lets the operator do or see something new |
+| `fix` | makes behavior that was wrong right |
+| `perf` | keeps the behavior and makes it faster or lighter |
+| `refactor` | changes the code and no behavior |
+| `test` | touches only tests, fixtures or test helpers |
+| `docs` | touches only documentation |
+| `build` | moves dependencies, the toolchain, packaging or the Herdr pin |
+| `ci` | changes workflows or the checks they run |
+| `chore` | keeps the repository up where nothing above fits |
+| `revert` | takes an earlier merge back out |
+
+Leave out a scope such as `fix(sidebar):`: the areas have no fixed list, and a free-form scope drifts the way the titles did.
+Without this rule the titles drifted: counted on 2026-10-16, 29 of the 60 pull requests up to #1224 had Korean titles in a mix of sentence endings, while 280 of the last 300 commit subjects on main were English.
 Do not credit an AI agent, model, vendor, or tool in commit messages, trailers, branch names, or pull request text.
 When the change's subject is one of the integrated products, name it in full or quote its command in backticks.

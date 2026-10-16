@@ -41,7 +41,8 @@ export function watchErrorNotices(): () => void {
     const fresh = freshError(state, previous);
     const notice = errorNotice(fresh);
     if (notice) useUiStore.getState().setNotice(notice);
-    // A refused View action changed nothing, so the keyboard stays where it is rather than waiting for a move that will not land.
-    if (viewRefusal(fresh)) useUiStore.getState().setViewFocusRequest(null);
+    // A refused View action, or a file whose read failed, showed nothing, so the keyboard stays where it is
+    // rather than waiting for a move that will not land and taking a later, unrelated one.
+    if (viewRefusal(fresh) || fresh?.kind === "file.open_failed") useUiStore.getState().setViewFocusRequest(null);
   });
 }

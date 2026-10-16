@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 
+use super::documents::CloseAfter;
 use super::*;
 
 #[derive(Debug, Deserialize)]
@@ -101,6 +102,11 @@ pub(super) struct GithubRequestPayload {
     pub(super) workspace_id: String,
     #[serde(default)]
     pub(super) refresh: bool,
+    /// The operator is looking at this project (its window came forward, or
+    /// the project did): read it again if its answer is old
+    /// (`Runtime::read_when_looked_at`). A refresh outranks it.
+    #[serde(default)]
+    pub(super) look: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -578,6 +584,44 @@ pub(super) struct PathMovePayload {
     pub(super) path: String,
     /// The folder the item lands in; the item keeps its name.
     pub(super) destination: String,
+}
+
+/// An item copied into a folder of the same checkout. The host names the
+/// copy; the destination is the folder.
+#[derive(Debug, Deserialize)]
+pub(super) struct PathCopyPayload {
+    /// The device whose tree asked; absent for this machine.
+    #[serde(default)]
+    pub(super) device_id: Option<String>,
+    pub(super) root: String,
+    pub(super) path: String,
+    /// The folder the copy lands in.
+    pub(super) destination: String,
+}
+
+/// The files and folders of a drop from the operator's file manager. Only
+/// hided makes this event: a window sends `path_import` with the ids of the
+/// files it uploaded, and hided turns each id into the staged path named
+/// here and never forwards the window's own event.
+#[derive(Debug, Deserialize)]
+pub(super) struct PathImportPayload {
+    /// The device whose tree asked; absent for this machine.
+    #[serde(default)]
+    pub(super) device_id: Option<String>,
+    pub(super) root: String,
+    /// The folder the items land in.
+    pub(super) destination: String,
+    pub(super) items: Vec<PathImportItem>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct PathImportItem {
+    /// Below the destination folder, `/` between names.
+    pub(super) path: String,
+    pub(super) directory: bool,
+    /// Where hided staged a file's bytes on this machine; absent for a folder.
+    #[serde(default)]
+    pub(super) staged: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1426,6 +1470,8 @@ pub(super) enum Event {
     DirCreate(ExplorerCreatePayload),
     PathRename(PathRenamePayload),
     PathMove(PathMovePayload),
+    PathCopy(PathCopyPayload),
+    PathImport(PathImportPayload),
     PathTrash(PathTrashPayload),
     UiStateUpdate(Box<UiStateUpdatePayload>),
     SessionsRefresh,
@@ -1671,6 +1717,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "dir_create" => decode!(ExplorerCreatePayload, DirCreate),
         "path_rename" => decode!(PathRenamePayload, PathRename),
         "path_move" => decode!(PathMovePayload, PathMove),
+        "path_copy" => decode!(PathCopyPayload, PathCopy),
+        "path_import" => decode!(PathImportPayload, PathImport),
         "path_trash" => decode!(PathTrashPayload, PathTrash),
         "ui_state_update" => serde_json::from_value::<Box<UiStateUpdatePayload>>(payload)
             .map(Event::UiStateUpdate)
@@ -3235,7 +3283,7 @@ impl Runtime {
             }
             Event::FileClose(payload) => {
                 if let Some(pending_save) = payload.pending_save {
-                    self.start_file_save_then_close(payload.tab_id, pending_save)
+                    self.start_file_save_then_close(payload.tab_id, pending_save, None)
                 } else {
                     self.close_file_tab_now(&payload.tab_id)
                 }
@@ -3304,7 +3352,7 @@ impl Runtime {
                 }
                 true
             }
-            Event::FileSave(payload) => self.request_file_save(payload, false),
+            Event::FileSave(payload) => self.request_file_save(payload, CloseAfter::Nothing),
             Event::FileConflict(payload) => {
                 let tab_id = match payload.tab_id {
                     Some(tab_id) if self.file_document_open(&tab_id) => tab_id,
@@ -3391,6 +3439,31 @@ impl Runtime {
                 change: ExplorerChange::Move {
                     path: payload.path,
                     destination: payload.destination,
+                },
+            }),
+            Event::PathCopy(payload) => self.request_explorer_change(ExplorerRequest {
+                root: payload.root,
+                device: payload.device_id,
+                change: ExplorerChange::Copy {
+                    path: payload.path,
+                    destination: payload.destination,
+                },
+            }),
+            Event::PathImport(payload) => self.request_explorer_change(ExplorerRequest {
+                root: payload.root,
+                device: payload.device_id,
+                change: ExplorerChange::Import {
+                    destination: payload.destination,
+                    items: payload
+                        .items
+                        .into_iter()
+                        .map(|item| files::ImportItem {
+                            path: item.path,
+                            directory: item.directory,
+                            staged: item.staged,
+                            data: String::new(),
+                        })
+                        .collect(),
                 },
             }),
             Event::PathTrash(payload) => self.request_explorer_change(ExplorerRequest {
@@ -3597,17 +3670,26 @@ impl Runtime {
                 changed
             }
             Event::GithubRequest(payload) => {
-                let project = self
-                    .snapshot
-                    .navigator
-                    .workspaces
-                    .iter()
-                    .find(|workspace| {
-                        workspace.id == payload.workspace_id
-                            && workspace.is_git
-                            && workspace.remote_target_id.is_none()
-                    })
-                    .map(|workspace| workspace.path.clone());
+                if payload.look && !payload.refresh {
+                    // A look changes nothing the operator sees, and a look at
+                    // a project that is not the one in front, or not read,
+                    // is not an error.
+                    if let Some(project) = self.local_git_project_path(&payload.workspace_id)
+                        && self
+                            .focused_local_checkout()
+                            .is_some_and(|(workspace, _)| workspace.path == project)
+                        && self.read_when_looked_at(&project, std::time::Instant::now())
+                            == super::projects::LookRead::Asked
+                    {
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "github",
+                            "kind": "read.looked_at",
+                            "project": project,
+                        }));
+                    }
+                    return false;
+                }
+                let project = self.local_git_project_path(&payload.workspace_id);
                 if project.is_none()
                     && let Some((Some(node), workspace)) = self.issue_project(&payload.workspace_id)
                     && workspace.is_git
@@ -3969,6 +4051,8 @@ impl Runtime {
                     session_open_folds: current.session_open_folds,
                     // The secretary belongs to `factory_secretary_set`.
                     factory_secretary_pane: current.factory_secretary_pane,
+                    // Recorded by the core when a Rename lands.
+                    operator_tab_names: current.operator_tab_names,
                     expanded_paths: payload.expanded_paths,
                     device_expanded_paths: payload
                         .device_expanded_paths

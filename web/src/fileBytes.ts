@@ -106,7 +106,7 @@ export type FileSource = { device: string; root: string } | null;
  * end; a range read names an offset and a length. The promise rejects with the
  * daemon's reason code (`outside_checkout`, `too_large`, `read_failed`, ...).
  */
-function requestFileBytesWithTotal(path: string, range?: { offset?: number; length?: number }, source: FileSource = null): Promise<{ bytes: Uint8Array; total: number }> {
+export function requestFileBytesWithTotal(path: string, range?: { offset?: number; length?: number }, source: FileSource = null): Promise<{ bytes: Uint8Array; total: number }> {
   return new Promise((resolve, reject) => {
     if (!dispatchFn) {
       reject(new Error("not_connected"));
