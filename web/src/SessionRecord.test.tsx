@@ -33,7 +33,8 @@ const BASE: RecordValue = {
   tasks: [task("t1", "Write the record", AT + 1, true), task("t2", "Check the search", AT + 2, false, "unfinished")],
   requests: [request(1, "Please write the record", ["t1"]), request(2, "Check the search too", ["t2"]), request(3, "How is it going?", [])],
   missed: [missed("m-open", "Retry the failed draft", 2), missed("m-closed", "Spacing of the heading", 2, "resolved")],
-  outputs: [output(1100, "review", "t2", SESSION), output(1093, "merged", null, CHILD)],
+  // The child's output carries the parent's task id: ids name turn offsets, which repeat across sessions.
+  outputs: [output(1100, "review", "t2", SESSION), output(1093, "merged", "t2", CHILD)],
   children: [child],
 };
 
@@ -135,6 +136,12 @@ it("draws an output no task claims beside the title, and none for a session with
   try {
     expect(container.querySelector("[data-record-output]")).toBeNull();
   } finally { await unmount(); }
+  // With Agent summaries off no task line is drawn, so a task's PR stands beside the title instead.
+  const off = await mount(BASE, { summaries: false });
+  try {
+    expect(off.container.querySelector('h2 [data-record-output-number="1100"]')).not.toBeNull();
+    expect(off.container.querySelector('[data-record-child="child"] [data-record-output-number="1093"]')).not.toBeNull();
+  } finally { await off.unmount(); }
 });
 
 it("with Hide AI off shows the PRs and the requests oldest first, the newest five open, and no checklist", async () => {

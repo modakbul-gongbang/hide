@@ -67,10 +67,14 @@ export function openMissedWork(work: readonly SessionWorkSummary[]): { owner: Se
     .sort((a, b) => b.item.at_unix_ms - a.item.at_unix_ms);
 }
 
-/** The outputs this record's own session made that no task of its claims (PRD pr-card-and-session-record-redesign B15): drawn beside the title. */
-export function titleOutputs(record: SessionRecord): WorkOutput[] {
+/** The outputs this record's own session made that no drawn task line claims (PRD pr-card-and-session-record-redesign B15): beside the title. With Agent summaries off no task line is drawn, so every own output stands there. */
+export function titleOutputs(record: SessionRecord, summaries: boolean): WorkOutput[] {
+  return ownOutputs(record).filter((output) => !summaries || !record.tasks.some((task) => groupPrs(task, [output]).length > 0));
+}
+/** The outputs the record's own session made. A task id names a turn offset, so a descendant's output can carry the same id as a task here and must not be read against it. */
+function ownOutputs(record: SessionRecord): WorkOutput[] {
   const own = workKey(record.session);
-  return record.outputs.filter((output) => workKey(output.source) === own && !record.tasks.some((task) => groupPrs(task, [output]).length > 0));
+  return record.outputs.filter((output) => workKey(output.source) === own);
 }
 /** The outputs a child and its descendants made, as the parent's record lists them and as the child's own does, each once (B15). */
 export function childOutputs(parent: SessionRecord, child: SessionRecord): WorkOutput[] {
@@ -117,6 +121,7 @@ export type Checklist = {
 export function checklist(record: SessionRecord, descendants: readonly SessionRecord[] = []): Checklist {
   const byAt = <T extends { at_unix_ms: number }>(rows: readonly T[]) => [...rows].sort((a, b) => a.at_unix_ms - b.at_unix_ms);
   const tasks = byAt(record.tasks);
+  const outputs = ownOutputs(record);
   const taskIds = new Set(tasks.map((task) => task.id));
   // A request's tasks are one group: its words, its missed work and its pull
   // requests hang once, from the group's first task (D-08, D-13).
@@ -139,8 +144,8 @@ export function checklist(record: SessionRecord, descendants: readonly SessionRe
     const leads = leaderOf(task.id) === task.id;
     return {
       task,
-      state: taskState(task, record.outputs),
-      prs: leads ? orderedOutputs(groupPrs(task, record.outputs)) : [],
+      state: taskState(task, outputs),
+      prs: leads ? orderedOutputs(groupPrs(task, outputs)) : [],
       words: leads ? byAt(record.requests.filter((request) => request.task_ids.some((id) => taskIds.has(id) && leaderOf(id) === task.id))) : [],
       missed: missedBy.get(task.id) ?? [],
     };

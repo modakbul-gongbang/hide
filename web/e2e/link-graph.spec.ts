@@ -259,6 +259,8 @@ test(`a ${kind} archive resume keeps its selected source and uses the current co
     // has settled and Resume has a worktree to start in.
     await expect(panel.locator(`[data-pr-panel-worktree="${tree}"]`)).not.toHaveAttribute("data-removed", "true");
     await expect(panel.locator("[data-link-loading]")).toHaveCount(0, { timeout: 60_000 });
+    // The card's own parts settle first: a part that lands after the hover draws a line that moves the row under the pointer.
+    await expect(panel.locator('[data-pr-card-part-state="pending"]')).toHaveCount(0, { timeout: 60_000 });
     const resume = archived.locator('[data-link-button="resume"]');
     await expect(resume).toBeEnabled();
     await archived.hover();
