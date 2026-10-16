@@ -1701,9 +1701,8 @@ impl Runtime {
                 let at = Instant::now()
                     .checked_sub(std::time::Duration::from_millis(age))
                     .unwrap_or_else(Instant::now);
-                // A grid change counts only a frame after its resize went
-                // out; one before that leaves the record waiting, and its
-                // node is asked to watch again with the resize.
+                // A grid change's record counts only a frame after its
+                // resize went out; a frame before that is another watch's.
                 self.op_timings.note_frame(&pane, at);
                 false
             }

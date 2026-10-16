@@ -216,6 +216,20 @@ fn a_zooms_frame_watch_starts_with_its_resize_and_ends_with_the_frame_after_it()
         0,
         "neither the request, the answer nor a frame before the resize asks for a watch"
     );
+    // A resize of the pane before its drawing was read is another change's.
+    dispatch(
+        &mut runtime,
+        "terminal_resize",
+        serde_json::json!({"pane_id": LEFT, "rows": 26, "cols": 44}),
+    );
+    assert_eq!(
+        watches(&terminals),
+        0,
+        "a resize before the drawing asks nothing"
+    );
+    // The drawn snapshot is read for the browser, which fits and reports.
+    runtime.ingest_session(Ok(session(Some(0.5), false)));
+    runtime.snapshot_delta_payload(0);
     dispatch(
         &mut runtime,
         "terminal_resize",

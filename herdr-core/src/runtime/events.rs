@@ -4227,10 +4227,7 @@ impl Event {
 impl Runtime {
     /// Sends the size the pane's view last reported to its node, which
     /// resizes its session (an observer attaches again once the size
-    /// settles) and records `terminal.resize_settled`. `force` sends it even
-    /// when the session already has it: a size held while the layout was
-    /// drawn ahead.
-    /// Sends the pane's last reported size to its node. An operation whose
+    /// settles) and records `terminal.resize_settled`. An operation whose
     /// record waits for this pane's first frame after its resize starts
     /// watching now (PRD grid-ahead-of-herdr D-06).
     pub(super) fn send_terminal_size(&mut self, pane_id: &str) {

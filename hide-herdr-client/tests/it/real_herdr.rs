@@ -465,26 +465,20 @@ impl Controller {
     }
 
     /// Reads frames until one's text shows `marker` (or, with none, until the
-    /// first frame), and says the size every frame read carried; a frame of
-    /// another size fails with what the screen showed. The deadline only
-    /// ends a stream that never answers.
-    fn frames_until(
-        &self,
-        marker: Option<&str>,
-        deadline: Instant,
-    ) -> std::collections::BTreeSet<(u16, u16)> {
-        let mut sizes = std::collections::BTreeSet::new();
+    /// first frame) and says that frame's size. Frames before it may still
+    /// carry the size before a resize, so only the marker's frame is judged.
+    /// The deadline only ends a stream that never answers.
+    fn frames_until(&self, marker: Option<&str>, deadline: Instant) -> (u16, u16) {
         let mut screen = String::new();
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             let (width, height, bytes) = self.frames.recv_timeout(left).unwrap_or_else(|_| {
                 panic!("no frame showed {marker:?}; the screen read: {screen:?}")
             });
-            sizes.insert((width, height));
             screen.push_str(&String::from_utf8_lossy(&bytes));
             match marker {
                 Some(marker) if !plain(&screen).contains(marker) => continue,
-                _ => return sizes,
+                _ => return (width, height),
             }
         }
     }
@@ -572,25 +566,26 @@ fn the_pinned_herdr_keeps_the_controllers_pty_size_through_a_zoom_and_a_siblings
     // prompt in it means the shell reads keys.
     assert_eq!(
         controller.frames_until(None, deadline()),
-        [(45, 20)].into(),
+        (45, 20),
         "the attach frame is the controller's size"
     );
-    // On Unix the shell prints the PTY's own size after each step, as
-    // `rows x cols`; elsewhere a newline draws a frame to read the size from.
+    // After each step the shell prints a marker, on Unix with the PTY's own
+    // size as `rows x cols`, and the frame that shows it is judged.
     let mut step = 0;
     let mut pty_size = |controller: &mut Controller, cols: u16, rows: u16, after: &str| {
         step += 1;
-        let marker = format!("SZ{step}=");
-        if cfg!(unix) {
-            controller.type_line(&format!("echo {marker}$(stty size | tr ' ' x)"));
-            let sizes =
-                controller.frames_until(Some(&format!("{marker}{rows}x{cols}")), deadline());
-            assert_eq!(sizes, [(cols, rows)].into(), "frames after {after}");
+        let marker = if cfg!(unix) {
+            controller.type_line(&format!("echo SZ{step}=$(stty size | tr ' ' x)"));
+            format!("SZ{step}={rows}x{cols}")
         } else {
-            controller.type_line("");
-            let sizes = controller.frames_until(None, deadline());
-            assert_eq!(sizes, [(cols, rows)].into(), "frames after {after}");
-        }
+            controller.type_line(&format!("echo SZ{step}"));
+            format!("SZ{step}")
+        };
+        assert_eq!(
+            controller.frames_until(Some(&marker), deadline()),
+            (cols, rows),
+            "the frame after {after}"
+        );
     };
     pty_size(&mut controller, 45, 20, "the attach");
 

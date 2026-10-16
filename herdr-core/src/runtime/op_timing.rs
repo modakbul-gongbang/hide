@@ -251,15 +251,18 @@ impl OpTimings {
         }
     }
 
-    /// A resize of `pane_id` went out: every record waiting for its frame
-    /// after a resize now counts the next one. Says whether any record
-    /// started waiting, so the caller asks the pane's node for that frame.
+    /// A resize of `pane_id` went out: every drawn record waiting for its
+    /// frame after a resize now counts the next one. A record not drawn yet
+    /// is one the shell has not been given, so the resize is another's.
+    /// Says whether any record started waiting, so the caller asks the
+    /// pane's node for that frame.
     pub(super) fn resize_sent(&mut self, pane_id: &str) -> bool {
         let mut started = false;
         for record in &mut self.open {
             if let Some((pane, true)) = &record.frame_pane
                 && pane == pane_id
                 && !record.resize_sent
+                && record.has(Stage::Drawn)
             {
                 record.resize_sent = true;
                 started = true;
@@ -498,8 +501,14 @@ mod tests {
         timings.await_frame("pane-op-2", "w1:p1", true);
         timings.note_frame("w1:p1", start + Duration::from_millis(5));
         assert!(
+            !timings.resize_sent("w1:p1"),
+            "a resize before the record is drawn is another's"
+        );
+        timings.predicted("pane-op-2");
+        timings.note_sent(start + Duration::from_millis(8));
+        assert!(
             timings.resize_sent("w1:p1"),
-            "the record starts waiting at the resize"
+            "the record starts waiting at the resize after its drawing"
         );
         assert!(
             !timings.resize_sent("w1:p1"),
