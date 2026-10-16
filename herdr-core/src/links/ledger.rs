@@ -413,15 +413,19 @@ pub struct ChildProgress {
 
 impl ChildWork {
     pub fn of(child: &SessionRecord) -> Self {
-        let working = child.state.as_deref() == Some("working");
+        // A child at work is not done, whatever an earlier turn finished: its
+        // new request has no END yet (B8). An ended session's last stored
+        // state says nothing about now.
+        if child.ended_at_unix_ms.is_none() && child.state.as_deref() == Some("working") {
+            return Self::Working;
+        }
         if !child.tasks.is_empty() {
             return if child.tasks.iter().all(|task| task.done) {
                 Self::Done
-            } else if working
-                || child
-                    .tasks
-                    .iter()
-                    .any(|task| matches!(task.end, LabelEnd::Working | LabelEnd::Waiting))
+            } else if child
+                .tasks
+                .iter()
+                .any(|task| matches!(task.end, LabelEnd::Working | LabelEnd::Waiting))
             {
                 Self::Working
             } else {
@@ -432,7 +436,6 @@ impl ChildWork {
             None => Self::Unjudged,
             Some(LabelEnd::Done) => Self::Done,
             Some(LabelEnd::Working | LabelEnd::Waiting) => Self::Working,
-            Some(_) if working => Self::Working,
             Some(_) => Self::Other,
         }
     }

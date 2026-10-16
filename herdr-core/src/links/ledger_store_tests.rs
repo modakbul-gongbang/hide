@@ -2224,6 +2224,19 @@ fn a_childs_progress_counts_its_own_tasks_or_its_last_end_and_hides_while_one_is
     let (states, fraction) = progress(&store);
     assert_eq!(states[3], ChildWork::Other);
     assert_eq!(fraction, Some(2));
+    // Handed a new request, the finished child works again before any END
+    // judges it, so it no longer counts done.
+    store
+        .apply_ledger_update(&LedgerUpdate::Title {
+            session: done.clone(),
+            native_title: None,
+            manual_title: None,
+            state: "working".into(),
+        })
+        .unwrap();
+    let (states, fraction) = progress(&store);
+    assert_eq!(states[0], ChildWork::Working);
+    assert_eq!(fraction, Some(1));
 }
 
 #[test]
