@@ -748,7 +748,7 @@ Where a program compares names, an unnamed registration is called by its registr
 Where a person reads a name (the bell line, a row) an unnamed agent is called by its title, and by its runtime's name when it has none.
 Nothing publishes a session `name`, reads Codex's first human turn as a title, or renames an agent or tab.
 
-The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex, Grok, Pi, omp, Cursor or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v11`), in the core's output language ([AI_PROVIDERS.md](AI_PROVIDERS.md#the-output-language)), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
+The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex, Grok, Pi, omp, Cursor or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v12`), in the core's output language ([AI_PROVIDERS.md](AI_PROVIDERS.md#the-output-language)), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
 A session with no goal and no assigned work answers `goal: null`; greetings, identity questions and capability questions create no task and no placeholder title.
 The row uses the existing title priority above, and the next analysis after real work is requested sets its first goal.
 A goal already set cannot become null and changes only on an operator turn with `goal_changed: true`; goals stored by earlier builds are preserved because the record cannot distinguish an invented goal from an actual assignment.
@@ -831,6 +831,8 @@ The PRs come from the record's `outputs`, which already hold every descendant's 
 The checklist lists tasks first-asked first with the finished count over the total.
 A missed item belongs to the task of its turn: the turn starts at the request whose offset is the item's `turn_offset`, and that request carries the `task_ids`; items whose turn is not a task or is gone, and descendants' items, follow the checklist.
 The operator's words show behind a UI-only toggle and are never stored; the newest request not yet judged shows as `지금` while the session works.
+A request that orders finished work again ("설치하고 재측정해줘" after that install was done) continues the finished task: the END judgment is shown the three newest finished tasks beside the open ones (`LedgerContext.finished_tasks`, newest first), a continued task takes the turn's end, and so a Done task returns to Doing and is Done again at its next Done END.
+A question, explanation, remark or progress check about a finished task is still no task, and a different deliverable is a new task.
 An assigned task is Done only after its last END is Done and all assigned PRs are merged; review, failed CI, unfinished, blocked and question remain distinct states, while waiting uses Doing.
 Descendant results can hold the parent's assigned task open, but do not duplicate the child's chapters or requests in the parent's own work.
 Children show three visual indentation levels, five siblings initially and a More action for the rest.
