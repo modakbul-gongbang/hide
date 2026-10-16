@@ -84,11 +84,12 @@ test("the 태스크 list groups the device's tasks, folds children and resting o
     const tasks = await showTasks(page);
     const row = (pane: string) => tasks.locator(`[data-task-row="${pane}"]`);
     const group = (name: string) => tasks.locator(`[data-task-group="${name}"]`);
-    // B4, B7, B8: Needs You's second line is the question, the working parent stands for its child, unfinished work rests with its line.
+    // B4, B7, B8: Needs You's second line is the question, the waiting parent stands for its child, unfinished work rests with its line.
     const ask = (pane: string) => group("needs_you").locator(`[data-task-row="${pane}"] [data-task-line="needs_you"]`);
     await expect(ask(asking)).toContainText("검증 명령을 승인해 주세요", { timeout: 30_000 });
     await expect(ask(question)).toContainText(QUESTION, { timeout: 30_000 });
-    await expect(group("working").locator(`[data-task-row="${parent}"]`)).toBeVisible();
+    // A parent waiting on its working child stands in 대기 (status-marks D-22, B32).
+    await expect(group("waiting").locator(`[data-task-row="${parent}"]`)).toBeVisible();
     await expect(row(child)).toHaveCount(0);
     // A folded parent counts no children (status-marks B35).
     await expect(row(parent).locator("[data-task-children]")).toHaveCount(0);
