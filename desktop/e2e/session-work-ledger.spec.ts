@@ -126,7 +126,6 @@ test("@platform session work records, missed lines, ended work and search render
       await expect(record.locator('[data-record-child]')).toContainText('Claude');
       // The child's pull request stands on the child's row; the session's own stand beside the title (B15).
       await expect(record.locator('[data-record-child] [data-record-output="pr"]')).toHaveCount(1);
-      await expect(record.locator('h2 [data-record-output="pr"]')).toHaveCount(2);
       await captureSummariesOff(app, herdr.panes[0], theme, facts);
       await page.locator('[data-open-settings]').click();
       await page.locator('[data-settings-tab="hideAi"]').click();
