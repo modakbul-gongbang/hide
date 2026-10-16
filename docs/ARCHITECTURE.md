@@ -157,6 +157,7 @@ Schema 8 adds card numbers, titles, aliases, cited paths, usage counts, and the 
 A source's time is when its words were said, read from the conversation event; a version-7 source gets its batch's analysis time, the closest the old rows hold.
 
 A session start receives an index of at most 20 rule, decision and lesson cards, one line each, and no body; a prompt receives the bodies of the cards the matcher finds that the session was not already given in full (D-03, D-04, B10-B12).
+A body injection begins with one line of Hide's own, `<hide-memory-instruction>`, outside the untrusted block, that tells the agent how to report a card the operator's current words contradict ([A card an agent reports stale](#a-card-an-agent-reports-stale)); the index carries none, since it carries no receipt, and the conversation reader treats both tags as injected text, never the operator's words.
 Each body injection carries a receipt authenticated over Project, runtime, session, event and the exact ordered card revisions, with one random key per Project kept in the store; an index carries none, because an index line is no delivery.
 Transcript text prefixes remain display classification only: receipt authority additionally requires Claude Code's own `hook_additional_context` attachment record (the shape since 2.1.296, read through `hide-session/src/claude_attachment.rs`, which the wake reader shares; the `hook_success` record repeating the same text in its `stdout` is never read) or a user record its hook metadata marks, a Codex developer message, an OpenCode synthetic user part or a Pi or omp custom message of Hide's own extension (`customType` `hide`), so human or Project instruction text cannot assert a receipt.
 A receipt is recorded by one function, `memory_analysis::record_receipt`, under the turn id `event:<offset>`, so whichever reader sees it first records it once (D-16, B13).
@@ -239,7 +240,7 @@ Merged pointers apply only to the revision they describe, so a changed claim is 
 A session makes at most two new cards in all, counted across the groups and passes that analyzed it (`new_card_limit`; `hide memory add` has none), and a session with fewer than three operator events makes none and asks no provider (D-02, D-03).
 The operator's events are the session's `human` events; in a session some agent started, which the coordination ledger records with a `parent` (a handoff has an `origin` and is the operator's), they are sent as `parent_agent` instead (D-04); such a session counts no operator events, so it makes no cards.
 
-`hide memory show|search|add|forget|undo|placed|building|unbuilt|outdated|skipped` (`herdr-core/src/memory_command.rs`) goes through hided like `hide links`: the core checks the caller under its lock (`Core::prepare_memory`), answering a caller on this machine or any registered linked device with a Memory reader, and naming the Project by the caller's checkout as its node reads it, and the command runs on hided's blocking task.
+`hide memory show|search|add|forget|undo|placed|building|unbuilt|outdated|skipped|stale|release` (`herdr-core/src/memory_command.rs`) goes through hided like `hide links`: the core checks the caller under its lock (`Core::prepare_memory`), answering a caller on this machine or any registered linked device with a Memory reader, and naming the Project by the caller's checkout as its node reads it, and the command runs on hided's blocking task.
 `show` answers a card with its state, kind, source counts, cited paths and whether it is waiting to be checked (`verifying`) and counts the read for the caller's session, `search` answers at most ten matching cards, and `add` writes through the same `write_cards` path background analysis uses, as an `agent_note` the provider sees, never as the operator's words (D-11, B7, B8, B14-B16, B27).
 An `add` is one batch per Project and text, so the same text added again answers the card it made and asks no provider; once every card of that batch is gone (forgotten, undone or never kept), the same text starts the next batch and is added again.
 Its provider tries end within 50 s and the cards are not written past 55 s, before the caller's minute runs out, so a refused or timed-out `add` has written nothing.
@@ -390,6 +391,30 @@ That held session counts only when it belongs to the connection the operation wa
 An expired or otherwise unconfirmed mutation becomes unknown and is never resent when doing so could repeat a destructive effect; it drops the geometry operations waiting behind it in its tab without holding the next request, and other scopes continue.
 Each tab has one geometry line: one zoom, split, resize or pane close is with Herdr at a time and at most `GEOMETRY_QUEUE_LIMIT` (8) wait behind it, so a fast gesture cannot create an unbounded queue; a resize joins the last waiting resize of the same pane and axis, and the request past the cap is refused with `pane.operation.queue_full`.
 A refused, failed or unknown operation drops the waiting operations behind it, because each was asked against the layout the failed one would have made, and the confirmed layout is drawn again; an unknown one does not hold the next request.
+
+### A card an agent reports stale
+
+A decision the operator reverses in conversation leaves the card and the files it cites unchanged, so nothing above catches it until the reversing session is analyzed (PRD memory-stale-cards D-01).
+An agent a prompt gave a card to reports it with `hide memory stale <card> <reason>`, and the card's current revision is held: it leaves the session-start index, the prompt match, the re-verification queue, the evidence walk, the due-check count and the promotion suggestions, and stays in `search`, the comparison set new cards are checked against, and `show`, which says it is held, why and since when (D-05, D-11).
+Only a session whose authenticated prompt receipt (a turn other than `show`) names that very revision can report it; a session with none is told to retry once its conversation is read, a session that only read the card with `show` is refused, and a Project whose receipts are at their cap and recorded none for the session is refused apart (D-04).
+A revision is reported once, ever: `stale_reports` keeps that apart from the hold, so a released or expired revision is not held again, and a changed text is a new revision (D-09).
+A session holds at most 3 cards and a Project 10; a report past either is refused (D-09).
+
+The hold (`card_holds`, in `hide-memory/src/store/hold.rs`) stores the reporting runtime and session, the time, the reason masked by the redactor and cut to 500 characters, a deadline seven days out, and where the session's conversation ended when it reported, read from the node holding its file (`session_stat`) within 5 s; a node that cannot say leaves no place, and that hold lasts to its deadline (D-13, D-14).
+It ends in four ways, and its row, reason included, is deleted with it (D-08, B17):
+
+- Analysis of the reporting session saves its cursor past the report's place, with every group before it written (`save_cursor`, one transaction). That analysis put the reported card first in its comparison set, marked `reported: true`, and the extraction prompt asks it to look for the reversal; the reason never goes to the provider, so the Hide AI disclosure is unchanged (D-06, D-08, D-15). If the operator's words reversed the card, the conflict rule already replaced its text; if not, the card is given again. A session with fewer than three operator events asks no provider and its cursor still moves, which ends the hold the same way (B10).
+- `hide memory release <card>`, which any caller with the Project may run, the operator's way back; the diagnostic log names the caller's session (D-10).
+- The deadline. The hooks and every list above compare it with the time they read at, so a Project no pass reaches frees the card on time; the 60 s pass deletes the row (`stale.released`, cause `expired`) (D-07, B9).
+- Any change to the card's text or state (edited, replaced, forgotten, undone): a trigger on `memory_items` deletes the hold whichever write path made the change (B12).
+
+A report never changes the conflict rule, and the reason is never a card's source (B8).
+The pass, the command and the release write `stale.held`, `stale.refused`, `stale.released` and `stale.offset_unavailable` records with the card number, session and a reason code, never the reason's text (B16).
+There is no screen, snapshot field or protocol change for a hold (D-11).
+
+Schema 16 adds both tables and the trigger; the writer keeps the v15 store as `.v15-backup` first, which a Project's delete scrubs like the v7 and v8 backups, and a failed move leaves the store at 15 to retry.
+A read-only hook refuses the store until the writer moved it and answers without Memory meanwhile, and an earlier build refuses a v16 store with `WrongSchema` (D-13, B14).
+Regression owners: the tests of `hide-memory/src/store/hold.rs`, `a_card_a_prompt_gave_the_caller_is_held_shown_held_and_released_once` in `herdr-core/src/memory_command.rs`, `a_reported_card_is_named_to_its_sessions_analysis_and_comes_back_after_it` in `herdr-core/src/runtime/memory_analysis.rs`, and `hook_memory_context_with_a_trust_attribute_is_injected_in_every_message_shape` in `hide-session/src/lib.rs`.
 
 ### Drawn ahead of Herdr
 

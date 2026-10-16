@@ -43,6 +43,11 @@ Only a live agent has a row: an attempt with no agent (a failure with no pull re
 The shell words the turn and opens the home from the row (the Memory tab with the attempt's To ask row open); the phone opens the agent's detail.
 Regression owners: `a_hide_started_row_follows_its_attempts_pull_request_into_and_out_of_needs_you` and `a_home_owned_row_is_listed_only_while_the_operator_has_something_to_do` in `herdr-core/src/runtime/tests/`, `the_home_turn_follows_the_pull_request_and_the_agent` in `memory_promotion.rs`, and `a_home_owned_row_notifies_once_on_entering_needs_you_and_not_on_a_turn_change` in `hided/src/mobile/push.rs`.
 
+### A held Memory card is no status
+
+An agent reporting a Project Memory card stale (`hide memory stale`) changes no agent row, group, badge, notification or snapshot field, and the operator is told nothing (PRD memory-stale-cards D-11, B15).
+The hold is the card's, not the agent's: it decides only what the hooks give, and `hide memory show` is where it is seen ([ARCHITECTURE.md: A card an agent reports stale](ARCHITECTURE.md#a-card-an-agent-reports-stale)).
+
 ## agent_status provenance and background waits
 
 Herdr owns the raw `agent_status`; Hide reads it through `agent.list`/`agent.get`, converts it at `herdr-core/src/wire.rs` and derives its axes in `agent_state/axes.rs`.
