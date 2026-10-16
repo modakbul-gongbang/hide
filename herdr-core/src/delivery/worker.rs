@@ -256,6 +256,8 @@ pub(crate) struct WatchWork {
     pub source: ActivitySource,
     /// The watching Factory's own stall window, when it set one.
     pub inactivity_ms: Option<u64>,
+    /// The target's own row says it stopped on a question.
+    pub asking: bool,
 }
 
 /// The node whose files hold a watched session's conversation, through its
@@ -277,6 +279,7 @@ fn read_activity(work: WatchWork) -> watch::Reading {
         failure: None,
         gone: work.gone,
         inactivity_ms: work.inactivity_ms,
+        asking: work.asking,
     };
     if work.gone {
         return reading;
@@ -973,7 +976,7 @@ fn answer_waits_ended<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::delivery::tests::{authority, fixture};
+    use crate::runtime::delivery::tests::{authority, fixture, show_agents};
     use crate::sidebar::SessionSnapshotPayload;
 
     #[test]
@@ -1167,6 +1170,7 @@ mod tests {
                         link: Some(channel.clone()),
                     },
                     inactivity_ms: None,
+                    asking: false,
                 })
                 .collect();
             let readings: Vec<_> = group_targets(work)
@@ -1296,6 +1300,56 @@ mod tests {
             )
             .unwrap();
             assert!(candidate.watches.is_empty());
+        }
+    }
+
+    /// docs/delivery.md, Watch activity and completion: the watch reads the
+    /// child's own row, so only a child stopped on a question tells its
+    /// parent one tick later; one stopped without a question, one working
+    /// on an async question and one Herdr holds at a blocked question wait
+    /// as before.
+    #[test]
+    fn only_a_child_stopped_on_a_question_warns_its_parent_after_one_tick() {
+        for (status, question, warns) in [
+            ("idle", true, true),
+            ("idle", false, false),
+            ("working", true, false),
+            ("blocked", true, false),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let (runtime, parent, observed, _) = fixture(root.path());
+            let mut ledger = Ledger::default();
+            watch::start(&mut ledger, &parent, &observed.actor, 1).unwrap();
+            let tokens = if question {
+                json!({"status_question": "Which branch?"})
+            } else {
+                json!({})
+            };
+            let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(json!({"agents":[
+                {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
+                {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":status,"state_change_seq":2,
+                 "lineage_session":"recipient-session","tokens":tokens},
+            ]}))
+            .unwrap();
+            let mut guard = runtime.lock().unwrap();
+            guard.publish_delivery(Arc::new(ledger.clone()), false);
+            guard.observe_delivery(crate::node::TEST_NODE, &payload, None, None);
+            show_agents(&mut guard, payload);
+            let work = guard.delivery_watch_work();
+            drop(guard);
+            let sample = read_activity(work.into_iter().next().unwrap());
+            let stopped = sample.status_changed_at_unix_ms;
+            watch::tick(
+                &mut ledger,
+                &[sample],
+                stopped + crate::delivery::QUESTION_WINDOW_MS,
+            )
+            .unwrap();
+            assert_eq!(
+                ledger.letters.len(),
+                usize::from(warns),
+                "{status}, question {question}"
+            );
         }
     }
 

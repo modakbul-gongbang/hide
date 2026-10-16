@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::ledger::Ledger;
-use super::{Actor, FILE_LIMIT, INACTIVITY_MS, SECOND_WARNING_MS, WATCH_LIMIT};
+use super::{Actor, FILE_LIMIT, INACTIVITY_MS, QUESTION_WINDOW_MS, SECOND_WARNING_MS, WATCH_LIMIT};
 
 /// The inactivity episode and external notification reservation survive the
 /// watch itself, so stopping/restarting or sibling watches cannot resend.
@@ -187,6 +187,9 @@ pub struct Reading {
     /// A window that replaces [`inactivity_window`] for this watch: a
     /// Factory's stall setting (D-30).
     pub inactivity_ms: Option<u64>,
+    /// The target's own row says it stopped on a question, neither working
+    /// nor held by a Herdr-blocked prompt.
+    pub asking: bool,
 }
 
 #[derive(Default)]
@@ -293,7 +296,9 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
         } else {
             watch.last_activity_at_unix_ms
         };
+        let asking = watch.warning_count == 0 && unheard_question(ledger, watch, reading);
         let due = match (watch.warning_count, watch.first_warning_at_unix_ms) {
+            (0, _) if asking => now.saturating_sub(activity) >= QUESTION_WINDOW_MS,
             (0, _) => {
                 now.saturating_sub(activity)
                     >= reading
@@ -327,10 +332,17 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
         let failure = reading.failure.as_deref().unwrap_or("none");
         // The first line is the letter's summary, which the doorbell types
         // after the watched agent's name (`bell`).
+        let summary = if asking {
+            format!("Stopped with a question (watch {}).", watch.id)
+        } else {
+            format!(
+                "No activity for {} minutes (watch {}).",
+                now.saturating_sub(activity) / 60_000,
+                watch.id
+            )
+        };
         let body = format!(
-            "No activity for {} minutes (watch {}).\nTarget {}. Last activity unix_ms={activity}; Herdr status={}; open requests={open_requests}; activity basis={basis}; read failure={failure}.\nInspect the target before deciding whether it is blocked.",
-            now.saturating_sub(activity) / 60_000,
-            watch.id,
+            "{summary}\nTarget {}. Last activity unix_ms={activity}; Herdr status={}; open requests={open_requests}; activity basis={basis}; read failure={failure}.\nInspect the target before deciding whether it is blocked.",
             watch.target.name,
             if reading.status_available {
                 reading.status.as_str()
@@ -410,6 +422,21 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
     Ok(result)
 }
 
+/// A pane observer hears after [`QUESTION_WINDOW_MS`], not the full window,
+/// that its target stopped on a question asked only in its own pane. A
+/// question the target sent the observer by letter, still awaiting its
+/// answer, already rang the observer's doorbell; a Factory is never told
+/// early, because its engine stops the worker on the first warning.
+fn unheard_question(ledger: &Ledger, watch: &Watch, reading: &Reading) -> bool {
+    reading.asking
+        && !watch.parent.code_owned()
+        && !ledger.letters.iter().any(|letter| {
+            letter.waiting_answer
+                && letter.sender.same_identity(&watch.target)
+                && letter.recipient.same_identity(&watch.parent)
+        })
+}
+
 fn encoded_len(value: &impl Serialize) -> Result<usize, String> {
     serde_json::to_vec(value)
         .map(|bytes| bytes.len())
@@ -446,6 +473,7 @@ mod tests {
             failure: None,
             gone: false,
             inactivity_ms: None,
+            asking: false,
         }
     }
 
@@ -604,6 +632,125 @@ mod tests {
         assert_eq!(ledger.letters.len(), 1);
     }
 
+    fn summaries(ledger: &Ledger) -> Vec<&str> {
+        ledger
+            .letters
+            .iter()
+            .filter(|letter| letter.watch_warning.is_some())
+            .filter_map(|letter| letter.body.lines().next())
+            .collect()
+    }
+
+    /// docs/delivery.md, Watch activity and completion: a child that
+    /// stopped on a question asked only in its pane is told to its parent
+    /// one tick later, once per episode, and the second warning keeps its
+    /// hour; new activity starts a new episode.
+    #[test]
+    fn a_target_stopped_on_a_question_warns_its_parent_after_one_tick_once_per_episode() {
+        let mut ledger = Ledger::default();
+        let watch = start(&mut ledger, &actor("parent"), &actor("child"), 10).unwrap();
+        let asking = |activity: u64| Reading {
+            asking: true,
+            ..reading(&watch.id, activity)
+        };
+        tick(&mut ledger, &[asking(10)], 10 + QUESTION_WINDOW_MS - 1).unwrap();
+        assert!(summaries(&ledger).is_empty());
+        tick(&mut ledger, &[asking(10)], 10 + QUESTION_WINDOW_MS).unwrap();
+        let first = format!("Stopped with a question (watch {}).", watch.id);
+        assert_eq!(summaries(&ledger), [first.as_str()]);
+        let second = 10 + QUESTION_WINDOW_MS + SECOND_WARNING_MS;
+        tick(&mut ledger, &[asking(10)], second - 1).unwrap();
+        assert_eq!(summaries(&ledger).len(), 1);
+        tick(&mut ledger, &[asking(10)], second).unwrap();
+        assert_eq!(
+            summaries(&ledger)[1],
+            format!("No activity for 61 minutes (watch {}).", watch.id)
+        );
+        let active = second + 1;
+        tick(&mut ledger, &[asking(active)], active + QUESTION_WINDOW_MS).unwrap();
+        assert_eq!(summaries(&ledger).len(), 3);
+    }
+
+    #[test]
+    fn a_stopped_target_with_no_question_waits_the_full_twenty_minutes() {
+        let mut ledger = Ledger::default();
+        let watch = start(&mut ledger, &actor("parent"), &actor("child"), 10).unwrap();
+        tick(
+            &mut ledger,
+            &[reading(&watch.id, 10)],
+            10 + QUESTION_WINDOW_MS,
+        )
+        .unwrap();
+        tick(
+            &mut ledger,
+            &[reading(&watch.id, 10)],
+            10 + INACTIVITY_MS - 1,
+        )
+        .unwrap();
+        assert!(summaries(&ledger).is_empty());
+        tick(&mut ledger, &[reading(&watch.id, 10)], 10 + INACTIVITY_MS).unwrap();
+        assert_eq!(
+            summaries(&ledger),
+            [format!("No activity for 20 minutes (watch {}).", watch.id).as_str()]
+        );
+    }
+
+    /// A question the child already sent its parent by letter rang the
+    /// parent's doorbell, and a Factory stops a worker on its first warning,
+    /// so neither is told early.
+    #[test]
+    fn a_question_sent_by_letter_or_watched_by_a_factory_waits_its_full_window() {
+        let mut ledger = Ledger::default();
+        let (parent, child) = (actor("parent"), actor("child"));
+        let watch = start(&mut ledger, &parent, &child, 10).unwrap();
+        let asked = super::super::mailbox::send(
+            &mut ledger,
+            &child,
+            &parent,
+            "which-branch",
+            "Which branch?",
+            "request",
+            None,
+            10,
+        )
+        .unwrap();
+        let asking = Reading {
+            asking: true,
+            ..reading(&watch.id, 10)
+        };
+        tick(
+            &mut ledger,
+            std::slice::from_ref(&asking),
+            10 + QUESTION_WINDOW_MS,
+        )
+        .unwrap();
+        assert!(summaries(&ledger).is_empty());
+        super::super::mailbox::apply(
+            &mut ledger,
+            &child,
+            None,
+            &super::super::Command::Cancel { id: asked.id },
+            20,
+        )
+        .unwrap();
+        tick(&mut ledger, &[asking], 10 + QUESTION_WINDOW_MS).unwrap();
+        assert_eq!(
+            summaries(&ledger).len(),
+            1,
+            "a cancelled letter asks nothing"
+        );
+
+        let mut ledger = Ledger::default();
+        let factory = Actor::factory("f-1", crate::node::TEST_NODE);
+        let watch = start(&mut ledger, &factory, &actor("worker"), 10).unwrap();
+        let asking = Reading {
+            asking: true,
+            ..reading(&watch.id, 10)
+        };
+        tick(&mut ledger, &[asking], 10 + INACTIVITY_MS).unwrap();
+        assert!(ledger.letters.is_empty());
+    }
+
     #[test]
     fn two_warnings_keep_the_first_deadline_across_restart_and_reset_on_activity() {
         let mut ledger = Ledger::default();
@@ -732,6 +879,7 @@ mod tests {
             failure: None,
             gone: false,
             inactivity_ms: None,
+            asking: false,
         };
         reading.gone = true;
         tick(&mut ledger, &[reading], 2 + INACTIVITY_MS).unwrap();
