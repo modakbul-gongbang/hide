@@ -343,6 +343,7 @@ How it fails (D-27):
 - The hook panics, or the payload does not arrive within 0.5 seconds, while some project has a protection on: the call runs, and one `guard.failed` line with its cause (`panic`, `payload_deadline`) is appended, throttled the same way (cause `guardrails_failed`).
   A hook the runtime kills at its own timeout leaves no line, since the process is gone, and the call takes that runtime's default.
 - A payload past the helper's 256 KiB read is judged by the tool name and the paths that arrived, a patch's file lines included; a shell command cut short is not judged.
+- agy sorts its payload's keys, so a long file write is cut inside its new text, before the tool's name and target; such a write is refused in a project where a protection judges writes, since its target may be one the protection guards.
 
 The payload each runtime sends, observed on the versions Hide installs into (`hide_agent_hooks::guardrails::payload`):
 
@@ -574,12 +575,12 @@ The block holds four events in agy's own format (`{"hide": {"<Event>": [{"type":
 
 agy refuses a tool call whose `PreToolUse` hook fails in any way (a nonzero exit, output that is not its JSON, a timeout, a missing program), unlike every other agent Hide supports.
 So the helper prints one of the two answers on every path, and the installed command prints the allow answer itself when the helper is gone; on Windows agy runs the command through `cmd /c`, so Hide writes it as `if exist <helper> (...) else (echo {"decision":"allow"})` (D-05).
-A subagent is a conversation of its own in the same process and pane, with its own `SessionStart` and `Stop` and no parent field; its transcript opens with the message its parent sent it, and that is how the helper tells a subagent's start and stop from the pane's own conversation (`hide_agent_hooks::antigravity::parent_of`).
+A subagent is a conversation of its own in the same process and pane, with its own `SessionStart` and `Stop` and no parent field; its transcript opens with the message its parent sent it, and that is how the helper tells a subagent's start and stop from the pane's own conversation; a subagent a subagent started is counted under the pane's own conversation too, found by following those first messages up at most eight levels (`hide_agent_hooks::antigravity::root_of`).
 An entry the operator edited reads Outdated and stays until Reinstall, and a `hooks.json` that is not JSON fails agy's row alone and is left as it is.
 `hide-agent-hooks/src/antigravity.rs` and `src/guidance.rs` test the answers and the block's install and removal in a fixture home, and the `agy contract` CI lane (`.github/workflows/agy-contract.yml`) also runs the vendor's current agy against the block in the runner's throwaway home.
 
 agy 1.4.0 loads a workspace's own `.agents/hooks.json` only for a folder in `trustedWorkspaces` of `~/.gemini/antigravity-cli/settings.json` (1.3.6 also loaded it in print mode without trust), trust is per exact path and is not inherited from a parent folder, and the first interactive start in a folder it has not been told to trust asks, which would leave a delegated child stopped at that question.
-Hide therefore adds the exact path of a worktree it made to that list before it starts agy there, and keeps which entries it added in `~/.hide/agent-hooks/antigravity-trust.json` (D-08); removing that worktree, or switching agy off, takes out only those entries, and an entry the operator added, before Hide or after it, stays.
+Hide therefore adds the exact path of a worktree it made to that list before it starts agy there; the node refuses to trust a folder that is not a Git worktree, a path written with `.` or `..`, the filesystem root, the home folder or a folder above it, whoever asks, and keeps which entries it added in `~/.hide/agent-hooks/antigravity-trust.json` (D-08); removing that worktree, or switching agy off, takes out only those entries, and an entry the operator added, before Hide or after it, stays.
 Every change holds one account lock and rewrites `settings.json` through the same lossless read as the hook files, so its other keys keep their bytes; a trust Hide cannot record keeps agy from starting there, and the caller gets the reason (B20).
 Hide AI's own folder for agy is trusted the same way ([AI_PROVIDERS.md](AI_PROVIDERS.md#antigravity)), and switching agy off removes it too.
 

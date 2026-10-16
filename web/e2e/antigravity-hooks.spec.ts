@@ -1,5 +1,5 @@
 // agy's own hook block on an isolated pinned Herdr and a hided that runs the install kit, with a stand-in `agy`
-// (PRD antigravity-first-class B1, B3, B9, B19, D-12, D-18): the Agents switch writes Hide's `hide` block in
+// (PRD antigravity-first-class B1, B2, B3, B9, D-09, D-12, D-18): the Agents switch writes Hide's `hide` block in
 // `~/.gemini/config/hooks.json` beside the operator's block, the skill stub in `~/.gemini/config/skills`, and Hide
 // AI's read-only folder with its trust, and takes out only Hide's; the operator's own skills under
 // `~/.gemini/antigravity-cli/skills` are never touched. The INSTALLED tool command, read from the file the kit wrote
@@ -129,7 +129,7 @@ test("the agy switch writes Hide's block, skill and Hide AI folder beside the op
     await expect.poll(() => read(stubFile(home)), { timeout: 60_000 }).toContain("hide browser help");
     expect(fs.readdirSync(operatorSkills(home))).toEqual(["mine"]);
     expect(read(path.join(operatorSkills(home), "mine", "SKILL.md"))).toBe(OPERATOR_SKILL);
-    // B9: Hide AI's folder refuses every tool and is trusted beside the operator's own entry.
+    // D-09: Hide AI's folder refuses every tool and is trusted beside the operator's own entry.
     await expect.poll(() => fs.existsSync(path.join(aiFolder(home), ".agents", "hooks.json")), { timeout: 60_000 }).toBe(true);
     await expect.poll(() => json<typeof OPERATOR_SETTINGS>(settingsFile(home)).trustedWorkspaces, { timeout: 60_000 }).toEqual(["/opt/mine", fs.realpathSync(aiFolder(home))]);
     expect(json<typeof OPERATOR_SETTINGS>(settingsFile(home)).theme).toBe("dark");
@@ -137,7 +137,7 @@ test("the agy switch writes Hide's block, skill and Hide AI folder beside the op
     await expect(list.locator("[data-agent-problem]")).toHaveCount(0);
     await screenshot(page, "agy-hooks-on");
 
-    // B19: off takes out Hide's block, stub, folder and trust, and the operator's files read as they did.
+    // B3: off takes out Hide's block, stub, folder and trust, and the operator's files read as they did.
     await switchOf("on").click();
     await expect(switchOf("off")).toBeVisible();
     await expect.poll(() => json(hooksFile(home)), { timeout: 60_000 }).toEqual(OPERATOR_HOOKS);
