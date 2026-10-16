@@ -6,7 +6,8 @@ import { cn } from "../lib/utils";
  * A row's second line in its parts: the leading word and the background tail
  * keep their width and only the sentence between them is cut, so a narrow
  * sidebar still says 대기 or 끝남 and how many tasks are left (status-marks
- * B27, B29).
+ * B27, B29). When the lead and tail alone pass the width, the line is
+ * clipped at its edge with no ellipsis; no lead word is that long.
  */
 export function RowLineText({ parts, className, ...rest }: { parts: LineParts } & HTMLAttributes<HTMLSpanElement>) {
   const pieces: { key: string; text: string; cut: boolean }[] = [];

@@ -69,7 +69,8 @@ function SubtreeItem({ row, targetDevice }: { row: SubtreeRow; targetDevice: str
   const { t } = useInterfaceTranslation();
   const { agent } = row;
   const quiet = row.state === "quiet";
-  const bright = row.target || !quiet;
+  // A sleeping agent's moon is never dimmed (status-marks D-21).
+  const bright = row.target || !quiet || agent.mark === "asleep";
   const device = agent.device_id !== targetDevice && agent.device_label ? agent.device_label : null;
   return (
     <li

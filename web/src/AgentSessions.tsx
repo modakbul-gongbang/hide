@@ -4,7 +4,7 @@ import type { Actions } from "./actions";
 import { AgentRowMark } from "./AgentRowMark";
 import { useAgentLogosShown } from "./agentLogoMode";
 import { agentProductName } from "./agentAdapters";
-import { backgroundTail, forkLabel, leadWord, lineParts, markTone, markWords, rowLine } from "./agentRow";
+import { backgroundTail, forkLabel, leadWord, lineParts, markTone, markWords, rowDimmed, rowLine, stateLine } from "./agentRow";
 import { RowLineText } from "./components/row-line-text";
 import { AgentForkMark } from "./components/fork-mark";
 import { hideAiWords, homeTurnLine } from "./hideAiOrigin";
@@ -170,7 +170,7 @@ const SessionRow = memo(function SessionRow({ row, family, model, actions, open,
   const needsYou = session.group === "needs_you";
   const open_ = () => { if (model.available) actions.openListedAgent(agent.pane_id); };
   // The chevron lane spans the row so an opened row's rail runs on to its children.
-  return <li className={cn("group/session relative flex min-w-0 items-stretch rounded-xs pr-xs", selected ? "bg-selected" : "hover:bg-accent focus-within:bg-accent")}
+  return <li className={cn("group/session relative flex min-w-0 items-stretch rounded-xs pr-xs", selected ? "bg-selected" : "hover:bg-accent focus-within:bg-accent", rowDimmed(agent) && "opacity-(--opacity-dimmed)")}
     data-session-row={agent.pane_id} data-selected={selected ? "true" : undefined} onClick={open_}>
     <TreeChevron name={agent.identity_label} open={open} onToggle={() => actions.toggleSessionTree(agent.pane_id)} hangs={false} disabled={!model.available} data-session-chevron={agent.pane_id} />
     <div className="flex min-w-0 flex-1 flex-col gap-xxs py-xs pl-xs">
@@ -208,7 +208,7 @@ function ChildRow({ parent, child, depth, model, actions, place, open, selected,
   const toggle = () => actions.toggleSessionTree(child.pane_id);
   // The sidebar's title rule: a delegated title is quiet unless it asks or is selected.
   const titleTone = child.state.title_emphasized || (selected && child.state.selection_emphasizes_title) ? "text-foreground" : "text-subtle-foreground";
-  return <li className={cn("group/session flex min-w-0 items-stretch rounded-xs pr-xs", selected ? "bg-selected" : "hover:bg-accent focus-within:bg-accent")}
+  return <li className={cn("group/session flex min-w-0 items-stretch rounded-xs pr-xs", selected ? "bg-selected" : "hover:bg-accent focus-within:bg-accent", rowDimmed(child) && "opacity-(--opacity-dimmed)")}
     data-session-child={child.pane_id} data-depth={depth} data-selected={selected ? "true" : undefined} onClick={go}>
     <TreeRails place={place} />
     <TreeChevron name={child.identity_label} open={open} onToggle={toggle} hangs chain={place.chain} disabled={!model.available} data-session-chevron={child.pane_id} />
@@ -279,11 +279,14 @@ function SecondLine({ agent, owl }: { agent: AgentRow; owl: boolean }) {
   // What its home waits for, after the agent's own ask or block cause (PRD hide-ai-work-home D-14, D-16).
   const turn = session.group === "needs_you" && !(session.line && agent.status_code === "error") ? agent.hide_ai?.turn : undefined;
   if (turn) return <div className={cn(indent, "flex min-w-0 text-micro text-warning")} data-session-line="home-turn"><span className="min-w-0 truncate">{homeTurnLine(t, turn)}</span></div>;
+  // A sleeping row has no line; a waking, failed or unknown one says its state, as on the sidebar (status-marks B16, B31).
+  const own = stateLine(agent);
+  if (own === null) return null;
   // A row stopped on proven work leads with 대기 and its sentence or cause, as the sidebar's line does (status-marks B29).
-  const row = rowLine(agent);
-  if (row?.mode === "waiting") {
-    const parts = lineParts(t, agent, row);
-    return <div className={cn(indent, "flex min-w-0 text-micro text-subtle-foreground")} data-session-line="waiting">
+  const row = own ?? rowLine(agent);
+  if (row?.mode === "waiting" || own) {
+    const parts = lineParts(t, agent, row!);
+    return <div className={cn(indent, "flex min-w-0 text-micro text-subtle-foreground")} data-session-line={own ? agent.status_code : "waiting"}>
       <RowLineText parts={parts} title={[parts.lead, parts.text].filter(Boolean).join(" · ")} />
     </div>;
   }

@@ -31,7 +31,7 @@ export function SleepingSessionRow({ session, actions, inset = "var(--spacing-xs
         </span>
         <Hint label={[session.identity_label, agentProductName(session.kind), session.reason, caption].filter(Boolean).join("\n")}>
           <span className="flex min-w-0 flex-1 flex-col">
-            <span className="min-h-(--size-sidebar-line) truncate leading-(--size-sidebar-line) text-subtle-foreground">{session.identity_label}<span className="sr-only">, {agentProductName(session.kind)}, {lineShown ? null : caption}</span></span>
+            <span className="min-h-(--size-sidebar-line) truncate leading-(--size-sidebar-line) text-subtle-foreground">{session.identity_label}<span className="sr-only">{`, ${[agentProductName(session.kind), lineShown ? null : caption].filter(Boolean).join(", ")}`}</span></span>
             {lineShown ? <span className="truncate text-caption leading-(--size-sidebar-line-detail) text-subtle-foreground" data-sleeping-line={session.phase} aria-busy={session.checking || pending || undefined}>{caption}</span> : null}
           </span>
         </Hint>

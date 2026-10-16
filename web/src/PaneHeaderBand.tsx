@@ -20,7 +20,7 @@ import { relationState } from "./lineage";
 import { deviceConnected } from "./devices";
 import { remoteTargetOfPane } from "./remote";
 import { useRelationProgress } from "./PaneRelations";
-import { lineText } from "./agentRow";
+import { lineText, stateLine } from "./agentRow";
 import { allAgents, agentsByPane } from "./paneAgents";
 import { paneChildren, type PaneChildren } from "./paneChildren";
 import { sessionOfAgentOn } from "./sessionWork";
@@ -272,7 +272,9 @@ function PaneTreeButton({ paneId, children, agents, actions, compact = false, co
 /** The existing core-ranked child line fills the otherwise unused band slot. */
 function ChildSummary({ child, connection }: { child: AgentRow; connection: string | null }) {
   const { t } = useInterfaceTranslation();
-  const line = child.state.line;
+  // A sleeping child says nothing more; a waking, failed or unknown one says its state (status-marks B31).
+  const own = stateLine(child);
+  const line = own === undefined ? child.state.line : own;
   const summary = connection ?? (line ? lineText(t, child, line) : child.identity_label);
   return <Hint label={connection ?? [child.identity_label, agentProductName(child.agent_kind), summary].filter((text, index, all) => all.indexOf(text) === index).join(" · ")}>
     <span className="flex min-w-0 flex-1 items-center gap-xxs" data-pane-child-summary={child.pane_id}><span className="min-w-0 truncate">{summary}</span></span>

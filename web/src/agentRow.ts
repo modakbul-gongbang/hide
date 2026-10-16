@@ -44,13 +44,30 @@ export function rowLine(agent: Pick<AgentRow, "state">): RowLine | null {
  * a waking or failed one says so on its line (status-marks B31).
  */
 export function sidebarLine(agent: Pick<AgentRow, "state" | "status_code">): RowLine | null {
-  if (agent.status_code === "sleeping") return null;
-  if (agent.status_code === "waking" || agent.status_code === "sleep_failed") return { text: "", mode: "kept" };
+  const own = stateLine(agent);
+  if (own !== undefined) return own;
   const line = rowLine(agent);
   if (line && line.mode !== "quiet") return line;
-  if (agent.state.asking) return { text: "", mode: "request" };
-  // A dimmed row with no mark says why on its line (B16).
-  return rowDimmed(agent) ? { text: "", mode: "kept" } : null;
+  return agent.state.asking ? { text: "", mode: "request" } : null;
+}
+
+/**
+ * The line an agent's own state decides in every list, ahead of its
+ * sentence: a sleeping row has none, its moon and hover say it; a waking, a
+ * failed and an unknown row say their state (B16, B31). Undefined when the
+ * state decides nothing.
+ */
+export function stateLine(agent: Pick<AgentRow, "status_code">): RowLine | null | undefined {
+  switch (agent.status_code) {
+    case "sleeping":
+      return null;
+    case "waking":
+    case "sleep_failed":
+    case "unknown":
+      return { text: "", mode: "kept" };
+    default:
+      return undefined;
+  }
 }
 
 /**
@@ -61,8 +78,7 @@ export function sidebarLine(agent: Pick<AgentRow, "state" | "status_code">): Row
 export function treeLine(agent: Pick<AgentRow, "state" | "status_code">): RowLine | null {
   const line = sidebarLine(agent);
   if (!line) return null;
-  const kept = agent.status_code === "error" || agent.status_code === "waking" || agent.status_code === "sleep_failed" || rowDimmed(agent) || line.mode === "waiting";
-  return kept ? line : null;
+  return agent.status_code === "error" || stateLine(agent) || line.mode === "waiting" ? line : null;
 }
 
 /** The background tasks a finished turn left, as its line's tail (B27), or null when none. */
@@ -227,7 +243,17 @@ export function branchChip(agent: Pick<AgentRow, "state">): string | null {
  * shows has to be here.
  */
 export function rowAccessibleName(t: TFunction<"translation">, agent: AgentRow, device: string | null): string {
-  return [agent.identity_label, device, branchChip(agent), agentProductName(agent.agent_kind), markWords(t, agent), hideAiWords(t, agent.hide_ai), agent.letters_waiting ? t("agents.letterWaiting") : null, agent.detail].filter(Boolean).join(", ");
+  return [agent.identity_label, device, branchChip(agent), agentProductName(agent.agent_kind), markWords(t, agent), hideAiWords(t, agent.hide_ai), agent.letters_waiting ? t("agents.letterWaiting") : null, rowSentence(t, agent)].filter(Boolean).join(", ");
+}
+
+/**
+ * The sentence a row's hover and accessible name end with: a waiting ring's
+ * whole line, so `대기 · …` tells it from a working ring without sight
+ * (B29), else the agent's own sentence.
+ */
+export function rowSentence(t: TFunction<"translation">, agent: AgentRow): string | null {
+  const line = rowLine(agent);
+  return line?.mode === "waiting" ? lineText(t, agent, line) : agent.detail?.trim() || null;
 }
 
 /**

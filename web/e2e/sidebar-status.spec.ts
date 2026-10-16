@@ -10,6 +10,7 @@ import { countSent, screenshot, sidebarOverflow } from "./wire";
 test.describe.configure({ timeout: 150_000 });
 const LONG_TITLE = "행 높이 WIDE TITLE MUST CUT HERE";
 const QUESTION = "PR 병합 전 검증을 다시 돌려도 될까요?";
+const WAIT_SENTENCE = "하위 작업 위임 후 자식이 계보 투영과 테스트를 모두 끝낼 때까지 기다리는 중";
 
 test("roots stay in one sidebar, open their children in place, and the header's tree button opens the tree", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -17,7 +18,7 @@ test("roots stay in one sidebar, open their children in place, and the header's 
   let daemon: Daemon | null = null;
   try {
     const [parent, child] = herdr.panes;
-    labelAgent(herdr, parent, { task: "Agent one", progress: "하위 작업 위임 후 대기" });
+    labelAgent(herdr, parent, { task: "Agent one", progress: WAIT_SENTENCE });
     await finishFixtureTurn(herdr, parent, elsewhereTab(herdr));
     const childSession = labelAgent(herdr, child, { task: LONG_TITLE, progress: "계보 투영 구현 중" });
     await setFixtureLifecycle(herdr, child, "working");
@@ -34,6 +35,12 @@ test("roots stay in one sidebar, open their children in place, and the header's 
     // Folded, a root whose descendants only work wears no mark: its waiting ring says it (B10, B17).
     await expect(childRow).toHaveCount(0);
     await expect(parentRow.locator('[data-descendant-mark]')).toHaveCount(0);
+    // A waiting ring's tree line leads with Waiting (대기), and at the narrowest sidebar only its sentence is cut (status-marks B29).
+    const waitLine = parentRow.locator('[data-agent-line="waiting"]');
+    await expect(waitLine).toHaveText(`Waiting · ${WAIT_SENTENCE}`, { timeout: 20_000 });
+    expect(await sidebarOverflow(page, "calc(var(--size-sidebar-min) + var(--size-rail))")).toEqual([]);
+    expect(await waitLine.locator('[data-line-part="text"]').evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true);
+    await sidebarOverflow(page, "");
     continueFixtureTranscript(herdr, childSession, { task: LONG_TITLE, reply: QUESTION, question: true });
     await setFixtureLifecycle(herdr, child, "idle");
     // An ordinary question waits on the root, so the root stops waiting and keeps its own state, never raised, and a quiet child adds no mark.

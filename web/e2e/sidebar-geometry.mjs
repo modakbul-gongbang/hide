@@ -194,6 +194,11 @@ export async function sidebarOverflow(page, width) {
         if (part.getBoundingClientRect().right > right + 0.5) problems.push(`${part.textContent ?? part.tagName} passes its row`);
       }
     }
+    // A line's leading word and its background tail are never cut; only the sentence between them is (status-marks B27, B29).
+    for (const part of Array.from(document.querySelectorAll('nav[data-sidebar] [data-line-part="lead"], nav[data-sidebar] [data-line-part="tail"]'))) {
+      const line = part.parentElement;
+      if (part.scrollWidth > part.clientWidth + 0.5 || (line && part.getBoundingClientRect().right > line.getBoundingClientRect().right + 0.5)) problems.push(`${part.textContent} is cut`);
+    }
     return problems;
   }, width);
 }
