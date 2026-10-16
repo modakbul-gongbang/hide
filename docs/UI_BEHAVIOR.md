@@ -1760,7 +1760,7 @@ Web owner: `web/src/components/usage.tsx`, `web/src/components/usage-history.tsx
 The core owns account windows and shared preferences (`usage`, `ui_state.usage`); all limits refer to the core's own node, even with a remote device in front.
 The declaration lists all seven agents; only agents with a declared limit source appear in the footer and popover.
 
-The footer draws up to three pinned account windows, followed by the View menu, Help and Settings.
+The footer draws up to three pinned account windows at its left edge, and the View menu, Help and Settings at its right edge.
 Defaults pin each supported agent's weekly window.
 Each chip shows the agent mark and its rounded percent, naming the window when the agent has multiple visible chips.
 A numberless not-started or expired chip always names its window.
