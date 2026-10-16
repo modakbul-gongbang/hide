@@ -23,8 +23,9 @@ const CONVERSATION: &str = "ade08778-fcdd-4e96-88ba-fd1c4e594fa2";
 const SUBAGENT: &str = "7956974a-cd2e-41c0-bd3b-4c12822badd5";
 const START: &str = "herdr agent start probe --kind claude --pane w1:p9";
 
-/// The stand-in `hide`: the checkout is registered, the pane has one letter,
-/// and every other call (Memory, the Workspace) is not answered.
+/// The stand-in `hide`: the checkout is registered, the pane has one letter
+/// and is a Factory worker, and every other call (Memory, the Workspace) is
+/// not answered.
 const FAKE_HIDE: &str = r#"#!/bin/sh
 [ "$1" = --help ] && exit 0
 echo "$@" >> "${HOME%/*}/hide-calls"
@@ -32,6 +33,7 @@ case "$1 $2" in
   "workspace bootstrap") echo '{"ok":true,"reference":"/x"}' ;;
   "inbox --hook") echo '{"ok":true,"result":{"context":"LETTER-FOR-THIS-PANE","ids":["letter-1"]}}' ;;
   "inbox --confirm") echo '{"ok":true,"result":{"confirmed":["letter-1"]}}' ;;
+  "workspace factory-question-guard") echo '{"type":"workspace_result","ok":true,"result":{"deny":true}}' ;;
   *) exit 1 ;;
 esac
 "#;
@@ -271,4 +273,93 @@ fn a_subagent_is_given_no_guidance_and_takes_no_letter_of_the_panes() {
         assert_eq!(run.stdout, "");
     }
     assert!(machine.inbox_calls().is_empty());
+}
+
+/// agy's call of `tool` with `args`, in the checkout.
+fn call(machine: &Machine, tool: &str, args: Value) -> Value {
+    json!({
+        "conversationId": CONVERSATION,
+        "toolCall": { "name": tool, "args": args },
+        "workspacePaths": [machine.checkout],
+    })
+}
+
+#[test]
+fn a_guarded_file_is_refused_to_each_of_agys_file_tools_and_its_shell() {
+    let machine = Machine::new();
+    let policy = machine.home.join(".hide/agent-hooks/guardrails.json");
+    std::fs::write(
+        &policy,
+        json!({"version": 1, "projects": [{"root": machine.checkout, "base": "main", "rules": {
+            "worktree_folder": false, "base_branch": false, "agent_merge": false,
+            "git_commands": false, "files": true, "paths": [".env"],
+        }}]})
+        .to_string(),
+    )
+    .unwrap();
+    let env = machine.checkout.join(".env");
+
+    for payload in [
+        call(&machine, "view_file", json!({ "AbsolutePath": env })),
+        call(
+            &machine,
+            "write_to_file",
+            json!({ "TargetFile": env, "CodeContent": "x" }),
+        ),
+        call(
+            &machine,
+            "replace_file_content",
+            json!({ "TargetFile": env, "ReplacementContent": "x" }),
+        ),
+        call(
+            &machine,
+            "multi_replace_file_content",
+            json!({ "TargetFile": env, "ReplacementChunks": [] }),
+        ),
+        call(
+            &machine,
+            "run_command",
+            json!({ "CommandLine": "cat .env", "Cwd": machine.checkout }),
+        ),
+    ] {
+        let denied = answer(&machine.run("PreToolUse", &payload, Some(PANE)));
+        assert_eq!(denied["decision"], "deny", "{payload}");
+        assert!(
+            denied["reason"].as_str().unwrap().contains("Guard files"),
+            "{denied}"
+        );
+    }
+    let other = call(
+        &machine,
+        "view_file",
+        json!({ "AbsolutePath": machine.checkout.join("README.md") }),
+    );
+    assert_eq!(
+        answer(&machine.run("PreToolUse", &other, Some(PANE))),
+        json!({ "decision": "allow" })
+    );
+}
+
+#[test]
+fn a_factory_workers_question_is_refused_toward_hide_factory_ask() {
+    let machine = Machine::new();
+
+    let run = machine.run(
+        "PreToolUse",
+        &call(
+            &machine,
+            "ask_question",
+            json!({ "Question": "private-question-text" }),
+        ),
+        Some(PANE),
+    );
+
+    let denied = answer(&run);
+    assert_eq!(denied["decision"], "deny", "{denied}");
+    assert!(
+        denied["reason"]
+            .as_str()
+            .unwrap()
+            .contains("hide factory ask")
+    );
 }
