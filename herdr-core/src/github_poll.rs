@@ -253,6 +253,7 @@ pub(crate) fn pass(
         }
         let mut changed = false;
         let mut causes: Vec<&'static str> = Vec::new();
+        let mut checks_tag_moved = false;
         let mut failure = None;
         for endpoint in endpoints(project) {
             if cancel.load(Ordering::Relaxed) || started.elapsed() >= POLL_PASS_BUDGET {
@@ -298,6 +299,7 @@ pub(crate) fn pass(
                             }));
                         }
                     } else if moved {
+                        checks_tag_moved |= known.is_some();
                         // One job of many finishing moves the list's tag and
                         // not the result the mark shows; read what it adds up to.
                         let list = if endpoint.ends_with("/status") {
@@ -362,6 +364,14 @@ pub(crate) fn pass(
                     changed = true;
                     causes.push("checks");
                 }
+            }
+            if checks_tag_moved && !causes.contains(&"checks") {
+                // What a read on every tag move would have asked for.
+                crate::diagnostic!(serde_json::json!({
+                    "component": "github",
+                    "kind": "poll.checks_tag_only",
+                    "project": project.path,
+                }));
             }
         }
         if changed {
