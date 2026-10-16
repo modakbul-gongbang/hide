@@ -35,11 +35,12 @@
 # 2026-09-28 one run held all five for 26 minutes, so a second pull request
 # waited up to 70 minutes before its lanes started. A pull request therefore
 # asks for a macOS runner only for what a macOS runner alone proves: `desktop
-# e2e` for a change to the desktop app or the web code it drives, `os
-# contract (macos)` for a change to `hide-platform` or `hide-herdr-client`, and
-# `package`'s macOS job for a change to what goes into a package, the one job
-# that starts the packaged app such a change builds.
-# Core and daemon changes run on Linux and Windows and leave the macOS
+# e2e` for a change to what the app runs (the desktop host, the web shell and
+# every crate, issue #1288), `os contract (macos)` for a change to
+# `hide-platform` or `hide-herdr-client`, and `package`'s macOS job for a
+# change to what goes into a package, the one job that starts the packaged app
+# such a change builds.
+# Core and daemon changes add only `desktop e2e` there and leave the macOS web
 # `@platform` tests, the macOS mailbox lane and the rest of the OS contract to
 # `nightly.yml`.
 # Everything else runs on Linux: the Rust suite, the unit suites, the invariant
@@ -558,7 +559,8 @@ jobs:
       issues: write
 
   # The Electron app on macOS, the system it is written against: the whole
-  # suite, for a change to the desktop app or the web code it drives.
+  # suite, for a change to what the app runs: the desktop host, the web shell
+  # or a crate.
   desktop-e2e:
     name: desktop e2e
     needs: plan
