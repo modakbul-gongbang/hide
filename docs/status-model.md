@@ -604,7 +604,13 @@ A file that cannot be read, decoded or is of another schema version is not used 
 `loading` is true only for a project with no answer to show whose first read has not yet answered; a project the reader answers nothing for is not loading either, and a project with a restored or earlier answer is loading only while an explicit refresh of it is in flight.
 A project's pull requests are two [`gh pr list`](https://cli.github.com/manual/gh_pr_list) calls asked for at the same time, each under the 15-second limit: the 200 newest pull requests of any state without `statusCheckRollup` (with `headRefOid`, `isCrossRepository`, `createdAt`, `closedAt`, `author`, `mergeStateStatus` and `reviewRequests`), and the open ones with `number,statusCheckRollup` only.
 The Work tool's PRs lens (below) adds three reads to the same generation: the signed-in login (`gh api user --jq .login`, once per read of all projects, right after `auth status`), the open pull requests the account was asked to review (`gh pr list --search review-requested:@me`, numbers only), and one GraphQL query for each open pull request's place in the merge queue and the time of its last review request (`HidePrFacts`).
-They are part of the answer: a read without them would put a pull request on the wrong side of `mine` or of the queue, so any of them failing fails the project's read like a failed list does, and the last answer stays.
+The pull request list alone decides whether a project's read succeeds (issue #1189, which replaces PRD work-tab-pr-lens D-25's rule that any of the three failing failed the read).
+`gh auth status` failing is still the machine's refusal and fails every project's read.
+Each of the three is asked and judged on its own, and one that fails leaves the judgments derived from it unknown on every pull request, never "no": the login makes `mine` (`Option<bool>`, `None` when unknown), the review search with the login and the request list makes `asked_of_me` (`ReviewAsk::Unknown`), and the GraphQL query makes the queue place (`MergeQueuePlace::Unknown`) and the time of the last review request.
+What the list alone settles stays settled: a request naming the login is a direct ask without the search, and a request list with nobody who could be the operator or their team (any request when the login is unknown, a team's request when it is known) was asked of neither.
+The read is a success with the failed questions named in the project's status (`unread_queries`: `account`, `review_requests`, `merge_queue`), so the status is not stale and the list is current; each failure writes one `github` `pull_requests.extra_unread` diagnostic with the question and `gh`'s words, which the operator never sees.
+A project that keeps its last list because a later read failed keeps the names of the unanswered questions that list was read with.
+The re-read clock treats the read as answered: the list is current, and a question that fails every time (a GitHub Enterprise Server without the queue fields, a token too narrow for the search) costs two calls each normal interval rather than slowing the list.
 Asking for the checks of every merged and closed pull request made one read take 11 - 14 seconds, so a settled pull request's checks are not asked for again: the checks read for the same number and head commit while it was open stay in the reader's cache, and without them its checks are `Unknown`, drawn as no mark.
 Either call failing fails the project's read, which keeps the last answer and states the failure, so half an answer is never a repository with no pull requests; `pull_requests.ok`, `pull_requests.empty` and `pull_requests.failed` carry the read's `duration_ms`.
 Which pull request belongs to a checkout is one rule (`github::belongs_to_checkout`, chosen by `pull_request_for_checkout`), because a branch name is used again for new work: a pull request from a fork never belongs to a local branch of the same name, an open one belongs to the checkout on its head branch, and a merged or closed one only while the checkout's commit (the worktree reader's `head_sha`, or, before that reader has answered, the commit `Repository::head_oid` read from the repository's own files with no process) is exactly the pull request's head commit on that branch; a checkout that was amended, rebased or left behind after the last push therefore loses its merged pull request.
@@ -654,6 +660,7 @@ The result is the `prs` board of each project's `agent_scope`: rows (group, fold
 
 Which pull requests are listed: the operator's own, those a session of theirs made or worked on, those a review was asked of them or of their team for, and bots'; a merged one needs the first two, a closed one that was not merged is never listed, and a teammate's pull request none of these reaches is not.
 "Mine" is the pull request's `author.login` equal to the signed-in login.
+A pull request is left out only when every judgment says it is not the operator's: while the login is unknown, every open or merged pull request may be theirs and is listed, and while a review ask is unknown, the open pull request it concerns is listed (issue #1189).
 A pull request's agents are the live agents whose session the link record names as having made or worked on its branch; sharing a folder alone ties nothing.
 An agent that finished and is not yet looked at moves no group, because the unread check is Sessions' (Done).
 
@@ -675,6 +682,16 @@ Each pull request stops at the first slot that fits:
 | 12 | a review was asked of a team of the operator's (the search finds it, the request names no user) | Needs You, folded as `팀 리뷰 요청 N` | `team_review` |
 | 13 | anything else open | Waiting | `ci` while checks run, else `waiting_review` |
 
+A judgment that is unknown is never read as "no", and a pull request that cannot be judged is never put in a group it may not belong to.
+The slots that read an unknown judgment instead place the pull request in Waiting with the reason `unjudged` and the question that was not answered (`account`, `review_requests`, `merge_queue`), in the plain colour of `checking`, and it counts toward no Needs You:
+
+| Unknown | The pull request that waits unjudged | What still holds |
+| --- | --- | --- |
+| the login | any open one that no earlier slot placed and that has no session of the operator's and is not a bot's; a session's pull request still stops at slot 7 | slots 1 - 6 (a bot, an agent, the queue place, a draft) |
+| the review ask | a teammate's open one the request list cannot settle (a team's request is on it) | a request naming the login (slot 11), and the pull requests of slots 7 - 10 |
+| the queue place | the operator's own at slot 8, 9 or 10 (merge state clean, has hooks, unstable, behind or blocked), the states a queued pull request can be in | a conflicted, draft or still-computing one; a queued one when the queue is read |
+
+Slot 5 fires only on a known place.
 A merged pull request is Merging · merged below the queued ones, newest merge first.
 When GitHub has not computed `mergeStateStatus` (`UNKNOWN`) the pull request keeps the group it stood in on the previous board with the reason `checking`, and waits when it is new, so a pull request never jumps while GitHub thinks.
 A pull request nothing has changed on for 7 days (`OLD_MS`) in any group but Merging · merged is folded as `오래된 PR N` inside its group.

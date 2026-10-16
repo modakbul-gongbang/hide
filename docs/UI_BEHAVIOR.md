@@ -987,7 +987,7 @@ Web owners: `web/src/AgentSessions.tsx`, `web/src/sessionPanel.ts`, and `web/e2e
 Work is the rail's first tool, drawn as a kanban board (PRD work-tab-pr-lens D-34, D-35), the rail reading `Work · Memory · Files · Changes` (`Work · 기억 · 파일 · 변경` in Korean); the name is `Work` in all four languages, and its icon tooltip and the lane header read `Work · <project> 전체`.
 The Work tool holds the project's name, `Sessions | PRs` and the scope chip (`All checkouts` or `<checkout> only`); the lens a Workspace was last on, and the chip, are remembered per Workspace across restarts.
 A Workspace saved on the sessions tool (`agent_sessions`) opens on Work's Sessions lens, and the rest of its lane (open tool, pin, tree, widths) and its View layout stay.
-The switch has no numbers: a lens with something for the operator carries a warning dot, whose tooltip and accessible name say the lens and the count, `PRs · Needs You 4`, and PRs carries ⚠ instead of the count while its last GitHub read failed.
+The switch has no numbers: a lens with something for the operator carries a warning dot, whose tooltip and accessible name say the lens and the count, `PRs · Needs You 4`, and PRs carries ⚠ instead of the count while its last GitHub read failed or left a question unanswered.
 The Work icon's number badge on the rail adds the Needs You rows of both lenses, an agent that asks and also stands in its pull request's Needs You row counted once, and leaves the folded lines out; the sidebar's Needs You is unchanged.
 The Sessions lens is [Sessions](#sessions-the-task-list) above; a PR mark on a session row opens that pull request's card, or lists them when there are several.
 A project with no GitHub remote has Sessions only, whatever it was left on.
@@ -1011,6 +1011,9 @@ The list has no search field, so Escape has nothing to clear in it.
 Until GitHub has answered the lens shows three skeleton rows and no zero is drawn; with nothing concerning the operator it reads `열린 PR 없음` above the folded `Merging · merged`.
 Without `gh` or its sign-in the lens reads one line of why with a `Settings › GitHub` button.
 When a read fails the last pull requests stay, PRs carries ⚠ whose tooltip says `GitHub 읽기 실패 · N분 전 값`, and there is no banner.
+When the list was read but a question beside it was not (the signed-in account, the review requests, the merge queue; `docs/status-model.md`, Pull request groups, owns what each leaves unknown), the list stays whole and current and the same ⚠ names the question in plain words: `GitHub 읽기 일부 실패 · 못 읽음: 로그인한 계정` (several are joined by commas), and after a failed read the names follow the age (`GitHub 읽기 실패 · 6분 전 값 · 못 읽음: 머지 큐`).
+There is no banner or sheet for it, the sidebar's PR marks and the card are unchanged (a mark counts states the list alone decides, so it does not dim), and the failure's own words stay in the diagnostic log (PRD work-tab-pr-lens D-25 is replaced by issue #1189 here).
+A pull request that cannot be judged because of such a question sits in the plain Waiting group, never in one it may not belong to, and its reason line reads `판정 못 함 · ` followed by what could not be told (`내 PR인지 알 수 없음`, `내게 리뷰가 요청됐는지 알 수 없음`, `머지 큐에 있는지 알 수 없음`) in the muted colour of `머지 상태 확인 중`; its card keeps GitHub as the primary action and draws Merge only for a pull request known to be the operator's, and it adds nothing to the Work icon's number.
 While the lens or a card shows, every listed open pull request whose checks run, an agent's or not, is read again every 60 seconds; hover, focus and a rest publish nothing.
 The lens, the Sessions lens and a card each hold that one demand, and it is released only when the last of them closes.
 
