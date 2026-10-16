@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { IncomingTaskScope, TaskCardScope, TaskState } from "./agentScope";
-import { cardLine, cardOfItem, cardOfPane, cardPulls, cardQuestion, itemToken, overviewDeviceOf, taskSections, taskTally } from "./overviewTasks";
+import { cardLine, cardOfItem, cardOfPane, cardPulls, cardQuestion, foldsShowing, itemToken, overviewDeviceOf, taskSections, taskTally } from "./overviewTasks";
 import type { BoardProject } from "./projectBoard";
 import type { AgentRow, SnapshotRest, Workspace } from "./snapshot";
 
@@ -186,5 +186,13 @@ describe("the card an item or a pane belongs to (D-31, B59)", () => {
     expect(cardOfPane([other, started], "child")?.card.root).toBe("root");
     expect(cardOfPane([other, started], "solo")?.project.id).toBe("q");
     expect(cardOfPane([other, started], "stranger")).toBeNull();
+  });
+
+  it("opens the fold a resting or cleanup card stands in, so the card it opens on shows selected (B7, B59)", () => {
+    expect(foldsShowing([], { state: "resting" }, "q")).toEqual(["rest:q"]);
+    expect(foldsShowing(["more:p"], { state: "cleanup" }, "q")).toEqual(["more:p", "cleanup:q"]);
+    const open = ["rest:q"];
+    expect(foldsShowing(open, { state: "resting" }, "q")).toBe(open);
+    expect(foldsShowing(open, { state: "working" }, "p")).toBe(open);
   });
 });

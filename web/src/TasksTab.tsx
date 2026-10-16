@@ -13,7 +13,7 @@ import { useInterfaceTranslation } from "./i18n/client";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { cn } from "./lib/utils";
 import { ageWords } from "./overviewLens";
-import { cardChangedAt, cardItems, isMemoKey, cardLine, cardPulls, cardQuestion, taskSections, taskTitle, type CardLine, type TaskSection } from "./overviewTasks";
+import { cardChangedAt, cardItems, cleanupFold, isMemoKey, cardLine, cardPulls, cardQuestion, restFold, taskSections, taskTitle, type CardLine, type TaskSection } from "./overviewTasks";
 import { backlogOf } from "./overviewBacklog";
 import { PR_LOOK } from "./prMark";
 import type { BoardProject } from "./projectBoard";
@@ -73,8 +73,8 @@ function TaskSectionView({ section, rows, deviceId, actions }: { section: TaskSe
   const { project } = section;
   const open = useUiStore((s) => s.overview.open);
   const backlog = backlogOf(project).rows.length;
-  const restOpen = open.includes(`rest:${project.id}`);
-  const cleanupOpen = open.includes(`cleanup:${project.id}`);
+  const restOpen = open.includes(restFold(project.id));
+  const cleanupOpen = open.includes(cleanupFold(project.id));
   const toggle = (fold: string) => useUiStore.getState().setOverview({ open: toggledFold(useUiStore.getState().overview.open, fold) });
   const empty = section.count === 0 && section.incoming.length === 0;
   return (
@@ -115,8 +115,8 @@ function TaskSectionView({ section, rows, deviceId, actions }: { section: TaskSe
           {restOpen ? section.resting.map((card) => <TaskCardView key={card.root} card={card} project={project} rows={rows} deviceId={deviceId} actions={actions} />) : null}
           {section.cleanup.length > 0 || section.resting.length > 0 ? (
             <span className="flex flex-wrap items-start gap-xs">
-              {section.cleanup.length > 0 ? <FoldChip label={cleanupOpen ? t("overviewTasks.fold") : t("overviewTasks.cleanup", { count: section.cleanup.length })} open={cleanupOpen} tone="text-pr-merged" onToggle={() => toggle(`cleanup:${project.id}`)} fold={`cleanup:${project.id}`} /> : null}
-              {section.resting.length > 0 ? <FoldChip label={restOpen ? t("overviewTasks.fold") : t("overviewTasks.resting", { count: section.resting.length })} open={restOpen} tone="text-muted-foreground" onToggle={() => toggle(`rest:${project.id}`)} fold={`rest:${project.id}`} /> : null}
+              {section.cleanup.length > 0 ? <FoldChip label={cleanupOpen ? t("overviewTasks.fold") : t("overviewTasks.cleanup", { count: section.cleanup.length })} open={cleanupOpen} tone="text-pr-merged" onToggle={() => toggle(cleanupFold(project.id))} fold={cleanupFold(project.id)} /> : null}
+              {section.resting.length > 0 ? <FoldChip label={restOpen ? t("overviewTasks.fold") : t("overviewTasks.resting", { count: section.resting.length })} open={restOpen} tone="text-muted-foreground" onToggle={() => toggle(restFold(project.id))} fold={restFold(project.id)} /> : null}
             </span>
           ) : null}
         </div>

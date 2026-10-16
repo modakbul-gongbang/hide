@@ -442,7 +442,7 @@ When the compact form has no raised count, or no state counts are available, a t
 If the parent or a known descendant's device is not connected, the button shows a dim disconnected mark, keeping the last topology total and connection reason in its tooltip and accessible name, and suppresses state totals and the representative activity line until the connection returns.
 When there is no core band, the core-ranked lead child's existing line, or its title when no line exists, fills the remaining space.
 With no live children there is no tree button or child row, and no empty separator.
-The tree popover's `Overview에서 일감 보기` opens the Overview on the agent's device with the card of the task it belongs to selected and the agent's own record in the panel (PRD overview-device-tasks B59).
+The tree popover's `Overview에서 일감 보기` opens the Overview on the agent's device with the card of the task it belongs to selected and the agent's own record in the panel (PRD overview-device-tasks B59); a resting or cleanup card's fold opens with it, so the selected card is drawn.
 The zoom control names the panes it hides and unzooms the tab; the existing pane keyboard outline and focused-header wash remain.
 
 The core publishes at most one band: connection, terminal restoration failure or sleep first, own demand next, the lead raised descendant next, then task state.
@@ -779,7 +779,7 @@ A fork is a root of its own and so a task of its own.
 Tasks has one section per project of the device, the projects with something that needs the operator first (B6).
 A section's head is the project's name, `일감 N` with `일하는 중 N` and, in the warning colour, `Needs You N`, then `백로그 N ›` while the project has open backlog items, which opens 백로그 on that project, and `열기 ↗`.
 `열기 ↗` closes the Overview, opens the project's most recent checkout and puts the lane on Work's Sessions list (B12).
-A section's cards stand in the order Needs You, blocked, working, waiting and done but not yet seen; resting tasks fold into `쉬는 일감 N ›`, and tasks whose pull requests all merged with a worktree still on disk into `정리할 것 N ›`, each opening in place and closing with `접기` (B7).
+A section's cards stand in the order Needs You, blocked, working, waiting and done but not yet seen; resting tasks fold into `쉬는 일감 N ›`, and tasks whose pull requests all merged with a worktree still on disk into `정리할 것 N ›`, each opening in place and closing with `접기` (B7); the Overview opened on a card in either (from a pane's tree or a started item) opens that fold too.
 A section with no task reads `진행 중인 일감 없음 · New agent`, and New agent opens the start panel.
 
 A card's first line is the root's status mark (and Hide AI's mark on a task Hide AI started), the task's title (the root session's label) and its age; while it asks, the question follows in at most two lines in the warning colour (B8).
