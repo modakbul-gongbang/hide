@@ -47,8 +47,17 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     github.clock(first, first);
     const { session, child } = seedFirstWork(herdr, first);
     const root = await taskRow(page, herdr.panes[0], FIRST_GOAL);
-    await root.hover();
-    await page.locator(`[data-task-record="${herdr.panes[0]}"]`).click();
+    // The pane head's chip counts the session's tasks and opens the same
+    // checklist under the pointer, whose 기록 열기 opens the record (PRD
+    // task-split-checklist B9, B11, B12).
+    const chip = page.locator(`[data-pane-task-chip="${herdr.panes[0]}"]`);
+    await expect(chip).toHaveText("1/1", { timeout: 45_000 });
+    await chip.hover();
+    const list = page.locator(`[data-pane-task-list="${herdr.panes[0]}"]`);
+    await expect(list.locator("[data-task-list-name]")).toHaveText(["기록 화면 구현"]);
+    await expect(list.locator("[data-child-progress]")).toHaveAttribute("data-child-progress", /^[01]\/1$/);
+    await list.locator("[data-task-list-record]").click();
+    await expect(list).toHaveCount(0);
     const record = page.locator(RECORD);
     const tasks = record.locator('[data-record-work]').first().locator('[data-record-task]');
     await expect(tasks).toHaveCount(1, { timeout: 45_000 });
@@ -67,18 +76,26 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     // terminal put the unpinned lane away (PRD right-lane B15).
     await root.hover();
     await page.locator(`[data-task-record="${herdr.panes[0]}"]`).click();
-    await expect(tasks).toHaveCount(2, { timeout: 45_000 });
+    // The second request asked for two deliverables: two tasks of one group.
+    await expect(tasks).toHaveCount(3, { timeout: 45_000 });
     await expect(record).toContainText(FIRST_GOAL);
     await expect(record).toContainText(NEXT_GOAL);
     await expect(record.locator('[data-record-output="pr"]')).toHaveCount(3, { timeout: 45_000 });
-    // First asked first: the finished task, then the one whose PR failed CI.
-    expect(await tasks.evaluateAll((rows) => rows.map((row) => row.querySelector("[data-task-state]")?.getAttribute("data-task-state")))).toEqual(["done", "ci_failed"]);
+    // First asked first: the finished task, then the split request's two, which share the failed CI of its PR.
+    expect(await tasks.evaluateAll((rows) => rows.map((row) => row.querySelector("[data-task-state]")?.getAttribute("data-task-state")))).toEqual(["done", "ci_failed", "ci_failed"]);
+    await expect(chip).toHaveText("1/3");
+    // Show task list pins the focused pane's checklist; the chord again closes it.
+    await page.locator(`[data-pane-view="${herdr.panes[0]}"] .xterm-helper-textarea`).focus();
+    await page.keyboard.press(chord("toggle_task_list"));
+    await expect(list.locator("[data-task-list-name]")).toHaveText(["기록 화면 구현", "이슈와 검색 검증", "좁은 열 줄바꿈 확인"]);
+    await page.keyboard.press(chord("toggle_task_list"));
+    await expect(list).toHaveCount(0);
     // A child is a row that opens its own record in the slot, and the head's ← comes back (PRD sidebar-task-lens B16).
     await record.locator(`[data-record-child="${child}"]`).click();
-    // The slot swaps the parent's two tasks for the child's one, so wait for that whole list.
+    // The slot swaps the parent's three tasks for the child's one, so wait for that whole list.
     await expect(record.locator("[data-record-task]")).toHaveText([/자식 연결 검증/]);
     await page.locator("[data-detail-back]").click();
-    await expect(tasks).toHaveCount(2);
+    await expect(tasks).toHaveCount(3);
     const missed = record.locator("[data-missed-work]", { hasText: MISSED });
     await missed.getByRole("button", { name: "Dismiss", exact: true }).click();
     // A closed one is a muted line that says how it closed; Undo shows under the pointer.

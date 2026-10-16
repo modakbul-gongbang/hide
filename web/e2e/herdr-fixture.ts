@@ -289,7 +289,7 @@ export type FixtureLabel = {
    * `question`, else done. A turn start's answer carries none: the provider shim
    * leaves `end` out when the request's schema asks for none. */
   end?: "question" | "blocked" | "done" | "waiting" | "unfinished";
-  work?: { task: {kind:"new";name:string} | {kind:"continue";ids:string[]} | {kind:"none"}; missed:{kind:"leftover"|"problem"|"follow_up";text:string}[]; resolved:{id:string;issue_number:number|null}[]; output_task_id:string|null };
+  work?: { task: {kind:"new";names:string[]} | {kind:"continue";ids:string[]} | {kind:"none"}; missed:{kind:"leftover"|"problem"|"follow_up";text:string}[]; resolved:{id:string;issue_number:number|null}[]; output_task_id:string|null };
   at?: number;
   /** Native cwd witness, when repository provenance is part of the journey. */
   cwd?: string;
