@@ -2,8 +2,9 @@
 // compare typography and geometry; runtime policy is tested in herdr-core.
 import { useLayoutEffect, useMemo } from "react";
 import { createActions } from "../actions";
-import { AgentSessions } from "../AgentSessions";
+import { TaskLens } from "../TaskLens";
 import { TooltipProvider } from "../components/ui/tooltip";
+import type { TaskState } from "../agentScope";
 import { PaneView } from "../PaneView";
 import type { AgentRow, AgentState, PaneHeader, PrState, RaisedAsk, SessionGroup } from "../snapshot";
 import type { StatusTone, RequestVerb } from "../snapshot";
@@ -12,6 +13,8 @@ import { REFERENCE_FOLDS, sidebarScene } from "./sceneData";
 import type { SceneParams } from "./SidebarScene";
 
 type Example = { title: string; group: SessionGroup; line: string | null; ask?: NonNullable<AgentState["ask"]>; pr?: PrState; unfinished?: boolean; mark?: AgentRow["descendant_mark"] };
+/** Each example's task: its row's index and the state the core gave it. */
+const TASKS: [number, TaskState][] = [[0, "needs_you"], [1, "needs_you"], [2, "needs_you"], [4, "working"], [5, "waiting"], [3, "done"], [6, "resting"], [7, "resting"], [8, "resting"]];
 const EXAMPLES: Example[] = [
   { title: "입력과 세션 복귀 흐름 검토", group: "needs_you", line: null, ask: { verb: "approval", what: "검증 명령 실행 권한이 필요합니다", more: 0 } },
   { title: "한국어 입력 경계 검토", group: "needs_you", line: null, ask: { verb: "answer", what: "기존 stdin 종료 경로도 남길까요?", more: 0 } },
@@ -73,10 +76,12 @@ export function SessionWorkflowScene({ scene: kind, theme, content, scale, width
       };
     });
     const feature = { ...checkout, id: "session-ui", label: "prd/session-ui", branch: "prd/session-ui" };
-    const scope = { ...project.agent_scope, members: agents.map((agent, index) => ({ pane_id: agent.pane_id, project_id: project.id, checkout_id: index === 5 ? checkout.id : feature.id })), work: { s3: { pull: 0, more: 0, issues: [], issue_chips: [] }, s4: { pull: 0, more: 0, issues: [], issue_chips: [] }, s5: { pull: null, more: 0, issues: ["issue-219"], issue_chips: ["issue-219"] }, s6: { pull: 0, more: 0, issues: [], issue_chips: [] } }, sessions: { groups: [{ group: "needs_you" as const, members: [0, 1, 2] }, { group: "working" as const, members: [4, 5] }, { group: "done" as const, members: [3] }, { group: "idle" as const, members: [6, 7] }, { group: "resolved" as const, members: [8] }] } };
+    const scope = { ...project.agent_scope, members: agents.map((agent, index) => ({ pane_id: agent.pane_id, project_id: project.id, checkout_id: index === 5 ? checkout.id : feature.id })), work: { s3: { pull: 0, more: 0, issues: [], issue_chips: [] }, s4: { pull: 0, more: 0, issues: [], issue_chips: [] }, s5: { pull: null, more: 0, issues: ["issue-219"], issue_chips: ["issue-219"] }, s6: { pull: 0, more: 0, issues: [], issue_chips: [] } }, tasks: { cards: TASKS.map(([member, state]) => ({ root: agents[member]!.pane_id, state, members: [agents[member]!.pane_id], checkouts: [member === 5 ? checkout.id : feature.id], recency: "" })), needs_you: 3, recency: "" } };
     project.agent_scope = scope;
     project.tasks = { source: null, overflow: false, tasks: [{ key: "issue-219", source: "github", id: `#${219}`, url: "https://example.invalid/issue/219", title: "세션 패널 구현", open: true }] };
-    checkout.agent_scope = { ...scope, members: [scope.members[5]!], sessions: { groups: [{ group: "working", members: [0] }] } };
+    checkout.agent_scope = { ...scope, members: [scope.members[5]!] };
+    // The sidebar's 태스크 list reads the device's tasks.
+    for (const device of base.rest.navigator?.devices ?? []) device.agent_scope = scope;
     const panes = agents.map((agent) => ({ ...pane, id: agent.pane_id, identity_label: agent.identity_label }));
     checkout.tabs = [{ ...checkout.tabs[0]!, panes: [panes[5]!] }];
     feature.tabs = [{ ...checkout.tabs[0]!, id: "session-ui-tab", panes: panes.filter((_, index) => index !== 5) }];
@@ -134,5 +139,5 @@ export function SessionWorkflowScene({ scene: kind, theme, content, scale, width
     document.documentElement.classList.toggle("light", theme === "light");
     document.documentElement.style.setProperty("--interface-scale", String(scale));
   }, [fixture, theme, scale]);
-  return <TooltipProvider>{kind === "session-panel" ? <div className="flex h-full bg-background text-foreground" data-gallery-scene={kind}><AgentSessions actions={actions} /></div> : <div style={{ width: width ?? undefined }} className="grid grid-cols-2 gap-lg bg-background p-xl text-foreground" data-gallery-scene={kind}>{BANDS.map(([id]) => <div key={id} className="h-[var(--size-pane-state-example)] min-w-0 border border-border"><PaneView pane={{ ...fixture.pane, id, identity_label: content === "long" ? "긴 한국어 제목을 좁은 pane에서 확인하는 상태 검토" : "한국어 입력 경계 검토", fork: id === "idle" ? { available: true, forked_from: { pane_id: "a1", label: "hide 에이전트 지원 PR 묶음 머지 조율" } } : undefined, lineage_path: CHILD_PANES.includes(id) ? [{ pane_id: "a1", label: "hide 에이전트 지원 PR 묶음 머지 조율", siblings: [] }, { pane_id: id, label: "한국어 입력 경계 검토", siblings: [] }] : undefined }} transport={undefined} focused={false} scale={1} actions={actions} agentKind="codex" markSymbol="○" markTone="text-muted-foreground" paneCount={2} zoomed={false} /></div>)}</div>}</TooltipProvider>;
+  return <TooltipProvider>{kind === "session-panel" ? <div className="flex h-full bg-background text-foreground" data-gallery-scene={kind}><TaskLens actions={actions} /></div> : <div style={{ width: width ?? undefined }} className="grid grid-cols-2 gap-lg bg-background p-xl text-foreground" data-gallery-scene={kind}>{BANDS.map(([id]) => <div key={id} className="h-[var(--size-pane-state-example)] min-w-0 border border-border"><PaneView pane={{ ...fixture.pane, id, identity_label: content === "long" ? "긴 한국어 제목을 좁은 pane에서 확인하는 상태 검토" : "한국어 입력 경계 검토", fork: id === "idle" ? { available: true, forked_from: { pane_id: "a1", label: "hide 에이전트 지원 PR 묶음 머지 조율" } } : undefined, lineage_path: CHILD_PANES.includes(id) ? [{ pane_id: "a1", label: "hide 에이전트 지원 PR 묶음 머지 조율", siblings: [] }, { pane_id: id, label: "한국어 입력 경계 검토", siblings: [] }] : undefined }} transport={undefined} focused={false} scale={1} actions={actions} agentKind="codex" markSymbol="○" markTone="text-muted-foreground" paneCount={2} zoomed={false} /></div>)}</div>}</TooltipProvider>;
 }

@@ -1137,6 +1137,10 @@ mod tests {
                 "selected_pane_id": panes[1],
                 "expanded_agent_pane_ids": panes,
                 "sessions_expanded_agent_pane_ids": panes,
+                "detail": {"items": (0..3).flat_map(|index| [
+                    json!({"kind": "pull_request", "workspace_id": registrations[index], "number": 7}),
+                    json!({"kind": "record", "session": {"device_id": devices[index], "agent": "claude", "session_id": "s"}}),
+                ]).collect::<Vec<_>>(), "shown": true},
                 "recent_pane_ids": panes,
                 "pane_text_scales": keyed("pane", json!(1.2)),
                 "pane_read_records": Value::Object(panes.iter().enumerate().map(|(index, pane)| (

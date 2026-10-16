@@ -54,16 +54,13 @@ it("with no project, says what to do with Add project and its chord in the middl
   await act(async () => button.click());
   expect(useUiStore.getState().overlay).toBe("add_project");
   await act(async () => useUiStore.getState().closeOverlay("add_project"));
+  // The Projects tab says the same in its place (PRD sidebar-task-lens B42).
+  await act(async () => useUiStore.getState().setMainView("projects"));
+  expect(container.querySelector('[data-main-view="projects"] [data-main-empty-home="no_project"]')).not.toBeNull();
 });
 
-it("with projects and no agent, says no agent is running with Start an agent and its chord, and the button opens the start panel (B28)", async () => {
+it("with projects and no agent, keeps the backlog rather than an empty Home; the sidebar's 태스크 list offers New agent (PRD sidebar-task-lens B42)", async () => {
   const container = await scene("home-no-agent");
-  expect(container.querySelector('[data-main-empty-home="no_project"]')).toBeNull();
-  const home = container.querySelector('[data-main-empty-home="no_agent"]')!;
-  expect(home.querySelector("p")?.textContent).toBe(english["firstRun.home.noAgent"]);
-  const button = home.querySelector('[data-main-empty-home-action="start_agent"]') as HTMLButtonElement;
-  expect(button.textContent).toBe(english["firstRun.home.startAgent"]);
-  expect(button.nextElementSibling?.textContent).toBe("⌘N");
-  await act(async () => button.click());
-  expect(useStartPanel.getState().isOpen).toBe(true);
+  expect(container.querySelector("[data-main-empty-home]")).toBeNull();
+  expect(container.querySelector("[data-overview-backlog]")).not.toBeNull();
 });

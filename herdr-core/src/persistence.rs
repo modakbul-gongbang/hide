@@ -5,10 +5,10 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    AgentLogoMode, ColorTheme, DeviceRegistration, PaneCompletion, PaneReadRecord,
-    PetOriginSnapshot, RightPanelSection, ThemePreference, UiStateSnapshot, WorkspaceRegistration,
-    default_accent_hex, default_font_size, default_pane_text_scale, default_panel_visible,
-    default_sidebar_width,
+    AgentLogoMode, ColorTheme, DetailSlot, DeviceRegistration, PaneCompletion, PaneReadRecord,
+    PetOriginSnapshot, RightPanelSection, SidebarLens, TaskView, ThemePreference, UiStateSnapshot,
+    WorkspaceRegistration, default_accent_hex, default_font_size, default_pane_text_scale,
+    default_panel_visible, default_sidebar_width,
 };
 
 const UI_STATE_SCHEMA_VERSION: u32 = 1;
@@ -64,6 +64,17 @@ struct StoredUiState {
     expanded_agent_pane_ids: Vec<String>,
     #[serde(default)]
     sessions_expanded_agent_pane_ids: Vec<String>,
+    /// Kept as text, like `theme`: absent in a store written before the
+    /// 태스크 list existed, which loads on the projects (PRD sidebar-task-lens
+    /// D-25), and a value this build does not know loads the same way.
+    #[serde(default)]
+    sidebar_lens: Option<String>,
+    #[serde(default)]
+    task_view: Option<String>,
+    /// Kept as JSON so a slot this build cannot read loads empty instead of
+    /// making the whole store unreadable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    detail: Option<serde_json::Value>,
     selected_path: Option<String>,
     selected_pane_id: Option<String>,
     /// Written only by a core move's rekey and left out once taken, so an
@@ -232,6 +243,11 @@ pub enum UnrecognizedField {
     ColorTheme,
     /// The agent logo mode; hidden was used.
     AgentLogoMode,
+    /// The sidebar's lens or the 태스크 view option; the projects, grouped
+    /// by state, was used.
+    SidebarLens,
+    /// The lane's 보기 slot; it loaded empty.
+    Detail,
 }
 
 /// What the removed native app's state file holds for `shortcut_bindings`.
@@ -377,6 +393,30 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             AgentLogoMode::Hidden
         }),
     };
+    let sidebar_lens = match stored.sidebar_lens.as_deref() {
+        None => SidebarLens::default(),
+        Some(value) => SidebarLens::parse(value).unwrap_or_else(|| {
+            unrecognized.push(UnrecognizedField::SidebarLens);
+            SidebarLens::default()
+        }),
+    };
+    let task_view = match stored.task_view.as_deref() {
+        None => TaskView::default(),
+        Some(value) => TaskView::parse(value).unwrap_or_else(|| {
+            unrecognized.push(UnrecognizedField::SidebarLens);
+            TaskView::default()
+        }),
+    };
+    let detail = match stored.detail {
+        None => DetailSlot::default(),
+        Some(value) => serde_json::from_value::<DetailSlot>(value)
+            .ok()
+            .filter(|slot| slot.items.len() <= crate::model::DETAIL_HISTORY_LIMIT)
+            .unwrap_or_else(|| {
+                unrecognized.push(UnrecognizedField::Detail);
+                DetailSlot::default()
+            }),
+    };
     let disposition = if unrecognized.is_empty() {
         LoadDisposition::Loaded
     } else {
@@ -405,6 +445,9 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             project_settings_writes: BTreeMap::new(),
             expanded_agent_pane_ids: stored.expanded_agent_pane_ids,
             sessions_expanded_agent_pane_ids: stored.sessions_expanded_agent_pane_ids,
+            sidebar_lens,
+            task_view,
+            detail,
             selected_path: stored.selected_path,
             selected_pane_id: stored.selected_pane_id,
             focus_from_herdr: stored.focus_from_herdr,
@@ -526,6 +569,10 @@ pub fn save(
         project_settings: state.project_settings.clone(),
         expanded_agent_pane_ids: state.expanded_agent_pane_ids.clone(),
         sessions_expanded_agent_pane_ids: state.sessions_expanded_agent_pane_ids.clone(),
+        sidebar_lens: Some(state.sidebar_lens.as_str().to_owned()),
+        task_view: Some(state.task_view.as_str().to_owned()),
+        detail: (state.detail != DetailSlot::default())
+            .then(|| serde_json::to_value(&state.detail).expect("the 보기 slot serializes")),
         selected_path: state.selected_path.clone(),
         selected_pane_id: state.selected_pane_id.clone(),
         focus_from_herdr: state.focus_from_herdr,
@@ -1175,6 +1222,53 @@ mod tests {
 
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir(root);
+    }
+
+    /// PRD sidebar-task-lens B3, D-25, D-48, D-50: the sidebar's lens, the
+    /// 태스크 view option and the 보기 slot survive a relaunch; a store
+    /// written before them opens on the projects, by state, with an empty
+    /// slot; a value this build does not know loads the same way and says so.
+    #[test]
+    fn the_lens_view_option_and_detail_slot_survive_a_relaunch() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("state.json");
+        let mut state = UiStateSnapshot {
+            sidebar_lens: SidebarLens::Tasks,
+            task_view: TaskView::Project,
+            sessions_expanded_agent_pane_ids: vec!["w1:p1".to_owned()],
+            ..UiStateSnapshot::default()
+        };
+        state.detail.open(crate::model::DetailItem::PullRequest {
+            workspace_id: "workspace:alpha".to_owned(),
+            number: 7,
+        });
+        save(&path, &state, &PaneTerminalSizes::new()).expect("persist the lens");
+        let (restored, _sizes, disposition) = load(&path);
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        assert_eq!(restored.sidebar_lens, SidebarLens::Tasks);
+        assert_eq!(restored.task_view, TaskView::Project);
+        assert_eq!(restored.sessions_expanded_agent_pane_ids, ["w1:p1"]);
+        assert_eq!(restored.detail, state.detail);
+
+        let older = br#"{"schema_version":1,"expanded_paths":[],"selected_path":null,"selected_pane_id":null}"#;
+        let (older_state, _sizes, older_disposition) = decode(older);
+        assert_eq!(older_disposition, LoadDisposition::Loaded);
+        assert_eq!(older_state.sidebar_lens, SidebarLens::Projects);
+        assert_eq!(older_state.task_view, TaskView::Status);
+        assert_eq!(older_state.detail, DetailSlot::default());
+
+        let unknown = br#"{"schema_version":1,"expanded_paths":[],"selected_path":null,"selected_pane_id":null,
+            "sidebar_lens":"sessions","task_view":"status","detail":{"items":[{"kind":"tab"}],"shown":true}}"#;
+        let (unknown_state, _sizes, unknown_disposition) = decode(unknown);
+        assert_eq!(
+            unknown_disposition,
+            LoadDisposition::Unrecognized(vec![
+                UnrecognizedField::SidebarLens,
+                UnrecognizedField::Detail
+            ])
+        );
+        assert_eq!(unknown_state.sidebar_lens, SidebarLens::Projects);
+        assert_eq!(unknown_state.detail, DetailSlot::default());
     }
 
     #[test]

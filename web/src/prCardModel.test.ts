@@ -3,11 +3,11 @@
 // case, why Merge cannot be pressed, and where a changed file opens.
 
 import { describe, expect, it } from "vitest";
-import { bodyOutline, bodyPreview, confirmHolds, fileOpen, mergeWhy, primaryAction, splitFiles } from "./prCardModel";
+import { bodyOutline, bodyPreview, confirmHolds, fileOpen, mergeWhy, prFacts, prSteps, primaryAction, splitFiles } from "./prCardModel";
 import type { PrCard, PullRequest } from "./snapshot";
 
 const pr = (over: Omit<Partial<PullRequest>, "work"> & { work?: Record<string, unknown> }): PullRequest =>
-  ({ number: 7, url: "https://github.com/acme/repo/pull/7", head_branch: "feat/x", base_branch: "main", is_draft: false, ...over, work: { merge_state: "clean", pending_checks: 0, ...over.work } }) as unknown as PullRequest;
+  ({ number: 7, url: "https://github.com/acme/repo/pull/7", head_branch: "feat/x", base_branch: "main", is_draft: false, ...over, work: { merge_state: "clean", pending_checks: 0, queue: { state: "not_queued" }, ...over.work } }) as unknown as PullRequest;
 
 const card = (merge: Partial<NonNullable<PrCard["merge"]>> | null): PrCard => ({ merge: merge === null ? null : { can_merge: true, methods: ["merge"], queue: false, ...merge } }) as unknown as PrCard;
 
@@ -98,5 +98,42 @@ describe("splitFiles", () => {
     const files = [{ path: "a.ts", generated: false }, { path: "Cargo.lock", generated: true }, { path: "dist/a.js", generated: true }] as NonNullable<PrCard["files"]>;
     expect(splitFiles(files)).toEqual({ shown: [files[0]], generated: 2 });
     expect(splitFiles(null)).toEqual({ shown: [], generated: 0 });
+  });
+});
+
+describe("prFacts", () => {
+  it("says the checks, the review and the conflict GitHub reported, nothing it did not", () => {
+    expect(prFacts(pr({ state: "mergeable", checks: "passing", review: "approved" }))).toEqual([{ kind: "checks_passing" }, { kind: "approved" }, { kind: "no_conflict", base: "main" }]);
+    expect(prFacts(pr({ state: "pending", checks: "pending", review: null, work: { merge_state: "blocked", pending_checks: 8 } }))).toEqual([{ kind: "checks_running", count: 8 }]);
+    expect(prFacts(pr({ state: "failed", checks: "failed", review: "changes_requested", work: { merge_state: "dirty", failed_checks: [{ name: "a", url: null }, { name: "b", url: null }] } }))).toEqual([{ kind: "checks_failed", count: 2 }, { kind: "changes" }, { kind: "conflict", base: "main" }]);
+    expect(prFacts(pr({ state: "merged", checks: "passing", review: null }))).toEqual([{ kind: "checks_passing" }]);
+  });
+});
+
+describe("prSteps", () => {
+  const states = (steps: ReturnType<typeof prSteps>) => steps.map((step) => step.state);
+  it("fills a mergeable pull request up to review and names who worked", () => {
+    const steps = prSteps(pr({ state: "mergeable", checks: "passing", review: "approved", work: { mine: true } }), "Claude", "merge");
+    expect(states(steps)).toEqual(["done", "done", "done", "empty"]);
+    expect(steps[0]!.note).toEqual({ kind: "agent", name: "Claude" });
+    expect(steps[2]!.note).toEqual({ kind: "approved" });
+  });
+
+  it("runs the PR step while checks run or it is a draft, and fails it on a failed check", () => {
+    expect(states(prSteps(pr({ state: "pending", checks: "pending", work: { merge_state: "blocked", pending_checks: 8 } }), null, "ci"))).toEqual(["done", "active", "empty", "empty"]);
+    expect(prSteps(pr({ state: "draft", is_draft: true, checks: "passing" }), null, "draft")[1]!.note).toEqual({ kind: "draft" });
+    const failed = prSteps(pr({ state: "failed", checks: "failed", work: { merge_state: "blocked", failed_checks: [{ name: "e2e", url: null }] } }), null, "failed");
+    expect(states(failed)).toEqual(["done", "failed", "empty", "empty"]);
+  });
+
+  it("waits on review once checks pass, says who it waits on, and fails it on changes", () => {
+    expect(prSteps(pr({ checks: "passing", review: "review_required", work: { merge_state: "blocked", asked_of_me: "direct" } }), null, "review")[2]).toEqual({ id: "review", state: "active", note: { kind: "asked_of_me" } });
+    expect(prSteps(pr({ checks: "passing", review: null, work: { merge_state: "blocked", asked_of_me: "none" } }), null, "assign_reviewer")[2]!.note).toEqual({ kind: "no_reviewer" });
+    expect(prSteps(pr({ checks: "passing", review: "changes_requested", work: { merge_state: "blocked" } }), null, "changes")[2]!.state).toBe("failed");
+  });
+
+  it("says an outside author worked on it, and fills every step once merged", () => {
+    expect(prSteps(pr({ checks: "passing", work: { mine: false, author: "kim" } }), null, "review")[0]!.note).toEqual({ kind: "external" });
+    expect(states(prSteps(pr({ state: "merged", checks: "passing" }), null, "merged"))).toEqual(["done", "done", "done", "done"]);
   });
 });

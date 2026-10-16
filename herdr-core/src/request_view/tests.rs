@@ -281,8 +281,10 @@ fn a_pr_reads_draft_then_failed_or_changes_requested_then_mergeable_then_pending
 }
 
 #[test]
-fn sessions_keep_delegated_children_out_and_order_each_group_with_quiet_idle_rows_last() {
-    use crate::agent_state::sessions::{Group, scope};
+fn a_session_row_takes_its_group_and_line_from_its_own_state() {
+    // The 태스크 list's second line (PRD sidebar-task-lens B8) reads each
+    // row's own session facts; which task holds a row is `tally/tasks.rs`'s.
+    use crate::agent_state::sessions::Group;
     let mut rows = rows(&[
         ("approval", "blocked"),
         ("working", "working"),
@@ -313,20 +315,18 @@ fn sessions_keep_delegated_children_out_and_order_each_group_with_quiet_idle_row
             ),
         ]),
     );
-    let scope = scope(rows.iter().enumerate());
-    let groups: Vec<_> = scope
-        .groups
-        .iter()
-        .map(|section| (section.group, section.members.clone()))
-        .collect();
     assert_eq!(
-        groups,
+        rows.iter()
+            .map(|row| row.state.session.group)
+            .collect::<Vec<_>>(),
         [
-            (Group::NeedsYou, vec![0]),
-            (Group::Working, vec![1]),
-            // Unfinished first, then a failed check, then mergeable; a row
-            // with neither a PR nor unfinished work comes last, not folded.
-            (Group::Idle, vec![4, 5, 6, 2]),
+            Group::NeedsYou,
+            Group::Working,
+            Group::Idle,
+            Group::NeedsYou,
+            Group::Idle,
+            Group::Idle,
+            Group::Idle,
         ]
     );
     assert_eq!(

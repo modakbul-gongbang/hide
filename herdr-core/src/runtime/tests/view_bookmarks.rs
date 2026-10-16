@@ -704,7 +704,7 @@ fn each_tab_keeps_its_own_list_and_the_lane_stays_the_workspaces() {
     open(&mut runtime, &checkout, &directory, "b.md");
     view_event(
         &mut runtime,
-        serde_json::json!({"tool": "work", "pinned": true, "lane_width": 444}),
+        serde_json::json!({"tool": "prs", "pinned": true, "lane_width": 444}),
     );
     let b = presentation(&runtime);
     focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
@@ -717,7 +717,7 @@ fn each_tab_keeps_its_own_list_and_the_lane_stays_the_workspaces() {
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
     assert_eq!(
         (view.tool, view.pinned, view.lane_width),
-        (Some(crate::workspace_views::Tool::Work), true, Some(444)),
+        (Some(crate::workspace_views::Tool::Prs), true, Some(444)),
         "the lane is the Workspace's, so another tab keeps it"
     );
     assert!(

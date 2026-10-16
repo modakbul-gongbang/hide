@@ -3,7 +3,6 @@ import type { Catalog, Catalogs } from "../schema";
 // Request and reply bodies, sender names, task titles and link labels are caller data.
 
 export const requestsEnglish = {
-  "requests.nothingToDo": "Nothing to do",
   "requests.images_one": "{{count}} image",
   "requests.images_other": "{{count}} images",
   "requests.sender.operator": "Me",
@@ -23,7 +22,6 @@ export const requestsEnglish = {
 } as const;
 
 const ko = {
-  "requests.nothingToDo": "할 일 없음",
   "requests.images_one": "이미지 {{count}}",
   "requests.images_other": "이미지 {{count}}",
   "requests.sender.operator": "나",
@@ -43,7 +41,6 @@ const ko = {
 } satisfies Catalog<typeof requestsEnglish>;
 
 const zhCN = {
-  "requests.nothingToDo": "暂无待办",
   "requests.images_one": "{{count}} 张图片",
   "requests.images_other": "{{count}} 张图片",
   "requests.sender.operator": "我",
@@ -63,7 +60,6 @@ const zhCN = {
 } satisfies Catalog<typeof requestsEnglish>;
 
 const ja = {
-  "requests.nothingToDo": "対応することはありません",
   "requests.images_one": "画像{{count}}枚",
   "requests.images_other": "画像{{count}}枚",
   "requests.sender.operator": "自分",

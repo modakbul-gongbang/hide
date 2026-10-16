@@ -61,7 +61,7 @@ export function UsageScene({ params }: { params: URLSearchParams }) {
     if (params.get("surface") === "history-year") useUiStore.setState({ screen: { kind: "main" } });
     else if (params.get("surface") === "overview") useUiStore.setState({ screen: { kind: "main" }, mainView: "usage", overview: OVERVIEW_ENTRY });
     else if (params.get("surface") !== "footer") useUiStore.getState().openSettings("usage");
-    else useUiStore.setState({ screen: { kind: "main" }, mainView: "tasks" });
+    else useUiStore.setState({ screen: { kind: "main" }, mainView: "backlog" });
     const root = document.documentElement;
     root.classList.toggle("dark", params.get("theme") !== "light");
     root.classList.toggle("light", params.get("theme") === "light");

@@ -37,8 +37,8 @@ describe("the projects the quick add offers (B38, D-33)", () => {
 describe("the project picked first (B38)", () => {
   const all = [project("first"), project("task"), project("filter"), project("front")];
 
-  it("takes the project of the task the Overview has selected, then the one it filters to, then the checkout in front", () => {
-    expect(quickAddChoice(rest, all, "local", place({ projectId: "filter", panel: { kind: "task", root: "pane" } }), "task", "front")).toMatchObject({ index: 1, reason: "task" });
+  it("takes the project of the task whose record the Overview shows, then the one it filters to, then the checkout in front", () => {
+    expect(quickAddChoice(rest, all, "local", place({ projectId: "filter", panel: { kind: "record", session: { device_id: "local", agent: "claude", session_id: "s" } } }), "task", "front")).toMatchObject({ index: 1, reason: "task" });
     expect(quickAddChoice(rest, all, "local", place({ projectId: "filter", panel: { kind: "item", workspaceId: "task", taskKey: "local:/task#1" } }), null, "front")).toMatchObject({ index: 1, reason: "task" });
     expect(quickAddChoice(rest, all, "local", place({ projectId: "filter" }), null, "front")).toMatchObject({ index: 2, reason: "filter" });
     expect(quickAddChoice(rest, all, "local", null, null, "front")).toMatchObject({ index: 3, reason: "front" });

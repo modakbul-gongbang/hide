@@ -81,18 +81,15 @@ test("roots stay in one sidebar, open their children in place, and the header's 
     await expect(treeButton).toBeFocused();
     await treeButton.click();
     await screenshot(page, "sessions-pane-child-popover");
-    // B59: the Overview opens on the parent's task card, its record beside it, opening the resting fold the read parent's card stands in; Escape closes the panel, then the Overview.
+    // The tree's task button reveals the parent's row in the sidebar's 태스크 list in one event, its record in the lane's 보기 slot when it has a session, and no Overview opens (PRD sidebar-task-lens B40).
+    const reveals = sent.get("task_reveal") ?? 0;
     await tree.locator("[data-agent-tree-task]").click();
-    const overview = page.getByRole("dialog", { name: "Overview", exact: true });
-    await expect(overview).toBeVisible();
-    await expect(overview.locator(`[data-task-card-open="${parent}"]`)).toHaveAttribute("aria-pressed", "true");
-    await expect(overview.locator("[data-overview-panel=task]")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(overview.locator("[data-overview-panel]")).toHaveCount(0);
-    await page.keyboard.press("Escape");
-    await expect(overview).toHaveCount(0);
+    await expect.poll(() => sent.get("task_reveal") ?? 0).toBe(reveals + 1);
+    expect(last.get("task_reveal")).toMatchObject({ pane_id: parent });
+    await expect(page.getByRole("dialog", { name: "Overview", exact: true })).toHaveCount(0);
 
-    // B16: when the child goes, the tree and its button go with it.
+    // B16: when the child goes, the tree and its button go with it. The reveal left the sidebar on 태스크; the row is in 프로젝트.
+    await page.locator('[data-sidebar-lens-option="projects"]').click();
     await page.locator(`nav[data-sidebar] [data-pane="${parent}"] [data-agent-open="${parent}"]`).first().click();
     await treeButton.click();
     herdr.run(["pane", "close", child]);

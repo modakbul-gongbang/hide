@@ -1,13 +1,18 @@
-//! The Overview's Tasks (PRD overview-device-tasks D-04, D-05, D-18): one
-//! task is a lineage root and every descendant it has on any device, with
-//! their checkouts and pull requests. It is derived, never stored, and is
+//! The sidebar's 태스크 list (PRD sidebar-task-lens D-40, after
+//! overview-device-tasks D-04, D-05, D-18): one task is a lineage root and
+//! every descendant it has on any device, with their checkouts and pull
+//! requests. It is published per project and for each device's every
+//! project, the one model that decides the rows, their groups and their
+//! order; the shell only draws them. It is derived, never stored, and is
 //! rebuilt only with the scope cache's compared input. The shell draws the
 //! rows, titles and PR marks from the agent rows it already holds.
 use crate::model::{PrState, SidebarAgentSnapshot, WorkspaceSnapshot};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-/// Where a task stands, in the order its project's section draws it (B7).
+/// Where a task stands, in the order the 태스크 list draws it (B4, B9):
+/// Needs You, 막힘, 일하는 중 (working, then waiting), 끝남, then the folded
+/// 쉬는 중 and 정리할 것.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskState {
@@ -16,7 +21,8 @@ pub enum TaskState {
     Working,
     Waiting,
     Done,
-    /// Nothing to do and nothing to clean: folded under `쉬는 일감 N`.
+    /// Nothing to do and nothing to clean, a resolved task included:
+    /// folded under `쉬는 중 N`.
     Resting,
     /// Resting, every pull request merged and a worktree still on disk:
     /// folded under `정리할 것 N`.
@@ -79,7 +85,8 @@ pub struct Tasks {
     pub cards: Vec<Card>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub incoming: Vec<Incoming>,
-    /// Cards whose root asks for the operator, blocked ones included.
+    /// Cards whose root asks for the operator, blocked ones included and
+    /// resolved ones not.
     pub needs_you: usize,
     /// The latest activity of the project's tasks, empty with none.
     pub recency: String,
@@ -107,6 +114,14 @@ pub(super) struct Forest<'a> {
     places: HashMap<&'a str, Place<'a>>,
     order: Vec<&'a str>,
     children: HashMap<&'a str, Vec<&'a str>>,
+}
+
+/// The tasks of every project, keyed by `(device, project)`, and of every
+/// device's projects together, keyed by device (B4, B6).
+#[derive(Default)]
+pub(super) struct Published {
+    pub projects: HashMap<(String, String), Tasks>,
+    pub devices: HashMap<String, Tasks>,
 }
 
 impl<'a> Forest<'a> {
@@ -160,14 +175,15 @@ impl<'a> Forest<'a> {
         result
     }
 
-    /// Every project's tasks, keyed by `(device, project)`.
-    pub(super) fn project(&self) -> HashMap<(String, String), Tasks> {
-        let mut result: HashMap<(String, String), Tasks> = HashMap::new();
+    /// Every project's tasks and every device's. A root a Factory card
+    /// holds as its worker is the Factory's, not a task (B7).
+    pub(super) fn publish(&self, workers: &HashSet<String>) -> Published {
+        let mut result = Published::default();
         for root in self
             .order
             .iter()
             .copied()
-            .filter(|id| self.parent(id).is_none())
+            .filter(|id| self.parent(id).is_none() && !workers.contains(*id))
         {
             let place = &self.places[root];
             if place.project.is_home {
@@ -178,39 +194,58 @@ impl<'a> Forest<'a> {
             let key = (place.device_id.to_owned(), place.project.id.clone());
             for incoming in self.incoming(place, &members) {
                 result
+                    .projects
                     .entry(incoming.0)
                     .or_default()
                     .incoming
                     .push(incoming.1);
             }
-            result.entry(key).or_default().cards.push(card);
+            result
+                .devices
+                .entry(place.device_id.to_owned())
+                .or_default()
+                .cards
+                .push(card.clone());
+            result.projects.entry(key).or_default().cards.push(card);
         }
-        for tasks in result.values_mut() {
-            tasks.cards.sort_by(|a, b| {
-                a.state.cmp(&b.state).then_with(|| match a.state {
-                    // Waited longest first, as Sessions' Needs You.
-                    TaskState::NeedsYou => self.places[a.root.as_str()]
-                        .agent
-                        .state
-                        .request_since
-                        .cmp(&self.places[b.root.as_str()].agent.state.request_since),
-                    _ => b.recency.cmp(&a.recency),
-                })
-            });
-            tasks.needs_you = tasks
-                .cards
-                .iter()
-                .filter(|c| self.places[c.root.as_str()].agent.group == "needs_you")
-                .count();
-            tasks.recency = tasks
-                .cards
-                .iter()
-                .map(|c| c.recency.as_str())
-                .max()
-                .unwrap_or_default()
-                .to_owned();
+        for tasks in result
+            .projects
+            .values_mut()
+            .chain(result.devices.values_mut())
+        {
+            self.settle(tasks);
         }
         result
+    }
+
+    /// The order inside each group (B9): Needs You longest waiting first,
+    /// every other group most recent first; and the totals.
+    fn settle(&self, tasks: &mut Tasks) {
+        tasks.cards.sort_by(|a, b| {
+            a.state.cmp(&b.state).then_with(|| match a.state {
+                TaskState::NeedsYou => self.places[a.root.as_str()]
+                    .agent
+                    .state
+                    .request_since
+                    .cmp(&self.places[b.root.as_str()].agent.state.request_since),
+                _ => b.recency.cmp(&a.recency),
+            })
+        });
+        tasks.needs_you = tasks
+            .cards
+            .iter()
+            .filter(|c| {
+                let agent = self.places[c.root.as_str()].agent;
+                agent.group == "needs_you" && agent.resolved.is_none()
+            })
+            .count();
+        tasks.recency = tasks
+            .cards
+            .iter()
+            .map(|c| c.recency.as_str())
+            .max()
+            .unwrap_or_default()
+            .to_owned();
     }
 
     fn card(&self, root: &Place<'a>, members: &[&'a str]) -> Card {

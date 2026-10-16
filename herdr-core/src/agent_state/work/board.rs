@@ -1,4 +1,4 @@
-//! The Work tab's PRs list (PRD work-tab-pr-lens): which pull requests the
+//! The PRs tool's list (PRD work-tab-pr-lens): which pull requests the
 //! operator sees, the one group each stands in, and the one reason its second
 //! line starts with.
 //!
@@ -36,8 +36,8 @@ const LINE_LIMIT: usize = 160;
 pub struct Board {
     pub rows: Vec<Row>,
     pub groups: Vec<Group>,
-    /// Needs You rows that are not folded: the PRs side of the Work tab's
-    /// number (D-17, D-26).
+    /// Needs You rows that are not folded: the PRs tool's rail number
+    /// (D-17, D-26; sidebar-task-lens B29).
     pub needs_you: usize,
 }
 

@@ -184,7 +184,7 @@ describe("the Memory tab", () => {
     await act(async () => useShellStore.setState({ rest: { ...rest, navigator: { ...rest.navigator, workspaces: [{ ...rest.navigator!.workspaces![0], pull_requests: [{ number: 72, url: "https://github.com/acme/one/pull/72", state: "merged" }] }] } } as unknown as SnapshotRest }));
     expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).toContain("Merged");
     await click("[data-memory-open-pr='72']");
-    expect(sent("pr_open")).toEqual([{ workspace_id: "p", pr_number: 72 }]);
+    expect(sent("pr_open")).toEqual([{ workspace_id: "p", pr_number: 72, open_workspace: true }]);
     await render(memory({ rows: [row(7, { promotion: { state: "pr_open", agent: null, pr_number: 72, target_path: null, github_failure: null } })] }));
     expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).toContain("Couldn't check for a PR");
     expect(container.querySelector<HTMLButtonElement>("[data-memory-open-pr='72']")?.disabled).toBe(true);

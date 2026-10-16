@@ -48,7 +48,8 @@ export function generate(root, ownedSheets = []) {
   let document = {version: existing?.version ?? '2.18', themes: THEMES, imports: {[ALIAS]: LIBRARY_PATH}, variables, children};
   if (ownedSheets.length) {
     if (!existing) throw new Error('Scoped regeneration needs an existing screen document');
-    document = transplant(document, {...existing, variables}, ownedSheets).document;
+    // A scoped run keeps every other sheet as it is, except one the product retired.
+    document = transplant(document, {...existing, variables, children: existing.children.filter(node => !RETIRED_SHEETS.includes(node.name))}, ownedSheets).document;
   }
   const before = existing ? serialize(existing) : null;
   const after = serialize(document);

@@ -3,8 +3,7 @@ import { expect, type ElectronApplication } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { herdrHasFocus, startHerdr } from "../../web/e2e/herdr-fixture";
-import { enterWorkspace } from "../../web/e2e/wire";
-import { openOverview, openTaskFolds } from "../../web/e2e/overview-entry";
+import { enterWorkspace, openTaskFolds, showTasks } from "../../web/e2e/wire";
 import { HIDE_CLI, isolate, launchShell, screenshot, test } from "./fixture";
 import { captureNativeWindow } from "./native-window";
 import { installSpawnProvider, nativeSpawnCommand, waitForSpawnShell, type SpawnedAgent } from "./agent-spawn-fixture";
@@ -76,11 +75,12 @@ test("handoff roots have provenance without delegation or a focus change in eith
     const facts = { parent, roots, state: run.env.HIDE_STATE_DIR, home: run.env.HOME, socket: herdr.socket, head: execFileSync("git", ["rev-parse", "HEAD"], { cwd: path.resolve(__dirname, "../.."), encoding: "utf8" }).trim(), provider: "synthetic native CLI" };
     await screenshot(page, "agent-handoff-roots");
     await captureNativeWindow(app, "agent-handoff-roots-native", facts).catch((error) => failures.push(error));
-    // Each handed-off root is its own task on the Overview's Tasks, not a member of the spawner's (PRD overview-device-tasks B8).
-    await openOverview(page, "tasks");
+    // Each handed-off root is its own task in the sidebar's 태스크 list, not a child of the spawner's (PRD sidebar-task-lens B4, B7).
+    const tasks = await showTasks(page);
     await openTaskFolds(page);
-    for (const pane of [parent, ...roots.map((root) => root.pane)]) await expect(page.locator(`[data-task-card="${pane}"]`)).toHaveCount(1);
-    await expect(page.locator(`[data-task-card="${parent}"] [data-task-children]`)).toHaveCount(0);
+    for (const pane of [parent, ...roots.map((root) => root.pane)]) await expect(tasks.locator(`[data-task-row="${pane}"]`)).toHaveCount(1);
+    await expect(tasks.locator(`[data-task-row="${parent}"] [data-task-children]`)).toHaveCount(0);
+    await expect(tasks.locator("[data-task-child]")).toHaveCount(0);
     await screenshot(page, "agent-handoff-tasks");
     await captureNativeWindow(app, "agent-handoff-tasks-native", facts).catch((error) => failures.push(error));
   } catch (error) {

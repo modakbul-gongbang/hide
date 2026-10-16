@@ -4,10 +4,10 @@
 // lifetime, focus and terminal preservation belong to overview-modal.spec.
 import { expect, type Page } from "@playwright/test";
 
-export type OverviewTab = "tasks" | "backlog" | "projects";
+export type OverviewTab = "backlog" | "projects";
 
 /** The Overview on one of its tabs, opened from the sidebar's Overview row when it is not on screen yet. */
-export async function openOverview(page: Page, tab: OverviewTab = "tasks") {
+export async function openOverview(page: Page, tab: OverviewTab = "backlog") {
   const overview = page.locator("[data-overview-page]");
   if ((await overview.count()) === 0) await page.locator("[data-sidebar-overview]").click();
   await expect(overview).toBeVisible();
@@ -25,10 +25,4 @@ export async function projectRow(page: Page, label: string) {
   if (!(await row.isVisible())) await quiet.click();
   await expect(row).toBeVisible({ timeout: 20_000 });
   return row;
-}
-
-/** Opens every folded group of the Tasks tab (`Resting N`, `To clean up N`), so every card is drawn (B7). */
-export async function openTaskFolds(page: Page) {
-  const folded = page.locator('[data-task-fold][aria-expanded="false"]');
-  while ((await folded.count()) > 0) await folded.first().click();
 }

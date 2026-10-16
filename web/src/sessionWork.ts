@@ -27,13 +27,12 @@ export function orderedOutputs(outputs: readonly WorkOutput[]): WorkOutput[] {
   return [...outputs].sort((a, b) => (OUTPUT_ORDER[a.state] ?? 5) - (OUTPUT_ORDER[b.state] ?? 5) || b.created_at_unix_ms - a.created_at_unix_ms);
 }
 /**
- * Every open missed item in the scope the Sessions panel shows, of a live
- * session as much as of an ended one: a session that works again keeps what it
- * missed in the group, and the newest comes first.
+ * Every open missed item of the sessions given, of a live session as much as
+ * of an ended one: a session that works again keeps what it missed in the
+ * Overview backlog's group, and the newest comes first.
  */
-export function openMissedWork(work: readonly SessionWorkSummary[], checkout: string | null): { owner: SessionWorkSummary; item: MissedWork }[] {
+export function openMissedWork(work: readonly SessionWorkSummary[]): { owner: SessionWorkSummary; item: MissedWork }[] {
   return work
-    .filter((row) => !checkout || row.cwd === checkout || row.cwd?.startsWith(`${checkout}/`))
     .flatMap((owner) => owner.missed.filter((item) => item.status === "open").map((item) => ({ owner, item })))
     .sort((a, b) => b.item.at_unix_ms - a.item.at_unix_ms);
 }

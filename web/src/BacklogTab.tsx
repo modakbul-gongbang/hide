@@ -10,12 +10,15 @@ import { Hint } from "./components/ui/tooltip";
 import { readsHere } from "./devices";
 import { useInterfaceTranslation } from "./i18n/client";
 import { requireInterfaceLanguage } from "./i18n/locale";
+import { summariesEnabled } from "./hideAi";
 import { cn } from "./lib/utils";
 import { ageWords } from "./overviewLens";
 import { originOf, useBacklogOrigin } from "./backlogOrigin";
 import { backlogLabels, backlogOf, BACKLOG_SHOWN, backlogTitle, destinationOf, filterRows, pendingItems, startedKeys, titleLeft, undoRetryable, type BacklogRow } from "./overviewBacklog";
-import { isMemoKey, itemToken, taskSections } from "./overviewTasks";
+import { isMemoKey, itemToken, projectOrder } from "./overviewTasks";
 import { issueDate, type BoardProject } from "./projectBoard";
+import { MissedRow } from "./SessionRecord";
+import { openMissedWork, workKey } from "./sessionWork";
 import { issueSourceChoices } from "./settings";
 import { projectIssueSource, settingsTarget } from "./projectSettings";
 import type { BacklogItem, Workspace } from "./snapshot";
@@ -24,24 +27,49 @@ import { IssueLabelDot, IssueLabelView } from "./issueMarks";
 import { toggledFold, useUiStore, type OverviewPanel } from "./ui";
 
 // The 백로그 tab (PRD overview-device-tasks D-09, D-10, D-21..D-23, B25-B36):
-// one section per project in Tasks' order, each with its source chip, an
+// one section per project, the ones waiting on the operator first, each with its source chip, an
 // input that makes an item at once, the items the core is making or failed
 // to make, and the unstarted items newest first. A device the core dials
 // keeps no backlog, so each of its sections says so in one line (B36).
 
 const LINK = "inline-flex items-center gap-xxs rounded-xs px-xxs text-caption outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring";
 
-export function OverviewBacklog({ projects, rows, actions }: { projects: readonly BoardProject[]; rows: ReadonlyMap<string, import("./snapshot").AgentRow>; deviceId: string; actions: Actions }) {
+export function OverviewBacklog({ projects, actions }: { projects: readonly BoardProject[]; deviceId: string; actions: Actions }) {
   const only = useUiStore((s) => s.overview.projectId);
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
-  // The sections stand in Tasks' order (B25).
-  const order = useMemo(() => taskSections(projects, rows, "all", "", only).map((section) => section.project), [projects, rows, only]);
+  // A project with a task waiting on the operator first, then the most recently active (B25).
+  const order = useMemo(() => projectOrder(projects, only), [projects, only]);
   return (
     // One grid for every project: each input row takes the shared hint
     // column, so the inputs end at the same x whatever their hint says.
     <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-sm gap-y-lg px-lg py-md" data-overview-backlog="true">
+      <MissedGroup projects={projects} actions={actions} />
       {order.map((project) => (readsHere(project, devices) ? <BacklogSection key={project.id} project={project} actions={actions} /> : <DialedSection key={project.id} project={project} />))}
     </div>
+  );
+}
+
+/**
+ * The device's open missed work above the projects (PRD sidebar-task-lens
+ * D-52, B52): folded to `놓친 일 N ›`, newest first when opened, each row with
+ * its `백로그로` and `무시`; no line while none is open or Hide AI is off.
+ */
+function MissedGroup({ projects, actions }: { projects: readonly BoardProject[]; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const [open, setOpen] = useState(false);
+  const enabled = useShellStore((s) => summariesEnabled(s.rest?.status?.background_ai));
+  const links = useShellStore((s) => s.linkSummaries);
+  const missed = useMemo(() => (enabled ? openMissedWork(projects.flatMap((project) => links?.projects[project.workspace.id]?.work ?? [])) : []), [enabled, projects, links]);
+  if (!missed.length) return null;
+  return (
+    <section className="col-span-full" aria-label={t("sessionWork.count", { count: missed.length })} data-open-missed="true">
+      <button type="button" className="flex items-center gap-xs rounded-xs px-xs py-xs text-caption text-warning outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring" aria-expanded={open} onClick={() => setOpen(!open)} data-open-missed-toggle="true">
+        <FlagIcon aria-hidden="true" className="size-(--size-icon-sm)" />
+        {t("sessionWork.count", { count: missed.length })}
+        {open ? <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />}
+      </button>
+      {open ? <ul className="px-xs">{missed.map(({ owner, item }) => <MissedRow key={`${workKey(owner.session)}:${item.id}`} missed={item} record={owner} actions={actions} />)}</ul> : null}
+    </section>
   );
 }
 
@@ -100,6 +128,8 @@ function BacklogSection({ project, actions }: { project: Workspace; actions: Act
         <span className="min-w-0 truncate text-subhead font-semibold text-foreground">{project.label}</span>
         <SourceChip project={project} actions={actions} />
         <span className="text-caption text-muted-foreground" data-backlog-open={backlog.rows.length}>{t("backlog.openCount", { count: backlog.rows.length })}</span>
+        {/* The started items' number alone: their tasks are the sidebar's 태스크 list (PRD sidebar-task-lens B41). */}
+        {backlog.started > 0 ? <span className="text-caption text-muted-foreground" data-backlog-started={backlog.started}>· {t("backlog.started", { count: backlog.started })}</span> : null}
         {source?.failure ? (
           <Hint label={source.failure}>
             <span className="inline-flex items-center gap-xxs text-caption text-warning" data-backlog-read-failed="true">
@@ -108,12 +138,6 @@ function BacklogSection({ project, actions }: { project: Workspace; actions: Act
               <button type="button" className={cn(LINK, "text-warning underline")} onClick={() => actions.openSettings("github")}>{t("backlog.readFix")}</button>
             </span>
           </Hint>
-        ) : null}
-        <span className="flex-1" />
-        {backlog.started > 0 ? (
-          <button type="button" className={cn(LINK, "text-subtle-foreground")} data-backlog-started={backlog.started} onClick={() => { useUiStore.getState().setMainView("tasks"); useUiStore.getState().setOverview({ projectId: project.id, panel: null }); }}>
-            {t("backlog.started", { count: backlog.started })}
-          </button>
         ) : null}
       </h2>
       <BacklogInput project={project} actions={actions} />

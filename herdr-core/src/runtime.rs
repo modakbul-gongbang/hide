@@ -15,6 +15,7 @@ mod clone;
 mod control_lane;
 pub(crate) mod core_move;
 pub(crate) mod delivery;
+mod detail;
 mod device_catalog;
 mod devices;
 mod disk_sweep;
@@ -1473,7 +1474,7 @@ pub struct Runtime {
     /// What the link worker was last handed, and its panel reads.
     links_work: links::LinksWork,
     backlog_work: backlog::BacklogWork,
-    /// The minute the Work tab's PRs list was last judged against the clock
+    /// The minute the PRs tool's list was last judged against the clock
     /// (`runtime/request_view.rs`, `tick_work_clock`).
     work_clock_minute: u64,
     /// Project Memory's background pass, receipts and analysis state
@@ -1932,6 +1933,14 @@ impl Runtime {
                     persistence::UnrecognizedField::AgentLogoMode => (
                         "ui_state.agent_logo_mode_unknown",
                         "The stored agent logo mode was not recognized; hidden was used",
+                    ),
+                    persistence::UnrecognizedField::SidebarLens => (
+                        "ui_state.sidebar_lens_unknown",
+                        "The stored sidebar lens or task view was not recognized; the projects, by state, were used",
+                    ),
+                    persistence::UnrecognizedField::Detail => (
+                        "ui_state.detail_unknown",
+                        "The stored 보기 slot was not recognized; it loaded empty",
                     ),
                 })
                 .collect(),

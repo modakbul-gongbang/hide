@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { LaneSessionRecord } from "./SessionRecord";
+import { SlotSessionRecord } from "./SessionRecord";
 import type { MissedWork, SessionRecord as RecordValue, SnapshotRest, WorkOutput, WorkRequest, WorkSession, WorkTask } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -37,21 +37,33 @@ const BASE: RecordValue = {
   children: [child],
 };
 
-async function mount(record: RecordValue, options: { summaries?: boolean; words?: boolean } = {}) {
+async function mount(record: RecordValue | null, options: { summaries?: boolean; words?: boolean } = {}) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   initializeInterfaceI18n("en");
-  const rest = { status: { background_ai: { provider: "claude", providers: [], unavailable_reason: null, enabled: options.summaries !== false, chosen: true, agent_summary: options.summaries !== false } } } as unknown as SnapshotRest;
-  useShellStore.setState({ rest, sessionRecord: { session: SESSION, loading: false, failure: null, record } });
+  const rest = { navigator: { devices: [{ id: "local", kind: "local" }] }, status: { background_ai: { provider: "claude", providers: [], unavailable_reason: null, enabled: options.summaries !== false, chosen: true, agent_summary: options.summaries !== false } } } as unknown as SnapshotRest;
+  useShellStore.setState({ rest, sessionRecord: record ? { session: SESSION, loading: false, failure: null, record } : null });
   useUiStore.setState({ sessionRecordWords: options.words ?? false });
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
-  await act(async () => root.render(<TooltipProvider><LaneSessionRecord actions={createActions(() => true)} target={SESSION} /></TooltipProvider>));
-  return { container, unmount: async () => { await act(async () => root.unmount()); } };
+  const sent: { kind: string; payload: unknown }[] = [];
+  const actions = createActions((event) => { sent.push(event as { kind: string; payload: unknown }); return true; });
+  await act(async () => root.render(<TooltipProvider><SlotSessionRecord actions={actions} target={SESSION} /></TooltipProvider>));
+  return { container, sent, unmount: async () => { await act(async () => root.unmount()); } };
 }
 
 const text = (element: Element | null | undefined) => element?.textContent ?? "";
+
+it("asks for the record once when the slot draws one nothing has read, as after a relaunch, and not when it is read", async () => {
+  const restored = await mount(null);
+  try {
+    expect(restored.sent).toEqual([{ schema_version: 2, kind: "detail_open", payload: { item: { kind: "record", session: SESSION } } }]);
+    expect(restored.container.querySelector("[data-record-loading]")).not.toBeNull();
+  } finally { await restored.unmount(); }
+  const read = await mount(BASE);
+  try { expect(read.sent).toEqual([]); } finally { await read.unmount(); }
+});
 
 it("draws the PRs first, then the checklist with its count, a task's PR on its line and no status words", async () => {
   const { container, unmount } = await mount(BASE);
@@ -147,17 +159,15 @@ it("draws a descendant's missed item once, named, at the end of the top record, 
   } finally { await unmount(); }
 });
 
-it("opens a child's record in place under `← <parent>`, and goes back one level per press (PRD overview-device-tasks B20)", async () => {
-  const { container, unmount } = await mount({ ...BASE, children: [child] });
+it("opens a child's record as the 보기 slot's next item, so the slot's ← comes back to the parent (PRD sidebar-task-lens B16)", async () => {
+  const { container, sent, unmount } = await mount({ ...BASE, children: [child] });
   try {
+    sent.length = 0;
     await act(async () => container.querySelector<HTMLElement>('[data-record-child="child"]')!.click());
-    expect(text(container.querySelector("h2"))).toContain("Child work");
-    const up = container.querySelector<HTMLElement>("[data-record-up]")!;
-    expect(text(up)).toContain(BASE.title);
-    await act(async () => up.click());
-    expect(container.querySelector("[data-record-up]")).toBeNull();
-    expect(container.querySelector("[data-record-back]")).not.toBeNull();
-    expect(text(container.querySelector("h2"))).toContain(BASE.title);
+    expect(sent.map((event) => event.kind)).toEqual(["detail_open"]);
+    expect(sent[0]!.payload).toEqual({ item: { kind: "record", session: CHILD } });
+    // The slot draws its own head: the record carries no back button of its own.
+    expect(container.querySelector("[data-record-up], [data-record-back]")).toBeNull();
   } finally { await unmount(); }
 });
 

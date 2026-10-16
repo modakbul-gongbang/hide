@@ -246,8 +246,8 @@ it("opens the card of the displayed repository even when another project has the
       {id: "other", device_id: "local", pull_requests: [{number: 7, url}], checkouts: []},
     ] as unknown as Workspace[]}} as SnapshotRest}));
     await act(async () => actions.openSessionPullRequest({workspace_id: "here", number: 7, url}));
-    // One event opens the card; the core chooses the Workspace (PRD work-tab-pr-lens D-28).
-    expect(events.filter((event) => event.kind === "pr_open")).toEqual([{schema_version: 2, kind: "pr_open", payload: {workspace_id: "other", pr_number: 7}}]);
+    // One event opens the card; the fixture has no Workspace in front, so the core opens the PR's (PRD sidebar-task-lens B17).
+    expect(events.filter((event) => event.kind === "pr_open")).toEqual([{schema_version: 2, kind: "pr_open", payload: {workspace_id: "other", pr_number: 7, open_workspace: true}}]);
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     actions.openSessionPullRequest({workspace_id: "here", number: 7, url: "https://github.com/acme/absent/pull/7"});
     expect(open).toHaveBeenCalledWith("https://github.com/acme/absent/pull/7", "_blank", "noopener,noreferrer");
