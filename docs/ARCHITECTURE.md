@@ -2353,7 +2353,7 @@ In web mode the per-checkout preview slot of `place_editor_tab` gives way to one
 A browser display binds to nothing (issue 155, [BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md)): it is `open` from the moment it exists, the reconcile never removes it for want of a document tab, and a restore reads nothing for it.
 `browser_open` from the Explorer or a page's new tab places a display in the named Workspace or the front one, a page's new tab beside the page it names (`beside_display`): in the area next to the page's, else in a new area to its right; pane CLI requests use the separate scoped Workspace action.
 `browser_state` records the address, title, and native load state a page reports, while `view_layout` `navigate` loads the operator's own address.
-UI `browser_open` receipts remain in `status.browser_opens`; pane CLI requests receive their own scoped action result.
+UI `browser_open` receipts remain in `status.browser_opens`, where the shell reads the one an operator's open named to hand that page the keyboard (BROWSER_DISPLAYS.md); pane CLI requests receive their own scoped action result.
 A load stamp (`load`, never saved) is how the core asks the desktop app to load a display's address again, and the address, capped at 8 KiB, holds only `http`, `https`, `file` or `about:blank`; loading repairs a stored display that breaks this to `about:blank`.
 A browser display with no `url` is the shell’s new-tab page, creates no native page, and is never deduplicated with another empty display.
 A file open captures the active empty display with its placement before reading; it replaces that exact display on success only while it is still empty, and a diff selection uses the same placement rule.

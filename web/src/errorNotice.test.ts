@@ -52,9 +52,9 @@ describe("the notice a failed Reopen leaves", () => {
     expect(useUiStore.getState().notice).not.toBeNull();
   });
 
-  it("drops the keyboard's wait for an open that was refused or could not read its file, and keeps it otherwise", () => {
+  it("drops the keyboard's wait for an open that was refused, a file that could not be read or a page refused, and keeps it otherwise", () => {
     const opened = { workspace: "local\u0000/repo", opened: { path: "/repo/a.md", kind: "file" as const, committed: null } };
-    const cases = [["file.save_failed", true], ["file.open_failed", false], ["view_layout.display_limit", false]] as const;
+    const cases = [["file.save_failed", true], ["file.open_failed", false], ["browser.open_refused", false], ["view_layout.display_limit", false]] as const;
     for (const [index, [kind, kept]] of cases.entries()) {
       useUiStore.getState().setViewFocusRequest(opened);
       publish(rest(error(kind, index + 1)));

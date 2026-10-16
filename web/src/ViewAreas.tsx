@@ -77,10 +77,11 @@ function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnaps
   // moved it by then. One watch per tree, ended when the read settles, by
   // the next arrival, or with the tree.
   const request = useUiStore((s) => s.viewFocusRequest);
+  const opens = useShellStore((s) => s.rest?.status?.browser_opens);
   const contentWatch = useRef<MutationObserver | null>(null);
   useEffect(() => () => contentWatch.current?.disconnect(), []);
   useEffect(() => {
-    if (!request || !body || !focusRequestArrived(request, key, layout)) return;
+    if (!request || !body || !focusRequestArrived(request, key, layout, opens)) return;
     useUiStore.getState().setViewFocusRequest(null);
     const areaId = layout.active_area;
     const before = document.activeElement;
@@ -111,7 +112,7 @@ function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnaps
       watch.observe(area, { childList: true, subtree: true });
       contentWatch.current = watch;
     });
-  }, [request, key, layout, body]);
+  }, [request, key, layout, body, opens]);
 
   // One keeper per document on screen, however many displays show it.
   const documents = useMemo(

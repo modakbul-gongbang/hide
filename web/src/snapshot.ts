@@ -1977,6 +1977,8 @@ export type SnapshotRest = {
     async_operations?: AsyncOperation[];
     tab_rename?: { request_id: string; tab_id: string; label: string; phase: "pending" | "succeeded" | "failed" } | null;
     pane_focus_request?: PaneFocusRequest | null;
+    /** The answers to the latest `browser_open` events that named themselves, oldest first and bounded. */
+    browser_opens?: import("./viewLayout").BrowserOpenReceipt[];
     /** The core's most recent failure; the shell logs its detail (B5). */
     last_error?: { kind: string; message: string; retryable: boolean; occurred_at: number; request_id?: string | null } | null;
   };

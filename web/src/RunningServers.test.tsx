@@ -135,7 +135,7 @@ describe("Workspace server action", () => {
 
     expect(events.filter((event) => event.kind === "browser_open")).toEqual([{
       schema_version: 2, kind: "browser_open",
-      payload: { url: "http://[::1]:3000", workspace: { device_id: "local", path: view.path } },
+      payload: { url: "http://[::1]:3000", workspace: { device_id: "local", path: view.path }, request_id: expect.stringMatching(/^follow:/) },
     }]);
     expect(document.querySelector('[aria-label="Running servers"]')).toBeNull();
   });
@@ -158,7 +158,7 @@ describe("Workspace server action", () => {
     }
     expect(events.filter((event) => event.kind === "browser_open")).toEqual([{
       schema_version: 2, kind: "browser_open",
-      payload: { url: "http://127.0.0.1:4000", workspace: { device_id: "mini", path: view.path } },
+      payload: { url: "http://127.0.0.1:4000", workspace: { device_id: "mini", path: view.path }, request_id: expect.stringMatching(/^follow:/) },
     }]);
   });
 });
