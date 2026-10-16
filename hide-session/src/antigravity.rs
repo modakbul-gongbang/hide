@@ -213,6 +213,60 @@ fn newest_root(home: &Path, cwd: &Path) -> Result<Option<Row>> {
     }))
 }
 
+/// The conversation agy's `/fork` made from `source` in `cwd` (canonical):
+/// `/fork` writes a new root row in the same checkout holding the source's
+/// steps, and no transcript until its next prompt. `None` while no such row
+/// has been written since `since_unix_s`; more than one is refused, since
+/// Hide could not tell which one is its fork.
+pub fn forked(home: &Path, source: &str, cwd: &Path, since_unix_s: u64) -> Result<Option<String>> {
+    let found = with_index(home, |db| -> rusqlite::Result<_> {
+        let steps: Option<i64> = db
+            .query_row(
+                &format!(
+                    "SELECT step_count FROM conversation_summaries \
+                     WHERE conversation_id = ?1 AND app_data_dir = '{APP}'"
+                ),
+                [source],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(steps) = steps else {
+            return Ok(None);
+        };
+        let mut statement = db.prepare(&format!(
+            "SELECT {COLUMNS} FROM conversation_summaries \
+             WHERE app_data_dir = '{APP}' AND coalesce(parent_conversation_id, '') = '' \
+             AND conversation_id != ?3 AND step_count = ?4 \
+             AND CAST(strftime('%s', last_modified_time) AS INTEGER) >= ?5 \
+             ORDER BY last_modified_time DESC LIMIT ?1"
+        ))?;
+        let rows = statement
+            .query_map(
+                rusqlite::params![
+                    SEARCH_ROWS,
+                    COLUMN_LIMIT_BYTES,
+                    source,
+                    steps,
+                    i64::try_from(since_unix_s).unwrap_or(i64::MAX)
+                ],
+                read_row,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(Some(rows))
+    })?
+    .map_err(|_| anyhow!("antigravity_db_unreadable"))?
+    .ok_or_else(|| anyhow!("session_route_missing"))?;
+    let mut forks = found.into_iter().filter_map(to_row).filter(|row| {
+        valid_id(&row.id)
+            && hide_platform::fs::identity::canonical(&row.cwd).is_ok_and(|native| native == cwd)
+    });
+    let fork = forks.next();
+    if forks.next().is_some() {
+        return Err(anyhow!("antigravity_fork_ambiguous"));
+    }
+    Ok(fork.map(|row| row.id))
+}
+
 /// The id and checkout of the conversation whose transcript is `path`,
 /// refused for a subagent's conversation: it is never an operator's session.
 pub(crate) fn header(path: &Path) -> Result<Header> {

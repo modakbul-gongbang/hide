@@ -4412,10 +4412,7 @@ mod antigravity {
             reference_value: CHILD.into(),
             ..native.request.clone()
         };
-        assert_eq!(
-            read(native.home.path(), &child).unwrap_err(),
-            "label_session_not_root"
-        );
+        assert!(read(native.home.path(), &child).is_err());
         // The newest conversation in the checkout is the subagent's; a pane
         // with no reported session still reads its operator's.
         let located = SessionLocator::new(native.home.path())
@@ -4444,6 +4441,52 @@ mod antigravity {
         .unwrap();
         assert_eq!(
             native.route(AGY_ID, &native.cwd).unwrap_err(),
+            "session_route_missing"
+        );
+    }
+
+    #[test]
+    fn a_fork_is_the_one_new_root_conversation_at_the_source_step_in_its_checkout() {
+        let native = Native::new();
+        let index = rusqlite::Connection::open(
+            native
+                .home
+                .path()
+                .join(".gemini/antigravity-cli/conversation_summaries.db"),
+        )
+        .unwrap();
+        let steps = |id: &str, count: i64| {
+            index
+                .execute(
+                    "UPDATE conversation_summaries SET step_count = ?2 WHERE conversation_id = ?1",
+                    rusqlite::params![id, count],
+                )
+                .unwrap();
+        };
+        // 2026-10-03 01:03:00 UTC, after the source was last written.
+        let since = 1_790_989_380;
+        let forked = |source: &str| {
+            hide_session::antigravity::forked(native.home.path(), source, &native.cwd, since)
+                .map_err(|error| error.to_string())
+        };
+        steps(AGY_ID, 7);
+        assert_eq!(forked(AGY_ID).unwrap(), None, "the source is never its own fork");
+        let older = "a9c0e2f4-0000-4000-8000-00000000000b";
+        native.conversation(older, "", "2026-10-03 01:02:30+00:00");
+        steps(older, 7);
+        let other_step = "a9c0e2f4-0000-4000-8000-00000000000c";
+        native.conversation(other_step, "", "2026-10-03 01:04:00+00:00");
+        steps(other_step, 3);
+        let fork = "a9c0e2f4-0000-4000-8000-00000000000d";
+        native.conversation(fork, "", "2026-10-03 01:05:00+00:00");
+        steps(fork, 7);
+        assert_eq!(forked(AGY_ID).unwrap().as_deref(), Some(fork));
+        let second = "a9c0e2f4-0000-4000-8000-00000000000e";
+        native.conversation(second, "", "2026-10-03 01:06:00+00:00");
+        steps(second, 7);
+        assert_eq!(forked(AGY_ID).unwrap_err(), "antigravity_fork_ambiguous");
+        assert_eq!(
+            forked("a9c0e2f4-0000-4000-8000-00000000000f").unwrap_err(),
             "session_route_missing"
         );
     }

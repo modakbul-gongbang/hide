@@ -283,7 +283,18 @@
     "session": {
       "sample": "hide-session/tests/fixtures/adapters/antigravity-1.3.6/transcript_full.jsonl"
     },
-    "features": [],
+    "features": [
+      "skill",
+      "guidance",
+      "letters",
+      "memory",
+      "spawn_guard",
+      "herdr_integration",
+      "sleep",
+      "fork",
+      "start",
+      "titles"
+    ],
     "factory": {
       "direct_ask": "available",
       "user_turn": "available",

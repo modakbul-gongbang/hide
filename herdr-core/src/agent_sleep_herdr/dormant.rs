@@ -374,7 +374,7 @@ fn start_dormant(
         )
     };
     match started {
-        Ok(_) => match report_resumed_session(connector, work, pane) {
+        Ok(_) => match super::report_resumed_session(connector, pane, &work.record.kind, &work.record.native_session_id) {
             Ok(()) => DormantStartOutcome::Started,
             Err(error) => {
                 crate::diagnostic!(serde_json::json!({
@@ -395,45 +395,6 @@ fn start_dormant(
             DormantStartOutcome::Unknown
         }
     }
-}
-
-/// A resumed agent whose CLI runs no session hook on resume leaves Herdr with
-/// no session for the woken pane, so the wake could never be told from
-/// another conversation. The core chose the id the pane resumed, and says so
-/// the way the agent's own integration would have.
-fn report_resumed_session(
-    connector: &dyn ApiConnector,
-    work: &DormantWork,
-    pane: &str,
-) -> Result<(), ApiError> {
-    let reports = hide_agent_adapter::adapter(&work.record.kind)
-        .and_then(|adapter| adapter.resume)
-        .is_none_or(hide_agent_adapter::LaunchDialect::resume_reports_session);
-    if reports {
-        return Ok(());
-    }
-    let seq = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
-        });
-    let params = wire::report_agent_session_params(
-        pane,
-        &work.record.kind,
-        &work.record.native_session_id,
-        seq,
-    )
-    .map_err(|message| ApiError::Remote {
-        code: "session_report_unavailable".into(),
-        message,
-    })?;
-    request_with_connector(
-        connector,
-        "pane.report_agent_session",
-        params,
-        REQUEST_TIMEOUT,
-    )
-    .map(|_| ())
 }
 
 #[cfg(test)]
@@ -556,7 +517,7 @@ mod tests {
             id: SleepId::new().unwrap(),
             record,
         };
-        let result = report_resumed_session(&herdr.connector(), &work, "w1:p9");
+        let result = super::super::report_resumed_session(&herdr.connector(), "w1:p9", &work.record.kind, &work.record.native_session_id);
         let reports = reports.lock().unwrap().clone();
         (result, reports)
     }

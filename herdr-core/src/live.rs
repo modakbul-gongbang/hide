@@ -3360,6 +3360,12 @@ fn run_agent_fork_with_registration(
         &check,
     )
     .map_err(start_error_message);
+    let started = started.and_then(|pane_id| {
+        if request.agent == crate::fork::ForkableAgent::Antigravity {
+            fork_antigravity(mutation_connector, node, request, &pane_id)?;
+        }
+        Ok(pane_id)
+    });
     match started {
         Ok(pane_id) => {
             if let Err(message) = register(&request.parent_pane_id, &pane_id) {
@@ -3389,6 +3395,81 @@ fn run_agent_fork_with_registration(
             })
         }
     }
+}
+
+/// How long agy gets to come up in the fork's pane, and then to write the
+/// conversation its `/fork` made.
+const ANTIGRAVITY_FORK_WAIT: Duration = Duration::from_secs(30);
+const ANTIGRAVITY_FORK_POLL: Duration = Duration::from_millis(250);
+
+/// agy forks only through its `/fork` command (agy 1.4.0, PRD
+/// antigravity-first-class D-07). The fork's pane resumed the source
+/// conversation; this types `/fork` once Herdr reads agy as idle there, finds
+/// the conversation `/fork` made in agy's index on the pane's node, and
+/// reports it to Herdr, which would keep the source's id until the next
+/// prompt. Everything the fork assumes of agy's screen is in this function;
+/// a failure leaves the source conversation as it was and the caller closes
+/// the pane.
+fn fork_antigravity(
+    connector: &dyn ApiConnector,
+    node: &dyn crate::node_access::NodeLink,
+    request: &ForkRequest,
+    pane_id: &str,
+) -> Result<(), String> {
+    let cwd = request
+        .cwd
+        .as_deref()
+        .ok_or("Session fork has no confirmed checkout")?;
+    let deadline = Instant::now() + ANTIGRAVITY_FORK_WAIT;
+    while control_request(connector, "pane.get", wire::pane_target_params(pane_id)?)
+        .and_then(wire::pane_agent_status)?
+        != "idle"
+    {
+        if Instant::now() >= deadline {
+            return Err("agy did not open the conversation to fork in time".into());
+        }
+        thread::sleep(ANTIGRAVITY_FORK_POLL);
+    }
+    // agy's index keeps whole seconds; a second back covers the one /fork
+    // lands in.
+    let since_unix_s = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |now| now.as_secs())
+        .saturating_sub(1);
+    control_request(
+        connector,
+        "pane.send_input",
+        wire::delivery_input_params(pane_id, "/fork")?,
+    )?;
+    let deadline = Instant::now() + ANTIGRAVITY_FORK_WAIT;
+    let forked = loop {
+        let found: Option<String> = crate::node_access::call_as(
+            node,
+            hide_node_link::protocol::Call::AntigravityFork {
+                source: request.session_id.clone(),
+                cwd: cwd.to_owned(),
+                since_unix_s,
+            },
+            Duration::from_secs(5),
+        )
+        .map_err(|error| format!("agy's fork could not be confirmed: {error}"))?;
+        if let Some(id) = found {
+            break id;
+        }
+        if Instant::now() >= deadline {
+            return Err("agy's /fork made no new conversation".into());
+        }
+        thread::sleep(ANTIGRAVITY_FORK_POLL);
+    };
+    let seq = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX));
+    control_request(
+        connector,
+        "pane.report_agent_session",
+        wire::report_agent_session_params(pane_id, request.agent.kind(), &forked, seq)?,
+    )
+    .map(drop)
 }
 
 pub fn spawn_remote_control(
@@ -4495,6 +4576,91 @@ mod tests {
                 ],
                 "summary-changed-before" => &[],
                 _ => &["session.snapshot", "layout.apply", "pane.close"],
+            };
+            assert_eq!(herdr.methods(), expected, "{case}");
+        }
+    }
+
+    #[test]
+    fn an_agy_fork_types_fork_once_and_reports_the_one_conversation_it_made() {
+        let source = "a9c0e2f4-0000-4000-8000-000000000001";
+        let fork = "a9c0e2f4-0000-4000-8000-000000000002";
+        for case in ["success", "ambiguous"] {
+            let home = tempfile::tempdir().unwrap();
+            let cwd = hide_platform::fs::identity::canonical(home.path()).unwrap();
+            crate::fixture::antigravity_conversation(
+                home.path(),
+                &cwd,
+                source,
+                4,
+                Some("2026-10-03 01:00:00+00:00"),
+            );
+            let node = hide_node::Local::new(Some(home.path().to_path_buf()));
+            let index_home = home.path().to_path_buf();
+            let index_cwd = cwd.clone();
+            let statuses = Arc::new(Mutex::new(vec!["working", "idle"]));
+            let herdr = FakeHerdr::start("agy-fork", move |method, params| match method {
+                "pane.get" => {
+                    let mut statuses = statuses.lock().unwrap();
+                    let status = if statuses.len() > 1 {
+                        statuses.remove(0)
+                    } else {
+                        statuses[0]
+                    };
+                    json!({"type":"pane_info","pane":{
+                        "pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w1",
+                        "tab_id":"w1:t2","focused":false,"agent_status":status,"revision":1}})
+                }
+                "pane.send_input" => {
+                    assert_eq!(params["text"], "/fork");
+                    assert_eq!(params["keys"], json!(["enter"]));
+                    // agy writes the fork's row at the source's step count.
+                    crate::fixture::antigravity_conversation(&index_home, &index_cwd, fork, 4, None);
+                    if case == "ambiguous" {
+                        crate::fixture::antigravity_conversation(
+                            &index_home,
+                            &index_cwd,
+                            "a9c0e2f4-0000-4000-8000-000000000003",
+                            4,
+                            None,
+                        );
+                    }
+                    json!({"type":"ok"})
+                }
+                "pane.report_agent_session" => {
+                    assert_eq!(params["agent_session_id"], fork);
+                    assert_eq!(params["agent"], "agy");
+                    assert_eq!(params["source"], "herdr:antigravity_cli");
+                    json!({"type":"ok"})
+                }
+                other => panic!("unexpected {other}"),
+            });
+            let request = ForkRequest {
+                source_reference: None,
+                parent_state_change_seq: None,
+                connection_generation: 0,
+                codex_daemon: Default::default(),
+                parent_pane_id: "parent-pane".into(),
+                agent: crate::fork::ForkableAgent::Antigravity,
+                session_id: source.into(),
+                cwd: Some(cwd.display().to_string()),
+                name: "fork-agy-1".into(),
+                tab_label: Some("Tab 2".into()),
+                placement: ForkPlacement::Tab,
+            };
+            let result = fork_antigravity(&herdr.connector(), &node, &request, "child-pane");
+            let expected: &[&str] = match case {
+                "success" => {
+                    assert_eq!(result, Ok(()));
+                    &["pane.get", "pane.get", "pane.send_input", "pane.report_agent_session"]
+                }
+                _ => {
+                    assert!(
+                        result.as_ref().unwrap_err().contains("antigravity_fork_ambiguous"),
+                        "{result:?}"
+                    );
+                    &["pane.get", "pane.get", "pane.send_input"]
+                }
             };
             assert_eq!(herdr.methods(), expected, "{case}");
         }

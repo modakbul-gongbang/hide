@@ -4620,6 +4620,11 @@ impl Runtime {
             .as_ref()
             .filter(|launch| launch.task == id);
         Some(live::PendingAgentStart {
+            // Only these tasks make the worktree their agent starts in.
+            made_worktree: matches!(operation.kind.as_str(), "worktree_create" | "branch_migrate")
+                .then(|| operation.path.clone())
+                .flatten()
+                .filter(|path| operation.repository_root.as_deref() != Some(path.as_str())),
             resume_reference: launch.and_then(|launch| launch.resume_reference.clone()),
             resume_scope: launch
                 .filter(|launch| {

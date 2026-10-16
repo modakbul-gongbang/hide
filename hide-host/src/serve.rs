@@ -1098,6 +1098,31 @@ pub fn handle_with_progress(
         Call::AgentInstalled { name } => {
             to_value(hide_ai::resolve_binary(Path::new(&name)).is_some())
         }
+        Call::AntigravityFork {
+            source,
+            cwd,
+            since_unix_s,
+        } => {
+            let home = env.home("antigravity_fork_home_unavailable")?;
+            let cwd = hide_platform::fs::identity::canonical(Path::new(&cwd))
+                .map_err(|_| HostError::new(ErrorCode::InvalidPath, "session_route_cwd_unconfirmed"))?;
+            to_value(
+                hide_session::antigravity::forked(Path::new(&home), &source, &cwd, since_unix_s)
+                    .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
+            )
+        }
+        Call::AntigravityTrust { path, trusted } => {
+            let home = env.home("antigravity_trust_home_unavailable")?;
+            let home = Path::new(&home);
+            let folder = Path::new(&path);
+            if trusted {
+                hide_agent_hooks::antigravity_trust::trust(home, folder)
+            } else {
+                hide_agent_hooks::antigravity_trust::forget(home, folder).map(drop)
+            }
+            .map_err(|failure| HostError::new(ErrorCode::Io, failure.message()))?;
+            to_value(())
+        }
         Call::ShellIntegration => {
             let home =
                 env.home("HOME is not set, so the shell integration has no place to live")?;

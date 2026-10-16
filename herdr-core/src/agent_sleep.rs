@@ -152,7 +152,9 @@ pub enum WakeMode {
 pub struct SleepRecord {
     pub phase: SleepPhase,
     pub kind: String,
-    pub session_id: String,
+    /// The conversation a wake resumes; none for an agent that slept before
+    /// it reported one (`sleeps_without_session`), which wakes as a new one.
+    pub session_id: Option<String>,
     /// The agent's Herdr name, when it had one: orchestrators address agents
     /// by name, so a wake restarts it under the same one.
     #[serde(default)]
@@ -207,8 +209,13 @@ impl SleepRecord {
         cwd: Option<String>,
         since_unix_ms: u64,
     ) -> Option<Self> {
-        let session_id = agent.session_id.clone()?;
-        let label_owner = hide_session::label_reference_token(&agent.agent_kind, "id", &session_id);
+        if agent.session_id.is_none() && !sleeps_without_session(&agent.agent_kind) {
+            return None;
+        }
+        let session_id = agent.session_id.clone();
+        let label_owner = session_id.as_deref().and_then(|session_id| {
+            hide_session::label_reference_token(&agent.agent_kind, "id", session_id)
+        });
         Some(Self {
             phase: SleepPhase::Ending,
             kind: agent.agent_kind.clone(),
@@ -288,9 +295,9 @@ impl SleepRecord {
             cwd: self.cwd.clone(),
             agent: Some(self.kind.clone()),
             agent_status: Some(if self.completed { "done" } else { "idle" }.to_owned()),
-            agent_session: Some(SessionAgentSessionPayload {
+            agent_session: self.session_id.clone().map(|value| SessionAgentSessionPayload {
                 kind: "id".to_owned(),
-                value: self.session_id.clone(),
+                value,
             }),
             spawned_from_pane_id: self
                 .parent_pane_id
@@ -298,7 +305,10 @@ impl SleepRecord {
                 .map(|parent| scope.session_id(parent).to_owned()),
             spawned_from_machine_id: None,
             declared_parent_session: self.parent_session.clone(),
-            lineage_session: crate::wire::session_digest(&self.session_id),
+            lineage_session: self
+                .session_id
+                .as_deref()
+                .and_then(crate::wire::session_digest),
             completion_seq: None,
             state_change_seq: self.state_change_seq,
             tokens: self
@@ -307,7 +317,10 @@ impl SleepRecord {
                 .map(|(source, source_session)| {
                     crate::wire::fork_tokens(
                         scope.session_id(source),
-                        crate::wire::session_digest(&self.session_id).as_deref(),
+                        self.session_id
+                            .as_deref()
+                            .and_then(crate::wire::session_digest)
+                            .as_deref(),
                         source_session.as_deref(),
                     )
                 })
@@ -576,6 +589,13 @@ pub(crate) fn sleeps_kind(kind: &str) -> bool {
     hide_agent_adapter::adapter(kind).is_some_and(|row| row.sleep.is_some())
 }
 
+/// Whether this kind can sleep before it has reported a conversation.
+pub(crate) fn sleeps_without_session(kind: &str) -> bool {
+    hide_agent_adapter::adapter(kind)
+        .and_then(|adapter| adapter.sleep)
+        .is_some_and(hide_agent_adapter::LaunchDialect::sleeps_without_session)
+}
+
 /// Whether this kind sleeps by closing its pane (Pi's dormant sleep).
 pub(crate) fn closes_pane_when_sleeping(kind: &str) -> bool {
     hide_agent_adapter::adapter(kind)
@@ -604,7 +624,7 @@ pub fn sleep_refusal(agent: &SidebarAgentSnapshot, machine: SleepMachine) -> Opt
     if let Some(reason) = crate::agent_state::rest_refusal(agent) {
         return Some(reason);
     }
-    if agent.session_id.is_none() {
+    if agent.session_id.is_none() && !sleeps_without_session(&agent.agent_kind) {
         return Some("Herdr has not reported this agent's conversation");
     }
     None
@@ -1073,5 +1093,21 @@ mod tests {
                 reason: Some("This agent sleeps only on the machine Hide's core runs on".into()),
             })
         );
+    }
+
+    #[test]
+    fn agy_sleeps_before_its_first_prompt_and_wakes_as_a_new_conversation() {
+        let mut fresh = agent("w1:p1");
+        fresh.session_id = None;
+        assert_eq!(
+            sleep_refusal(&fresh, SleepMachine::Core),
+            Some("Herdr has not reported this agent's conversation")
+        );
+        assert_eq!(SleepRecord::ending(&fresh, None, 1), None);
+        fresh.agent_kind = "antigravity".into();
+        assert_eq!(sleep_refusal(&fresh, SleepMachine::Core), None);
+        let record = SleepRecord::ending(&fresh, None, 1).unwrap();
+        assert_eq!(record.session_id, None);
+        assert_eq!(record.label_owner, None);
     }
 }

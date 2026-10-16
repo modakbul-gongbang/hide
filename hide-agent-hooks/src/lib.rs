@@ -19,6 +19,7 @@
 //! or polls.
 
 pub mod antigravity;
+pub mod antigravity_trust;
 pub mod basic;
 pub mod codex_daemon;
 pub mod codex_trust;

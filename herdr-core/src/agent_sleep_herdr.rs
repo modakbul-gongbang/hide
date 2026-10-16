@@ -155,6 +155,38 @@ fn process_group(
     .and_then(wire::pane_process_group)
 }
 
+/// A resumed agent whose CLI runs no session hook on resume leaves Herdr with
+/// no session for the woken pane, so the wake could never be told from
+/// another conversation. The core chose the id the pane resumed, and says so
+/// the way the agent's own integration would have. Nothing is sent for an
+/// agent that reports it itself.
+pub(crate) fn report_resumed_session(
+    connector: &dyn ApiConnector,
+    pane: &str,
+    kind: &str,
+    session_id: &str,
+) -> Result<(), ApiError> {
+    let reports = hide_agent_adapter::adapter(kind)
+        .and_then(|adapter| adapter.resume)
+        .is_none_or(hide_agent_adapter::LaunchDialect::resume_reports_session);
+    if reports {
+        return Ok(());
+    }
+    let seq = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
+        });
+    let params = wire::report_agent_session_params(pane, kind, session_id, seq).map_err(
+        |message| ApiError::Remote {
+            code: "session_report_unavailable".into(),
+            message,
+        },
+    )?;
+    request_with_connector(connector, "pane.report_agent_session", params, REQUEST_TIMEOUT)
+        .map(|_| ())
+}
+
 /// What a wake needs, gathered under the lock before the worker starts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct WakeRequest {
@@ -164,6 +196,9 @@ pub(crate) struct WakeRequest {
     pub(crate) mode: WakeMode,
     pub(crate) args: Vec<String>,
     pub(crate) cwd: Option<String>,
+    /// The conversation a resume opens, which the core reports to Herdr for
+    /// an agent that does not report it itself on resume.
+    pub(crate) session_id: Option<String>,
     pub(crate) codex_daemon: crate::codex_launch::CodexDaemon,
 }
 
@@ -217,7 +252,24 @@ pub(crate) fn start_agent(
         &|| Ok(()),
     ) {
         Ok(value) => match wire::started_agent(value) {
-            Ok(_) => WakeOutcome::Started,
+            Ok(_) => {
+                if request.mode == WakeMode::Resume
+                    && let Some(session) = request.session_id.as_deref()
+                    && let Err(error) =
+                        report_resumed_session(connector, &request.pane_id, &request.kind, session)
+                {
+                    // The agent runs its conversation; Herdr learns it at the
+                    // next prompt instead, as it would have without Hide.
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "agent_sleep",
+                        "kind": "agent_sleep.session_report_failed",
+                        "pane_id": request.pane_id,
+                        "provider": request.kind,
+                        "message": error.to_string(),
+                    }));
+                }
+                WakeOutcome::Started
+            }
             Err(detail) => WakeOutcome::Failed {
                 reason: "The agent did not become ready in time.".to_owned(),
                 detail,
@@ -376,6 +428,7 @@ mod tests {
                         mode: WakeMode::Resume,
                         args: args.into_iter().map(str::to_owned).collect(),
                         cwd: None,
+                        session_id: None,
                         codex_daemon: crate::codex_launch::CodexDaemon::Unsupported,
                     }
                 ),
@@ -533,6 +586,7 @@ mod tests {
                 mode: WakeMode::Resume,
                 args: vec!["resume".into(), "abc".into()],
                 cwd: None,
+                session_id: None,
             },
         );
         let WakeOutcome::Failed { reason, .. } = outcome else {
@@ -568,6 +622,7 @@ mod tests {
                 mode: WakeMode::Resume,
                 args: vec!["--resume".into(), "abc".into()],
                 cwd: None,
+                session_id: None,
             },
         );
         assert_eq!(
@@ -593,6 +648,7 @@ mod tests {
                 mode: WakeMode::Resume,
                 args: Vec::new(),
                 cwd: Some("/nonexistent/agent-sleep-test".into()),
+                session_id: None,
             },
         );
         assert!(matches!(

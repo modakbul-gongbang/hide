@@ -897,6 +897,10 @@ fn spawn(
                 }));
             }
             close_unstarted_attempts(connector.as_ref(), &*state(client)?, &reserved, &observed);
+            // A spawn's worktree is Hide's unless it is the repository itself.
+            if let Some(checkout) = reserved.path.as_deref().filter(|checkout| *checkout != repo) {
+                crate::agent_start::trust_worktree(node.as_deref(), kind, checkout)?;
+            }
             crate::live::start_agent(
                 connector.as_ref(),
                 node.as_deref(),

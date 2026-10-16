@@ -290,7 +290,23 @@ impl LaunchDialect {
     }
 
     pub const fn closes_pane_when_sleeping(self) -> bool {
-        !matches!(self, Self::Claude | Self::Codex)
+        !matches!(self, Self::Claude | Self::Codex | Self::Antigravity)
+    }
+
+    /// Whether the agent asks before it works in a folder it has not been
+    /// told to trust, so Hide records that trust for a worktree it made
+    /// before it starts the agent there: agy's trust question would otherwise
+    /// hold a started prompt (PRD antigravity-first-class D-08).
+    pub const fn trusts_worktrees(self) -> bool {
+        matches!(self, Self::Antigravity)
+    }
+
+    /// Whether an agent that has reported no conversation yet can still
+    /// sleep, waking as a new one in the same pane: agy reports its
+    /// conversation only once its first prompt is sent (PRD
+    /// antigravity-first-class D-10).
+    pub const fn sleeps_without_session(self) -> bool {
+        matches!(self, Self::Antigravity)
     }
 
     /// Whether the agent, resumed with its `resume_flag`, tells Herdr which

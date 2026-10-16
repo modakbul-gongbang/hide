@@ -1042,6 +1042,12 @@ pub fn remove(agent: GuidanceAgent, home: &Path) -> Result<RemoveOutcome, Instal
         total.removed_entries += outcome.removed_entries;
         total.preserved_entries += outcome.preserved_entries;
     }
+    // Switching agy off also takes out the folder trust Hide added (D-08).
+    if agent == GuidanceAgent::Antigravity {
+        let forgotten = crate::antigravity_trust::forget_all(home)?;
+        total.changed |= forgotten > 0;
+        total.removed_entries += forgotten;
+    }
     Ok(total)
 }
 
