@@ -353,6 +353,35 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   expect(hostLog(run.env).filter((line) => line.event.startsWith("probe_paths.refused"))).toEqual([]);
 });
 
+// Its own spec because the links journey is at its size ceiling: the keyboard
+// goes with the file a link opens, so ⌘W closes that file and never the pane
+// that printed the link.
+test("a file a terminal link opens takes the keyboard, so Command W closes the file and the pane stays", async () => {
+  const checkout = path.join(fs.realpathSync(herdr.root), "fixture");
+  fs.mkdirSync(path.join(checkout, "src"), { recursive: true });
+  fs.writeFileSync(path.join(checkout, "src", "focus.ts"), "// the keyboard follows the open");
+  ({ app } = await launch(run.env));
+  await fitWindow(app, { width: 1024, height: 681 });
+  const page = await shellPage(app);
+  await withProbe(page);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.4));
+  await enterWorkspace(page, "fixture");
+  const paneId = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneId()!);
+  await dockFiles(page, paneId);
+  await print(page, paneId, ["file src/focus.ts", "FOCUS-END"], "FOCUS-END");
+
+  const point = await pointOf(page, paneId, "src/focus.ts", { offset: 2 });
+  await hoverLink(page, paneId, point);
+  await page.mouse.click(point.x, point.y);
+  const editor = page.locator("[data-editor-body] .cm-content");
+  await expect(editor).toContainText("the keyboard follows the open", { timeout: 20_000 });
+  await expect(editor).toBeFocused();
+
+  await page.keyboard.press("Meta+KeyW");
+  await expect(viewTab(page, "focus.ts")).toHaveCount(0);
+  await expect(page.locator(`[data-pane-view="${paneId}"]`)).toBeVisible();
+});
+
 // Its own spec because the links journey is at its size ceiling: a file of
 // another checkout is one contract, the routing that keeps the screen where it is.
 test("an image of another checkout opens in the Workspace in front and its checkout stays where it is", async () => {
