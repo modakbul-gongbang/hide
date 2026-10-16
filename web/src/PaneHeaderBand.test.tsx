@@ -393,6 +393,20 @@ it("names the pane's title and agent product on its record button", async () => 
   } finally { await act(async () => root.unmount()); }
 });
 
+it("says a waiting pane's mark words on its record button, the words its tab and row say", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  initializeInterfaceI18n("en");
+  const agent = legacyAgentRow({ id: "a", pane_id: "pane-1", identity_label: "PR 올리고 CI 확인", agent_kind: "claude", session_id: "s-1", device_id: "local", mark: "waiting", wait: "checks" });
+  useShellStore.setState({ agents: [agent], rest: { status: { pane_focus_request: null } } as SnapshotRest });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  await act(async () => root.render(<TooltipProvider><PaneRecordButton paneId="pane-1" title="PR 올리고 CI 확인" product="Claude Code" actions={createActions(() => true)} plain={<span />}>PR 올리고 CI 확인</PaneRecordButton></TooltipProvider>));
+  try {
+    expect(container.querySelector("[data-pane-record]")?.getAttribute("aria-label")).toBe("PR 올리고 CI 확인, Claude Code, In progress · Waiting, View session record");
+  } finally { await act(async () => root.unmount()); }
+});
+
 // docs/UI_BEHAVIOR.md: a pull request band names only what its verb does not,
 // and nothing Hide could not read reaches it; an approval names no command.
 it("words a pull request band by what its verb leaves out and nothing Hide could not read", async () => {
