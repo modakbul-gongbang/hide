@@ -1107,8 +1107,8 @@ A copy repeats on every paste.
 A folder is copied with everything under it, in one `path_copy` the checkout's host makes: it builds the copy in a hidden working folder inside the destination and renames it into place, so the copy appears whole or not at all, and a failed copy leaves nothing behind.
 A link, a socket or any other file that is not a plain file or folder refuses the whole copy with the name of what it met.
 One copy holds at most 5,000 items and 256 MiB; the host measures before it writes, and a copy past either is refused with nothing copied.
-A paste works inside one checkout of one device: pasting an item that came from another checkout, or another device, is refused with a line under the folder it was pasted into, and a folder cannot be pasted into itself or below itself.
-The failure line is the one a refused name uses; the core's reason is drawn under the folder the copy was pasted into.
+A paste works inside one checkout of one device: pasting an item that came from another checkout, or another device, is refused with that line, and a folder cannot be pasted into itself or below itself.
+A copy's failure, and a drop's, is a wrapping line under the root row, not under a row, because it concerns a whole folder whose open rows a line there would cover; it is red like a refused name's line and holds the page's own reason or the core's.
 Cut, Copy, Paste and Duplicate are not undone inside the app, as a rename and a move are not: a copy only adds an item, so its undo is Move to Trash on the new item, which is selected when the paste lands, and the Trash restores it; a cut item pasted is moved back the way a drag moves it back.
 
 Files and folders dragged in from the operator's file manager are copied into the checkout.
@@ -1116,7 +1116,7 @@ Dropping on a folder row puts them in that folder, on the root row or on the emp
 Folders come with everything under them, and a name already used in the destination becomes `name copy.ext`, never a replacement.
 The window reads the bytes with the browser's file API and hands them over the connection it already has; a path from outside every registered checkout never reaches the core, and the same route serves a checkout on another device, whose helper writes the files into its own checkout.
 Each file is uploaded to hided's staging, as a terminal attachment is, and one `path_import` event names the staged files; hided is the only maker of the core's `path_import`, and the core reads the staged files itself and has the checkout's host write the items under a hidden working folder, so a drop lands whole or not at all.
-A drop holds at most 500 items, 20 MiB a file and 40 MiB in all; the window checks the counts and the sizes before it reads a byte, and a drop past a cap adds nothing and says so in the failure line under the folder it was dropped on.
+A drop holds at most 500 items, 20 MiB a file and 40 MiB in all; the window checks the counts and the sizes before it reads a byte, and a drop past a cap adds nothing and says so in that failure line.
 An upload that hided refuses, a file that cannot be read and an entry that disappears mid-drop end the same way.
 A drop is undone like a copy: it adds items, the first is selected, and Move to Trash takes them away.
 

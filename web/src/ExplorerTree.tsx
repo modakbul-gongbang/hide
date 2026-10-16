@@ -524,16 +524,14 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
         : answer && rows.length === 0
           ? t("documents.noMatchingFiles")
           : null;
-  // The core's own failure, drawn under the row the change started from (a
-  // copy under the folder it was pasted into), or the line the page drew.
+  // A rename, a move or a creation fails under the row it started from. A
+  // copy or a drop fails for a whole folder, whose open rows the line would
+  // cover, so its line stands under the root row and names the folder.
   const operationFailure = operation?.phase === "failed" && operation.message ? operation : null;
-  const failure: { path: string; message: string } | null = notice
-    ? notice
+  const failure: { path: string; message: string; onRow: boolean } | null = notice
+    ? { ...notice, onRow: false }
     : operationFailure && operationFailure.message
-      ? {
-          path: operationFailure.kind === "path_copy" ? parentPath(operationFailure.destination) : operationFailure.path,
-          message: operationFailure.message,
-        }
+      ? { path: operationFailure.path, message: operationFailure.message, onRow: operationFailure.kind !== "path_copy" && operationFailure.kind !== "path_import" }
       : null;
 
   const anchorTop = (path: string): number | null => {
@@ -542,8 +540,7 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
     const item = virtualizer.getVirtualItems().find((virtual) => virtual.index === index);
     return item ? item.start : null;
   };
-  // A failure under the root, or under a row the list has not drawn, stands above the rows.
-  const failureTop = failure ? anchorTop(failure.path) ?? (failure.path === rootPath ? null : anchorTop(parentPath(failure.path))) : null;
+  const failureTop = failure?.onRow ? anchorTop(failure.path) ?? anchorTop(parentPath(failure.path)) ?? 0 : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-explorer={rootPath}>
@@ -635,9 +632,9 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
           </Button>
         </Hint>
       </div>
-      {failure && failureTop === null ? (
-        <div className="border-b border-border px-md py-xs text-caption text-destructive" data-explorer-failure={failure.path}>
-          <span className="block truncate">{failure.message}</span>
+      {failure && !failure.onRow ? (
+        <div className="break-words border-b border-border px-md py-xs text-caption text-destructive" data-explorer-failure={failure.path}>
+          {failure.message}
         </div>
       ) : null}
       {refused ? (
@@ -754,7 +751,7 @@ export function ExplorerTree({ actions, hint, footer }: { actions: Actions; hint
                 />
               );
             })}
-            {failure && failureTop !== null ? (
+            {failure?.onRow && failureTop !== null ? (
               <div
                 className="absolute inset-x-0 flex items-center gap-xs pr-md text-caption text-destructive"
                 data-explorer-failure={failure.path}
