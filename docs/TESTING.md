@@ -450,6 +450,15 @@ Refresh it when a shard's time drifts from the others in a run, when the plan wa
 3. Commit `web/e2e/shard-durations.json`.
 A table from a Windows or macOS runner's logs would need its own file and a lane that reads it; `durations` already reads their `ok` and `✓` marks.
 
+### A real agent on CI
+
+A lane that signs a real agent in, like the nightly `agy contract` lane, proves only what the agent does before and around its model's answer; keep its real turn to the minimum.
+
+- An API key alone may not sign the agent in: agy 1.4.0 asked for a browser sign-in until its settings also named `"modelProvider": "gemini"` (2026-10-16).
+- A free-tier quota is counted per model per day across the key's project: 20 requests on 2026-10-16, so hand runs of the lane spend the nightly's turns and the next one fails with `429`.
+- Assert what happens before the model answers (the hooks fired, the letter went in, a refused call carried Hide's reason) rather than what the model writes, and name the model in the workflow so a renamed one is one line to change.
+- Keep the turn's own bounds inside the test's hang guard (`.config/nextest.toml`), so a slow turn fails with the agent's report instead of being ended with nothing.
+
 ## Flaky tests
 
 A test is flaky when it both fails and passes on the same SHA.

@@ -462,6 +462,18 @@ It is then one shared declaration, its contract fixtures, the logo manifest, and
 
 ### Adding an agent
 
+Prove it on the real agent first, before any code, and pin what you measure with a test:
+
+- A vendor document is a lead, not a fact.
+  On 2026-10-16 agy 1.4.0 ignored `ANTIGRAVITY_CLI_CONFIG_DIR`, and its `/skills` listed a folder whose skills its model never received.
+  Prove a skill by asking the model for its own list of skills, not by reading the agent's listing.
+- Measure the hook failure matrix for the agent: a missing helper, a helper that is not executable, a crash, a non-zero exit, empty or malformed output, and a timeout.
+  agy refuses the tool call on every one of them (measured 2026-10-16), so each case has a test that the installed command still answers (`guidance::tests::agys_tool_command_answers_allow_when_the_helper_is_gone_cannot_run_or_fails`).
+- Measure how the pinned Herdr reads the agent's permission and folder-trust prompts before relying on Needs You or the bell.
+  Herdr 0.9.3 read agy's as `idle` (2026-10-16), which is why agy has no bell.
+- Record the agent version every fact was proven on.
+  agy moved from 1.3.6 to 1.4.0 on 2026-10-16, during the work, so every fact proven on 1.3.6 had to be proven again on 1.4.0.
+
 Add the declaration in `hide-agent-adapter/src/declarations.rs`, keeping its canonical id stable across records, hook commands and device reports.
 Aliases belong on that row: every caller uses the same borrowed, case-insensitive lookup, including surrounding-whitespace normalization.
 Select hook and installation dialects implemented by `hide-agent-hooks`, session formats implemented by `hide-session`, and launch, find and usage dialects in their existing owners; the leaf crate contains data and typed selectors only.
