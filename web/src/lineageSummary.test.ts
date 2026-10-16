@@ -11,7 +11,7 @@ function agent(pane: string, patch: Partial<AgentRow> = {}): AgentRow {
     pane_id: pane,
     identity_label: pane,
     agent_kind: "codex",
-    symbol: "●",
+    mark: "going",
     group: "working",
     status_code: "working",
     detail: null,
@@ -58,11 +58,11 @@ function workspace(device: string, rows: { id: string; branch: string; panes: st
 describe("folded checkout lineage", () => {
   it("keeps same-checkout descendants in the badge and summarizes other checkouts in priority order", () => {
     const parent = agent("parent", { checkout_label: "main", lineage_child_pane_ids: ["same", "review", "remote", "fourth", "fifth"] });
-    const same = agent("same", { checkout_label: "main", delegated: true, demand: "question", activity: "stopped", symbol: "?", group: "working" });
-    const review = agent("review", { checkout_label: "review-branch-with-a-very-long-name", delegated: true, group: "done", activity: "stopped", symbol: "✓" });
+    const same = agent("same", { checkout_label: "main", delegated: true, demand: "question", activity: "stopped", mark: "going", group: "working" });
+    const review = agent("review", { checkout_label: "review-branch-with-a-very-long-name", delegated: true, group: "done", activity: "stopped", mark: "quiet" });
     const remote = agent("remote", { checkout_label: "remote-work", delegated: true, device_id: "mini", device_label: "mini" });
-    const fourth = agent("fourth", { checkout_label: "zeta", delegated: true, group: "seen", activity: "stopped", symbol: "○" });
-    const fifth = agent("fifth", { checkout_label: "alpha", delegated: true, group: "needs_you", demand: "error", activity: "stopped", symbol: "▲" });
+    const fourth = agent("fourth", { checkout_label: "zeta", delegated: true, group: "seen", activity: "stopped", mark: "quiet" });
+    const fifth = agent("fifth", { checkout_label: "alpha", delegated: true, group: "needs_you", demand: "error", activity: "stopped", mark: "quiet" });
     const workspaces = [
       workspace("local", [
         { id: "main", branch: "main", panes: ["parent", "same"] },

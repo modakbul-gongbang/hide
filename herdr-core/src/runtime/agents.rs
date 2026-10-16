@@ -3114,6 +3114,7 @@ impl Runtime {
             .flat_map(|session| session.agents.iter().map(|agent| agent.pane_id.clone()))
             .collect::<HashSet<_>>();
         self.lay_awaited_replies(&mut agents, &unreachable);
+        self.lay_checks(&mut agents);
         self.lay_hide_ai(&mut agents);
         crate::agent_state::apply_lineage(
             &mut agents,

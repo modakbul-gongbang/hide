@@ -197,7 +197,7 @@ function TaskCardView({ card, project, rows, deviceId, actions }: { card: TaskCa
         data-task-card-open={card.root}
       />
       <span className="pointer-events-none flex min-w-0 items-center gap-xs">
-        {root ? <StatusMark symbol={root.symbol} className={markTone(root)} /> : null}
+        {root ? <StatusMark mark={root.mark} className={markTone(root)} /> : null}
         {root?.hide_ai ? <HideMark className="size-(--size-agent-badge-compact)" /> : null}
         <span className="min-w-0 flex-1 truncate font-medium text-foreground" title={title} data-task-title="true">{title}</span>
         {changed !== null ? <span className="shrink-0 font-mono text-micro text-muted-foreground">{ageWords(language, Date.now() - changed, t)}</span> : null}
@@ -207,7 +207,7 @@ function TaskCardView({ card, project, rows, deviceId, actions }: { card: TaskCa
         <span className="flex min-w-0 flex-wrap items-center gap-xs">
           {children.length > 0 ? (
             <span className="pointer-events-none inline-flex items-center gap-xxs text-muted-foreground" data-task-children={children.length}>
-              {children.slice(0, 8).map((child) => <StatusMark key={child.pane_id} symbol={child.symbol} className={cn(markTone(child), "size-(--size-icon-sm)")} />)}
+              {children.slice(0, 8).map((child) => <StatusMark key={child.pane_id} mark={child.mark} className={cn(markTone(child), "size-(--size-icon-sm)")} />)}
               {t("overviewTasks.children", { count: children.length })}
             </span>
           ) : null}
@@ -266,7 +266,7 @@ function IncomingCardView({ entry, rows }: { entry: IncomingTaskScope; rows: Rea
       <span className="pointer-events-none text-muted-foreground">← {from}</span>
       {children.map((child) => (
         <span key={child.pane_id} className="pointer-events-none flex min-w-0 items-center gap-xs">
-          <StatusMark symbol={child.symbol} className={markTone(child)} />
+          <StatusMark mark={child.mark} className={markTone(child)} />
           <span className="min-w-0 truncate text-foreground">{child.identity_label}</span>
         </span>
       ))}

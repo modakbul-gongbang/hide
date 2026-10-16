@@ -8,52 +8,101 @@ import { agentProductName } from "./agentAdapters";
 import { hideAiWords } from "./hideAiOrigin";
 import type { TFunction } from "i18next";
 import { statusText } from "./agentStatus";
-import { markToneClass, toneClass } from "./lineage";
-import type { AgentRow, MarkCounts, TabAgent } from "./snapshot";
+import { toneClass } from "./lineage";
+import type { AgentRow, AgentStatusCode, AgentWait, LineMode, MarkCounts, RowMark, TabAgent } from "./snapshot";
 
 /**
- * Why a row's second line is on screen at rest.
+ * Why a row's second line is on screen at rest (the core's `RowLine::mode`).
  *
  * - `request`: the agent is asking the operator (question, approval) or is blocked;
  *   the line stays until the request is resolved, reading it does not end it.
  * - `news`: the row changed since the operator last looked; it goes once read.
- * - `waiting`: what a waiting row waits for; it stays while the row waits.
+ * - `waiting`: an in-progress row's sentence, or with no text its proven cause.
+ * - `kept`: the work left or the unproven wait of a read stop, at rest and subdued.
  * - `quiet`: nothing to report; the line shows only on the selected or hovered
  *   row, where it is revealed in full.
- * - `vanished`: the work the agent was waiting for died with its process; the
- *   core sends no text and the sidebar says it in the operator's language.
+ * - `vanished`: the work the agent was waiting for died with its process.
+ * - `checks_passed`, `checks_failed`: the checks the row waited on ended.
+ * The modes with no text are worded here, in the operator's language.
  */
-export type LineMode = "request" | "news" | "waiting" | "quiet" | "vanished";
+export type { LineMode };
 
-export type RowLine = { text: string; mode: LineMode };
+export type RowLine = { text: string; mode: LineMode; pull_request?: number };
 
-/** The row's second line and why it shows, or null when the core gave it no sentence. */
+/** The row's second line and why it shows, or null when the core gave it none. */
 export function rowLine(agent: Pick<AgentRow, "state">): RowLine | null {
   const line = agent.state.line;
-  return line && line.mode !== "vanished" ? { text: line.text, mode: line.mode } : null;
+  return line ? { text: line.text, mode: line.mode, pull_request: line.pull_request } : null;
 }
 
 /**
- * The line a sidebar row draws (PRD sidebar-readability D-4, B4, B6): a
- * request or news only, on one line from the moment it exists, so a pointer,
+ * The line a sidebar row draws (PRD sidebar-readability D-4, B4, B6): anything
+ * but a quiet sentence, on one line from the moment it exists, so a pointer,
  * the keyboard or a selection never adds a line or grows the row. A quiet
- * sentence is read in the row's tooltip.
+ * sentence is read in the row's tooltip. A request with no sentence still
+ * draws its word (B5).
  */
-export function sidebarLine(agent: Pick<AgentRow, "state">): RowLine | null {
-  const line = agent.state.line;
-  return line && line.mode !== "quiet" ? { text: line.text, mode: line.mode } : null;
+export function sidebarLine(agent: Pick<AgentRow, "state" | "status_code">): RowLine | null {
+  const line = rowLine(agent);
+  if (line && line.mode !== "quiet") return line;
+  if (agent.state.asking) return { text: "", mode: "request" };
+  // A dimmed row with no mark says why on its line (B16).
+  return rowDimmed(agent) ? { text: "", mode: "kept" } : null;
+}
+
+/** Status codes that lead a line as its word: what was asked, how a turn ended (D-04). */
+const LEAD_WORDS = new Set<AgentStatusCode>(["error", "question", "approval", "done", "unfinished", "waiting"]);
+
+/** The word that leads a row's line, or null when its status code is not one. */
+export function leadWord(t: TFunction<"translation">, agent: Pick<AgentRow, "status_code">): string | null {
+  return LEAD_WORDS.has(agent.status_code) ? statusText(t, agent.status_code) : null;
 }
 
 /**
- * The sentence as the sidebar draws it. A stopped turn and a waiting row sit
- * where their mark alone does not say so (a half-disc among Done rows, a ring
- * among Working ones), so their word leads the sentence: `멈춤 · 테스트 3개
- * 남음`, `대기 · CI 끝나기를 기다림`.
+ * The sentence as a row draws it. A request, a read row's news and a kept line
+ * lead with their word (`질문 · …`, `일 남음 · …`, D-04); an in-progress row
+ * says its sentence alone or, with none, the cause Hide proved (B10); the end
+ * of the checks a row waited on names the pull request (B13).
  */
-export function lineText(t: TFunction<"translation">, agent: Pick<AgentRow, "state" | "wait" | "status_code">, line: RowLine): string {
-  if (line.mode === "vanished") return `${statusText(t, agent.status_code)} · ${t("agents.line.vanished")}`;
-  const worded = line.mode !== "request" && (agent.wait || agent.status_code === "stopped");
-  return worded ? `${statusText(t, agent.status_code)} · ${line.text}` : line.text;
+/** What `lineText` reads off a row: a desktop row, or the phone's. */
+export type LineAgent = { wait?: AgentWait | null; status_code: AgentStatusCode; descendant_counts?: { working: number } | null };
+
+export function lineText(t: TFunction<"translation">, agent: LineAgent, line: RowLine): string {
+  const word = leadWord(t, agent);
+  const lead = (text: string) => (word && text ? `${word} · ${text}` : word ?? text);
+  switch (line.mode) {
+    case "vanished":
+      return `${statusText(t, "stopped")} · ${t("agents.line.vanished")}`;
+    case "checks_passed":
+      return t("agents.line.checksPassed", { number: line.pull_request ?? 0 });
+    case "checks_failed":
+      return t("agents.line.checksFailed", { number: line.pull_request ?? 0 });
+    case "waiting":
+      return line.text || waitCause(t, agent, line);
+    case "kept":
+      return line.text ? lead(line.text) : (word ?? statusText(t, agent.status_code));
+    case "request":
+    case "news":
+      return lead(line.text);
+    case "quiet":
+      return line.text;
+  }
+}
+
+/** What an in-progress row with no sentence is proven to wait on (B10). */
+function waitCause(t: TFunction<"translation">, agent: LineAgent, line: RowLine): string {
+  switch (agent.wait) {
+    case "checks":
+      return line.pull_request ? t("agents.line.checksWait", { number: line.pull_request }) : statusText(t, agent.status_code);
+    case "children":
+      return t("agents.line.children", { count: agent.descendant_counts?.working ?? 0 });
+    case "background":
+      return t("agents.line.background");
+    case "reply":
+      return t("agents.line.reply");
+    default:
+      return statusText(t, agent.status_code);
+  }
 }
 
 /** Whether the line is drawn without a pointer or selection on the row. */
@@ -61,61 +110,64 @@ export function lineShownAtRest(line: RowLine, selected: boolean): boolean {
   return line.mode !== "quiet" || selected;
 }
 
-/** The colour of a line: a request in its demand's colour, dimmed like its mark once read, news bright, a revealed line subdued. */
+/** The colour of a line: a request in its demand's colour, dimmed like its mark once read, news bright, failed checks in warning, a revealed or kept line subdued. */
 export function lineTone(line: RowLine, agent: Pick<AgentRow, "state">): string {
   if (line.mode === "request") return toneClass(agent.state.chip_tone);
-  return line.mode === "news" ? "text-foreground" : "text-subtle-foreground";
+  if (line.mode === "checks_failed") return "text-warning";
+  return line.mode === "news" || line.mode === "checks_passed" ? "text-foreground" : "text-subtle-foreground";
+}
+
+/** The status mark's dimming: a read turn draws at the read-status opacity. */
+export function markTone(agent: Pick<TabAgent, "state">): string {
+  return agent.state.mark_tone.read ? "opacity-(--opacity-read-status)" : "";
+}
+
+/** The name of a mark, in the operator's language: 내 차례, 진행 중, 읽을 것, 조용함. */
+export function markName(t: TFunction<"translation">, mark: RowMark): string {
+  return t(`agents.mark.${mark}`);
 }
 
 /**
- * The status mark's colour. A waiting row draws its hollow ring in the
- * working colour (D-01); every other row reads its own axes the way the chips
- * do.
+ * What a mark says on hover and in a row's accessible name (B3): the state,
+ * then the word that leads its line, `내 차례 · 질문`, `읽을 것 · 일 남음`. A
+ * quiet row adds the word only when it says something (상태 모름, 재움); an in
+ * progress row names nothing more, its line says why.
  */
-export function markTone(agent: Pick<TabAgent, "state">): string {
-  return markToneClass(agent.state.mark_tone);
+export function markWords(t: TFunction<"translation">, agent: Pick<AgentRow, "mark" | "status_code">): string {
+  const name = markName(t, agent.mark);
+  const word = agent.mark === "going" ? null : agent.mark === "quiet" ? (QUIET_WORDS.has(agent.status_code) ? statusText(t, agent.status_code) : null) : agent.mark === "unread" && agent.status_code === "stopped" ? statusText(t, agent.status_code) : leadWord(t, agent);
+  return word ? `${name} · ${word}` : name;
 }
 
-/** A badge's counts: a folded parent's descendants (no `idle`), or a project's or checkout's agents. */
+const QUIET_WORDS = new Set<AgentStatusCode>(["unknown", "sleeping", "waking", "sleep_failed", "unfinished", "waiting", "error", "question", "approval"]);
+
+/** A row a surface draws dimmed with no mark: a sleeping, waking or unknown agent (B16). */
+export function rowDimmed(agent: Pick<AgentRow, "status_code">): boolean {
+  return agent.status_code === "unknown" || agent.status_code === "sleeping" || agent.status_code === "waking" || agent.status_code === "sleep_failed";
+}
+
+/** A badge's counts: a project's or checkout's agents, or a parent's children. */
 export type BadgeCounts = Partial<MarkCounts>;
 
 /** One mark and count on a badge. */
-export type BadgePart = { state: keyof MarkCounts; symbol: string; count: number; tone: string };
+export type BadgePart = { state: keyof MarkCounts; mark: RowMark; count: number };
 
-const BADGE_ORDER: { state: keyof MarkCounts; symbol: string; tone: string }[] = [
-  { state: "error", symbol: "▲", tone: "text-warning" },
-  { state: "approval", symbol: "!", tone: "text-warning" },
-  { state: "question", symbol: "?", tone: "text-warning" },
-  { state: "working", symbol: "●", tone: "text-agent-working" },
-  { state: "stopped", symbol: "◐", tone: "text-status-seen" },
-  { state: "done", symbol: "✓", tone: "text-success" },
-  { state: "idle", symbol: "○", tone: "text-status-seen" },
-];
+const BADGE_ORDER: (keyof MarkCounts)[] = ["turn", "going", "done", "unread"];
 
 /**
- * The badge's marks, worst first, with zero states left out (docs/status-model.md).
- * A ready descendant and one Herdr cannot classify are counted in none.
+ * The badge's marks in the order whose move is next (B19): `!` N, ring N,
+ * green dot N, plain dot N, zero states left out. A quiet agent draws no mark
+ * and is counted in none.
  */
 export function badgeParts(counts: BadgeCounts | undefined): BadgePart[] {
   if (!counts) return [];
-  return BADGE_ORDER.filter(({ state }) => (counts[state] ?? 0) > 0).map((part) => ({ ...part, count: counts[part.state] ?? 0 }));
+  return BADGE_ORDER.filter((state) => (counts[state] ?? 0) > 0).map((state) => ({ state, mark: state, count: counts[state] ?? 0 }));
 }
 
-/** The count of each marked state, in words. */
-const COUNT_WORDS: Record<keyof MarkCounts, (t: TFunction<"translation">, count: number) => string> = {
-  error: (t, count) => t("agents.count.error", { count }),
-  approval: (t, count) => t("agents.count.approval", { count }),
-  question: (t, count) => t("agents.count.question", { count }),
-  working: (t, count) => t("agents.count.working", { count }),
-  stopped: (t, count) => t("agents.count.stopped", { count }),
-  done: (t, count) => t("agents.count.done", { count }),
-  idle: (t, count) => t("agents.count.idle", { count }),
-};
-
-/** A status badge in words, for the accessible name of the row it sits on: `1 question, 2 idle`. */
+/** A status badge in words, for the accessible name of the row it sits on: `내 차례 1개, 읽을 것 2개`. */
 export function badgeWords(counts: BadgeCounts | undefined, t: TFunction<"translation">): string {
   return badgeParts(counts)
-    .map((part) => COUNT_WORDS[part.state](t, part.count))
+    .map((part) => t(`agents.count.${part.state}`, { count: part.count }))
     .join(", ");
 }
 
@@ -136,7 +188,7 @@ export function branchChip(agent: Pick<AgentRow, "state">): string | null {
  * shows has to be here.
  */
 export function rowAccessibleName(t: TFunction<"translation">, agent: AgentRow, device: string | null): string {
-  return [agent.identity_label, device, branchChip(agent), agentProductName(agent.agent_kind), statusText(t, agent.status_code), hideAiWords(t, agent.hide_ai), agent.letters_waiting ? t("agents.letterWaiting") : null, agent.detail].filter(Boolean).join(", ");
+  return [agent.identity_label, device, branchChip(agent), agentProductName(agent.agent_kind), markWords(t, agent), hideAiWords(t, agent.hide_ai), agent.letters_waiting ? t("agents.letterWaiting") : null, agent.detail].filter(Boolean).join(", ");
 }
 
 /**

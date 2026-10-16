@@ -23,7 +23,7 @@ afterAll(() => browserCanvas.restore());
 // of the agents (PRD hide-ai-origin-mark B4, B9).
 function row(id: string, over: Partial<AgentRow> = {}, group: "working" | "needs_you" = "working"): AgentRow {
   return {
-    ...legacyAgentRow({ id, pane_id: id, identity_label: `작업 ${id}`, agent_kind: "claude", symbol: "○", group: "seen", demand: "none", unread: false, status_code: "idle", emphasized: false, changed_at_unix_ms: 1, ...over }),
+    ...legacyAgentRow({ id, pane_id: id, identity_label: `작업 ${id}`, agent_kind: "claude", mark: "quiet", group: "seen", demand: "none", unread: false, status_code: "idle", emphasized: false, changed_at_unix_ms: 1, ...over }),
     state: { ...legacyAgentRow({}).state, session: { group, line: "", unfinished: false } },
   } as AgentRow;
 }

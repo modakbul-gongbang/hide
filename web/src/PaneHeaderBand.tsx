@@ -252,7 +252,7 @@ function PaneTreeButton({ paneId, children, agents, actions, compact = false, co
   const { t } = useInterfaceTranslation();
   const count = children.children.length;
   const label = [t("agentSessions.tree.children", { count }), ...(connection ? [connection] : children.parts.map((part) => t(part.label, { count: part.count })))].join(" · ");
-  const parts = compact ? children.parts.filter((part) => part.kind === "raised") : children.parts;
+  const parts = children.parts.filter((part) => part.mark !== null && (!compact || part.mark === "turn"));
   return <AgentTreePopover
     parent={children.parent}
     agents={agents}
@@ -262,9 +262,8 @@ function PaneTreeButton({ paneId, children, agents, actions, compact = false, co
     returnFocus={() => document.querySelector<HTMLButtonElement>(`[data-pane-tree="${paneId}"]`)?.focus()}
     triggerLabel={label}
     trigger={<button type="button" aria-label={label} data-pane-tree={paneId} className="flex h-(--size-sidebar-line-detail) shrink-0 items-center gap-xxs rounded-xs border border-border bg-background px-xs outline-none hover:bg-popover focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-secondary">
-      {!connection && parts.length === 0 ? <ListTreeIcon aria-hidden="true" className="size-(--size-icon-sm) text-muted-foreground" /> : null}
-      {connection ? <StatusMark symbol="⊘" className="text-muted-foreground" /> : null}
-      {parts.length ? <span className="flex items-center gap-xxs" aria-hidden="true">{parts.map((part) => <span key={part.kind} className={cn("flex items-center font-mono text-micro", part.tone)} data-pane-child-count={part.kind}><StatusMark symbol={part.symbol} /><span>{part.count}</span></span>)}</span> : null}
+      {parts.length === 0 ? <ListTreeIcon aria-hidden="true" className="size-(--size-icon-sm) text-muted-foreground" /> : null}
+      {parts.length ? <span className="flex items-center gap-xxs" aria-hidden="true">{parts.map((part) => <span key={part.kind} className="flex items-center font-mono text-micro text-muted-foreground" data-pane-child-count={part.kind}><StatusMark mark={part.mark ?? "quiet"} /><span>{part.count}</span></span>)}</span> : null}
       <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm) text-muted-foreground" />
     </button>}
   />;

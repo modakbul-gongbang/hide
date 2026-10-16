@@ -97,7 +97,7 @@ self.addEventListener("message", (event) => {
   if (!data || data.type !== "words" || !data.words || typeof data.words !== "object") return;
   const { needs_you, done, observer_unconfirmed, letter_undelivered } = data.words;
   if (!isWord(needs_you) || !isWord(done)) return;
-  const statusWords = Object.fromEntries(["question", "approval", "error", "working", "done", "idle", "unknown", "waiting", "stopped"].map((code) => [`status_${code}`, data.words[`status_${code}`]]).filter(([, word]) => isWord(word)));
+  const statusWords = Object.fromEntries(["question", "approval", "error", "working", "done", "idle", "unknown", "waiting", "stopped", "unfinished"].map((code) => [`status_${code}`, data.words[`status_${code}`]]).filter(([, word]) => isWord(word)));
   const words = JSON.stringify({ needs_you, done, observer_unconfirmed, letter_undelivered, ...statusWords });
   event.waitUntil(
     caches

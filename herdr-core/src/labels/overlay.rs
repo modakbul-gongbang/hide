@@ -256,6 +256,11 @@ fn row_facts(facts: &SessionFacts) -> RowFacts {
             .iter()
             .map(|pr| (pr.repository.clone(), pr.number, pr.sighted_at_unix_ms))
             .collect(),
+        sighted_prs: facts
+            .sightings
+            .iter()
+            .map(|sighting| (sighting.repository.to_ascii_lowercase(), sighting.number))
+            .collect(),
         end: None,
         line: None,
         awaiting_operator: false,

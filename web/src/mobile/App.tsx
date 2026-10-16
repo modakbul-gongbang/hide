@@ -6,7 +6,7 @@ import { BellIcon, ChevronRightIcon, LaptopIcon, Loader2Icon, MoonIcon, PlusIcon
 import { useEffect, useState } from "react";
 import { useElapsed } from "../components/elapsed";
 import { useInterfaceTranslation } from "../i18n/translator";
-import { statusText } from "../agentStatus";
+import { lineText, markWords } from "../agentRow";
 import { Button } from "../components/ui/button";
 import { agentProductName } from "../agentAdapters";
 import { sleepingCaption } from "../sleeping-session";
@@ -213,12 +213,12 @@ function SleepingRow({ session }: { session: PhoneSleepingSession }) {
   );
 }
 
-const LINE_TONE = { error: "text-destructive", warning: "text-warning", news: "text-foreground" } as const;
+const LINE_TONE = { warning: "text-warning", news: "text-foreground", subtle: "text-subtle-foreground" } as const;
 
 function AgentRow({ agent }: { agent: PhoneAgent }) {
   const { t } = useInterfaceTranslation();
   const elapsed = useElapsed(agent.changed_at_unix_ms);
-  const label = [statusText(t, agent.status_code), agent.title, agentProductName(agent.agent_kind), agent.place, agent.device_label, elapsed].filter(Boolean).join(", ");
+  const label = [markWords(t, agent), agent.title, agentProductName(agent.agent_kind), agent.place, agent.device_label, elapsed].filter(Boolean).join(", ");
   return (
     <li>
       <button
@@ -237,8 +237,8 @@ function AgentRow({ agent }: { agent: PhoneAgent }) {
         </span>
         <Place agent={agent} inset={LIST_INSET} />
         {agent.line ? (
-          <span className={`line-clamp-2 ${LIST_INSET} text-body ${LINE_TONE[agent.line.tone]}`} data-phone-line={agent.line.tone}>
-            {agent.line.text}
+          <span className={`line-clamp-2 ${LIST_INSET} text-body ${LINE_TONE[agent.line.tone]}`} data-phone-line={agent.line.mode}>
+            {lineText(t, { wait: agent.wait, status_code: agent.status_code, descendant_counts: { working: agent.descendants_working } }, agent.line)}
           </span>
         ) : null}
       </button>

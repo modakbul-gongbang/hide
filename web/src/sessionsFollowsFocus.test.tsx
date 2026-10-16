@@ -21,7 +21,7 @@ afterAll(() => browserCanvas.restore());
 
 function row(id: string, over: Partial<AgentRow> = {}): AgentRow {
   return {
-    ...legacyAgentRow({ id, pane_id: id, identity_label: `작업 ${id}`, agent_kind: "claude", symbol: "●", group: "working", demand: "none", unread: false, status_code: "working", emphasized: false, changed_at_unix_ms: 1, ...over }),
+    ...legacyAgentRow({ id, pane_id: id, identity_label: `작업 ${id}`, agent_kind: "claude", mark: "going", group: "working", demand: "none", unread: false, status_code: "working", emphasized: false, changed_at_unix_ms: 1, ...over }),
     state: { ...legacyAgentRow({}).state, session: { group: "working", line: "", unfinished: false } },
   } as AgentRow;
 }

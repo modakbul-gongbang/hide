@@ -63,7 +63,7 @@ const NO_AGENT_PROJECTS = ["investment", "landing-page", "modakbul-site"];
 const SLEEPING_PROJECTS: Record<string, number> = { "codex-daemon-apply-spec": 4, "sticky-notes": 14 };
 
 const ROOT = "/work";
-const NO_MARKS: MarkCounts = { error: 0, approval: 0, question: 0, working: 0, stopped: 0, done: 0, idle: 0 };
+const NO_MARKS: MarkCounts = { turn: 0, going: 0, done: 0, unread: 0 };
 
 const TITLES: Record<SceneContent, Record<string, string>> = {
   reference: {
@@ -83,7 +83,7 @@ const TITLES: Record<SceneContent, Record<string, string>> = {
 };
 
 /** A scene names how long ago each agent changed (`42s`, `3m`, `2h`); the row counts on from there. */
-type AgentSpec = Partial<AgentRow> & Pick<AgentRow, "pane_id" | "group" | "symbol" | "status_code"> & { elapsed: string };
+type AgentSpec = Partial<AgentRow> & Pick<AgentRow, "pane_id" | "group" | "mark" | "status_code"> & { elapsed: string };
 
 const UNIT_MS: Record<string, number> = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 };
 
@@ -105,7 +105,10 @@ function agent({ elapsed, ...spec }: AgentSpec): AgentRow {
   };
 }
 
-function marks(partial: Partial<MarkCounts>): MarkCounts {
+/** A checkout's agents by mark; `quiet` ones count in Seen and on no badge. */
+type SpecMarks = Partial<MarkCounts> & { quiet?: number };
+
+function marks({ quiet: _quiet, ...partial }: SpecMarks): MarkCounts {
   return { ...NO_MARKS, ...partial };
 }
 
@@ -119,7 +122,7 @@ type CheckoutSpec = {
   age?: number;
   purpose?: string;
   panes?: string[];
-  marks?: Partial<MarkCounts>;
+  marks?: SpecMarks;
   pr?: Pick<PullRequest, "badge" | "is_draft" | "number" | "title" | "state">;
   exists?: boolean;
 };
@@ -144,10 +147,10 @@ export function checkout(spec: CheckoutSpec, nowSeconds: number): Checkout {
     agent_summary: counted
       ? {
           representative_pane_id: panes[0] ?? null,
-          needs_you: counted.question + counted.approval + counted.error,
-          done: counted.done,
-          working: counted.working,
-          seen: counted.idle,
+          needs_you: counted.turn,
+          done: counted.done + counted.unread,
+          working: counted.going,
+          seen: spec.marks?.quiet ?? 0,
           unknown: 0,
           marks: counted,
         }
@@ -217,7 +220,7 @@ function withPresence(row: Workspace, folds: SceneFolds, nowMs: number): Workspa
   if (days !== undefined) return { ...row, agent_presence: { working: false, asleep: { since_unix_ms: nowMs - days * 86_400_000, expanded: folds.asleepOpen.includes(row.id) } } };
   const working = row.checkouts.some((value) => {
     const counts = value.agent_summary?.marks;
-    return !!counts && counts.error + counts.approval + counts.question + counts.working + counts.stopped + counts.done > 0;
+    return !!counts && counts.turn + counts.going + counts.done + counts.unread > 0;
   });
   return { ...row, agent_presence: { working } };
 }
@@ -246,12 +249,12 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
   const title = TITLES[content];
   const unfolded = (id: string) => folds.expandedAgents.includes(id);
   const agents: AgentRow[] = [
-    agent({ pane_id: "tn1", identity_label: "회의록 요약", group: "seen", symbol: "○", status_code: "idle", elapsed: "3h" }),
+    agent({ pane_id: "tn1", identity_label: "회의록 요약", group: "seen", mark: "quiet", status_code: "idle", elapsed: "3h" }),
     agent({
       pane_id: "a1",
       identity_label: title.a1,
       group: "working",
-      symbol: "●",
+      mark: "going",
       status_code: "working",
       activity: "working",
       elapsed: "1m",
@@ -266,7 +269,7 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       identity_label: title.a1c1,
       agent_kind: "codex",
       group: "working",
-      symbol: "●",
+      mark: "going",
       status_code: "working",
       activity: "working",
       elapsed: "42s",
@@ -275,12 +278,12 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       lineage_depth: 1,
       lineage_worktree_badge: "feat/ui",
     }),
-    agent({ pane_id: "a1c2", identity_label: title.a1c2, group: "seen", symbol: "○", status_code: "idle", elapsed: "38s", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1 }),
+    agent({ pane_id: "a1c2", identity_label: title.a1c2, group: "seen", mark: "quiet", status_code: "idle", elapsed: "38s", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1 }),
     agent({
       pane_id: "a2",
       identity_label: title.a2,
       group: "working",
-      symbol: "○",
+      mark: "quiet",
       status_code: "done",
       activity: "stopped",
       elapsed: "2m",
@@ -293,7 +296,7 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       pane_id: "a2c1",
       identity_label: "인터뷰 질문 정리",
       group: "working",
-      symbol: "?",
+      mark: "turn",
       status_code: "question",
       demand: "question",
       elapsed: "1m",
@@ -302,21 +305,21 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       lineage_parent_pane_id: "a2",
       lineage_depth: 1,
     }),
-    agent({ pane_id: "a2c2", identity_label: "사례 조사", group: "working", symbol: "●", status_code: "working", activity: "working", elapsed: "50s", delegated: true, lineage_parent_pane_id: "a2", lineage_depth: 1 }),
+    agent({ pane_id: "a2c2", identity_label: "사례 조사", group: "working", mark: "going", status_code: "working", activity: "working", elapsed: "50s", delegated: true, lineage_parent_pane_id: "a2", lineage_depth: 1 }),
     agent({
       pane_id: "a3",
       identity_label: title.a3,
       group: "needs_you",
-      symbol: "?",
+      mark: "turn",
       status_code: "question",
       demand: "question",
       elapsed: "30s",
       unread: true,
       detail: "프로덕션 배포 전에 변경 내용을 확인해 주세요",
     }),
-    agent({ pane_id: "q1", identity_label: "브라우저 표시 확인", group: "needs_you", symbol: "?", status_code: "question", demand: "question", elapsed: "40m", detail: "주소 경계를 어디에 둘까요?" }),
-    agent({ pane_id: "q2", identity_label: "검색 팔레트", group: "done", symbol: "✓", status_code: "done", activity: "stopped", elapsed: "1h" }),
-    agent({ pane_id: "e1", identity_label: "단축키 연결", group: "working", symbol: "●", status_code: "working", activity: "working", elapsed: "2h" }),
+    agent({ pane_id: "q1", identity_label: "브라우저 표시 확인", group: "needs_you", mark: "turn", status_code: "question", demand: "question", elapsed: "40m", detail: "주소 경계를 어디에 둘까요?" }),
+    agent({ pane_id: "q2", identity_label: "검색 팔레트", group: "done", mark: "done", status_code: "done", activity: "stopped", elapsed: "1h" }),
+    agent({ pane_id: "e1", identity_label: "단축키 연결", group: "working", mark: "going", status_code: "working", activity: "working", elapsed: "2h" }),
   ];
 
   if (devices !== "one") agents.push(...HOME_AGENTS[content]);
@@ -329,7 +332,7 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       identity_label: "P8 읽기 전용 준비",
       agent_kind: "codex",
       group: "working",
-      symbol: "○",
+      mark: "quiet",
       status_code: "waiting",
       activity: "stopped",
       elapsed: "19h",
@@ -342,30 +345,30 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       descendant_mark: { kind: "raised", count: 1 },
       ...ownPull(811, "읽기 전용 준비", "failed"),
     }),
-    agent({ pane_id: "a1g1", identity_label: "테스트 작성", agent_kind: "codex", group: "working", symbol: "!", status_code: "approval", demand: "approval", elapsed: "12m", delegated: true, lineage_parent_pane_id: "a1c3", lineage_depth: 2 }),
-    agent({ pane_id: "a1g2", identity_label: "문서 정리", agent_kind: "codex", group: "seen", symbol: "✓", status_code: "done", activity: "stopped", elapsed: "40m", delegated: true, lineage_parent_pane_id: "a1c3", lineage_depth: 2 }),
-    agent({ pane_id: "a1c4", identity_label: "P7 Pi·omp 재우기", group: "working", symbol: "?", status_code: "question", demand: "question", elapsed: "1h", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1, ...ownPull(838, "Pi·omp 재우기", "pending") }),
-    agent({ pane_id: "a1c5", identity_label: "미전달 편지 승격 해제", group: "seen", symbol: "○", status_code: "idle", elapsed: "5h", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1 }),
-    agent({ pane_id: "a1c6", identity_label: "P6 OpenCode 세션 리더", group: "seen", symbol: "✓", status_code: "done", activity: "stopped", elapsed: "7m", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1, ...ownPull(842, "OpenCode 세션 리더", "mergeable") }),
-    agent({ pane_id: "a1c7", identity_label: "P5 큰 도구 결과 읽기", group: "seen", symbol: "○", status_code: "idle", elapsed: "1h", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1, ...ownPull(830, "큰 도구 결과 읽기", "merged") }),
-    agent({ pane_id: "a1c8", identity_label: "문서 링크 점검", group: "seen", symbol: "○", status_code: "idle", elapsed: "3h", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1 }),
+    agent({ pane_id: "a1g1", identity_label: "테스트 작성", agent_kind: "codex", group: "working", mark: "going", status_code: "approval", demand: "approval", elapsed: "12m", delegated: true, lineage_parent_pane_id: "a1c3", lineage_depth: 2 }),
+    agent({ pane_id: "a1g2", identity_label: "문서 정리", agent_kind: "codex", group: "seen", mark: "quiet", status_code: "done", activity: "stopped", elapsed: "40m", delegated: true, lineage_parent_pane_id: "a1c3", lineage_depth: 2 }),
+    agent({ pane_id: "a1c4", identity_label: "P7 Pi·omp 재우기", group: "working", mark: "going", status_code: "question", demand: "question", elapsed: "1h", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1, ...ownPull(838, "Pi·omp 재우기", "pending") }),
+    agent({ pane_id: "a1c5", identity_label: "미전달 편지 승격 해제", group: "seen", mark: "quiet", status_code: "idle", elapsed: "5h", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1 }),
+    agent({ pane_id: "a1c6", identity_label: "P6 OpenCode 세션 리더", group: "seen", mark: "quiet", status_code: "done", activity: "stopped", elapsed: "7m", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1, ...ownPull(842, "OpenCode 세션 리더", "mergeable") }),
+    agent({ pane_id: "a1c7", identity_label: "P5 큰 도구 결과 읽기", group: "seen", mark: "quiet", status_code: "idle", elapsed: "1h", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1, ...ownPull(830, "큰 도구 결과 읽기", "merged") }),
+    agent({ pane_id: "a1c8", identity_label: "문서 링크 점검", group: "seen", mark: "quiet", status_code: "idle", elapsed: "3h", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1 }),
   );
 
   const herdrCheckouts: Checkout[] = [
-    checkout({ id: "hide:main", workspace: "hide", branch: "main", primary: true, age: 10, purpose: "사이드바 가독성 개선", panes: ["a1", ...A1_CHILDREN.filter((pane) => pane !== "a1c1"), "a1g1", "a1g2", "a2", "a2c1", "a2c2", "a3"], marks: { question: 2, working: 3, idle: 1 } }, now),
-    checkout({ id: "hide:155", workspace: "hide", branch: "quick/155-browser-display", age: 40 * 60, purpose: issueTitle(155, "browser display (WebContentsView)"), panes: ["q1"], marks: { question: 1 } }, now),
+    checkout({ id: "hide:main", workspace: "hide", branch: "main", primary: true, age: 10, purpose: "사이드바 가독성 개선", panes: ["a1", ...A1_CHILDREN.filter((pane) => pane !== "a1c1"), "a1g1", "a1g2", "a2", "a2c1", "a2c2", "a3"], marks: { turn: 2, going: 3, quiet: 1 } }, now),
+    checkout({ id: "hide:155", workspace: "hide", branch: "quick/155-browser-display", age: 40 * 60, purpose: issueTitle(155, "browser display (WebContentsView)"), panes: ["q1"], marks: { turn: 1 } }, now),
     checkout({ id: "hide:154", workspace: "hide", branch: "quick/154-search-palette", age: 3600, purpose: issueTitle(154, "⌘K search palette UI"), panes: ["q2"], marks: { done: 1 }, pr: { number: 154, title: "Search palette", badge: "open", is_draft: true, state: "draft" } }, now),
-    checkout({ id: "hide:electron", workspace: "hide", branch: "electron-shortcut-bindings", age: 2 * 3600, purpose: "Electron desktop host for the web shell", panes: ["e1"], marks: { working: 1 }, pr: { number: 149, title: "Electron host", badge: "open", is_draft: false, state: "pending" } }, now),
+    checkout({ id: "hide:electron", workspace: "hide", branch: "electron-shortcut-bindings", age: 2 * 3600, purpose: "Electron desktop host for the web shell", panes: ["e1"], marks: { going: 1 }, pr: { number: 149, title: "Electron host", badge: "open", is_draft: false, state: "pending" } }, now),
     checkout({ id: "hide:ux", workspace: "hide", branch: "design/workspace-ux-proposal", age: 5 * 3600, purpose: "Workspace UX 제안과 상태 소유 정리" }, now),
     checkout({ id: "hide:fix", workspace: "hide", branch: "fix/registered-projects-only", age: 86400 }, now),
     checkout({ id: "hide:legacy", workspace: "hide", branch: "legacy-shell", exists: false }, now),
     ...INACTIVE.map((branch, index) =>
-      checkout({ id: `hide:inactive-${index}`, workspace: "hide", branch, age: (8 + index) * 86400, ...(index === 0 ? { panes: ["a1c1"], marks: { working: 1 } } : {}) }, now),
+      checkout({ id: `hide:inactive-${index}`, workspace: "hide", branch, age: (8 + index) * 86400, ...(index === 0 ? { panes: ["a1c1"], marks: { going: 1 } } : {}) }, now),
     ),
   ];
 
   const workspaces: Workspace[] = [
-    workspace("team-notes", { is_git: false, pinned: true, checkouts: [checkout({ id: "team-notes:folder", workspace: "team-notes", branch: null, folder: true, purpose: "회의록 요약 정리", panes: ["tn1"], marks: { idle: 1 } }, now)] }, folds),
+    workspace("team-notes", { is_git: false, pinned: true, checkouts: [checkout({ id: "team-notes:folder", workspace: "team-notes", branch: null, folder: true, purpose: "회의록 요약 정리", panes: ["tn1"], marks: { quiet: 1 } }, now)] }, folds),
     workspace(
       "hide",
       {
@@ -374,7 +377,7 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       },
       folds,
     ),
-    workspace("sasu", { checkouts: [checkout({ id: "sasu:main", workspace: "sasu", branch: "main", primary: true, age: 3 * 3600, purpose: "파이프라인 정리", marks: { working: 1, done: 1, idle: 1 } }, now)] }, folds),
+    workspace("sasu", { checkouts: [checkout({ id: "sasu:main", workspace: "sasu", branch: "main", primary: true, age: 3 * 3600, purpose: "파이프라인 정리", marks: { going: 1, done: 1, quiet: 1 } }, now)] }, folds),
     workspace("codex-daemon-apply-spec", { is_git: false, checkouts: [checkout({ id: "codex-daemon-apply-spec:folder", workspace: "codex-daemon-apply-spec", branch: null, folder: true, age: 4 * 86400 }, now)] }, folds),
     workspace("sticky-notes", { checkouts: [checkout({ id: "sticky-notes:main", workspace: "sticky-notes", branch: "main", primary: true, age: 27 * 86400 }, now)] }, folds),
     ...NO_AGENT_PROJECTS.map((id, index) => workspace(id, { checkouts: [checkout({ id: `${id}:main`, workspace: id, branch: "main", primary: true, age: (2 + index) * 86400 }, now)] }, folds)),
@@ -428,8 +431,8 @@ export function sidebarStatusAxisScene(content: SceneContent, folds: SceneFolds,
   const labels = ["탭 경계·여백 정리", "왼쪽 pane 검토", "세션 기록 동기화", "PR 질문 표시 개선", "탐색 개선"];
   const ages = ["1m", "8m", "2s", "6m", "11m"];
   const ids = ["a1", "a2", "a3", "q1", "e1"];
-  const agents = ids.map((id, index) => agent({ pane_id: id, identity_label: content === "long" ? `${labels[index]} · 여러 프로젝트의 한국어 작업 기록과 진행 상황을 확인합니다` : labels[index], agent_kind: index > 0 && index < 4 ? "codex" : "claude", group: index === 4 ? "seen" : "working", symbol: index === 4 ? "○" : "●", status_code: index === 4 ? "idle" : "working", elapsed: ages[index]!, state: galleryAgentState(index === 4 ? "h2" : "e1", null, nowMs) }));
-  const main = checkout({ id: "hide:main", workspace: "hide", branch: "main", primary: true, age: 480, panes: ids, marks: { working: 4, idle: 1 } }, nowMs / 1000);
+  const agents = ids.map((id, index) => agent({ pane_id: id, identity_label: content === "long" ? `${labels[index]} · 여러 프로젝트의 한국어 작업 기록과 진행 상황을 확인합니다` : labels[index], agent_kind: index > 0 && index < 4 ? "codex" : "claude", group: index === 4 ? "seen" : "working", mark: index === 4 ? "quiet" : "going", status_code: index === 4 ? "idle" : "working", elapsed: ages[index]!, state: galleryAgentState(index === 4 ? "h2" : "e1", null, nowMs) }));
+  const main = checkout({ id: "hide:main", workspace: "hide", branch: "main", primary: true, age: 480, panes: ids, marks: { going: 4, quiet: 1 } }, nowMs / 1000);
   main.tabs = [["a1", "a2"], ["a3"], ["q1", "e1"]].map((panes, index) => ({ ...main.tabs[0]!, id: `hide:main:t${index + 1}`, sidebar: { number: index + 1, manual_name: index === 0 ? "아주 긴 한국어 탭 이름과 작업 묶음의 경계 확인 · Sidebar tab groups" : null, named_by_operator: index === 0 }, panes: panes.map(pane) }));
   const scope = statusAxisScope as unknown as AgentScope;
   main.agent_scope = scope;
@@ -440,33 +443,33 @@ export function sidebarStatusAxisScene(content: SceneContent, folds: SceneFolds,
 
 const HOME_AGENTS: Record<SceneContent, AgentRow[]> = {
   reference: [
-    agent({ pane_id: "h1", identity_label: "블로그 초안 정리", group: "needs_you", symbol: "?", status_code: "question", demand: "question", elapsed: "2m", unread: true, detail: "톤을 이대로 갈까요?" }),
-    agent({ pane_id: "h2", identity_label: "두 프로젝트 비교 조사", agent_kind: "codex", group: "seen", symbol: "○", status_code: "idle", elapsed: "14m" }),
+    agent({ pane_id: "h1", identity_label: "블로그 초안 정리", group: "needs_you", mark: "turn", status_code: "question", demand: "question", elapsed: "2m", unread: true, detail: "톤을 이대로 갈까요?" }),
+    agent({ pane_id: "h2", identity_label: "두 프로젝트 비교 조사", agent_kind: "codex", group: "seen", mark: "quiet", status_code: "idle", elapsed: "14m" }),
   ],
   long: [
-    agent({ pane_id: "h1", identity_label: "여러 프로젝트에 걸친 블로그 초안 정리와 어투 통일 작업을 이어서 진행하는 에이전트", group: "needs_you", symbol: "?", status_code: "question", demand: "question", elapsed: "2m", unread: true, detail: "톤을 이대로 갈까요, 아니면 조금 더 딱딱하게 다듬을까요?" }),
-    agent({ pane_id: "h2", identity_label: "두 프로젝트의 구조와 의존성을 나란히 비교 조사하는 작업", agent_kind: "codex", group: "seen", symbol: "○", status_code: "idle", elapsed: "14m" }),
+    agent({ pane_id: "h1", identity_label: "여러 프로젝트에 걸친 블로그 초안 정리와 어투 통일 작업을 이어서 진행하는 에이전트", group: "needs_you", mark: "turn", status_code: "question", demand: "question", elapsed: "2m", unread: true, detail: "톤을 이대로 갈까요, 아니면 조금 더 딱딱하게 다듬을까요?" }),
+    agent({ pane_id: "h2", identity_label: "두 프로젝트의 구조와 의존성을 나란히 비교 조사하는 작업", agent_kind: "codex", group: "seen", mark: "quiet", status_code: "idle", elapsed: "14m" }),
   ],
 };
 
 const REMOTE_AGENTS: Record<SceneContent, AgentRow[]> = {
   reference: [
-    agent({ pane_id: "remote:mini:pane:1", identity_label: "배치 감시", agent_kind: "codex", group: "needs_you", symbol: "?", status_code: "question", demand: "question", elapsed: "5m", unread: true, detail: "풀 리퀘스트 머지할까요?" }),
-    agent({ pane_id: "remote:mini:pane:2", identity_label: "릴리스 빌드 확인", agent_kind: "codex", group: "working", symbol: "●", status_code: "working", activity: "working", elapsed: "1m" }),
+    agent({ pane_id: "remote:mini:pane:1", identity_label: "배치 감시", agent_kind: "codex", group: "needs_you", mark: "turn", status_code: "question", demand: "question", elapsed: "5m", unread: true, detail: "풀 리퀘스트 머지할까요?" }),
+    agent({ pane_id: "remote:mini:pane:2", identity_label: "릴리스 빌드 확인", agent_kind: "codex", group: "working", mark: "going", status_code: "working", activity: "working", elapsed: "1m" }),
   ],
   long: [
-    agent({ pane_id: "remote:mini:pane:1", identity_label: "밤새 도는 배치 작업의 실패 원인과 재시도 여부를 감시하는 에이전트", agent_kind: "codex", group: "needs_you", symbol: "?", status_code: "question", demand: "question", elapsed: "5m", unread: true, detail: "풀 리퀘스트 머지할까요?" }),
-    agent({ pane_id: "remote:mini:pane:2", identity_label: "릴리스 빌드 확인", agent_kind: "codex", group: "working", symbol: "●", status_code: "working", activity: "working", elapsed: "1m" }),
+    agent({ pane_id: "remote:mini:pane:1", identity_label: "밤새 도는 배치 작업의 실패 원인과 재시도 여부를 감시하는 에이전트", agent_kind: "codex", group: "needs_you", mark: "turn", status_code: "question", demand: "question", elapsed: "5m", unread: true, detail: "풀 리퀘스트 머지할까요?" }),
+    agent({ pane_id: "remote:mini:pane:2", identity_label: "릴리스 빌드 확인", agent_kind: "codex", group: "working", mark: "going", status_code: "working", activity: "working", elapsed: "1m" }),
   ],
 };
 
 /** Enough more agents on `mini` for ten or more Needs You, past the Projects list's cap, an unseen Done and a second Working. */
 const BUSY_AGENTS: AgentRow[] = [
   ...Array.from({ length: 11 }, (_, index) =>
-    agent({ pane_id: `remote:mini:busy:${index}`, identity_label: `배치 ${index + 1}`, agent_kind: "codex", group: "needs_you", symbol: "?", status_code: "question", demand: "question", elapsed: "3m", detail: "확인이 필요합니다" }),
+    agent({ pane_id: `remote:mini:busy:${index}`, identity_label: `배치 ${index + 1}`, agent_kind: "codex", group: "needs_you", mark: "turn", status_code: "question", demand: "question", elapsed: "3m", detail: "확인이 필요합니다" }),
   ),
-  agent({ pane_id: "remote:mini:done:1", identity_label: "빌드 정리", agent_kind: "codex", group: "done", symbol: "✓", status_code: "done", activity: "stopped", elapsed: "9m" }),
-  agent({ pane_id: "remote:mini:working:2", identity_label: "로그 수집", agent_kind: "codex", group: "working", symbol: "●", status_code: "working", activity: "working", elapsed: "2m" }),
+  agent({ pane_id: "remote:mini:done:1", identity_label: "빌드 정리", agent_kind: "codex", group: "done", mark: "done", status_code: "done", activity: "stopped", elapsed: "9m" }),
+  agent({ pane_id: "remote:mini:working:2", identity_label: "로그 수집", agent_kind: "codex", group: "working", mark: "going", status_code: "working", activity: "working", elapsed: "2m" }),
 ];
 
 /** The registration the core keeps for a project on `deviceId`; `home` marks the device's Home. */
@@ -484,7 +487,7 @@ function deviceWorld(content: SceneContent, workspaces: Workspace[], now: number
   const offlineLabel = content === "long" ? "연구실 빌드 서버 자동화 장비 (긴 이름 확인용)" : "build-box";
   const home = workspace(
     "home",
-    { label: "hide", path: `${ROOT}/hide`, is_home: true, is_git: false, checkouts: [checkout({ id: "home:folder", workspace: "home", branch: null, folder: true, panes: ["h1", "h2"], marks: { question: 1, idle: 1 } }, now)] },
+    { label: "hide", path: `${ROOT}/hide`, is_home: true, is_git: false, checkouts: [checkout({ id: "home:folder", workspace: "home", branch: null, folder: true, panes: ["h1", "h2"], marks: { turn: 1, quiet: 1 } }, now)] },
     folds,
   );
   const remoteWorkspace = (id: string, label: string, extra: Partial<Workspace>, panes: string[]): Workspace => ({

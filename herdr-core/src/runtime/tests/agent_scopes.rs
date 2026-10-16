@@ -413,7 +413,7 @@ fn scopes_keep_first_overview_owner_last_badge_owner_and_restore_rebuilt_catalog
     assert_eq!(runtime.snapshot.navigator.agent_scope.listed[2].index, 2);
     assert_eq!(project.checkouts[0].agent_summary.working, 0);
     assert_eq!(project.checkouts[1].agent_summary.working, 1);
-    assert_eq!(project.agent_scope.marks.working, 1);
+    assert_eq!(project.agent_scope.marks.going, 1);
     assert!(
         !runtime.refresh_agent_scopes(),
         "an unchanged projection publishes nothing"

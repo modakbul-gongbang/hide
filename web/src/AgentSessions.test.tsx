@@ -8,7 +8,7 @@ import type { AgentRow, Checkout, SessionGroup, SnapshotRest, Workspace } from "
 
 function fixture() {
   const row = (id: string, group: SessionGroup): AgentRow => ({
-    ...legacyAgentRow({ id, pane_id: id, identity_label: `긴 한국어 작업 제목 ${id}`, agent_kind: "codex", symbol: "○", group: "seen", demand: "question", unread: false, status_code: "question", emphasized: false, changed_at_unix_ms: 1 }),
+    ...legacyAgentRow({ id, pane_id: id, identity_label: `긴 한국어 작업 제목 ${id}`, agent_kind: "codex", mark: "quiet", group: "seen", demand: "question", unread: false, status_code: "question", emphasized: false, changed_at_unix_ms: 1 }),
     state: { ...legacyAgentRow({}).state, session: { group, line: "확인할 결과 한 줄", unfinished: false } },
     request: { verb: group === "needs_you" ? "fix" : "working", verb_since_unix_ms: 1, line: "확인할 결과 한 줄", request: null, later_by: null, reply: null, pull_requests: [] },
   });

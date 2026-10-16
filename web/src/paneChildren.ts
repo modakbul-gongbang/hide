@@ -3,13 +3,13 @@ import { agentsByPane } from "./paneAgents";
 import { deviceConnected, localDeviceId } from "./devices";
 import type { MessageKey } from "./i18n/catalogs";
 import { remoteTargetOfPane } from "./remote";
-import type { AgentRow, SnapshotRest } from "./snapshot";
+import type { AgentRow, RowMark, SnapshotRest } from "./snapshot";
 
 export type ChildCountPart = {
   kind: "raised" | "working" | "result" | "waiting" | "unknown" | "idle";
-  symbol: string;
+  /** The mark the count is drawn with; a quiet count (unknown, idle) draws none and is named only in the hint. */
+  mark: RowMark | null;
   count: number;
-  tone: string;
   label: Extract<MessageKey, `panes.children.${string}`>;
 };
 
@@ -29,20 +29,24 @@ export function paneChildren(paneId: string, agents: AgentRow[], rest: SnapshotR
   const unavailableDevice = unavailable ? unavailable.device_id ?? remoteTargetOfPane(rest, unavailable.pane_id) ?? localDeviceId(rest) : null;
   const raised = parent.descendant_mark?.kind === "raised" ? parent.descendant_mark.count : 0;
   const parts: ChildCountPart[] = [];
-  if (raised > 0 && unavailableDevice === null) parts.push({ kind: "raised", symbol: "!", count: raised, tone: "text-warning", label: "panes.children.raised" });
   const counts = parent.direct_child_counts;
+  // The four marks mean here what they mean on a row (B21, B24): a request a
+  // child raised to the operator is `!`; a child's own question is its
+  // parent's to answer, so it draws no mark and is named only in the hint.
+  const asking = counts ? counts.error + counts.approval + counts.question : 0;
+  if (unavailableDevice === null) {
+    parts.push({ kind: "raised", mark: "turn", count: raised, label: "panes.children.raised" }, { kind: "waiting", mark: null, count: asking, label: "panes.children.waiting" });
+  }
   if (counts && unavailableDevice === null) {
     // The core omits its unknown count from the wire; its final row status
     // already applies demand precedence and identifies these children.
     const unknown = children.filter((child) => child.status_code === "unknown").length;
-    const waiting = counts.error + counts.approval + counts.question;
-    const idle = children.length - waiting - counts.working - counts.done - unknown;
+    const idle = children.length - asking - counts.working - counts.done - unknown;
     parts.push(
-      { kind: "working", symbol: "●", count: counts.working, tone: "text-agent-working", label: "panes.children.working" },
-      { kind: "result", symbol: "✓", count: counts.done, tone: "text-success", label: "panes.children.result" },
-      { kind: "waiting", symbol: "○", count: waiting, tone: "text-agent-working", label: "panes.children.waiting" },
-      { kind: "unknown", symbol: "~", count: unknown, tone: "text-muted-foreground", label: "panes.children.unknown" },
-      { kind: "idle", symbol: "○", count: idle, tone: "text-muted-foreground", label: "panes.children.idle" },
+      { kind: "working", mark: "going", count: counts.working, label: "panes.children.working" },
+      { kind: "result", mark: "unread", count: counts.done, label: "panes.children.result" },
+      { kind: "unknown", mark: null, count: unknown, label: "panes.children.unknown" },
+      { kind: "idle", mark: null, count: idle, label: "panes.children.idle" },
     );
   }
   return { parent, children, raised, parts: parts.filter((part) => part.count > 0), lead: children[0]!, unavailableDevice };

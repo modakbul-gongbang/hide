@@ -254,8 +254,8 @@ fn an_unfinished_turn_stops_the_row_and_summaries_off_take_every_ai_field_away()
 /// B1, B2, B3, B4, B10, D-25: a turn that named its cause is a block in Needs
 /// You with its own mark and word and the cause as the second line; reading
 /// it moves it to Seen and keeps the dimmed cause; the agent working again
-/// ends it. An unfinished turn is a half-disc in Done, never a check, and a
-/// turn the agent reported finished keeps the check.
+/// ends it. An unfinished turn is a plain dot to read with work left, and only
+/// a turn the agent reported finished draws the green dot (status-marks D-03).
 #[test]
 fn a_blocked_turn_is_a_needs_you_block_and_an_unfinished_one_a_stop_not_a_check() {
     use crate::labels::analysis::LabelEnd;
@@ -273,7 +273,7 @@ fn a_blocked_turn_is_a_needs_you_block_and_an_unfinished_one_a_stop_not_a_check(
     ));
     assert_eq!(blocked["demand"], "error");
     assert_eq!(blocked["group"], "needs_you");
-    assert_eq!(blocked["symbol"], "\u{25b2}");
+    assert_eq!(blocked["mark"], "turn");
     assert_eq!(blocked["status_code"], "error");
     assert_eq!(blocked["detail"], "디스크 여유가 없어 검증을 못 함");
     assert_eq!(blocked["request"]["verb"], "blocked");
@@ -287,11 +287,11 @@ fn a_blocked_turn_is_a_needs_you_block_and_an_unfinished_one_a_stop_not_a_check(
     ));
     assert_eq!(stopped["demand"], "none");
     assert_eq!(stopped["group"], "done");
-    assert_eq!(stopped["symbol"], "\u{25d0}");
-    assert_eq!(stopped["status_code"], "stopped");
+    assert_eq!(stopped["mark"], "unread");
+    assert_eq!(stopped["status_code"], "unfinished");
     assert_eq!(stopped["detail"], "배포 단계가 남음");
     assert_eq!(stopped["request"]["verb"], "stopped");
-    assert_eq!(stopped["state"]["chip_tone"]["kind"], "subtle");
+    assert_eq!(stopped["state"]["chip_tone"]["kind"], "news");
 
     let done = row(&runtime_with_record(
         record(LabelEnd::Done, "검증을 끝냄"),
@@ -299,18 +299,19 @@ fn a_blocked_turn_is_a_needs_you_block_and_an_unfinished_one_a_stop_not_a_check(
         true,
     ));
     assert_eq!(done["group"], "done");
-    assert_eq!(done["symbol"], "\u{2713}");
+    assert_eq!(done["mark"], "done");
     assert_eq!(done["status_code"], "done");
 
-    // With no label verdict (summaries off) the same Herdr `done` is the
-    // check it always was (D-16, B17).
+    // With no label verdict (summaries off) the same Herdr `done` is a stop
+    // to read with no verdict: a plain dot, never the green one (D-03).
     let off = row(&runtime_with_record(
         record(LabelEnd::Blocked, "디스크 여유가 없어 검증을 못 함"),
         "done",
         false,
     ));
     assert_eq!(off["demand"], "none");
-    assert_eq!(off["symbol"], "\u{2713}");
+    assert_eq!(off["mark"], "unread");
+    assert_eq!(off["status_code"], "stopped");
 }
 
 /// B15, D-29: opening a finished row reads the pane as a focus would, and

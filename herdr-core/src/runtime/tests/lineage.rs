@@ -734,7 +734,12 @@ fn a_pane_with_children_lists_them_and_names_the_one_that_speaks_for_them() {
         children.representative.as_ref().unwrap().label,
         "Resolve hook failure"
     );
-    assert_eq!(children.representative.as_ref().unwrap().symbol, "?");
+    // The question is the parent's to answer, so the child draws none of
+    // the operator's marks (status-marks B24).
+    assert_eq!(
+        children.representative.as_ref().unwrap().mark,
+        crate::agent_state::tally::RowMark::Quiet
+    );
 
     // In-process subagents are summarised separately and never folded into
     // the chip count.
@@ -1008,7 +1013,7 @@ fn a_strip_entry_carries_its_one_agents_identity_and_mark() {
         .expect("one agent names the tab");
     assert_eq!(identity.label, "Coordinate implementation");
     assert_eq!(identity.pane_id, "w1:p1");
-    assert_eq!(identity.symbol, "\u{25cf}");
+    assert_eq!(identity.mark, crate::agent_state::tally::RowMark::Going);
     assert_eq!(identity.activity, "working");
 
     // A tab with no agent pane at all says nothing about agents.
@@ -1118,7 +1123,7 @@ fn a_delegated_childs_demand_and_completion_stay_off_the_operators_groups() {
     // The axes themselves are untouched, so the parent's badge can still read
     // the question off the row it points at.
     assert_eq!(row("child").demand, "question");
-    assert_eq!(row("child").symbol, "?");
+    assert_eq!(row("child").mark, crate::agent_state::tally::RowMark::Quiet);
     // The operator's own root keeps its group and its brightness.
     assert_eq!(row("parent").group, "working");
     assert!(!row("parent").delegated);
@@ -1445,7 +1450,7 @@ fn a_quiet_root_waits_in_working_while_a_descendant_works_and_not_on_one_that_as
     let root = agent_row(&runtime, "w1:p1");
     assert!(root.wait == Some(crate::model::AgentWait::Children));
     assert_eq!(root.group, "working", "a waiting root is not Done");
-    assert_eq!(root.symbol, "\u{25cb}");
+    assert_eq!(root.mark, crate::agent_state::tally::RowMark::Going);
     assert_eq!(root.status_code, crate::model::AgentStatusCode::Waiting);
     assert!(!root.emphasized);
     assert_eq!(root.descendant_counts.working, 1);
@@ -1474,7 +1479,10 @@ fn a_quiet_root_waits_in_working_while_a_descendant_works_and_not_on_one_that_as
     );
     let root = agent_row(&runtime, "w1:p1");
     assert!(root.wait.is_none(), "an asking child is not progress");
-    assert_eq!((root.group.as_str(), root.symbol.as_str()), ("done", "✓"));
+    assert_eq!(
+        (root.group.as_str(), root.mark),
+        ("done", crate::agent_state::tally::RowMark::Unread)
+    );
     assert_eq!(root.descendant_counts.question, 1);
     assert!(root.unread, "a child's question is news to the root");
     assert!(
@@ -1498,8 +1506,8 @@ fn a_quiet_root_waits_in_working_while_a_descendant_works_and_not_on_one_that_as
     let root = agent_row(&runtime, "w1:p1");
     assert!(root.wait.is_none());
     assert_eq!(
-        (root.group.as_str(), root.symbol.as_str()),
-        ("needs_you", "?")
+        (root.group.as_str(), root.mark),
+        ("needs_you", crate::agent_state::tally::RowMark::Turn)
     );
     ingest_lineage(
         &mut runtime,
@@ -1511,8 +1519,8 @@ fn a_quiet_root_waits_in_working_while_a_descendant_works_and_not_on_one_that_as
     let root = agent_row(&runtime, "w1:p1");
     assert!(root.wait.is_none());
     assert_eq!(
-        (root.group.as_str(), root.symbol.as_str()),
-        ("working", "\u{25cf}")
+        (root.group.as_str(), root.mark),
+        ("working", crate::agent_state::tally::RowMark::Going)
     );
 
     // B3: the root and every descendant are quiet: Done, and the ring goes.
@@ -1525,7 +1533,10 @@ fn a_quiet_root_waits_in_working_while_a_descendant_works_and_not_on_one_that_as
     );
     let root = agent_row(&runtime, "w1:p1");
     assert!(root.wait.is_none());
-    assert_eq!((root.group.as_str(), root.symbol.as_str()), ("done", "✓"));
+    assert_eq!(
+        (root.group.as_str(), root.mark),
+        ("done", crate::agent_state::tally::RowMark::Unread)
+    );
 
     // A grandchild keeps the root waiting through a quiet middle row, and
     // closing its pane releases the root on the next projection.
@@ -1644,16 +1655,16 @@ fn a_root_with_finished_children_draws_its_own_state_past_a_request_a_stopped_ch
     let row = agent_row(&runtime, "w1:p1");
     assert_eq!(row.wait, None);
     assert_eq!(
-        (row.group.as_str(), row.symbol.as_str()),
-        ("done", "✓"),
+        (row.group.as_str(), row.mark),
+        ("done", crate::agent_state::tally::RowMark::Unread),
         "its own finished turn, unread"
     );
     look_at(&mut runtime, "w1:p1");
     let row = agent_row(&runtime, "w1:p1");
     assert_eq!(row.wait, None);
     assert_eq!(
-        (row.group.as_str(), row.symbol.as_str()),
-        ("seen", "○"),
+        (row.group.as_str(), row.mark),
+        ("seen", crate::agent_state::tally::RowMark::Quiet),
         "read, it is a gray ring"
     );
     let _ = std::fs::remove_file(&runtime.state_path);

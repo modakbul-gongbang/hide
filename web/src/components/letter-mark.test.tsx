@@ -55,7 +55,7 @@ it("marks a sidebar row with a quiet envelope and no number only while letters w
   await clientI18n.changeLanguage("en");
   const menu: AgentRowMenu = { items: () => [], onSelect: () => {} };
   const agent = (letters?: number): AgentRow => legacyAgentRow({
-    id: "a", pane_id: "pane-a", identity_label: "Input return flow", agent_kind: "codex", symbol: "○", group: "seen",
+    id: "a", pane_id: "pane-a", identity_label: "Input return flow", agent_kind: "codex", mark: "quiet", group: "seen",
     status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, letters_waiting: letters,
   });
   const row = (letters?: number) => <ul><SidebarAgentRow agent={agent(letters)} device={null} place={null} depth={0} selected={false} onOpen={() => {}} onOpenPullRequest={() => {}} inset="0" menu={menu} /></ul>;

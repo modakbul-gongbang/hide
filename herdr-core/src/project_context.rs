@@ -184,7 +184,7 @@ pub(crate) fn agent_presence(
             continue;
         }
         awake += 1;
-        working |= !matches!(RowMark::of(agent), RowMark::Idle | RowMark::Unknown);
+        working |= RowMark::of(agent) != RowMark::Quiet;
     }
     for session in sleeping.iter().filter(|session| {
         session.node_id == workspace.device_id

@@ -45,7 +45,7 @@ function catalog(focusedCheckout: string, inactiveOpen = false): { rest: Snapsho
     expanded: false, checkouts: [checkout("beta", "main", ["pane:beta"])], inactive_checkouts: { expanded: false, checkout_ids: [] },
   } as unknown as Workspace;
   const agent = (pane: string, label: string, lineage: Partial<AgentRow> = {}) => legacyAgentRow({
-    id: `agent:${pane}`, pane_id: pane, identity_label: label, agent_kind: "claude", symbol: "●", group: "working",
+    id: `agent:${pane}`, pane_id: pane, identity_label: label, agent_kind: "claude", mark: "going", group: "working",
     status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "working", ...lineage,
   }) as AgentRow;
   const agents = [

@@ -329,8 +329,8 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect(phone.locator('[data-phone-group="needs_you"]').locator(`[data-phone-agent$="|${one}"]`)).toBeVisible({ timeout: 20_000 });
     await expect(oneRow.locator("[data-phone-line]")).toHaveText("배포 전에 테스트를 다시 돌릴까요?");
     await expect(phone.locator('[data-phone-group="working"]').locator(`[data-phone-agent$="|${two}"]`)).toBeVisible();
-    await expect(phone.locator("[data-phone-group] h2").first()).toContainText("Needs your attention");
-    // B21: live; two asks and joins one under Needs your attention without a reload.
+    await expect(phone.locator("[data-phone-group] h2").first()).toContainText("Needs You");
+    // B21: live; two asks and joins one under Needs You without a reload.
     await ask(herdr, two, "어느 브랜치에 올릴까요?");
     await expect(phone.locator('[data-phone-group="needs_you"] [data-phone-group-count]')).toHaveText("2", { timeout: 20_000 });
     // B41: an idle list sends nothing; the phone hears only changes.

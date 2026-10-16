@@ -2038,7 +2038,7 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
     );
     assert_eq!(
         mini["remote:mini:pane:w9:p2"],
-        (AgentStatusCode::Done, false, "done".to_owned()),
+        (AgentStatusCode::Stopped, false, "done".to_owned()),
         "an unread completion does not create a close prompt"
     );
     // The pane tree is what the remote pane surface reads, so the read
@@ -2051,7 +2051,7 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
     );
     assert_eq!(
         tree["remote:mini:pane:w9:p2"],
-        (AgentStatusCode::Done, false),
+        (AgentStatusCode::Stopped, false),
         "the pane tree carries the completion protection decision"
     );
 
@@ -2191,7 +2191,7 @@ fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
         panes,
         vec![
             ("plain:p1", AgentStatusCode::Idle, false),
-            ("plain:p2", AgentStatusCode::Done, false)
+            ("plain:p2", AgentStatusCode::Stopped, false)
         ],
         "the read pane and the unread completion both close without a prompt"
     );

@@ -403,7 +403,7 @@ function observerScene(base: FactorySceneFixture, now: number, variant: Observer
   const panes: AgentRow[] = [[t436, "세 안을 화면에 그려 두고 답을 기다림"], [t437, "두 Task의 완료 조건을 비교하고 답을 기다림"], [t435, "테스트 실행을 기다리는 중"]].map(([task, line]) => {
     const view = task as CardView;
     const pane = view.worker_pane!;
-    return { ...template, state: galleryAgentState(pane, null, view.since), id: pane, pane_id: pane, identity_label: pane, agent_kind: view.worker_runtime ?? "codex", activity: "idle", symbol: "○", status_code: "idle", lineage_child_pane_ids: [], close_descendant_pane_ids: [], request: { ...template.request!, line: line as string } };
+    return { ...template, state: galleryAgentState(pane, null, view.since), id: pane, pane_id: pane, identity_label: pane, agent_kind: view.worker_runtime ?? "codex", activity: "idle", mark: "quiet", status_code: "idle", lineage_child_pane_ids: [], close_descendant_pane_ids: [], request: { ...template.request!, line: line as string } };
   });
   return { ...base, summary, detail, config, workers: [...base.workers, ...panes] };
 }
@@ -751,7 +751,7 @@ function referenceScene(content: SceneContent, now: number): FactorySceneFixture
     const pane = value.worker_pane;
     const delegated = value.task === taskId(415);
     const blocked = value.state === "blocked" || value.state === "stopped";
-    const row: AgentRow = { state: galleryAgentState(pane, null, value.since), id: pane, pane_id: pane, identity_label: pane, agent_kind: value.worker_runtime ?? "codex", emphasized: false, unread: false, demand: "none", activity: blocked ? "idle" : "working", group: "seen", symbol: blocked ? "○" : "●", status_code: blocked ? "idle" : "working", changed_at_unix_ms: value.since,
+    const row: AgentRow = { state: galleryAgentState(pane, null, value.since), id: pane, pane_id: pane, identity_label: pane, agent_kind: value.worker_runtime ?? "codex", emphasized: false, unread: false, demand: "none", activity: blocked ? "idle" : "working", group: "seen", mark: blocked ? "quiet" : "going", status_code: blocked ? "idle" : "working", changed_at_unix_ms: value.since,
       request: { verb: "working", verb_since_unix_ms: value.since, request: null, later_by: null, reply: null, pull_requests: [], line: WORKER_LINES[value.task] ?? "변경을 구현하고 검증하는 중" },
       lineage_child_pane_ids: delegated ? [`${pane}:child-1`, `${pane}:child-2`] : [],
       close_descendant_pane_ids: delegated ? [`${pane}:child-1`, `${pane}:child-2`] : [],

@@ -3,7 +3,8 @@ import type { Subtree, SubtreeRow, SubtreeState } from "../close";
 import { useInterfaceTranslation } from "../i18n/client";
 import { statusText } from "../agentStatus";
 import type { MessageKey } from "../i18n/catalogs";
-import { markTone } from "../agentRow";
+import { markTone, markWords } from "../agentRow";
+import type { RowMark as RowMarkValue } from "../snapshot";
 import { DeviceChip } from "./device-chip";
 import { StatusMark } from "./status-mark";
 import { Hint } from "./ui/tooltip";
@@ -16,11 +17,14 @@ import { Hint } from "./ui/tooltip";
 // word; a quiet one is dimmed, and its mark's tooltip and the row's
 // accessible name carry its state.
 
-const SUMMARY: { state: Exclude<SubtreeState, "quiet">; symbol: string; tone: string; word: MessageKey }[] = [
-  { state: "working", symbol: "●", tone: "text-agent-working", word: "agents.subtree.working" },
-  { state: "waiting", symbol: "?", tone: "text-warning", word: "agents.subtree.waiting" },
-  { state: "unread", symbol: "✓", tone: "text-success", word: "agents.subtree.unread" },
-  { state: "unknown", symbol: "~", tone: "text-subtle-foreground", word: "agents.subtree.unknown" },
+// The four marks mean here what they mean on every row (B21): a request
+// waiting for an answer is `!`, work in progress the ring, an unread result
+// the dot; an unknown state has no mark and says so in its word.
+const SUMMARY: { state: Exclude<SubtreeState, "quiet">; mark: RowMarkValue; word: MessageKey }[] = [
+  { state: "waiting", mark: "turn", word: "agents.subtree.waiting" },
+  { state: "working", mark: "going", word: "agents.subtree.working" },
+  { state: "unread", mark: "unread", word: "agents.subtree.unread" },
+  { state: "unknown", mark: "quiet", word: "agents.subtree.unknown" },
 ];
 
 /** What the list is for: the agents that close with the one closed, or the agents outside a project that a removal stops. */
@@ -42,9 +46,9 @@ export function SubtreeList({ subtree, targetDevice, scope = "close" }: { subtre
     <div className="flex min-w-0 flex-col gap-xs" data-subtree-list="true">
       {parts.length > 0 ? (
         <p className="flex flex-wrap items-center gap-x-sm gap-y-xxs text-caption text-subtle-foreground" data-subtree-summary={subtreeSummaryWords(subtree.counts, t)}>
-          {parts.map(({ state, symbol, tone, word }) => (
+          {parts.map(({ state, mark, word }) => (
             <span key={state} className="inline-flex items-center gap-xxs" data-subtree-count={state}>
-              <StatusMark symbol={symbol} className={tone} />
+              <StatusMark mark={mark} />
               <span>
                 {t(word)} {subtree.counts[state]}
               </span>
@@ -77,7 +81,7 @@ function SubtreeItem({ row, targetDevice }: { row: SubtreeRow; targetDevice: str
       className={`flex min-w-0 items-start gap-xs rounded-xs px-xs py-xxs outline-none focus-visible:ring-2 focus-visible:ring-ring ${bright ? "" : "opacity-(--opacity-read-status)"}`}
       style={{ paddingInlineStart: `calc(var(--spacing-xs) + var(--spacing-lg) * ${row.depth})` }}
     >
-      <RowMark symbol={agent.symbol} tone={markTone(agent)} status={quiet ? statusText(t, agent.status_code) : null} />
+      <RowMark mark={agent.mark} tone={markTone(agent)} status={quiet ? markWords(t, agent) : null} />
       <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-xs gap-y-xxs" aria-hidden="true">
         <span className={`min-w-0 break-words ${row.target ? "font-medium text-foreground" : "text-foreground"}`}>{agent.identity_label}</span>
         {quiet ? null : <span className="shrink-0 text-caption text-subtle-foreground" data-subtree-status="true">{statusText(t, agent.status_code)}</span>}
@@ -91,8 +95,8 @@ function SubtreeItem({ row, targetDevice }: { row: SubtreeRow; targetDevice: str
  * A close list row's status mark. A quiet row shows no status word, so its
  * mark says the state on hover (D-42); the row's accessible name says it too.
  */
-export function RowMark({ symbol, tone, status }: { symbol: string; tone: string; status: string | null }) {
-  const mark = <StatusMark symbol={symbol} className={`mt-xxs ${tone}`} />;
+export function RowMark({ mark: rowMark, tone, status }: { mark: RowMarkValue; tone: string; status: string | null }) {
+  const mark = <StatusMark mark={rowMark} className={`mt-xxs ${tone}`} />;
   if (!status) return mark;
   return (
     <Hint label={status} reveals>

@@ -11,6 +11,7 @@ mod agent_sleep;
 mod agents;
 mod attachments;
 mod backlog;
+mod checks_wait;
 mod clone;
 mod control_lane;
 pub(crate) mod core_move;
@@ -1593,6 +1594,9 @@ pub struct Runtime {
     /// last looked at (PRD overview-request-view D-32).
     request_view_observed: bool,
     pending_checks_read_at: Option<std::time::Instant>,
+    /// What each of this Mac's rows waited on in a pull request's checks
+    /// (`checks_wait`).
+    checks_memory: checks_wait::ChecksMemory,
     issue_tokens: crate::wire::IssueTokens,
     issue_candidates: BTreeMap<String, crate::issues::IssueCandidate>,
     issue_write_pending: Option<issues::IssueWritePending>,
@@ -2217,6 +2221,7 @@ impl Runtime {
             pull_request_times: Default::default(),
             request_view_observed: false,
             pending_checks_read_at: None,
+            checks_memory: Default::default(),
             issue_tokens: Default::default(),
             issue_candidates: Default::default(),
             issue_write_pending: None,

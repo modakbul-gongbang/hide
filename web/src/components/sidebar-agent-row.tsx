@@ -5,7 +5,7 @@ import { agentProductName } from "../agentAdapters";
 import { agentClosing } from "../close";
 import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
-import { branchChip, forkLabel, lineText, lineTone, markTone, rowAccessibleName, sidebarLine } from "../agentRow";
+import { branchChip, forkLabel, lineText, lineTone, markTone, markWords, rowAccessibleName, rowDimmed, sidebarLine } from "../agentRow";
 import { homeTurnLine, originLine } from "../hideAiOrigin";
 import { AgentForkMark } from "./fork-mark";
 import { RowLetterMark } from "./letter-mark";
@@ -133,12 +133,13 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   const agentPrStaleness = useAgentStaleness(agent);
   // A tree row is one line (B14), except that a block keeps its cause, read or
   // not (agent-blocked-state B2): the triangle alone does not say what stopped it.
-  const line = tree && agent.status_code !== "error" ? null : sidebarLine(agent);
+  const line = tree && agent.status_code !== "error" && !rowDimmed(agent) ? null : sidebarLine(agent);
   const branch = branchShown ? branchChip(agent) : null;
   const attention = agent.state.attention;
   const unreachable = remote !== null && !remote.reachable;
   const titleTone = agent.state.title_emphasized || (selected && agent.state.selection_emphasizes_title) ? "text-foreground" : "text-subtle-foreground";
-  const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, agentProductName(agent.agent_kind), agent.detail?.trim(), place].filter(Boolean).join("\n");
+  // The mark's state and word ride the row's hint, which the mark sits inside (B3).
+  const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, agentProductName(agent.agent_kind), markWords(t, agent), agent.detail?.trim(), place].filter(Boolean).join("\n");
   const staleness = ask ? undefined : agentPrStaleness;
   const folded = tree ? tree.open !== true : true;
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -171,7 +172,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       data-agent-device={device ?? undefined}
       data-depth={depth}
       data-unreachable={unreachable ? "true" : undefined}
-      className={cn("group/row relative flex rounded-sm text-body", tree ? "items-stretch pr-xs" : "items-start gap-xs py-xs pr-xs", selected ? tree ? "bg-secondary" : "bg-selected" : "hover:bg-accent", unreachable && "opacity-(--opacity-dimmed)")}
+      className={cn("group/row relative flex rounded-sm text-body", tree ? "items-stretch pr-xs" : "items-start gap-xs py-xs pr-xs", selected ? tree ? "bg-secondary" : "bg-selected" : "hover:bg-accent", (unreachable || rowDimmed(agent)) && "opacity-(--opacity-dimmed)")}
       style={{ paddingLeft: inset }}
     >
       <Hint label={hint} reveals>
@@ -192,7 +193,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       {tree && tree.open !== null && depth > 0 ? <span className="absolute inset-y-0 flex w-(--size-agent-mark)" style={{ left: `calc(${inset} + var(--size-lineage-indent) * ${depth - 1})` }}><RowChevron agent={agent} tree={tree} returnFocus={() => main.current?.focus()} /></span> : null}
       <span className={cn("flex min-w-0 flex-1 items-start gap-xs", tree && "py-xs")}>
         <span className="pointer-events-none flex min-h-(--size-sidebar-line) shrink-0 items-center gap-xs">
-          <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.wait ? "waiting" : agent.status_code} />
+          <StatusMark mark={unreachable ? "quiet" : agent.mark} className={markTone(agent)} data-agent-status-mark={unreachable ? "quiet" : agent.mark} data-agent-status={agent.status_code} />
           {/* A Hide AI row is never in a tree; the Hide owl stands beside the status mark (PRD agent-mark-quiet D-04). The provider's logo follows the view mode or an ⌥ hold, with the owl as its badge (PRD agent-logo-view-mode D-04, D-09). */}
           <AgentRowMark kind={agent.agent_kind} hideAi={agent.hide_ai && !tree ? "sidebar" : null} />
         </span>

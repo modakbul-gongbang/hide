@@ -482,6 +482,8 @@ mod tests {
         rows[0].wait = Some(crate::model::AgentWait::Children);
         lift(&mut rows, |_| None);
         assert_eq!(super::super::turn::demand_verb(&rows[0]), None);
+        rows[0].mark = super::super::tally::RowMark::of(&rows[0]);
+        assert_eq!(rows[0].mark, super::super::tally::RowMark::Turn);
         let state = super::super::turn::row_state(&rows[0]);
         assert_eq!(state.ask.map(|ask| ask.verb), Some(Verb::Approval));
         assert_eq!(state.mark_tone.kind, "warning");

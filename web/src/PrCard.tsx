@@ -220,7 +220,7 @@ function AgentSaid({ entry }: { entry: PrEntry }) {
   return (
     <section className="flex flex-col gap-xxs" data-pr-card-agent={agent.pane_id}>
       <h3 className="flex min-w-0 items-center gap-xs text-caption text-muted-foreground">
-        <StatusMark symbol={agent.symbol} className={markTone(agent)} />
+        <StatusMark mark={agent.mark} className={markTone(agent)} />
         <span className="min-w-0 truncate">{asking ? t("work.card.agentAsks", { name: agent.identity_label }) : agent.identity_label}</span>
         <span className="shrink-0 font-normal">{agentProductName(agent.agent_kind)}</span>
         <Elapsed since={agent.state.request_since} className="shrink-0" />

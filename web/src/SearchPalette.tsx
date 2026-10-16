@@ -274,7 +274,7 @@ function EntryIcon({ entry }: { entry: SearchEntry }) {
   if (entry.kind === "agent" || entry.kind === "session") {
     return (
       <span className="flex w-(--size-agent-badge-compact) shrink-0 justify-center" aria-hidden="true">
-        {entry.agent ? <StatusMark symbol={entry.agent.symbol} className={markTone(entry.agent)} /> : null}
+        {entry.agent ? <StatusMark mark={entry.agent.mark} className={markTone(entry.agent)} /> : null}
       </span>
     );
   }

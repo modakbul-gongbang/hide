@@ -451,8 +451,8 @@ The whole pill is one button, reachable by keyboard and pressed with Enter, and 
 Pressing sends `deliver_letters_now` and nothing else: the pill goes, and the bell line appears in the terminal as the doorbell types it, with no confirmation and no warning about a draft, because the pill sits right above the composer.
 No other hold of a letter reaches the screen, and nothing changes on the sender's pane (`web/src/components/letter-mark.tsx`).
 The B2 tree button starts the second row over the terminal: positive core state counts and a chevron open the existing tree popover, with no separate total or internal divider ([status-model.md](status-model.md#the-descendant-mark-and-the-tree-popover)).
-The state counts show working as a blue dot, reported results as a green check, child requests as a blue ring, unknown as a dim tilde, and resting as a dim ring; `! N` in warning colour is exclusively the core's operator-raised request count over the subtree.
-An ordinary child's question, approval or error adds to the blue request ring, not the operator's `!` count; a check is a reported completion, not verified delivery of a task.
+The state counts use the row marks (status-marks B21): working children as the in-progress ring and reported results as the dot to read, while unknown and resting children draw no mark and are named only in the tooltip; the turn mark with N is exclusively the core's operator-raised request count over the subtree.
+An ordinary child's question, approval or error is its parent's to answer, so it draws no mark and is named only in the tooltip; a dot is a reported completion, not verified delivery of a task.
 The tooltip and accessible name spell out the live direct child total and every state count, including those hidden by the compact form.
 When the compact form has no raised count, or no state counts are available, a tree icon keeps the child popover recognizable.
 If the parent or a known descendant's device is not connected, the button shows a dim disconnected mark, keeping the last topology total and connection reason in its tooltip and accessible name, and suppresses state totals and the representative activity line until the connection returns.
@@ -514,13 +514,13 @@ An unknown close or wake offers Check status, disables that action while a check
 The current Claude Code and Codex keep-pane behavior above is unchanged.
 Web owners: `web/src/components/sleeping-session-row.tsx`, `web/src/sleeping-session.ts` and `web/src/sidebar.tsx`.
 
-The sidebar is one list of operator-owned roots under projects and checkouts, with Needs You and Done raised above it.
+The sidebar is one list of operator-owned roots under projects and checkouts, with Needs You (`내 차례`) and To read (`읽을 것`) raised above it.
 A root whose descendant is raised enters Needs You itself, at any depth, and the raised descendant never appears there on its own row; its second line is the verb and what to do, with no name, count, PR or path.
 What to do is the core's `detail`: the label's reply, else the first line of a native question waiting now in the agent's own words (up to 40 characters, `…` when cut), else the label's line, else the verb's own words (`답을 기다림`); a native question therefore reads as itself with Hide AI off and while the label still describes the turn's work ([status-model.md](status-model.md#the-second-line)).
 An idle or done parent still owns its children, and a closed pane or ended parent agent makes them orphan roots.
 A parent waiting on a working descendant stays Working; a descendant that asks waits on its parent, so the parent keeps its own state, unread because the ask is news to it ([status-model.md](status-model.md#a-quiet-row-that-waits)).
 A root with direct children has a chevron at its left and starts folded; the opened roots persist across launches and device reconnects.
-Folded, it wears its descendant mark, `! N` for raised descendants, and nothing when its descendants are working, asking it, idle or done: a parent waiting on a working child already shows its blue ring and that child's line, a child's ask that is not raised already turns the parent unread, and the operator did not read a `● N` (PRD session-record-redesign D-04).
+Folded, it wears its descendant mark, the turn mark and N for raised descendants, and nothing when its descendants are working, asking it, idle or done: a parent waiting on a working child already shows its ring and that child's line, and a child's ask that is not raised already turns the parent unread (PRD session-record-redesign D-04).
 The core still computes the working mark; no surface draws it.
 Opened, its children follow most urgent first, joined to it by rails, and a child with children has its own chevron; grandchildren are one step further in, and a grandchild with children opens the tree popover from its chevron.
 Past five siblings the rest wait behind `N개 더`, which opens them in place.
@@ -924,7 +924,7 @@ A fork's row, here and in the sidebar, wears the fork mark right after its title
 A fork is a root row of its own, never a child under its source; ⌘K, the Overview's task cards and the phone draw no fork mark.
 Every row, a child and a resolved row included, ends in the Resolve button's slot, so the times of the panel stand in one column as in the sidebar.
 There is no checkout name, front-checkout bar or status word on a root row.
-Its second line is the ask on Needs You, the label line on Working (or the line of the most recently changed working descendant while it waits on them), the finished turn's line on Done, and on Idle only the remaining work of an unfinished turn after `◐`; with no label line there is no second line.
+Its second line is the ask on Needs You, the label line on Working (or the line of the most recently changed working descendant while it waits on them), the finished turn's line on Done, and on Idle only the remaining work of an unfinished turn led by `일 남음`; with no label line there is no second line.
 The PR mark on a child or a root without descendants shows one own PR as its state's icon and `#number`, and several as each state's icon and count.
 A root with descendants does the same over the distinct PR URLs itself and its descendants hold, including folded trees and siblings behind `N개 더`.
 Several PRs read as one icon and count per state present, in that state's colour, worst first and no `PR` letters (a mergeable and a merged PR are green `1` and purple `1`, never green `2`): `#` means a number, digits alone mean how many.
@@ -1279,7 +1279,7 @@ The project-row entry and Overview child-row requirements in PRD sidebar-row-cli
 Project rows now open checkouts; shared Overview owns the only Overview selection and destination.
 
 The sidebar sets its words on three sizes: a project name 13, a checkout name, an agent title and a count 12/400, and a second line and a time 11; a section header is 10/500 in sentence case (`Projects · Recent activity · 5`), 26 high with its words on the baseline.
-A project name is 600 while one of its agents is working, that is wears a mark of `▲ ! ? ● ◐ ✓`, and 400 in the ordinary text color while its agents only rest or sleep or it has none; the core decides which (`agent_presence.working`) and the next snapshot moves it.
+A project name is 600 while one of its awake agents draws a mark (the turn, the ring or a dot to read), and 400 in the ordinary text color while its agents only rest or sleep or it has none; the core decides which (`agent_presence.working`) and the next snapshot moves it.
 A project row and a one-line plain folder are 36 high, a checkout row 32 or 48 with its second line, an agent row 28 or 44.
 A checkout name mutes its prefix up to and including the first slash (`prd/`), so the part that tells checkouts apart reads first; a name with no slash, or one that starts or ends with it, has no prefix.
 The checkout whose Workspace is in front turns its name 500 and nothing else about the row.
@@ -1364,7 +1364,10 @@ At a 240px sidebar width, its 8px list inset puts the checkout's kind glyph at x
 Focused sidebar agent and checkout rows use the neutral `--secondary` fill.
 Root shortcuts follow the same physical grouping order and deduplicate raised occurrences, with no numbers for tab lines or children.
 A closed checkout draws its status badge and still shows questioning or blocked Needs You rows.
-A status badge counts agents under the mark each agent's own row draws, one mark and count per state, worst first (`▲ ! ? ● ◐ ✓ ○`), with idle agents included and zero states left out (docs/status-model.md, Workspace aggregation).
+An agent row draws one of five marks in one 12 px slot ([status-model.md](status-model.md#the-mark)): the operator's turn as a `!` in a warning badge, in progress as a static three-quarter ring in the working colour, to read as a 7 px dot that is green only when the label read the turn as finished, and quiet as the empty slot; a read turn keeps its badge dimmed.
+The mark's name and the word that leads its line are its hover text (`내 차례 · 질문`, `읽을 것 · 일 남음`); the line leads with that word (`질문 · …`, `끝남 · …`, `일 남음 · …`, `대기 · …`), an in-progress row says its sentence alone or the proven cause (`CI 대기 · PR #12`, `자식 2명 작업 중`), and the end of checks the row waited on is its news (`CI 통과 · PR #12`, `CI 실패 · PR #12` in warning).
+A sleeping, waking, unreachable or unknown row draws no mark and is dimmed whole, its line saying why.
+A status badge counts agents under the mark each agent's own row draws, one mark and count per mark in the order whose move is next (the turn, in progress, finished to read, to read), with quiet agents and zero counts left out (status-marks B19; docs/status-model.md, Workspace aggregation).
 A web project row opens its device's last focused usable checkout, falling back to the primary checkout and then the first usable checkout.
 It opens the Workspace and unfolds its checkouts in one admitted event; activating it while that target Workspace is in front and the project is unfolded folds the project while keeping the Workspace in front.
 A project without a usable checkout opens the shared Overview at that project's scope.
@@ -2099,7 +2102,7 @@ Color theme chooses the palette every window draws in, Hide or Neutral, as a seg
 Hide is the landing page's Owl Field palette and the default, including for an install that never chose; Neutral is the grey chrome.
 Both have their own sixteen terminal colors, each readable at 4.5:1 on its background, and the choice changes the sidebar, tabs, pane headers, terminals, editors, sheets and popovers at once, keeping a terminal's content, scroll position, half-typed line and selection.
 Status colors, the accent choices and what uses them, the destructive color, and the diff, PR and file icon colors are the same in both.
-A quiet status mark (Seen, Idle, stopped, and the badge's ○ and ◐) is one grey in both, `--status-seen`, while quiet text beside it, such as a read request line, follows the palette's `--subtle-foreground`.
+The status marks' colours (the warning badge, the working ring, the green and the plain dot) are the same in both, while quiet text beside them, such as a read request line, follows the palette's `--subtle-foreground`; a quiet row draws no mark.
 Mode is the former Theme row unchanged: System, Light or Dark, each color theme having both.
 The choice is the core's, one for every window attached to it, and survives a restart of the app or of hided; the first paint, the desktop window before the page draws and the host status page are Hide Dark, and a paired phone draws the operator's color theme in its own light or dark.
 A stored value this build does not know opens Hide with only the `ui_state.color_theme_unknown` diagnostic.
@@ -2312,7 +2315,7 @@ The push to the phone is on Settings > Notifications, not on this page (PRD sett
 The QR opens a page with the hide icon, "<Mac>에 연결", a line on what the phone can do, 연결, and a note that the code expires in five minutes.
 연결 opens the list and a one-time hint to keep hide on the Home Screen; an expired or spent code says so, a fifth phone is told the limit and to revoke one on the Mac, and a page opened with no code or credential says to scan the QR in Settings > Mobile.
 The list's header shows hide, the Mac's name, how many other phones are connected, and a connection dot.
-Agents sit in 내 확인 대기, 끝, 진행 중 and 확인함 with their counts, each row with its status mark, task name, project and branch, the SSH device's chip, the elapsed time and the request or news line, and the list updates live.
+Agents sit in 내 차례, 읽을 것, 작업 중 and 확인함, the sidebar's own section names, with their counts, each row with its status mark (the sidebar's five marks and the word that leads its line), task name, project and branch, the SSH device's chip, the elapsed time and the request or news line, and the list updates live.
 Local sleeping conversations appear as separate rows in the core-selected group, with Wake or Check status and no conversation detail or reply bar.
 Those controls are disabled while disconnected or while one sleep request is waiting; a refused request keeps the row and asks the operator to check connection and session status before trying again.
 With no agents the list is one line, 실행 중인 에이전트가 없어요.

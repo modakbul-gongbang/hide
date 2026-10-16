@@ -1211,7 +1211,8 @@ pub struct SidebarAgentSnapshot {
     pub blocked: bool,
     /// Derived: `needs_you`, `done`, `working`, or `seen`.
     pub group: String,
-    pub symbol: String,
+    /// Derived: whose move is next, the one mark every surface draws.
+    pub mark: crate::agent_state::RowMark,
     /// Derived: rows in Needs You and Done are drawn bright, the rest subdued.
     pub emphasized: bool,
     /// Derived: the status code the screen turns into a word. No view shows an
@@ -1348,6 +1349,17 @@ pub struct SidebarAgentSnapshot {
     /// Working row (D-10).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wait: Option<AgentWait>,
+    /// The pull request whose checks this row would wait on: a duty pull
+    /// request of its own with checks running on a current read, or one its
+    /// session just printed whose read has not landed (`AgentWait::Checks`).
+    /// Laid before the lineage (`Runtime::lay_checks`); the line names it.
+    #[serde(skip_serializing)]
+    pub checks_wait: Option<u32>,
+    /// The checks this row waited on finished in its current state, and how
+    /// (docs/status-model.md, A quiet row that waits). It is part of the read
+    /// fingerprint, so the end turns the row unread once.
+    #[serde(skip_serializing)]
+    pub checks_ended: Option<ChecksEnded>,
     /// The demands and completions of this row's live descendants, keyed by
     /// the descendant pane. It is what the read record compares against, so
     /// a descendant asking or finishing turns this row unread the same way
@@ -1621,19 +1633,14 @@ pub struct CheckoutAgentSummary {
 }
 
 /// How many rows draw each status mark (docs/status-model.md, The status
-/// badge). A row counts under the mark it draws, read or not, so `idle` holds
-/// every quiet agent the operator has already seen. A row whose activity
-/// Herdr reports as unknown draws `~` and is counted in none: the badge does
-/// not claim a state the projection cannot vouch for.
+/// badge): the operator's turn, in progress, to read as finished, and to read
+/// otherwise. A quiet row draws no mark and is counted in none.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct MarkCountsSnapshot {
-    pub error: u32,
-    pub approval: u32,
-    pub question: u32,
-    pub working: u32,
-    pub stopped: u32,
+    pub turn: u32,
+    pub going: u32,
     pub done: u32,
-    pub idle: u32,
+    pub unread: u32,
 }
 
 /// The source of the one-line checkout purpose chosen by the core.
@@ -1935,6 +1942,16 @@ pub enum AgentWait {
     /// A Hide request the agent sent still waits for its reply, and the
     /// recipient has not taken it in yet or is still making the answer.
     Reply,
+    /// A pull request the row holds the duty of has checks running, or one
+    /// its session just printed has not been read from GitHub yet.
+    Checks,
+}
+
+/// How the checks a row waited on ended, for the pull request `number`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ChecksEnded {
+    pub number: u32,
+    pub passed: bool,
 }
 
 /// One answer a row's session waits for: the agent the letter went to, as
@@ -1962,10 +1979,14 @@ pub enum AgentStatusCode {
     Done,
     Idle,
     Unknown,
-    /// Waiting on delegated children, a background job or a reply.
+    /// Waiting: on delegated children, a background job, a reply or a pull
+    /// request's checks (the row is in progress), or, by the label's word, on
+    /// something nothing proves (the row is to read).
     Waiting,
     /// The turn stopped before the request was done and nothing is left to
     /// wake the agent.
+    Unfinished,
+    /// A reported completion no label judged: finished or not is unknown.
     Stopped,
     /// A pane that holds a terminal but no agent.
     Attached,
@@ -1985,6 +2006,7 @@ impl AgentStatusCode {
             Self::Idle => "Idle",
             Self::Unknown => "Unknown",
             Self::Waiting => "Waiting",
+            Self::Unfinished => "Unfinished",
             Self::Stopped => "Stopped",
             Self::Attached => "Attached",
             Self::Sleeping => "Sleeping \u{b7} resumes when opened",
@@ -1998,7 +2020,7 @@ impl AgentStatusCode {
 pub struct TabAgentSnapshot {
     pub state: crate::agent_state::TabState,
     pub agent_kind: String,
-    pub symbol: String,
+    pub mark: crate::agent_state::RowMark,
     pub demand: String,
     pub activity: String,
     pub emphasized: bool,
@@ -2014,7 +2036,7 @@ impl From<&SidebarAgentSnapshot> for TabAgentSnapshot {
                 mark_tone: agent.state.mark_tone,
             },
             agent_kind: agent.agent_kind.clone(),
-            symbol: agent.symbol.clone(),
+            mark: agent.mark,
             demand: agent.demand.clone(),
             activity: agent.activity.clone(),
             emphasized: agent.emphasized,
@@ -2298,7 +2320,7 @@ pub struct AgentChipSnapshot {
     pub demand: String,
     pub activity: String,
     pub emphasized: bool,
-    pub symbol: String,
+    pub mark: crate::agent_state::RowMark,
     pub status_code: AgentStatusCode,
     /// Whether this child is still delegated work. It lifts only when the
     /// child's parent is gone and the child is a root again.
@@ -3644,6 +3666,11 @@ pub struct PaneReadRecord {
     /// than judging the pane again from numbers that no longer compare.
     #[serde(default)]
     pub unread: bool,
+    /// How the pull request checks the pane waited on had ended when it was
+    /// read. An end the record lacks is news (status-marks D-08); one gone
+    /// since is the pane moving on, which its own change already says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checks_ended: Option<ChecksEnded>,
 }
 
 /// A pane whose last stop finished work, as Hide last saw it. Herdr's
@@ -4777,6 +4804,12 @@ pub struct PullRequestWork {
     /// are still running: the second line's `✗ <name>` and `CI · N`.
     pub failed_checks: Vec<PrFailedCheck>,
     pub pending_checks: u32,
+    /// How many of those checks have reported and still run (`QUEUED`,
+    /// `IN_PROGRESS`, `WAITING`, `PENDING`, `REQUESTED`), leaving out a
+    /// required check that never reported (`EXPECTED`): only a running one
+    /// holds an agent's row in progress (status-marks D-07). Core only.
+    #[serde(skip)]
+    pub running_checks: u32,
     /// Its place in the base branch's merge queue.
     pub queue: MergeQueuePlace,
     /// When the latest review request on it was made, which `리뷰 · N시간째`
@@ -6317,14 +6350,79 @@ mod wire_enum_tests {
         assert_wire(&contract, "request_verb", &verbs);
         checked.insert("request_verb");
 
-        let waits = [AgentWait::Children, AgentWait::Background, AgentWait::Reply];
+        let waits = [
+            AgentWait::Children,
+            AgentWait::Background,
+            AgentWait::Reply,
+            AgentWait::Checks,
+        ];
         for variant in waits {
             match variant {
-                AgentWait::Children | AgentWait::Background | AgentWait::Reply => {}
+                AgentWait::Children
+                | AgentWait::Background
+                | AgentWait::Reply
+                | AgentWait::Checks => {}
             }
         }
         assert_wire(&contract, "agent_wait", &waits);
         checked.insert("agent_wait");
+
+        use crate::agent_state::RowMark;
+        let marks = [
+            RowMark::Turn,
+            RowMark::Going,
+            RowMark::Done,
+            RowMark::Unread,
+            RowMark::Quiet,
+        ];
+        for variant in marks {
+            match variant {
+                RowMark::Turn
+                | RowMark::Going
+                | RowMark::Done
+                | RowMark::Unread
+                | RowMark::Quiet => {}
+            }
+        }
+        assert_wire(&contract, "row_mark", &marks);
+        checked.insert("row_mark");
+
+        let codes = [
+            AgentStatusCode::Error,
+            AgentStatusCode::Question,
+            AgentStatusCode::Approval,
+            AgentStatusCode::Working,
+            AgentStatusCode::Done,
+            AgentStatusCode::Idle,
+            AgentStatusCode::Unknown,
+            AgentStatusCode::Waiting,
+            AgentStatusCode::Unfinished,
+            AgentStatusCode::Stopped,
+            AgentStatusCode::Attached,
+            AgentStatusCode::Sleeping,
+            AgentStatusCode::Waking,
+            AgentStatusCode::SleepFailed,
+        ];
+        for variant in codes {
+            match variant {
+                AgentStatusCode::Error
+                | AgentStatusCode::Question
+                | AgentStatusCode::Approval
+                | AgentStatusCode::Working
+                | AgentStatusCode::Done
+                | AgentStatusCode::Idle
+                | AgentStatusCode::Unknown
+                | AgentStatusCode::Waiting
+                | AgentStatusCode::Unfinished
+                | AgentStatusCode::Stopped
+                | AgentStatusCode::Attached
+                | AgentStatusCode::Sleeping
+                | AgentStatusCode::Waking
+                | AgentStatusCode::SleepFailed => {}
+            }
+        }
+        assert_wire(&contract, "agent_status_code", &codes);
+        checked.insert("agent_status_code");
 
         use crate::labels::analysis::LabelEnd;
         let ends = [

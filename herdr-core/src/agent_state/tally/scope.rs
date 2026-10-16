@@ -213,12 +213,10 @@ pub(super) fn project_marks(projects: &[&WorkspaceSnapshot]) -> MarkCountsSnapsh
         .flat_map(|p| &p.checkouts)
         .map(|c| c.agent_summary.marks)
     {
-        counts.error += marks.error;
-        counts.approval += marks.approval;
-        counts.question += marks.question;
-        counts.working += marks.working;
+        counts.turn += marks.turn;
+        counts.going += marks.going;
         counts.done += marks.done;
-        counts.idle += marks.idle;
+        counts.unread += marks.unread;
     }
     counts
 }

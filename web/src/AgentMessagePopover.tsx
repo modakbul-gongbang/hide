@@ -29,7 +29,7 @@ export function AgentMessagePopover({ agent, place, fallback, tone, onOpen, cont
       <TooltipContent side="bottom" align="start" className="pointer-events-auto w-(--size-pr-popover) max-w-(--radix-tooltip-content-available-width) text-left text-wrap rounded-md p-md" data-lens-message={agent.pane_id}>
         <div className="flex flex-col gap-sm">
           <span className="flex min-w-0 items-center gap-xs text-body font-medium text-foreground">
-            <StatusMark symbol={agent.symbol} className={markTone(agent)} />
+            <StatusMark mark={agent.mark} className={markTone(agent)} />
             <AgentMark kind={agent.agent_kind} />
             <span className="min-w-0 flex-1 truncate">{agent.identity_label}</span>
             <span className="shrink-0 text-caption font-normal text-muted-foreground">{agentProductName(agent.agent_kind)}</span>

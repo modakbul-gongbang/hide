@@ -8,24 +8,27 @@
 
 import type { TFunction } from "i18next";
 import type { MessageKey } from "../i18n/catalogs";
-import type { AgentStatusCode, SleepingSession } from "../snapshot";
-
-export type Tone = "error" | "warning" | "working" | "success" | "subtle";
+import type { AgentStatusCode, AgentWait, LineMode, RowMark, SleepingSession } from "../snapshot";
 
 export type PhoneAgent = {
   device_id: string;
   pane_id: string;
   root_pane_id: string;
   group: GroupId;
-  symbol: string;
-  tone: Tone;
+  /** The desktop row's mark (`RowMark`). */
+  mark: RowMark;
+  /** What an in-progress row waits on, which its line words when it has no sentence. */
+  wait: AgentWait | null;
+  /** How many of its descendants work, for a row waiting on them. */
+  descendants_working: number;
   agent_kind: string;
   title: string;
   place: string | null;
   device_label: string | null;
   /** When the Mac's core last saw this agent change state (epoch ms); the phone counts the elapsed time from it. */
   changed_at_unix_ms: number | null;
-  line: { text: string; tone: "error" | "warning" | "news" } | null;
+  /** The desktop row's second line (`RowLine`), worded the same way. */
+  line: { text: string; mode: LineMode; tone: "warning" | "news" | "subtle"; pull_request?: number } | null;
   status_code: AgentStatusCode;
   demand: string;
   emphasized: boolean;

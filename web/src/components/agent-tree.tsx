@@ -42,7 +42,7 @@ export function AskLine({ ask, className }: { ask: NonNullable<AgentRow["state"]
 /**
  * The one mark a folded parent wears for its descendants (B17): `! N` while
  * they raise something. A descendant that is only working draws nothing: the
- * operator did not read `● N`, and a waiting parent already shows its blue ring
+ * operator did not read a ring count, and a waiting parent already shows its ring
  * and the working child's line. The core still computes the working mark.
  */
 export function DescendantMark({ agent }: { agent: AgentRow }) {

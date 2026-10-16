@@ -9,8 +9,8 @@ const japanese = initializeInterfaceI18n("ja").getFixedT(null, "translation");
 
 describe("the phone's key tables", () => {
   it("names the four groups in the shipped Korean and in English", () => {
-    expect(Object.values(GROUP_TITLE).map(korean)).toEqual(["내 확인 대기", "끝", "진행 중", "확인함"]);
-    expect(Object.values(GROUP_TITLE).map(english)).toEqual(["Needs your attention", "Done", "Working", "Seen"]);
+    expect(Object.values(GROUP_TITLE).map(korean)).toEqual(["내 차례", "읽을 것", "작업 중", "확인함"]);
+    expect(Object.values(GROUP_TITLE).map(english)).toEqual(["Needs You", "To read", "Working", "Seen"]);
   });
 
   it("names the quick keys by what they press", () => {

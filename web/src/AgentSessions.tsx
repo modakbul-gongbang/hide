@@ -4,7 +4,7 @@ import type { Actions } from "./actions";
 import { AgentRowMark } from "./AgentRowMark";
 import { useAgentLogosShown } from "./agentLogoMode";
 import { agentProductName } from "./agentAdapters";
-import { forkLabel, markTone } from "./agentRow";
+import { forkLabel, markTone, markWords } from "./agentRow";
 import { AgentForkMark } from "./components/fork-mark";
 import { hideAiWords, homeTurnLine } from "./hideAiOrigin";
 import { sessionsModel, type SessionsModel } from "./sessionPanel";
@@ -14,7 +14,6 @@ import { childrenOf } from "./components/agent-tree-popover";
 import { Elapsed } from "./components/elapsed";
 import { StatusMark } from "./components/status-mark";
 import { Hint } from "./components/ui/tooltip";
-import { statusText } from "./agentStatus";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
 import { cn } from "./lib/utils";
@@ -178,10 +177,10 @@ const SessionRow = memo(function SessionRow({ row, family, model, actions, open,
         <button type="button" data-session-focus="row" disabled={!model.available} onClick={(event) => { event.stopPropagation(); open_(); }}
           onKeyDown={(event) => treeKey(event, open, () => actions.toggleSessionTree(agent.pane_id))}
           aria-current={selected ? "true" : undefined}
-          aria-expanded={open ?? undefined} aria-label={[agent.identity_label, forkLabel(t, agent), agentProductName(agent.agent_kind), statusText(t, agent.status_code), hideAiWords(t, agent.hide_ai)].filter(Boolean).join(", ")} title={[agent.identity_label, agentProductName(agent.agent_kind)].filter(Boolean).join("\n")}
+          aria-expanded={open ?? undefined} aria-label={[agent.identity_label, forkLabel(t, agent), agentProductName(agent.agent_kind), markWords(t, agent), hideAiWords(t, agent.hide_ai)].filter(Boolean).join(", ")} title={[agent.identity_label, agentProductName(agent.agent_kind)].filter(Boolean).join("\n")}
           className="flex min-w-0 flex-1 items-center gap-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50">
-          {/* Unfinished Idle work wears ◐ in the mark's place (B31); the line says what is left. */}
-          {session.unfinished ? <StatusMark symbol="◐" className="text-warning" data-session-unfinished="true" /> : <StatusMark symbol={agent.symbol} className={markTone(agent)} />}<AgentRowMark kind={agent.agent_kind} hideAi={agent.hide_ai ? "card" : null} />
+          {/* The same mark as the sidebar row; work left is said on the line, not in a mark of its own (status-marks B20). */}
+          <StatusMark mark={agent.mark} className={markTone(agent)} data-session-mark={agent.mark} /><AgentRowMark kind={agent.agent_kind} hideAi={agent.hide_ai ? "card" : null} />
           <span className="min-w-0 truncate text-caption font-medium">{agent.identity_label}</span>
           <AgentForkMark agent={agent} />
         </button>
@@ -217,9 +216,9 @@ function ChildRow({ parent, child, depth, model, actions, place, open, selected,
         <button type="button" data-session-focus="row" disabled={!model.available} onClick={(event) => { event.stopPropagation(); go(); }}
           onKeyDown={(event) => treeKey(event, open, toggle)}
           aria-current={selected ? "true" : undefined} aria-expanded={open ?? undefined}
-          aria-label={[child.identity_label, forkLabel(t, child), agentProductName(child.agent_kind), statusText(t, child.status_code), child.state.branch_badge].filter(Boolean).join(", ")} title={[child.identity_label, agentProductName(child.agent_kind)].filter(Boolean).join("\n")}
+          aria-label={[child.identity_label, forkLabel(t, child), agentProductName(child.agent_kind), markWords(t, child), child.state.branch_badge].filter(Boolean).join(", ")} title={[child.identity_label, agentProductName(child.agent_kind)].filter(Boolean).join("\n")}
           className="flex min-w-0 flex-1 items-center gap-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50">
-          <StatusMark symbol={child.symbol} className={markTone(child)} /><AgentRowMark kind={child.agent_kind} />
+          <StatusMark mark={child.mark} className={markTone(child)} /><AgentRowMark kind={child.agent_kind} />
           <span className={cn("min-w-0 truncate text-caption", titleTone)}>{child.identity_label}</span>
           <AgentForkMark agent={child} />
         </button>

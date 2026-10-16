@@ -76,6 +76,9 @@ pub(super) struct Sighted {
     /// The projects whose ask was unanswered when it was printed, each owed a
     /// read once that answer lands if the answer does not hold it.
     waiting: BTreeSet<String>,
+    /// The projects whose read of it has not landed: the turn that printed
+    /// it is held in progress until each answers (status-marks D-09).
+    owed: BTreeSet<String>,
 }
 
 /// What a sighting or a look may do to one project now.
@@ -1319,12 +1322,17 @@ impl Runtime {
             let mut kept = Sighted {
                 fresh_until: now + fresh_for,
                 waiting: BTreeSet::new(),
+                owed: BTreeSet::new(),
             };
             let mut read_now = Vec::new();
             for path in projects {
                 match self.sighted_read(&path) {
-                    SightedRead::Now => read_now.push(path),
+                    SightedRead::Now => {
+                        kept.owed.insert(path.clone());
+                        read_now.push(path);
+                    }
                     SightedRead::AfterAnswer => {
+                        kept.owed.insert(path.clone());
                         kept.waiting.insert(path);
                     }
                     SightedRead::Never => {}
@@ -1429,6 +1437,33 @@ impl Runtime {
             })
             | Some(GithubClock::NoRemote) => SightedRead::Never,
             _ => SightedRead::AfterAnswer,
+        }
+    }
+
+    /// Whether the read of a pull request a session printed at `address` is
+    /// still owed: a read it set off has not answered, so a turn that just
+    /// printed it is not a stop yet (status-marks D-09, B14).
+    pub(super) fn sighted_read_owed(&self, address: &(String, u64)) -> bool {
+        !self.pull_request_times.contains_key(address)
+            && self
+                .github_sighted
+                .get(address)
+                .is_some_and(|kept| !kept.owed.is_empty())
+    }
+
+    /// An answer for `path` landed: the sightings it owed a read stop holding
+    /// their turns, unless the answer was for an ask already out when the
+    /// address was printed, worked and does not hold it, which the clock
+    /// reads again for (`sighted_owed_after_answer`).
+    fn release_sighted_reads(&mut self, path: &str, outcome: GithubReadOutcome) {
+        let times = &self.pull_request_times;
+        for (address, kept) in &mut self.github_sighted {
+            let read_again = kept.waiting.contains(path)
+                && outcome.pull_requests_read()
+                && !times.contains_key(address);
+            if !read_again {
+                kept.owed.remove(path);
+            }
         }
     }
 
@@ -1579,6 +1614,7 @@ impl Runtime {
         // The answer is for the request as it stands now, so every project in
         // it has been read once, including one that returned nothing.
         let mut newly_settled = false;
+        let mut answered = Vec::new();
         for project in requested.projects {
             let path = project.root.to_string_lossy().into_owned();
             // The read's own provenance, taken before a failed one is filled
@@ -1598,6 +1634,7 @@ impl Runtime {
                 != Some(project.generation)
             {
                 self.github_answered.insert(path.clone(), outcome);
+                answered.push((path.clone(), outcome));
             }
             newly_settled |= self.github_settled.insert(path);
         }
@@ -1610,7 +1647,7 @@ impl Runtime {
             if newly_settled {
                 self.apply_pull_requests();
             }
-            return newly_settled;
+            return self.settle_answered_reads(&answered) | newly_settled;
         }
         self.github = merged;
         if let Some(store) = &self.github_store {
@@ -1620,7 +1657,17 @@ impl Runtime {
         self.refresh_worktree_projection();
         // A promoted card's pull request may have opened, merged or closed.
         self.track_memory_promotions();
+        self.settle_answered_reads(&answered);
         true
+    }
+
+    /// The reads that answered release the turns they held, and every row's
+    /// checks are laid again on what the answer says (B11, B13, B14).
+    fn settle_answered_reads(&mut self, answered: &[(String, GithubReadOutcome)]) -> bool {
+        for (path, outcome) in answered {
+            self.release_sighted_reads(path, *outcome);
+        }
+        self.refresh_checks_waits()
     }
 
     /// Marks the pull requests Hide merged as merged in `github` until a read

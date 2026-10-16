@@ -47,7 +47,7 @@ export function AgentTab({ number, entry, checkout, interaction, actions, renami
  */
 function TabMark({ agent }: { agent: TabAgent | null | undefined }) {
   const shown = useAgentLogosShown();
-  const status = agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-tab-status={agent.status_code} /> : null;
+  const status = agent ? <StatusMark mark={agent.mark} className={markTone(agent)} data-tab-status={agent.status_code} /> : null;
   if (agent && !shown) return status;
   return <>{status}<AgentMark kind={agent?.agent_kind} /></>;
 }

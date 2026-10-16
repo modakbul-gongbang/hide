@@ -24,7 +24,7 @@ function workspace(id: string, extra: Partial<Workspace> = {}): Workspace {
   };
 }
 
-const NO_MARKS = { error: 0, approval: 0, question: 0, working: 0, stopped: 0, done: 0, idle: 0 };
+const NO_MARKS = { turn: 0, going: 0, done: 0, unread: 0 };
 
 describe("activeCheckouts", () => {
   it("leaves out the checkouts the core folded, hid as child-only, or put in Cleanup", () => {
@@ -252,7 +252,7 @@ describe("checkoutCard", () => {
   const keys = (card: ReturnType<typeof checkoutCard>) => card.rows.map((row) => row.key);
 
   it("heads a pull request's card with its badge, number, url and title, then every row with a value (B5)", () => {
-    const card = checkoutCard(project, checkout({ pull_request: pr(), agent_summary: summary({ question: 1, working: 2 }, { needs_you: 1, working: 2 }) }), now, t);
+    const card = checkoutCard(project, checkout({ pull_request: pr(), agent_summary: summary({ turn: 1, going: 2 }, { needs_you: 1, working: 2 }) }), now, t);
     expect(card.header).toEqual({
       kind: "pull_request",
       badge: { label: "Approved", draft: false },
@@ -265,7 +265,7 @@ describe("checkoutCard", () => {
       { key: "review", label: "Review", value: "Approved", tone: "text-pr-mergeable" },
       { key: "checks", label: "Checks", value: "Passing", tone: "text-pr-mergeable" },
       { key: "branch", label: "Branch", value: "feature" },
-      { key: "agents", label: "Agents", marks: { ...NO_MARKS, question: 1, working: 2 } },
+      { key: "agents", label: "Agents", marks: { ...NO_MARKS, turn: 1, going: 2 } },
       { key: "commit", label: "Commit", value: "2h ago" },
       { key: "path", label: "Path", value: "/h/repo.worktrees/feature" },
     ]);
@@ -304,7 +304,7 @@ describe("checkoutCard", () => {
       { key: "path", label: "Path", value: "/h/repo.worktrees/feature" },
     ]);
     const folder = workspace("notes", { is_git: false });
-    expect(keys(checkoutCard(folder, checkout({ worktree: null, is_worktree: false, path: "/h/notes", agent_summary: summary({ idle: 1 }, { seen: 1 }) }), now, t))).toEqual(["agents", "path"]);
+    expect(keys(checkoutCard(folder, checkout({ worktree: null, is_worktree: false, path: "/h/notes", agent_summary: summary({}, { seen: 1 }) }), now, t))).toEqual(["agents", "path"]);
   });
 
   it("words the detached HEAD row and the commit age in the interface language", () => {
@@ -317,7 +317,7 @@ describe("checkoutCard", () => {
   });
 
   it("heads a missing folder with Folder missing over its path alone, whatever else is known", () => {
-    const card = checkoutCard(project, checkout({ exists: false, pull_request: pr(), agent_summary: summary({ idle: 1 }, { seen: 1 }) }), now, t);
+    const card = checkoutCard(project, checkout({ exists: false, pull_request: pr(), agent_summary: summary({}, { seen: 1 }) }), now, t);
     expect(card.header).toEqual({ kind: "missing", label: "Folder missing" });
     expect(card.rows).toEqual([{ key: "path", label: "Path", value: "/h/repo.worktrees/feature" }]);
   });
@@ -398,7 +398,7 @@ describe("checkout row lines (PRD sidebar-typography D-04, D-06)", () => {
     );
 
   it("draws line two only for a purpose or a raised-from parent, agents or not", () => {
-    const withAgents = read({ agent_summary: { representative_pane_id: null, needs_you: 0, done: 0, working: 2, seen: 0, unknown: 0, marks: { ...NO_MARKS, working: 2 } } });
+    const withAgents = read({ agent_summary: { representative_pane_id: null, needs_you: 0, done: 0, working: 2, seen: 0, unknown: 0, marks: { ...NO_MARKS, going: 2 } } });
     expect(checkoutHasSecondLine(withAgents, null, null)).toBe(false);
     expect(checkoutHasSecondLine(withAgents, "사이드바 가독성 개선", null)).toBe(true);
     expect(checkoutHasSecondLine(withAgents, null, "메인 체크아웃 정리에서")).toBe(true);

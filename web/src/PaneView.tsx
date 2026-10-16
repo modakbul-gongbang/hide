@@ -18,7 +18,7 @@ import { keySystem } from "./host";
 import { useInterfaceTranslation } from "./i18n/client";
 import { modChord, TERMINAL_COPY, TERMINAL_PASTE } from "./shortcuts";
 import { wakingLine } from "./sleep";
-import type { AgentSleep, PaneRow, TerminalPane } from "./snapshot";
+import type { AgentSleep, PaneRow, RowMark, TerminalPane } from "./snapshot";
 import { caughtUp } from "./operatorFocus";
 import { useShellStore } from "./store";
 import { attachTerminal, bracketedPaste, focusTerminal, requestView, setTextScale, terminalLinkAt, terminalSelectionText } from "./terminals";
@@ -158,7 +158,7 @@ export const PaneView = memo(function PaneView({
   actions: Actions;
   /** The pane's agent, as the sidebar row and the tab draw it; null for a plain shell. */
   agentKind: string | null;
-  markSymbol: string | null;
+  markSymbol: RowMark | null;
   markTone: string;
   /** Letters the core shows waiting on this pane for a possible draft; 0 draws no pill. */
   lettersWaiting?: number;
@@ -310,7 +310,7 @@ export const PaneView = memo(function PaneView({
             actions={actions}
             plain={
               <>
-                {markSymbol ? <StatusMark symbol={markSymbol} className={markTone} data-pane-status-mark={markSymbol} /> : null}
+                {markSymbol ? <StatusMark mark={markSymbol} className={markTone} data-pane-status-mark={markSymbol} /> : null}
                 <Hint label={agentProductName(agentKind)}><span className="flex shrink-0"><AgentMark kind={agentKind} /></span></Hint>
                 <Hint label={`${title}\n${agentProductName(agentKind)}`} reveals>
                   <span className="min-w-0 truncate">{title}<span className="sr-only">, {agentProductName(agentKind)}</span></span>
@@ -318,7 +318,7 @@ export const PaneView = memo(function PaneView({
               </>
             }
           >
-            {markSymbol ? <StatusMark symbol={markSymbol} className={markTone} data-pane-status-mark={markSymbol} /> : null}
+            {markSymbol ? <StatusMark mark={markSymbol} className={markTone} data-pane-status-mark={markSymbol} /> : null}
             {/* The logo names its product as the plain head's does (agent-mark-quiet B4, B6); the button's own name already says it. */}
             <span className="flex shrink-0" role="img" aria-label={agentProductName(agentKind)}><AgentMark kind={agentKind} /></span>
             <span className="min-w-0 truncate">

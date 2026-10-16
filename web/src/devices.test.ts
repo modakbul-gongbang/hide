@@ -12,7 +12,7 @@ const tileHint = (label: string, connected: boolean, counts: Parameters<typeof t
 const frontTitle = (devices: Parameters<typeof frontTitleIn>[0], frontId: string) => frontTitleIn(devices, frontId, t);
 
 function agent(paneId: string, group: string): AgentRow {
-  return legacyAgentRow({ id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "?", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "idle" }) as AgentRow;
+  return legacyAgentRow({ id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", mark: "turn", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "idle" }) as AgentRow;
 }
 
 const LOCAL_AGENTS = [agent("l1", "needs_you"), agent("l2", "needs_you"), agent("l3", "working")];

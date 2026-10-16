@@ -11,8 +11,9 @@
 use super::*;
 use crate::request_view::{self, RowPlace};
 
-/// How often, while the request view is shown, a project whose linked pull
-/// request has checks running is read again (D-32).
+/// How often, while the request view is shown or a row waits on its pull
+/// request's checks, a project whose pull request has checks running is read
+/// again (D-32, status-marks B13).
 const PENDING_CHECKS_REREAD: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl Runtime {
@@ -197,16 +198,32 @@ impl Runtime {
     /// Once a minute while the request view is shown, asks GitHub again for
     /// each local project a pull request has checks running in, so a finished
     /// run moves its row without a new turn (D-32, B12, work-tab-pr-lens B44).
-    /// Nothing is asked while no window shows the view or no checks are running.
+    /// A project a row waits on running checks in is asked for whatever the
+    /// window shows, so the row leaves progress when they end (status-marks
+    /// B13); there are at most as many as such rows. Nothing is asked while
+    /// neither holds.
     pub(crate) fn reread_pending_checks(&mut self, now: std::time::Instant) {
-        if !self.request_view_observed
-            || self
-                .pending_checks_read_at
-                .is_some_and(|at| now.duration_since(at) < PENDING_CHECKS_REREAD)
-        {
+        let waits = self.checks_wait_projects().clone();
+        if !self.request_view_observed && waits.is_empty() {
             return;
         }
+        match self.pending_checks_read_at {
+            // The read that showed the wait is a moment old: the first
+            // re-read is a minute later.
+            None => {
+                self.pending_checks_read_at = Some(now);
+                return;
+            }
+            Some(at) if now.duration_since(at) < PENDING_CHECKS_REREAD => return,
+            Some(_) => {}
+        }
         self.pending_checks_read_at = Some(now);
+        if !self.request_view_observed {
+            for project in waits {
+                self.refresh_pull_requests(&project);
+            }
+            return;
+        }
         // A pull request the Work list shows (D-25), an agent's or not, with
         // checks running counts: the lens and a card draw them (PRD
         // work-tab-pr-lens B44). A teammate's pull request nothing reaches is
@@ -255,7 +272,11 @@ impl Runtime {
                     .map(|project| project.root_path.clone())
             })
             .collect();
-        let running: BTreeSet<String> = running.union(&agents).cloned().collect();
+        let running: BTreeSet<String> = running
+            .union(&agents)
+            .chain(waits.iter())
+            .cloned()
+            .collect();
         for project in running {
             self.refresh_pull_requests(&project);
         }

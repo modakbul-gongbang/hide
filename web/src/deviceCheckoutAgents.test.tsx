@@ -41,7 +41,7 @@ function project(device: string): { workspace: Workspace; agent: AgentRow; check
     }],
   } as unknown as Workspace;
   const agent = legacyAgentRow({
-    id: `${scope}agent:w3Y:p7`, pane_id: paneId, identity_label: "인사에 답하기", agent_kind: "codex", symbol: "○", group: "seen",
+    id: `${scope}agent:w3Y:p7`, pane_id: paneId, identity_label: "인사에 답하기", agent_kind: "codex", mark: "quiet", group: "seen",
     status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "stopped",
   }) as AgentRow;
   return { workspace, agent, checkoutId };

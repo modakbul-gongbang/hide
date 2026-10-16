@@ -11,83 +11,69 @@ use super::turn::*;
 use crate::model::SidebarAgentSnapshot;
 use crate::pet::PetSummary;
 use crate::sidebar::sync_checkout_purposes;
+use serde::Serialize;
 use std::collections::BTreeMap;
 
-/// The mark a row draws, matching the retired label plugin's symbol table. It is
-/// one decision for the row's own symbol and for every count of marks, so a
-/// badge that stands for folded rows says what opening them would show.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum RowMark {
-    /// The agent stopped and named what stopped it. Drawn as a filled
-    /// triangle, a shape no other demand shares.
-    Blocked,
-    Approval,
-    Question,
-    Working,
-    /// The turn stopped before the request was done and nothing is left to
-    /// wake the agent. Drawn as a half-filled disc.
-    Stopped,
+/// The mark a row draws: whose move is next (docs/status-model.md, One
+/// meaning across surfaces). It is one decision for the row's own mark and
+/// for every count of marks, so a badge that stands for folded rows says what
+/// opening them would show. The shell draws the shape and its colour; no
+/// surface draws a mark of its own.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RowMark {
+    /// The operator's move: a question, an approval or a block, drawn as a
+    /// `!` in a warning badge. Read and still unresolved, it stays dimmed.
+    Turn,
+    /// In progress and proven: the agent works, or a background task, a
+    /// working child, an answer being made or a pull request's checks will
+    /// wake it. A static three-quarter ring.
+    Going,
+    /// To read, and the label read the turn as finished: a green dot.
     Done,
-    Idle,
-    Unknown,
+    /// To read, with no finished verdict: work left, a wait nothing proves,
+    /// or a stop nobody judged. A plain dot.
+    Unread,
+    /// Nothing to do: no mark, its slot kept.
+    #[default]
+    Quiet,
 }
 
 impl RowMark {
     pub(crate) fn of(agent: &SidebarAgentSnapshot) -> Self {
-        // A root raised by a descendant asks with its lead's mark, unless its
-        // own demand already does (PRD B1).
-        if let (None, Some(lead)) = (super::turn::demand_verb(agent), agent.raised.first()) {
-            return match lead.verb {
-                super::escalation::Verb::Answer => Self::Question,
-                _ => Self::Approval,
+        let ownership = ownership_of(agent);
+        let (demand, activity, _) = axes_of(agent);
+        // The group already holds every call on the operator: an own unread
+        // demand, a blocked prompt, a raise from below, an escalated child
+        // and a home's turn.
+        if agent.group == "needs_you" || agent.escalation.is_some() {
+            return Self::Turn;
+        }
+        // A demand the operator has read stays theirs until it is answered;
+        // a delegated child's is its parent's (B8, B24).
+        if demand != AgentDemand::None && !matches!(ownership, Ownership::Delegated) {
+            return Self::Turn;
+        }
+        if activity == AgentActivity::Working || agent.wait.is_some() {
+            return Self::Going;
+        }
+        if agent.group == "done" {
+            return if finished_verdict(agent) {
+                Self::Done
+            } else {
+                Self::Unread
             };
         }
-        // A waiting row keeps the hollow ring and says so: its own
-        // completion is not the news while a child is still busy or a job
-        // it started still runs, and the badge beside it says what the
-        // children are doing (D-01, D-02). It has no demand of its own, so
-        // a block or a question still outranks it (D-25).
-        if agent.wait.is_some() {
-            return Self::Idle;
-        }
-        let (demand, activity, unread) = axes_of(agent);
-        match demand {
-            AgentDemand::Error => Self::Blocked,
-            AgentDemand::Question => Self::Question,
-            AgentDemand::Approval => Self::Approval,
-            AgentDemand::None => match activity {
-                AgentActivity::Working => Self::Working,
-                AgentActivity::Stopped if stopped_unfinished(agent) => Self::Stopped,
-                AgentActivity::Stopped if agent.completed && unread => Self::Done,
-                AgentActivity::Stopped => Self::Idle,
-                AgentActivity::Unknown => Self::Unknown,
-            },
-        }
-    }
-
-    pub(crate) fn symbol(self) -> &'static str {
-        match self {
-            Self::Blocked => "\u{25b2}",
-            Self::Approval => "!",
-            Self::Question => "?",
-            Self::Working => "\u{25cf}",
-            Self::Stopped => "\u{25d0}",
-            Self::Done => "✓",
-            Self::Idle => "\u{25cb}",
-            Self::Unknown => "~",
-        }
+        Self::Quiet
     }
 
     pub(crate) fn count_into(self, counts: &mut crate::model::MarkCountsSnapshot) {
         match self {
-            Self::Blocked => counts.error += 1,
-            Self::Approval => counts.approval += 1,
-            Self::Question => counts.question += 1,
-            Self::Working => counts.working += 1,
-            Self::Stopped => counts.stopped += 1,
+            Self::Turn => counts.turn += 1,
+            Self::Going => counts.going += 1,
             Self::Done => counts.done += 1,
-            Self::Idle => counts.idle += 1,
-            Self::Unknown => {}
+            Self::Unread => counts.unread += 1,
+            Self::Quiet => {}
         }
     }
 }
@@ -340,8 +326,13 @@ pub mod phone {
     #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
     pub struct Line {
         pub text: String,
-        /// `warning` (a question, an approval or a block), or `news`.
+        /// The desktop row's line mode (`RowLine::mode`), which the phone
+        /// words the same way.
+        pub mode: String,
+        /// `warning` (a request or failed checks), `news` or `subtle`.
         pub tone: &'static str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub pull_request: Option<u64>,
     }
 
     #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -352,9 +343,13 @@ pub mod phone {
         /// The pane id of this agent's lineage root on the same device; itself for a root.
         pub root_pane_id: String,
         pub group: String,
-        pub symbol: String,
-        /// `warning`, `working`, `success` or `subtle`, as the desktop row colors its mark.
-        pub tone: &'static str,
+        /// The row's mark (`RowMark`): `turn`, `going`, `done`, `unread` or `quiet`.
+        pub mark: String,
+        /// What an in-progress row waits on (`AgentWait`), which its line
+        /// words when it has no sentence.
+        pub wait: Option<String>,
+        /// How many of its descendants work, for a row waiting on them.
+        pub descendants_working: u64,
         pub agent_kind: String,
         pub title: String,
         /// `project · branch`, or the project alone for a plain folder.
@@ -490,50 +485,24 @@ pub mod phone {
         value.get(field).and_then(Value::as_str).unwrap_or("")
     }
 
-    fn tone(agent: &Value) -> &'static str {
-        let raised = agent
-            .get("raised")
-            .and_then(Value::as_array)
-            .is_some_and(|raised| !raised.is_empty());
-        if !raised && agent.get("wait").is_some_and(|wait| !wait.is_null()) {
-            return "working";
-        }
-        match str_of(agent, "demand") {
-            "error" | "question" | "approval" => "warning",
-            _ => match str_of(agent, "activity") {
-                "working" => "working",
-                // The half-disc stays neutral: Done is quiet, and only a
-                // block asks for attention (design principle 13).
-                "stopped" if str_of(agent, "status_code") == "stopped" => "subtle",
-                "stopped"
-                    if agent
-                        .get("emphasized")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false) =>
-                {
-                    "success"
-                }
-                _ => "subtle",
-            },
-        }
-    }
-
-    /// The desktop sidebar's second-line rule (`sidebarLine`): a request stays,
-    /// news shows while unread, a quiet sentence is not drawn.
+    /// The desktop sidebar's second-line rule (`sidebarLine`): the core's
+    /// line, except a quiet sentence, which no row draws at rest.
     fn line(agent: &Value) -> Option<Line> {
-        let text = agent
-            .get("detail")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|text| !text.is_empty())?;
-        let tone = match str_of(agent, "demand") {
-            "error" | "question" | "approval" => "warning",
-            _ if agent.get("unread").and_then(Value::as_bool) == Some(true) => "news",
-            _ => return None,
+        let line = agent.pointer("/state/line")?;
+        let mode = str_of(line, "mode");
+        if mode.is_empty() || mode == "quiet" {
+            return None;
+        }
+        let tone = match (mode, str_of(line.get("tone")?, "kind")) {
+            ("request" | "checks_failed", _) => "warning",
+            (_, "news") => "news",
+            _ => "subtle",
         };
         Some(Line {
-            text: text.to_owned(),
+            text: str_of(line, "text").trim().to_owned(),
+            mode: mode.to_owned(),
             tone,
+            pull_request: line.get("pull_request").and_then(Value::as_u64),
         })
     }
 
@@ -655,8 +624,12 @@ pub mod phone {
                     .cloned()
                     .unwrap_or_else(|| pane_id.to_owned()),
                 group: str_of(agent, "group").to_owned(),
-                symbol: str_of(agent, "symbol").to_owned(),
-                tone: tone(agent),
+                mark: str_of(agent, "mark").to_owned(),
+                wait: agent.get("wait").and_then(Value::as_str).map(str::to_owned),
+                descendants_working: agent
+                    .pointer("/descendant_counts/working")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
                 emphasized: matches!(str_of(agent, "group"), "needs_you" | "done"),
                 holds_notification: matches!(str_of(agent, "group"), "needs_you" | "done")
                     || matches!(str_of(agent, "demand"), "question" | "approval" | "error"),
