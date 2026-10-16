@@ -7,9 +7,13 @@
 import type { ProjectTasksScope, TaskCardScope, TaskState } from "./agentScope";
 import type { AgentRow, TaskView, Workspace } from "./snapshot";
 
-/** The open groups of the 상태별 view, in the order they are drawn (B4). */
-export type TaskGroupState = "needs_you" | "blocked" | "working" | "done";
-export const TASK_GROUPS: readonly TaskGroupState[] = ["needs_you", "blocked", "working", "done"];
+/**
+ * The open groups of the 상태별 view, in the order they are drawn (B4): the
+ * groups that want the operator's look first, so 끝남 stands above 일하는 중,
+ * whose tasks need nothing from them yet.
+ */
+export type TaskGroupState = "needs_you" | "blocked" | "done" | "working";
+export const TASK_GROUPS: readonly TaskGroupState[] = ["needs_you", "blocked", "done", "working"];
 
 export type TaskEntry = { card: TaskCardScope; agent: AgentRow; project: Workspace | null };
 

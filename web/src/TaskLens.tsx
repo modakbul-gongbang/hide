@@ -32,7 +32,7 @@ import { revealRow, sidebarFocusPane } from "./sidebarFocus";
 import type { SidebarTreeLine } from "./sidebarTree";
 import { catalogWorkspaces, localDeviceId, type AgentRow, type TaskView } from "./snapshot";
 import { useShellStore } from "./store";
-import { taskList, type TaskEntry, type TaskGroup, type TaskGroupState } from "./taskList";
+import { TASK_GROUPS, taskList, type TaskEntry, type TaskGroup, type TaskGroupState } from "./taskList";
 import { useUiStore } from "./ui";
 import type { TaskState } from "./agentScope";
 
@@ -230,7 +230,7 @@ function GroupHead({ group }: { group: TaskGroup }) {
       </h3>
     );
   }
-  const counts = (["needs_you", "blocked", "working", "done"] as const).filter((state) => group.counts[state]);
+  const counts = TASK_GROUPS.filter((state) => group.counts[state]);
   return (
     <h3 tabIndex={-1} data-task-focus="group" className="flex min-w-0 items-center gap-sm rounded-xs px-xs pt-sm pb-xs text-caption font-semibold text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring" data-task-group-head="project">
       <span className="min-w-0 flex-1 truncate" title={group.project?.path}>{group.project?.label ?? ""}</span>

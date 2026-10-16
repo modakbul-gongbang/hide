@@ -79,7 +79,7 @@ async function render(rest: SnapshotRest, agents: AgentRow[], focused: string | 
 const heads = (container: HTMLElement) => [...container.querySelectorAll("[data-task-group-head]")].map((head) => head.textContent);
 const rows = (container: HTMLElement) => [...container.querySelectorAll("[data-task-row]")].map((element) => element.getAttribute("data-task-row"));
 
-it("groups the device's tasks as Needs You, 막힘, 일하는 중 and 끝남, drops empty groups, names each row's project, and folds the resting and cleanup ones (B4, B5, B9)", async () => {
+it("groups the device's tasks as Needs You, 막힘, 끝남 and 일하는 중, drops empty groups, names each row's project, and folds the resting and cleanup ones (B4, B5, B9)", async () => {
   const agents = [
     row("ask", { status_code: "question", state: undefined as never }, { group: "needs_you" }),
     row("stuck", {}, { line: "API 서버에 닿지 못해 멈춤" }),
@@ -88,9 +88,9 @@ it("groups the device's tasks as Needs You, 막힘, 일하는 중 and 끝남, dr
   agents[0] = { ...agents[0]!, state: { ...agents[0]!.state, ask: { verb: "answer", what: "새 언어로 다시 쓸까요?", more: 0 } } };
   const cards = [card("ask", "needs_you", "hide-main"), card("stuck", "blocked", "hide-main"), card("waits", "waiting", "site-main"), card("works", "working", "hide-main"), card("done", "done", "site-main"), card("rest", "resting", "hide-main"), card("clean", "cleanup", "hide-main")];
   const { container } = await render(snapshot(agents, cards), agents);
-  expect(heads(container)).toEqual(["Needs You1", "막힘1", "일하는 중2", "끝남1"]);
+  expect(heads(container)).toEqual(["Needs You1", "막힘1", "끝남1", "일하는 중2"]);
   // A waiting task stands after the working one in its group, whatever the core's order.
-  expect(rows(container)).toEqual(["ask", "stuck", "works", "waits", "done"]);
+  expect(rows(container)).toEqual(["ask", "stuck", "done", "works", "waits"]);
   expect(container.querySelector("[data-task-count]")?.textContent).toBe("태스크 5");
   const line = (pane: string) => container.querySelector(`[data-task-row="${pane}"] [data-task-line]`);
   expect(line("ask")?.textContent).toBe("herdr-ide새 언어로 다시 쓸까요?");
@@ -112,7 +112,7 @@ it("in 프로젝트별 draws one group per project, the asking project first, wi
   const { container } = await render(snapshot(agents, cards, "project"), agents);
   expect([...container.querySelectorAll("[data-task-group]")].map((group) => group.getAttribute("data-task-group"))).toEqual(["site", "hide"]);
   expect(container.querySelector("[data-task-project]")).toBeNull();
-  expect(rows(container)).toEqual(["b", "a", "c"]);
+  expect(rows(container)).toEqual(["b", "c", "a"]);
 });
 
 it("opens a task's pane on a press, its record on Space, and resolves it from the ⋯ menu (B12, B15, B18)", async () => {
