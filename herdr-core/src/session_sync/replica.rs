@@ -546,6 +546,8 @@ impl SessionReplica {
                         TabSnapshot {
                             agent: representative.map(Into::into),
                             naming: crate::model::TabNaming {
+                                // Rename is recorded for this machine's tabs.
+                                by_operator: false,
                                 focused_pane_id: focused
                                     .map(|pane| remote_pane_id(target_id, pane))
                                     .unwrap_or_default(),

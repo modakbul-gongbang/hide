@@ -1912,12 +1912,12 @@ fn sidebar_tab_naming<S: serde::Serializer>(
     struct SidebarName<'a> {
         manual_name: Option<&'a str>,
         number: u32,
+        named_by_operator: bool,
     }
-    let raw = naming.raw.trim();
-    let numeric = automatic_tab_number(raw).is_some();
     SidebarName {
-        manual_name: (!raw.is_empty() && !numeric).then_some(raw),
+        manual_name: naming.manual_name(),
         number: naming.number,
+        named_by_operator: naming.operator_name().is_some(),
     }
     .serialize(serializer)
 }
@@ -2076,6 +2076,33 @@ pub struct TabNaming {
     pub processes: BTreeMap<String, String>,
     pub raw: String,
     pub automatic: String,
+    /// The manual name is one the operator gave through Rename, recorded in
+    /// `UiStateSnapshot::operator_tab_names`; a spawn's name, or one given
+    /// before Hide recorded them, is not. Always false on a device's tab.
+    pub by_operator: bool,
+}
+
+impl TabNaming {
+    /// The name the tab was given, never an automatic `Tab N`: the sidebar's
+    /// tab line shows it whoever gave it.
+    pub fn manual_name(&self) -> Option<&str> {
+        let raw = self.raw.trim();
+        (!raw.is_empty() && automatic_tab_number(raw).is_none()).then_some(raw)
+    }
+
+    /// The name the operator gave the tab: what makes it a named tab, which
+    /// outlives its agents (docs/UI_BEHAVIOR.md, Agent areas).
+    pub fn operator_name(&self) -> Option<&str> {
+        self.manual_name().filter(|_| self.by_operator)
+    }
+
+    /// Whether `names` records this tab's current manual name as the
+    /// operator's.
+    pub fn named_by(&self, tab_id: Option<&str>, names: &BTreeMap<String, String>) -> bool {
+        tab_id
+            .and_then(|id| names.get(id))
+            .is_some_and(|name| Some(name.as_str()) == self.manual_name())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -3540,6 +3567,13 @@ pub struct UiStateSnapshot {
     /// pane ids, so the next press starts a new secretary.
     #[serde(default)]
     pub factory_secretary_pane: Option<String>,
+    /// The names the operator gave tabs through Rename, by tab id, at most
+    /// `OPERATOR_TAB_NAME_LIMIT`: a tab is named, and outlives its agents,
+    /// only while its label is still the name recorded here (Herdr keeps tab
+    /// ids through a restore). A spawn's name, or one given before this was
+    /// recorded, is not the operator's. Persisted and never on the wire.
+    #[serde(default, skip_serializing)]
+    pub operator_tab_names: BTreeMap<String, String>,
 }
 
 /// The most checkouts the recent list keeps; the oldest leave first.
@@ -3547,6 +3581,11 @@ pub const RECENT_CHECKOUT_LIMIT: usize = 10;
 
 /// The most panes the recent pane order keeps; the oldest leave first.
 pub const RECENT_PANE_LIMIT: usize = 50;
+
+/// The most tab names the operator's Rename is remembered for; past it, the
+/// names of tabs that are gone leave first, and a rename with no room left
+/// is not remembered.
+pub const OPERATOR_TAB_NAME_LIMIT: usize = 256;
 
 /// One entry of the recent list: the ids that open the checkout and the
 /// facts that draw its row while its device has no catalog to read them from.
@@ -4164,6 +4203,7 @@ impl Default for UiStateSnapshot {
             recent_checkouts: Vec::new(),
             recent_pane_ids: Vec::new(),
             factory_secretary_pane: None,
+            operator_tab_names: BTreeMap::new(),
         }
     }
 }

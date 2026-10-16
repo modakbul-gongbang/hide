@@ -306,10 +306,16 @@ pub(crate) fn refresh_inactive_groups(
         if project_is_inactive {
             let expanded = expanded_project_devices.contains(workspace.device_id.as_str());
             add_to_group(&mut inactive_projects, workspace, expanded);
-        } else if !has_rows && !workspace.pinned && !workspace.is_home && !in_front {
+        } else if !has_rows
+            && !workspace.checkouts.iter().any(holds_named_tab)
+            && !workspace.pinned
+            && !workspace.is_home
+            && !in_front
+        {
             // A project with no agent and no sleeping conversation waits in
             // its device's No agents fold (D-01); the Inactive fold keeps
-            // the projects nothing has touched for a week.
+            // the projects nothing has touched for a week. A tab the
+            // operator named and left without agents is one they kept.
             let expanded = ui_state
                 .session_open_folds
                 .contains(&no_agents_fold_key(&workspace.device_id));
@@ -403,6 +409,15 @@ pub(crate) fn refresh_device_folds(
     refresh_session_folds(workspace, agents, ui_state, focused_checkout_id);
 }
 
+/// The checkout holds a tab the operator named, which stays on its line
+/// with or without agents (docs/UI_BEHAVIOR.md, Sidebar hierarchy).
+fn holds_named_tab(checkout: &CheckoutSnapshot) -> bool {
+    checkout
+        .tabs
+        .iter()
+        .any(|tab| tab.naming.operator_name().is_some() && !tab.delegated)
+}
+
 pub(crate) fn refresh_session_folds(
     workspace: &mut WorkspaceSnapshot,
     agents: &HashMap<&str, &SidebarAgentSnapshot>,
@@ -454,7 +469,7 @@ pub(crate) fn refresh_session_folds(
                 .is_none_or(|value| value.count == 0)
             && focused_checkout_id != Some(checkout.id.as_str())
         {
-            if !live {
+            if !live && !holds_named_tab(checkout) {
                 folds.empty.push(checkout.id.clone());
                 folds.open_prs += usize::from(
                     checkout
@@ -895,6 +910,46 @@ mod tests {
         assert_eq!(
             navigator.workspaces[0].inactive_checkouts.checkout_ids,
             ["control"]
+        );
+    }
+
+    /// A tab the operator named and left without agents is one they kept:
+    /// its worktree keeps its line and its project stays out of No agents.
+    /// The same name given by a spawn keeps neither.
+    #[test]
+    fn a_tab_the_operator_named_keeps_its_worktree_and_project_out_of_no_agents() {
+        let now_ms = 20 * 24 * 60 * 60 * 1_000;
+        let recent = Some(now_ms / 1_000);
+        let named = |by_operator| crate::model::TabNaming {
+            raw: "Planning".to_owned(),
+            by_operator,
+            ..Default::default()
+        };
+        let mut kept = project("kept", "local", recent, &["kept-shell"]);
+        kept.checkouts[0].tabs[0].naming = named(true);
+        let mut spawned = project("spawned", "local", recent, &["spawned-shell"]);
+        spawned.checkouts[0].tabs[0].naming = named(false);
+        let mut alpha = project("alpha", "local", recent, &[]);
+        alpha.pinned = true;
+        for (id, by_operator) in [("kept-tree", true), ("spawned-tree", false)] {
+            let mut tree = make_worktree_checkout("alpha", id, None);
+            tree.tabs = checkout(id, None, &["shell"]).tabs;
+            tree.tabs[0].naming = named(by_operator);
+            alpha.checkouts.push(tree);
+        }
+        let mut navigator = navigator(vec![kept, spawned, alpha]);
+
+        refresh_inactive_groups(&mut navigator, &UiStateSnapshot::default(), now_ms);
+
+        let no_agents: Vec<_> = navigator
+            .no_agent_projects
+            .iter()
+            .flat_map(|group| group.project_ids.clone())
+            .collect();
+        assert_eq!(no_agents, ["spawned"]);
+        assert_eq!(
+            navigator.workspaces[2].session_folds.empty,
+            ["spawned-tree"]
         );
     }
 

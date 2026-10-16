@@ -4011,6 +4011,8 @@ impl Runtime {
                     session_open_folds: current.session_open_folds,
                     // The secretary belongs to `factory_secretary_set`.
                     factory_secretary_pane: current.factory_secretary_pane,
+                    // Recorded by the core when a Rename lands.
+                    operator_tab_names: current.operator_tab_names,
                     expanded_paths: payload.expanded_paths,
                     device_expanded_paths: payload
                         .device_expanded_paths
