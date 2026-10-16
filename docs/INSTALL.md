@@ -163,9 +163,8 @@ Unverified on Windows and Linux (the macOS assumptions below are left as they ar
 - Whether Alt+Shift also switches the input language on a Windows or Linux layout; hide's chord still runs.
 - A real Grok or Cursor session: each needs an account, so their Windows and Linux hook forms rest on each CLI's source and package, not on a run.
 - A real agy turn on CI: the nightly `agy contract` lane signs agy in on the CI account's key (`HIDE_AGY_API_KEY`, handed to agy as `GEMINI_API_KEY` with `"modelProvider": "gemini"` in its settings, the API-key mode agy 1.4.0's own changelog names; `GEMINI_API_KEY` alone asked for a browser sign-in), and says "not configured" without the key.
-  Signed in, agy lists Hide's four events on Linux, macOS and Windows, and on Linux and macOS one real prompt fires Hide's hooks and takes a letter into the conversation, confirmed after agy recorded it (run 38885907433 on 2026-10-16).
-  A tool call refused by Hide's hook is unverified on CI, because the key's free tier gives the model agy picks in API-key mode (`gemini-3.1-pro`) a quota of 0, so no turn reaches a tool call; it closes when the CI project has a quota for that model, and until then the refusal is proven on this Mac's signed-in agy 1.4.0 alone.
-  The prompt does not run on Windows, because its stand-in `hide` is a shell script and the helper looks for `hide.exe` beside itself; it closes when the test builds a portable stand-in.
+  Signed in, agy lists Hide's four events on Linux, macOS and Windows, and on Linux and macOS one real turn on a flash model (`gemini-3.8-flash-medium`, the one the key's free tier serves; agy's API-key default `gemini-3.1-pro` has a quota of 0) fires Hide's hooks, takes a letter into the conversation, confirmed after agy recorded it, and ends a direct `herdr agent start` as agy's tool error with Hide's reason (run 38887836027 on 2026-10-16).
+  The turn does not run on Windows, because its stand-in `hide` is a shell script and the helper looks for `hide.exe` beside itself; it closes when the test builds a portable stand-in.
 - A notification reaching the screen, on any system: the desktop e2e replaces the system's notification, and a moved Windows folder has not been tried.
 
 ### Make the command available in a new shell
