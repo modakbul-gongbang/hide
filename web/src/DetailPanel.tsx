@@ -80,8 +80,10 @@ export function DetailPanel({ actions }: { actions: Actions }) {
   if (!item) return null;
   const key = item.kind === "pull_request" ? `pr:${item.workspace_id}:${item.number}` : `record:${workKey(item.session)}`;
   return (
-    <aside className="flex h-full min-h-0 min-w-0 flex-1 flex-col text-foreground" aria-label={title} data-lane="detail" data-detail={item.kind}>
-      <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-xxs border-b border-border px-xs text-caption" data-detail-head="true">
+    // The slot reads as a page on the lane: its head keeps the lane's surface
+    // and what it holds, a card or a record alike, sits on the page's.
+    <aside className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground" aria-label={title} data-lane="detail" data-detail={item.kind}>
+      <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-xxs border-b border-border bg-card px-xs text-caption" data-detail-head="true">
         <Hint label={t("detail.back")}>
           <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={t("detail.back")} disabled={!before} onClick={() => actions.detailBack()} data-detail-back="true">
             <ArrowLeftIcon />
